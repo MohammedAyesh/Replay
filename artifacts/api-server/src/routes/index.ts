@@ -6,6 +6,7 @@ import recordingsRouter from "./recordings";
 import clipsRouter from "./clips";
 import savedClipsRouter from "./savedClips";
 import accountRouter from "./account";
+import ossComputeRouter from "./ossCompute";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(recordingsRouter);
 router.use(clipsRouter);
 router.use(savedClipsRouter);
 router.use(accountRouter);
+router.use(ossComputeRouter);
 
 export default router;
