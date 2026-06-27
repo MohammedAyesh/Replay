@@ -36,7 +36,7 @@ export function dateFromKey(key: string): string | null {
 
 export function timeFromFilename(filename: string): string | null {
   const m = filename.match(/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
-  if (m) return `${m[4]}:${m[5]}:${m[6]}`;
+  if (m) return `${m[4]}:${m[5]}`;
   return null;
 }
 
@@ -58,20 +58,26 @@ export function useFCCompute(camera?: string) {
   });
 }
 
-export interface OSSVideoState {
+export interface OSSVideoEntry {
   url: string;
   filename: string;
-  camera: string;
   date: string;
+  time: string;
 }
 
-export function storeOSSVideo(v: OSSVideoState) {
-  sessionStorage.setItem("oss_video", JSON.stringify(v));
+export interface OSSVideoState {
+  videos: OSSVideoEntry[];
+  startIndex: number;
+  camera: string;
 }
 
-export function loadOSSVideo(): OSSVideoState | null {
+export function storeOSSVideos(state: OSSVideoState) {
+  sessionStorage.setItem("oss_videos", JSON.stringify(state));
+}
+
+export function loadOSSVideos(): OSSVideoState | null {
   try {
-    const raw = sessionStorage.getItem("oss_video");
+    const raw = sessionStorage.getItem("oss_videos");
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
