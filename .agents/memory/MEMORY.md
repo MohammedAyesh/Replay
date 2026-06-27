@@ -1,1 +1,1 @@
-- [Orval query-param type collision](orval-params-collision.md) — query params on OpenAPI ops cause TS2308 in api-zod barrel; remove them and filter client-side.
+- [HEVC→H264 HLS transcode](hevc-hls-transcode.md) — fMP4 HLS output option is `-hls_fmp4_init_filename`, not `-hls_init_filename`; 4096×1152 HEVC takes ~17s for first segment on Replit CPU.

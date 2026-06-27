@@ -9,6 +9,7 @@ import accountRouter from "./account";
 import ossComputeRouter from "./ossCompute";
 import fcProxyRouter from "./fcProxy";
 import hlsProxyRouter from "./hlsProxy";
+import hlsTranscodeRouter from "./hlsTranscode";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(accountRouter);
 router.use(ossComputeRouter);
 router.use(fcProxyRouter);
 router.use(hlsProxyRouter);
+router.use(hlsTranscodeRouter);
 
 export default router;

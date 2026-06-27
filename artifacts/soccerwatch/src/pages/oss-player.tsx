@@ -18,6 +18,7 @@ import {
   Check,
   X,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -49,19 +50,6 @@ function fmt(s: number) {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-/** True when the browser can MSE-decode HEVC (hvc1). */
-function supportsHEVC(): boolean {
-  try {
-    return (
-      typeof MediaSource !== "undefined" &&
-      (MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"') ||
-        MediaSource.isTypeSupported('video/mp4; codecs="hvc1"'))
-    );
-  } catch {
-    return false;
-  }
-}
-
 // ─── entry point ─────────────────────────────────────────────────────────────
 export default function OSSPlayer() {
   const [, navigate] = useLocation();
@@ -69,7 +57,7 @@ export default function OSSPlayer() {
 
   useEffect(() => {
     if (!state) navigate("/fields");
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!state || state.videos.length === 0) return null;
 
@@ -81,66 +69,6 @@ export default function OSSPlayer() {
       onBack={() => window.history.back()}
     />
   );
-}
-
-// ─── HLS attachment helper ────────────────────────────────────────────────────
-function attachHLS(
-  videoEl: HTMLVideoElement,
-  url: string,
-  autoplay: boolean,
-  muted: boolean,
-  onError: (msg: string) => void
-): Hls | null {
-  videoEl.muted = muted;
-
-  const isM3u8 = url.endsWith(".m3u8") || url.includes(".m3u8?");
-
-  if (isM3u8) {
-    // Safari / iOS — native HLS (also plays HEVC natively)
-    if (!Hls.isSupported()) {
-      if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
-        videoEl.src = url;
-        if (autoplay) videoEl.play().catch(() => {});
-      } else {
-        onError("HLS playback is not supported in this browser. Try Safari.");
-      }
-      return null;
-    }
-
-    // Chrome / Firefox — use HLS.js, but HEVC won't decode
-    if (!supportsHEVC()) {
-      onError(
-        "This stream is encoded in H.265 (HEVC). Chrome cannot decode it — open in Safari to watch."
-      );
-      return null;
-    }
-
-    // HEVC-capable browser (e.g. Chrome on Windows with HW decode)
-    const hls = new Hls({ enableWorker: false });
-    hls.loadSource(url);
-    hls.attachMedia(videoEl);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      if (autoplay) videoEl.play().catch(() => {});
-    });
-    hls.on(Hls.Events.ERROR, (_ev, data) => {
-      if (!data.fatal) return;
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        onError(
-          "Codec not supported — this stream uses H.265 (HEVC). Open in Safari to watch."
-        );
-      } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        onError("Network error: could not load stream segments.");
-      } else {
-        onError(`Playback error (${data.details}).`);
-      }
-    });
-    return hls;
-  }
-
-  // Plain MP4
-  videoEl.src = url;
-  if (autoplay) videoEl.play().catch(() => {});
-  return null;
 }
 
 // ─── player ───────────────────────────────────────────────────────────────────
@@ -169,12 +97,16 @@ function Player({
   const [panX, setPanX] = useState(0);
   const [maxPanX, setMaxPanX] = useState(0);
   const [streamError, setStreamError] = useState<string | null>(null);
+  // isConverting = waiting for server transcode to produce first segment
+  const [isConverting, setIsConverting] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const isPlayingRef = useRef(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const dragStart = useRef<{ clientX: number; clientY: number; panX: number; time: number } | null>(null);
+  const dragStart = useRef<{
+    clientX: number; clientY: number; panX: number; time: number;
+  } | null>(null);
   const isDragging = useRef(false);
 
   const resetHideTimer = useCallback(() => {
@@ -182,33 +114,97 @@ function Player({
     setShowControls(true);
     hideTimer.current = setTimeout(() => setShowControls(false), 3500);
   }, []);
-  useEffect(() => { resetHideTimer(); }, []);
+  useEffect(() => { resetHideTimer(); }, []); // eslint-disable-line
   useEffect(() => () => clearTimeout(hideTimer.current), []);
 
-  // ── load current video ───────────────────────────────────────────────────
+  // ── load video when `current` changes ────────────────────────────────────
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
+    if (!videoRef.current) return;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const v = videoRef.current!;
 
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
+    // Tear down previous instance
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    v.pause(); v.removeAttribute("src"); v.load();
 
     const entry = videos[current];
-    setPanX(0);
-    setCurrentTime(0);
-    setDuration(0);
-    setClipMode(false);
-    setStreamError(null);
+    setPanX(0); setCurrentTime(0); setDuration(0);
+    setClipMode(false); setStreamError(null); setIsConverting(false);
 
-    hlsRef.current = attachHLS(
-      v,
-      entry.url,
-      isPlayingRef.current,
-      isMuted,
-      setStreamError
-    );
+    v.muted = isMuted;
+
+    let cancelled = false;
+    let hlsInst: Hls | null = null;
+    const abortCtrl = new AbortController();
+
+    async function load() {
+      if (entry.isHLS) {
+        // ── Step 1: ask the server to start (or reuse) a transcode job ──
+        setIsConverting(true);
+        let jobId: string;
+        try {
+          const r = await fetch(
+            `/api/hls/start?url=${encodeURIComponent(entry.url)}`,
+            { signal: abortCtrl.signal },
+          );
+          if (cancelled) return;
+          if (!r.ok) {
+            const j: { error?: string } = await r.json().catch(() => ({}));
+            throw new Error(j.error ?? `Server error ${r.status}`);
+          }
+          const body: { jobId: string } = await r.json();
+          jobId = body.jobId;
+        } catch (err: unknown) {
+          if (cancelled || (err as Error).name === "AbortError") return;
+          setStreamError((err as Error).message || "Could not start transcode");
+          setIsConverting(false);
+          return;
+        }
+
+        if (cancelled) return;
+
+        // ── Step 2: load the transcoded HLS playlist with HLS.js ──
+        setIsConverting(false);
+        const playlistUrl = `/api/hls/stream/${jobId}/playlist.m3u8`;
+
+        hlsInst = new Hls({ enableWorker: false });
+        hlsRef.current = hlsInst;
+
+        hlsInst.loadSource(playlistUrl);
+        hlsInst.attachMedia(v);
+
+        hlsInst.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (!cancelled && isPlayingRef.current) v.play().catch(() => {});
+        });
+        hlsInst.on(Hls.Events.ERROR, (_e, data) => {
+          if (data.fatal && !cancelled) {
+            setStreamError(`Playback error: ${data.details}`);
+          }
+        });
+      } else {
+        // ── Plain MP4 ──
+        const vid = v;
+        vid.src = entry.url;
+        vid.load();
+        const onCanPlay = () => {
+          if (!cancelled && isPlayingRef.current) vid.play().catch(() => {});
+        };
+        const onErr = () => {
+          if (!cancelled) setStreamError("Could not load video file.");
+        };
+        vid.addEventListener("canplay", onCanPlay, { once: true });
+        vid.addEventListener("error", onErr, { once: true });
+      }
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+      abortCtrl.abort();
+      hlsInst?.destroy();
+      hlsRef.current = null;
+    };
   }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -221,17 +217,15 @@ function Player({
     if (!v) return;
     const onTime = () => {
       setCurrentTime(v.currentTime);
-      if (clipMode && v.currentTime >= clipEnd && clipEnd > clipStart) {
+      if (clipMode && v.currentTime >= clipEnd && clipEnd > clipStart)
         v.currentTime = clipStart;
-      }
     };
     const onMeta = () => {
       setDuration(isFinite(v.duration) ? v.duration : 0);
       setCurrentTime(v.currentTime);
       if (v.videoWidth && v.videoHeight) {
         const scale = window.innerHeight / v.videoHeight;
-        const scaledW = v.videoWidth * scale;
-        setMaxPanX(Math.max(0, (scaledW - window.innerWidth) / 2));
+        setMaxPanX(Math.max(0, (v.videoWidth * scale - window.innerWidth) / 2));
       }
     };
     v.addEventListener("timeupdate", onTime);
@@ -269,9 +263,7 @@ function Player({
     if (!v) return;
     v.pause();
     const dur = isFinite(v.duration) ? v.duration : 0;
-    setClipStart(0);
-    setClipEnd(dur);
-    setClipMode(true);
+    setClipStart(0); setClipEnd(dur); setClipMode(true);
     resetHideTimer();
   }, [resetHideTimer]);
 
@@ -284,13 +276,9 @@ function Player({
   const saveClip = useCallback(() => {
     const entry = videos[current];
     saveLocalClip({
-      id: `${Date.now()}`,
-      camera,
-      date: entry.date,
-      filename: entry.filename,
-      videoUrl: entry.url,
-      startTime: clipStart,
-      endTime: clipEnd,
+      id: `${Date.now()}`, camera, date: entry.date,
+      filename: entry.filename, videoUrl: entry.url,
+      startTime: clipStart, endTime: clipEnd,
       savedAt: new Date().toISOString(),
     });
     exitClipMode();
@@ -317,10 +305,11 @@ function Player({
     if (!dragStart.current) return;
     const dx = e.clientX - dragStart.current.clientX;
     const dy = e.clientY - dragStart.current.clientY;
-    if (!isDragging.current && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) isDragging.current = true;
+    if (!isDragging.current && (Math.abs(dx) > 6 || Math.abs(dy) > 6))
+      isDragging.current = true;
     if (!isDragging.current) return;
-    const newPan = dragStart.current.panX + dx;
-    setPanX(Math.max(-maxPanX, Math.min(maxPanX, newPan)));
+    const p = dragStart.current.panX + dx;
+    setPanX(Math.max(-maxPanX, Math.min(maxPanX, p)));
   }, [maxPanX]);
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
@@ -328,8 +317,7 @@ function Player({
     const dx = e.clientX - dragStart.current.clientX;
     const dt = Date.now() - dragStart.current.time;
     const wasDragging = isDragging.current;
-    dragStart.current = null;
-    isDragging.current = false;
+    dragStart.current = null; isDragging.current = false;
     if (wasDragging && Math.abs(dx) > 80 && dt < 400) {
       if (dx < 0 && current < videos.length - 1) { switchTo(current + 1); return; }
       if (dx > 0 && current > 0) { switchTo(current - 1); return; }
@@ -339,7 +327,6 @@ function Player({
 
   const entry = videos[current];
   const progress = duration > 0 ? currentTime / duration : 0;
-  const m3u8Url = entry.isHLS ? entry.url : null;
 
   return (
     <div className="relative w-full h-[100dvh] bg-black overflow-hidden select-none touch-none">
@@ -364,28 +351,29 @@ function Player({
       {/* gradient */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/85" />
 
-      {/* ── CODEC ERROR OVERLAY ── */}
+      {/* ── CONVERTING OVERLAY ── */}
+      {isConverting && !streamError && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none">
+          <Loader2 className="w-10 h-10 text-white animate-spin mb-4" />
+          <p className="text-white font-semibold text-base">Converting stream…</p>
+          <p className="text-white/50 text-sm mt-1.5">H.265 → H.264 · first play takes ~20 s</p>
+        </div>
+      )}
+
+      {/* ── ERROR OVERLAY ── */}
       {streamError && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center px-8 bg-black/80 backdrop-blur-sm pointer-events-auto">
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center px-8 bg-black/85 backdrop-blur-sm pointer-events-auto">
           <div className="w-14 h-14 rounded-full bg-yellow-500/20 flex items-center justify-center mb-5">
             <AlertTriangle className="w-7 h-7 text-yellow-400" />
           </div>
-          <h2 className="text-white font-bold text-lg text-center mb-2">
-            H.265 Stream
-          </h2>
-          <p className="text-white/70 text-sm text-center leading-relaxed mb-6">
-            {streamError}
-          </p>
-          {m3u8Url && (
-            <a
-              href={m3u8Url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-5 py-3 bg-primary rounded-xl text-white text-sm font-semibold active:scale-95 transition-transform mb-3"
-            >
-              Open stream URL
-            </a>
-          )}
+          <h2 className="text-white font-bold text-lg text-center mb-2">Playback error</h2>
+          <p className="text-white/70 text-sm text-center leading-relaxed mb-6">{streamError}</p>
+          <button
+            onClick={() => { setStreamError(null); setCurrent((c) => c); }}
+            className="px-5 py-3 bg-primary rounded-xl text-white text-sm font-semibold active:scale-95 transition-transform mb-3"
+          >
+            Retry
+          </button>
           <button
             onClick={onBack}
             className="px-5 py-3 bg-white/10 rounded-xl text-white/80 text-sm font-medium active:scale-95 transition-transform"
@@ -410,7 +398,9 @@ function Player({
               <button
                 key={i}
                 onClick={() => switchTo(i)}
-                className={`rounded-full transition-all ${i === current ? "w-5 h-2 bg-white" : "w-2 h-2 bg-white/40"}`}
+                className={`rounded-full transition-all ${
+                  i === current ? "w-5 h-2 bg-white" : "w-2 h-2 bg-white/40"
+                }`}
               />
             ))}
           </div>
@@ -499,19 +489,23 @@ function Player({
               </span>
               {entry.isHLS && (
                 <span className="bg-white/20 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase">
-                  HLS · H.265
+                  H.265 → H.264
                 </span>
               )}
             </div>
             <p className="text-white font-bold text-base drop-shadow-md">
               {entry.time || entry.filename}
             </p>
-            <p className="text-white/50 text-xs">{entry.date} · {current + 1} / {videos.length}</p>
+            <p className="text-white/50 text-xs">
+              {entry.date} · {current + 1} / {videos.length}
+            </p>
           </div>
 
           <div className="px-5 mb-3">
             <div className="flex items-center gap-3">
-              <span className="text-white/60 text-xs font-mono w-9 text-right shrink-0">{fmt(currentTime)}</span>
+              <span className="text-white/60 text-xs font-mono w-9 text-right shrink-0">
+                {fmt(currentTime)}
+              </span>
               <div className="flex-1">
                 <input
                   type="range"
@@ -527,7 +521,9 @@ function Player({
                   }}
                 />
               </div>
-              <span className="text-white/60 text-xs font-mono w-9 shrink-0">{fmt(duration)}</span>
+              <span className="text-white/60 text-xs font-mono w-9 shrink-0">
+                {fmt(duration)}
+              </span>
             </div>
           </div>
 
@@ -571,7 +567,8 @@ function TrimBar({
         className="absolute top-0 bottom-0 bg-primary/30 border-t-2 border-b-2 border-primary"
         style={{ left: `${startPct}%`, right: `${100 - endPct}%` }}
       />
-      <div className="absolute top-0 bottom-0 w-0.5 bg-white/70" style={{ left: `${playPct}%` }} />
+      <div className="absolute top-0 bottom-0 w-0.5 bg-white/70"
+        style={{ left: `${playPct}%` }} />
       <input
         type="range" min={0} max={d} step={0.5} value={clipStart}
         onChange={(e) => onStartChange(Math.min(parseFloat(e.target.value), clipEnd - 1))}
