@@ -10,16 +10,15 @@ import {
   getHLSMasterUrl,
 } from "@/lib/fc";
 import { ChevronLeft, Clock, Radio } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 export default function FieldDetail() {
   const [, params] = useRoute("/fields/:camera");
   const camera = decodeURIComponent(params?.camera ?? "Cam01");
   const [, navigate] = useLocation();
 
-  // Reuse the same no-camera cache already populated by the fields list page
   const { data, isLoading } = useFCCompute();
 
-  // Direct MP4 entries for this camera
   const mp4Videos = useMemo(
     () =>
       (data?.videos ?? []).filter(
@@ -31,7 +30,6 @@ export default function FieldDetail() {
     [data, camera]
   );
 
-  // HLS chunk entries for this camera
   const hlsChunks = useMemo(
     () =>
       extractHLSChunks(
@@ -40,7 +38,6 @@ export default function FieldDetail() {
     [data, camera]
   );
 
-  // All unique dates across both sources
   const dates = useMemo(() => {
     const set = new Set<string>();
     for (const v of mp4Videos) {
@@ -96,7 +93,11 @@ export default function FieldDetail() {
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <header className="pt-safe px-4 py-4 bg-white border-b sticky top-0 z-10 flex items-center gap-3 shadow-sm">
+      <motion.header
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } }}
+        className="pt-safe px-4 py-4 bg-white border-b sticky top-0 z-10 flex items-center gap-3 shadow-sm"
+      >
         <Link
           href="/fields"
           className="w-10 h-10 flex items-center justify-center -ml-2 rounded-full hover:bg-muted text-foreground"
@@ -106,23 +107,25 @@ export default function FieldDetail() {
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-bold truncate">{camera}</h1>
           <p className="text-xs text-muted-foreground">
-            {isLoading
-              ? "Loading…"
-              : `${mp4Videos.length + hlsChunks.length} recordings`}
+            {isLoading ? "Loading…" : `${mp4Videos.length + hlsChunks.length} recordings`}
           </p>
         </div>
-      </header>
+      </motion.header>
 
       {/* Field image banner */}
       {data?.fieldImageUrl && (
-        <div className="relative h-36 overflow-hidden shrink-0">
+        <motion.div
+          initial={{ opacity: 0, scale: 1.04 }}
+          animate={{ opacity: 1, scale: 1, transition: { duration: 0.5, ease: "easeOut" as const } }}
+          className="relative h-36 overflow-hidden shrink-0"
+        >
           <img
             src={data.fieldImageUrl}
             alt={`${camera} field`}
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent" />
-        </div>
+        </motion.div>
       )}
 
       <div className="flex-1 overflow-y-auto pb-24">
@@ -137,9 +140,12 @@ export default function FieldDetail() {
             {/* Date pills */}
             {dates.length > 0 && (
               <div className="px-4 py-3 flex gap-2 overflow-x-auto no-scrollbar border-b bg-white sticky top-0 z-10">
-                {dates.map((d) => (
-                  <button
+                {dates.map((d, i) => (
+                  <motion.button
                     key={d}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0, transition: { delay: i * 0.06, duration: 0.3, ease: "easeOut" as const } }}
+                    whileTap={{ scale: 0.93 }}
                     onClick={() => setSelectedDate(d)}
                     className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
                       d === currentDate
@@ -148,7 +154,7 @@ export default function FieldDetail() {
                     }`}
                   >
                     {formatDateLabel(d)}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
             )}
@@ -156,58 +162,88 @@ export default function FieldDetail() {
             {/* Time selector grid */}
             <div className="p-4">
               {currentDate && (
-                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-3">
+                <motion.p
+                  key={currentDate}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-3"
+                >
                   {formatDateLabel(currentDate)} — pick a time
-                </p>
+                </motion.p>
               )}
 
-              {totalForDate === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  No recordings for this date.
-                </div>
-              ) : (
-                <div className="grid grid-cols-3 gap-3">
-                  {/* MP4 chips */}
-                  {mp4ForDate.map((v, i) => {
-                    const t = timeFromFilename(v.filename);
-                    return (
-                      <button
-                        key={v.key}
-                        onClick={() => handlePlay(i)}
-                        className="flex flex-col items-center gap-1.5 bg-card border border-border rounded-2xl py-4 px-2 shadow-sm hover:border-primary hover:shadow-md active:scale-95 transition-all group disabled:opacity-50"
+              <AnimatePresence mode="wait">
+                {totalForDate === 0 ? (
+                  <motion.div
+                    key="empty"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="text-center py-12 text-muted-foreground"
+                  >
+                    No recordings for this date.
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key={currentDate}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1, transition: { duration: 0.2 } }}
+                    exit={{ opacity: 0 }}
+                    className="grid grid-cols-3 gap-3"
+                  >
+                    {/* MP4 chips */}
+                    {mp4ForDate.map((v, i) => {
+                      const t = timeFromFilename(v.filename);
+                      return (
+                        <motion.button
+                          key={v.key}
+                          initial={{ opacity: 0, scale: 0.88, y: 12 }}
+                          animate={{
+                            opacity: 1, scale: 1, y: 0,
+                            transition: { delay: i * 0.06, duration: 0.35, ease: "easeOut" as const },
+                          }}
+                          whileTap={{ scale: 0.92 }}
+                          onClick={() => handlePlay(i)}
+                          className="flex flex-col items-center gap-1.5 bg-card border border-border rounded-2xl py-4 px-2 shadow-sm hover:border-primary hover:shadow-md active:scale-95 transition-colors group"
+                        >
+                          <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary group-active:bg-primary transition-colors">
+                            <Clock className="w-4 h-4 text-primary group-hover:text-white group-active:text-white" />
+                          </div>
+                          <span className="text-sm font-bold text-foreground font-mono">
+                            {t ?? `Clip ${i + 1}`}
+                          </span>
+                        </motion.button>
+                      );
+                    })}
+
+                    {/* HLS chips */}
+                    {hlsForDate.map((c, i) => (
+                      <motion.button
+                        key={c.chunkKey}
+                        initial={{ opacity: 0, scale: 0.88, y: 12 }}
+                        animate={{
+                          opacity: 1, scale: 1, y: 0,
+                          transition: { delay: (mp4ForDate.length + i) * 0.06, duration: 0.35, ease: "easeOut" as const },
+                        }}
+                        whileTap={{ scale: 0.92 }}
+                        onClick={() => handlePlay(mp4ForDate.length + i)}
+                        className="flex flex-col items-center gap-1.5 bg-card border border-border rounded-2xl py-4 px-2 shadow-sm hover:border-primary hover:shadow-md active:scale-95 transition-colors group"
                       >
                         <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary group-active:bg-primary transition-colors">
-                          <Clock className="w-4 h-4 text-primary group-hover:text-white group-active:text-white" />
+                          <Radio className="w-4 h-4 text-primary group-hover:text-white group-active:text-white" />
                         </div>
                         <span className="text-sm font-bold text-foreground font-mono">
-                          {t ?? `Clip ${i + 1}`}
+                          {c.time || `HLS ${i + 1}`}
                         </span>
-                      </button>
-                    );
-                  })}
-
-                  {/* HLS chips */}
-                  {hlsForDate.map((c, i) => (
-                    <button
-                      key={c.chunkKey}
-                      onClick={() => handlePlay(mp4ForDate.length + i)}
-                      className="flex flex-col items-center gap-1.5 bg-card border border-border rounded-2xl py-4 px-2 shadow-sm hover:border-primary hover:shadow-md active:scale-95 transition-all group disabled:opacity-50"
-                    >
-                      <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary group-active:bg-primary transition-colors">
-                        <Radio className="w-4 h-4 text-primary group-hover:text-white group-active:text-white" />
-                      </div>
-                      <span className="text-sm font-bold text-foreground font-mono">
-                        {c.time || `HLS ${i + 1}`}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
+                      </motion.button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </>
         )}
       </div>
-
     </div>
   );
 }

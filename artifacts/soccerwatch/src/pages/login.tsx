@@ -7,6 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Crown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { motion } from "framer-motion";
+
+const fadeUp = (delay = 0) => ({
+  initial: { opacity: 0, y: 28 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.5, delay, ease: "easeOut" as const } },
+});
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -22,20 +28,12 @@ export default function Login() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
-    
     loginMutation.mutate(
       { data: { email, password } },
       {
-        onSuccess: (data) => {
-          setUser(data.user);
-          setLocation("/watch");
-        },
+        onSuccess: (data) => { setUser(data.user); setLocation("/watch"); },
         onError: () => {
-          toast({
-            variant: "destructive",
-            title: "Login failed",
-            description: "Please check your credentials and try again.",
-          });
+          toast({ variant: "destructive", title: "Login failed", description: "Please check your credentials and try again." });
         },
       }
     );
@@ -43,42 +41,43 @@ export default function Login() {
 
   const handleGuest = () => {
     guestMutation.mutate(undefined, {
-      onSuccess: (data) => {
-        setUser(data.user);
-        setLocation("/watch");
-      },
+      onSuccess: (data) => { setUser(data.user); setLocation("/watch"); },
       onError: () => {
-        toast({
-          variant: "destructive",
-          title: "Guest login failed",
-          description: "Something went wrong.",
-        });
+        toast({ variant: "destructive", title: "Guest login failed", description: "Something went wrong." });
       },
     });
   };
 
   return (
-    <div className="flex-1 flex flex-col field-pattern relative text-white">
-      <div className="absolute inset-0 bg-black/40" /> {/* Dark overlay */}
-      
+    <div className="flex-1 flex flex-col field-pattern relative text-white overflow-hidden">
+      <div className="absolute inset-0 bg-black/40" />
+
       <div className="relative z-10 flex-1 flex flex-col justify-between p-6">
         <div className="pt-12">
-          <div className="flex items-center gap-2 mb-8">
-            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
+          <motion.div {...fadeUp(0)} className="flex items-center gap-2 mb-8">
+            <motion.div
+              initial={{ scale: 0, rotate: -20 }}
+              animate={{ scale: 1, rotate: 0, transition: { type: "spring", stiffness: 300, damping: 18, delay: 0.05 } }}
+              className="w-8 h-8 rounded-full bg-primary flex items-center justify-center"
+            >
               <Crown className="w-5 h-5 text-white" />
-            </div>
+            </motion.div>
             <span className="font-bold text-xl tracking-tight">SOCCERWATCH</span>
-          </div>
-          
-          <h1 className="text-5xl font-bold leading-[1.1] mb-4">
+          </motion.div>
+
+          <motion.h1 {...fadeUp(0.12)} className="text-5xl font-bold leading-[1.1] mb-4">
             Every game.<br />Every angle.
-          </h1>
-          <p className="text-lg text-white/80 leading-snug">
+          </motion.h1>
+          <motion.p {...fadeUp(0.2)} className="text-lg text-white/80 leading-snug">
             Browse field footage, relive the best moments, and save your clip of the week.
-          </p>
+          </motion.p>
         </div>
 
-        <div className="bg-card text-card-foreground rounded-[20px] p-6 shadow-xl mb-4">
+        <motion.div
+          initial={{ opacity: 0, y: 60 }}
+          animate={{ opacity: 1, y: 0, transition: { duration: 0.55, delay: 0.28, ease: "easeOut" as const } }}
+          className="bg-card text-card-foreground rounded-[20px] p-6 shadow-xl mb-4"
+        >
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -102,12 +101,12 @@ export default function Login() {
                 className="bg-muted border-transparent focus:border-primary"
               />
             </div>
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-6 rounded-xl"
               disabled={loginMutation.isPending}
             >
-              {loginMutation.isPending ? "Signing in..." : "Sign In"}
+              {loginMutation.isPending ? "Signing in…" : "Sign In"}
             </Button>
           </form>
 
@@ -120,16 +119,16 @@ export default function Login() {
             </div>
           </div>
 
-          <Button 
-            type="button" 
-            variant="outline" 
+          <Button
+            type="button"
+            variant="outline"
             className="w-full font-semibold py-6 rounded-xl"
             onClick={handleGuest}
             disabled={guestMutation.isPending}
           >
-            {guestMutation.isPending ? "Starting..." : "Browse as Guest"}
+            {guestMutation.isPending ? "Starting…" : "Browse as Guest"}
           </Button>
-        </div>
+        </motion.div>
       </div>
     </div>
   );

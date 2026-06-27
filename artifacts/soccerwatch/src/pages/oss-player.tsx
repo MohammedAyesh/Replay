@@ -5,6 +5,7 @@ import {
   useCallback,
 } from "react";
 import Hls from "hls.js";
+import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { loadOSSVideos, OSSVideoEntry } from "@/lib/fc";
 import {
@@ -346,36 +347,94 @@ function Player({
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/85" />
 
       {/* ── CONVERTING OVERLAY ── */}
-      {isConverting && !streamError && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none">
-          <Loader2 className="w-10 h-10 text-white animate-spin mb-4" />
-          <p className="text-white font-semibold text-base">Converting stream…</p>
-          <p className="text-white/50 text-sm mt-1.5">H.265 → H.264 · first play takes ~20 s</p>
-        </div>
-      )}
+      <AnimatePresence>
+        {isConverting && !streamError && (
+          <motion.div
+            key="converting"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35 }}
+            className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none"
+          >
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ repeat: Infinity, duration: 1.1, ease: "linear" }}
+              className="mb-4"
+            >
+              <Loader2 className="w-10 h-10 text-white" />
+            </motion.div>
+            <motion.p
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0, transition: { delay: 0.15 } }}
+              className="text-white font-semibold text-base"
+            >
+              Converting stream…
+            </motion.p>
+            <motion.p
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0, transition: { delay: 0.25 } }}
+              className="text-white/50 text-sm mt-1.5"
+            >
+              H.265 → H.264 · first play takes ~20 s
+            </motion.p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── ERROR OVERLAY ── */}
-      {streamError && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center px-8 bg-black/85 backdrop-blur-sm pointer-events-auto">
-          <div className="w-14 h-14 rounded-full bg-yellow-500/20 flex items-center justify-center mb-5">
-            <AlertTriangle className="w-7 h-7 text-yellow-400" />
-          </div>
-          <h2 className="text-white font-bold text-lg text-center mb-2">Playback error</h2>
-          <p className="text-white/70 text-sm text-center leading-relaxed mb-6">{streamError}</p>
-          <button
-            onClick={() => { setStreamError(null); setCurrent((c) => c); }}
-            className="px-5 py-3 bg-primary rounded-xl text-white text-sm font-semibold active:scale-95 transition-transform mb-3"
+      <AnimatePresence>
+        {streamError && (
+          <motion.div
+            key="error"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="absolute inset-0 z-40 flex flex-col items-center justify-center px-8 bg-black/85 backdrop-blur-sm pointer-events-auto"
           >
-            Retry
-          </button>
-          <button
-            onClick={onBack}
-            className="px-5 py-3 bg-white/10 rounded-xl text-white/80 text-sm font-medium active:scale-95 transition-transform"
-          >
-            Go back
-          </button>
-        </div>
-      )}
+            <motion.div
+              initial={{ scale: 0.7, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1, transition: { type: "spring", stiffness: 280, damping: 18, delay: 0.1 } }}
+              className="w-14 h-14 rounded-full bg-yellow-500/20 flex items-center justify-center mb-5"
+            >
+              <AlertTriangle className="w-7 h-7 text-yellow-400" />
+            </motion.div>
+            <motion.h2
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0, transition: { delay: 0.18 } }}
+              className="text-white font-bold text-lg text-center mb-2"
+            >
+              Playback error
+            </motion.h2>
+            <motion.p
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0, transition: { delay: 0.24 } }}
+              className="text-white/70 text-sm text-center leading-relaxed mb-6"
+            >
+              {streamError}
+            </motion.p>
+            <motion.button
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0, transition: { delay: 0.3 } }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => { setStreamError(null); setCurrent((c) => c); }}
+              className="px-5 py-3 bg-primary rounded-xl text-white text-sm font-semibold mb-3"
+            >
+              Retry
+            </motion.button>
+            <motion.button
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0, transition: { delay: 0.36 } }}
+              whileTap={{ scale: 0.95 }}
+              onClick={onBack}
+              className="px-5 py-3 bg-white/10 rounded-xl text-white/80 text-sm font-medium"
+            >
+              Go back
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* top bar */}
       <div className="absolute top-0 pt-safe px-4 pt-4 w-full flex justify-between items-start z-20 pointer-events-auto">
