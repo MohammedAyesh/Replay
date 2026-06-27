@@ -19,10 +19,11 @@ export interface FCResponse {
 
 export function dateFromKey(key: string): string | null {
   const parts = key.split("/");
-  if (parts.length >= 4) {
-    const year = parts[1];
-    const month = parts[2];
-    const day = parts[3];
+  // Scan all positions — works for both "cam9/Cam01/2025/07/04/..." and "Cam01/2025/07/04/..."
+  for (let i = 0; i + 2 < parts.length; i++) {
+    const year = parts[i];
+    const month = parts[i + 1];
+    const day = parts[i + 2];
     if (
       /^\d{4}$/.test(year) &&
       /^\d{2}$/.test(month) &&

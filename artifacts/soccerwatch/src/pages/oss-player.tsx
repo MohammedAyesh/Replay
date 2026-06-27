@@ -63,7 +63,7 @@ export default function OSSPlayer() {
       videos={state.videos}
       startIndex={state.startIndex}
       camera={state.camera}
-      onBack={() => navigate("~")}
+      onBack={() => window.history.back()}
     />
   );
 }
