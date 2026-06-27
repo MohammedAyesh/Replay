@@ -98,12 +98,11 @@ export function extractHLSChunks(videos: FCVideo[]): HLSChunk[] {
   return chunks;
 }
 
-/** Fetch a presigned URL for master.m3u8 in the given chunk folder. */
-export async function getHLSMasterUrl(chunkKey: string): Promise<string> {
-  const res = await fetch(`/api/hls/presign?chunkKey=${encodeURIComponent(chunkKey)}`);
-  if (!res.ok) throw new Error(`presign failed: ${res.status}`);
-  const data = await res.json();
-  return data.url as string;
+const OSS_BASE = "https://cam9.oss-me-central-1.aliyuncs.com";
+
+/** Build a public URL for master.m3u8 — the OSS bucket is publicly readable with open CORS. */
+export function getHLSMasterUrl(chunkKey: string): string {
+  return `${OSS_BASE}/${chunkKey}/master.m3u8`;
 }
 
 // ─── OSSVideoEntry (shared by field-detail → oss-player) ─────────────────────

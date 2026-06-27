@@ -70,41 +70,25 @@ export default function FieldDetail() {
     [mp4ForDate, hlsForDate]
   );
 
-  const [loading, setLoading] = useState(false);
+  function handlePlay(index: number) {
+    const mp4Entries = mp4ForDate.map((v) => ({
+      url: v.url,
+      filename: v.filename,
+      date: dateFromKey(v.key) ?? "",
+      time: timeFromFilename(v.filename) ?? "",
+      isHLS: false,
+    }));
 
-  async function handlePlay(index: number) {
-    setLoading(true);
-    try {
-      // Build entries: resolve HLS presigned URLs for HLS chunks
-      const mp4Entries = mp4ForDate.map((v) => ({
-        url: v.url,
-        filename: v.filename,
-        date: dateFromKey(v.key) ?? "",
-        time: timeFromFilename(v.filename) ?? "",
-        isHLS: false,
-      }));
+    const hlsEntries = hlsForDate.map((c) => ({
+      url: getHLSMasterUrl(c.chunkKey),
+      filename: c.chunkKey.split("/").pop() ?? c.chunkKey,
+      date: c.date,
+      time: c.time,
+      isHLS: true,
+    }));
 
-      const hlsEntries = await Promise.all(
-        hlsForDate.map(async (c) => {
-          const url = await getHLSMasterUrl(c.chunkKey);
-          return {
-            url,
-            filename: c.chunkKey.split("/").pop() ?? c.chunkKey,
-            date: c.date,
-            time: c.time,
-            isHLS: true,
-          };
-        })
-      );
-
-      const entries = [...mp4Entries, ...hlsEntries];
-      storeOSSVideos({ videos: entries, startIndex: index, camera });
-      navigate("/oss-player");
-    } catch (err) {
-      console.error("Failed to prepare videos", err);
-    } finally {
-      setLoading(false);
-    }
+    storeOSSVideos({ videos: [...mp4Entries, ...hlsEntries], startIndex: index, camera });
+    navigate("/oss-player");
   }
 
   const totalForDate = allVideos.length;
@@ -189,7 +173,6 @@ export default function FieldDetail() {
                     return (
                       <button
                         key={v.key}
-                        disabled={loading}
                         onClick={() => handlePlay(i)}
                         className="flex flex-col items-center gap-1.5 bg-card border border-border rounded-2xl py-4 px-2 shadow-sm hover:border-primary hover:shadow-md active:scale-95 transition-all group disabled:opacity-50"
                       >
@@ -207,7 +190,6 @@ export default function FieldDetail() {
                   {hlsForDate.map((c, i) => (
                     <button
                       key={c.chunkKey}
-                      disabled={loading}
                       onClick={() => handlePlay(mp4ForDate.length + i)}
                       className="flex flex-col items-center gap-1.5 bg-card border border-border rounded-2xl py-4 px-2 shadow-sm hover:border-primary hover:shadow-md active:scale-95 transition-all group disabled:opacity-50"
                     >
@@ -226,14 +208,6 @@ export default function FieldDetail() {
         )}
       </div>
 
-      {/* Loading overlay */}
-      {loading && (
-        <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl px-6 py-4 text-sm font-medium shadow-xl">
-            Preparing stream…
-          </div>
-        </div>
-      )}
     </div>
   );
 }
