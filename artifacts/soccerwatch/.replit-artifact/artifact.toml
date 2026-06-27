@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "SoccerWatch"
+version = "1.0.0"
+id = "artifacts/soccerwatch"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20097
+
+[services.development]
+run = "pnpm --filter @workspace/soccerwatch run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/soccerwatch", "run", "build" ]
+publicDir = "artifacts/soccerwatch/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20097"
+BASE_PATH = "/"

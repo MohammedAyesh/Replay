@@ -1,22 +1,35 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: SoccerWatch API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: fields
+    description: Soccer fields
+  - name: recordings
+    description: Field recordings
+  - name: clips
+    description: Highlight clips
+  - name: savedClips
+    description: User saved clips
+  - name: likes
+    description: Clip likes
+  - name: account
+    description: User account
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +37,254 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+
+  /auth/guest:
+    post:
+      operationId: loginAsGuest
+      tags: [auth]
+      summary: Browse as guest
+      responses:
+        "200":
+          description: Guest session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Log out
+      responses:
+        "200":
+          description: Logged out
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthenticated
+
+  /fields:
+    get:
+      operationId: listFields
+      tags: [fields]
+      summary: List all fields
+      responses:
+        "200":
+          description: List of fields
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Field"
+
+  /fields/{id}:
+    get:
+      operationId: getField
+      tags: [fields]
+      summary: Get field by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Field"
+        "404":
+          description: Not found
+
+  /fields/{id}/recordings:
+    get:
+      operationId: getFieldRecordings
+      tags: [recordings]
+      summary: Get recordings for a field
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of recordings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Recording"
+
+  /recordings/{id}:
+    get:
+      operationId: getRecording
+      tags: [recordings]
+      summary: Get a recording by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Recording
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+        "404":
+          description: Not found
+
+  /clips:
+    get:
+      operationId: listClips
+      tags: [clips]
+      summary: Get ranked highlights feed for current week
+      responses:
+        "200":
+          description: Ranked clips feed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Clip"
+
+  /clips/{id}:
+    get:
+      operationId: getClip
+      tags: [clips]
+      summary: Get a single clip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Clip
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Clip"
+        "404":
+          description: Not found
+
+  /clips/{id}/like:
+    post:
+      operationId: toggleLike
+      tags: [likes]
+      summary: Toggle like on a clip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Like toggled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LikeResult"
+
+  /saved-clips:
+    get:
+      operationId: listSavedClips
+      tags: [savedClips]
+      summary: Get user's saved clips
+      responses:
+        "200":
+          description: Saved clips
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Clip"
+
+  /saved-clips/{clipId}:
+    put:
+      operationId: saveClip
+      tags: [savedClips]
+      summary: Save a clip
+      parameters:
+        - name: clipId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Clip saved
+    delete:
+      operationId: unsaveClip
+      tags: [savedClips]
+      summary: Unsave a clip
+      parameters:
+        - name: clipId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Clip unsaved
+
+  /account/stats:
+    get:
+      operationId: getAccountStats
+      tags: [account]
+      summary: Get current user stats (saved clips count, likes given, fields visited)
+      responses:
+        "200":
+          description: Account stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +295,124 @@ components:
       required:
         - status
 
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+
+    User:
+      type: object
+      required: [id, name, email, isGuest]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        isGuest:
+          type: boolean
+
+    AuthResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+
+    Field:
+      type: object
+      required: [id, name, location, courts, clipCount]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        location:
+          type: string
+        courts:
+          type: integer
+        clipCount:
+          type: integer
+        lastRecordedAt:
+          type: ["string", "null"]
+
+    Recording:
+      type: object
+      required: [id, fieldId, court, date, timeSlot, duration]
+      properties:
+        id:
+          type: integer
+        fieldId:
+          type: integer
+        court:
+          type: string
+        date:
+          type: string
+        timeSlot:
+          type: string
+        duration:
+          type: string
+        score:
+          type: ["string", "null"]
+        videoUrl:
+          type: string
+        highlightMoment:
+          type: ["string", "null"]
+        fieldName:
+          type: ["string", "null"]
+
+    Clip:
+      type: object
+      required: [id, recordingId, rank, momentLabel, likeCount]
+      properties:
+        id:
+          type: integer
+        recordingId:
+          type: integer
+        rank:
+          type: integer
+        momentLabel:
+          type: string
+        playerTags:
+          type: array
+          items:
+            type: string
+        likeCount:
+          type: integer
+        isLiked:
+          type: boolean
+        isSaved:
+          type: boolean
+        videoUrl:
+          type: string
+        fieldName:
+          type: ["string", "null"]
+        court:
+          type: ["string", "null"]
+        date:
+          type: ["string", "null"]
+
+    LikeResult:
+      type: object
+      required: [liked, likeCount]
+      properties:
+        liked:
+          type: boolean
+        likeCount:
+          type: integer
+
+    AccountStats:
+      type: object
+      required: [savedClips, likesGiven, fieldsVisited]
+      properties:
+        savedClips:
+          type: integer
+        likesGiven:
+          type: integer
+        fieldsVisited:
+          type: integer

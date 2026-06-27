@@ -1,0 +1,106 @@
+import React from "react";
+import { Link, useLocation } from "wouter";
+import { PlaySquare, MapPin, Bookmark, User as UserIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+
+  const isLogin = location === "/";
+  const isImmersivePlayer = location.startsWith("/player/");
+  const isWatchFeed = location === "/watch";
+
+  const hideTabBar = isLogin || isImmersivePlayer;
+  const useTranslucentBar = isWatchFeed;
+
+  return (
+    <div className="mx-auto w-full max-w-[420px] min-h-[100dvh] bg-background relative overflow-hidden flex flex-col shadow-2xl">
+      <main className="flex-1 w-full h-full flex flex-col overflow-hidden relative">
+        {children}
+      </main>
+
+      {!hideTabBar && (
+        <nav
+          className={cn(
+            "absolute bottom-0 left-0 right-0 z-50 flex items-center justify-around pb-safe pt-2 px-4 h-16 border-t backdrop-blur-md",
+            useTranslucentBar
+              ? "bg-black/40 border-white/10 text-white"
+              : "bg-white border-border text-muted-foreground"
+          )}
+        >
+          <NavItem
+            href="/watch"
+            icon={<PlaySquare className="w-6 h-6" />}
+            label="Watch"
+            isActive={location === "/watch"}
+            isTranslucent={useTranslucentBar}
+          />
+          <NavItem
+            href="/fields"
+            icon={<MapPin className="w-6 h-6" />}
+            label="Fields"
+            isActive={location.startsWith("/fields")}
+            isTranslucent={useTranslucentBar}
+          />
+          <NavItem
+            href="/my-clips"
+            icon={<Bookmark className="w-6 h-6" />}
+            label="My Clips"
+            isActive={location === "/my-clips"}
+            isTranslucent={useTranslucentBar}
+          />
+          <NavItem
+            href="/account"
+            icon={<UserIcon className="w-6 h-6" />}
+            label="Account"
+            isActive={location === "/account"}
+            isTranslucent={useTranslucentBar}
+          />
+        </nav>
+      )}
+    </div>
+  );
+}
+
+function NavItem({
+  href,
+  icon,
+  label,
+  isActive,
+  isTranslucent,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  isActive: boolean;
+  isTranslucent: boolean;
+}) {
+  return (
+    <Link href={href} className="flex flex-col items-center justify-center gap-1 w-16">
+      <div
+        className={cn(
+          "transition-colors",
+          isActive
+            ? "text-primary"
+            : isTranslucent
+            ? "text-white/70 hover:text-white"
+            : "text-muted-foreground hover:text-foreground"
+        )}
+      >
+        {icon}
+      </div>
+      <span
+        className={cn(
+          "text-[10px] font-medium transition-colors",
+          isActive
+            ? "text-primary"
+            : isTranslucent
+            ? "text-white/70"
+            : "text-muted-foreground"
+        )}
+      >
+        {label}
+      </span>
+    </Link>
+  );
+}

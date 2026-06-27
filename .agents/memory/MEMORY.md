@@ -1,0 +1,1 @@
+- [Orval query-param type collision](orval-params-collision.md) — query params on OpenAPI ops cause TS2308 in api-zod barrel; remove them and filter client-side.

@@ -1,0 +1,41 @@
+Build a mobile web app called "SoccerWatch"
+
+Build a responsive, mobile-first web app where amateur soccer players browse pre-recorded footage from their local fields, watch a social-media-style "highlights" feed, and save their best moments as clips. Think TikTok/Reels meets a field-booking app. Design it to look great in a phone-width column (max ~420px), centered on desktop.
+
+Tech stack: React (or Next.js) + Tailwind CSS on the frontend, a simple Node/Express backend with a Postgres database. Use a video player that supports HLS streams (e.g. hls.js or Video.js). Mock the video sources with looping placeholder clips for now.
+
+Brand & visual style:
+
+Fonts: Space Grotesk.
+Colors: dark forest green #0d1f0d (headers/immersive backgrounds), vivid green #22c55e (primary/accent), off-white #f4f4f2 (page background), white cards. Use a pink-red #ff2d55 only for the "liked" heart state.
+Rounded cards (~12px radius), subtle shadows, clean and sporty — no gradients-for-the-sake-of-it, no emoji.
+Each clip's video tile sits on a dark green field-pattern background and autoplays muted + looped, with a thin green progress bar.
+Screens / features:
+
+Login — Field-photo hero with "SoccerWatch" logo and a headline. Email + password sign-in, plus a "Browse as Guest" option. Both routes enter the app.
+
+Watch (home tab) — A full-screen vertical, swipeable "Clip of the Week / Highlights" feed (scroll-snap, one clip per screen). Each clip shows: the field's footage autoplaying muted on loop; a rank badge (#1 = "Clip of the Week", others "#N This Week"); a highlight-moment label (e.g. "GOAL · 32'"); field name, court, and date; player name tags (e.g. @m.alotaibi); and a right-side rail with a Like button (with count) and Share button.
+
+Fields (tab) — Searchable list of nearby fields. Each field card shows name, location, recording count, number of courts, and last-recorded date. Tapping a field opens its detail.
+
+Field detail — Date filter tabs (Today, Yesterday, etc.) and a list of available recordings. Each recording row shows time slot, court, duration, and final score, with a "Watch" button.
+
+Player / Get your clip — Opens the recording in the same immersive full-screen view with a back button and an action bar: Like, Share, and a prominent "Save clip to My Clips" button (toggles to "Saved ✓").
+
+My Clips (tab) — A 2-column grid of the user's saved highlights (field, moment, court, date). Empty state prompts them to save a clip. Tapping a saved clip reopens it in the player.
+
+Account (tab) — Profile avatar/initials, name, email, and stat cards (Saved Clips, Likes Given, Fields). A settings menu (Notifications, Saved Fields, Privacy & Security, Help & Support) and a Sign Out button. Guest sessions show a "Guest" profile.
+
+Bottom tab navigation across Watch / Fields / My Clips / Account, with the active tab in green. The nav is a translucent dark glass bar over the Watch feed and a solid white bar on the other tabs; hidden in the immersive player and on login.
+
+Data model:
+
+users (id, name, email, password hash, is_guest)
+fields (id, name, location, courts, last_recorded_at)
+recordings (id, field_id, court, date, time_slot, duration, score, video_url, highlight_moment)
+clips / highlights (id, recording_id, rank, moment_label, player_tags[], like_count)
+saved_clips (user_id, clip_id)
+likes (user_id, clip_id)
+Behavior: Likes and saves persist per user. The Watch feed is ranked by like count for the current week. Seed the database with ~6 fields, several recordings each, and 5 ranked highlight clips so the app is populated on first run.
+
+Start with the frontend screens and mock data, then wire up the backend and database.
