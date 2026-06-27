@@ -4,6 +4,7 @@ import {
   useState,
   useCallback,
 } from "react";
+import Hls from "hls.js";
 import { useLocation } from "wouter";
 import { loadOSSVideos, OSSVideoEntry } from "@/lib/fc";
 import {
@@ -59,7 +60,7 @@ export default function OSSPlayer() {
   if (!state || state.videos.length === 0) return null;
 
   return (
-    <Slideshow
+    <Player
       videos={state.videos}
       startIndex={state.startIndex}
       camera={state.camera}
@@ -68,8 +69,40 @@ export default function OSSPlayer() {
   );
 }
 
+// ─── HLS attachment helper ────────────────────────────────────────────────────
+function attachHLS(
+  videoEl: HTMLVideoElement,
+  url: string,
+  autoplay: boolean,
+  muted: boolean
+): Hls | null {
+  videoEl.muted = muted;
+
+  if (url.endsWith(".m3u8") || url.includes(".m3u8?")) {
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: false });
+      hls.loadSource(url);
+      hls.attachMedia(videoEl);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (autoplay) videoEl.play().catch(() => {});
+      });
+      return hls;
+    } else if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
+      // Native HLS (Safari / iOS)
+      videoEl.src = url;
+      if (autoplay) videoEl.play().catch(() => {});
+    }
+    return null;
+  }
+
+  // Plain MP4
+  videoEl.src = url;
+  if (autoplay) videoEl.play().catch(() => {});
+  return null;
+}
+
 // ─── player ───────────────────────────────────────────────────────────────────
-function Slideshow({
+function Player({
   videos,
   startIndex,
   camera,
@@ -91,22 +124,14 @@ function Slideshow({
   const [duration, setDuration] = useState(0);
   const [clipStart, setClipStart] = useState(0);
   const [clipEnd, setClipEnd] = useState(0);
-
-  // Pan state: how far the video has been dragged (px)
   const [panX, setPanX] = useState(0);
-  const [maxPanX, setMaxPanX] = useState(0); // max drift before clamping
+  const [maxPanX, setMaxPanX] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const isPlayingRef = useRef(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
-
-  // Drag tracking
-  const dragStart = useRef<{
-    clientX: number;
-    clientY: number;
-    panX: number;
-    time: number;
-  } | null>(null);
+  const dragStart = useRef<{ clientX: number; clientY: number; panX: number; time: number } | null>(null);
   const isDragging = useRef(false);
 
   // ── controls auto-hide ───────────────────────────────────────────────────
@@ -118,29 +143,33 @@ function Slideshow({
   useEffect(() => { resetHideTimer(); }, []);
   useEffect(() => () => clearTimeout(hideTimer.current), []);
 
-  // ── switch video ─────────────────────────────────────────────────────────
-  const switchTo = useCallback((idx: number) => {
-    if (idx < 0 || idx >= videos.length) return;
-    setCurrent(idx);
+  // ── load current video (with HLS.js if needed) ───────────────────────────
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    // Destroy previous HLS instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    const entry = videos[current];
     setPanX(0);
     setCurrentTime(0);
     setDuration(0);
     setClipMode(false);
-  }, [videos.length]);
 
-  // ── play / pause current video ───────────────────────────────────────────
+    hlsRef.current = attachHLS(v, entry.url, isPlayingRef.current, isMuted);
+  }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── sync mute ────────────────────────────────────────────────────────────
   useEffect(() => {
     const v = videoRef.current;
-    if (!v) return;
-    v.muted = isMuted;
-    if (isPlayingRef.current) {
-      v.play().catch(() => {});
-    } else {
-      v.pause();
-    }
-  }, [current, isMuted]);
+    if (v) v.muted = isMuted;
+  }, [isMuted]);
 
-  // ── time tracking ────────────────────────────────────────────────────────
+  // ── time tracking + pan bounds ───────────────────────────────────────────
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -154,13 +183,10 @@ function Slideshow({
     const onMeta = () => {
       setDuration(isFinite(v.duration) ? v.duration : 0);
       setCurrentTime(v.currentTime);
-      // Compute how far we can pan this video (based on natural video width vs viewport)
-      const containerW = window.innerWidth;
-      const containerH = window.innerHeight;
       if (v.videoWidth && v.videoHeight) {
-        const scale = containerH / v.videoHeight;
+        const scale = window.innerHeight / v.videoHeight;
         const scaledW = v.videoWidth * scale;
-        setMaxPanX(Math.max(0, (scaledW - containerW) / 2));
+        setMaxPanX(Math.max(0, (scaledW - window.innerWidth) / 2));
       }
     };
 
@@ -175,6 +201,9 @@ function Slideshow({
       v.removeEventListener("loadedmetadata", onMeta);
     };
   }, [current, clipMode, clipEnd, clipStart]);
+
+  // ── cleanup HLS on unmount ───────────────────────────────────────────────
+  useEffect(() => () => { hlsRef.current?.destroy(); }, []);
 
   // ── seek ─────────────────────────────────────────────────────────────────
   const seek = useCallback((val: number) => {
@@ -232,15 +261,16 @@ function Slideshow({
     });
   }, [current, clipStart, clipEnd, camera, videos, exitClipMode, toast]);
 
-  // ── drag-to-pan + swipe-to-navigate ─────────────────────────────────────
+  // ── switch recording ─────────────────────────────────────────────────────
+  const switchTo = useCallback((idx: number) => {
+    if (idx < 0 || idx >= videos.length) return;
+    setCurrent(idx);
+  }, [videos.length]);
+
+  // ── drag-to-pan / swipe-to-navigate ─────────────────────────────────────
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (clipMode) return;
-    dragStart.current = {
-      clientX: e.clientX,
-      clientY: e.clientY,
-      panX,
-      time: Date.now(),
-    };
+    dragStart.current = { clientX: e.clientX, clientY: e.clientY, panX, time: Date.now() };
     isDragging.current = false;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }, [clipMode, panX]);
@@ -249,15 +279,10 @@ function Slideshow({
     if (!dragStart.current) return;
     const dx = e.clientX - dragStart.current.clientX;
     const dy = e.clientY - dragStart.current.clientY;
-    if (!isDragging.current && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
-      isDragging.current = true;
-    }
+    if (!isDragging.current && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) isDragging.current = true;
     if (!isDragging.current) return;
-
-    // Pan the video horizontally (clamped to max)
     const newPan = dragStart.current.panX + dx;
-    const clamped = Math.max(-maxPanX, Math.min(maxPanX, newPan));
-    setPanX(clamped);
+    setPanX(Math.max(-maxPanX, Math.min(maxPanX, newPan)));
   }, [maxPanX]);
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
@@ -267,23 +292,11 @@ function Slideshow({
     const wasDragging = isDragging.current;
     dragStart.current = null;
     isDragging.current = false;
-
-    // Fast horizontal swipe → navigate between recordings
     if (wasDragging && Math.abs(dx) > 80 && dt < 400) {
-      if (dx < 0 && current < videos.length - 1) {
-        switchTo(current + 1);
-        return;
-      }
-      if (dx > 0 && current > 0) {
-        switchTo(current - 1);
-        return;
-      }
+      if (dx < 0 && current < videos.length - 1) { switchTo(current + 1); return; }
+      if (dx > 0 && current > 0) { switchTo(current - 1); return; }
     }
-
-    // Tap (no drag) → toggle controls
-    if (!wasDragging) {
-      resetHideTimer();
-    }
+    if (!wasDragging) resetHideTimer();
   }, [current, videos.length, switchTo, resetHideTimer]);
 
   const entry = videos[current];
@@ -291,7 +304,7 @@ function Slideshow({
 
   return (
     <div className="relative w-full h-[100dvh] bg-black overflow-hidden select-none touch-none">
-      {/* ── video: natural aspect, centered, pannable ── */}
+      {/* ── video: natural aspect ratio, pannable ── */}
       <div
         className="absolute inset-0 flex items-center justify-center overflow-hidden"
         onPointerDown={onPointerDown}
@@ -300,22 +313,19 @@ function Slideshow({
         onPointerCancel={() => { dragStart.current = null; isDragging.current = false; }}
       >
         <video
-          key={entry.url}
           ref={videoRef}
-          src={entry.url}
           className="h-full w-auto max-w-none"
           style={{ transform: `translateX(${panX}px)`, willChange: "transform" }}
           playsInline
-          loop={!clipMode}
           muted
-          autoPlay
+          loop={!clipMode}
         />
       </div>
 
       {/* ── gradients ── */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/85" />
 
-      {/* ── top bar (always visible) ── */}
+      {/* ── top bar ── */}
       <div className="absolute top-0 pt-safe px-4 pt-4 w-full flex justify-between items-start z-20 pointer-events-auto">
         <button
           onClick={onBack}
@@ -324,16 +334,13 @@ function Slideshow({
           <ChevronLeft className="w-6 h-6 ml-[-2px]" />
         </button>
 
-        {/* Dot indicators */}
         {videos.length > 1 && (
           <div className="flex items-center gap-1.5 mt-2">
             {videos.slice(0, 12).map((_, i) => (
               <button
                 key={i}
                 onClick={() => switchTo(i)}
-                className={`rounded-full transition-all ${
-                  i === current ? "w-5 h-2 bg-white" : "w-2 h-2 bg-white/40"
-                }`}
+                className={`rounded-full transition-all ${i === current ? "w-5 h-2 bg-white" : "w-2 h-2 bg-white/40"}`}
               />
             ))}
           </div>
@@ -353,7 +360,7 @@ function Slideshow({
         </button>
       </div>
 
-      {/* ── CLIP MODE overlay ── */}
+      {/* ── CLIP MODE ── */}
       {clipMode ? (
         <div
           className="absolute bottom-0 left-0 right-0 z-30 px-4 pb-safe pb-6 pt-6 bg-gradient-to-t from-black via-black/95 to-transparent pointer-events-auto"
@@ -361,7 +368,6 @@ function Slideshow({
           <p className="text-white/50 text-xs font-medium uppercase tracking-widest text-center mb-4">
             Trim clip
           </p>
-
           <TrimBar
             duration={duration}
             clipStart={clipStart}
@@ -370,13 +376,11 @@ function Slideshow({
             onStartChange={(s) => { setClipStart(s); seek(s); }}
             onEndChange={(e) => { setClipEnd(e); seek(e); }}
           />
-
           <div className="flex justify-between mt-3 mb-5">
             <span className="text-white text-sm font-mono font-bold">{fmt(clipStart)}</span>
             <span className="text-white/50 text-xs mt-0.5">clip · {fmt(clipEnd - clipStart)}</span>
             <span className="text-white text-sm font-mono font-bold">{fmt(clipEnd)}</span>
           </div>
-
           <div className="flex gap-3">
             <button
               onClick={exitClipMode}
@@ -393,13 +397,13 @@ function Slideshow({
           </div>
         </div>
       ) : (
-        /* ── NORMAL controls overlay ── */
+        /* ── NORMAL controls ── */
         <div
           className={`absolute bottom-0 left-0 right-0 z-20 transition-opacity duration-300 pointer-events-auto ${
             showControls ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
         >
-          {/* Prev / Next arrows (shown when there are multiple recordings) */}
+          {/* Prev / Next arrows */}
           {videos.length > 1 && (
             <>
               {current > 0 && (
@@ -423,9 +427,16 @@ function Slideshow({
 
           {/* Info */}
           <div className="px-5 mb-3">
-            <span className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase mb-1.5 inline-block">
-              {camera}
-            </span>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase">
+                {camera}
+              </span>
+              {entry.isHLS && (
+                <span className="bg-white/20 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase">
+                  HLS
+                </span>
+              )}
+            </div>
             <p className="text-white font-bold text-base drop-shadow-md">
               {entry.time || entry.filename}
             </p>
@@ -464,8 +475,7 @@ function Slideshow({
             >
               {isPlaying
                 ? <Pause className="w-6 h-6 text-black fill-black" />
-                : <Play className="w-6 h-6 text-black fill-black ml-0.5" />
-              }
+                : <Play className="w-6 h-6 text-black fill-black ml-0.5" />}
             </button>
             <button
               onClick={enterClipMode}
@@ -482,35 +492,22 @@ function Slideshow({
 
 // ─── Trim bar ─────────────────────────────────────────────────────────────────
 function TrimBar({
-  duration,
-  clipStart,
-  clipEnd,
-  currentTime,
-  onStartChange,
-  onEndChange,
+  duration, clipStart, clipEnd, currentTime, onStartChange, onEndChange,
 }: {
-  duration: number;
-  clipStart: number;
-  clipEnd: number;
-  currentTime: number;
-  onStartChange: (v: number) => void;
-  onEndChange: (v: number) => void;
+  duration: number; clipStart: number; clipEnd: number;
+  currentTime: number; onStartChange: (v: number) => void; onEndChange: (v: number) => void;
 }) {
   const d = Math.max(duration, 1);
   const startPct = (clipStart / d) * 100;
   const endPct = (clipEnd / d) * 100;
   const playPct = (currentTime / d) * 100;
-
   return (
     <div className="relative h-12 rounded-xl bg-white/10 overflow-hidden">
       <div
         className="absolute top-0 bottom-0 bg-primary/30 border-t-2 border-b-2 border-primary"
         style={{ left: `${startPct}%`, right: `${100 - endPct}%` }}
       />
-      <div
-        className="absolute top-0 bottom-0 w-0.5 bg-white/70"
-        style={{ left: `${playPct}%` }}
-      />
+      <div className="absolute top-0 bottom-0 w-0.5 bg-white/70" style={{ left: `${playPct}%` }} />
       <input
         type="range" min={0} max={d} step={0.5} value={clipStart}
         onChange={(e) => onStartChange(Math.min(parseFloat(e.target.value), clipEnd - 1))}
@@ -523,14 +520,12 @@ function TrimBar({
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
         style={{ zIndex: 4 }}
       />
-      {/* Start handle */}
       <div
         className="absolute top-0 bottom-0 w-4 bg-primary rounded-l-md flex items-center justify-center pointer-events-none"
         style={{ left: `${startPct}%`, transform: "translateX(-100%)" }}
       >
         <div className="w-0.5 h-5 bg-white/60 rounded-full" />
       </div>
-      {/* End handle */}
       <div
         className="absolute top-0 bottom-0 w-4 bg-primary rounded-r-md flex items-center justify-center pointer-events-none"
         style={{ left: `${endPct}%` }}

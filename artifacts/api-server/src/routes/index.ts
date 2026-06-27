@@ -8,6 +8,7 @@ import savedClipsRouter from "./savedClips";
 import accountRouter from "./account";
 import ossComputeRouter from "./ossCompute";
 import fcProxyRouter from "./fcProxy";
+import hlsProxyRouter from "./hlsProxy";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(savedClipsRouter);
 router.use(accountRouter);
 router.use(ossComputeRouter);
 router.use(fcProxyRouter);
+router.use(hlsProxyRouter);
 
 export default router;

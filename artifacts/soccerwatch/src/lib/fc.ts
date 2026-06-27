@@ -59,11 +59,62 @@ export function useFCCompute(camera?: string) {
   });
 }
 
+// ─── HLS chunk helpers ────────────────────────────────────────────────────────
+
+export interface HLSChunk {
+  /** The OSS key prefix up to and including the chunk folder, e.g.
+   *  Cam01/2025/07/15/hls/Field_00_20250715184625_combined_chunk01  */
+  chunkKey: string;
+  /** Parsed date in YYYY-MM-DD format */
+  date: string;
+  /** HH:MM extracted from the chunk folder name */
+  time: string;
+}
+
+/** Extract unique HLS chunk folders from a list of FC videos.
+ *  Only considers entries inside /hls/ subdirectories. */
+export function extractHLSChunks(videos: FCVideo[]): HLSChunk[] {
+  const seen = new Set<string>();
+  const chunks: HLSChunk[] = [];
+
+  for (const v of videos) {
+    const idx = v.key.indexOf("/hls/");
+    if (idx === -1) continue;
+
+    // chunk folder = everything up to and including the next path segment after /hls/
+    const afterHls = v.key.slice(idx + 5); // strip "/hls/"
+    const chunkFolder = afterHls.split("/")[0];
+    if (!chunkFolder) continue;
+
+    const chunkKey = v.key.slice(0, idx) + "/hls/" + chunkFolder;
+    if (seen.has(chunkKey)) continue;
+    seen.add(chunkKey);
+
+    const date = dateFromKey(v.key) ?? "";
+    const time = timeFromFilename(chunkFolder) ?? "";
+    chunks.push({ chunkKey, date, time });
+  }
+
+  return chunks;
+}
+
+/** Fetch a presigned URL for master.m3u8 in the given chunk folder. */
+export async function getHLSMasterUrl(chunkKey: string): Promise<string> {
+  const res = await fetch(`/api/hls/presign?chunkKey=${encodeURIComponent(chunkKey)}`);
+  if (!res.ok) throw new Error(`presign failed: ${res.status}`);
+  const data = await res.json();
+  return data.url as string;
+}
+
+// ─── OSSVideoEntry (shared by field-detail → oss-player) ─────────────────────
+
 export interface OSSVideoEntry {
   url: string;
   filename: string;
   date: string;
   time: string;
+  /** true when url points to a master.m3u8 (HLS stream) */
+  isHLS?: boolean;
 }
 
 export interface OSSVideoState {
