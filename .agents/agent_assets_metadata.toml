@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "tY8lmJmUY4pvKPs7RJUoc"
+uri = "file://function-compute/deploy.tar.gz"
+type = "unspecified"
+title = "SoccerWatch Function Compute – deploy.tar.gz"

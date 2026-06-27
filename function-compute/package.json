@@ -1,0 +1,12 @@
+{
+  "name": "soccerwatch-compute",
+  "version": "1.0.0",
+  "description": "Alibaba Cloud Function Compute handler – lists OSS videos by camera and date",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ali-oss": "^6.21.0"
+  }
+}
