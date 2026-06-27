@@ -2,12 +2,12 @@ import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
 import { db, savedClipsTable, likesTable, recordingsTable, clipsTable } from "@workspace/db";
 import { GetAccountStatsResponse } from "@workspace/api-zod";
-import { getUserId } from "./auth";
+import { getLocalUserId } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
 
 router.get("/account/stats", async (req, res): Promise<void> => {
-  const userId = getUserId(req);
+  const userId = await getLocalUserId(req);
   if (!userId) {
     res.json(GetAccountStatsResponse.parse({ savedClips: 0, likesGiven: 0, fieldsVisited: 0 }));
     return;

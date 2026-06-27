@@ -8,7 +8,7 @@ import {
   ToggleLikeParams,
   ToggleLikeResponse,
 } from "@workspace/api-zod";
-import { getUserId } from "./auth";
+import { getLocalUserId } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
 
@@ -54,7 +54,7 @@ async function buildClip(clipId: number, userId: number | null) {
 }
 
 router.get("/clips", async (req, res): Promise<void> => {
-  const userId = getUserId(req);
+  const userId = await getLocalUserId(req);
   const clips = await db.select().from(clipsTable).orderBy(desc(clipsTable.likeCount), clipsTable.rank);
 
   const result = await Promise.all(clips.map((c) => buildClip(c.id, userId)));
@@ -69,7 +69,7 @@ router.get("/clips/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const userId = getUserId(req);
+  const userId = await getLocalUserId(req);
   const clip = await buildClip(params.data.id, userId);
   if (!clip) {
     res.status(404).json({ error: "Clip not found" });
@@ -87,7 +87,7 @@ router.post("/clips/:id/like", async (req, res): Promise<void> => {
     return;
   }
 
-  const userId = getUserId(req);
+  const userId = await getLocalUserId(req);
   if (!userId) {
     res.status(401).json({ error: "Unauthenticated" });
     return;

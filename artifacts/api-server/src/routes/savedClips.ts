@@ -6,12 +6,12 @@ import {
   UnsaveClipParams,
   ListSavedClipsResponse,
 } from "@workspace/api-zod";
-import { getUserId } from "./auth";
+import { getLocalUserId } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
 
 router.get("/saved-clips", async (req, res): Promise<void> => {
-  const userId = getUserId(req);
+  const userId = await getLocalUserId(req);
   if (!userId) {
     res.json([]);
     return;
@@ -61,7 +61,7 @@ router.put("/saved-clips/:clipId", async (req, res): Promise<void> => {
     return;
   }
 
-  const userId = getUserId(req);
+  const userId = await getLocalUserId(req);
   if (!userId) {
     res.status(401).json({ error: "Unauthenticated" });
     return;
@@ -83,7 +83,7 @@ router.delete("/saved-clips/:clipId", async (req, res): Promise<void> => {
     return;
   }
 
-  const userId = getUserId(req);
+  const userId = await getLocalUserId(req);
   if (!userId) {
     res.status(401).json({ error: "Unauthenticated" });
     return;

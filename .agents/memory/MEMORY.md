@@ -1,1 +1,2 @@
 - [HEVC→H264 HLS transcode](hevc-hls-transcode.md) — fMP4 HLS output option is `-hls_fmp4_init_filename`, not `-hls_init_filename`; 4096×1152 HEVC takes ~17s for first segment on Replit CPU.
+- [Clerk auth setup](clerk-auth.md) — Replit-managed Clerk replaces cookie auth; real users JIT-provisioned via clerkId in DB; guests use guestId httpOnly cookie alongside Clerk.

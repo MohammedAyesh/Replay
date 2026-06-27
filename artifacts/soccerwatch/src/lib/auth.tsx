@@ -1,67 +1,29 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { useGetMe, getGetMeQueryKey, User } from "@workspace/api-client-react";
+import { useUser } from "@clerk/react";
+import { useGetMe, getGetMeQueryKey, type User } from "@workspace/api-client-react";
 
-interface AuthContextType {
-  user: User | null;
-  isLoading: boolean;
-  setUser: (user: User | null) => void;
-  isGuest: boolean;
-}
+export type { User };
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export function useAuth() {
+  const { isSignedIn, isLoaded } = useUser();
 
-const STORAGE_KEY = "soccerwatch_user";
-
-function loadStoredUser(): User | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as User) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUserState] = useState<User | null>(() => loadStoredUser());
-
-  const setUser = (u: User | null) => {
-    setUserState(u);
-    if (u) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  };
-
-  const { data: meData, isLoading: isMeLoading } = useGetMe({
+  const { data: localUser, isLoading: isMeLoading } = useGetMe({
     query: {
-      enabled: !!user,
+      enabled: isLoaded,
       retry: false,
       staleTime: 5 * 60 * 1000,
       queryKey: getGetMeQueryKey(),
     },
   });
 
-  useEffect(() => {
-    if (meData) {
-      setUser(meData);
-    }
-  }, [meData]);
-
-  const isLoading = !!user && isMeLoading && !meData;
+  const user = localUser ?? null;
+  const isLoading = !isLoaded || (isLoaded && isMeLoading && isSignedIn === true);
   const isGuest = user?.isGuest ?? false;
 
-  return (
-    <AuthContext.Provider value={{ user, isLoading, setUser, isGuest }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const setUser = (_u: User | null) => {};
+
+  return { user, isLoading, isGuest, setUser };
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
 }
