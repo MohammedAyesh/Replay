@@ -21,3 +21,9 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+OSS_REGION = "oss-me-central-2"
+OSS_BUCKET = "cam9"
