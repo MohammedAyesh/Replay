@@ -1,12 +1,12 @@
 import { Link } from "wouter";
-import { useListSavedClips } from "@workspace/api-client-react";
+import { useListSavedClips, getListSavedClipsQueryKey } from "@workspace/api-client-react";
 import { Bookmark, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 
 export default function MyClips() {
   const { isGuest } = useAuth();
-  const { data: clips, isLoading } = useListSavedClips({ query: { enabled: !isGuest } });
+  const { data: clips, isLoading } = useListSavedClips({ query: { enabled: !isGuest, queryKey: getListSavedClipsQueryKey() } });
 
   if (isGuest) {
     return (

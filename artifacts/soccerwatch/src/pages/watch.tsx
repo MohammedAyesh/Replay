@@ -24,7 +24,7 @@ export default function Watch() {
   }
 
   return (
-    <div className="flex-1 bg-black overflow-y-scroll snap-y snap-mandatory no-scrollbar h-[100dvh]">
+    <div className="flex-1 min-h-0 bg-black overflow-y-scroll snap-y snap-mandatory no-scrollbar">
       {clips.map((clip, idx) => (
         <ClipScreen key={clip.id} clip={clip} index={idx} />
       ))}
@@ -89,7 +89,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
     
     if (clip.isSaved) {
       unsaveClipMutation.mutate(
-        { data: { clipId: clip.id } },
+        { clipId: clip.id },
         {
           onSuccess: () => {
             queryClient.setQueryData(getListClipsQueryKey(), (old: Clip[] | undefined) => 
@@ -101,7 +101,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
       );
     } else {
       saveClipMutation.mutate(
-        { data: { clipId: clip.id } },
+        { clipId: clip.id },
         {
           onSuccess: () => {
             queryClient.setQueryData(getListClipsQueryKey(), (old: Clip[] | undefined) => 
@@ -137,7 +137,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
   const videoSrc = clip.videoUrl || FALLBACK_VIDEOS[index % FALLBACK_VIDEOS.length];
 
   return (
-    <div className="relative w-full h-[100dvh] snap-start bg-black overflow-hidden" onClick={togglePlay}>
+    <div className="relative w-full h-full shrink-0 snap-start bg-black overflow-hidden" onClick={togglePlay}>
       {/* Background field pattern if video is small */}
       <div className="absolute inset-0 field-pattern opacity-30" />
       
@@ -210,7 +210,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
           <div className="flex flex-wrap gap-2">
             {clip.playerTags.map((tag) => (
               <span key={tag} className="text-xs bg-white/20 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 font-medium">
-                @{tag}
+                {tag}
               </span>
             ))}
           </div>

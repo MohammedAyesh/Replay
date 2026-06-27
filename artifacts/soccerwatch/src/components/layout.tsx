@@ -14,8 +14,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const useTranslucentBar = isWatchFeed;
 
   return (
-    <div className="mx-auto w-full max-w-[420px] min-h-[100dvh] bg-background relative overflow-hidden flex flex-col shadow-2xl">
-      <main className="flex-1 w-full h-full flex flex-col overflow-hidden relative">
+    <div className="mx-auto w-full max-w-[420px] h-[100dvh] bg-background relative overflow-hidden flex flex-col shadow-2xl">
+      <main className="flex-1 min-h-0 w-full flex flex-col overflow-hidden relative">
         {children}
       </main>
 
@@ -24,7 +24,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           className={cn(
             "absolute bottom-0 left-0 right-0 z-50 flex items-center justify-around pb-safe pt-2 px-4 h-16 border-t backdrop-blur-md",
             useTranslucentBar
-              ? "bg-black/40 border-white/10 text-white"
+              ? "bg-black/80 border-white/20 text-white"
               : "bg-white border-border text-muted-foreground"
           )}
         >

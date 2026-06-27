@@ -65,7 +65,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
     
     if (clip.isSaved) {
       unsaveClipMutation.mutate(
-        { data: { clipId: clip.id } },
+        { clipId: clip.id },
         {
           onSuccess: () => {
             queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) => 
@@ -77,7 +77,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       );
     } else {
       saveClipMutation.mutate(
-        { data: { clipId: clip.id } },
+        { clipId: clip.id },
         {
           onSuccess: () => {
             queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) => 

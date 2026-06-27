@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { setUserId } = useAuth();
+  const { setUser } = useAuth();
   const { toast } = useToast();
 
   const [email, setEmail] = useState("");
@@ -27,7 +27,7 @@ export default function Login() {
       { data: { email, password } },
       {
         onSuccess: (data) => {
-          setUserId(data.user.id);
+          setUser(data.user);
           setLocation("/watch");
         },
         onError: () => {
@@ -44,7 +44,7 @@ export default function Login() {
   const handleGuest = () => {
     guestMutation.mutate(undefined, {
       onSuccess: (data) => {
-        setUserId(data.user.id);
+        setUser(data.user);
         setLocation("/watch");
       },
       onError: () => {

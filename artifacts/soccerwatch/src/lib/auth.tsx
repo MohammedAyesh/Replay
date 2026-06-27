@@ -1,48 +1,58 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { useGetMe, User } from "@workspace/api-client-react";
+import { useGetMe, getGetMeQueryKey, User } from "@workspace/api-client-react";
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  setUserId: (id: number | null) => void;
+  setUser: (user: User | null) => void;
   isGuest: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [userId, setUserId] = useState<number | null>(() => {
-    const stored = localStorage.getItem("soccerwatch_user_id");
-    return stored ? parseInt(stored, 10) : null;
-  });
+const STORAGE_KEY = "soccerwatch_user";
 
-  const { data: user, isLoading: isMeLoading } = useGetMe({
+function loadStoredUser(): User | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as User) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUserState] = useState<User | null>(() => loadStoredUser());
+
+  const setUser = (u: User | null) => {
+    setUserState(u);
+    if (u) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  };
+
+  const { data: meData, isLoading: isMeLoading } = useGetMe({
     query: {
-      enabled: !!userId,
+      enabled: !!user,
       retry: false,
+      staleTime: 5 * 60 * 1000,
+      queryKey: getGetMeQueryKey(),
     },
   });
 
   useEffect(() => {
-    if (userId) {
-      localStorage.setItem("soccerwatch_user_id", userId.toString());
-    } else {
-      localStorage.removeItem("soccerwatch_user_id");
+    if (meData) {
+      setUser(meData);
     }
-  }, [userId]);
+  }, [meData]);
 
-  const isLoading = !!userId && isMeLoading;
+  const isLoading = !!user && isMeLoading && !meData;
   const isGuest = user?.isGuest ?? false;
 
   return (
-    <AuthContext.Provider
-      value={{
-        user: user ?? null,
-        isLoading,
-        setUserId,
-        isGuest,
-      }}
-    >
+    <AuthContext.Provider value={{ user, isLoading, setUser, isGuest }}>
       {children}
     </AuthContext.Provider>
   );

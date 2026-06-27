@@ -5,31 +5,32 @@ import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, LogOut } from "lucide
 import { Button } from "@/components/ui/button";
 
 export default function Account() {
-  const { isGuest, setUserId } = useAuth();
+  const { isGuest, user: authUser, setUser } = useAuth();
   const [, setLocation] = useLocation();
   const logoutMutation = useLogout();
 
   const { data: user } = useGetMe({ query: { enabled: !isGuest, queryKey: getGetMeQueryKey() } });
+  const displayUser = user ?? authUser;
   const { data: stats } = useGetAccountStats({ query: { enabled: !isGuest, queryKey: getGetAccountStatsQueryKey() } });
 
   const handleLogout = () => {
     if (isGuest) {
-      setUserId(null);
+      setUser(null);
       setLocation("/");
       return;
     }
     
     logoutMutation.mutate(undefined, {
       onSuccess: () => {
-        setUserId(null);
+        setUser(null);
         setLocation("/");
       }
     });
   };
 
-  const initial = user?.name?.charAt(0)?.toUpperCase() || "G";
-  const name = isGuest ? "Guest User" : user?.name || "Player";
-  const email = isGuest ? "Browsing as guest" : user?.email || "";
+  const initial = displayUser?.name?.charAt(0)?.toUpperCase() || "G";
+  const name = isGuest ? "Guest User" : displayUser?.name || "Player";
+  const email = isGuest ? "Browsing as guest" : displayUser?.email || "";
 
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
