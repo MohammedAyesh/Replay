@@ -10,6 +10,7 @@ import Watch from "@/pages/watch";
 import Fields from "@/pages/fields";
 import FieldDetail from "@/pages/field-detail";
 import Player from "@/pages/player";
+import OSSPlayer from "@/pages/oss-player";
 import MyClips from "@/pages/my-clips";
 import Account from "@/pages/account";
 import NotFound from "@/pages/not-found";
@@ -23,8 +24,9 @@ function Router() {
         <Route path="/" component={Login} />
         <Route path="/watch" component={Watch} />
         <Route path="/fields" component={Fields} />
-        <Route path="/fields/:id" component={FieldDetail} />
+        <Route path="/fields/:camera" component={FieldDetail} />
         <Route path="/player/:id" component={Player} />
+        <Route path="/oss-player" component={OSSPlayer} />
         <Route path="/my-clips" component={MyClips} />
         <Route path="/account" component={Account} />
         <Route component={NotFound} />

@@ -7,6 +7,7 @@ import clipsRouter from "./clips";
 import savedClipsRouter from "./savedClips";
 import accountRouter from "./account";
 import ossComputeRouter from "./ossCompute";
+import fcProxyRouter from "./fcProxy";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(clipsRouter);
 router.use(savedClipsRouter);
 router.use(accountRouter);
 router.use(ossComputeRouter);
+router.use(fcProxyRouter);
 
 export default router;
