@@ -10,7 +10,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isImmersivePlayer = location.startsWith("/player/");
   const isWatchFeed = location === "/watch";
 
-  const hideTabBar = isLogin || isImmersivePlayer;
+  const isOSSPlayer = location === "/oss-player";
+  const hideTabBar = isLogin || isImmersivePlayer || isOSSPlayer;
   const useTranslucentBar = isWatchFeed;
 
   return (
