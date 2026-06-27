@@ -15,14 +15,19 @@ export default function FieldDetail() {
   const camera = decodeURIComponent(params?.camera ?? "Cam01");
   const [, navigate] = useLocation();
 
-  const { data, isLoading } = useFCCompute(camera);
+  // Reuse the same no-camera cache already populated by the fields list page
+  // so field-detail always has the same data (including the latest dates).
+  const { data, isLoading } = useFCCompute();
 
   const allVideos = useMemo(
     () =>
       (data?.videos ?? []).filter(
-        (v) => !v.key.includes("/hls/") && v.filename !== "init.mp4"
+        (v) =>
+          v.key.startsWith(camera + "/") &&
+          !v.key.includes("/hls/") &&
+          v.filename !== "init.mp4"
       ),
-    [data]
+    [data, camera]
   );
 
   const dates = useMemo(() => {
