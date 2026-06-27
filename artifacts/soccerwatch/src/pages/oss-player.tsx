@@ -31,13 +31,16 @@ export interface LocalClip {
 }
 
 function saveLocalClip(clip: LocalClip) {
-  const raw = localStorage.getItem("local_clips");
-  const list: LocalClip[] = raw ? JSON.parse(raw) : [];
-  list.unshift(clip);
-  localStorage.setItem("local_clips", JSON.stringify(list));
+  try {
+    const raw = localStorage.getItem("local_clips");
+    const list: LocalClip[] = raw ? JSON.parse(raw) : [];
+    list.unshift(clip);
+    localStorage.setItem("local_clips", JSON.stringify(list));
+  } catch (_) {}
 }
 
 function fmt(s: number) {
+  if (!isFinite(s) || isNaN(s)) return "0:00";
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   return `${m}:${sec.toString().padStart(2, "0")}`;
@@ -80,6 +83,8 @@ function Slideshow({
 
   const [current, setCurrent] = useState(startIndex);
   const [isMuted, setIsMuted] = useState(true);
+
+  // isPlaying is UI intent only — driven exclusively by button, not DOM events
   const [isPlaying, setIsPlaying] = useState(true);
   const [showControls, setShowControls] = useState(true);
   const [clipMode, setClipMode] = useState(false);
@@ -91,141 +96,158 @@ function Slideshow({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
+  // Ref that mirrors isPlaying so effects always read the latest value
+  const isPlayingRef = useRef(true);
 
-  const activeVideo = () => videoRefs.current[current];
+  const getVideo = (idx = current) => videoRefs.current[idx] ?? null;
 
-  // ── controls visibility ──────────────────────────────────────────────────
+  // ── auto-hide controls ───────────────────────────────────────────────────
   const resetHideTimer = useCallback(() => {
     clearTimeout(hideTimer.current);
     setShowControls(true);
     hideTimer.current = setTimeout(() => setShowControls(false), 3500);
   }, []);
-
   useEffect(() => { resetHideTimer(); }, []);
   useEffect(() => () => clearTimeout(hideTimer.current), []);
 
-  // ── scroll sync ──────────────────────────────────────────────────────────
+  // ── when current video changes: pause old, play new ─────────────────────
   useEffect(() => {
+    // Scroll carousel to correct slide
     const el = containerRef.current;
-    if (!el) return;
-    el.scrollTo({ left: current * el.clientWidth, behavior: "smooth" });
-  }, [current]);
+    if (el) el.scrollTo({ left: current * el.clientWidth, behavior: "smooth" });
 
-  // ── play / pause / mute sync ─────────────────────────────────────────────
-  useEffect(() => {
+    // Pause every video that isn't current
     videoRefs.current.forEach((v, i) => {
-      if (!v) return;
-      if (i === current) {
-        v.muted = isMuted;
-        if (isPlaying) v.play().catch(() => {});
-        else v.pause();
-      } else {
-        v.pause();
-        v.currentTime = 0;
-      }
+      if (!v || i === current) return;
+      v.pause();
+      v.currentTime = 0;
     });
-  }, [current, isMuted, isPlaying]);
 
-  // ── time tracking ────────────────────────────────────────────────────────
+    // Play / pause the current video according to intent
+    const v = getVideo();
+    if (!v) return;
+    v.muted = isMuted;
+    if (isPlayingRef.current) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+
+    // Reset time display
+    setCurrentTime(v.currentTime);
+    setDuration(isFinite(v.duration) ? v.duration : 0);
+
+    setClipMode(false);
+  }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── sync mute to current video ───────────────────────────────────────────
   useEffect(() => {
-    const v = activeVideo();
+    const v = getVideo();
+    if (v) v.muted = isMuted;
+  }, [isMuted, current]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── track time on the current video ─────────────────────────────────────
+  useEffect(() => {
+    const v = getVideo();
     if (!v) return;
 
     const onTime = () => {
       setCurrentTime(v.currentTime);
-      // loop within clip if clip mode
-      if (clipMode && v.currentTime >= clipEnd) {
+      if (clipMode && v.currentTime >= clipEnd && clipEnd > clipStart) {
         v.currentTime = clipStart;
       }
     };
     const onMeta = () => {
-      setDuration(v.duration || 0);
+      setDuration(isFinite(v.duration) ? v.duration : 0);
       setCurrentTime(v.currentTime);
     };
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
 
     v.addEventListener("timeupdate", onTime);
     v.addEventListener("loadedmetadata", onMeta);
-    v.addEventListener("play", onPlay);
-    v.addEventListener("pause", onPause);
-    if (v.readyState >= 1) { setDuration(v.duration || 0); setCurrentTime(v.currentTime); }
+    if (v.readyState >= 1) {
+      setDuration(isFinite(v.duration) ? v.duration : 0);
+      setCurrentTime(v.currentTime);
+    }
 
     return () => {
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("loadedmetadata", onMeta);
-      v.removeEventListener("play", onPlay);
-      v.removeEventListener("pause", onPause);
     };
-  }, [current, clipMode, clipEnd, clipStart]);
+  }, [current, clipMode, clipEnd, clipStart]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── scroll → current index ───────────────────────────────────────────────
   const onScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
     const idx = Math.round(el.scrollLeft / el.clientWidth);
-    if (idx !== current) {
-      setCurrent(idx);
-      setClipMode(false);
-      setCurrentTime(0);
-      setDuration(0);
-    }
+    if (idx !== current) setCurrent(idx);
   }, [current]);
 
   // ── actions ──────────────────────────────────────────────────────────────
-  const togglePlay = () => {
-    const v = activeVideo();
+  const togglePlay = useCallback(() => {
+    const next = !isPlayingRef.current;
+    isPlayingRef.current = next;
+    setIsPlaying(next);
+    const v = getVideo();
     if (!v) return;
-    if (isPlaying) { v.pause(); } else { v.play().catch(() => {}); }
+    if (next) { v.play().catch(() => {}); } else { v.pause(); }
     resetHideTimer();
-  };
+  }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const seek = (val: number) => {
-    const v = activeVideo();
-    if (v && isFinite(val)) { v.currentTime = val; setCurrentTime(val); }
+  const seek = useCallback((val: number) => {
+    const v = getVideo();
+    if (v && isFinite(val)) {
+      v.currentTime = val;
+      setCurrentTime(val);
+    }
     resetHideTimer();
-  };
+  }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const enterClipMode = () => {
-    const v = activeVideo();
+  const enterClipMode = useCallback(() => {
+    const v = getVideo();
     if (!v) return;
     v.pause();
-    const dur = v.duration || 0;
+    // Don't change isPlayingRef here; exiting clip mode will restore it
+    const dur = isFinite(v.duration) ? v.duration : 0;
     setClipStart(0);
-    setClipEnd(dur > 0 ? dur : 0);
+    setClipEnd(dur);
     setClipMode(true);
     resetHideTimer();
-  };
+  }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const saveClip = () => {
-    const v = videos[current];
+  const exitClipMode = useCallback(() => {
+    setClipMode(false);
+    const v = getVideo();
+    if (v && isPlayingRef.current) v.play().catch(() => {});
+  }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveClip = useCallback(() => {
+    const entry = videos[current];
     const clip: LocalClip = {
       id: `${Date.now()}`,
       camera,
-      date: v.date,
-      filename: v.filename,
-      videoUrl: v.url,
+      date: entry.date,
+      filename: entry.filename,
+      videoUrl: entry.url,
       startTime: clipStart,
       endTime: clipEnd,
       savedAt: new Date().toISOString(),
     };
     saveLocalClip(clip);
-    setClipMode(false);
-    const v2 = activeVideo();
-    if (v2) v2.play().catch(() => {});
+    exitClipMode();
     toast({
       title: "Clip saved!",
       description: `${fmt(clipStart)} → ${fmt(clipEnd)} · ${fmt(clipEnd - clipStart)} long`,
       className: "bg-primary text-white border-none",
     });
-  };
+  }, [current, clipStart, clipEnd, camera, videos, exitClipMode, toast]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const v = videos[current];
   const progress = duration > 0 ? currentTime / duration : 0;
 
   return (
     <div
-      className="relative w-full h-[100dvh] bg-black overflow-hidden"
+      className="relative w-full h-[100dvh] bg-black overflow-hidden select-none"
       onClick={() => { if (!clipMode) resetHideTimer(); }}
     >
       {/* ── video carousel ── */}
@@ -247,18 +269,18 @@ function Slideshow({
               className="w-full h-full object-cover"
               playsInline
               loop={!clipMode}
-              muted={isMuted}
+              muted
               autoPlay={i === startIndex}
             />
           </div>
         ))}
       </div>
 
-      {/* ── gradient overlays ── */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/80" />
+      {/* ── gradients ── */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/85" />
 
       {/* ── top bar (always visible) ── */}
-      <div className="absolute top-0 pt-safe px-4 pt-4 w-full flex justify-between items-start z-20">
+      <div className="absolute top-0 pt-safe px-4 pt-4 w-full flex justify-between items-start z-20 pointer-events-auto">
         <button
           onClick={(e) => { e.stopPropagation(); onBack(); }}
           className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white backdrop-blur-md"
@@ -281,24 +303,30 @@ function Slideshow({
         )}
 
         <button
-          onClick={(e) => { e.stopPropagation(); setIsMuted((m) => !m); resetHideTimer(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            const next = !isMuted;
+            setIsMuted(next);
+            const vid = getVideo();
+            if (vid) vid.muted = next;
+            resetHideTimer();
+          }}
           className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white backdrop-blur-md"
         >
           {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
         </button>
       </div>
 
-      {/* ── CLIP MODE overlay ── */}
+      {/* ── CLIP MODE ── */}
       {clipMode ? (
         <div
-          className="absolute bottom-0 left-0 right-0 z-30 px-4 pb-safe pb-6 pt-5 bg-gradient-to-t from-black via-black/95 to-transparent"
+          className="absolute bottom-0 left-0 right-0 z-30 px-4 pb-safe pb-6 pt-6 bg-gradient-to-t from-black via-black/95 to-transparent pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
         >
           <p className="text-white/50 text-xs font-medium uppercase tracking-widest text-center mb-4">
             Trim clip
           </p>
 
-          {/* Trim bar */}
           <TrimBar
             duration={duration}
             clipStart={clipStart}
@@ -308,38 +336,32 @@ function Slideshow({
             onEndChange={(e) => { setClipEnd(e); seek(e); }}
           />
 
-          {/* Time labels */}
           <div className="flex justify-between mt-3 mb-5">
             <span className="text-white text-sm font-mono font-bold">{fmt(clipStart)}</span>
-            <span className="text-white/50 text-xs mt-0.5">
-              clip · {fmt(clipEnd - clipStart)}
-            </span>
+            <span className="text-white/50 text-xs mt-0.5">clip · {fmt(clipEnd - clipStart)}</span>
             <span className="text-white text-sm font-mono font-bold">{fmt(clipEnd)}</span>
           </div>
 
-          {/* Buttons */}
           <div className="flex gap-3">
             <button
-              onClick={() => setClipMode(false)}
+              onClick={exitClipMode}
               className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl bg-white/10 text-white border border-white/20 font-semibold text-sm active:scale-95 transition-transform"
             >
-              <X className="w-4 h-4" />
-              Cancel
+              <X className="w-4 h-4" /> Cancel
             </button>
             <button
               onClick={saveClip}
               className="flex-[2] flex items-center justify-center gap-2 py-3.5 rounded-xl bg-primary text-white font-semibold text-sm active:scale-95 transition-transform shadow-lg"
             >
-              <Check className="w-4 h-4" />
-              Save Clip
+              <Check className="w-4 h-4" /> Save Clip
             </button>
           </div>
         </div>
       ) : (
-        /* ── NORMAL controls overlay ── */
+        /* ── NORMAL controls ── */
         <div
-          className={`absolute bottom-0 left-0 right-0 z-20 transition-opacity duration-300 ${
-            showControls ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          className={`absolute bottom-0 left-0 right-0 z-20 transition-opacity duration-300 pointer-events-auto ${
+            showControls ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
           onClick={(e) => e.stopPropagation()}
         >
@@ -358,17 +380,18 @@ function Slideshow({
           <div className="px-5 mb-3">
             <div className="flex items-center gap-3">
               <span className="text-white/60 text-xs font-mono w-9 text-right shrink-0">{fmt(currentTime)}</span>
-              <div className="flex-1 relative">
+              <div className="flex-1">
                 <input
                   type="range"
                   min={0}
                   max={duration || 1}
-                  step={0.1}
+                  step={0.5}
                   value={currentTime}
                   onChange={(e) => seek(parseFloat(e.target.value))}
-                  className="w-full h-1 accent-primary appearance-none bg-white/25 rounded-full cursor-pointer"
+                  className="w-full h-1 appearance-none rounded-full cursor-pointer"
                   style={{
                     background: `linear-gradient(to right, #22c55e ${progress * 100}%, rgba(255,255,255,0.25) ${progress * 100}%)`,
+                    accentColor: "#22c55e",
                   }}
                 />
               </div>
@@ -378,10 +401,8 @@ function Slideshow({
 
           {/* Action row */}
           <div className="px-5 pb-safe pb-6 flex items-center justify-between">
-            {/* Spacer */}
             <div className="w-12" />
 
-            {/* Play / Pause */}
             <button
               onClick={togglePlay}
               className="w-14 h-14 rounded-full bg-white flex items-center justify-center shadow-xl active:scale-95 transition-transform"
@@ -392,7 +413,6 @@ function Slideshow({
               }
             </button>
 
-            {/* Clip button */}
             <button
               onClick={enterClipMode}
               className="w-12 h-12 rounded-full bg-white/15 border border-white/30 backdrop-blur-md flex items-center justify-center active:scale-95 transition-transform"
@@ -422,46 +442,46 @@ function TrimBar({
   onStartChange: (v: number) => void;
   onEndChange: (v: number) => void;
 }) {
-  const d = duration || 1;
+  const d = Math.max(duration, 1);
   const startPct = (clipStart / d) * 100;
   const endPct = (clipEnd / d) * 100;
   const playPct = (currentTime / d) * 100;
 
   return (
     <div className="relative h-12 rounded-xl bg-white/10 overflow-hidden">
-      {/* Selected region */}
+      {/* Selected region highlight */}
       <div
-        className="absolute top-0 bottom-0 bg-primary/40 border-t-2 border-b-2 border-primary"
+        className="absolute top-0 bottom-0 bg-primary/30 border-t-2 border-b-2 border-primary"
         style={{ left: `${startPct}%`, right: `${100 - endPct}%` }}
       />
 
       {/* Playhead */}
       <div
-        className="absolute top-0 bottom-0 w-0.5 bg-white/80"
+        className="absolute top-0 bottom-0 w-0.5 bg-white/70"
         style={{ left: `${playPct}%` }}
       />
 
-      {/* Start handle (range input, z-index managed) */}
+      {/* Start range (z underneath end so both handles are reachable) */}
       <input
         type="range"
         min={0}
         max={d}
-        step={0.1}
+        step={0.5}
         value={clipStart}
         onChange={(e) => {
           const val = Math.min(parseFloat(e.target.value), clipEnd - 1);
           onStartChange(val);
         }}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        style={{ zIndex: clipStart > d * 0.9 ? 5 : 3 }}
+        style={{ zIndex: clipStart / d > 0.9 ? 5 : 3 }}
       />
 
-      {/* End handle (range input) */}
+      {/* End range */}
       <input
         type="range"
         min={0}
         max={d}
-        step={0.1}
+        step={0.5}
         value={clipEnd}
         onChange={(e) => {
           const val = Math.max(parseFloat(e.target.value), clipStart + 1);
