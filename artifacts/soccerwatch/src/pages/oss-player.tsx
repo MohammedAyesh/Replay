@@ -314,16 +314,10 @@ function Player({
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     if (!dragStart.current) return;
-    const dx = e.clientX - dragStart.current.clientX;
-    const dt = Date.now() - dragStart.current.time;
     const wasDragging = isDragging.current;
     dragStart.current = null; isDragging.current = false;
-    if (wasDragging && Math.abs(dx) > 80 && dt < 400) {
-      if (dx < 0 && current < videos.length - 1) { switchTo(current + 1); return; }
-      if (dx > 0 && current > 0) { switchTo(current - 1); return; }
-    }
     if (!wasDragging) resetHideTimer();
-  }, [current, videos.length, switchTo, resetHideTimer]);
+  }, [resetHideTimer]);
 
   const entry = videos[current];
   const progress = duration > 0 ? currentTime / duration : 0;
