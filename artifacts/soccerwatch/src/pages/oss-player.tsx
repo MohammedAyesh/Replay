@@ -225,8 +225,9 @@ function Player({
       setDuration(isFinite(v.duration) ? v.duration : 0);
       setCurrentTime(v.currentTime);
       if (v.videoWidth && v.videoHeight) {
-        const scale = window.innerHeight / v.videoHeight;
-        setMaxPanX(Math.max(0, (v.videoWidth * scale - window.innerWidth) / 2));
+        const displayH = window.innerHeight * 0.72;
+        const scale = displayH / v.videoHeight;
+        setMaxPanX(Math.max(0, (v.videoWidth * scale * 1.04 - window.innerWidth) / 2));
       }
     };
     v.addEventListener("timeupdate", onTime);
@@ -335,8 +336,12 @@ function Player({
       >
         <video
           ref={videoRef}
-          className="h-full w-auto max-w-none"
-          style={{ transform: `translateX(${panX}px)`, willChange: "transform" }}
+          className="w-auto max-w-none"
+          style={{
+            height: "72dvh",
+            transform: `translateX(${panX}px) scaleX(1.04)`,
+            willChange: "transform",
+          }}
           playsInline
           muted
           loop={!clipMode}
