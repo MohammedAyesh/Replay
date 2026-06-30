@@ -7,6 +7,7 @@ import {
   ListSavedClipsResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
 
 const router: IRouter = Router();
 
@@ -32,6 +33,11 @@ router.get("/saved-clips", async (req, res): Promise<void> => {
         .from(likesTable)
         .where(and(eq(likesTable.userId, userId), eq(likesTable.clipId, s.clipId)));
 
+      const bunnyPlaybackUrl =
+        clip.bunnyVideoId && isBunnyConfigured()
+          ? getBunnyPlaybackUrl(clip.bunnyVideoId)
+          : (clip.bunnyPlaybackUrl ?? null);
+
       return {
         id: clip.id,
         recordingId: clip.recordingId,
@@ -42,7 +48,7 @@ router.get("/saved-clips", async (req, res): Promise<void> => {
         isLiked: !!like,
         isSaved: true,
         videoUrl: recording?.videoUrl ?? "",
-        bunnyPlaybackUrl: clip.bunnyPlaybackUrl ?? null,
+        bunnyPlaybackUrl,
         bunnyVideoId: clip.bunnyVideoId ?? null,
         fieldName: field?.name ?? null,
         court: recording?.court ?? null,

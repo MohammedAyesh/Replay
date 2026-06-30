@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useRoute } from "wouter";
+import Hls from "hls.js";
 import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, Clip } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Heart, Share, Bookmark, ChevronLeft, Volume2, VolumeX } from "lucide-react";
@@ -7,12 +8,12 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 
-const FALLBACK_VIDEO = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+const FALLBACK_VIDEO = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
 export default function Player() {
   const [, params] = useRoute("/player/:id");
   const clipId = parseInt(params?.id || "0", 10);
-  
+
   const { data: clip, isLoading } = useGetClip(clipId, { query: { enabled: !!clipId, queryKey: getGetClipQueryKey(clipId) } });
 
   if (isLoading) {
@@ -30,14 +31,49 @@ function PlayerScreen({ clip }: { clip: Clip }) {
   const queryClient = useQueryClient();
   const { isGuest } = useAuth();
   const { toast } = useToast();
-  
+
   const [isMuted, setIsMuted] = useState(true);
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
   const toggleLikeMutation = useToggleLike();
   const saveClipMutation = useSaveClip();
   const unsaveClipMutation = useUnsaveClip();
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+
+    const src = clip.bunnyPlaybackUrl ?? clip.videoUrl ?? FALLBACK_VIDEO;
+
+    if (src.includes(".m3u8")) {
+      if (Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: false });
+        hlsRef.current = hls;
+        hls.loadSource(src);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().then(() => setIsPlaying(true)).catch(() => {});
+        });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = src;
+        video.play().then(() => setIsPlaying(true)).catch(() => {});
+      }
+    } else {
+      video.src = src;
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
+    }
+
+    return () => {
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    };
+  }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl]);
 
   const handleToggleLike = () => {
     if (isGuest) {
@@ -48,7 +84,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       { id: clip.id },
       {
         onSuccess: (data) => {
-          queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) => 
+          queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) =>
             old ? { ...old, isLiked: data.liked, likeCount: data.likeCount } : old
           );
           queryClient.invalidateQueries({ queryKey: getListClipsQueryKey() });
@@ -62,13 +98,13 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       toast({ title: "Sign in to save", description: "Create an account to build your highlight reel." });
       return;
     }
-    
+
     if (clip.isSaved) {
       unsaveClipMutation.mutate(
         { clipId: clip.id },
         {
           onSuccess: () => {
-            queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) => 
+            queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) =>
               old ? { ...old, isSaved: false } : old
             );
             queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
@@ -80,7 +116,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         { clipId: clip.id },
         {
           onSuccess: () => {
-            queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) => 
+            queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) =>
               old ? { ...old, isSaved: true } : old
             );
             queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
@@ -100,26 +136,23 @@ function PlayerScreen({ clip }: { clip: Clip }) {
   };
 
   const togglePlay = () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause();
-      } else {
-        videoRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
+    if (!videoRef.current) return;
+    if (isPlaying) {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     }
   };
 
   return (
     <div className="relative w-full h-[100dvh] bg-black overflow-hidden" onClick={togglePlay}>
       <div className="absolute inset-0 field-pattern opacity-30" />
-      
+
       <video
         ref={videoRef}
-        src={clip.videoUrl || FALLBACK_VIDEO}
         className="absolute inset-0 w-full h-full object-cover"
         playsInline
-        autoPlay
         loop
         muted={isMuted}
       />
@@ -131,7 +164,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         <Link href="~" className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white backdrop-blur-md">
           <ChevronLeft className="w-6 h-6 ml-[-2px]" />
         </Link>
-        <button 
+        <button
           onClick={toggleMute}
           className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white backdrop-blur-md"
         >
@@ -150,20 +183,20 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         </div>
 
         <div className="flex items-center gap-3">
-          <button 
+          <button
             onClick={handleToggleLike}
             className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-md rounded-xl py-3.5 flex items-center justify-center gap-2 transition-colors active:scale-95"
           >
             <Heart className={cn("w-5 h-5", clip.isLiked ? "fill-destructive text-destructive" : "text-white")} />
             <span className="text-white font-semibold text-sm">{clip.likeCount}</span>
           </button>
-          
-          <button 
+
+          <button
             onClick={handleToggleSave}
             className={cn(
               "flex-[2] rounded-xl py-3.5 flex items-center justify-center gap-2 transition-colors font-semibold text-sm active:scale-95",
-              clip.isSaved 
-                ? "bg-primary text-white border-primary" 
+              clip.isSaved
+                ? "bg-primary text-white border-primary"
                 : "bg-white/10 text-white border border-white/20 backdrop-blur-md hover:bg-white/20"
             )}
           >
