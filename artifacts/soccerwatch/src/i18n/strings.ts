@@ -48,6 +48,7 @@ const strings = {
     },
     fieldDetail: {
       loading: "Loading…",
+      fieldFallback: "Field",
       recordings: (n: number) => `${n} recordings`,
       noRecordingsTitle: "No recordings yet",
       noRecordingsDesc:
@@ -84,6 +85,7 @@ const strings = {
     account: {
       title: "Account",
       subtitle: "Manage your profile",
+      playerFallback: "Player",
       guestSubtitle: "Guest session",
       guestName: "Guest User",
       guestEmail: "Browsing as guest",
@@ -146,6 +148,7 @@ const strings = {
     },
     fieldDetail: {
       loading: "جارٍ التحميل…",
+      fieldFallback: "ملعب",
       recordings: (n: number) => `${n} تسجيلات`,
       noRecordingsTitle: "لا تسجيلات بعد",
       noRecordingsDesc: "ستظهر لقطات هذا الملعب هنا عند توصيل الكاميرات.",
@@ -181,6 +184,7 @@ const strings = {
     account: {
       title: "الحساب",
       subtitle: "إدارة ملفك الشخصي",
+      playerFallback: "لاعب",
       guestSubtitle: "جلسة زائر",
       guestName: "مستخدم زائر",
       guestEmail: "تصفّح كزائر",

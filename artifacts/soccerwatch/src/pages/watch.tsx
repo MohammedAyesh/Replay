@@ -318,7 +318,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
       <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/80 pointer-events-none" />
 
       {/* Top Bar */}
-      <div className="absolute top-0 left-0 w-full h-1 bg-white/20">
+      <div className="absolute top-0 start-0 w-full h-1 bg-white/20">
         <div className="h-full bg-primary w-1/3" />
       </div>
 

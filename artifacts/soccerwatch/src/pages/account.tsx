@@ -1,7 +1,7 @@
 import { useGetMe, useGetAccountStats, useLogout, getGetAccountStatsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
-import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, LogOut, Globe } from "lucide-react";
+import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, ChevronLeft, LogOut, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 
@@ -31,7 +31,7 @@ export default function Account() {
   };
 
   const initial = displayUser?.name?.charAt(0)?.toUpperCase() || "G";
-  const name = isGuest ? t.account.guestName : displayUser?.name || "Player";
+  const name = isGuest ? t.account.guestName : displayUser?.name || t.account.playerFallback;
   const email = isGuest ? t.account.guestEmail : displayUser?.email || "";
 
   return (
@@ -130,7 +130,8 @@ function SettingRow({ icon, label, borderBottom = true }: { icon: React.ReactNod
         {icon}
         <span className="font-medium text-foreground">{label}</span>
       </div>
-      <ChevronRight className="w-5 h-5 text-muted-foreground" />
+      <ChevronRight className="w-5 h-5 text-muted-foreground rtl:hidden" />
+      <ChevronLeft className="w-5 h-5 text-muted-foreground ltr:hidden" />
     </button>
   );
 }

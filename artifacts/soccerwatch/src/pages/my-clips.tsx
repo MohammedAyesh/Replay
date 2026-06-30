@@ -133,11 +133,11 @@ function ClipCard({ clip, index }: { clip: Clip; index: number }) {
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
           <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
 
-          <div className="absolute top-2 left-2 bg-primary text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm">
+          <div className="absolute top-2 start-2 bg-primary text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm">
             {clip.momentLabel}
           </div>
 
-          <div className="absolute bottom-2 left-2 right-2">
+          <div className="absolute bottom-2 start-2 end-2">
             <h3 className="text-white font-bold text-sm leading-tight mb-0.5 line-clamp-2">
               {clip.fieldName}
             </h3>

@@ -63,7 +63,7 @@ export default function FieldDetail() {
           <ChevronRight className="w-6 h-6 ltr:hidden" />
         </Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold truncate">{isLoading ? t.fieldDetail.loading : (field?.name ?? "Field")}</h1>
+          <h1 className="text-lg font-bold truncate">{isLoading ? t.fieldDetail.loading : (field?.name ?? t.fieldDetail.fieldFallback)}</h1>
           <p className="text-xs text-muted-foreground">
             {isLoading ? "…" : t.fieldDetail.recordings(recordings?.length ?? 0)}
           </p>
