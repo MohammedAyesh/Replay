@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
+    "seed:bunny": "psql \"$DATABASE_URL\" -f ./src/seed-bunny-placeholders.sql",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
