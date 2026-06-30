@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and, gt } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable } from "@workspace/db";
+import { db, adsTable, adImpressionsTable, adClicksTable, clipsTable, recordingsTable } from "@workspace/db";
 import {
   RecordImpressionParams,
   RecordImpressionBody,
@@ -15,14 +15,32 @@ router.get("/ads/next", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   const now = new Date();
 
+  // Resolve the clip's field for targeting
+  let clipFieldId: number | null = null;
+  const rawClipId = req.query.clipId;
+  if (rawClipId) {
+    const clipId = parseInt(String(rawClipId), 10);
+    if (!isNaN(clipId)) {
+      const [clip] = await db.select().from(clipsTable).where(eq(clipsTable.id, clipId));
+      if (clip) {
+        const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, clip.recordingId));
+        if (recording) clipFieldId = recording.fieldId;
+      }
+    }
+  }
+
   const allActive = await db
     .select()
     .from(adsTable)
     .where(eq(adsTable.status, "active"));
 
+  // Filter by date range and field targeting
   const eligible = allActive.filter((ad) => {
     if (ad.startsAt && ad.startsAt > now) return false;
     if (ad.endsAt && ad.endsAt < now) return false;
+    if (ad.targetType === "field") {
+      if (!clipFieldId || ad.targetFieldId !== clipFieldId) return false;
+    }
     return true;
   });
 

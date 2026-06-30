@@ -35,6 +35,14 @@ export default function Watch() {
 
 type AdPhase = "idle" | "showing" | "done";
 
+function handleAdClick(ad: Ad) {
+  fetch(`/api/ads/${ad.id}/click`, {
+    method: "POST",
+    credentials: "include",
+  }).catch(() => {});
+  window.open(ad.clickUrl, "_blank", "noopener,noreferrer");
+}
+
 function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
   const queryClient = useQueryClient();
   const { isGuest } = useAuth();
@@ -52,7 +60,8 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
   const adVideoRef = useRef<HTMLVideoElement>(null);
   const adHlsRef = useRef<Hls | null>(null);
   const adElapsedRef = useRef(0);
-  const adTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const adCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const adImageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toggleLikeMutation = useToggleLike();
   const saveClipMutation = useSaveClip();
@@ -66,7 +75,8 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
   }, []);
 
   const finishAd = useCallback((ad: Ad, skippedAt?: number) => {
-    if (adTimerRef.current) { clearInterval(adTimerRef.current); adTimerRef.current = null; }
+    if (adCountdownRef.current) { clearInterval(adCountdownRef.current); adCountdownRef.current = null; }
+    if (adImageTimeoutRef.current) { clearTimeout(adImageTimeoutRef.current); adImageTimeoutRef.current = null; }
     if (adHlsRef.current) { adHlsRef.current.destroy(); adHlsRef.current = null; }
     if (adVideoRef.current) { adVideoRef.current.pause(); adVideoRef.current.removeAttribute("src"); }
 
@@ -82,6 +92,12 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
     setCurrentAd(null);
     startClip();
   }, [clip.id, startClip]);
+
+  // Clear all ad timers helper
+  const clearAdTimers = useCallback(() => {
+    if (adCountdownRef.current) { clearInterval(adCountdownRef.current); adCountdownRef.current = null; }
+    if (adImageTimeoutRef.current) { clearTimeout(adImageTimeoutRef.current); adImageTimeoutRef.current = null; }
+  }, []);
 
   // Load clip video via HLS.js
   useEffect(() => {
@@ -116,7 +132,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
     };
   }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, index]);
 
-  // Load ad video when ad starts showing
+  // Load ad video when ad starts
   useEffect(() => {
     if (adPhase !== "showing" || !currentAd) return;
     const adVideo = adVideoRef.current;
@@ -154,18 +170,14 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
     setSkipSecondsLeft(SKIP_AFTER);
     adElapsedRef.current = 0;
 
-    adTimerRef.current = setInterval(() => {
+    adCountdownRef.current = setInterval(() => {
       adElapsedRef.current += 1;
       const left = SKIP_AFTER - adElapsedRef.current;
-      if (left > 0) {
-        setSkipSecondsLeft(left);
-      } else {
-        setSkipSecondsLeft(0);
-      }
+      setSkipSecondsLeft(left > 0 ? left : 0);
     }, 1000);
 
     return () => {
-      if (adTimerRef.current) { clearInterval(adTimerRef.current); adTimerRef.current = null; }
+      if (adCountdownRef.current) { clearInterval(adCountdownRef.current); adCountdownRef.current = null; }
     };
   }, [adPhase, currentAd]);
 
@@ -179,7 +191,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
         if (entry.isIntersecting) {
           setAdPhase("idle");
           setCurrentAd(null);
-          fetch("/api/ads/next", { credentials: "include" })
+          fetch(`/api/ads/next?clipId=${clip.id}`, { credentials: "include" })
             .then(async (r) => {
               if (r.status === 204 || !r.ok) return null;
               return r.json() as Promise<Ad>;
@@ -202,7 +214,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
         } else {
           video.pause();
           setIsPlaying(false);
-          if (adTimerRef.current) { clearInterval(adTimerRef.current); adTimerRef.current = null; }
+          clearAdTimers();
           if (adHlsRef.current) { adHlsRef.current.destroy(); adHlsRef.current = null; }
           setAdPhase("idle");
           setCurrentAd(null);
@@ -212,7 +224,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
     );
     observer.observe(video);
     return () => observer.disconnect();
-  }, []);
+  }, [clip.id, clearAdTimers]);
 
   const handleToggleLike = () => {
     if (isGuest) {
@@ -386,18 +398,25 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
               alt="Advertisement"
               className="absolute inset-0 w-full h-full object-cover"
               onLoad={() => {
-                setTimeout(() => finishAd(currentAd), currentAd.durationSeconds * 1000);
+                if (adImageTimeoutRef.current) clearTimeout(adImageTimeoutRef.current);
+                adImageTimeoutRef.current = setTimeout(
+                  () => finishAd(currentAd),
+                  currentAd.durationSeconds * 1000
+                );
               }}
             />
           )}
 
           <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/60 pointer-events-none" />
 
-          {/* Ad badge */}
+          {/* Ad badge — clickable, opens click-through URL */}
           <div className="absolute top-safe pt-4 px-4 w-full flex justify-between items-start pointer-events-auto">
-            <span className="bg-black/60 text-white/80 border border-white/20 text-[10px] font-bold px-2 py-1 rounded backdrop-blur-sm">
+            <button
+              onClick={() => handleAdClick(currentAd)}
+              className="bg-black/60 text-white/80 border border-white/20 text-[10px] font-bold px-2 py-1 rounded backdrop-blur-sm active:scale-95 transition-transform"
+            >
               AD
-            </span>
+            </button>
             {skipSecondsLeft !== null && skipSecondsLeft > 0 ? (
               <span className="bg-black/60 text-white/70 border border-white/20 text-xs px-3 py-1.5 rounded backdrop-blur-sm">
                 Skip in {skipSecondsLeft}s
@@ -415,13 +434,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
           {/* Visit button */}
           <div className="absolute bottom-safe pb-8 px-6 w-full pointer-events-auto">
             <button
-              onClick={() => {
-                fetch(`/api/ads/${currentAd.id}/click`, {
-                  method: "POST",
-                  credentials: "include",
-                }).catch(() => {});
-                window.open(currentAd.clickUrl, "_blank", "noopener,noreferrer");
-              }}
+              onClick={() => handleAdClick(currentAd)}
               className="w-full bg-white text-black font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg"
             >
               <ExternalLink className="w-4 h-4" />
