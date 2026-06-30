@@ -14,6 +14,17 @@ const FALLBACK_VIDEOS = [
   "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
 ];
 
+function isUsableUrl(url: string | null | undefined): url is string {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    // Reject if hostname has spaces or no dot (malformed placeholder URLs)
+    return u.hostname.includes(".") && !u.hostname.includes(" ");
+  } catch {
+    return false;
+  }
+}
+
 export default function Watch() {
   const { data: clips, isLoading } = useListClips();
   const { t } = useTranslation();
@@ -101,36 +112,57 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
     if (adImageTimeoutRef.current) { clearTimeout(adImageTimeoutRef.current); adImageTimeoutRef.current = null; }
   }, []);
 
-  // Load clip video via HLS.js
+  // Load clip video via HLS.js, with automatic fallback on error
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-    video.pause();
-    video.removeAttribute("src");
-    video.load();
+    const primary =
+      (isUsableUrl(clip.bunnyPlaybackUrl) ? clip.bunnyPlaybackUrl : null) ??
+      (isUsableUrl(clip.videoUrl) ? clip.videoUrl : null);
+    const fallbackSrc = FALLBACK_VIDEOS[index % FALLBACK_VIDEOS.length];
+    let usedFallback = false;
 
-    const src =
-      clip.bunnyPlaybackUrl ??
-      clip.videoUrl ??
-      FALLBACK_VIDEOS[index % FALLBACK_VIDEOS.length];
+    function loadSrc(src: string) {
+      if (!video) return;
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
 
-    if (src.includes(".m3u8")) {
-      if (Hls.isSupported()) {
-        const hls = new Hls({ enableWorker: false });
-        hlsRef.current = hls;
-        hls.loadSource(src);
-        hls.attachMedia(video);
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      if (src.includes(".m3u8")) {
+        if (Hls.isSupported()) {
+          const hls = new Hls({ enableWorker: false });
+          hlsRef.current = hls;
+          hls.loadSource(src);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.ERROR, (_, data) => {
+            if (data.fatal && !usedFallback) {
+              usedFallback = true;
+              loadSrc(fallbackSrc);
+            }
+          });
+        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = src;
+        }
+      } else {
         video.src = src;
       }
-    } else {
-      video.src = src;
     }
+
+    function handleVideoError() {
+      if (!usedFallback) {
+        usedFallback = true;
+        loadSrc(fallbackSrc);
+      }
+    }
+
+    video.addEventListener("error", handleVideoError);
+    loadSrc(primary ?? fallbackSrc);
 
     return () => {
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      video.removeEventListener("error", handleVideoError);
     };
   }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, index]);
 
