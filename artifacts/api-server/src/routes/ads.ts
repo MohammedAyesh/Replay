@@ -45,8 +45,11 @@ router.get("/ads/next", async (req, res): Promise<void> => {
 
     const recentAdIds = new Set(recentImpressions.map((i) => i.adId));
     const uncapped = eligible.filter((ad) => !recentAdIds.has(ad.id));
-    const pool = uncapped.length > 0 ? uncapped : eligible;
-    const ad = pool[Math.floor(Math.random() * pool.length)];
+    if (uncapped.length === 0) {
+      res.status(204).end();
+      return;
+    }
+    const ad = uncapped[Math.floor(Math.random() * uncapped.length)];
 
     res.json(GetNextAdResponse.parse({
       id: ad.id,
