@@ -10,6 +10,8 @@ export const clipsTable = pgTable("clips", {
   momentLabel: text("moment_label").notNull(),
   playerTags: text("player_tags").array().notNull().default([]),
   likeCount: integer("like_count").notNull().default(0),
+  bunnyVideoId: text("bunny_video_id"),
+  bunnyPlaybackUrl: text("bunny_playback_url"),
 });
 
 export const insertClipSchema = createInsertSchema(clipsTable).omit({ id: true });

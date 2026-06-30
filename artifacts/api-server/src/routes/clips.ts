@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { db, clipsTable, recordingsTable, fieldsTable, savedClipsTable, likesTable } from "@workspace/db";
 import {
   GetClipParams,
@@ -25,15 +25,13 @@ async function buildClip(clipId: number, userId: number | null) {
     const [like] = await db
       .select()
       .from(likesTable)
-      .where(eq(likesTable.userId, userId))
-      .where(eq(likesTable.clipId, clipId));
+      .where(and(eq(likesTable.userId, userId), eq(likesTable.clipId, clipId)));
     isLiked = !!like;
 
     const [saved] = await db
       .select()
       .from(savedClipsTable)
-      .where(eq(savedClipsTable.userId, userId))
-      .where(eq(savedClipsTable.clipId, clipId));
+      .where(and(eq(savedClipsTable.userId, userId), eq(savedClipsTable.clipId, clipId)));
     isSaved = !!saved;
   }
 
@@ -47,6 +45,8 @@ async function buildClip(clipId: number, userId: number | null) {
     isLiked,
     isSaved,
     videoUrl: recording?.videoUrl ?? "",
+    bunnyPlaybackUrl: clip.bunnyPlaybackUrl ?? null,
+    bunnyVideoId: clip.bunnyVideoId ?? null,
     fieldName: field?.name ?? null,
     court: recording?.court ?? null,
     date: recording?.date ?? null,
@@ -103,8 +103,7 @@ router.post("/clips/:id/like", async (req, res): Promise<void> => {
   const [existing] = await db
     .select()
     .from(likesTable)
-    .where(eq(likesTable.userId, userId))
-    .where(eq(likesTable.clipId, clipId));
+    .where(and(eq(likesTable.userId, userId), eq(likesTable.clipId, clipId)));
 
   let liked: boolean;
   let newCount: number;
@@ -112,8 +111,7 @@ router.post("/clips/:id/like", async (req, res): Promise<void> => {
   if (existing) {
     await db
       .delete(likesTable)
-      .where(eq(likesTable.userId, userId))
-      .where(eq(likesTable.clipId, clipId));
+      .where(and(eq(likesTable.userId, userId), eq(likesTable.clipId, clipId)));
     newCount = Math.max(0, clip.likeCount - 1);
     liked = false;
   } else {

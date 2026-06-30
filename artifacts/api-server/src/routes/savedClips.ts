@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db, savedClipsTable, clipsTable, recordingsTable, fieldsTable, likesTable } from "@workspace/db";
 import {
   SaveClipParams,
@@ -30,8 +30,7 @@ router.get("/saved-clips", async (req, res): Promise<void> => {
       const [like] = await db
         .select()
         .from(likesTable)
-        .where(eq(likesTable.userId, userId))
-        .where(eq(likesTable.clipId, s.clipId));
+        .where(and(eq(likesTable.userId, userId), eq(likesTable.clipId, s.clipId)));
 
       return {
         id: clip.id,
@@ -43,6 +42,8 @@ router.get("/saved-clips", async (req, res): Promise<void> => {
         isLiked: !!like,
         isSaved: true,
         videoUrl: recording?.videoUrl ?? "",
+        bunnyPlaybackUrl: clip.bunnyPlaybackUrl ?? null,
+        bunnyVideoId: clip.bunnyVideoId ?? null,
         fieldName: field?.name ?? null,
         court: recording?.court ?? null,
         date: recording?.date ?? null,
@@ -91,8 +92,7 @@ router.delete("/saved-clips/:clipId", async (req, res): Promise<void> => {
 
   await db
     .delete(savedClipsTable)
-    .where(eq(savedClipsTable.userId, userId))
-    .where(eq(savedClipsTable.clipId, params.data.clipId));
+    .where(and(eq(savedClipsTable.userId, userId), eq(savedClipsTable.clipId, params.data.clipId)));
 
   res.json({ ok: true });
 });

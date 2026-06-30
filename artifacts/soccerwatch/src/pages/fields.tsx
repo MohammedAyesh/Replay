@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { useFCCompute, dateFromKey, formatDateLabel } from "@/lib/fc";
+import { useListFields, Field } from "@workspace/api-client-react";
 import { Search, Camera, Video } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
@@ -15,26 +15,12 @@ const cardVariants = {
 };
 
 export default function Fields() {
-  const { data, isLoading } = useFCCompute();
+  const { data: fields, isLoading } = useListFields();
   const [search, setSearch] = useState("");
 
-  const cameras = data?.cameras ?? [];
-
-  const videosPerCamera = (camera: string) =>
-    (data?.videos ?? []).filter((v) => v.key.startsWith(camera + "/")).length;
-
-  const lastDateForCamera = (camera: string): string | null => {
-    const dates = (data?.videos ?? [])
-      .filter((v) => v.key.startsWith(camera + "/"))
-      .map((v) => dateFromKey(v.key))
-      .filter(Boolean) as string[];
-    if (!dates.length) return null;
-    dates.sort((a, b) => b.localeCompare(a));
-    return dates[0];
-  };
-
-  const filtered = cameras.filter((c) =>
-    c.toLowerCase().includes(search.toLowerCase())
+  const filtered = (fields ?? []).filter((f) =>
+    f.name.toLowerCase().includes(search.toLowerCase()) ||
+    f.location.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -53,7 +39,7 @@ export default function Fields() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search cameras"
+            placeholder="Search fields"
             className="pl-9 bg-muted border-transparent focus-visible:ring-primary rounded-xl h-12"
           />
         </div>
@@ -77,66 +63,57 @@ export default function Fields() {
             animate={{ opacity: 1 }}
             className="text-center py-12 text-muted-foreground"
           >
-            No cameras found
+            No fields found
           </motion.div>
         ) : (
-          filtered.map((cam, i) => {
-            const isDefault = cam === data?.camera;
-            const thumbUrl = isDefault ? (data?.fieldImageUrl ?? null) : null;
-            const count = videosPerCamera(cam);
-            const last = lastDateForCamera(cam);
-
-            return (
-              <motion.div
-                key={cam}
-                custom={i}
-                variants={cardVariants}
-                initial="hidden"
-                animate="show"
-                whileTap={{ scale: 0.97 }}
-              >
-                <Link href={`/fields/${encodeURIComponent(cam)}`}>
-                  <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
-                    <div className="h-36 relative flex items-center justify-center overflow-hidden">
-                      {thumbUrl ? (
-                        <img
-                          src={thumbUrl}
-                          alt={cam}
-                          className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-black/10" />
-
-                      <div className="absolute top-3 right-3 bg-primary text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-md">
-                        <Video className="w-3 h-3" />
-                        {count} videos
-                      </div>
-
-                      <div className="absolute bottom-3 left-3 flex items-center gap-2 text-white">
-                        <Camera className="w-4 h-4 opacity-80" />
-                        <h3 className="font-bold text-lg leading-tight drop-shadow-md">{cam}</h3>
-                      </div>
-                    </div>
-
-                    <div className="px-4 py-3 flex items-center gap-2">
-                      {last && (
-                        <span className="text-xs font-medium bg-green-100 text-green-800 px-2 py-1 rounded-md">
-                          Last recorded {formatDateLabel(last)}
-                        </span>
-                      )}
-                      {count === 0 && (
-                        <span className="text-xs text-muted-foreground">No footage yet</span>
-                      )}
-                    </div>
-                  </div>
-                </Link>
-              </motion.div>
-            );
-          })
+          filtered.map((field, i) => (
+            <FieldCard key={field.id} field={field} index={i} />
+          ))
         )}
       </div>
     </div>
+  );
+}
+
+function FieldCard({ field, index }: { field: Field; index: number }) {
+  return (
+    <motion.div
+      custom={index}
+      variants={cardVariants}
+      initial="hidden"
+      animate="show"
+      whileTap={{ scale: 0.97 }}
+    >
+      <Link href={`/fields/${field.id}`}>
+        <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
+          <div className="h-36 relative flex items-center justify-center overflow-hidden">
+            <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-black/10" />
+
+            <div className="absolute top-3 right-3 bg-primary text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-md">
+              <Video className="w-3 h-3" />
+              {field.clipCount} clips
+            </div>
+
+            <div className="absolute bottom-3 left-3 flex items-center gap-2 text-white">
+              <Camera className="w-4 h-4 opacity-80" />
+              <h3 className="font-bold text-lg leading-tight drop-shadow-md">{field.name}</h3>
+            </div>
+          </div>
+
+          <div className="px-4 py-3 flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{field.location}</span>
+            {field.lastRecordedAt && (
+              <span className="text-xs font-medium bg-green-100 text-green-800 px-2 py-1 rounded-md ml-auto">
+                Last recorded {new Date(field.lastRecordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              </span>
+            )}
+            {field.clipCount === 0 && (
+              <span className="text-xs text-muted-foreground ml-auto">No clips yet</span>
+            )}
+          </div>
+        </div>
+      </Link>
+    </motion.div>
   );
 }

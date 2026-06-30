@@ -151,6 +151,8 @@ export const ListClipsResponseItem = zod.object({
   "isLiked": zod.boolean().optional(),
   "isSaved": zod.boolean().optional(),
   "videoUrl": zod.string().optional(),
+  "bunnyPlaybackUrl": zod.string().nullish(),
+  "bunnyVideoId": zod.string().nullish(),
   "fieldName": zod.string().nullish(),
   "court": zod.string().nullish(),
   "date": zod.string().nullish()
@@ -175,6 +177,8 @@ export const GetClipResponse = zod.object({
   "isLiked": zod.boolean().optional(),
   "isSaved": zod.boolean().optional(),
   "videoUrl": zod.string().optional(),
+  "bunnyPlaybackUrl": zod.string().nullish(),
+  "bunnyVideoId": zod.string().nullish(),
   "fieldName": zod.string().nullish(),
   "court": zod.string().nullish(),
   "date": zod.string().nullish()
@@ -207,6 +211,8 @@ export const ListSavedClipsResponseItem = zod.object({
   "isLiked": zod.boolean().optional(),
   "isSaved": zod.boolean().optional(),
   "videoUrl": zod.string().optional(),
+  "bunnyPlaybackUrl": zod.string().nullish(),
+  "bunnyVideoId": zod.string().nullish(),
   "fieldName": zod.string().nullish(),
   "court": zod.string().nullish(),
   "date": zod.string().nullish()

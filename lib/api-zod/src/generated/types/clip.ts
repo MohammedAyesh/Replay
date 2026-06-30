@@ -17,6 +17,10 @@ export interface Clip {
   isSaved?: boolean;
   videoUrl?: string;
   /** @nullable */
+  bunnyPlaybackUrl?: string | null;
+  /** @nullable */
+  bunnyVideoId?: string | null;
+  /** @nullable */
   fieldName?: string | null;
   /** @nullable */
   court?: string | null;

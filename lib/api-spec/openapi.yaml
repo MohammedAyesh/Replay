@@ -390,6 +390,10 @@ components:
           type: boolean
         videoUrl:
           type: string
+        bunnyPlaybackUrl:
+          type: ["string", "null"]
+        bunnyVideoId:
+          type: ["string", "null"]
         fieldName:
           type: ["string", "null"]
         court:
