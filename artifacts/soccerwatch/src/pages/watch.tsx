@@ -28,20 +28,36 @@ function isUsableUrl(url: string | null | undefined): url is string {
 export default function Watch() {
   const { data: clips, isLoading } = useListClips();
   const { t } = useTranslation();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [slideHeight, setSlideHeight] = useState(0);
 
-  if (isLoading) {
-    return <div className="flex-1 bg-black flex items-center justify-center text-white">{t.watch.loadingFeed}</div>;
-  }
+  // Always-mounted ResizeObserver: containerRef is always attached to the root div
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSlideHeight(el.clientHeight));
+    ro.observe(el);
+    setSlideHeight(el.clientHeight);
+    return () => ro.disconnect();
+  }, []);
 
-  if (!clips || clips.length === 0) {
-    return <div className="flex-1 bg-black flex items-center justify-center text-white">{t.watch.noClips}</div>;
-  }
+  const ready = slideHeight > 0;
 
   return (
-    <div className="flex-1 min-h-0 bg-black overflow-y-scroll snap-y snap-mandatory no-scrollbar">
-      {clips.map((clip, idx) => (
-        <ClipScreen key={clip.id} clip={clip} index={idx} />
-      ))}
+    <div ref={containerRef} className="flex-1 min-h-0 bg-black overflow-y-scroll snap-y snap-mandatory no-scrollbar">
+      {isLoading || !ready ? (
+        <div className="flex items-center justify-center text-white" style={{ height: slideHeight || "100%" }}>
+          {t.watch.loadingFeed}
+        </div>
+      ) : !clips || clips.length === 0 ? (
+        <div className="flex items-center justify-center text-white" style={{ height: slideHeight }}>
+          {t.watch.noClips}
+        </div>
+      ) : (
+        clips.map((clip, idx) => (
+          <ClipScreen key={clip.id} clip={clip} index={idx} slideHeight={slideHeight} />
+        ))
+      )}
     </div>
   );
 }
@@ -56,7 +72,7 @@ function handleAdClick(ad: Ad) {
   window.open(ad.clickUrl, "_blank", "noopener,noreferrer");
 }
 
-function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
+function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; slideHeight: number }) {
   const queryClient = useQueryClient();
   const { isGuest } = useAuth();
   const { toast } = useToast();
@@ -336,7 +352,11 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
   );
 
   return (
-    <div className="relative w-full h-full shrink-0 snap-start bg-black overflow-hidden" onClick={togglePlay}>
+    <div
+      className="relative w-full shrink-0 snap-start bg-black overflow-hidden"
+      style={{ height: slideHeight }}
+      onClick={togglePlay}
+    >
       <div className="absolute inset-0 field-pattern opacity-30" />
 
       <video
