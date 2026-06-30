@@ -4,6 +4,7 @@ import { Bookmark, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { motion } from "framer-motion";
+import { useTranslation } from "@/i18n";
 
 function getBunnyThumbnailUrl(clip: Clip): string | null {
   if (clip.bunnyPlaybackUrl) {
@@ -14,6 +15,7 @@ function getBunnyThumbnailUrl(clip: Clip): string | null {
 
 export default function MyClips() {
   const { isGuest } = useAuth();
+  const { t } = useTranslation();
   const { data: clips, isLoading } = useListSavedClips({
     query: { enabled: !isGuest, queryKey: getListSavedClipsQueryKey() },
   });
@@ -32,12 +34,12 @@ export default function MyClips() {
         >
           <Bookmark className="w-8 h-8 text-muted-foreground" />
         </motion.div>
-        <h2 className="text-xl font-bold mb-2">Sign in to save clips</h2>
+        <h2 className="text-xl font-bold mb-2">{t.myClips.signInTitle}</h2>
         <p className="text-muted-foreground mb-6">
-          Create an account to build your personal highlight reel from local games.
+          {t.myClips.signInDesc}
         </p>
         <Link href="/">
-          <Button className="w-full max-w-[200px] bg-primary text-white">Sign In / Register</Button>
+          <Button className="w-full max-w-[200px] bg-primary text-white">{t.myClips.signInButton}</Button>
         </Link>
       </motion.div>
     );
@@ -51,8 +53,8 @@ export default function MyClips() {
         className="pt-safe px-4 py-6 bg-white border-b sticky top-0 z-10 shadow-sm flex items-end justify-between"
       >
         <div>
-          <h1 className="text-2xl font-bold text-foreground">My Clips</h1>
-          <p className="text-muted-foreground text-sm">{clips?.length || 0} saved highlights</p>
+          <h1 className="text-2xl font-bold text-foreground">{t.myClips.title}</h1>
+          <p className="text-muted-foreground text-sm">{t.myClips.savedHighlights(clips?.length || 0)}</p>
         </div>
       </motion.div>
 
@@ -81,12 +83,12 @@ export default function MyClips() {
             >
               <Video className="w-8 h-8 text-muted-foreground" />
             </motion.div>
-            <p className="text-muted-foreground">No saved clips yet.</p>
+            <p className="text-muted-foreground">{t.myClips.noClipsYet}</p>
             <p className="text-sm text-muted-foreground mt-1">
-              Browse the Watch feed and save your first clip.
+              {t.myClips.noClipsDesc}
             </p>
             <Link href="/watch">
-              <Button variant="outline" className="mt-6">Go to Watch Feed</Button>
+              <Button variant="outline" className="mt-6">{t.myClips.goToWatch}</Button>
             </Link>
           </motion.div>
         ) : (

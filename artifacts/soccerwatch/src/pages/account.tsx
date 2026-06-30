@@ -1,12 +1,14 @@
 import { useGetMe, useGetAccountStats, useLogout, getGetAccountStatsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
-import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, LogOut } from "lucide-react";
+import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, LogOut, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/i18n";
 
 export default function Account() {
   const { isGuest, user: authUser, setUser } = useAuth();
   const [, setLocation] = useLocation();
+  const { t, locale, setLocale } = useTranslation();
   const logoutMutation = useLogout();
 
   const { data: user } = useGetMe({ query: { enabled: !isGuest, queryKey: getGetMeQueryKey() } });
@@ -29,14 +31,14 @@ export default function Account() {
   };
 
   const initial = displayUser?.name?.charAt(0)?.toUpperCase() || "G";
-  const name = isGuest ? "Guest User" : displayUser?.name || "Player";
-  const email = isGuest ? "Browsing as guest" : displayUser?.email || "";
+  const name = isGuest ? t.account.guestName : displayUser?.name || "Player";
+  const email = isGuest ? t.account.guestEmail : displayUser?.email || "";
 
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
       <div className="pt-safe px-4 py-6 bg-white border-b shadow-sm">
-        <h1 className="text-2xl font-bold text-foreground">Account</h1>
-        <p className="text-muted-foreground text-sm">{isGuest ? "Guest session" : "Manage your profile"}</p>
+        <h1 className="text-2xl font-bold text-foreground">{t.account.title}</h1>
+        <p className="text-muted-foreground text-sm">{isGuest ? t.account.guestSubtitle : t.account.subtitle}</p>
       </div>
 
       <div className="flex-1 overflow-y-auto pb-24">
@@ -53,19 +55,48 @@ export default function Account() {
         {!isGuest && (
           <div className="p-4 bg-white border-b">
             <div className="grid grid-cols-3 gap-4">
-              <StatCard label="Saved Clips" value={stats?.savedClips ?? 0} />
-              <StatCard label="Likes Given" value={stats?.likesGiven ?? 0} />
-              <StatCard label="Fields" value={stats?.fieldsVisited ?? 0} />
+              <StatCard label={t.account.savedClips} value={stats?.savedClips ?? 0} />
+              <StatCard label={t.account.likesGiven} value={stats?.likesGiven ?? 0} />
+              <StatCard label={t.account.fields} value={stats?.fieldsVisited ?? 0} />
             </div>
           </div>
         )}
 
         {/* Settings List */}
         <div className="mt-4 bg-white border-y">
-          <SettingRow icon={<Bell className="w-5 h-5 text-muted-foreground" />} label="Notifications" />
-          <SettingRow icon={<Bookmark className="w-5 h-5 text-muted-foreground" />} label="Saved Fields" />
-          <SettingRow icon={<Shield className="w-5 h-5 text-muted-foreground" />} label="Privacy & Security" />
-          <SettingRow icon={<HelpCircle className="w-5 h-5 text-muted-foreground" />} label="Help & Support" borderBottom={false} />
+          <SettingRow icon={<Bell className="w-5 h-5 text-muted-foreground" />} label={t.account.notifications} />
+          <SettingRow icon={<Bookmark className="w-5 h-5 text-muted-foreground" />} label={t.account.savedFields} />
+          <SettingRow icon={<Shield className="w-5 h-5 text-muted-foreground" />} label={t.account.privacy} />
+          <SettingRow icon={<HelpCircle className="w-5 h-5 text-muted-foreground" />} label={t.account.help} />
+          {/* Language toggle */}
+          <div className="w-full flex items-center justify-between p-4 bg-white border-b border-border">
+            <div className="flex items-center gap-3">
+              <Globe className="w-5 h-5 text-muted-foreground" />
+              <span className="font-medium text-foreground">{t.account.language}</span>
+            </div>
+            <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+              <button
+                onClick={() => setLocale("en")}
+                className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
+                  locale === "en"
+                    ? "bg-white text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                EN
+              </button>
+              <button
+                onClick={() => setLocale("ar")}
+                className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
+                  locale === "ar"
+                    ? "bg-white text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                عربي
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="p-6 mt-4">
@@ -74,8 +105,8 @@ export default function Account() {
             className="w-full text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive py-6 rounded-xl font-semibold"
             onClick={handleLogout}
           >
-            <LogOut className="w-5 h-5 mr-2" />
-            {isGuest ? "Sign In / Register" : "Sign Out"}
+            <LogOut className="w-5 h-5 me-2" />
+            {isGuest ? t.account.signInRegister : t.account.signOut}
           </Button>
         </div>
       </div>

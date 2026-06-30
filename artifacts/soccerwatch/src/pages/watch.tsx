@@ -6,6 +6,7 @@ import { Heart, Share, Bookmark, Volume2, VolumeX, ExternalLink } from "lucide-r
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/i18n";
 
 const FALLBACK_VIDEOS = [
   "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
@@ -15,13 +16,14 @@ const FALLBACK_VIDEOS = [
 
 export default function Watch() {
   const { data: clips, isLoading } = useListClips();
+  const { t } = useTranslation();
 
   if (isLoading) {
-    return <div className="flex-1 bg-black flex items-center justify-center text-white">Loading feed...</div>;
+    return <div className="flex-1 bg-black flex items-center justify-center text-white">{t.watch.loadingFeed}</div>;
   }
 
   if (!clips || clips.length === 0) {
-    return <div className="flex-1 bg-black flex items-center justify-center text-white">No clips available right now.</div>;
+    return <div className="flex-1 bg-black flex items-center justify-center text-white">{t.watch.noClips}</div>;
   }
 
   return (
@@ -226,9 +228,11 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
     return () => observer.disconnect();
   }, [clip.id, clearAdTimers]);
 
+  const { t } = useTranslation();
+
   const handleToggleLike = () => {
     if (isGuest) {
-      toast({ title: "Sign in to like", description: "Create an account to save your favorite moments." });
+      toast({ title: t.watch.signInToLike, description: t.watch.signInToLikeDesc });
       return;
     }
     toggleLikeMutation.mutate(
@@ -245,7 +249,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
 
   const handleToggleSave = () => {
     if (isGuest) {
-      toast({ title: "Sign in to save", description: "Create an account to build your highlight reel." });
+      toast({ title: t.watch.signInToSave, description: t.watch.signInToSaveDesc });
       return;
     }
 
@@ -270,7 +274,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
               old?.map(c => c.id === clip.id ? { ...c, isSaved: true } : c)
             );
             queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
-            toast({ title: "Saved to My Clips", className: "bg-primary text-white border-none" });
+            toast({ title: t.watch.savedToMyClips, className: "bg-primary text-white border-none" });
           }
         }
       );
@@ -321,7 +325,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
       <div className="absolute top-safe pt-4 px-4 w-full flex justify-between items-start pointer-events-none">
         <div className="bg-primary/90 text-white px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1.5">
           <CrownIcon className="w-3 h-3" />
-          {clip.rank === 1 ? "#1 Clip of the Week" : `#${clip.rank} This Week`}
+          {clip.rank === 1 ? t.watch.rankFirst : t.watch.rankOther(clip.rank)}
         </div>
         <button
           onClick={toggleMute}
@@ -332,7 +336,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
       </div>
 
       {/* Right Rail */}
-      <div className="absolute right-4 bottom-28 flex flex-col items-center gap-6 pointer-events-auto">
+      <div className="absolute end-4 bottom-28 flex flex-col items-center gap-6 pointer-events-auto">
         <div className="flex flex-col items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={handleToggleLike}
@@ -360,12 +364,12 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
       </div>
 
       {/* Bottom Info */}
-      <div className="absolute bottom-24 left-4 right-20 text-white pointer-events-auto">
+      <div className="absolute bottom-24 start-4 end-20 text-white pointer-events-auto">
         <div className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase inline-block mb-2">
           {clip.momentLabel}
         </div>
-        <h2 className="text-xl font-bold mb-1 shadow-black drop-shadow-md">{clip.fieldName || "Local Pitch"}</h2>
-        <p className="text-white/80 text-sm mb-3 shadow-black drop-shadow-md">{clip.court || "Court 1"} • {clip.date || "Recent"}</p>
+        <h2 className="text-xl font-bold mb-1 shadow-black drop-shadow-md">{clip.fieldName || t.watch.localPitch}</h2>
+        <p className="text-white/80 text-sm mb-3 shadow-black drop-shadow-md">{clip.court || t.watch.court1} • {clip.date || t.watch.recent}</p>
 
         {clip.playerTags && clip.playerTags.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -419,14 +423,14 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
             </button>
             {skipSecondsLeft !== null && skipSecondsLeft > 0 ? (
               <span className="bg-black/60 text-white/70 border border-white/20 text-xs px-3 py-1.5 rounded backdrop-blur-sm">
-                Skip in {skipSecondsLeft}s
+                {t.watch.skipIn(skipSecondsLeft)}
               </span>
             ) : (
               <button
                 onClick={() => finishAd(currentAd, adElapsedRef.current)}
                 className="bg-white/90 text-black text-xs font-bold px-3 py-1.5 rounded active:scale-95 transition-transform"
               >
-                Skip →
+                {t.watch.skipNow}
               </button>
             )}
           </div>
@@ -438,7 +442,7 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
               className="w-full bg-white text-black font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg"
             >
               <ExternalLink className="w-4 h-4" />
-              Visit
+              {t.watch.visit}
             </button>
           </div>
         </div>

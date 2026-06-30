@@ -2,9 +2,11 @@ import React from "react";
 import { Link, useLocation } from "wouter";
 import { PlaySquare, MapPin, Bookmark, User as UserIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
+  const { t } = useTranslation();
 
   const isLogin = location === "/";
   const isImmersivePlayer = location.startsWith("/player/");
@@ -23,7 +25,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {!hideTabBar && (
         <nav
           className={cn(
-            "absolute bottom-0 left-0 right-0 z-50 flex items-center justify-around pb-safe pt-2 px-4 h-16 border-t backdrop-blur-md",
+            "absolute bottom-0 start-0 end-0 z-50 flex items-center justify-around pb-safe pt-2 px-4 h-16 border-t backdrop-blur-md",
             useTranslucentBar
               ? "bg-black/80 border-white/20 text-white"
               : "bg-white border-border text-muted-foreground"
@@ -32,28 +34,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <NavItem
             href="/watch"
             icon={<PlaySquare className="w-6 h-6" />}
-            label="Watch"
+            label={t.nav.watch}
             isActive={location === "/watch"}
             isTranslucent={useTranslucentBar}
           />
           <NavItem
             href="/fields"
             icon={<MapPin className="w-6 h-6" />}
-            label="Fields"
+            label={t.nav.fields}
             isActive={location.startsWith("/fields")}
             isTranslucent={useTranslucentBar}
           />
           <NavItem
             href="/my-clips"
             icon={<Bookmark className="w-6 h-6" />}
-            label="My Clips"
+            label={t.nav.myClips}
             isActive={location === "/my-clips"}
             isTranslucent={useTranslucentBar}
           />
           <NavItem
             href="/account"
             icon={<UserIcon className="w-6 h-6" />}
-            label="Account"
+            label={t.nav.account}
             isActive={location === "/account"}
             isTranslucent={useTranslucentBar}
           />

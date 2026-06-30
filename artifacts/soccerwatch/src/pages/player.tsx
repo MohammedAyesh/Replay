@@ -3,10 +3,11 @@ import { Link, useRoute } from "wouter";
 import Hls from "hls.js";
 import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, Clip } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Heart, Share, Bookmark, ChevronLeft, Volume2, VolumeX } from "lucide-react";
+import { Heart, Share, Bookmark, ChevronLeft, ChevronRight, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/i18n";
 
 const FALLBACK_VIDEO = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
@@ -16,12 +17,14 @@ export default function Player() {
 
   const { data: clip, isLoading } = useGetClip(clipId, { query: { enabled: !!clipId, queryKey: getGetClipQueryKey(clipId) } });
 
+  const { t } = useTranslation();
+
   if (isLoading) {
-    return <div className="flex-1 bg-black flex items-center justify-center text-white h-[100dvh]">Loading clip...</div>;
+    return <div className="flex-1 bg-black flex items-center justify-center text-white h-[100dvh]">{t.player.loading}</div>;
   }
 
   if (!clip) {
-    return <div className="flex-1 bg-black flex items-center justify-center text-white h-[100dvh]">Clip not found.</div>;
+    return <div className="flex-1 bg-black flex items-center justify-center text-white h-[100dvh]">{t.player.notFound}</div>;
   }
 
   return <PlayerScreen clip={clip} />;
@@ -75,9 +78,11 @@ function PlayerScreen({ clip }: { clip: Clip }) {
     };
   }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl]);
 
+  const { t } = useTranslation();
+
   const handleToggleLike = () => {
     if (isGuest) {
-      toast({ title: "Sign in to like", description: "Create an account to interact." });
+      toast({ title: t.player.signInToLike, description: t.player.signInToLikeDesc });
       return;
     }
     toggleLikeMutation.mutate(
@@ -95,7 +100,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
   const handleToggleSave = () => {
     if (isGuest) {
-      toast({ title: "Sign in to save", description: "Create an account to build your highlight reel." });
+      toast({ title: t.player.signInToSave, description: t.player.signInToSaveDesc });
       return;
     }
 
@@ -120,7 +125,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
               old ? { ...old, isSaved: true } : old
             );
             queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
-            toast({ title: "Saved to My Clips", className: "bg-primary text-white border-none" });
+            toast({ title: t.player.savedToMyClips, className: "bg-primary text-white border-none" });
           }
         }
       );
@@ -162,7 +167,8 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       {/* Top Nav */}
       <div className="absolute top-safe pt-4 px-4 w-full flex justify-between items-start pointer-events-auto z-10">
         <Link href="~" className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white backdrop-blur-md">
-          <ChevronLeft className="w-6 h-6 ml-[-2px]" />
+          <ChevronLeft className="w-6 h-6 ms-[-2px] rtl:hidden" />
+          <ChevronRight className="w-6 h-6 me-[-2px] ltr:hidden" />
         </Link>
         <button
           onClick={toggleMute}
@@ -178,8 +184,8 @@ function PlayerScreen({ clip }: { clip: Clip }) {
           <div className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase inline-block mb-2 shadow-sm">
             {clip.momentLabel}
           </div>
-          <h2 className="text-2xl font-bold text-white mb-1 shadow-black drop-shadow-md">{clip.fieldName || "Local Pitch"}</h2>
-          <p className="text-white/80 text-sm shadow-black drop-shadow-md">{clip.court || "Court 1"} • {clip.date || "Recent"}</p>
+          <h2 className="text-2xl font-bold text-white mb-1 shadow-black drop-shadow-md">{clip.fieldName || t.player.localPitch}</h2>
+          <p className="text-white/80 text-sm shadow-black drop-shadow-md">{clip.court || t.player.court1} • {clip.date || t.player.recent}</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -201,7 +207,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
             )}
           >
             <Bookmark className={cn("w-5 h-5", clip.isSaved ? "fill-white" : "")} />
-            {clip.isSaved ? "Saved" : "Save to My Clips"}
+            {clip.isSaved ? t.player.saved : t.player.saveToMyClips}
           </button>
 
           <button className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-md rounded-xl py-3.5 flex items-center justify-center gap-2 transition-colors active:scale-95">

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Crown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
+import { useTranslation } from "@/i18n";
 
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 28 },
@@ -16,16 +17,19 @@ const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const guestMutation = useLoginAsGuest();
 
   const handleGuest = () => {
     guestMutation.mutate(undefined, {
       onSuccess: () => setLocation("/watch"),
       onError: () => {
-        toast({ variant: "destructive", title: "Guest login failed", description: "Something went wrong." });
+        toast({ variant: "destructive", title: t.login.guestLoginFailed, description: t.login.guestLoginError });
       },
     });
   };
+
+  const [tagline1, tagline2] = t.login.tagline.split("\n");
 
   return (
     <div className="flex-1 flex flex-col field-pattern relative text-white overflow-hidden">
@@ -46,10 +50,10 @@ export default function Login() {
           </motion.div>
 
           <motion.h1 {...fadeUp(0.12)} className="text-5xl font-bold leading-[1.1] mb-4">
-            Every game.<br />Every angle.
+            {tagline1}<br />{tagline2}
           </motion.h1>
           <motion.p {...fadeUp(0.2)} className="text-lg text-white/80 leading-snug">
-            Browse field footage, relive the best moments, and save your clip of the week.
+            {t.login.description}
           </motion.p>
         </div>
 
@@ -63,7 +67,7 @@ export default function Login() {
             asChild
             className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-6 rounded-xl text-base"
           >
-            <a href={`${basePath}/sign-in`}>Sign In</a>
+            <a href={`${basePath}/sign-in`}>{t.login.signIn}</a>
           </Button>
 
           <Button
@@ -71,7 +75,7 @@ export default function Login() {
             variant="outline"
             className="w-full font-semibold py-6 rounded-xl text-base bg-white/10 border-white/30 text-white hover:bg-white/20 hover:text-white"
           >
-            <a href={`${basePath}/sign-up`}>Create Account</a>
+            <a href={`${basePath}/sign-up`}>{t.login.createAccount}</a>
           </Button>
 
           <div className="relative my-2">
@@ -79,7 +83,7 @@ export default function Login() {
               <div className="w-full border-t border-white/20" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="px-2 text-white/50">Or</span>
+              <span className="px-2 text-white/50">{t.login.or}</span>
             </div>
           </div>
 
@@ -90,7 +94,7 @@ export default function Login() {
             onClick={handleGuest}
             disabled={guestMutation.isPending}
           >
-            {guestMutation.isPending ? "Starting…" : "Browse as Guest"}
+            {guestMutation.isPending ? t.login.startingGuest : t.login.browseAsGuest}
           </Button>
         </motion.div>
       </div>

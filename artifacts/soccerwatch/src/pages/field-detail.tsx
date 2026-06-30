@@ -1,9 +1,10 @@
 import { useState, useMemo } from "react";
 import { Link, useRoute } from "wouter";
 import { useGetField, useGetFieldRecordings, Recording } from "@workspace/api-client-react";
-import { ChevronLeft, Clock, Play } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Play } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/i18n";
 
 function groupByDate(recordings: Recording[]): Map<string, Recording[]> {
   const map = new Map<string, Recording[]>();
@@ -25,6 +26,7 @@ export default function FieldDetail() {
   const [, params] = useRoute("/fields/:id");
   const fieldId = parseInt(params?.id ?? "0", 10);
   const { toast } = useToast();
+  const { t, locale } = useTranslation();
 
   const { data: field, isLoading: fieldLoading } = useGetField(fieldId);
   const { data: recordings, isLoading: recLoading } = useGetFieldRecordings(fieldId);
@@ -43,6 +45,9 @@ export default function FieldDetail() {
   const byDate = useMemo(() => groupByDate(recordings ?? []), [recordings]);
   const forDate = byDate.get(currentDate ?? "") ?? [];
 
+  const courtsLabel = (n: number) =>
+    n === 1 ? `1 ${t.fieldDetail.court}` : `${n} ${t.fieldDetail.courts}`;
+
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
       <motion.header
@@ -52,14 +57,15 @@ export default function FieldDetail() {
       >
         <Link
           href="/fields"
-          className="w-10 h-10 flex items-center justify-center -ml-2 rounded-full hover:bg-muted text-foreground"
+          className="w-10 h-10 flex items-center justify-center -ms-2 rounded-full hover:bg-muted text-foreground"
         >
-          <ChevronLeft className="w-6 h-6" />
+          <ChevronLeft className="w-6 h-6 rtl:hidden" />
+          <ChevronRight className="w-6 h-6 ltr:hidden" />
         </Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold truncate">{isLoading ? "Loading…" : (field?.name ?? "Field")}</h1>
+          <h1 className="text-lg font-bold truncate">{isLoading ? t.fieldDetail.loading : (field?.name ?? "Field")}</h1>
           <p className="text-xs text-muted-foreground">
-            {isLoading ? "…" : `${recordings?.length ?? 0} recordings`}
+            {isLoading ? "…" : t.fieldDetail.recordings(recordings?.length ?? 0)}
           </p>
         </div>
       </motion.header>
@@ -72,9 +78,9 @@ export default function FieldDetail() {
         <div className="absolute inset-0 field-pattern" />
         <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent" />
         {field && (
-          <div className="absolute bottom-3 left-4 text-foreground">
+          <div className="absolute bottom-3 start-4 text-foreground">
             <p className="text-sm font-medium opacity-70">{field.location}</p>
-            <p className="text-xs opacity-50">{field.courts} court{field.courts !== 1 ? "s" : ""}</p>
+            <p className="text-xs opacity-50">{courtsLabel(field.courts)}</p>
           </div>
         )}
       </motion.div>
@@ -95,8 +101,8 @@ export default function FieldDetail() {
             <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
               <Play className="w-6 h-6 text-primary" />
             </div>
-            <h3 className="font-semibold text-foreground mb-1">No recordings yet</h3>
-            <p className="text-sm text-muted-foreground">Footage from this field will appear here once cameras are connected.</p>
+            <h3 className="font-semibold text-foreground mb-1">{t.fieldDetail.noRecordingsTitle}</h3>
+            <p className="text-sm text-muted-foreground">{t.fieldDetail.noRecordingsDesc}</p>
           </motion.div>
         ) : (
           <>
@@ -104,7 +110,7 @@ export default function FieldDetail() {
               {sortedDates.map((d, i) => (
                 <motion.button
                   key={d}
-                  initial={{ opacity: 0, x: -12 }}
+                  initial={{ opacity: 0, x: locale === "ar" ? 12 : -12 }}
                   animate={{ opacity: 1, x: 0, transition: { delay: i * 0.06, duration: 0.3, ease: "easeOut" as const } }}
                   whileTap={{ scale: 0.93 }}
                   onClick={() => setSelectedDate(d)}
@@ -150,7 +156,7 @@ export default function FieldDetail() {
                       whileTap={{ scale: 0.92 }}
                       onClick={() =>
                         toast({
-                          title: "Video coming soon",
+                          title: t.fieldDetail.videoComingSoon,
                           description: `${rec.court} · ${rec.timeSlot}`,
                           className: "bg-primary text-white border-none",
                         })

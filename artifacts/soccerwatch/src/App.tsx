@@ -3,10 +3,12 @@ import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { ClerkProvider, SignIn, SignUp, useClerk } from "@clerk/react";
 import { publishableKeyFromHost } from "@clerk/react/internal";
+import { arSA } from "@clerk/localizations";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/layout";
 import { clerkAppearance } from "@/lib/clerkAppearance";
+import { LocaleProvider, useLocale } from "@/i18n";
 
 import Landing from "@/pages/login";
 import Watch from "@/pages/watch";
@@ -108,6 +110,19 @@ function AppRouter() {
 
 function ClerkProviderWithRoutes() {
   const [, setLocation] = useLocation();
+  const { locale } = useLocale();
+
+  const localization = locale === "ar"
+    ? arSA
+    : {
+        signIn: {
+          start: { title: "Welcome back", subtitle: "Sign in to your SoccerWatch account" },
+        },
+        signUp: {
+          start: { title: "Join SoccerWatch", subtitle: "Create your account to save and like clips" },
+        },
+      };
+
   return (
     <ClerkProvider
       publishableKey={clerkPubKey}
@@ -115,14 +130,7 @@ function ClerkProviderWithRoutes() {
       appearance={clerkAppearance}
       signInUrl={`${basePath}/sign-in`}
       signUpUrl={`${basePath}/sign-up`}
-      localization={{
-        signIn: {
-          start: { title: "Welcome back", subtitle: "Sign in to your SoccerWatch account" },
-        },
-        signUp: {
-          start: { title: "Join SoccerWatch", subtitle: "Create your account to save and like clips" },
-        },
-      }}
+      localization={localization}
       routerPush={(to) => setLocation(stripBase(to))}
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
@@ -140,7 +148,9 @@ function ClerkProviderWithRoutes() {
 function App() {
   return (
     <WouterRouter base={basePath}>
-      <ClerkProviderWithRoutes />
+      <LocaleProvider>
+        <ClerkProviderWithRoutes />
+      </LocaleProvider>
     </WouterRouter>
   );
 }
