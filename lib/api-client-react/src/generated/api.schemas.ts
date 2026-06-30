@@ -35,6 +35,15 @@ export interface Field {
   lastRecordedAt?: string | null;
 }
 
+export interface BunnyVideo {
+  guid: string;
+  title: string;
+  thumbnailUrl: string;
+  playbackUrl: string;
+  views?: number;
+  duration?: number;
+}
+
 export interface Recording {
   id: number;
   fieldId: number;

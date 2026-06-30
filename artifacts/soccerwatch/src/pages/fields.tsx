@@ -1,10 +1,18 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useListFields, Field } from "@workspace/api-client-react";
-import { Search, Camera, Video } from "lucide-react";
+import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
+
+function splitName(name: string): string[] {
+  return name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.toUpperCase());
+}
 
 const cardVariants = {
   hidden: { opacity: 0, y: 32 },
@@ -20,9 +28,10 @@ export default function Fields() {
   const [search, setSearch] = useState("");
   const { t } = useTranslation();
 
-  const filtered = (fields ?? []).filter((f) =>
-    f.name.toLowerCase().includes(search.toLowerCase()) ||
-    f.location.toLowerCase().includes(search.toLowerCase())
+  const filtered = (fields ?? []).filter(
+    (f) =>
+      f.name.toLowerCase().includes(search.toLowerCase()) ||
+      f.location.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -33,9 +42,7 @@ export default function Fields() {
         className="pt-safe px-4 py-6 bg-white border-b sticky top-0 z-10 shadow-sm"
       >
         <h1 className="text-2xl font-bold text-foreground">{t.fields.title}</h1>
-        <p className="text-muted-foreground text-sm mb-4">
-          {t.fields.subtitle}
-        </p>
+        <p className="text-muted-foreground text-sm mb-4">{t.fields.subtitle}</p>
         <div className="relative">
           <Search className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -47,23 +54,23 @@ export default function Fields() {
         </div>
       </motion.div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+      <div className="flex-1 overflow-y-auto px-4 py-4 pb-24 grid grid-cols-2 gap-4 content-start">
         {isLoading ? (
-          <div className="space-y-4">
-            {[1, 2].map((i) => (
+          <>
+            {[1, 2, 3, 4].map((i) => (
               <motion.div
                 key={i}
                 initial={{ opacity: 0 }}
-                animate={{ opacity: 1, transition: { delay: i * 0.1 } }}
-                className="h-[200px] bg-muted rounded-2xl animate-pulse"
+                animate={{ opacity: 1, transition: { delay: i * 0.08 } }}
+                className="aspect-[3/4] bg-muted rounded-2xl animate-pulse"
               />
             ))}
-          </div>
+          </>
         ) : filtered.length === 0 ? (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-center py-12 text-muted-foreground"
+            className="col-span-2 text-center py-12 text-muted-foreground"
           >
             {t.fields.noFieldsFound}
           </motion.div>
@@ -78,10 +85,7 @@ export default function Fields() {
 }
 
 function FieldCard({ field, index }: { field: Field; index: number }) {
-  const { t } = useTranslation();
-  const dateStr = field.lastRecordedAt
-    ? new Date(field.lastRecordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })
-    : "";
+  const words = splitName(field.name);
 
   return (
     <motion.div
@@ -89,35 +93,30 @@ function FieldCard({ field, index }: { field: Field; index: number }) {
       variants={cardVariants}
       initial="hidden"
       animate="show"
-      whileTap={{ scale: 0.97 }}
+      whileTap={{ scale: 0.95 }}
+      className="aspect-[3/4]"
     >
-      <Link href={`/fields/${field.id}`}>
-        <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
-          <div className="h-36 relative flex items-center justify-center overflow-hidden">
-            <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-black/10" />
+      <Link href={`/fields/${field.id}`} className="block h-full">
+        <div className="h-full relative overflow-hidden rounded-2xl shadow-md group cursor-pointer">
+          <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80" />
 
-            <div className="absolute top-3 end-3 bg-primary text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-md">
-              <Video className="w-3 h-3" />
-              {t.fields.clips(field.clipCount)}
-            </div>
-
-            <div className="absolute bottom-3 start-3 flex items-center gap-2 text-white">
-              <Camera className="w-4 h-4 opacity-80" />
-              <h3 className="font-bold text-lg leading-tight drop-shadow-md">{field.name}</h3>
-            </div>
+          <div className="absolute inset-0 flex flex-col items-center justify-center px-3 gap-1">
+            {words.map((word, wi) => (
+              <span
+                key={wi}
+                className="text-white font-black leading-none tracking-tight text-center drop-shadow-lg"
+                style={{ fontSize: `clamp(1rem, ${Math.min(5, 10 / word.length)}vw + 0.5rem, 2.2rem)` }}
+              >
+                {word}
+              </span>
+            ))}
           </div>
 
-          <div className="px-4 py-3 flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{field.location}</span>
-            {field.lastRecordedAt && (
-              <span className="text-xs font-medium bg-green-100 text-green-800 px-2 py-1 rounded-md ms-auto">
-                {t.fields.lastRecorded(dateStr)}
-              </span>
-            )}
-            {field.clipCount === 0 && (
-              <span className="text-xs text-muted-foreground ms-auto">{t.fields.noClipsYet}</span>
-            )}
+          <div className="absolute bottom-3 start-0 end-0 px-3">
+            <p className="text-white/70 text-[10px] font-medium text-center truncate">
+              {field.location}
+            </p>
           </div>
         </div>
       </Link>

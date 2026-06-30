@@ -25,6 +25,7 @@ import type {
   AdStats,
   AdminAdEntry,
   AuthResponse,
+  BunnyVideo,
   Clip,
   CreateAdInput,
   Field,
@@ -570,6 +571,83 @@ export function useGetField<TData = Awaited<ReturnType<typeof getField>>, TError
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetFieldQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetFieldVideosUrl = (id: number,) => {
+
+
+
+
+  return `/api/fields/${id}/videos`
+}
+
+/**
+ * @summary Get Bunny Stream videos for a field
+ */
+export const getFieldVideos = async (id: number, options?: RequestInit): Promise<BunnyVideo[]> => {
+
+  return customFetch<BunnyVideo[]>(getGetFieldVideosUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFieldVideosQueryKey = (id: number,) => {
+    return [
+    `/api/fields/${id}/videos`
+    ] as const;
+    }
+
+
+export const getGetFieldVideosQueryOptions = <TData = Awaited<ReturnType<typeof getFieldVideos>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFieldVideos>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFieldVideosQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFieldVideos>>> = ({ signal }) => getFieldVideos(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFieldVideos>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFieldVideosQueryResult = NonNullable<Awaited<ReturnType<typeof getFieldVideos>>>
+export type GetFieldVideosQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get Bunny Stream videos for a field
+ */
+
+export function useGetFieldVideos<TData = Awaited<ReturnType<typeof getFieldVideos>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFieldVideos>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFieldVideosQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

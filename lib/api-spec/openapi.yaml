@@ -136,6 +136,27 @@ paths:
         "404":
           description: Not found
 
+  /fields/{id}/videos:
+    get:
+      operationId: getFieldVideos
+      tags: [fields]
+      summary: Get Bunny Stream videos for a field
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of Bunny Stream videos for this field
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BunnyVideo"
+
   /fields/{id}/recordings:
     get:
       operationId: getFieldRecordings
@@ -471,6 +492,23 @@ components:
           type: integer
         lastRecordedAt:
           type: ["string", "null"]
+
+    BunnyVideo:
+      type: object
+      required: [guid, title, thumbnailUrl, playbackUrl]
+      properties:
+        guid:
+          type: string
+        title:
+          type: string
+        thumbnailUrl:
+          type: string
+        playbackUrl:
+          type: string
+        views:
+          type: integer
+        duration:
+          type: number
 
     Recording:
       type: object
