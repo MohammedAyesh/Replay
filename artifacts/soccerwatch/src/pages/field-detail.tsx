@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useRoute } from "wouter";
-import { useGetField, useGetFieldVideos, BunnyVideo } from "@workspace/api-client-react";
+import {
+  useGetBunnyCollections,
+  useGetBunnyCollectionVideos,
+  BunnyVideo,
+} from "@workspace/api-client-react";
 import { ChevronLeft, ChevronRight, Play, Volume2, VolumeX, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
@@ -23,19 +27,17 @@ function formatDuration(seconds: number): string {
 
 export default function FieldDetail() {
   const [, params] = useRoute("/fields/:id");
-  const fieldId = parseInt(params?.id ?? "0", 10);
+  const guid = params?.id ?? "";
   const { t } = useTranslation();
 
-  const { data: field, isLoading: fieldLoading } = useGetField(fieldId);
-  const { data: videos, isLoading: videosLoading } = useGetFieldVideos(fieldId);
+  // Use the cached collections list to get name/metadata without an extra endpoint
+  const { data: collections } = useGetBunnyCollections();
+  const collection = collections?.find((c) => c.guid === guid);
 
-  const isLoading = fieldLoading || videosLoading;
-  const words = field ? splitName(field.name) : [];
+  const { data: videos, isLoading: videosLoading } = useGetBunnyCollectionVideos(guid);
 
+  const words = collection ? splitName(collection.name) : [];
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
-
-  const courtsLabel = (n: number) =>
-    n === 1 ? `1 ${t.fieldDetail.court}` : `${n} ${t.fieldDetail.courts}`;
 
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
@@ -54,10 +56,10 @@ export default function FieldDetail() {
         </Link>
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-bold truncate">
-            {isLoading ? t.fieldDetail.loading : (field?.name ?? t.fieldDetail.fieldFallback)}
+            {collection?.name ?? t.fieldDetail.loading}
           </h1>
           <p className="text-xs text-muted-foreground">
-            {isLoading ? "…" : `${videos?.length ?? 0} videos`}
+            {videosLoading ? "…" : `${videos?.length ?? 0} videos`}
           </p>
         </div>
       </motion.header>
@@ -68,32 +70,46 @@ export default function FieldDetail() {
         animate={{ opacity: 1, scale: 1, transition: { duration: 0.5, ease: "easeOut" as const } }}
         className="relative h-44 overflow-hidden shrink-0"
       >
-        <div className="absolute inset-0 field-pattern" />
+        {collection?.previewImageUrl ? (
+          <img
+            src={collection.previewImageUrl}
+            alt={collection.name}
+            className="absolute inset-0 w-full h-full object-cover"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+        ) : (
+          <div className="absolute inset-0 field-pattern" />
+        )}
         <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80" />
 
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 px-4">
-          {words.map((word, wi) => (
-            <span
-              key={wi}
-              className="text-white font-black leading-none tracking-tight drop-shadow-lg text-center"
-              style={{ fontSize: `clamp(1.4rem, ${Math.min(6, 12 / word.length)}vw + 0.5rem, 3rem)` }}
-            >
-              {word}
-            </span>
-          ))}
-        </div>
+        {words.length > 0 && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 px-4">
+            {words.map((word, wi) => (
+              <span
+                key={wi}
+                className="text-white font-black leading-none tracking-tight drop-shadow-lg text-center"
+                style={{ fontSize: `clamp(1.4rem, ${Math.min(6, 12 / word.length)}vw + 0.5rem, 3rem)` }}
+              >
+                {word}
+              </span>
+            ))}
+          </div>
+        )}
 
-        {field && (
+        {collection && (
           <div className="absolute bottom-3 start-0 end-0 flex flex-col items-center">
-            <p className="text-white/70 text-xs font-medium">{field.location}</p>
-            <p className="text-white/50 text-[10px]">{courtsLabel(field.courts)}</p>
+            <p className="text-white/60 text-[10px]">
+              {collection.videoCount} {collection.videoCount === 1 ? "video" : "videos"}
+            </p>
           </div>
         )}
       </motion.div>
 
       {/* Video Grid */}
       <div className="flex-1 overflow-y-auto pb-24">
-        {isLoading ? (
+        {videosLoading ? (
           <div className="p-4 grid grid-cols-2 gap-3">
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="aspect-video bg-muted rounded-xl animate-pulse" />

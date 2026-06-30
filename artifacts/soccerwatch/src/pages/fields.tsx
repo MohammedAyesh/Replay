@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { useListFields, Field } from "@workspace/api-client-react";
+import { useGetBunnyCollections, BunnyCollection } from "@workspace/api-client-react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
@@ -24,14 +24,12 @@ const cardVariants = {
 };
 
 export default function Fields() {
-  const { data: fields, isLoading } = useListFields();
+  const { data: collections, isLoading } = useGetBunnyCollections();
   const [search, setSearch] = useState("");
   const { t } = useTranslation();
 
-  const filtered = (fields ?? []).filter(
-    (f) =>
-      f.name.toLowerCase().includes(search.toLowerCase()) ||
-      f.location.toLowerCase().includes(search.toLowerCase())
+  const filtered = (collections ?? []).filter((c) =>
+    c.name.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -75,8 +73,8 @@ export default function Fields() {
             {t.fields.noFieldsFound}
           </motion.div>
         ) : (
-          filtered.map((field, i) => (
-            <FieldCard key={field.id} field={field} index={i} />
+          filtered.map((collection, i) => (
+            <CollectionCard key={collection.guid} collection={collection} index={i} />
           ))
         )}
       </div>
@@ -84,8 +82,8 @@ export default function Fields() {
   );
 }
 
-function FieldCard({ field, index }: { field: Field; index: number }) {
-  const words = splitName(field.name);
+function CollectionCard({ collection, index }: { collection: BunnyCollection; index: number }) {
+  const words = splitName(collection.name);
 
   return (
     <motion.div
@@ -96,9 +94,20 @@ function FieldCard({ field, index }: { field: Field; index: number }) {
       whileTap={{ scale: 0.95 }}
       className="aspect-[3/4]"
     >
-      <Link href={`/fields/${field.id}`} className="block h-full">
+      <Link href={`/fields/${collection.guid}`} className="block h-full">
         <div className="h-full relative overflow-hidden rounded-2xl shadow-md group cursor-pointer">
-          <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
+          {collection.previewImageUrl ? (
+            <img
+              src={collection.previewImageUrl}
+              alt={collection.name}
+              className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : (
+            <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
+          )}
           <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80" />
 
           <div className="absolute inset-0 flex flex-col items-center justify-center px-3 gap-1">
@@ -114,8 +123,8 @@ function FieldCard({ field, index }: { field: Field; index: number }) {
           </div>
 
           <div className="absolute bottom-3 start-0 end-0 px-3">
-            <p className="text-white/70 text-[10px] font-medium text-center truncate">
-              {field.location}
+            <p className="text-white/70 text-[10px] font-medium text-center">
+              {collection.videoCount} {collection.videoCount === 1 ? "video" : "videos"}
             </p>
           </div>
         </div>

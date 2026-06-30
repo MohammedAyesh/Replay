@@ -9,11 +9,13 @@ import accountRouter from "./account";
 import adsRouter from "./ads";
 import adminRouter from "./admin";
 import bunnyVideosRouter from "./bunnyVideos";
+import bunnyCollectionsRouter from "./bunnyCollections";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(authRouter);
+router.use(bunnyCollectionsRouter);
 router.use(bunnyVideosRouter);
 router.use(fieldsRouter);
 router.use(recordingsRouter);

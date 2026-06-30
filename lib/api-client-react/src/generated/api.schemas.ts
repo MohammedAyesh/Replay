@@ -35,6 +35,14 @@ export interface Field {
   lastRecordedAt?: string | null;
 }
 
+export interface BunnyCollection {
+  guid: string;
+  name: string;
+  videoCount: number;
+  /** @nullable */
+  previewImageUrl?: string | null;
+}
+
 export interface BunnyVideo {
   guid: string;
   title: string;

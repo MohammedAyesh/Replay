@@ -136,6 +136,42 @@ paths:
         "404":
           description: Not found
 
+  /bunny/collections:
+    get:
+      operationId: getBunnyCollections
+      tags: [fields]
+      summary: List all Bunny Stream collections (one per field)
+      responses:
+        "200":
+          description: List of collections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BunnyCollection"
+
+  /bunny/collections/{guid}/videos:
+    get:
+      operationId: getBunnyCollectionVideos
+      tags: [fields]
+      summary: Get videos in a Bunny Stream collection
+      parameters:
+        - name: guid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of videos in the collection
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BunnyVideo"
+
   /fields/{id}/videos:
     get:
       operationId: getFieldVideos
@@ -491,6 +527,19 @@ components:
         clipCount:
           type: integer
         lastRecordedAt:
+          type: ["string", "null"]
+
+    BunnyCollection:
+      type: object
+      required: [guid, name, videoCount]
+      properties:
+        guid:
+          type: string
+        name:
+          type: string
+        videoCount:
+          type: integer
+        previewImageUrl:
           type: ["string", "null"]
 
     BunnyVideo:

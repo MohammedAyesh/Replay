@@ -96,6 +96,36 @@ export const GetFieldResponse = zod.object({
 
 
 /**
+ * @summary List all Bunny Stream collections (one per field)
+ */
+export const GetBunnyCollectionsResponseItem = zod.object({
+  "guid": zod.string(),
+  "name": zod.string(),
+  "videoCount": zod.number(),
+  "previewImageUrl": zod.string().nullish()
+})
+export const GetBunnyCollectionsResponse = zod.array(GetBunnyCollectionsResponseItem)
+
+
+/**
+ * @summary Get videos in a Bunny Stream collection
+ */
+export const GetBunnyCollectionVideosParams = zod.object({
+  "guid": zod.coerce.string()
+})
+
+export const GetBunnyCollectionVideosResponseItem = zod.object({
+  "guid": zod.string(),
+  "title": zod.string(),
+  "thumbnailUrl": zod.string(),
+  "playbackUrl": zod.string(),
+  "views": zod.number().optional(),
+  "duration": zod.number().optional()
+})
+export const GetBunnyCollectionVideosResponse = zod.array(GetBunnyCollectionVideosResponseItem)
+
+
+/**
  * @summary Get Bunny Stream videos for a field
  */
 export const GetFieldVideosParams = zod.object({

@@ -25,6 +25,7 @@ import type {
   AdStats,
   AdminAdEntry,
   AuthResponse,
+  BunnyCollection,
   BunnyVideo,
   Clip,
   CreateAdInput,
@@ -571,6 +572,160 @@ export function useGetField<TData = Awaited<ReturnType<typeof getField>>, TError
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetFieldQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetBunnyCollectionsUrl = () => {
+
+
+
+
+  return `/api/bunny/collections`
+}
+
+/**
+ * @summary List all Bunny Stream collections (one per field)
+ */
+export const getBunnyCollections = async ( options?: RequestInit): Promise<BunnyCollection[]> => {
+
+  return customFetch<BunnyCollection[]>(getGetBunnyCollectionsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBunnyCollectionsQueryKey = () => {
+    return [
+    `/api/bunny/collections`
+    ] as const;
+    }
+
+
+export const getGetBunnyCollectionsQueryOptions = <TData = Awaited<ReturnType<typeof getBunnyCollections>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBunnyCollections>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBunnyCollectionsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBunnyCollections>>> = ({ signal }) => getBunnyCollections({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBunnyCollections>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBunnyCollectionsQueryResult = NonNullable<Awaited<ReturnType<typeof getBunnyCollections>>>
+export type GetBunnyCollectionsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all Bunny Stream collections (one per field)
+ */
+
+export function useGetBunnyCollections<TData = Awaited<ReturnType<typeof getBunnyCollections>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBunnyCollections>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBunnyCollectionsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetBunnyCollectionVideosUrl = (guid: string,) => {
+
+
+
+
+  return `/api/bunny/collections/${guid}/videos`
+}
+
+/**
+ * @summary Get videos in a Bunny Stream collection
+ */
+export const getBunnyCollectionVideos = async (guid: string, options?: RequestInit): Promise<BunnyVideo[]> => {
+
+  return customFetch<BunnyVideo[]>(getGetBunnyCollectionVideosUrl(guid),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBunnyCollectionVideosQueryKey = (guid: string,) => {
+    return [
+    `/api/bunny/collections/${guid}/videos`
+    ] as const;
+    }
+
+
+export const getGetBunnyCollectionVideosQueryOptions = <TData = Awaited<ReturnType<typeof getBunnyCollectionVideos>>, TError = ErrorType<unknown>>(guid: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBunnyCollectionVideos>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBunnyCollectionVideosQueryKey(guid);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBunnyCollectionVideos>>> = ({ signal }) => getBunnyCollectionVideos(guid, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: guid !== null && guid !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBunnyCollectionVideos>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBunnyCollectionVideosQueryResult = NonNullable<Awaited<ReturnType<typeof getBunnyCollectionVideos>>>
+export type GetBunnyCollectionVideosQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get videos in a Bunny Stream collection
+ */
+
+export function useGetBunnyCollectionVideos<TData = Awaited<ReturnType<typeof getBunnyCollectionVideos>>, TError = ErrorType<unknown>>(
+ guid: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBunnyCollectionVideos>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBunnyCollectionVideosQueryOptions(guid,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
