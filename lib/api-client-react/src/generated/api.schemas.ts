@@ -84,3 +84,66 @@ export interface AccountStats {
   fieldsVisited: number;
 }
 
+export interface Ad {
+  id: number;
+  creativeUrl: string;
+  clickUrl: string;
+  durationSeconds: number;
+  targetType: string;
+}
+
+export interface ImpressionInput {
+  clipId: number;
+  completed: boolean;
+  /** @nullable */
+  skippedAtSecond?: number | null;
+}
+
+export interface AdminAdEntry {
+  id: number;
+  title: string;
+  creativeUrl: string;
+  clickUrl: string;
+  durationSeconds: number;
+  targetType: string;
+  /** @nullable */
+  targetFieldId?: number | null;
+  /** @nullable */
+  startsAt?: string | null;
+  /** @nullable */
+  endsAt?: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export interface CreateAdInput {
+  title: string;
+  creativeUrl: string;
+  clickUrl: string;
+  durationSeconds: number;
+  targetType?: string;
+  /** @nullable */
+  targetFieldId?: number | null;
+  /** @nullable */
+  startsAt?: string | null;
+  /** @nullable */
+  endsAt?: string | null;
+  status?: string;
+}
+
+export interface PatchAdInput {
+  status?: string;
+  title?: string;
+  creativeUrl?: string;
+  clickUrl?: string;
+  durationSeconds?: number;
+}
+
+export interface AdStats {
+  impressions: number;
+  clicks: number;
+  completions: number;
+  skipRate: number;
+  completionRate: number;
+}
+

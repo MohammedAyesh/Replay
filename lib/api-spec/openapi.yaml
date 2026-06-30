@@ -23,6 +23,10 @@ tags:
     description: Clip likes
   - name: account
     description: User account
+  - name: ads
+    description: Ad serving
+  - name: admin
+    description: Admin ad management
 
 paths:
   /healthz:
@@ -285,6 +289,133 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountStats"
 
+  /ads/next:
+    get:
+      operationId: getNextAd
+      tags: [ads]
+      summary: Get next ad for current user (frequency-capped)
+      responses:
+        "200":
+          description: Next ad to show
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ad"
+        "204":
+          description: No ad available
+
+  /ads/{id}/impression:
+    post:
+      operationId: recordImpression
+      tags: [ads]
+      summary: Record an ad impression
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImpressionInput"
+      responses:
+        "200":
+          description: Impression recorded
+
+  /ads/{id}/click:
+    post:
+      operationId: recordClick
+      tags: [ads]
+      summary: Record an ad click
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Click recorded
+
+  /admin/ads:
+    get:
+      operationId: listAdminAds
+      tags: [admin]
+      summary: List all ad campaigns (admin)
+      responses:
+        "200":
+          description: All campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminAdEntry"
+    post:
+      operationId: createAd
+      tags: [admin]
+      summary: Create a new ad campaign (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAdInput"
+      responses:
+        "201":
+          description: Campaign created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAdEntry"
+
+  /admin/ads/{id}:
+    patch:
+      operationId: updateAd
+      tags: [admin]
+      summary: Update ad status (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchAdInput"
+      responses:
+        "200":
+          description: Campaign updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAdEntry"
+
+  /admin/ads/{id}/stats:
+    get:
+      operationId: getAdStats
+      tags: [admin]
+      summary: Get stats for an ad campaign (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Campaign stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdStats"
+
 components:
   schemas:
     HealthStatus:
@@ -420,3 +551,108 @@ components:
           type: integer
         fieldsVisited:
           type: integer
+
+    Ad:
+      type: object
+      required: [id, creativeUrl, clickUrl, durationSeconds, targetType]
+      properties:
+        id:
+          type: integer
+        creativeUrl:
+          type: string
+        clickUrl:
+          type: string
+        durationSeconds:
+          type: integer
+        targetType:
+          type: string
+
+    ImpressionInput:
+      type: object
+      required: [clipId, completed]
+      properties:
+        clipId:
+          type: integer
+        completed:
+          type: boolean
+        skippedAtSecond:
+          type: ["integer", "null"]
+
+    AdminAdEntry:
+      type: object
+      required: [id, title, creativeUrl, clickUrl, durationSeconds, targetType, status, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        creativeUrl:
+          type: string
+        clickUrl:
+          type: string
+        durationSeconds:
+          type: integer
+        targetType:
+          type: string
+        targetFieldId:
+          type: ["integer", "null"]
+        startsAt:
+          type: ["string", "null"]
+        endsAt:
+          type: ["string", "null"]
+        status:
+          type: string
+        createdAt:
+          type: string
+
+    CreateAdInput:
+      type: object
+      required: [title, creativeUrl, clickUrl, durationSeconds]
+      properties:
+        title:
+          type: string
+        creativeUrl:
+          type: string
+        clickUrl:
+          type: string
+        durationSeconds:
+          type: integer
+        targetType:
+          type: string
+        targetFieldId:
+          type: ["integer", "null"]
+        startsAt:
+          type: ["string", "null"]
+        endsAt:
+          type: ["string", "null"]
+        status:
+          type: string
+
+    PatchAdInput:
+      type: object
+      properties:
+        status:
+          type: string
+        title:
+          type: string
+        creativeUrl:
+          type: string
+        clickUrl:
+          type: string
+        durationSeconds:
+          type: integer
+
+    AdStats:
+      type: object
+      required: [impressions, clicks, completions, skipRate, completionRate]
+      properties:
+        impressions:
+          type: integer
+        clicks:
+          type: integer
+        completions:
+          type: integer
+        skipRate:
+          type: number
+        completionRate:
+          type: number

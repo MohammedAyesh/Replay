@@ -4,3 +4,4 @@ export * from "./recordings";
 export * from "./clips";
 export * from "./savedClips";
 export * from "./likes";
+export * from "./ads";

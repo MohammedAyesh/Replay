@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Hls from "hls.js";
-import { useListClips, useToggleLike, useSaveClip, useUnsaveClip, getListClipsQueryKey, getListSavedClipsQueryKey, Clip } from "@workspace/api-client-react";
+import { useListClips, useToggleLike, useSaveClip, useUnsaveClip, getListClipsQueryKey, getListSavedClipsQueryKey, Clip, Ad } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Heart, Share, Bookmark, Volume2, VolumeX } from "lucide-react";
+import { Heart, Share, Bookmark, Volume2, VolumeX, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
@@ -33,6 +33,8 @@ export default function Watch() {
   );
 }
 
+type AdPhase = "idle" | "showing" | "done";
+
 function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
   const queryClient = useQueryClient();
   const { isGuest } = useAuth();
@@ -43,11 +45,45 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
+  // Ad state
+  const [adPhase, setAdPhase] = useState<AdPhase>("idle");
+  const [currentAd, setCurrentAd] = useState<Ad | null>(null);
+  const [skipSecondsLeft, setSkipSecondsLeft] = useState<number | null>(null);
+  const adVideoRef = useRef<HTMLVideoElement>(null);
+  const adHlsRef = useRef<Hls | null>(null);
+  const adElapsedRef = useRef(0);
+  const adTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const toggleLikeMutation = useToggleLike();
   const saveClipMutation = useSaveClip();
   const unsaveClipMutation = useUnsaveClip();
 
-  // Load video via HLS.js when clip changes
+  const startClip = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.play().catch(() => {});
+    setIsPlaying(true);
+  }, []);
+
+  const finishAd = useCallback((ad: Ad, skippedAt?: number) => {
+    if (adTimerRef.current) { clearInterval(adTimerRef.current); adTimerRef.current = null; }
+    if (adHlsRef.current) { adHlsRef.current.destroy(); adHlsRef.current = null; }
+    if (adVideoRef.current) { adVideoRef.current.pause(); adVideoRef.current.removeAttribute("src"); }
+
+    const completed = skippedAt === undefined;
+    fetch(`/api/ads/${ad.id}/impression`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clipId: clip.id, completed, skippedAtSecond: skippedAt ?? null }),
+    }).catch(() => {});
+
+    setAdPhase("done");
+    setCurrentAd(null);
+    startClip();
+  }, [clip.id, startClip]);
+
+  // Load clip video via HLS.js
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -80,18 +116,96 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
     };
   }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, index]);
 
-  // Intersection Observer for autoplay
+  // Load ad video when ad starts showing
+  useEffect(() => {
+    if (adPhase !== "showing" || !currentAd) return;
+    const adVideo = adVideoRef.current;
+    if (!adVideo) return;
+
+    const src = currentAd.creativeUrl;
+    if (src.includes(".m3u8")) {
+      if (Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: false });
+        adHlsRef.current = hls;
+        hls.loadSource(src);
+        hls.attachMedia(adVideo);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          adVideo.play().catch(() => {});
+        });
+      } else if (adVideo.canPlayType("application/vnd.apple.mpegurl")) {
+        adVideo.src = src;
+        adVideo.play().catch(() => {});
+      }
+    } else if (src.match(/\.(mp4|webm|ogg)$/i)) {
+      adVideo.src = src;
+      adVideo.play().catch(() => {});
+    }
+
+    return () => {
+      if (adHlsRef.current) { adHlsRef.current.destroy(); adHlsRef.current = null; }
+    };
+  }, [adPhase, currentAd]);
+
+  // Skip countdown timer
+  useEffect(() => {
+    if (adPhase !== "showing" || !currentAd) return;
+
+    const SKIP_AFTER = 5;
+    setSkipSecondsLeft(SKIP_AFTER);
+    adElapsedRef.current = 0;
+
+    adTimerRef.current = setInterval(() => {
+      adElapsedRef.current += 1;
+      const left = SKIP_AFTER - adElapsedRef.current;
+      if (left > 0) {
+        setSkipSecondsLeft(left);
+      } else {
+        setSkipSecondsLeft(0);
+      }
+    }, 1000);
+
+    return () => {
+      if (adTimerRef.current) { clearInterval(adTimerRef.current); adTimerRef.current = null; }
+    };
+  }, [adPhase, currentAd]);
+
+  // Intersection Observer: fetch ad then autoplay
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
-          video.play().catch(() => {});
-          setIsPlaying(true);
+          setAdPhase("idle");
+          setCurrentAd(null);
+          fetch("/api/ads/next", { credentials: "include" })
+            .then(async (r) => {
+              if (r.status === 204 || !r.ok) return null;
+              return r.json() as Promise<Ad>;
+            })
+            .then((ad) => {
+              if (ad && ad.id) {
+                setCurrentAd(ad);
+                setAdPhase("showing");
+              } else {
+                setAdPhase("done");
+                video.play().catch(() => {});
+                setIsPlaying(true);
+              }
+            })
+            .catch(() => {
+              setAdPhase("done");
+              video.play().catch(() => {});
+              setIsPlaying(true);
+            });
         } else {
           video.pause();
           setIsPlaying(false);
+          if (adTimerRef.current) { clearInterval(adTimerRef.current); adTimerRef.current = null; }
+          if (adHlsRef.current) { adHlsRef.current.destroy(); adHlsRef.current = null; }
+          setAdPhase("idle");
+          setCurrentAd(null);
         }
       },
       { threshold: 0.6 }
@@ -161,11 +275,17 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
   };
 
   const togglePlay = () => {
+    if (adPhase === "showing") return;
     const video = videoRef.current;
     if (!video) return;
     if (isPlaying) { video.pause(); } else { video.play().catch(() => {}); }
     setIsPlaying(!isPlaying);
   };
+
+  const isVideoAd = currentAd && (
+    currentAd.creativeUrl.includes(".m3u8") ||
+    currentAd.creativeUrl.match(/\.(mp4|webm|ogg)$/i)
+  );
 
   return (
     <div className="relative w-full h-full shrink-0 snap-start bg-black overflow-hidden" onClick={togglePlay}>
@@ -245,6 +365,71 @@ function ClipScreen({ clip, index }: { clip: Clip; index: number }) {
           </div>
         )}
       </div>
+
+      {/* Ad Overlay */}
+      {adPhase === "showing" && currentAd && (
+        <div
+          className="absolute inset-0 bg-black z-20 flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {isVideoAd ? (
+            <video
+              ref={adVideoRef}
+              className="absolute inset-0 w-full h-full object-cover"
+              playsInline
+              muted={isMuted}
+              onEnded={() => finishAd(currentAd)}
+            />
+          ) : (
+            <img
+              src={currentAd.creativeUrl}
+              alt="Advertisement"
+              className="absolute inset-0 w-full h-full object-cover"
+              onLoad={() => {
+                setTimeout(() => finishAd(currentAd), currentAd.durationSeconds * 1000);
+              }}
+            />
+          )}
+
+          <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/60 pointer-events-none" />
+
+          {/* Ad badge */}
+          <div className="absolute top-safe pt-4 px-4 w-full flex justify-between items-start pointer-events-auto">
+            <span className="bg-black/60 text-white/80 border border-white/20 text-[10px] font-bold px-2 py-1 rounded backdrop-blur-sm">
+              AD
+            </span>
+            {skipSecondsLeft !== null && skipSecondsLeft > 0 ? (
+              <span className="bg-black/60 text-white/70 border border-white/20 text-xs px-3 py-1.5 rounded backdrop-blur-sm">
+                Skip in {skipSecondsLeft}s
+              </span>
+            ) : (
+              <button
+                onClick={() => finishAd(currentAd, adElapsedRef.current)}
+                className="bg-white/90 text-black text-xs font-bold px-3 py-1.5 rounded active:scale-95 transition-transform"
+              >
+                Skip →
+              </button>
+            )}
+          </div>
+
+          {/* Visit button */}
+          <div className="absolute bottom-safe pb-8 px-6 w-full pointer-events-auto">
+            <button
+              onClick={() => {
+                fetch(`/api/ads/${currentAd.id}/click`, {
+                  method: "POST",
+                  credentials: "include",
+                }).catch(() => {});
+                window.open(currentAd.clickUrl, "_blank", "noopener,noreferrer");
+              }}
+              className="w-full bg-white text-black font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Visit
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

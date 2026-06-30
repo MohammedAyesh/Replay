@@ -7,11 +7,17 @@
  */
 
 export * from './accountStats';
+export * from './ad';
+export * from './adminAdEntry';
+export * from './adStats';
 export * from './authResponse';
 export * from './clip';
+export * from './createAdInput';
 export * from './field';
 export * from './healthStatus';
+export * from './impressionInput';
 export * from './likeResult';
 export * from './loginInput';
+export * from './patchAdInput';
 export * from './recording';
 export * from './user';

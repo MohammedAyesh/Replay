@@ -250,3 +250,136 @@ export const GetAccountStatsResponse = zod.object({
 })
 
 
+/**
+ * @summary Get next ad for current user (frequency-capped)
+ */
+export const GetNextAdResponse = zod.object({
+  "id": zod.number(),
+  "creativeUrl": zod.string(),
+  "clickUrl": zod.string(),
+  "durationSeconds": zod.number(),
+  "targetType": zod.string()
+})
+
+
+/**
+ * @summary Record an ad impression
+ */
+export const RecordImpressionParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RecordImpressionBody = zod.object({
+  "clipId": zod.number(),
+  "completed": zod.boolean(),
+  "skippedAtSecond": zod.number().nullish()
+})
+
+export const RecordImpressionResponse = zod.unknown()
+
+
+/**
+ * @summary Record an ad click
+ */
+export const RecordClickParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RecordClickResponse = zod.unknown()
+
+
+/**
+ * @summary List all ad campaigns (admin)
+ */
+export const ListAdminAdsResponseItem = zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "creativeUrl": zod.string(),
+  "clickUrl": zod.string(),
+  "durationSeconds": zod.number(),
+  "targetType": zod.string(),
+  "targetFieldId": zod.number().nullish(),
+  "startsAt": zod.string().nullish(),
+  "endsAt": zod.string().nullish(),
+  "status": zod.string(),
+  "createdAt": zod.string()
+})
+export const ListAdminAdsResponse = zod.array(ListAdminAdsResponseItem)
+
+
+/**
+ * @summary Create a new ad campaign (admin)
+ */
+export const CreateAdBody = zod.object({
+  "title": zod.string(),
+  "creativeUrl": zod.string(),
+  "clickUrl": zod.string(),
+  "durationSeconds": zod.number(),
+  "targetType": zod.string().optional(),
+  "targetFieldId": zod.number().nullish(),
+  "startsAt": zod.string().nullish(),
+  "endsAt": zod.string().nullish(),
+  "status": zod.string().optional()
+})
+
+export const CreateAdResponse = zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "creativeUrl": zod.string(),
+  "clickUrl": zod.string(),
+  "durationSeconds": zod.number(),
+  "targetType": zod.string(),
+  "targetFieldId": zod.number().nullish(),
+  "startsAt": zod.string().nullish(),
+  "endsAt": zod.string().nullish(),
+  "status": zod.string(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Update ad status (admin)
+ */
+export const UpdateAdParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateAdBody = zod.object({
+  "status": zod.string().optional(),
+  "title": zod.string().optional(),
+  "creativeUrl": zod.string().optional(),
+  "clickUrl": zod.string().optional(),
+  "durationSeconds": zod.number().optional()
+})
+
+export const UpdateAdResponse = zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "creativeUrl": zod.string(),
+  "clickUrl": zod.string(),
+  "durationSeconds": zod.number(),
+  "targetType": zod.string(),
+  "targetFieldId": zod.number().nullish(),
+  "startsAt": zod.string().nullish(),
+  "endsAt": zod.string().nullish(),
+  "status": zod.string(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Get stats for an ad campaign (admin)
+ */
+export const GetAdStatsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetAdStatsResponse = zod.object({
+  "impressions": zod.number(),
+  "clicks": zod.number(),
+  "completions": zod.number(),
+  "skipRate": zod.number(),
+  "completionRate": zod.number()
+})
+
+
