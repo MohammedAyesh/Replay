@@ -9,6 +9,7 @@ import {
   ToggleLikeResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
 
 const router: IRouter = Router();
 
@@ -35,6 +36,13 @@ async function buildClip(clipId: number, userId: number | null) {
     isSaved = !!saved;
   }
 
+  // Derive Bunny playback URL from videoId when Bunny is configured,
+  // falling back to the stored URL, then the legacy videoUrl.
+  let bunnyPlaybackUrl = clip.bunnyPlaybackUrl ?? null;
+  if (clip.bunnyVideoId && isBunnyConfigured()) {
+    bunnyPlaybackUrl = getBunnyPlaybackUrl(clip.bunnyVideoId);
+  }
+
   return {
     id: clip.id,
     recordingId: clip.recordingId,
@@ -45,7 +53,7 @@ async function buildClip(clipId: number, userId: number | null) {
     isLiked,
     isSaved,
     videoUrl: recording?.videoUrl ?? "",
-    bunnyPlaybackUrl: clip.bunnyPlaybackUrl ?? null,
+    bunnyPlaybackUrl,
     bunnyVideoId: clip.bunnyVideoId ?? null,
     fieldName: field?.name ?? null,
     court: recording?.court ?? null,
