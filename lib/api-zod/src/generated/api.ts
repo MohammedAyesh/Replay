@@ -211,10 +211,13 @@ export const CreateUserClipBody = zod.object({
   "title": zod.string(),
   "startTime": zod.number(),
   "endTime": zod.number(),
-  "cropX": zod.number(),
-  "cropY": zod.number(),
-  "cropW": zod.number(),
-  "cropH": zod.number()
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+}))
 })
 
 export const CreateUserClipResponse = zod.object({
@@ -224,10 +227,13 @@ export const CreateUserClipResponse = zod.object({
   "title": zod.string(),
   "startTime": zod.number(),
   "endTime": zod.number(),
-  "cropX": zod.number(),
-  "cropY": zod.number(),
-  "cropW": zod.number(),
-  "cropH": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()
@@ -244,10 +250,13 @@ export const ListUserClipsResponseItem = zod.object({
   "title": zod.string(),
   "startTime": zod.number(),
   "endTime": zod.number(),
-  "cropX": zod.number(),
-  "cropY": zod.number(),
-  "cropW": zod.number(),
-  "cropH": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()

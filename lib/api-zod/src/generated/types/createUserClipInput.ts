@@ -5,14 +5,12 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { CropKeyframe } from './cropKeyframe';
 
 export interface CreateUserClipInput {
   videoId: string;
   title: string;
   startTime: number;
   endTime: number;
-  cropX: number;
-  cropY: number;
-  cropW: number;
-  cropH: number;
+  cropPath: CropKeyframe[];
 }

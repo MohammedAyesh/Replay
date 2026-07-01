@@ -709,9 +709,27 @@ components:
         date:
           type: ["string", "null"]
 
+    CropKeyframe:
+      type: object
+      required: [t, x, y, w, h]
+      properties:
+        t:
+          type: number
+          description: Time position as fraction (0-1) of clip duration
+        x:
+          type: number
+          description: Crop left edge as fraction of total video width
+        y:
+          type: number
+        w:
+          type: number
+          description: Crop width as fraction of total video width
+        h:
+          type: number
+
     UserClip:
       type: object
-      required: [id, userId, videoId, title, startTime, endTime, cropX, cropY, cropW, cropH, createdAt]
+      required: [id, userId, videoId, title, startTime, endTime, cropPath, createdAt]
       properties:
         id:
           type: integer
@@ -725,14 +743,10 @@ components:
           type: number
         endTime:
           type: number
-        cropX:
-          type: number
-        cropY:
-          type: number
-        cropW:
-          type: number
-        cropH:
-          type: number
+        cropPath:
+          type: array
+          items:
+            $ref: "#/components/schemas/CropKeyframe"
         thumbnailUrl:
           type: ["string", "null"]
         playbackUrl:
@@ -742,7 +756,7 @@ components:
 
     CreateUserClipInput:
       type: object
-      required: [videoId, title, startTime, endTime, cropX, cropY, cropW, cropH]
+      required: [videoId, title, startTime, endTime, cropPath]
       properties:
         videoId:
           type: string
@@ -752,14 +766,10 @@ components:
           type: number
         endTime:
           type: number
-        cropX:
-          type: number
-        cropY:
-          type: number
-        cropW:
-          type: number
-        cropH:
-          type: number
+        cropPath:
+          type: array
+          items:
+            $ref: "#/components/schemas/CropKeyframe"
 
     LikeResult:
       type: object

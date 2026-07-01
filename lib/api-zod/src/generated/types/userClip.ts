@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { CropKeyframe } from './cropKeyframe';
 
 export interface UserClip {
   id: number;
@@ -13,10 +14,7 @@ export interface UserClip {
   title: string;
   startTime: number;
   endTime: number;
-  cropX: number;
-  cropY: number;
-  cropW: number;
-  cropH: number;
+  cropPath: CropKeyframe[];
   /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */

@@ -16,6 +16,7 @@ export * from './bunnyVideo';
 export * from './clip';
 export * from './createAdInput';
 export * from './createUserClipInput';
+export * from './cropKeyframe';
 export * from './field';
 export * from './healthStatus';
 export * from './impressionInput';

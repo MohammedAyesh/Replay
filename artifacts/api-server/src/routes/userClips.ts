@@ -25,7 +25,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
-  const { videoId, title, startTime, endTime, cropX, cropY, cropW, cropH } = body.data;
+  const { videoId, title, startTime, endTime, cropPath } = body.data;
 
   const [row] = await db
     .insert(userClipsTable)
@@ -35,10 +35,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       title,
       startTime: String(startTime),
       endTime: String(endTime),
-      cropX: String(cropX),
-      cropY: String(cropY),
-      cropW: String(cropW),
-      cropH: String(cropH),
+      cropPath,
     })
     .returning();
 
@@ -53,10 +50,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       title: row.title,
       startTime: parseFloat(row.startTime),
       endTime: parseFloat(row.endTime),
-      cropX: parseFloat(row.cropX),
-      cropY: parseFloat(row.cropY),
-      cropW: parseFloat(row.cropW),
-      cropH: parseFloat(row.cropH),
+      cropPath: row.cropPath,
       thumbnailUrl,
       playbackUrl,
       createdAt: row.createdAt.toISOString(),
@@ -84,10 +78,7 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     title: row.title,
     startTime: parseFloat(row.startTime),
     endTime: parseFloat(row.endTime),
-    cropX: parseFloat(row.cropX),
-    cropY: parseFloat(row.cropY),
-    cropW: parseFloat(row.cropW),
-    cropH: parseFloat(row.cropH),
+    cropPath: row.cropPath,
     thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null,
     playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
     createdAt: row.createdAt.toISOString(),

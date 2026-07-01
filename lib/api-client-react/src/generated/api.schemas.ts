@@ -100,6 +100,17 @@ export interface Clip {
   date?: string | null;
 }
 
+export interface CropKeyframe {
+  /** Time position as fraction (0-1) of clip duration */
+  t: number;
+  /** Crop left edge as fraction of total video width */
+  x: number;
+  y: number;
+  /** Crop width as fraction of total video width */
+  w: number;
+  h: number;
+}
+
 export interface UserClip {
   id: number;
   userId: number;
@@ -107,10 +118,7 @@ export interface UserClip {
   title: string;
   startTime: number;
   endTime: number;
-  cropX: number;
-  cropY: number;
-  cropW: number;
-  cropH: number;
+  cropPath: CropKeyframe[];
   /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */
@@ -123,10 +131,7 @@ export interface CreateUserClipInput {
   title: string;
   startTime: number;
   endTime: number;
-  cropX: number;
-  cropY: number;
-  cropW: number;
-  cropH: number;
+  cropPath: CropKeyframe[];
 }
 
 export interface LikeResult {
