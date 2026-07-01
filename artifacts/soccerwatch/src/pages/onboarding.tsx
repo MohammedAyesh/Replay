@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { useUpdateProfile, useGetMe } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useUpdateProfile, useGetMe, getGetMeQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,6 +44,7 @@ export default function Onboarding() {
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
 
+  const queryClient = useQueryClient();
   const updateProfile = useUpdateProfile();
 
   // Guard: guests and unauthenticated users go to login
@@ -78,7 +80,9 @@ export default function Onboarding() {
         },
       },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
+          // Update the cached user immediately so the auth guard sees profileComplete=true
+          queryClient.setQueryData(getGetMeQueryKey(), data);
           setLocation("/watch");
         },
         onError: () => {
