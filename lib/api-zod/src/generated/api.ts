@@ -204,6 +204,68 @@ export const GetRecordingResponse = zod.object({
 
 
 /**
+ * @summary Create a user clip from a full match video
+ */
+export const CreateUserClipBody = zod.object({
+  "videoId": zod.string(),
+  "title": zod.string(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropX": zod.number(),
+  "cropY": zod.number(),
+  "cropW": zod.number(),
+  "cropH": zod.number()
+})
+
+export const CreateUserClipResponse = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "videoId": zod.string(),
+  "title": zod.string(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropX": zod.number(),
+  "cropY": zod.number(),
+  "cropW": zod.number(),
+  "cropH": zod.number(),
+  "thumbnailUrl": zod.string().nullish(),
+  "playbackUrl": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary List clips created by the current user
+ */
+export const ListUserClipsResponseItem = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "videoId": zod.string(),
+  "title": zod.string(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropX": zod.number(),
+  "cropY": zod.number(),
+  "cropW": zod.number(),
+  "cropH": zod.number(),
+  "thumbnailUrl": zod.string().nullish(),
+  "playbackUrl": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const ListUserClipsResponse = zod.array(ListUserClipsResponseItem)
+
+
+/**
+ * @summary Delete a user-created clip
+ */
+export const DeleteUserClipParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteUserClipResponse = zod.unknown()
+
+
+/**
  * @summary Get ranked highlights feed for current week
  */
 export const ListClipsResponseItem = zod.object({

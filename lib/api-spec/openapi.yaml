@@ -235,6 +235,63 @@ paths:
         "404":
           description: Not found
 
+  /user-clips:
+    post:
+      operationId: createUserClip
+      tags: [clips]
+      summary: Create a user clip from a full match video
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserClipInput"
+      responses:
+        "201":
+          description: Clip created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserClip"
+        "401":
+          description: Unauthenticated
+    get:
+      operationId: listUserClips
+      tags: [clips]
+      summary: List clips created by the current user
+      responses:
+        "200":
+          description: User's created clips
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserClip"
+        "401":
+          description: Unauthenticated
+
+  /user-clips/{id}:
+    delete:
+      operationId: deleteUserClip
+      tags: [clips]
+      summary: Delete a user-created clip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Clip deleted
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Not your clip
+        "404":
+          description: Not found
+
   /clips:
     get:
       operationId: listClips
@@ -651,6 +708,58 @@ components:
           type: ["string", "null"]
         date:
           type: ["string", "null"]
+
+    UserClip:
+      type: object
+      required: [id, userId, videoId, title, startTime, endTime, cropX, cropY, cropW, cropH, createdAt]
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        videoId:
+          type: string
+        title:
+          type: string
+        startTime:
+          type: number
+        endTime:
+          type: number
+        cropX:
+          type: number
+        cropY:
+          type: number
+        cropW:
+          type: number
+        cropH:
+          type: number
+        thumbnailUrl:
+          type: ["string", "null"]
+        playbackUrl:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    CreateUserClipInput:
+      type: object
+      required: [videoId, title, startTime, endTime, cropX, cropY, cropW, cropH]
+      properties:
+        videoId:
+          type: string
+        title:
+          type: string
+        startTime:
+          type: number
+        endTime:
+          type: number
+        cropX:
+          type: number
+        cropY:
+          type: number
+        cropW:
+          type: number
+        cropH:
+          type: number
 
     LikeResult:
       type: object

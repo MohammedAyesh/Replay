@@ -100,6 +100,35 @@ export interface Clip {
   date?: string | null;
 }
 
+export interface UserClip {
+  id: number;
+  userId: number;
+  videoId: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+  cropX: number;
+  cropY: number;
+  cropW: number;
+  cropH: number;
+  /** @nullable */
+  thumbnailUrl?: string | null;
+  /** @nullable */
+  playbackUrl?: string | null;
+  createdAt: string;
+}
+
+export interface CreateUserClipInput {
+  videoId: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+  cropX: number;
+  cropY: number;
+  cropW: number;
+  cropH: number;
+}
+
 export interface LikeResult {
   liked: boolean;
   likeCount: number;

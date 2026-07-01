@@ -29,6 +29,7 @@ import type {
   BunnyVideo,
   Clip,
   CreateAdInput,
+  CreateUserClipInput,
   Field,
   HealthStatus,
   ImpressionInput,
@@ -37,7 +38,8 @@ import type {
   PatchAdInput,
   ProfileInput,
   Recording,
-  User
+  User,
+  UserClip
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -969,6 +971,223 @@ export function useGetRecording<TData = Awaited<ReturnType<typeof getRecording>>
 
 
 
+
+export const getCreateUserClipUrl = () => {
+
+
+
+
+  return `/api/user-clips`
+}
+
+/**
+ * @summary Create a user clip from a full match video
+ */
+export const createUserClip = async (createUserClipInput: CreateUserClipInput, options?: RequestInit): Promise<UserClip> => {
+
+  return customFetch<UserClip>(getCreateUserClipUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createUserClipInput)
+  }
+);}
+
+
+
+
+export const getCreateUserClipMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createUserClip>>, TError,{data: BodyType<CreateUserClipInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createUserClip>>, TError,{data: BodyType<CreateUserClipInput>}, TContext> => {
+
+const mutationKey = ['createUserClip'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createUserClip>>, {data: BodyType<CreateUserClipInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createUserClip(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateUserClipMutationResult = NonNullable<Awaited<ReturnType<typeof createUserClip>>>
+    export type CreateUserClipMutationBody = BodyType<CreateUserClipInput>
+    export type CreateUserClipMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a user clip from a full match video
+ */
+export const useCreateUserClip = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createUserClip>>, TError,{data: BodyType<CreateUserClipInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createUserClip>>,
+        TError,
+        {data: BodyType<CreateUserClipInput>},
+        TContext
+      > => {
+      return useMutation(getCreateUserClipMutationOptions(options));
+    }
+
+export const getListUserClipsUrl = () => {
+
+
+
+
+  return `/api/user-clips`
+}
+
+/**
+ * @summary List clips created by the current user
+ */
+export const listUserClips = async ( options?: RequestInit): Promise<UserClip[]> => {
+
+  return customFetch<UserClip[]>(getListUserClipsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListUserClipsQueryKey = () => {
+    return [
+    `/api/user-clips`
+    ] as const;
+    }
+
+
+export const getListUserClipsQueryOptions = <TData = Awaited<ReturnType<typeof listUserClips>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUserClips>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListUserClipsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listUserClips>>> = ({ signal }) => listUserClips({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listUserClips>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListUserClipsQueryResult = NonNullable<Awaited<ReturnType<typeof listUserClips>>>
+export type ListUserClipsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List clips created by the current user
+ */
+
+export function useListUserClips<TData = Awaited<ReturnType<typeof listUserClips>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUserClips>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListUserClipsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDeleteUserClipUrl = (id: number,) => {
+
+
+
+
+  return `/api/user-clips/${id}`
+}
+
+/**
+ * @summary Delete a user-created clip
+ */
+export const deleteUserClip = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteUserClipUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteUserClipMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteUserClip>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteUserClip>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteUserClip'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteUserClip>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteUserClip(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteUserClipMutationResult = NonNullable<Awaited<ReturnType<typeof deleteUserClip>>>
+
+    export type DeleteUserClipMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a user-created clip
+ */
+export const useDeleteUserClip = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteUserClip>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteUserClip>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteUserClipMutationOptions(options));
+    }
 
 export const getListClipsUrl = () => {
 

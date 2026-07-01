@@ -1,14 +1,19 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Link, useRoute } from "wouter";
 import {
   useGetBunnyCollections,
   useGetBunnyCollectionVideos,
+  useCreateUserClip,
+  getListUserClipsQueryKey,
   BunnyVideo,
 } from "@workspace/api-client-react";
-import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Scissors } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
+import { useAuth } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
 import Hls from "hls.js";
 
 function splitName(name: string): string[] {
@@ -26,12 +31,18 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function formatTime(secs: number): string {
+  if (!isFinite(secs) || secs < 0) return "0:00";
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 export default function FieldDetail() {
   const [, params] = useRoute("/fields/:id");
   const guid = params?.id ?? "";
   const { t } = useTranslation();
 
-  // Use the cached collections list to get name/metadata without an extra endpoint
   const { data: collections } = useGetBunnyCollections();
   const collection = collections?.find((c) => c.guid === guid);
 
@@ -42,7 +53,6 @@ export default function FieldDetail() {
 
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
-      {/* Header */}
       <motion.header
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } }}
@@ -65,7 +75,6 @@ export default function FieldDetail() {
         </div>
       </motion.header>
 
-      {/* Field Hero */}
       <motion.div
         initial={{ opacity: 0, scale: 1.04 }}
         animate={{ opacity: 1, scale: 1, transition: { duration: 0.5, ease: "easeOut" as const } }}
@@ -108,7 +117,6 @@ export default function FieldDetail() {
         )}
       </motion.div>
 
-      {/* Video Grid */}
       <div className="flex-1 overflow-y-auto pb-24">
         {videosLoading ? (
           <div className="p-4 grid grid-cols-2 gap-3">
@@ -142,7 +150,6 @@ export default function FieldDetail() {
         )}
       </div>
 
-      {/* Fullscreen player overlay */}
       <AnimatePresence>
         {activeVideo && (
           <VideoPlayer video={activeVideo} onClose={() => setActiveVideo(null)} />
@@ -208,10 +215,23 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const scrollRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const { setFullscreenVideo } = useFullscreenVideo();
+  const { isGuest } = useAuth();
+  const { toast } = useToast();
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const createUserClip = useCreateUserClip();
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [videoWidth, setVideoWidth] = useState<number | undefined>(undefined);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  const [isClipping, setIsClipping] = useState(false);
+  const [clipStart, setClipStart] = useState(0);
+  const [clipEnd, setClipEnd] = useState(0.1);
+  const [clipTitle, setClipTitle] = useState("");
+  const [isSavingClip, setIsSavingClip] = useState(false);
 
   useEffect(() => {
     setFullscreenVideo(true);
@@ -227,10 +247,14 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     function onPlay() { setIsPlaying(true); }
     function onPause() { setIsPlaying(false); }
     function onCanPlay() { setIsReady(true); }
+    function onTimeUpdate() { if (el) setCurrentTime(el.currentTime); }
+    function onDurationChange() { if (el) setDuration(el.duration || 0); }
 
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
     el.addEventListener("canplay", onCanPlay);
+    el.addEventListener("timeupdate", onTimeUpdate);
+    el.addEventListener("durationchange", onDurationChange);
 
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
@@ -239,9 +263,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       hls.attachMedia(el);
       hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
-          el.dispatchEvent(new Event("error"));
-        }
+        if (data.fatal) el.dispatchEvent(new Event("error"));
       });
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
       el.src = video.playbackUrl;
@@ -254,10 +276,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       el.removeEventListener("play", onPlay);
       el.removeEventListener("pause", onPause);
       el.removeEventListener("canplay", onCanPlay);
+      el.removeEventListener("timeupdate", onTimeUpdate);
+      el.removeEventListener("durationchange", onDurationChange);
     };
   }, [video.playbackUrl]);
 
-  // Once video metadata loads, compute exact pixel width so the container overflows
   function onLoadedMetadata(e: React.SyntheticEvent<HTMLVideoElement>) {
     const v = e.currentTarget;
     const scrollEl = scrollRef.current;
@@ -266,14 +289,13 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     const ar = v.videoWidth / v.videoHeight;
     const w = Math.round(containerH * ar);
     setVideoWidth(w);
-    // Re-center after width is known
+    setDuration(v.duration || 0);
     requestAnimationFrame(() => {
       const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
       scrollEl.scrollLeft = maxScroll / 2;
     });
   }
 
-  // Fallback center on open (before metadata loads)
   useEffect(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl) return;
@@ -300,6 +322,68 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     el.currentTime = Math.max(0, Math.min(el.duration || Infinity, el.currentTime + delta));
   };
 
+  const enterClipMode = () => {
+    if (isGuest) {
+      toast({ title: t.clipping.signInToClip, description: t.clipping.signInToClipDesc });
+      return;
+    }
+    const el = videoRef.current;
+    if (el && !el.paused) el.pause();
+
+    const d = duration || 1;
+    const ct = currentTime;
+    const half = Math.min(30 / d, 0.15);
+    const s = Math.max(0, ct / d - half);
+    const e = Math.min(1, ct / d + half);
+    setClipStart(s);
+    setClipEnd(e > s + 0.01 ? e : Math.min(1, s + 0.1));
+    setClipTitle(video.title);
+    setIsClipping(true);
+  };
+
+  const cancelClip = () => {
+    setIsClipping(false);
+    setClipTitle("");
+  };
+
+  const saveClip = async () => {
+    const scrollEl = scrollRef.current;
+    const vw = videoWidth ?? 1;
+    const containerW = scrollEl?.clientWidth ?? vw;
+    const scrollLeft = scrollEl?.scrollLeft ?? 0;
+
+    const cropX = vw > 0 ? Math.max(0, scrollLeft / vw) : 0;
+    const cropW = vw > 0 ? Math.min(1, containerW / vw) : 1;
+
+    setIsSavingClip(true);
+    try {
+      await createUserClip.mutateAsync({
+        data: {
+          videoId: video.guid,
+          title: clipTitle.trim() || video.title,
+          startTime: clipStart,
+          endTime: clipEnd,
+          cropX,
+          cropY: 0,
+          cropW,
+          cropH: 1,
+        },
+      });
+      queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+      toast({
+        title: t.clipping.saved,
+        description: t.clipping.savedDesc,
+        className: "bg-primary text-white border-none",
+      });
+      setIsClipping(false);
+      setClipTitle("");
+    } catch {
+      toast({ title: t.clipping.error, variant: "destructive" });
+    } finally {
+      setIsSavingClip(false);
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -317,7 +401,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         </button>
       </div>
 
-      {/* 16:9 viewport with horizontally scrollable wide video (no visible scrollbar) */}
+      {/* Video viewport */}
       <div className="flex-1 flex items-center justify-center w-full overflow-hidden">
         <div
           ref={scrollRef}
@@ -332,49 +416,217 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             loop
             onLoadedMetadata={onLoadedMetadata}
           />
-          {/* Transparent overlay catches taps for play/pause without blocking scroll */}
+
+          {/* Crop frame overlay in clip mode */}
+          <AnimatePresence>
+            {isClipping && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-10 pointer-events-none"
+              >
+                <div className="absolute inset-0 border-2 border-primary/80 rounded shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]" />
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded whitespace-nowrap">
+                  {t.clipping.cropHint}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <button
-            onClick={togglePlay}
+            onClick={!isClipping ? togglePlay : undefined}
             className="absolute inset-0 z-10"
             aria-label={isPlaying ? "Pause" : "Play"}
           />
         </div>
       </div>
 
-      {/* Playback controls */}
-      <div className="shrink-0 px-4 py-3 bg-black flex items-center justify-center gap-6">
-        <button
-          onClick={() => seek(-5)}
-          className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
-          aria-label="Back 5 seconds"
-        >
-          <SkipBack className="w-5 h-5" />
-        </button>
+      {/* Clipping UI */}
+      <AnimatePresence>
+        {isClipping && (
+          <motion.div
+            initial={{ y: 60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 60, opacity: 0 }}
+            transition={{ type: "spring", damping: 26, stiffness: 300 }}
+            className="shrink-0 bg-zinc-900/95 backdrop-blur-md px-4 pt-4 pb-safe"
+          >
+            <p className="text-white font-bold text-sm mb-3">{t.clipping.title}</p>
 
-        <button
-          onClick={togglePlay}
-          className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
-          aria-label={isPlaying ? "Pause" : "Play"}
-        >
-          {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
-        </button>
+            {/* Range slider */}
+            <div className="mb-3">
+              <RangeSlider
+                start={clipStart}
+                end={clipEnd}
+                onChange={(s, e) => {
+                  setClipStart(s);
+                  setClipEnd(e);
+                  if (videoRef.current) videoRef.current.currentTime = s * (duration || 1);
+                }}
+              />
+              <div className="flex justify-between mt-1">
+                <span className="text-white/60 text-[10px]">
+                  {t.clipping.startLabel}: {formatTime(clipStart * (duration || 0))}
+                </span>
+                <span className="text-white/60 text-[10px]">
+                  {t.clipping.endLabel}: {formatTime(clipEnd * (duration || 0))}
+                </span>
+              </div>
+            </div>
 
-        <button
-          onClick={() => seek(5)}
-          className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
-          aria-label="Forward 5 seconds"
-        >
-          <SkipForward className="w-5 h-5" />
-        </button>
-      </div>
+            {/* Title input */}
+            <input
+              className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/40 outline-none focus:border-primary mb-3"
+              placeholder={t.clipping.titlePlaceholder}
+              value={clipTitle}
+              onChange={(e) => setClipTitle(e.target.value)}
+              maxLength={80}
+            />
+
+            {/* Actions */}
+            <div className="flex gap-2 pb-3">
+              <button
+                onClick={cancelClip}
+                disabled={isSavingClip}
+                className="flex-1 bg-white/10 border border-white/20 rounded-xl py-3 text-white text-sm font-semibold active:scale-95 transition-transform disabled:opacity-50"
+              >
+                {t.clipping.cancel}
+              </button>
+              <button
+                onClick={saveClip}
+                disabled={isSavingClip}
+                className="flex-[2] bg-primary rounded-xl py-3 text-white text-sm font-bold active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Scissors className="w-4 h-4" />
+                {isSavingClip ? t.clipping.saving : t.clipping.save}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Playback controls — hidden while clipping */}
+      {!isClipping && (
+        <div className="shrink-0 px-4 py-3 bg-black flex items-center justify-center gap-4">
+          <button
+            onClick={() => seek(-5)}
+            className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+            aria-label="Back 5 seconds"
+          >
+            <SkipBack className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={togglePlay}
+            className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
+            aria-label={isPlaying ? "Pause" : "Play"}
+          >
+            {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+          </button>
+
+          <button
+            onClick={() => seek(5)}
+            className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+            aria-label="Forward 5 seconds"
+          >
+            <SkipForward className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={enterClipMode}
+            className="w-12 h-12 rounded-full bg-primary/90 flex items-center justify-center text-white active:scale-95 transition-transform"
+            aria-label="Create clip"
+          >
+            <Scissors className="w-5 h-5" />
+          </button>
+        </div>
+      )}
 
       {/* Bottom info */}
-      <div className="shrink-0 px-4 pb-safe pb-3 bg-black">
-        <p className="text-white font-bold text-sm leading-tight">{video.title}</p>
-        {(video.views ?? 0) > 0 && (
-          <p className="text-white/60 text-xs mt-0.5">{(video.views ?? 0).toLocaleString()} views</p>
-        )}
-      </div>
+      {!isClipping && (
+        <div className="shrink-0 px-4 pb-safe pb-3 bg-black">
+          <p className="text-white font-bold text-sm leading-tight">{video.title}</p>
+          {(video.views ?? 0) > 0 && (
+            <p className="text-white/60 text-xs mt-0.5">{(video.views ?? 0).toLocaleString()} views</p>
+          )}
+        </div>
+      )}
     </motion.div>
+  );
+}
+
+function RangeSlider({
+  start,
+  end,
+  onChange,
+}: {
+  start: number;
+  end: number;
+  onChange: (start: number, end: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  const getVal = (clientX: number): number => {
+    const t = trackRef.current;
+    if (!t) return 0;
+    const rect = t.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  };
+
+  const handleStartPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const handleStartPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.buttons === 0) return;
+    const v = getVal(e.clientX);
+    onChange(Math.min(v, end - 0.02), end);
+  };
+
+  const handleEndPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const handleEndPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.buttons === 0) return;
+    const v = getVal(e.clientX);
+    onChange(start, Math.max(v, start + 0.02));
+  };
+
+  return (
+    <div ref={trackRef} className="relative h-10 flex items-center select-none">
+      {/* Background track */}
+      <div className="absolute inset-x-3 h-1.5 bg-white/20 rounded-full">
+        {/* Selected range */}
+        <div
+          className="absolute h-full bg-primary rounded-full"
+          style={{
+            left: `${start * 100}%`,
+            right: `${(1 - end) * 100}%`,
+          }}
+        />
+      </div>
+
+      {/* Start thumb */}
+      <div
+        className="absolute w-6 h-6 bg-white rounded-full shadow-lg cursor-pointer touch-none z-20 flex items-center justify-center"
+        style={{ left: `calc(${start * 100}% - 12px + 12px)` }}
+        onPointerDown={handleStartPointerDown}
+        onPointerMove={handleStartPointerMove}
+      >
+        <div className="w-1 h-3 rounded bg-zinc-400" />
+      </div>
+
+      {/* End thumb */}
+      <div
+        className="absolute w-6 h-6 bg-primary rounded-full shadow-lg cursor-pointer touch-none z-20 flex items-center justify-center"
+        style={{ left: `calc(${end * 100}% - 12px + 12px)` }}
+        onPointerDown={handleEndPointerDown}
+        onPointerMove={handleEndPointerMove}
+      >
+        <div className="w-1 h-3 rounded bg-white/60" />
+      </div>
+    </div>
   );
 }

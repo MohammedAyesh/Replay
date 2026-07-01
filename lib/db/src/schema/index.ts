@@ -5,3 +5,4 @@ export * from "./clips";
 export * from "./savedClips";
 export * from "./likes";
 export * from "./ads";
+export * from "./userClips";
