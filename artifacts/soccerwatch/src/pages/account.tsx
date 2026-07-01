@@ -1,14 +1,18 @@
 import { useGetMe, useGetAccountStats, useLogout, getGetAccountStatsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
+import { useClerk } from "@clerk/react";
 import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, ChevronLeft, LogOut, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+
 export default function Account() {
-  const { isGuest, user: authUser, setUser } = useAuth();
+  const { isGuest, user: authUser } = useAuth();
   const [, setLocation] = useLocation();
   const { t, locale, setLocale } = useTranslation();
+  const { signOut } = useClerk();
   const logoutMutation = useLogout();
 
   const { data: user } = useGetMe({ query: { enabled: !isGuest, queryKey: getGetMeQueryKey() } });
@@ -17,16 +21,18 @@ export default function Account() {
 
   const handleLogout = () => {
     if (isGuest) {
-      setUser(null);
       setLocation("/");
       return;
     }
-    
+
     logoutMutation.mutate(undefined, {
       onSuccess: () => {
-        setUser(null);
-        setLocation("/");
-      }
+        signOut({ redirectUrl: `${basePath}/` });
+      },
+      onError: () => {
+        // Even if the backend call fails, sign out of Clerk
+        signOut({ redirectUrl: `${basePath}/` });
+      },
     });
   };
 
