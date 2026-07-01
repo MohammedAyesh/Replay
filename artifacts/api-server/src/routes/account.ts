@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
 import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable } from "@workspace/db";
-import { GetAccountStatsResponse, UpdateProfileResponse } from "@workspace/api-zod";
+import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody } from "@workspace/api-zod";
 import { getLocalUserId, getLocalUserRecord } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
@@ -13,10 +13,17 @@ router.patch("/account/profile", async (req, res): Promise<void> => {
     return;
   }
 
-  const { name, phone, position, age, gender } = req.body;
+  let body;
+  try {
+    body = UpdateProfileBody.parse(req.body);
+  } catch (e) {
+    res.status(400).json({ error: "Invalid profile data" });
+    return;
+  }
+
   const [updated] = await db
     .update(usersTable)
-    .set({ name, phone, position, age, gender, profileComplete: true })
+    .set({ name: body.name, phone: body.phone, position: body.position, age: body.age, gender: body.gender, profileComplete: true })
     .where(eq(usersTable.id, userId))
     .returning();
 

@@ -27,11 +27,23 @@ router.get("/auth/me", async (req, res): Promise<void> => {
 router.post("/auth/guest", async (req, res): Promise<void> => {
   const [guest] = await db
     .insert(usersTable)
-    .values({ name: "Guest", email: `guest_${Date.now()}@soccerwatch.local`, isGuest: true })
+    .values({ name: "Guest", email: `guest_${Date.now()}@soccerwatch.local`, isGuest: true, profileComplete: true })
     .returning();
 
   res.cookie("guestId", String(guest.id), { httpOnly: true, sameSite: "lax" });
-  res.json(LoginAsGuestResponse.parse({ user: { id: guest.id, name: guest.name, email: guest.email, isGuest: guest.isGuest } }));
+  res.json(LoginAsGuestResponse.parse({
+    user: {
+      id: guest.id,
+      name: guest.name,
+      email: guest.email,
+      isGuest: guest.isGuest,
+      phone: null,
+      position: null,
+      age: null,
+      gender: null,
+      profileComplete: true,
+    },
+  }));
 });
 
 router.post("/auth/logout", async (req, res): Promise<void> => {

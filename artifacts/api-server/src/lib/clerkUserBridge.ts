@@ -1,7 +1,18 @@
-import { getAuth } from "@clerk/express";
+import { getAuth, createClerkClient } from "@clerk/express";
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import type { Request } from "express";
+
+const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+
+async function isSocialLoginUser(clerkId: string): Promise<boolean> {
+  try {
+    const clerkUser = await clerkClient.users.getUser(clerkId);
+    return (clerkUser.externalAccounts?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
 
 async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | null> {
   const [existing] = await db
@@ -11,6 +22,9 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
 
   if (existing) return existing.id;
 
+  // Social login users start with profileComplete=false (need onboarding)
+  const isSocial = await isSocialLoginUser(clerkId);
+
   const [created] = await db
     .insert(usersTable)
     .values({
@@ -18,6 +32,7 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
       name: "Player",
       email: `clerk_${clerkId}@soccerwatch.local`,
       isGuest: false,
+      profileComplete: !isSocial,
     })
     .onConflictDoNothing()
     .returning({ id: usersTable.id });
