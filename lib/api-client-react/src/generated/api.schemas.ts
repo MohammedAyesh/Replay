@@ -48,6 +48,7 @@ export interface BunnyVideo {
   title: string;
   thumbnailUrl: string;
   playbackUrl: string;
+  embedUrl: string;
   views?: number;
   duration?: number;
 }

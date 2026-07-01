@@ -544,7 +544,7 @@ components:
 
     BunnyVideo:
       type: object
-      required: [guid, title, thumbnailUrl, playbackUrl]
+      required: [guid, title, thumbnailUrl, playbackUrl, embedUrl]
       properties:
         guid:
           type: string
@@ -553,6 +553,8 @@ components:
         thumbnailUrl:
           type: string
         playbackUrl:
+          type: string
+        embedUrl:
           type: string
         views:
           type: integer

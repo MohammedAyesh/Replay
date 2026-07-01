@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useRoute } from "wouter";
 import {
   useGetBunnyCollections,
   useGetBunnyCollectionVideos,
   BunnyVideo,
 } from "@workspace/api-client-react";
-import { ChevronLeft, ChevronRight, Play, Volume2, VolumeX, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
-import Hls from "hls.js";
 
 function splitName(name: string): string[] {
   return name
@@ -203,69 +202,32 @@ function VideoCard({
 }
 
 function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => void }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const [isMuted, setIsMuted] = useState(false);
-
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-
-    if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: false });
-      hlsRef.current = hls;
-      hls.loadSource(video.playbackUrl);
-      hls.attachMedia(el);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));
-    } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
-      el.src = video.playbackUrl;
-      el.play().catch(() => {});
-    }
-
-    return () => {
-      hlsRef.current?.destroy();
-      hlsRef.current = null;
-    };
-  }, [video.playbackUrl]);
-
-  const toggleMute = () => {
-    if (videoRef.current) {
-      videoRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
-    }
-  };
-
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-black flex items-center justify-center"
+      className="fixed inset-0 z-50 bg-black flex flex-col"
     >
-      <video
-        ref={videoRef}
-        className="w-full h-full object-contain"
-        playsInline
-        autoPlay
-        muted={isMuted}
-      />
-
-      <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between">
+      {/* Close button */}
+      <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between z-10 pointer-events-none">
         <button
           onClick={onClose}
-          className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white"
+          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto"
         >
           <X className="w-5 h-5" />
         </button>
-        <button
-          onClick={toggleMute}
-          className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white"
-        >
-          {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-        </button>
       </div>
 
-      <div className="absolute bottom-safe pb-6 px-4 w-full">
+      {/* Bunny iframe player — works without CDN hostname config */}
+      <iframe
+        src={video.embedUrl}
+        className="flex-1 w-full border-0"
+        allow="autoplay; fullscreen"
+        allowFullScreen
+      />
+
+      <div className="absolute bottom-safe pb-6 px-4 w-full pointer-events-none">
         <p className="text-white font-bold text-lg leading-tight drop-shadow-md">{video.title}</p>
         {(video.views ?? 0) > 0 && (
           <p className="text-white/60 text-sm mt-1">{(video.views ?? 0).toLocaleString()} views</p>

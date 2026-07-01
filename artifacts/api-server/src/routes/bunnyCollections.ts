@@ -86,6 +86,7 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
       title: v.title as string,
       thumbnailUrl: `https://${BUNNY_CDN_HOSTNAME}/${v.guid}/thumbnail.jpg`,
       playbackUrl: `https://${BUNNY_CDN_HOSTNAME}/${v.guid}/playlist.m3u8`,
+      embedUrl: `https://iframe.mediadelivery.net/embed/${BUNNY_LIBRARY_ID}/${v.guid}?autoplay=true&loop=false&muted=false&preload=true`,
       views: v.views ?? 0,
       duration: v.length ?? 0,
     }));

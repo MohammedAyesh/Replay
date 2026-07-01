@@ -119,6 +119,7 @@ export const GetBunnyCollectionVideosResponseItem = zod.object({
   "title": zod.string(),
   "thumbnailUrl": zod.string(),
   "playbackUrl": zod.string(),
+  "embedUrl": zod.string(),
   "views": zod.number().optional(),
   "duration": zod.number().optional()
 })
@@ -137,6 +138,7 @@ export const GetFieldVideosResponseItem = zod.object({
   "title": zod.string(),
   "thumbnailUrl": zod.string(),
   "playbackUrl": zod.string(),
+  "embedUrl": zod.string(),
   "views": zod.number().optional(),
   "duration": zod.number().optional()
 })
