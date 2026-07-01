@@ -28,6 +28,8 @@ export interface User {
   /** @nullable */
   gender?: string | null;
   profileComplete: boolean;
+  /** @nullable */
+  preferredLocale?: string | null;
 }
 
 export interface AuthResponse {
@@ -151,6 +153,10 @@ export interface AccountStats {
   savedClips: number;
   likesGiven: number;
   fieldsVisited: number;
+}
+
+export interface LocaleInput {
+  locale: string;
 }
 
 export interface Ad {

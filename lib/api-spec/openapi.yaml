@@ -403,6 +403,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountStats"
 
+  /account/locale:
+    patch:
+      operationId: updateLocale
+      tags: [account]
+      summary: Persist the user's preferred locale
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocaleInput"
+      responses:
+        "200":
+          description: Locale updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthenticated
+
   /account/profile:
     patch:
       operationId: updateProfile
@@ -592,6 +613,8 @@ components:
           type: ["string", "null"]
         profileComplete:
           type: boolean
+        preferredLocale:
+          type: ["string", "null"]
 
     AuthResponse:
       type: object
@@ -805,6 +828,13 @@ components:
           type: integer
         fieldsVisited:
           type: integer
+
+    LocaleInput:
+      type: object
+      required: [locale]
+      properties:
+        locale:
+          type: string
 
     Ad:
       type: object

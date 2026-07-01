@@ -34,6 +34,7 @@ import type {
   HealthStatus,
   ImpressionInput,
   LikeResult,
+  LocaleInput,
   LoginInput,
   PatchAdInput,
   ProfileInput,
@@ -1706,6 +1707,76 @@ export function useGetAccountStats<TData = Awaited<ReturnType<typeof getAccountS
 
 
 
+
+export const getUpdateLocaleUrl = () => {
+
+
+
+
+  return `/api/account/locale`
+}
+
+/**
+ * @summary Persist the user's preferred locale
+ */
+export const updateLocale = async (localeInput: LocaleInput, options?: RequestInit): Promise<User> => {
+
+  return customFetch<User>(getUpdateLocaleUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(localeInput)
+  }
+);}
+
+
+
+
+export const getUpdateLocaleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLocale>>, TError,{data: BodyType<LocaleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateLocale>>, TError,{data: BodyType<LocaleInput>}, TContext> => {
+
+const mutationKey = ['updateLocale'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateLocale>>, {data: BodyType<LocaleInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateLocale(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateLocaleMutationResult = NonNullable<Awaited<ReturnType<typeof updateLocale>>>
+    export type UpdateLocaleMutationBody = BodyType<LocaleInput>
+    export type UpdateLocaleMutationError = ErrorType<void>
+
+    /**
+ * @summary Persist the user's preferred locale
+ */
+export const useUpdateLocale = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateLocale>>, TError,{data: BodyType<LocaleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateLocale>>,
+        TError,
+        {data: BodyType<LocaleInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateLocaleMutationOptions(options));
+    }
 
 export const getUpdateProfileUrl = () => {
 

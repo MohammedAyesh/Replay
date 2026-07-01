@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
 import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable } from "@workspace/db";
-import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody } from "@workspace/api-zod";
+import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody, UpdateLocaleBody, UpdateLocaleResponse } from "@workspace/api-zod";
 import { getLocalUserId, getLocalUserRecord } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
@@ -42,6 +42,46 @@ router.patch("/account/profile", async (req, res): Promise<void> => {
     age: updated.age ?? null,
     gender: updated.gender ?? null,
     profileComplete: updated.profileComplete,
+  }));
+});
+
+router.patch("/account/locale", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: "Unauthenticated" });
+    return;
+  }
+
+  let body;
+  try {
+    body = UpdateLocaleBody.parse(req.body);
+  } catch (e) {
+    res.status(400).json({ error: "Invalid locale data" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(usersTable)
+    .set({ preferredLocale: body.locale })
+    .where(eq(usersTable.id, userId))
+    .returning();
+
+  if (!updated) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  res.json(UpdateLocaleResponse.parse({
+    id: updated.id,
+    name: updated.name,
+    email: updated.email,
+    isGuest: updated.isGuest,
+    phone: updated.phone ?? null,
+    position: updated.position ?? null,
+    age: updated.age ?? null,
+    gender: updated.gender ?? null,
+    profileComplete: updated.profileComplete,
+    preferredLocale: updated.preferredLocale ?? null,
   }));
 });
 

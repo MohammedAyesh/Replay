@@ -21,6 +21,7 @@ export * from './field';
 export * from './healthStatus';
 export * from './impressionInput';
 export * from './likeResult';
+export * from './localeInput';
 export * from './loginInput';
 export * from './patchAdInput';
 export * from './profileInput';

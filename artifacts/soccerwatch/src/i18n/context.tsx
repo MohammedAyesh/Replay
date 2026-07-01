@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { useGetMe, useUpdateLocale, getGetMeQueryKey } from "@workspace/api-client-react";
 import type { Locale, Strings } from "./strings";
 import { strings } from "./strings";
 
@@ -20,9 +21,37 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
     return saved === "ar" ? "ar" : "en";
   });
 
+  const serverSynced = useRef(false);
+
+  const { data: me } = useGetMe({
+    query: {
+      retry: false,
+      staleTime: 5 * 60 * 1000,
+      queryKey: getGetMeQueryKey(),
+    },
+  });
+
+  const { mutate: persistLocale } = useUpdateLocale();
+
+  useEffect(() => {
+    if (serverSynced.current) return;
+    if (!me) return;
+
+    const serverLocale = me.preferredLocale;
+    if (serverLocale === "ar" || serverLocale === "en") {
+      localStorage.setItem(STORAGE_KEY, serverLocale);
+      setLocaleState(serverLocale);
+    }
+    serverSynced.current = true;
+  }, [me]);
+
   const setLocale = (l: Locale) => {
     localStorage.setItem(STORAGE_KEY, l);
     setLocaleState(l);
+
+    if (me && !me.isGuest) {
+      persistLocale({ data: { locale: l } });
+    }
   };
 
   useEffect(() => {

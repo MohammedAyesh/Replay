@@ -21,6 +21,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     age: user.age ?? null,
     gender: user.gender ?? null,
     profileComplete: user.profileComplete,
+    preferredLocale: user.preferredLocale ?? null,
   }));
 });
 

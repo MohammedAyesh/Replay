@@ -158,13 +158,11 @@ function ClerkProviderWithRoutes() {
       routerPush={(to) => setLocation(stripBase(to))}
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
-      <QueryClientProvider client={queryClient}>
-        <ClerkQueryClientCacheInvalidator />
-        <TooltipProvider>
-          <AppRouter />
-          <Toaster />
-        </TooltipProvider>
-      </QueryClientProvider>
+      <ClerkQueryClientCacheInvalidator />
+      <TooltipProvider>
+        <AppRouter />
+        <Toaster />
+      </TooltipProvider>
     </ClerkProvider>
   );
 }
@@ -172,11 +170,13 @@ function ClerkProviderWithRoutes() {
 function App() {
   return (
     <WouterRouter base={basePath}>
-      <LocaleProvider>
-        <FullscreenVideoProvider>
-          <ClerkProviderWithRoutes />
-        </FullscreenVideoProvider>
-      </LocaleProvider>
+      <QueryClientProvider client={queryClient}>
+        <LocaleProvider>
+          <FullscreenVideoProvider>
+            <ClerkProviderWithRoutes />
+          </FullscreenVideoProvider>
+        </LocaleProvider>
+      </QueryClientProvider>
     </WouterRouter>
   );
 }

@@ -20,4 +20,6 @@ export interface User {
   /** @nullable */
   gender?: string | null;
   profileComplete: boolean;
+  /** @nullable */
+  preferredLocale?: string | null;
 }

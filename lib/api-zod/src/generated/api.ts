@@ -34,7 +34,8 @@ export const LoginResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
-  "profileComplete": zod.boolean()
+  "profileComplete": zod.boolean(),
+  "preferredLocale": zod.string().nullish()
 })
 })
 
@@ -52,7 +53,8 @@ export const LoginAsGuestResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
-  "profileComplete": zod.boolean()
+  "profileComplete": zod.boolean(),
+  "preferredLocale": zod.string().nullish()
 })
 })
 
@@ -75,7 +77,8 @@ export const GetMeResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
-  "profileComplete": zod.boolean()
+  "profileComplete": zod.boolean(),
+  "preferredLocale": zod.string().nullish()
 })
 
 
@@ -387,6 +390,27 @@ export const GetAccountStatsResponse = zod.object({
 
 
 /**
+ * @summary Persist the user's preferred locale
+ */
+export const UpdateLocaleBody = zod.object({
+  "locale": zod.string()
+})
+
+export const UpdateLocaleResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "isGuest": zod.boolean(),
+  "phone": zod.string().nullish(),
+  "position": zod.string().nullish(),
+  "age": zod.number().nullish(),
+  "gender": zod.string().nullish(),
+  "profileComplete": zod.boolean(),
+  "preferredLocale": zod.string().nullish()
+})
+
+
+/**
  * @summary Update user profile (onboarding)
  */
 export const UpdateProfileBody = zod.object({
@@ -406,7 +430,8 @@ export const UpdateProfileResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
-  "profileComplete": zod.boolean()
+  "profileComplete": zod.boolean(),
+  "preferredLocale": zod.string().nullish()
 })
 
 
