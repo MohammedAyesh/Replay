@@ -346,6 +346,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountStats"
 
+  /account/profile:
+    patch:
+      operationId: updateProfile
+      tags: [account]
+      summary: Update user profile (onboarding)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileInput"
+      responses:
+        "200":
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthenticated
+
   /ads/next:
     get:
       operationId: getNextAd
@@ -494,7 +515,7 @@ components:
 
     User:
       type: object
-      required: [id, name, email, isGuest]
+      required: [id, name, email, isGuest, profileComplete]
       properties:
         id:
           type: integer
@@ -503,6 +524,16 @@ components:
         email:
           type: string
         isGuest:
+          type: boolean
+        phone:
+          type: ["string", "null"]
+        position:
+          type: ["string", "null"]
+        age:
+          type: ["integer", "null"]
+        gender:
+          type: ["string", "null"]
+        profileComplete:
           type: boolean
 
     AuthResponse:
@@ -629,6 +660,21 @@ components:
           type: boolean
         likeCount:
           type: integer
+
+    ProfileInput:
+      type: object
+      required: [name, phone, position, age, gender]
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+        position:
+          type: string
+        age:
+          type: integer
+        gender:
+          type: string
 
     AccountStats:
       type: object

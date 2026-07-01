@@ -11,4 +11,13 @@ export interface User {
   name: string;
   email: string;
   isGuest: boolean;
+  /** @nullable */
+  phone?: string | null;
+  /** @nullable */
+  position?: string | null;
+  /** @nullable */
+  age?: number | null;
+  /** @nullable */
+  gender?: string | null;
+  profileComplete: boolean;
 }

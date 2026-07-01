@@ -11,7 +11,17 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthenticated" });
     return;
   }
-  res.json(GetMeResponse.parse({ id: user.id, name: user.name, email: user.email, isGuest: user.isGuest }));
+  res.json(GetMeResponse.parse({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    isGuest: user.isGuest,
+    phone: user.phone ?? null,
+    position: user.position ?? null,
+    age: user.age ?? null,
+    gender: user.gender ?? null,
+    profileComplete: user.profileComplete,
+  }));
 });
 
 router.post("/auth/guest", async (req, res): Promise<void> => {

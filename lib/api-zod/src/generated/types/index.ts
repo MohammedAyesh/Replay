@@ -21,5 +21,6 @@ export * from './impressionInput';
 export * from './likeResult';
 export * from './loginInput';
 export * from './patchAdInput';
+export * from './profileInput';
 export * from './recording';
 export * from './user';

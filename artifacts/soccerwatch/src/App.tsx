@@ -18,7 +18,9 @@ import FieldDetail from "@/pages/field-detail";
 import Player from "@/pages/player";
 import MyClips from "@/pages/my-clips";
 import Account from "@/pages/account";
+import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
+import { useAuth } from "@/lib/auth";
 
 const queryClient = new QueryClient();
 
@@ -92,13 +94,32 @@ function ClerkQueryClientCacheInvalidator() {
   return null;
 }
 
+function AuthRedirectGuard() {
+  const { user, isLoading, isGuest } = useAuth();
+  const [location, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!user || isGuest) return;
+
+    const isPublicPage = location === "/" || location.startsWith("/sign-in") || location.startsWith("/sign-up");
+    if (!user.profileComplete && !isPublicPage && location !== "/onboarding") {
+      setLocation("/onboarding");
+    }
+  }, [isLoading, user, isGuest, location, setLocation]);
+
+  return null;
+}
+
 function AppRouter() {
   return (
     <Layout>
+      <AuthRedirectGuard />
       <Switch>
         <Route path="/" component={Landing} />
         <Route path="/sign-in/*?" component={SignInPage} />
         <Route path="/sign-up/*?" component={SignUpPage} />
+        <Route path="/onboarding" component={Onboarding} />
         <Route path="/watch" component={Watch} />
         <Route path="/fields" component={Fields} />
         <Route path="/fields/:id" component={FieldDetail} />

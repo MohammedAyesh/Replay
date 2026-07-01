@@ -29,7 +29,12 @@ export const LoginResponse = zod.object({
   "id": zod.number(),
   "name": zod.string(),
   "email": zod.string(),
-  "isGuest": zod.boolean()
+  "isGuest": zod.boolean(),
+  "phone": zod.string().nullish(),
+  "position": zod.string().nullish(),
+  "age": zod.number().nullish(),
+  "gender": zod.string().nullish(),
+  "profileComplete": zod.boolean()
 })
 })
 
@@ -42,7 +47,12 @@ export const LoginAsGuestResponse = zod.object({
   "id": zod.number(),
   "name": zod.string(),
   "email": zod.string(),
-  "isGuest": zod.boolean()
+  "isGuest": zod.boolean(),
+  "phone": zod.string().nullish(),
+  "position": zod.string().nullish(),
+  "age": zod.number().nullish(),
+  "gender": zod.string().nullish(),
+  "profileComplete": zod.boolean()
 })
 })
 
@@ -60,7 +70,12 @@ export const GetMeResponse = zod.object({
   "id": zod.number(),
   "name": zod.string(),
   "email": zod.string(),
-  "isGuest": zod.boolean()
+  "isGuest": zod.boolean(),
+  "phone": zod.string().nullish(),
+  "position": zod.string().nullish(),
+  "age": zod.number().nullish(),
+  "gender": zod.string().nullish(),
+  "profileComplete": zod.boolean()
 })
 
 
@@ -297,6 +312,30 @@ export const GetAccountStatsResponse = zod.object({
   "savedClips": zod.number(),
   "likesGiven": zod.number(),
   "fieldsVisited": zod.number()
+})
+
+
+/**
+ * @summary Update user profile (onboarding)
+ */
+export const UpdateProfileBody = zod.object({
+  "name": zod.string(),
+  "phone": zod.string(),
+  "position": zod.string(),
+  "age": zod.number(),
+  "gender": zod.string()
+})
+
+export const UpdateProfileResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "isGuest": zod.boolean(),
+  "phone": zod.string().nullish(),
+  "position": zod.string().nullish(),
+  "age": zod.number().nullish(),
+  "gender": zod.string().nullish(),
+  "profileComplete": zod.boolean()
 })
 
 

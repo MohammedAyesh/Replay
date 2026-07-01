@@ -55,6 +55,25 @@ export default function Account() {
           </div>
           <h2 className="text-xl font-bold text-foreground">{name}</h2>
           <p className="text-muted-foreground text-sm">{email}</p>
+          {!isGuest && (
+            <div className="flex flex-wrap justify-center gap-2 mt-3">
+              {displayUser?.position && (
+                <span className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold capitalize">
+                  {displayUser.position}
+                </span>
+              )}
+              {displayUser?.age != null && (
+                <span className="px-2.5 py-1 rounded-full bg-muted text-muted-foreground text-xs font-semibold">
+                  {displayUser.age} yrs
+                </span>
+              )}
+              {displayUser?.gender && (
+                <span className="px-2.5 py-1 rounded-full bg-muted text-muted-foreground text-xs font-semibold capitalize">
+                  {displayUser.gender.replace(/_/g, " ")}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Stats */}

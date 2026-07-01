@@ -19,6 +19,15 @@ export interface User {
   name: string;
   email: string;
   isGuest: boolean;
+  /** @nullable */
+  phone?: string | null;
+  /** @nullable */
+  position?: string | null;
+  /** @nullable */
+  age?: number | null;
+  /** @nullable */
+  gender?: string | null;
+  profileComplete: boolean;
 }
 
 export interface AuthResponse {
@@ -94,6 +103,14 @@ export interface Clip {
 export interface LikeResult {
   liked: boolean;
   likeCount: number;
+}
+
+export interface ProfileInput {
+  name: string;
+  phone: string;
+  position: string;
+  age: number;
+  gender: string;
 }
 
 export interface AccountStats {
