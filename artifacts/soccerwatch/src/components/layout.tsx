@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { PlaySquare, MapPin, Bookmark, User as UserIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
+import { useFullscreenVideo } from "@/lib/fullscreen-video";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -11,9 +12,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isLogin = location === "/";
   const isImmersivePlayer = location.startsWith("/player/");
   const isWatchFeed = location === "/watch";
+  const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up");
-  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage;
+  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo;
   const useTranslucentBar = isWatchFeed;
 
   return (

@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/layout";
 import { clerkAppearance } from "@/lib/clerkAppearance";
 import { LocaleProvider, useLocale } from "@/i18n";
+import { FullscreenVideoProvider } from "@/lib/fullscreen-video";
 
 import Landing from "@/pages/login";
 import Watch from "@/pages/watch";
@@ -151,7 +152,9 @@ function App() {
   return (
     <WouterRouter base={basePath}>
       <LocaleProvider>
-        <ClerkProviderWithRoutes />
+        <FullscreenVideoProvider>
+          <ClerkProviderWithRoutes />
+        </FullscreenVideoProvider>
       </LocaleProvider>
     </WouterRouter>
   );

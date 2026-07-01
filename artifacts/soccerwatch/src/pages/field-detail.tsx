@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useRoute } from "wouter";
 import {
   useGetBunnyCollections,
@@ -8,6 +8,8 @@ import {
 import { ChevronLeft, ChevronRight, Play, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
+import { useFullscreenVideo } from "@/lib/fullscreen-video";
+import Hls from "hls.js";
 
 function splitName(name: string): string[] {
   return name
@@ -202,6 +204,56 @@ function VideoCard({
 }
 
 function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const { setFullscreenVideo } = useFullscreenVideo();
+
+  useEffect(() => {
+    setFullscreenVideo(true);
+    return () => setFullscreenVideo(false);
+  }, [setFullscreenVideo]);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+
+    el.muted = false;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: false });
+      hlsRef.current = hls;
+      hls.loadSource(video.playbackUrl);
+      hls.attachMedia(el);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          el.dispatchEvent(new Event("error"));
+        }
+      });
+    } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
+      el.src = video.playbackUrl;
+      el.addEventListener("canplay", () => el.play().catch(() => {}), { once: true });
+    }
+
+    return () => {
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+    };
+  }, [video.playbackUrl]);
+
+  // Center the scroll position on open
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    // After a short delay for the video to render and set its width
+    const t = setTimeout(() => {
+      const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
+      scrollEl.scrollLeft = maxScroll / 2;
+    }, 100);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -209,7 +261,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-black flex flex-col"
     >
-      {/* Close button */}
+      {/* Top controls */}
       <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between z-10 pointer-events-none">
         <button
           onClick={onClose}
@@ -219,19 +271,31 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         </button>
       </div>
 
-      {/* Bunny iframe player — works without CDN hostname config */}
-      <iframe
-        src={video.embedUrl}
-        className="flex-1 w-full border-0"
-        allow="autoplay; fullscreen"
-        allowFullScreen
-      />
+      {/* 16:9 viewport with horizontally scrollable wide video */}
+      <div className="flex-1 flex items-center justify-center w-full overflow-hidden">
+        <div
+          ref={scrollRef}
+          className="w-full overflow-x-auto overflow-y-hidden"
+          style={{ aspectRatio: "16/9" }}
+        >
+          <video
+            ref={videoRef}
+            className="h-full w-auto max-w-none"
+            playsInline
+            loop
+          />
+        </div>
+      </div>
 
-      <div className="absolute bottom-safe pb-6 px-4 w-full pointer-events-none">
-        <p className="text-white font-bold text-lg leading-tight drop-shadow-md">{video.title}</p>
+      {/* Bottom info */}
+      <div className="shrink-0 px-4 py-4 bg-black">
+        <p className="text-white font-bold text-base leading-tight">{video.title}</p>
         {(video.views ?? 0) > 0 && (
           <p className="text-white/60 text-sm mt-1">{(video.views ?? 0).toLocaleString()} views</p>
         )}
+        <p className="text-white/40 text-xs mt-1">
+          Swipe left/right to pan across the field
+        </p>
       </div>
     </motion.div>
   );
