@@ -62,13 +62,8 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
   const hlsRef = useRef<Hls | null>(null);
   const rafRef = useRef<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [totalDuration, setTotalDuration] = useState(0);
-
   const keyframes = clip.cropPath ?? [];
   // startTime/endTime are 0–1 fractions of total video duration
-  const startSec = totalDuration > 0 ? clip.startTime * totalDuration : 0;
-  const endSec = totalDuration > 0 ? clip.endTime * totalDuration : totalDuration;
-  const clipDuration = Math.max(0.1, endSec - startSec);
 
   /* HLS init */
   useEffect(() => {
@@ -78,7 +73,6 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
     function onLoaded() {
       if (!video) return;
       const dur = video.duration || 0;
-      setTotalDuration(dur);
       if (dur > 0) {
         video.currentTime = clip.startTime * dur;
         video.play().then(() => setIsPlaying(true)).catch(() => {});
@@ -102,19 +96,27 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
     };
   }, [clip.playbackUrl, clip.startTime]);
 
-  /* Scroll interpolation loop */
+  /* Scroll interpolation loop — reads duration live from the element */
   useEffect(() => {
     const tick = () => {
       const video = videoRef.current;
       const scrollEl = scrollRef.current;
-      if (!video || !scrollEl || keyframes.length === 0 || totalDuration === 0) {
+      if (!video || !scrollEl || keyframes.length === 0) {
         rafRef.current = requestAnimationFrame(tick);
         return;
       }
 
+      const dur = video.duration || 0;
+      if (dur === 0) {
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const sSec = clip.startTime * dur;
+      const eSec = clip.endTime * dur;
+      const cDur = Math.max(0.1, eSec - sSec);
       const now = video.currentTime;
-      // Normalise 0..1 within the clip window
-      const t = Math.max(0, Math.min(1, (now - startSec) / clipDuration));
+      const t = Math.max(0, Math.min(1, (now - sSec) / cDur));
       const x = interpolateX(keyframes, t);
       const totalW = scrollEl.scrollWidth;
       const viewW = scrollEl.clientWidth;
@@ -126,34 +128,42 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [keyframes, startSec, clipDuration, totalDuration]);
+  }, [keyframes, clip.startTime, clip.endTime]);
 
-  /* Auto-stop when clip window ends */
+  /* Auto-stop when clip window ends — read duration live from the element */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || totalDuration === 0) return;
+    if (!video) return;
     const onTime = () => {
-      if (video.currentTime >= endSec) {
+      const dur = video.duration || 0;
+      if (dur === 0) return;
+      const sSec = clip.startTime * dur;
+      const eSec = clip.endTime * dur;
+      if (video.currentTime >= eSec) {
         video.pause();
         setIsPlaying(false);
-        video.currentTime = startSec;
+        video.currentTime = sSec;
       }
     };
     const id = setInterval(onTime, 100);
     return () => clearInterval(id);
-  }, [endSec, startSec, totalDuration]);
+  }, [clip.startTime, clip.endTime]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
-    if (!video || totalDuration === 0) return;
+    if (!video) return;
+    const dur = video.duration || 0;
+    if (dur === 0) return;
+    const sSec = clip.startTime * dur;
+    const eSec = clip.endTime * dur;
     if (video.paused) {
-      if (video.currentTime >= endSec) video.currentTime = startSec;
+      if (video.currentTime >= eSec) video.currentTime = sSec;
       video.play().then(() => setIsPlaying(true)).catch(() => {});
     } else {
       video.pause();
       setIsPlaying(false);
     }
-  }, [endSec, startSec, totalDuration]);
+  }, [clip.startTime, clip.endTime]);
 
   return (
     <motion.div
@@ -201,7 +211,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
         <div>
           <p className="text-white font-bold text-sm">{clip.title}</p>
           <p className="text-white/50 text-xs">
-            {Math.max(0.1, clipDuration).toFixed(1)}s clip
+            {(clip.endTime - clip.startTime).toFixed(3)} × video duration
           </p>
         </div>
         <button
