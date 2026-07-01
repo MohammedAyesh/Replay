@@ -1,7 +1,7 @@
 import { useLocation } from "wouter";
 import { useLoginAsGuest } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
-import { Crown } from "lucide-react";
+import { Crown, Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
@@ -17,7 +17,7 @@ const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, locale, setLocale } = useTranslation();
   const guestMutation = useLoginAsGuest();
 
   const handleGuest = () => {
@@ -34,6 +34,17 @@ export default function Login() {
   return (
     <div className="flex-1 flex flex-col field-pattern relative text-white overflow-hidden">
       <div className="absolute inset-0 bg-black/40" />
+
+      {/* Language selector — top right */}
+      <div className="absolute top-safe right-4 z-20">
+        <button
+          onClick={() => setLocale(locale === "en" ? "ar" : "en")}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/10 backdrop-blur-md text-white/80 hover:text-white hover:bg-white/20 transition-colors text-xs font-semibold"
+        >
+          <Globe className="w-3.5 h-3.5" />
+          {locale === "en" ? "EN" : "عربي"}
+        </button>
+      </div>
 
       <div className="relative z-10 flex-1 flex flex-col justify-between p-6">
         <div className="pt-12">

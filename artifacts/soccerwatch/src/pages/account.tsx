@@ -2,6 +2,7 @@ import { useGetMe, useGetAccountStats, useLogout, getGetAccountStatsQueryKey, ge
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, ChevronLeft, LogOut, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
@@ -14,26 +15,36 @@ export default function Account() {
   const { t, locale, setLocale } = useTranslation();
   const { signOut } = useClerk();
   const logoutMutation = useLogout();
+  const queryClient = useQueryClient();
 
   const { data: user } = useGetMe({ query: { enabled: !isGuest, queryKey: getGetMeQueryKey() } });
   const displayUser = user ?? authUser;
   const { data: stats } = useGetAccountStats({ query: { enabled: !isGuest, queryKey: getGetAccountStatsQueryKey() } });
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Always clear backend guest cookie (harmless for real users too)
+    try {
+      await logoutMutation.mutateAsync();
+    } catch {
+      // Ignore backend errors — proceed with client-side logout
+    }
+
+    // Clear all cached queries so the next user doesn't see stale data
+    queryClient.clear();
+
     if (isGuest) {
       setLocation("/");
       return;
     }
 
-    logoutMutation.mutate(undefined, {
-      onSuccess: () => {
-        signOut({ redirectUrl: `${basePath}/` });
-      },
-      onError: () => {
-        // Even if the backend call fails, sign out of Clerk
-        signOut({ redirectUrl: `${basePath}/` });
-      },
-    });
+    // Sign out of Clerk and navigate home
+    try {
+      await signOut({ redirectUrl: `${basePath}/` });
+    } catch {
+      // Fallback: if signOut throws or doesn't redirect, force navigation
+      setLocation("/");
+      window.location.reload();
+    }
   };
 
   const initial = displayUser?.name?.charAt(0)?.toUpperCase() || "G";
