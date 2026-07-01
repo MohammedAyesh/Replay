@@ -25,6 +25,8 @@ export * from './localeInput';
 export * from './loginInput';
 export * from './patchAdInput';
 export * from './profileInput';
+export * from './profileInputGender';
+export * from './profileInputPosition';
 export * from './recording';
 export * from './user';
 export * from './userClip';

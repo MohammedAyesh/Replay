@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { useUpdateProfile, useGetMe, getGetMeQueryKey } from "@workspace/api-client-react";
+import { useUpdateProfile, useGetMe, getGetMeQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -74,9 +74,9 @@ export default function Onboarding() {
         data: {
           name: name.trim(),
           phone: phone.trim(),
-          position,
+          position: position as ProfileInputPosition,
           age: parseInt(age, 10),
-          gender,
+          gender: gender as ProfileInputGender,
         },
       },
       {

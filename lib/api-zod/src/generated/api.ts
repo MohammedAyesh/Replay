@@ -413,12 +413,17 @@ export const UpdateLocaleResponse = zod.object({
 /**
  * @summary Update user profile (onboarding)
  */
+export const updateProfileBodyAgeMin = 10;
+export const updateProfileBodyAgeMax = 99;
+
+
+
 export const UpdateProfileBody = zod.object({
   "name": zod.string(),
   "phone": zod.string(),
-  "position": zod.string(),
-  "age": zod.number(),
-  "gender": zod.string()
+  "position": zod.enum(['goalkeeper', 'defender', 'midfielder', 'forward']),
+  "age": zod.number().min(updateProfileBodyAgeMin).max(updateProfileBodyAgeMax),
+  "gender": zod.enum(['male', 'female', 'prefer_not_to_say'])
 })
 
 export const UpdateProfileResponse = zod.object({

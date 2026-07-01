@@ -813,10 +813,14 @@ components:
           type: string
         position:
           type: string
+          enum: [goalkeeper, defender, midfielder, forward]
         age:
           type: integer
+          minimum: 10
+          maximum: 99
         gender:
           type: string
+          enum: [male, female, prefer_not_to_say]
 
     AccountStats:
       type: object

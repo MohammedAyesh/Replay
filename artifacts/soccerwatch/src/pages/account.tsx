@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useGetMe, useGetAccountStats, useUpdateProfile, getGetAccountStatsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
+import { useGetMe, useGetAccountStats, useUpdateProfile, getGetAccountStatsQueryKey, getGetMeQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -70,9 +70,9 @@ export default function Account() {
   const handleSaveProfile = (data: {
     name: string;
     phone: string;
-    position: string;
+    position: ProfileInputPosition;
     age: number;
-    gender: string;
+    gender: ProfileInputGender;
   }) => {
     updateProfile.mutate(
       { data },

@@ -141,12 +141,35 @@ export interface LikeResult {
   likeCount: number;
 }
 
+export type ProfileInputPosition = typeof ProfileInputPosition[keyof typeof ProfileInputPosition];
+
+
+export const ProfileInputPosition = {
+  goalkeeper: 'goalkeeper',
+  defender: 'defender',
+  midfielder: 'midfielder',
+  forward: 'forward',
+} as const;
+
+export type ProfileInputGender = typeof ProfileInputGender[keyof typeof ProfileInputGender];
+
+
+export const ProfileInputGender = {
+  male: 'male',
+  female: 'female',
+  prefer_not_to_say: 'prefer_not_to_say',
+} as const;
+
 export interface ProfileInput {
   name: string;
   phone: string;
-  position: string;
+  position: ProfileInputPosition;
+  /**
+     * @minimum 10
+     * @maximum 99
+     */
   age: number;
-  gender: string;
+  gender: ProfileInputGender;
 }
 
 export interface AccountStats {

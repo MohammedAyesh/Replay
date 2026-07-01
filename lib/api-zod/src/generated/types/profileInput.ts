@@ -5,11 +5,17 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { ProfileInputGender } from './profileInputGender';
+import type { ProfileInputPosition } from './profileInputPosition';
 
 export interface ProfileInput {
   name: string;
   phone: string;
-  position: string;
+  position: ProfileInputPosition;
+  /**
+     * @minimum 10
+     * @maximum 99
+     */
   age: number;
-  gender: string;
+  gender: ProfileInputGender;
 }
