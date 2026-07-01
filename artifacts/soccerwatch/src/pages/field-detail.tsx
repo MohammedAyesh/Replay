@@ -211,6 +211,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [videoWidth, setVideoWidth] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     setFullscreenVideo(true);
@@ -256,14 +257,30 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     };
   }, [video.playbackUrl]);
 
-  // Center the scroll position on open
+  // Once video metadata loads, compute exact pixel width so the container overflows
+  function onLoadedMetadata(e: React.SyntheticEvent<HTMLVideoElement>) {
+    const v = e.currentTarget;
+    const scrollEl = scrollRef.current;
+    if (!scrollEl || !v.videoWidth || !v.videoHeight) return;
+    const containerH = scrollEl.clientHeight;
+    const ar = v.videoWidth / v.videoHeight;
+    const w = Math.round(containerH * ar);
+    setVideoWidth(w);
+    // Re-center after width is known
+    requestAnimationFrame(() => {
+      const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
+      scrollEl.scrollLeft = maxScroll / 2;
+    });
+  }
+
+  // Fallback center on open (before metadata loads)
   useEffect(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl) return;
     const t = setTimeout(() => {
       const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
       scrollEl.scrollLeft = maxScroll / 2;
-    }, 150);
+    }, 200);
     return () => clearTimeout(t);
   }, []);
 
@@ -304,15 +321,22 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       <div className="flex-1 flex items-center justify-center w-full overflow-hidden">
         <div
           ref={scrollRef}
-          className="w-full overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar"
+          className="w-full overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
           style={{ aspectRatio: "16/9" }}
         >
           <video
             ref={videoRef}
-            className="h-full w-auto max-w-none"
+            className="h-full max-w-none pointer-events-none"
+            style={{ width: videoWidth ?? "auto", aspectRatio: videoWidth ? undefined : "3840/1080" }}
             playsInline
             loop
+            onLoadedMetadata={onLoadedMetadata}
+          />
+          {/* Transparent overlay catches taps for play/pause without blocking scroll */}
+          <button
             onClick={togglePlay}
+            className="absolute inset-0 z-10"
+            aria-label={isPlaying ? "Pause" : "Play"}
           />
         </div>
       </div>
