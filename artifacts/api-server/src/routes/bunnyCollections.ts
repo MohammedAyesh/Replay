@@ -50,7 +50,7 @@ router.get("/bunny/collections", async (req, res): Promise<void> => {
       guid: c.guid as string,
       name: c.name as string,
       videoCount: c.videoCount ?? 0,
-      previewImageUrl: c.previewImageUrls?.[0] ?? null,
+      previewImageUrl: "/Field.png",
     }));
 
   res.json(collections);

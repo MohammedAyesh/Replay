@@ -1,5 +1,10 @@
 uploads = []
-generated = []
+
+[[generated]]
+id = "3zSA0Mu-mC9WPc0OkPEd2"
+uri = "file://artifacts/soccerwatch/public/Field.png"
+type = "image"
+title = "Soccer field aerial view"
 
 [[outputs]]
 id = "tY8lmJmUY4pvKPs7RJUoc"
