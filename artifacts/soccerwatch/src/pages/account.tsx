@@ -1,25 +1,46 @@
 import * as React from "react";
-import { useGetMe, useGetAccountStats, getGetAccountStatsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
+import { useGetMe, useGetAccountStats, useUpdateProfile, getGetAccountStatsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, ChevronLeft, LogOut, Globe } from "lucide-react";
+import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, ChevronLeft, LogOut, Globe, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useTranslation } from "@/i18n";
+import type { Strings } from "@/i18n/strings";
+import { useToast } from "@/hooks/use-toast";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+const POSITIONS = [
+  { value: "goalkeeper", label: "Goalkeeper" },
+  { value: "defender", label: "Defender" },
+  { value: "midfielder", label: "Midfielder" },
+  { value: "forward", label: "Forward" },
+];
+
+const GENDERS = [
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "prefer_not_to_say", label: "Prefer not to say" },
+];
+
 export default function Account() {
   const { isGuest, user: authUser } = useAuth();
-  const { t, locale, setLocale } = useTranslation();
+  const { t, locale } = useTranslation();
   const { signOut } = useClerk();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const { data: user } = useGetMe({ query: { enabled: !isGuest, queryKey: getGetMeQueryKey() } });
   const displayUser = user ?? authUser;
   const { data: stats } = useGetAccountStats({ query: { enabled: !isGuest, queryKey: getGetAccountStatsQueryKey() } });
 
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
+  const [isEditOpen, setIsEditOpen] = React.useState(false);
+
+  const updateProfile = useUpdateProfile();
 
   const handleLogout = () => {
     if (isLoggingOut) return;
@@ -44,6 +65,28 @@ export default function Account() {
     Promise.race([signOutPromise, timeoutPromise]).then(() => {
       window.location.replace(`${basePath}/`);
     });
+  };
+
+  const handleSaveProfile = (data: {
+    name: string;
+    phone: string;
+    position: string;
+    age: number;
+    gender: string;
+  }) => {
+    updateProfile.mutate(
+      { data },
+      {
+        onSuccess: (updated) => {
+          queryClient.setQueryData(getGetMeQueryKey(), updated);
+          toast({ title: t.account.profileUpdated, description: t.account.profileUpdatedDesc });
+          setIsEditOpen(false);
+        },
+        onError: () => {
+          toast({ variant: "destructive", title: t.account.profileUpdateFailed, description: t.account.profileUpdateFailedDesc });
+        },
+      }
+    );
   };
 
   const initial = displayUser?.name?.charAt(0)?.toUpperCase() || "G";
@@ -99,39 +142,25 @@ export default function Account() {
 
         {/* Settings List */}
         <div className="mt-4 bg-white border-y">
+          {!isGuest && user && (
+            <button
+              onClick={() => setIsEditOpen(true)}
+              className="w-full flex items-center justify-between p-4 bg-white hover:bg-muted/50 transition-colors border-b border-border"
+            >
+              <div className="flex items-center gap-3">
+                <Pencil className="w-5 h-5 text-muted-foreground" />
+                <span className="font-medium text-foreground">{t.account.editProfile}</span>
+              </div>
+              <ChevronRight className="w-5 h-5 text-muted-foreground rtl:hidden" />
+              <ChevronLeft className="w-5 h-5 text-muted-foreground ltr:hidden" />
+            </button>
+          )}
           <SettingRow icon={<Bell className="w-5 h-5 text-muted-foreground" />} label={t.account.notifications} />
           <SettingRow icon={<Bookmark className="w-5 h-5 text-muted-foreground" />} label={t.account.savedFields} />
           <SettingRow icon={<Shield className="w-5 h-5 text-muted-foreground" />} label={t.account.privacy} />
           <SettingRow icon={<HelpCircle className="w-5 h-5 text-muted-foreground" />} label={t.account.help} />
           {/* Language toggle */}
-          <div className="w-full flex items-center justify-between p-4 bg-white border-b border-border">
-            <div className="flex items-center gap-3">
-              <Globe className="w-5 h-5 text-muted-foreground" />
-              <span className="font-medium text-foreground">{t.account.language}</span>
-            </div>
-            <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
-              <button
-                onClick={() => setLocale("en")}
-                className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
-                  locale === "en"
-                    ? "bg-white text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                EN
-              </button>
-              <button
-                onClick={() => setLocale("ar")}
-                className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
-                  locale === "ar"
-                    ? "bg-white text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                عربي
-              </button>
-            </div>
-          </div>
+          <LanguageToggle />
         </div>
 
         <div className="p-6 mt-4">
@@ -149,6 +178,18 @@ export default function Account() {
           </Button>
         </div>
       </div>
+
+      {/* Edit Profile Dialog */}
+      {isEditOpen && displayUser && !isGuest && (
+        <EditProfileDialog
+          user={displayUser}
+          locale={locale}
+          onClose={() => setIsEditOpen(false)}
+          onSave={handleSaveProfile}
+          isSaving={updateProfile.isPending}
+          t={t.account}
+        />
+      )}
     </div>
   );
 }
@@ -172,5 +213,178 @@ function SettingRow({ icon, label, borderBottom = true }: { icon: React.ReactNod
       <ChevronRight className="w-5 h-5 text-muted-foreground rtl:hidden" />
       <ChevronLeft className="w-5 h-5 text-muted-foreground ltr:hidden" />
     </button>
+  );
+}
+
+function LanguageToggle() {
+  const { t, locale, setLocale } = useTranslation();
+  return (
+    <div className="w-full flex items-center justify-between p-4 bg-white border-b border-border">
+      <div className="flex items-center gap-3">
+        <Globe className="w-5 h-5 text-muted-foreground" />
+        <span className="font-medium text-foreground">{t.account.language}</span>
+      </div>
+      <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+        <button
+          onClick={() => setLocale("en")}
+          className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
+            locale === "en"
+              ? "bg-white text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          EN
+        </button>
+        <button
+          onClick={() => setLocale("ar")}
+          className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
+            locale === "ar"
+              ? "bg-white text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          عربي
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EditProfileDialog({
+  user,
+  locale,
+  onClose,
+  onSave,
+  isSaving,
+  t,
+}: {
+  user: { name?: string | null; phone?: string | null; position?: string | null; age?: number | null; gender?: string | null };
+  locale: "en" | "ar";
+  onClose: () => void;
+  onSave: (data: { name: string; phone: string; position: string; age: number; gender: string }) => void;
+  isSaving: boolean;
+  t: Strings["account"];
+}) {
+  const [name, setName] = React.useState(user.name ?? "");
+  const [phone, setPhone] = React.useState(user.phone ?? "");
+  const [position, setPosition] = React.useState(user.position ?? "");
+  const [age, setAge] = React.useState(user.age != null ? String(user.age) : "");
+  const [gender, setGender] = React.useState(user.gender ?? "");
+
+  const allFilled = name.trim() && phone.trim() && position && age && gender;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!allFilled) return;
+    onSave({
+      name: name.trim(),
+      phone: phone.trim(),
+      position,
+      age: parseInt(age, 10),
+      gender,
+    });
+  };
+
+  const rtl = locale === "ar";
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-white">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-4 border-b bg-white">
+        <button
+          onClick={onClose}
+          className="flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {rtl ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+          {rtl ? "رجوع" : "Back"}
+        </button>
+        <h2 className="text-lg font-bold text-foreground">{t.editProfile}</h2>
+        <div className="w-16" />
+      </div>
+
+      {/* Form */}
+      <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 pt-6 pb-8 space-y-5">
+        <p className="text-muted-foreground text-sm">{t.editProfileDesc}</p>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-name" className="text-sm font-medium">{t.fullName}</Label>
+          <Input
+            id="edit-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t.fullName}
+            autoComplete="name"
+            className="h-12"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-phone" className="text-sm font-medium">{t.phoneNumber}</Label>
+          <Input
+            id="edit-phone"
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+1 555 000 0000"
+            autoComplete="tel"
+            className="h-12"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-position" className="text-sm font-medium">{t.preferredPosition}</Label>
+          <select
+            id="edit-position"
+            value={position}
+            onChange={(e) => setPosition(e.target.value)}
+            className="w-full h-12 rounded-md border border-input bg-transparent px-3 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring text-base appearance-none"
+          >
+            <option value="" disabled>{t.selectPosition}</option>
+            {POSITIONS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-age" className="text-sm font-medium">{t.age}</Label>
+          <Input
+            id="edit-age"
+            type="number"
+            min={10}
+            max={99}
+            value={age}
+            onChange={(e) => setAge(e.target.value)}
+            placeholder="25"
+            className="h-12"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-gender" className="text-sm font-medium">{t.gender}</Label>
+          <select
+            id="edit-gender"
+            value={gender}
+            onChange={(e) => setGender(e.target.value)}
+            className="w-full h-12 rounded-md border border-input bg-transparent px-3 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring text-base appearance-none"
+          >
+            <option value="" disabled>{t.selectGender}</option>
+            {GENDERS.map((g) => (
+              <option key={g.value} value={g.value}>{g.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="pt-4">
+          <Button
+            type="submit"
+            disabled={!allFilled || isSaving}
+            className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-6 rounded-xl text-base disabled:opacity-50"
+          >
+            {isSaving ? t.saving : t.saveChanges}
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }
