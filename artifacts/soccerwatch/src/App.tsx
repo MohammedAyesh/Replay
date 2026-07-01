@@ -49,6 +49,7 @@ function SignInPage() {
           routing="path"
           path={`${basePath}/sign-in`}
           signUpUrl={`${basePath}/sign-up`}
+          forceRedirectUrl={`${basePath}/watch`}
         />
       </div>
     </div>
@@ -64,6 +65,7 @@ function SignUpPage() {
           routing="path"
           path={`${basePath}/sign-up`}
           signInUrl={`${basePath}/sign-in`}
+          forceRedirectUrl={`${basePath}/watch`}
         />
       </div>
     </div>
