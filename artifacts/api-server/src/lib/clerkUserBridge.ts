@@ -5,6 +5,15 @@ import type { Request } from "express";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
+async function isSocialLoginUser(clerkId: string): Promise<boolean> {
+  try {
+    const clerkUser = await clerkClient.users.getUser(clerkId);
+    return (clerkUser.externalAccounts?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | null> {
   const [existing] = await db
     .select({ id: usersTable.id })
@@ -13,6 +22,11 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
 
   if (existing) return existing.id;
 
+  // Social login users (Google, Apple, etc.) start with profileComplete=false
+  // so they are guided through onboarding to fill in their soccer profile.
+  // Email-signup users skip onboarding since they already completed Clerk's flow.
+  const isSocial = await isSocialLoginUser(clerkId);
+
   const [created] = await db
     .insert(usersTable)
     .values({
@@ -20,7 +34,7 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
       name: "Player",
       email: `clerk_${clerkId}@soccerwatch.local`,
       isGuest: false,
-      profileComplete: false,
+      profileComplete: !isSocial,
     })
     .onConflictDoNothing()
     .returning({ id: usersTable.id });
