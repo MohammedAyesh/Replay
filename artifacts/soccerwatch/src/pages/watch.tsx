@@ -128,10 +128,16 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
     if (adImageTimeoutRef.current) { clearTimeout(adImageTimeoutRef.current); adImageTimeoutRef.current = null; }
   }, []);
 
+  // Track whether this clip should be playing (set by IntersectionObserver)
+  const shouldPlayRef = useRef(false);
+
   // Load clip video via HLS.js, with automatic fallback on error
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+
+    // Force muted imperatively — React's muted prop doesn't reliably sync to the DOM
+    video.muted = true;
 
     const primary =
       (isUsableUrl(clip.bunnyPlaybackUrl) ? clip.bunnyPlaybackUrl : null) ??
@@ -152,6 +158,13 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
           hlsRef.current = hls;
           hls.loadSource(src);
           hls.attachMedia(video);
+          // Play as soon as the stream is ready — this fires even if play() was
+          // called earlier and rejected because the manifest wasn't loaded yet
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (shouldPlayRef.current) {
+              video.play().catch(() => {});
+            }
+          });
           hls.on(Hls.Events.ERROR, (_, data) => {
             if (data.fatal && !usedFallback) {
               usedFallback = true;
@@ -159,7 +172,11 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
             }
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          // Native HLS (Safari) — play once canplay fires
           video.src = src;
+          video.addEventListener("canplay", () => {
+            if (shouldPlayRef.current) video.play().catch(() => {});
+          }, { once: true });
         }
       } else {
         video.src = src;
@@ -239,6 +256,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
+          shouldPlayRef.current = true;
           setAdPhase("idle");
           setCurrentAd(null);
           fetch(`/api/ads/next?clipId=${clip.id}`, { credentials: "include" })
@@ -252,6 +270,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
                 setAdPhase("showing");
               } else {
                 setAdPhase("done");
+                // Try play now — MANIFEST_PARSED will retry if not ready yet
                 video.play().catch(() => {});
                 setIsPlaying(true);
               }
@@ -262,6 +281,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
               setIsPlaying(true);
             });
         } else {
+          shouldPlayRef.current = false;
           video.pause();
           setIsPlaying(false);
           clearAdTimers();
