@@ -5,15 +5,6 @@ import type { Request } from "express";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
-async function isSocialLoginUser(clerkId: string): Promise<boolean> {
-  try {
-    const clerkUser = await clerkClient.users.getUser(clerkId);
-    return (clerkUser.externalAccounts?.length ?? 0) > 0;
-  } catch {
-    return false;
-  }
-}
-
 async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | null> {
   const [existing] = await db
     .select({ id: usersTable.id })
@@ -22,17 +13,34 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
 
   if (existing) return existing.id;
 
+  // Fetch Clerk user once to get real name, email, and provider info.
+  let clerkUser: Awaited<ReturnType<typeof clerkClient.users.getUser>> | null = null;
+  try {
+    clerkUser = await clerkClient.users.getUser(clerkId);
+  } catch {
+    // If Clerk is unreachable, fall back to synthetic values below.
+  }
+
   // Social login users (Google, Apple, etc.) start with profileComplete=false
   // so they are guided through onboarding to fill in their soccer profile.
   // Email-signup users skip onboarding since they already completed Clerk's flow.
-  const isSocial = await isSocialLoginUser(clerkId);
+  const isSocial = (clerkUser?.externalAccounts?.length ?? 0) > 0;
+
+  const firstName = clerkUser?.firstName?.trim() ?? "";
+  const lastName = clerkUser?.lastName?.trim() ?? "";
+  const name = [firstName, lastName].filter(Boolean).join(" ") || "Player";
+
+  const primaryEmail = clerkUser?.emailAddresses?.find(
+    (e) => e.id === clerkUser?.primaryEmailAddressId
+  )?.emailAddress;
+  const email = primaryEmail ?? `clerk_${clerkId}@soccerwatch.local`;
 
   const [created] = await db
     .insert(usersTable)
     .values({
       clerkId,
-      name: "Player",
-      email: `clerk_${clerkId}@soccerwatch.local`,
+      name,
+      email,
       isGuest: false,
       profileComplete: !isSocial,
     })
