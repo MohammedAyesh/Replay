@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import {
   useListSavedClips,
@@ -10,12 +10,13 @@ import {
   UserClip,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bookmark, Video, Scissors, Trash2 } from "lucide-react";
+import { Bookmark, Video, Scissors, Trash2, X, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
+import Hls from "hls.js";
 
 function getBunnyThumbnailUrl(clip: Clip): string | null {
   if (clip.bunnyPlaybackUrl) {
@@ -24,12 +25,207 @@ function getBunnyThumbnailUrl(clip: Clip): string | null {
   return null;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Interpolate scroll position from cropPath keyframes               */
+/* ------------------------------------------------------------------ */
+
+type KF = { t: number; x: number; y: number; w: number; h: number };
+
+function lerp(a: number, b: number, p: number) {
+  return a + (b - a) * p;
+}
+
+function interpolateX(keyframes: KF[], t: number): number {
+  if (keyframes.length === 0) return 0.5;
+  if (keyframes.length === 1) return keyframes[0].x;
+  if (t <= keyframes[0].t) return keyframes[0].x;
+  if (t >= keyframes[keyframes.length - 1].t) return keyframes[keyframes.length - 1].x;
+
+  for (let i = 0; i < keyframes.length - 1; i++) {
+    const a = keyframes[i];
+    const b = keyframes[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const p = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t);
+      return lerp(a.x, b.x, p);
+    }
+  }
+  return keyframes[keyframes.length - 1].x;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Player overlay for user-created clips                               */
+/* ------------------------------------------------------------------ */
+
+function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const rafRef = useRef<number>(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [totalDuration, setTotalDuration] = useState(0);
+
+  const keyframes = clip.cropPath ?? [];
+  // startTime/endTime are 0–1 fractions of total video duration
+  const startSec = totalDuration > 0 ? clip.startTime * totalDuration : 0;
+  const endSec = totalDuration > 0 ? clip.endTime * totalDuration : totalDuration;
+  const clipDuration = Math.max(0.1, endSec - startSec);
+
+  /* HLS init */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !clip.playbackUrl) return;
+
+    function onLoaded() {
+      if (!video) return;
+      const dur = video.duration || 0;
+      setTotalDuration(dur);
+      if (dur > 0) {
+        video.currentTime = clip.startTime * dur;
+        video.play().then(() => setIsPlaying(true)).catch(() => {});
+      }
+    }
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: false });
+      hlsRef.current = hls;
+      hls.loadSource(clip.playbackUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, onLoaded);
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = clip.playbackUrl;
+      video.addEventListener("loadedmetadata", onLoaded, { once: true });
+      video.play().catch(() => {});
+    }
+
+    return () => {
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    };
+  }, [clip.playbackUrl, clip.startTime]);
+
+  /* Scroll interpolation loop */
+  useEffect(() => {
+    const tick = () => {
+      const video = videoRef.current;
+      const scrollEl = scrollRef.current;
+      if (!video || !scrollEl || keyframes.length === 0 || totalDuration === 0) {
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const now = video.currentTime;
+      // Normalise 0..1 within the clip window
+      const t = Math.max(0, Math.min(1, (now - startSec) / clipDuration));
+      const x = interpolateX(keyframes, t);
+      const totalW = scrollEl.scrollWidth;
+      const viewW = scrollEl.clientWidth;
+      const maxScroll = Math.max(0, totalW - viewW);
+      scrollEl.scrollLeft = x * totalW - (viewW / 2) + (viewW * (keyframes[0]?.w ?? 1) / 2);
+      scrollEl.scrollLeft = Math.max(0, Math.min(maxScroll, scrollEl.scrollLeft));
+
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [keyframes, startSec, clipDuration, totalDuration]);
+
+  /* Auto-stop when clip window ends */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || totalDuration === 0) return;
+    const onTime = () => {
+      if (video.currentTime >= endSec) {
+        video.pause();
+        setIsPlaying(false);
+        video.currentTime = startSec;
+      }
+    };
+    const id = setInterval(onTime, 100);
+    return () => clearInterval(id);
+  }, [endSec, startSec, totalDuration]);
+
+  const togglePlay = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || totalDuration === 0) return;
+    if (video.paused) {
+      if (video.currentTime >= endSec) video.currentTime = startSec;
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
+    } else {
+      video.pause();
+      setIsPlaying(false);
+    }
+  }, [endSec, startSec, totalDuration]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black flex flex-col"
+    >
+      {/* Top bar */}
+      <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between z-20 pointer-events-none">
+        <button
+          onClick={onClose}
+          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto"
+        >
+          <X className="w-5 h-5" />
+        </button>
+        <div className="w-10" />
+      </div>
+
+      {/* Scrollable video viewport */}
+      <div className="flex-1 flex items-center justify-center w-full overflow-hidden">
+        <div
+          ref={scrollRef}
+          className="w-full overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
+          style={{ aspectRatio: "16/9" }}
+        >
+          <video
+            ref={videoRef}
+            className="h-full max-w-none pointer-events-none"
+            style={{ aspectRatio: "3840/1080" }}
+            playsInline
+            loop={false}
+            muted={false}
+          />
+          <button
+            onClick={togglePlay}
+            className="absolute inset-0 z-10"
+            aria-label={isPlaying ? "Pause" : "Play"}
+          />
+        </div>
+      </div>
+
+      {/* Bottom info */}
+      <div className="shrink-0 px-4 pb-safe pb-3 bg-black flex items-center justify-between">
+        <div>
+          <p className="text-white font-bold text-sm">{clip.title}</p>
+          <p className="text-white/50 text-xs">
+            {Math.max(0.1, clipDuration).toFixed(1)}s clip
+          </p>
+        </div>
+        <button
+          onClick={togglePlay}
+          className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
+        >
+          {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main page                                                           */
+/* ------------------------------------------------------------------ */
+
 type Tab = "saved" | "created";
 
 export default function MyClips() {
   const { isGuest } = useAuth();
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("saved");
+  const [activeClip, setActiveClip] = useState<UserClip | null>(null);
 
   const { data: savedClips, isLoading: savedLoading } = useListSavedClips({
     query: { enabled: !isGuest, queryKey: getListSavedClipsQueryKey() },
@@ -131,14 +327,25 @@ export default function MyClips() {
               exit={{ opacity: 0, x: 10 }}
               transition={{ duration: 0.2 }}
             >
-              <CreatedTab clips={userClips} isLoading={userClipsLoading} />
+              <CreatedTab clips={userClips} isLoading={userClipsLoading} onPlay={setActiveClip} />
             </motion.div>
           )}
         </AnimatePresence>
       </div>
+
+      {/* Inline player overlay */}
+      <AnimatePresence>
+        {activeClip && (
+          <UserClipPlayer clip={activeClip} onClose={() => setActiveClip(null)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  Saved tab                                                           */
+/* ------------------------------------------------------------------ */
 
 function SavedTab({ clips, isLoading }: { clips: Clip[] | undefined; isLoading: boolean }) {
   const { t } = useTranslation();
@@ -185,56 +392,6 @@ function SavedTab({ clips, isLoading }: { clips: Clip[] | undefined; isLoading: 
     <div className="grid grid-cols-2 gap-4">
       {clips.map((clip, i) => (
         <SavedClipCard key={clip.id} clip={clip} index={i} />
-      ))}
-    </div>
-  );
-}
-
-function CreatedTab({ clips, isLoading }: { clips: UserClip[] | undefined; isLoading: boolean }) {
-  const { t } = useTranslation();
-
-  if (isLoading) {
-    return (
-      <div className="grid grid-cols-2 gap-4">
-        {[1, 2, 3, 4].map((i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1, transition: { delay: i * 0.08 } }}
-            className="aspect-[3/4] bg-muted rounded-xl animate-pulse"
-          />
-        ))}
-      </div>
-    );
-  }
-
-  if (!clips || clips.length === 0) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        animate={{ opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" as const } }}
-        className="text-center py-20"
-      >
-        <motion.div
-          initial={{ scale: 0.7, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1, transition: { type: "spring", stiffness: 260, damping: 18, delay: 0.1 } }}
-          className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4"
-        >
-          <Scissors className="w-8 h-8 text-muted-foreground" />
-        </motion.div>
-        <p className="text-muted-foreground font-medium">{t.myClips.noCreatedYet}</p>
-        <p className="text-sm text-muted-foreground mt-1">{t.myClips.noCreatedDesc}</p>
-        <Link href="/fields">
-          <Button variant="outline" className="mt-6">{t.myClips.goToFields}</Button>
-        </Link>
-      </motion.div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-2 gap-4">
-      {clips.map((clip, i) => (
-        <UserClipCard key={clip.id} clip={clip} index={i} />
       ))}
     </div>
   );
@@ -288,7 +445,77 @@ function SavedClipCard({ clip, index }: { clip: Clip; index: number }) {
   );
 }
 
-function UserClipCard({ clip, index }: { clip: UserClip; index: number }) {
+/* ------------------------------------------------------------------ */
+/*  Created tab                                                         */
+/* ------------------------------------------------------------------ */
+
+function CreatedTab({
+  clips,
+  isLoading,
+  onPlay,
+}: {
+  clips: UserClip[] | undefined;
+  isLoading: boolean;
+  onPlay: (clip: UserClip) => void;
+}) {
+  const { t } = useTranslation();
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-2 gap-4">
+        {[1, 2, 3, 4].map((i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, transition: { delay: i * 0.08 } }}
+            className="aspect-[3/4] bg-muted rounded-xl animate-pulse"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (!clips || clips.length === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" as const } }}
+        className="text-center py-20"
+      >
+        <motion.div
+          initial={{ scale: 0.7, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1, transition: { type: "spring", stiffness: 260, damping: 18, delay: 0.1 } }}
+          className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4"
+        >
+          <Scissors className="w-8 h-8 text-muted-foreground" />
+        </motion.div>
+        <p className="text-muted-foreground font-medium">{t.myClips.noCreatedYet}</p>
+        <p className="text-sm text-muted-foreground mt-1">{t.myClips.noCreatedDesc}</p>
+        <Link href="/fields">
+          <Button variant="outline" className="mt-6">{t.myClips.goToFields}</Button>
+        </Link>
+      </motion.div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      {clips.map((clip, i) => (
+        <UserClipCard key={clip.id} clip={clip} index={i} onPlay={onPlay} />
+      ))}
+    </div>
+  );
+}
+
+function UserClipCard({
+  clip,
+  index,
+  onPlay,
+}: {
+  clip: UserClip;
+  index: number;
+  onPlay: (clip: UserClip) => void;
+}) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -322,7 +549,9 @@ function UserClipCard({ clip, index }: { clip: UserClip; index: number }) {
         opacity: 1, scale: 1, y: 0,
         transition: { delay: index * 0.07, duration: 0.4, ease: "easeOut" as const },
       }}
-      className="relative aspect-[3/4] rounded-xl overflow-hidden shadow-sm group"
+      whileTap={{ scale: 0.95 }}
+      onClick={() => onPlay(clip)}
+      className="relative aspect-[3/4] rounded-xl overflow-hidden shadow-sm group cursor-pointer"
     >
       {clip.thumbnailUrl ? (
         <img
@@ -338,6 +567,7 @@ function UserClipCard({ clip, index }: { clip: UserClip; index: number }) {
       )}
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+      <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
 
       {/* Scissors badge */}
       <div className="absolute top-2 start-2 bg-black/60 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
