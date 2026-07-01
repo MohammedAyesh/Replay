@@ -5,7 +5,7 @@ import {
   useGetBunnyCollectionVideos,
   BunnyVideo,
 } from "@workspace/api-client-react";
-import { ChevronLeft, ChevronRight, Play, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -209,6 +209,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const hlsRef = useRef<Hls | null>(null);
   const { setFullscreenVideo } = useFullscreenVideo();
 
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isReady, setIsReady] = useState(false);
+
   useEffect(() => {
     setFullscreenVideo(true);
     return () => setFullscreenVideo(false);
@@ -219,6 +222,14 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     if (!el) return;
 
     el.muted = false;
+
+    function onPlay() { setIsPlaying(true); }
+    function onPause() { setIsPlaying(false); }
+    function onCanPlay() { setIsReady(true); }
+
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
+    el.addEventListener("canplay", onCanPlay);
 
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
@@ -239,6 +250,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     return () => {
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("canplay", onCanPlay);
     };
   }, [video.playbackUrl]);
 
@@ -246,13 +260,28 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   useEffect(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl) return;
-    // After a short delay for the video to render and set its width
     const t = setTimeout(() => {
       const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
       scrollEl.scrollLeft = maxScroll / 2;
-    }, 100);
+    }, 150);
     return () => clearTimeout(t);
   }, []);
+
+  const togglePlay = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.paused) {
+      el.play().catch(() => {});
+    } else {
+      el.pause();
+    }
+  };
+
+  const seek = (delta: number) => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.currentTime = Math.max(0, Math.min(el.duration || Infinity, el.currentTime + delta));
+  };
 
   return (
     <motion.div
@@ -271,11 +300,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         </button>
       </div>
 
-      {/* 16:9 viewport with horizontally scrollable wide video */}
+      {/* 16:9 viewport with horizontally scrollable wide video (no visible scrollbar) */}
       <div className="flex-1 flex items-center justify-center w-full overflow-hidden">
         <div
           ref={scrollRef}
-          className="w-full overflow-x-auto overflow-y-hidden"
+          className="w-full overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar"
           style={{ aspectRatio: "16/9" }}
         >
           <video
@@ -283,19 +312,44 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             className="h-full w-auto max-w-none"
             playsInline
             loop
+            onClick={togglePlay}
           />
         </div>
       </div>
 
+      {/* Playback controls */}
+      <div className="shrink-0 px-4 py-3 bg-black flex items-center justify-center gap-6">
+        <button
+          onClick={() => seek(-5)}
+          className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+          aria-label="Back 5 seconds"
+        >
+          <SkipBack className="w-5 h-5" />
+        </button>
+
+        <button
+          onClick={togglePlay}
+          className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
+          aria-label={isPlaying ? "Pause" : "Play"}
+        >
+          {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+        </button>
+
+        <button
+          onClick={() => seek(5)}
+          className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+          aria-label="Forward 5 seconds"
+        >
+          <SkipForward className="w-5 h-5" />
+        </button>
+      </div>
+
       {/* Bottom info */}
-      <div className="shrink-0 px-4 py-4 bg-black">
-        <p className="text-white font-bold text-base leading-tight">{video.title}</p>
+      <div className="shrink-0 px-4 pb-safe pb-3 bg-black">
+        <p className="text-white font-bold text-sm leading-tight">{video.title}</p>
         {(video.views ?? 0) > 0 && (
-          <p className="text-white/60 text-sm mt-1">{(video.views ?? 0).toLocaleString()} views</p>
+          <p className="text-white/60 text-xs mt-0.5">{(video.views ?? 0).toLocaleString()} views</p>
         )}
-        <p className="text-white/40 text-xs mt-1">
-          Swipe left/right to pan across the field
-        </p>
       </div>
     </motion.div>
   );
