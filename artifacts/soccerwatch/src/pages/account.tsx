@@ -1,6 +1,6 @@
-import { useGetMe, useGetAccountStats, useLogout, getGetAccountStatsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
+import * as React from "react";
+import { useGetMe, useGetAccountStats, getGetAccountStatsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
-import { useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, ChevronLeft, LogOut, Globe } from "lucide-react";
@@ -11,40 +11,39 @@ const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export default function Account() {
   const { isGuest, user: authUser } = useAuth();
-  const [, setLocation] = useLocation();
   const { t, locale, setLocale } = useTranslation();
   const { signOut } = useClerk();
-  const logoutMutation = useLogout();
   const queryClient = useQueryClient();
 
   const { data: user } = useGetMe({ query: { enabled: !isGuest, queryKey: getGetMeQueryKey() } });
   const displayUser = user ?? authUser;
   const { data: stats } = useGetAccountStats({ query: { enabled: !isGuest, queryKey: getGetAccountStatsQueryKey() } });
 
-  const handleLogout = async () => {
-    // Always clear backend guest cookie (harmless for real users too)
-    try {
-      await logoutMutation.mutateAsync();
-    } catch {
-      // Ignore backend errors — proceed with client-side logout
-    }
+  const [isLoggingOut, setIsLoggingOut] = React.useState(false);
 
-    // Clear all cached queries so the next user doesn't see stale data
+  const handleLogout = () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+
+    // Wipe all cached queries so the next user doesn't see stale data
     queryClient.clear();
 
     if (isGuest) {
-      setLocation("/");
+      window.location.href = `${basePath}/`;
       return;
     }
 
-    // Sign out of Clerk and navigate home
-    try {
-      await signOut({ redirectUrl: `${basePath}/` });
-    } catch {
-      // Fallback: if signOut throws or doesn't redirect, force navigation
-      setLocation("/");
-      window.location.reload();
-    }
+    // Clear backend session (fire-and-forget)
+    fetch(`${basePath}/api/auth/logout`, { method: "POST", credentials: "include" })
+      .catch(() => {});
+
+    // Sign out of Clerk, then navigate.  We race against a 2-second timeout
+    // so the user isn't stuck if signOut hangs or never resolves.
+    const signOutPromise = signOut().catch(() => {});
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2000));
+    Promise.race([signOutPromise, timeoutPromise]).then(() => {
+      window.location.replace(`${basePath}/`);
+    });
   };
 
   const initial = displayUser?.name?.charAt(0)?.toUpperCase() || "G";
@@ -136,13 +135,17 @@ export default function Account() {
         </div>
 
         <div className="p-6 mt-4">
-          <Button 
-            variant="outline" 
-            className="w-full text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive py-6 rounded-xl font-semibold"
+          <Button
+            type="button"
+            variant="outline"
+            disabled={isLoggingOut}
+            className="w-full text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive py-6 rounded-xl font-semibold disabled:opacity-50"
             onClick={handleLogout}
           >
             <LogOut className="w-5 h-5 me-2" />
-            {isGuest ? t.account.signInRegister : t.account.signOut}
+            {isLoggingOut
+              ? (isGuest ? "Redirecting..." : "Signing out...")
+              : (isGuest ? t.account.signInRegister : t.account.signOut)}
           </Button>
         </div>
       </div>
