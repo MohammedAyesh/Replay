@@ -842,10 +842,12 @@ components:
 
     Ad:
       type: object
-      required: [id, creativeUrl, clickUrl, durationSeconds, targetType]
+      required: [id, title, creativeUrl, clickUrl, durationSeconds, targetType]
       properties:
         id:
           type: integer
+        title:
+          type: string
         creativeUrl:
           type: string
         clickUrl:

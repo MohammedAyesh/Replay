@@ -8,6 +8,7 @@
 
 export interface Ad {
   id: number;
+  title: string;
   creativeUrl: string;
   clickUrl: string;
   durationSeconds: number;

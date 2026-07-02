@@ -71,6 +71,7 @@ router.get("/ads/next", async (req, res): Promise<void> => {
 
     res.json(GetNextAdResponse.parse({
       id: ad.id,
+      title: ad.title,
       creativeUrl: ad.creativeUrl,
       clickUrl: ad.clickUrl,
       durationSeconds: ad.durationSeconds,
@@ -82,6 +83,7 @@ router.get("/ads/next", async (req, res): Promise<void> => {
   const ad = eligible[Math.floor(Math.random() * eligible.length)];
   res.json(GetNextAdResponse.parse({
     id: ad.id,
+    title: ad.title,
     creativeUrl: ad.creativeUrl,
     clickUrl: ad.clickUrl,
     durationSeconds: ad.durationSeconds,

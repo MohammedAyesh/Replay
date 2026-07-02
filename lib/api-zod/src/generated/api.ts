@@ -445,6 +445,7 @@ export const UpdateProfileResponse = zod.object({
  */
 export const GetNextAdResponse = zod.object({
   "id": zod.number(),
+  "title": zod.string(),
   "creativeUrl": zod.string(),
   "clickUrl": zod.string(),
   "durationSeconds": zod.number(),
