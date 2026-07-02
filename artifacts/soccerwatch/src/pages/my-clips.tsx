@@ -10,13 +10,14 @@ import {
   UserClip,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bookmark, Video, Scissors, Trash2, X, Play, Pause } from "lucide-react";
+import { Bookmark, Video, Scissors, Trash2, X, Play, Pause, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
 import Hls from "hls.js";
+import { exportClip, canExportVideo } from "@/lib/exportClip";
 
 function getBunnyThumbnailUrl(clip: Clip): string | null {
   if (clip.bunnyPlaybackUrl) {
@@ -56,12 +57,18 @@ function interpolateX(keyframes: KF[], t: number): number {
 /*  Player overlay for user-created clips                               */
 /* ------------------------------------------------------------------ */
 
+type ExportState = "idle" | "exporting" | "done" | "error";
+
 function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const rafRef = useRef<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [exportState, setExportState] = useState<ExportState>("idle");
+  const [exportProgress, setExportProgress] = useState(0);
+  const { t } = useTranslation();
+  const { toast } = useToast();
   const keyframes = clip.cropPath ?? [];
   // startTime/endTime are 0–1 fractions of total video duration
 
@@ -165,6 +172,54 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
     }
   }, [clip.startTime, clip.endTime]);
 
+  const handleExport = useCallback(async () => {
+    if (exportState === "exporting") return;
+
+    if (!clip.playbackUrl) {
+      toast({ title: t.export.noUrl, variant: "destructive" });
+      return;
+    }
+
+    const supportsCapture = canExportVideo();
+
+    setExportState("exporting");
+    setExportProgress(0);
+
+    try {
+      await exportClip({
+        playbackUrl: clip.playbackUrl,
+        startTime: clip.startTime,
+        endTime: clip.endTime,
+        cropPath: clip.cropPath ?? [],
+        title: clip.title,
+        onProgress: (p) => setExportProgress(Math.round(p * 100)),
+      });
+
+      setExportState("done");
+
+      if (supportsCapture) {
+        toast({ title: t.export.done, description: t.export.doneDesc });
+      } else if ("share" in navigator) {
+        toast({ title: t.export.fallbackShared });
+      } else {
+        toast({
+          title: t.export.fallbackCopied,
+          description: t.export.fallbackCopiedDesc,
+        });
+      }
+
+      setTimeout(() => setExportState("idle"), 3000);
+    } catch {
+      setExportState("error");
+      toast({
+        title: t.export.error,
+        description: t.export.errorDesc,
+        variant: "destructive",
+      });
+      setTimeout(() => setExportState("idle"), 3000);
+    }
+  }, [clip, exportState, t, toast]);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -207,16 +262,41 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
       </div>
 
       {/* Bottom info */}
-      <div className="shrink-0 px-4 pb-safe pb-3 bg-black flex items-center justify-between">
-        <div>
-          <p className="text-white font-bold text-sm">{clip.title}</p>
+      <div className="shrink-0 px-4 pb-safe pb-3 bg-black flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <p className="text-white font-bold text-sm truncate">{clip.title}</p>
           <p className="text-white/50 text-xs">
             {(clip.endTime - clip.startTime).toFixed(3)} × video duration
           </p>
         </div>
+
+        {/* Export button */}
+        <button
+          onClick={handleExport}
+          disabled={exportState === "exporting"}
+          className={`flex items-center gap-1.5 px-3 h-10 rounded-full text-sm font-semibold transition-all active:scale-95 shrink-0 ${
+            exportState === "exporting"
+              ? "bg-white/20 text-white/60 cursor-not-allowed"
+              : exportState === "done"
+              ? "bg-green-500 text-white"
+              : exportState === "error"
+              ? "bg-red-500/80 text-white"
+              : "bg-white/15 text-white hover:bg-white/25"
+          }`}
+          aria-label={t.export.button}
+        >
+          <Download className="w-4 h-4 shrink-0" />
+          <span>
+            {exportState === "exporting"
+              ? t.export.exporting(exportProgress)
+              : t.export.button}
+          </span>
+        </button>
+
+        {/* Play/Pause */}
         <button
           onClick={togglePlay}
-          className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
+          className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform shrink-0"
         >
           {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
         </button>
