@@ -480,6 +480,19 @@ export const RecordClickResponse = zod.unknown()
 
 
 /**
+ * @summary List all banners from Bunny storage
+ */
+export const ListBannersResponseItem = zod.object({
+  "id": zod.string(),
+  "upperSubtext": zod.string().optional(),
+  "title": zod.string(),
+  "lowerSubtext": zod.string().optional(),
+  "imageUrl": zod.string()
+})
+export const ListBannersResponse = zod.array(ListBannersResponseItem)
+
+
+/**
  * @summary List all ad campaigns (admin)
  */
 export const ListAdminAdsResponseItem = zod.object({

@@ -25,6 +25,8 @@ tags:
     description: User account
   - name: ads
     description: Ad serving
+  - name: banners
+    description: Banner content from storage
   - name: admin
     description: Admin ad management
 
@@ -496,6 +498,21 @@ paths:
         "200":
           description: Click recorded
 
+  /banners:
+    get:
+      operationId: listBanners
+      tags: [banners]
+      summary: List all banners from Bunny storage
+      responses:
+        "200":
+          description: Available banners
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Banner"
+
   /admin/ads:
     get:
       operationId: listAdminAds
@@ -855,6 +872,21 @@ components:
         durationSeconds:
           type: integer
         targetType:
+          type: string
+
+    Banner:
+      type: object
+      required: [id, title, imageUrl]
+      properties:
+        id:
+          type: string
+        upperSubtext:
+          type: string
+        title:
+          type: string
+        lowerSubtext:
+          type: string
+        imageUrl:
           type: string
 
     ImpressionInput:

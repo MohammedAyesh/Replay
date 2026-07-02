@@ -11,6 +11,7 @@ export * from './ad';
 export * from './adminAdEntry';
 export * from './adStats';
 export * from './authResponse';
+export * from './banner';
 export * from './bunnyCollection';
 export * from './bunnyVideo';
 export * from './clip';

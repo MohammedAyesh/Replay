@@ -191,6 +191,14 @@ export interface Ad {
   targetType: string;
 }
 
+export interface Banner {
+  id: string;
+  upperSubtext?: string;
+  title: string;
+  lowerSubtext?: string;
+  imageUrl: string;
+}
+
 export interface ImpressionInput {
   clipId: number;
   completed: boolean;

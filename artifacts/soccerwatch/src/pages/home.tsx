@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import {
-  useGetNextAd,
+  useListBanners,
   useListFields,
-  getGetNextAdQueryKey,
+  getListBannersQueryKey,
   getListFieldsQueryKey,
 } from "@workspace/api-client-react";
 
@@ -26,12 +26,11 @@ export default function Home() {
   const [slide, setSlide] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /* Real ad data */
-  const { data: adData } = useGetNextAd({
-    query: { queryKey: getGetNextAdQueryKey() },
+  /* Banners from Bunny storage */
+  const { data: bannersData } = useListBanners({
+    query: { queryKey: getListBannersQueryKey() },
   });
-  const hasAd = !!adData && typeof adData === "object" && "id" in adData;
-  const ad = hasAd ? adData : null;
+  const banners = bannersData ?? [];
 
   /* Real fields */
   const { data: fieldsData } = useListFields({
@@ -39,48 +38,33 @@ export default function Home() {
   });
   const fields = (fieldsData ?? []).slice(0, 4);
 
-  const slides = ad
-    ? [
-        {
-          id: `ad-${ad.id}`,
-          image: ad.creativeUrl,
-          title: ad.title,
-          desc: t.home.sponsored ?? "Sponsored",
-          isAd: true as const,
-          adId: ad.id,
-          clickUrl: ad.clickUrl,
-        },
-        {
-          id: "trending",
-          image: null,
-          title: t.home.bannerSlide1Title,
-          desc: t.home.bannerSlide1Desc,
-          isAd: false as const,
-        },
-        {
-          id: "local",
-          image: null,
-          title: t.home.bannerSlide2Title,
-          desc: t.home.bannerSlide2Desc,
-          isAd: false as const,
-        },
-      ]
-    : [
-        {
-          id: "trending",
-          image: null,
-          title: t.home.bannerSlide1Title,
-          desc: t.home.bannerSlide1Desc,
-          isAd: false as const,
-        },
-        {
-          id: "local",
-          image: null,
-          title: t.home.bannerSlide2Title,
-          desc: t.home.bannerSlide2Desc,
-          isAd: false as const,
-        },
-      ];
+  /* Build slides: banners first, then fallback static slides */
+  const bannerSlides = banners.map((b) => ({
+    id: b.id,
+    image: b.imageUrl,
+    upperSubtext: b.upperSubtext ?? "",
+    title: b.title ?? "",
+    lowerSubtext: b.lowerSubtext ?? "",
+  }));
+
+  const fallbackSlides = [
+    {
+      id: "trending",
+      image: null,
+      upperSubtext: t.home.trendingNow ?? "Trending",
+      title: t.home.bannerSlide1Title,
+      lowerSubtext: t.home.bannerSlide1Desc,
+    },
+    {
+      id: "local",
+      image: null,
+      upperSubtext: "",
+      title: t.home.bannerSlide2Title,
+      lowerSubtext: t.home.bannerSlide2Desc,
+    },
+  ];
+
+  const slides = bannerSlides.length > 0 ? bannerSlides : fallbackSlides;
 
   useEffect(() => {
     if (slides.length <= 1) return;
@@ -98,21 +82,7 @@ export default function Home() {
     intervalRef.current = setInterval(() => {
       setSlide((s) => (s + 1) % slides.length);
     }, BANNER_INTERVAL);
-  }, []);
-
-  const handleAdClick = useCallback(() => {
-    const current = slides[slide];
-    if (!current.isAd || !current.clickUrl) return;
-    window.open(current.clickUrl, "_blank", "noopener,noreferrer");
-    if (current.adId) {
-      fetch(`/api/ads/${current.adId}/impression`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clipId: 0, completed: true }),
-      }).catch(() => {});
-    }
-  }, [slide, slides]);
+  }, [slides.length]);
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto bg-background pb-20">
@@ -145,23 +115,15 @@ export default function Home() {
 
             <div className="absolute inset-0 flex flex-col justify-end p-5">
               <div className="relative z-10">
-                <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">
-                  {slides[slide].isAd ? (t.home.sponsored ?? "Sponsored") : (t.home.trendingNow ?? "Trending")}
-                </p>
+                {slides[slide].upperSubtext && (
+                  <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">
+                    {slides[slide].upperSubtext}
+                  </p>
+                )}
                 <h2 className="text-white text-2xl font-bold leading-tight mb-1">
                   {slides[slide].title}
                 </h2>
-                <p className="text-white/80 text-sm">{slides[slide].desc}</p>
-
-                {slides[slide].isAd && (
-                  <button
-                    onClick={handleAdClick}
-                    className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/20 text-white text-xs font-semibold hover:bg-white/30 active:scale-95 transition-all"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    {t.home.learnMore ?? "Learn more"}
-                  </button>
-                )}
+                <p className="text-white/80 text-sm">{slides[slide].lowerSubtext}</p>
               </div>
             </div>
           </motion.div>
@@ -177,7 +139,6 @@ export default function Home() {
                   "rounded-full transition-all duration-300",
                   i === slide ? "w-5 h-1.5 bg-white" : "w-1.5 h-1.5 bg-white/40"
                 )}
-                aria-label={`Slide ${i + 1}`}
               />
             ))}
           </div>
@@ -185,54 +146,46 @@ export default function Home() {
       </div>
 
       {/* Nearest Fields */}
-      <div className="mt-5 px-4">
+      <div className="px-4 pt-5 pb-2">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-bold text-base">{t.home.nearestFields}</h3>
-          <Link href="/fields" className="flex items-center gap-0.5 text-primary text-xs font-semibold">
-            {t.home.seeAll ?? "See all"} <ChevronRight className="w-3.5 h-3.5" />
+          <h2 className="text-foreground font-bold text-lg">{t.home.nearestFields ?? "Nearest Fields"}</h2>
+          <Link
+            href="/fields"
+            className="flex items-center gap-0.5 text-sm text-primary font-medium active:opacity-70"
+          >
+            See all <ChevronRight className="w-4 h-4" />
           </Link>
         </div>
-        <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide snap-x snap-mandatory">
-          {fields.length === 0 && (
-            <p className="text-muted-foreground text-sm">{t.home.noFields ?? "No fields yet"}</p>
-          )}
-          {fields.map((field) => {
-            const words = splitName(field.name);
-            return (
-              <Link
-                key={field.id}
-                href={`/fields/${field.id}`}
-                className="snap-start flex-shrink-0 w-36 rounded-2xl overflow-hidden shadow-sm border border-border bg-card relative group"
-              >
-                <div className="relative w-full h-28 overflow-hidden">
-                  <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
-                  <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/50 to-black/80" />
-                  <div className="absolute inset-0 flex flex-col items-center justify-center px-2 gap-0.5">
-                    {words.map((word, wi) => (
-                      <span
-                        key={wi}
-                        className="text-white font-black leading-none tracking-tight text-center drop-shadow-lg"
-                        style={{ fontSize: `clamp(0.75rem, ${Math.min(5, 10 / word.length)}vw + 0.4rem, 1.6rem)` }}
-                      >
-                        {word}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="absolute bottom-2 start-0 end-0 px-2">
-                    <p className="text-white/70 text-[10px] font-medium text-center">
-                      {t.home.clips(field.clipCount ?? 0)}
-                    </p>
-                  </div>
-                </div>
-                <div className="p-2.5">
-                  <p className="font-semibold text-xs leading-tight truncate">{field.name}</p>
-                  <p className="text-muted-foreground text-[10px] mt-0.5 truncate">{field.location}</p>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
       </div>
+
+      {fields.length > 0 ? (
+        <div className="flex gap-3 overflow-x-auto px-4 pb-4 snap-x snap-mandatory no-scrollbar">
+          {fields.map((f) => (
+            <Link
+              key={f.id}
+              href={`/fields/${f.id}`}
+              className="relative shrink-0 snap-start w-48 aspect-[4/5] rounded-2xl overflow-hidden group"
+            >
+              <div className="absolute inset-0 field-pattern" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
+              <div className="absolute inset-0 flex flex-col justify-end p-3">
+                <h3 className="text-white font-bold text-base leading-tight">
+                  {splitName(f.name).join(" ")}
+                </h3>
+                {(f.clipCount ?? 0) > 0 && (
+                  <p className="text-white/60 text-xs mt-0.5">
+                    {(f.clipCount ?? 0).toLocaleString()} clips
+                  </p>
+                )}
+              </div>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="px-4 pb-4 text-center">
+          <p className="text-muted-foreground text-sm">No fields found</p>
+        </div>
+      )}
     </div>
   );
 }

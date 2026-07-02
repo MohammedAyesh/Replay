@@ -25,6 +25,7 @@ import type {
   AdStats,
   AdminAdEntry,
   AuthResponse,
+  Banner,
   BunnyCollection,
   BunnyVideo,
   Clip,
@@ -2065,6 +2066,83 @@ export const useRecordClick = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getRecordClickMutationOptions(options));
     }
+
+export const getListBannersUrl = () => {
+
+
+
+
+  return `/api/banners`
+}
+
+/**
+ * @summary List all banners from Bunny storage
+ */
+export const listBanners = async ( options?: RequestInit): Promise<Banner[]> => {
+
+  return customFetch<Banner[]>(getListBannersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListBannersQueryKey = () => {
+    return [
+    `/api/banners`
+    ] as const;
+    }
+
+
+export const getListBannersQueryOptions = <TData = Awaited<ReturnType<typeof listBanners>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBanners>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListBannersQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listBanners>>> = ({ signal }) => listBanners({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listBanners>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListBannersQueryResult = NonNullable<Awaited<ReturnType<typeof listBanners>>>
+export type ListBannersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all banners from Bunny storage
+ */
+
+export function useListBanners<TData = Awaited<ReturnType<typeof listBanners>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBanners>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListBannersQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getListAdminAdsUrl = () => {
 

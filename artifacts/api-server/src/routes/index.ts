@@ -9,6 +9,7 @@ import userClipsRouter from "./userClips";
 import accountRouter from "./account";
 import adsRouter from "./ads";
 import adminRouter from "./admin";
+import bannersRouter from "./banners";
 import bunnyVideosRouter from "./bunnyVideos";
 import bunnyCollectionsRouter from "./bunnyCollections";
 
@@ -25,6 +26,7 @@ router.use(savedClipsRouter);
 router.use(userClipsRouter);
 router.use(accountRouter);
 router.use(adsRouter);
+router.use(bannersRouter);
 router.use(adminRouter);
 
 export default router;
