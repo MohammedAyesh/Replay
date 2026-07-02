@@ -3,10 +3,27 @@ export type Locale = "en" | "ar";
 const strings = {
   en: {
     nav: {
+      home: "Home",
       watch: "Watch",
       fields: "Fields",
       myClips: "My Clips",
       account: "Account",
+    },
+    home: {
+      greeting: (name: string) => `Hey, ${name} 👋`,
+      guestGreeting: "Hey there 👋",
+      bannerSlide1Title: "Weekend Warriors",
+      bannerSlide1Desc: "Best goals from Saturday's matches",
+      bannerSlide2Title: "Top Saves",
+      bannerSlide2Desc: "Goalkeeper highlights this week",
+      bannerSlide3Title: "Local Legends",
+      bannerSlide3Desc: "Rising talent at your nearest pitch",
+      nearestFields: "Nearest Fields",
+      trendingClips: "Trending Clips",
+      jumpBackIn: "Watch Feed →",
+      clips: (n: number) => `${n} clips`,
+      km: (d: string) => `${d} km`,
+      likes: (n: number) => `${n} likes`,
     },
     login: {
       tagline: "Every game.\nEvery angle.",
@@ -156,10 +173,27 @@ const strings = {
   },
   ar: {
     nav: {
+      home: "الرئيسية",
       watch: "مشاهدة",
       fields: "الملاعب",
       myClips: "مقاطعي",
       account: "الحساب",
+    },
+    home: {
+      greeting: (name: string) => `أهلاً، ${name} 👋`,
+      guestGreeting: "أهلاً بك 👋",
+      bannerSlide1Title: "أبطال نهاية الأسبوع",
+      bannerSlide1Desc: "أفضل الأهداف من مباريات السبت",
+      bannerSlide2Title: "أفضل التصديات",
+      bannerSlide2Desc: "أبرز لقطات حراس المرمى هذا الأسبوع",
+      bannerSlide3Title: "نجوم محليون",
+      bannerSlide3Desc: "مواهب صاعدة في أقرب ملعب",
+      nearestFields: "أقرب الملاعب",
+      trendingClips: "المقاطع الرائجة",
+      jumpBackIn: "← قائمة المشاهدة",
+      clips: (n: number) => `${n} مقاطع`,
+      km: (d: string) => `${d} كم`,
+      likes: (n: number) => `${n} إعجاب`,
     },
     login: {
       tagline: "كل مباراة.\nكل زاوية.",

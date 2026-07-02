@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { PlaySquare, MapPin, Bookmark, User as UserIcon } from "lucide-react";
+import { Home, PlaySquare, MapPin, Bookmark, User as UserIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -33,6 +33,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
               : "bg-white border-border text-muted-foreground"
           )}
         >
+          <NavItem
+            href="/home"
+            icon={<Home className="w-6 h-6" />}
+            label={t.nav.home}
+            isActive={location === "/home"}
+            isTranslucent={useTranslucentBar}
+          />
           <NavItem
             href="/watch"
             icon={<PlaySquare className="w-6 h-6" />}

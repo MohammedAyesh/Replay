@@ -12,6 +12,7 @@ import { LocaleProvider, useLocale } from "@/i18n";
 import { FullscreenVideoProvider } from "@/lib/fullscreen-video";
 
 import Landing from "@/pages/login";
+import Home from "@/pages/home";
 import Watch from "@/pages/watch";
 import Fields from "@/pages/fields";
 import FieldDetail from "@/pages/field-detail";
@@ -52,7 +53,7 @@ function SignInPage() {
           routing="path"
           path={`${basePath}/sign-in`}
           signUpUrl={`${basePath}/sign-up`}
-          forceRedirectUrl={`${basePath}/watch`}
+          forceRedirectUrl={`${basePath}/home`}
         />
       </div>
     </div>
@@ -68,7 +69,7 @@ function SignUpPage() {
           routing="path"
           path={`${basePath}/sign-up`}
           signInUrl={`${basePath}/sign-in`}
-          forceRedirectUrl={`${basePath}/watch`}
+          forceRedirectUrl={`${basePath}/home`}
         />
       </div>
     </div>
@@ -120,6 +121,7 @@ function AppRouter() {
         <Route path="/sign-in/*?" component={SignInPage} />
         <Route path="/sign-up/*?" component={SignUpPage} />
         <Route path="/onboarding" component={Onboarding} />
+        <Route path="/home" component={Home} />
         <Route path="/watch" component={Watch} />
         <Route path="/fields" component={Fields} />
         <Route path="/fields/:id" component={FieldDetail} />
