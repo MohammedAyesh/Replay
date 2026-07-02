@@ -225,47 +225,46 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-black flex flex-col"
+      className="fixed inset-0 z-50 bg-black"
     >
-      {/* Top bar */}
+      {/* Full-bleed scrollable video — fills screen in both portrait + landscape */}
+      <div
+        ref={scrollRef}
+        className="absolute inset-0 overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar"
+      >
+        <video
+          ref={videoRef}
+          className="h-full max-w-none pointer-events-none"
+          style={{ aspectRatio: "3840/1080" }}
+          playsInline
+          loop={false}
+          muted={false}
+        />
+        {/* Tap to play/pause — covers the whole viewport */}
+        <button
+          onClick={togglePlay}
+          className="absolute inset-0 z-10"
+          aria-label={isPlaying ? "Pause" : "Play"}
+        />
+      </div>
+
+      {/* Top close button */}
       <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between z-20 pointer-events-none">
         <button
           onClick={onClose}
-          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto"
+          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto active:scale-95 transition-transform"
         >
           <X className="w-5 h-5" />
         </button>
         <div className="w-10" />
       </div>
 
-      {/* Scrollable video viewport */}
-      <div className="flex-1 flex items-center justify-center w-full overflow-hidden">
-        <div
-          ref={scrollRef}
-          className="w-full overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
-          style={{ aspectRatio: "16/9" }}
-        >
-          <video
-            ref={videoRef}
-            className="h-full max-w-none pointer-events-none"
-            style={{ aspectRatio: "3840/1080" }}
-            playsInline
-            loop={false}
-            muted={false}
-          />
-          <button
-            onClick={togglePlay}
-            className="absolute inset-0 z-10"
-            aria-label={isPlaying ? "Pause" : "Play"}
-          />
-        </div>
-      </div>
-
-      {/* Bottom info */}
-      <div className="shrink-0 px-4 pb-safe pb-3 bg-black flex items-center gap-3">
-        <div className="flex-1 min-w-0">
-          <p className="text-white font-bold text-sm truncate">{clip.title}</p>
-          <p className="text-white/50 text-xs">
+      {/* Bottom controls — floating overlay, not a separate bar */}
+      <div className="absolute bottom-safe left-0 right-0 z-20 px-4 pb-3 flex items-end gap-3 pointer-events-none"
+        style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}>
+        <div className="flex-1 min-w-0 pb-1 pointer-events-auto">
+          <p className="text-white font-bold text-sm truncate drop-shadow">{clip.title}</p>
+          <p className="text-white/70 text-xs drop-shadow">
             {(clip.endTime - clip.startTime).toFixed(3)} × video duration
           </p>
         </div>
@@ -274,7 +273,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
         <button
           onClick={handleExport}
           disabled={exportState === "exporting"}
-          className={`flex items-center gap-1.5 px-3 h-10 rounded-full text-sm font-semibold transition-all active:scale-95 shrink-0 ${
+          className={`flex items-center gap-1.5 px-3 h-10 rounded-full text-sm font-semibold transition-all active:scale-95 shrink-0 pointer-events-auto ${
             exportState === "exporting"
               ? "bg-white/20 text-white/60 cursor-not-allowed"
               : exportState === "done"
@@ -296,7 +295,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
         {/* Play/Pause */}
         <button
           onClick={togglePlay}
-          className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform shrink-0"
+          className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform shrink-0 pointer-events-auto"
         >
           {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
         </button>
