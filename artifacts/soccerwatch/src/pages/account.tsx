@@ -3,7 +3,7 @@ import { useGetMe, useGetAccountStats, useUpdateProfile, getGetAccountStatsQuery
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell, Bookmark, Shield, HelpCircle, ChevronRight, ChevronLeft, LogOut, Globe, Pencil } from "lucide-react";
+import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -91,7 +91,7 @@ export default function Account() {
 
   const initial = displayUser?.name?.charAt(0)?.toUpperCase() || "G";
   const name = isGuest ? t.account.guestName : displayUser?.name || t.account.playerFallback;
-  const email = isGuest ? t.account.guestEmail : displayUser?.email || "";
+  const email = isGuest ? "" : displayUser?.email || "";
 
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
@@ -155,10 +155,6 @@ export default function Account() {
               <ChevronLeft className="w-5 h-5 text-muted-foreground ltr:hidden" />
             </button>
           )}
-          <SettingRow icon={<Bell className="w-5 h-5 text-muted-foreground" />} label={t.account.notifications} />
-          <SettingRow icon={<Bookmark className="w-5 h-5 text-muted-foreground" />} label={t.account.savedFields} />
-          <SettingRow icon={<Shield className="w-5 h-5 text-muted-foreground" />} label={t.account.privacy} />
-          <SettingRow icon={<HelpCircle className="w-5 h-5 text-muted-foreground" />} label={t.account.help} />
           {/* Language toggle */}
           <LanguageToggle />
         </div>

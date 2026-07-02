@@ -5,6 +5,8 @@ import { Crown, Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
+import { useQueryClient } from "@tanstack/react-query";
+import { getListBannersQueryKey, getListFieldsQueryKey } from "@workspace/api-client-react";
 
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 28 },
@@ -19,8 +21,22 @@ export default function Login() {
   const { toast } = useToast();
   const { t, locale, setLocale } = useTranslation();
   const guestMutation = useLoginAsGuest();
+  const queryClient = useQueryClient();
+
+  /* Preload banners & fields while logging in */
+  const preloadHomeData = () => {
+    queryClient.prefetchQuery({
+      queryKey: getListBannersQueryKey(),
+      staleTime: 24 * 60 * 60 * 1000,
+    });
+    queryClient.prefetchQuery({
+      queryKey: getListFieldsQueryKey(),
+      staleTime: 24 * 60 * 60 * 1000,
+    });
+  };
 
   const handleGuest = () => {
+    preloadHomeData();
     guestMutation.mutate(undefined, {
       onSuccess: () => setLocation("/watch"),
       onError: () => {

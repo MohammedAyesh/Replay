@@ -26,15 +26,23 @@ export default function Home() {
   const [slide, setSlide] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /* Banners from Bunny storage */
+  /* Banners from Bunny storage — cached for 24h */
   const { data: bannersData } = useListBanners({
-    query: { queryKey: getListBannersQueryKey() },
+    query: {
+      queryKey: getListBannersQueryKey(),
+      staleTime: 24 * 60 * 60 * 1000,
+      gcTime: 24 * 60 * 60 * 1000,
+    },
   });
   const banners = bannersData ?? [];
 
-  /* Real fields */
+  /* Real fields — cached for 24h */
   const { data: fieldsData } = useListFields({
-    query: { queryKey: getListFieldsQueryKey() },
+    query: {
+      queryKey: getListFieldsQueryKey(),
+      staleTime: 24 * 60 * 60 * 1000,
+      gcTime: 24 * 60 * 60 * 1000,
+    },
   });
   const fields = (fieldsData ?? []).slice(0, 4);
 
