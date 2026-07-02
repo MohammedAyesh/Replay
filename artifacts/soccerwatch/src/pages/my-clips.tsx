@@ -10,7 +10,7 @@ import {
   UserClip,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bookmark, Video, Scissors, Trash2, X, Play, Pause, Download } from "lucide-react";
+import { Bookmark, Video, Scissors, Trash2, X, Play, Pause, Download, Maximize, Minimize } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
@@ -65,6 +65,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
   const hlsRef = useRef<Hls | null>(null);
   const rafRef = useRef<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [exportState, setExportState] = useState<ExportState>("idle");
   const [exportProgress, setExportProgress] = useState(0);
   const { t } = useTranslation();
@@ -171,6 +172,21 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
       setIsPlaying(false);
     }
   }, [clip.startTime, clip.endTime]);
+
+  /* Fullscreen toggle */
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   const handleExport = useCallback(async () => {
     if (exportState === "exporting") return;
@@ -290,6 +306,15 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
               ? t.export.exporting(exportProgress)
               : t.export.button}
           </span>
+        </button>
+
+        {/* Fullscreen toggle */}
+        <button
+          onClick={toggleFullscreen}
+          className="w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all shrink-0 pointer-events-auto"
+          aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+        >
+          {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
         </button>
 
         {/* Play/Pause */}
