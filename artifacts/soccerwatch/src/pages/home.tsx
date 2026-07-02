@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { Heart, MapPin, ChevronRight, ExternalLink } from "lucide-react";
+import { Heart, ChevronRight, ExternalLink, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
@@ -13,29 +13,20 @@ import {
   getListFieldsQueryKey,
   getListClipsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
 
 const BANNER_INTERVAL = 5000;
 
-const fieldGradients = [
-  "from-emerald-700 to-green-900",
-  "from-blue-700 to-indigo-900",
-  "from-teal-600 to-emerald-900",
-  "from-sky-700 to-blue-900",
-];
-
-const clipGradients = [
-  "from-slate-700 to-slate-900",
-  "from-zinc-700 to-zinc-900",
-  "from-neutral-700 to-neutral-900",
-  "from-stone-700 to-stone-900",
-  "from-gray-700 to-gray-900",
-];
+function splitName(name: string): string[] {
+  return name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.toUpperCase());
+}
 
 export default function Home() {
   const { t } = useTranslation();
   const { user, isGuest } = useAuth();
-  const qc = useQueryClient();
   const [slide, setSlide] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -63,14 +54,13 @@ export default function Home() {
     .sort((a, b) => (b.likeCount ?? 0) - (a.likeCount ?? 0))
     .slice(0, 5);
 
-  /* Banner slides: if there's an ad, use it as the first slide + 2 generic backups */
   const slides = ad
     ? [
         {
           id: `ad-${ad.id}`,
           image: ad.creativeUrl,
           title: ad.title,
-          desc: "Sponsored",
+          desc: t.home.sponsored ?? "Sponsored",
           isAd: true as const,
           adId: ad.id,
           clickUrl: ad.clickUrl,
@@ -129,7 +119,6 @@ export default function Home() {
     const current = slides[slide];
     if (!current.isAd || !current.clickUrl) return;
     window.open(current.clickUrl, "_blank", "noopener,noreferrer");
-    /* Record impression as "completed" since they clicked */
     if (current.adId) {
       fetch(`/api/ads/${current.adId}/impression`, {
         method: "POST",
@@ -142,7 +131,7 @@ export default function Home() {
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto bg-background pb-20">
-      {/* Banner carousel — now shows real ads when available */}
+      {/* Banner carousel */}
       <div className="relative w-full aspect-[16/9] overflow-hidden">
         <AnimatePresence mode="wait">
           <motion.div
@@ -164,28 +153,16 @@ export default function Home() {
                 <div className="absolute inset-0 bg-black/40" />
               </>
             ) : (
-              <div className={cn(
-                "absolute inset-0 bg-gradient-to-br flex flex-col justify-end p-5",
-                slide % 2 === 0
-                  ? "from-emerald-800 via-green-700 to-teal-600"
-                  : "from-slate-800 via-blue-900 to-indigo-800"
-              )}>
-                <div className="absolute inset-0 bg-black/30" />
+              <div className="absolute inset-0 field-pattern bg-[#0d1f0d]">
+                <div className="absolute inset-0 bg-gradient-to-br from-emerald-900/60 via-green-800/40 to-black/70" />
               </div>
             )}
 
             <div className="absolute inset-0 flex flex-col justify-end p-5">
               <div className="relative z-10">
-                {slides[slide].isAd && (
-                  <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">
-                    {t.home.sponsored ?? "Sponsored"}
-                  </p>
-                )}
-                {!slides[slide].isAd && (
-                  <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">
-                    {t.home.trendingNow ?? "Trending Now"}
-                  </p>
-                )}
+                <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">
+                  {slides[slide].isAd ? (t.home.sponsored ?? "Sponsored") : (t.home.trendingNow ?? "Trending")}
+                </p>
                 <h2 className="text-white text-2xl font-bold leading-tight mb-1">
                   {slides[slide].title}
                 </h2>
@@ -205,7 +182,6 @@ export default function Home() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Dot indicators */}
         {slides.length > 1 && (
           <div className="absolute bottom-3 start-0 end-0 flex justify-center gap-1.5 z-10">
             {slides.map((_, i) => (
@@ -223,14 +199,14 @@ export default function Home() {
         )}
       </div>
 
-      {/* Personalised greeting — now below banner, not a sticky bar */}
+      {/* Greeting */}
       <div className="px-4 pt-5 pb-1">
         <p className="text-foreground/70 text-sm">
           {firstName ? t.home.greeting(firstName) : t.home.guestGreeting}
         </p>
       </div>
 
-      {/* Nearest Fields — real data */}
+      {/* Nearest Fields — real cards with field-pattern background */}
       <div className="mt-4">
         <div className="flex items-center justify-between px-4 mb-3">
           <h3 className="font-bold text-base">{t.home.nearestFields}</h3>
@@ -242,35 +218,47 @@ export default function Home() {
           {fields.length === 0 && (
             <p className="text-muted-foreground text-sm px-2">{t.home.noFields ?? "No fields yet"}</p>
           )}
-          {fields.map((field, idx) => (
-            <Link
-              key={field.id}
-              href={`/fields/${field.id}`}
-              className="snap-start flex-shrink-0 w-36 rounded-2xl overflow-hidden shadow-sm border border-border bg-card"
-            >
-              <div
-                className={cn(
-                  "w-full h-20 bg-gradient-to-br flex items-end p-2",
-                  fieldGradients[idx % fieldGradients.length]
-                )}
+          {fields.map((field) => {
+            const words = splitName(field.name);
+            return (
+              <Link
+                key={field.id}
+                href={`/fields/${field.id}`}
+                className="snap-start flex-shrink-0 w-36 rounded-2xl overflow-hidden shadow-sm border border-border bg-card relative group"
               >
-                <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
-                  <MapPin className="w-4 h-4 text-white" />
+                {/* Background — textured field pattern with gradient */}
+                <div className="relative w-full h-28 overflow-hidden">
+                  <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
+                  <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/50 to-black/80" />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center px-2 gap-0.5">
+                    {words.map((word, wi) => (
+                      <span
+                        key={wi}
+                        className="text-white font-black leading-none tracking-tight text-center drop-shadow-lg"
+                        style={{ fontSize: `clamp(0.75rem, ${Math.min(5, 10 / word.length)}vw + 0.4rem, 1.6rem)` }}
+                      >
+                        {word}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="absolute bottom-2 start-0 end-0 px-2">
+                    <p className="text-white/70 text-[10px] font-medium text-center">
+                      {t.home.clips(field.clipCount ?? 0)}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div className="p-2.5">
-                <p className="font-semibold text-xs leading-tight truncate">{field.name}</p>
-                <p className="text-muted-foreground text-[10px] mt-0.5 truncate">{field.location}</p>
-                <p className="text-primary text-[10px] font-medium mt-0.5">
-                  {t.home.clips(field.clipCount ?? 0)}
-                </p>
-              </div>
-            </Link>
-          ))}
+                {/* Info row below image */}
+                <div className="p-2.5">
+                  <p className="font-semibold text-xs leading-tight truncate">{field.name}</p>
+                  <p className="text-muted-foreground text-[10px] mt-0.5 truncate">{field.location}</p>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       </div>
 
-      {/* Trending Clips — real data sorted by likes */}
+      {/* Trending Clips — clean cards without fake gradient thumbnails */}
       <div className="mt-5">
         <div className="flex items-center justify-between px-4 mb-3">
           <h3 className="font-bold text-base">{t.home.trendingClips}</h3>
@@ -278,7 +266,7 @@ export default function Home() {
             {t.home.seeAll ?? "See all"} <ChevronRight className="w-3.5 h-3.5" />
           </Link>
         </div>
-        <div className="flex flex-col gap-3 px-4">
+        <div className="flex flex-col gap-2 px-4">
           {clips.length === 0 && (
             <p className="text-muted-foreground text-sm">{t.home.noClips ?? "No clips yet"}</p>
           )}
@@ -286,21 +274,22 @@ export default function Home() {
             <Link
               key={clip.id}
               href={`/player/${clip.id}`}
-              className="flex gap-3 items-center bg-card rounded-2xl overflow-hidden shadow-sm border border-border"
+              className="flex items-center gap-3 bg-card rounded-xl border border-border p-3 active:scale-[0.98] transition-transform"
             >
-              <div
-                className={cn(
-                  "flex-shrink-0 w-24 h-16 bg-gradient-to-br rounded-l-2xl",
-                  clipGradients[idx % clipGradients.length]
-                )}
-              />
-              <div className="flex-1 min-w-0 py-2 pe-3">
+              {/* Rank badge */}
+              <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold shrink-0">
+                {idx + 1}
+              </div>
+              <div className="flex-1 min-w-0">
                 <p className="font-semibold text-sm leading-tight truncate">{clip.momentLabel}</p>
                 <p className="text-muted-foreground text-xs mt-0.5 truncate">{clip.fieldName ?? clip.court ?? ""}</p>
-                <div className="flex items-center gap-1 mt-1">
-                  <Heart className="w-3 h-3 text-rose-500" />
-                  <span className="text-xs text-muted-foreground">{t.home.likes(clip.likeCount ?? 0)}</span>
-                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0 text-muted-foreground">
+                <Heart className="w-3.5 h-3.5 text-rose-500" />
+                <span className="text-xs">{t.home.likes(clip.likeCount ?? 0)}</span>
+              </div>
+              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                <Play className="w-3.5 h-3.5 text-muted-foreground fill-muted-foreground" />
               </div>
             </Link>
           ))}
