@@ -132,7 +132,7 @@ export default function Home() {
                 <img
                   src={slides[slide].image ?? undefined}
                   alt={slides[slide].title}
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="absolute inset-0 w-full h-full object-contain bg-black"
                   loading="eager"
                 />
                 <div className="absolute inset-0 bg-black/40" />

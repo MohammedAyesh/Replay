@@ -379,13 +379,15 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
     >
       <div className="absolute inset-0 field-pattern opacity-30" />
 
-      <video
-        ref={videoRef}
-        className="absolute inset-0 w-full h-full object-cover"
-        playsInline
-        loop
-        muted={isMuted}
-      />
+      <div className="absolute inset-0 flex items-center bg-black">
+        <video
+          ref={videoRef}
+          className="w-full aspect-[16/9] object-cover"
+          playsInline
+          loop
+          muted={isMuted}
+        />
+      </div>
 
       <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/80 pointer-events-none" />
 
@@ -461,18 +463,20 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
           onClick={(e) => e.stopPropagation()}
         >
           {isVideoAd ? (
-            <video
-              ref={adVideoRef}
-              className="absolute inset-0 w-full h-full object-cover"
-              playsInline
-              muted={isMuted}
-              onEnded={() => finishAd(currentAd)}
-            />
+            <div className="absolute inset-0 flex items-center bg-black">
+              <video
+                ref={adVideoRef}
+                className="w-full aspect-[16/9] object-cover"
+                playsInline
+                muted={isMuted}
+                onEnded={() => finishAd(currentAd)}
+              />
+            </div>
           ) : (
             <img
               src={currentAd.creativeUrl}
               alt="Advertisement"
-              className="absolute inset-0 w-full h-full object-cover"
+              className="absolute inset-0 w-full h-full object-contain bg-black"
               onLoad={() => {
                 if (adImageTimeoutRef.current) clearTimeout(adImageTimeoutRef.current);
                 adImageTimeoutRef.current = setTimeout(

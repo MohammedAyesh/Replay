@@ -422,27 +422,29 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-black"
     >
-      {/* Full-bleed scrollable video — fills entire screen */}
-      <div
-        ref={scrollRef}
-        className="absolute inset-0 overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar"
-      >
-        {clipMode === "recording" && (
-          <div className="absolute inset-0 border-2 border-red-500/70 z-10 pointer-events-none rounded" />
-        )}
+      {/* Letterboxed 16:9 scrollable video — black bars top & bottom */}
+      <div className="absolute inset-0 flex items-center bg-black">
+        <div
+          ref={scrollRef}
+          className="w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
+        >
+          {clipMode === "recording" && (
+            <div className="absolute inset-0 border-2 border-red-500/70 z-10 pointer-events-none rounded" />
+          )}
 
-        <video
-          ref={videoRef}
-          className="h-full max-w-none pointer-events-none"
-          style={{ aspectRatio: "3840/1080" }}
-          playsInline
-          loop
-          onLoadedMetadata={onLoadedMetadata}
-        />
+          <video
+            ref={videoRef}
+            className="h-full max-w-none pointer-events-none"
+            style={{ aspectRatio: "3840/1080" }}
+            playsInline
+            loop
+            onLoadedMetadata={onLoadedMetadata}
+          />
 
-        {clipMode !== "recording" && (
-          <button onClick={togglePlay} className="absolute inset-0 z-10" aria-label={isPlaying ? "Pause" : "Play"} />
-        )}
+          {clipMode !== "recording" && (
+            <button onClick={togglePlay} className="absolute inset-0 z-10" aria-label={isPlaying ? "Pause" : "Play"} />
+          )}
+        </div>
       </div>
 
       {/* Top bar — floating over video */}
