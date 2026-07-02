@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useGetMe, useUpdateLocale, getGetMeQueryKey } from "@workspace/api-client-react";
 import type { Locale, Strings } from "./strings";
 import { strings } from "./strings";
+import { toast } from "@/hooks/use-toast";
 
 const STORAGE_KEY = "soccerwatch_locale";
 
@@ -50,17 +51,45 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
     if (!me.isGuest) {
       const localLocale = localStorage.getItem(STORAGE_KEY);
       if (localLocale === "ar" || localLocale === "en") {
-        persistLocale({ data: { locale: localLocale } });
+        persistLocale(
+          { data: { locale: localLocale } },
+          {
+            onError: () => {
+              const t = strings[localLocale].account;
+              toast({
+                title: t.localeSaveFailed,
+                description: t.localeSaveFailedDesc,
+                variant: "destructive",
+              });
+            },
+          },
+        );
       }
     }
   }, [me]);
 
   const setLocale = (l: Locale) => {
+    const prev = localStorage.getItem(STORAGE_KEY) as Locale | null;
     localStorage.setItem(STORAGE_KEY, l);
     setLocaleState(l);
 
     if (me && !me.isGuest) {
-      persistLocale({ data: { locale: l } });
+      persistLocale(
+        { data: { locale: l } },
+        {
+          onError: () => {
+            const reverted = prev ?? "en";
+            localStorage.setItem(STORAGE_KEY, reverted);
+            setLocaleState(reverted);
+            const t = strings[reverted].account;
+            toast({
+              title: t.localeSaveFailed,
+              description: t.localeSaveFailedDesc,
+              variant: "destructive",
+            });
+          },
+        },
+      );
     }
   };
 

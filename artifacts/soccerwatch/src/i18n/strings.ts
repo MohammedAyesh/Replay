@@ -150,6 +150,8 @@ const strings = {
       profileUpdatedDesc: "Your changes have been saved.",
       profileUpdateFailed: "Failed to update profile",
       profileUpdateFailedDesc: "Please try again.",
+      localeSaveFailed: "Couldn't save language setting",
+      localeSaveFailedDesc: "Your preference is shown but wasn't saved. Please try again.",
     },
   },
   ar: {
@@ -300,6 +302,8 @@ const strings = {
       profileUpdatedDesc: "تم حفظ تغييراتك.",
       profileUpdateFailed: "فشل تحديث الملف الشخصي",
       profileUpdateFailedDesc: "يرجى المحاولة مرة أخرى.",
+      localeSaveFailed: "تعذّر حفظ إعداد اللغة",
+      localeSaveFailedDesc: "يظهر الإعداد ولكنه لم يُحفظ. يرجى المحاولة مرة أخرى.",
     },
   },
 } as const;
