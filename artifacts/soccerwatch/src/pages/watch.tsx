@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useLocation } from "wouter";
 import Hls from "hls.js";
 import { useListClips, useToggleLike, useSaveClip, useUnsaveClip, getListClipsQueryKey, getListSavedClipsQueryKey, Clip, Ad } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -7,6 +8,15 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
+
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
 
 const FALLBACK_VIDEOS = [
   "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
@@ -76,6 +86,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
   const queryClient = useQueryClient();
   const { isGuest } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
   const [isMuted, setIsMuted] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -439,6 +450,22 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
 
       {/* Bottom Info */}
       <div className="absolute bottom-24 start-4 end-20 text-white pointer-events-auto">
+        {clip.creatorId && clip.creatorName && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setLocation(`/players/${clip.creatorId}`); }}
+            className="flex items-center gap-2 mb-3 active:opacity-70 transition-opacity"
+          >
+            <div className="w-8 h-8 rounded-full bg-primary/90 flex items-center justify-center shadow-md border border-white/20 text-white text-xs font-bold shrink-0">
+              {getInitials(clip.creatorName)}
+            </div>
+            <div className="text-start">
+              <p className="text-white text-xs font-semibold leading-tight drop-shadow">{clip.creatorName}</p>
+              {clip.creatorPosition && (
+                <p className="text-white/70 text-[10px] capitalize leading-tight">{clip.creatorPosition}</p>
+              )}
+            </div>
+          </button>
+        )}
         <div className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase inline-block mb-2">
           {clip.momentLabel}
         </div>

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   useListSavedClips,
   useListUserClips,
@@ -513,8 +513,18 @@ function SavedTab({ clips, isLoading }: { clips: Clip[] | undefined; isLoading: 
   );
 }
 
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
 function SavedClipCard({ clip, index }: { clip: Clip; index: number }) {
   const thumbnailUrl = getBunnyThumbnailUrl(clip);
+  const [, setLocation] = useLocation();
 
   return (
     <motion.div
@@ -546,6 +556,16 @@ function SavedClipCard({ clip, index }: { clip: Clip; index: number }) {
           <div className="absolute top-2 start-2 bg-primary text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm">
             {clip.momentLabel}
           </div>
+
+          {clip.creatorId && clip.creatorName && (
+            <button
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setLocation(`/players/${clip.creatorId}`); }}
+              className="absolute top-2 end-2 w-6 h-6 rounded-full bg-primary/90 flex items-center justify-center border border-white/30 shadow-sm z-10 active:opacity-70 transition-opacity"
+              title={clip.creatorName}
+            >
+              <span className="text-white text-[8px] font-bold">{getInitials(clip.creatorName)}</span>
+            </button>
+          )}
 
           <div className="absolute bottom-2 start-2 end-2">
             <h3 className="text-white font-bold text-sm leading-tight mb-0.5 line-clamp-2">

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and } from "drizzle-orm";
-import { db, savedClipsTable, clipsTable, recordingsTable, fieldsTable, likesTable } from "@workspace/db";
+import { db, savedClipsTable, clipsTable, recordingsTable, fieldsTable, likesTable, usersTable } from "@workspace/db";
 import {
   SaveClipParams,
   UnsaveClipParams,
@@ -38,6 +38,21 @@ router.get("/saved-clips", async (req, res): Promise<void> => {
           ? getBunnyPlaybackUrl(clip.bunnyVideoId)
           : (clip.bunnyPlaybackUrl ?? null);
 
+      let creatorId: number | null = null;
+      let creatorName: string | null = null;
+      let creatorPosition: string | null = null;
+      if (clip.creatorId) {
+        const [creator] = await db
+          .select({ id: usersTable.id, name: usersTable.name, position: usersTable.position })
+          .from(usersTable)
+          .where(eq(usersTable.id, clip.creatorId));
+        if (creator) {
+          creatorId = creator.id;
+          creatorName = creator.name;
+          creatorPosition = creator.position ?? null;
+        }
+      }
+
       return {
         id: clip.id,
         recordingId: clip.recordingId,
@@ -53,6 +68,9 @@ router.get("/saved-clips", async (req, res): Promise<void> => {
         fieldName: field?.name ?? null,
         court: recording?.court ?? null,
         date: recording?.date ?? null,
+        creatorId,
+        creatorName,
+        creatorPosition,
       };
     })
   );

@@ -4,5 +4,6 @@ export * from "./recordings";
 export * from "./clips";
 export * from "./savedClips";
 export * from "./likes";
+export * from "./follows";
 export * from "./ads";
 export * from "./userClips";

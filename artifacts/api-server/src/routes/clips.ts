@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, desc, and } from "drizzle-orm";
-import { db, clipsTable, recordingsTable, fieldsTable, savedClipsTable, likesTable } from "@workspace/db";
+import { db, clipsTable, recordingsTable, fieldsTable, savedClipsTable, likesTable, usersTable } from "@workspace/db";
 import {
   GetClipParams,
   GetClipResponse,
@@ -43,6 +43,21 @@ async function buildClip(clipId: number, userId: number | null) {
     bunnyPlaybackUrl = getBunnyPlaybackUrl(clip.bunnyVideoId);
   }
 
+  let creatorId: number | null = null;
+  let creatorName: string | null = null;
+  let creatorPosition: string | null = null;
+  if (clip.creatorId) {
+    const [creator] = await db
+      .select({ id: usersTable.id, name: usersTable.name, position: usersTable.position })
+      .from(usersTable)
+      .where(eq(usersTable.id, clip.creatorId));
+    if (creator) {
+      creatorId = creator.id;
+      creatorName = creator.name;
+      creatorPosition = creator.position ?? null;
+    }
+  }
+
   return {
     id: clip.id,
     recordingId: clip.recordingId,
@@ -58,6 +73,9 @@ async function buildClip(clipId: number, userId: number | null) {
     fieldName: field?.name ?? null,
     court: recording?.court ?? null,
     date: recording?.date ?? null,
+    creatorId,
+    creatorName,
+    creatorPosition,
   };
 }
 

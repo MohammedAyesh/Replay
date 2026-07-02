@@ -29,6 +29,8 @@ tags:
     description: Banner content from storage
   - name: admin
     description: Admin ad management
+  - name: users
+    description: User profiles and follows
 
 paths:
   /healthz:
@@ -498,6 +500,71 @@ paths:
         "200":
           description: Click recorded
 
+  /users/{id}:
+    get:
+      operationId: getUserProfile
+      tags: [users]
+      summary: Get a public player profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Public player profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicProfile"
+        "404":
+          description: Not found
+
+  /users/{id}/follow:
+    post:
+      operationId: followUser
+      tags: [users]
+      summary: Follow a user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Followed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FollowResult"
+        "401":
+          description: Unauthenticated
+        "404":
+          description: Not found
+    delete:
+      operationId: unfollowUser
+      tags: [users]
+      summary: Unfollow a user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Unfollowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FollowResult"
+        "401":
+          description: Unauthenticated
+        "404":
+          description: Not found
+
   /banners:
     get:
       operationId: listBanners
@@ -714,6 +781,36 @@ components:
         fieldName:
           type: ["string", "null"]
 
+    PublicProfile:
+      type: object
+      required: [id, name, followerCount, followingCount, clipCount, isFollowing]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        position:
+          type: ["string", "null"]
+        age:
+          type: ["integer", "null"]
+        followerCount:
+          type: integer
+        followingCount:
+          type: integer
+        clipCount:
+          type: integer
+        isFollowing:
+          type: boolean
+
+    FollowResult:
+      type: object
+      required: [following, followerCount]
+      properties:
+        following:
+          type: boolean
+        followerCount:
+          type: integer
+
     Clip:
       type: object
       required: [id, recordingId, rank, momentLabel, likeCount]
@@ -747,6 +844,12 @@ components:
         court:
           type: ["string", "null"]
         date:
+          type: ["string", "null"]
+        creatorId:
+          type: ["integer", "null"]
+        creatorName:
+          type: ["string", "null"]
+        creatorPosition:
           type: ["string", "null"]
 
     CropKeyframe:

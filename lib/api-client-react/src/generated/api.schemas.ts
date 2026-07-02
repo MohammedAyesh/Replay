@@ -80,6 +80,24 @@ export interface Recording {
   fieldName?: string | null;
 }
 
+export interface PublicProfile {
+  id: number;
+  name: string;
+  /** @nullable */
+  position?: string | null;
+  /** @nullable */
+  age?: number | null;
+  followerCount: number;
+  followingCount: number;
+  clipCount: number;
+  isFollowing: boolean;
+}
+
+export interface FollowResult {
+  following: boolean;
+  followerCount: number;
+}
+
 export interface Clip {
   id: number;
   recordingId: number;
@@ -100,6 +118,12 @@ export interface Clip {
   court?: string | null;
   /** @nullable */
   date?: string | null;
+  /** @nullable */
+  creatorId?: number | null;
+  /** @nullable */
+  creatorName?: string | null;
+  /** @nullable */
+  creatorPosition?: string | null;
 }
 
 export interface CropKeyframe {

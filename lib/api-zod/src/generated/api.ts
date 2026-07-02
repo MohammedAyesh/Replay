@@ -294,7 +294,10 @@ export const ListClipsResponseItem = zod.object({
   "bunnyVideoId": zod.string().nullish(),
   "fieldName": zod.string().nullish(),
   "court": zod.string().nullish(),
-  "date": zod.string().nullish()
+  "date": zod.string().nullish(),
+  "creatorId": zod.number().nullish(),
+  "creatorName": zod.string().nullish(),
+  "creatorPosition": zod.string().nullish()
 })
 export const ListClipsResponse = zod.array(ListClipsResponseItem)
 
@@ -320,7 +323,10 @@ export const GetClipResponse = zod.object({
   "bunnyVideoId": zod.string().nullish(),
   "fieldName": zod.string().nullish(),
   "court": zod.string().nullish(),
-  "date": zod.string().nullish()
+  "date": zod.string().nullish(),
+  "creatorId": zod.number().nullish(),
+  "creatorName": zod.string().nullish(),
+  "creatorPosition": zod.string().nullish()
 })
 
 
@@ -354,7 +360,10 @@ export const ListSavedClipsResponseItem = zod.object({
   "bunnyVideoId": zod.string().nullish(),
   "fieldName": zod.string().nullish(),
   "court": zod.string().nullish(),
-  "date": zod.string().nullish()
+  "date": zod.string().nullish(),
+  "creatorId": zod.number().nullish(),
+  "creatorName": zod.string().nullish(),
+  "creatorPosition": zod.string().nullish()
 })
 export const ListSavedClipsResponse = zod.array(ListSavedClipsResponseItem)
 
@@ -477,6 +486,51 @@ export const RecordClickParams = zod.object({
 })
 
 export const RecordClickResponse = zod.unknown()
+
+
+/**
+ * @summary Get a public player profile
+ */
+export const GetUserProfileParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetUserProfileResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "position": zod.string().nullish(),
+  "age": zod.number().nullish(),
+  "followerCount": zod.number(),
+  "followingCount": zod.number(),
+  "clipCount": zod.number(),
+  "isFollowing": zod.boolean()
+})
+
+
+/**
+ * @summary Follow a user
+ */
+export const FollowUserParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const FollowUserResponse = zod.object({
+  "following": zod.boolean(),
+  "followerCount": zod.number()
+})
+
+
+/**
+ * @summary Unfollow a user
+ */
+export const UnfollowUserParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UnfollowUserResponse = zod.object({
+  "following": zod.boolean(),
+  "followerCount": zod.number()
+})
 
 
 /**

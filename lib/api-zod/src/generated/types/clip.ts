@@ -26,4 +26,10 @@ export interface Clip {
   court?: string | null;
   /** @nullable */
   date?: string | null;
+  /** @nullable */
+  creatorId?: number | null;
+  /** @nullable */
+  creatorName?: string | null;
+  /** @nullable */
+  creatorPosition?: string | null;
 }

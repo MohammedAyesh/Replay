@@ -17,6 +17,7 @@ import Watch from "@/pages/watch";
 import Fields from "@/pages/fields";
 import FieldDetail from "@/pages/field-detail";
 import Player from "@/pages/player";
+import Profile from "@/pages/profile";
 import MyClips from "@/pages/my-clips";
 import Account from "@/pages/account";
 import Onboarding from "@/pages/onboarding";
@@ -126,6 +127,7 @@ function AppRouter() {
         <Route path="/fields" component={Fields} />
         <Route path="/fields/:id" component={FieldDetail} />
         <Route path="/player/:id" component={Player} />
+        <Route path="/players/:id" component={Profile} />
         <Route path="/my-clips" component={MyClips} />
         <Route path="/account" component={Account} />
         <Route component={NotFound} />
