@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useRoute } from "wouter";
 import {
   useGetBunnyCollections,
@@ -8,7 +8,7 @@ import {
   BunnyVideo,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Maximize, Minimize } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -170,6 +170,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const createUserClip = useCreateUserClip();
 
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [duration, setDuration] = useState(0);
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
@@ -189,6 +190,21 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     setFullscreenVideo(true);
     return () => setFullscreenVideo(false);
   }, [setFullscreenVideo]);
+
+  /* Fullscreen toggle */
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -404,19 +420,41 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-black flex flex-col"
+      className="fixed inset-0 z-50 bg-black"
     >
-      {/* Top bar */}
+      {/* Full-bleed scrollable video — fills entire screen */}
+      <div
+        ref={scrollRef}
+        className="absolute inset-0 overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar"
+      >
+        {clipMode === "recording" && (
+          <div className="absolute inset-0 border-2 border-red-500/70 z-10 pointer-events-none rounded" />
+        )}
+
+        <video
+          ref={videoRef}
+          className="h-full max-w-none pointer-events-none"
+          style={{ aspectRatio: "3840/1080" }}
+          playsInline
+          loop
+          onLoadedMetadata={onLoadedMetadata}
+        />
+
+        {clipMode !== "recording" && (
+          <button onClick={togglePlay} className="absolute inset-0 z-10" aria-label={isPlaying ? "Pause" : "Play"} />
+        )}
+      </div>
+
+      {/* Top bar — floating over video */}
       <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between z-20 pointer-events-none">
         <button
           onClick={clipMode === "idle" ? onClose : undefined}
           disabled={clipMode !== "idle"}
-          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto disabled:opacity-40"
+          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto disabled:opacity-40 active:scale-95 transition-transform"
         >
           <X className="w-5 h-5" />
         </button>
 
-        {/* REC badge */}
         <AnimatePresence>
           {clipMode === "recording" && (
             <motion.div
@@ -455,63 +493,56 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         )}
       </AnimatePresence>
 
-      {/* Video viewport — scrollable wide video */}
-      <div className="flex-1 flex items-center justify-center w-full overflow-hidden">
-        <div
-          ref={scrollRef}
-          className="w-full overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
-          style={{ aspectRatio: "16/9" }}
-        >
-          {/* Green frame border while recording */}
-          {clipMode === "recording" && (
-            <div className="absolute inset-0 border-2 border-red-500/70 z-10 pointer-events-none rounded" />
-          )}
-
-          <video
-            ref={videoRef}
-            className="h-full max-w-none pointer-events-none"
-            style={{ aspectRatio: "3840/1080" }}
-            playsInline
-            loop
-            onLoadedMetadata={onLoadedMetadata}
-          />
-
-          {/* Tap overlay — disabled during recording so scroll works uninterrupted */}
-          {clipMode !== "recording" && (
-            <button onClick={togglePlay} className="absolute inset-0 z-10" aria-label={isPlaying ? "Pause" : "Play"} />
-          )}
-        </div>
-      </div>
-
-      {/* Controls */}
+      {/* Idle controls — floating overlay at bottom */}
       {clipMode === "idle" && (
-        <div className="shrink-0 px-4 py-3 bg-black flex items-center justify-center gap-4">
-          <button onClick={() => seek(-5)}
-            className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
-            aria-label="Back 5s">
-            <SkipBack className="w-5 h-5" />
-          </button>
-          <button onClick={togglePlay}
-            className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
-            aria-label={isPlaying ? "Pause" : "Play"}>
-            {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
-          </button>
-          <button onClick={() => seek(5)}
-            className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
-            aria-label="Forward 5s">
-            <SkipForward className="w-5 h-5" />
-          </button>
-          {/* Record button */}
-          <button onClick={startRecording}
-            className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white active:scale-95 transition-transform shadow-lg shadow-red-900/50"
-            aria-label={t.clipping.record}>
-            <Circle className="w-5 h-5 fill-white text-white" />
-          </button>
+        <div
+          className="absolute bottom-safe left-0 right-0 z-20 px-4 pb-3 flex flex-col gap-3"
+          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}
+        >
+          {/* Title + views */}
+          <div className="px-1">
+            <p className="text-white font-bold text-sm leading-tight drop-shadow">{video.title}</p>
+            {(video.views ?? 0) > 0 && (
+              <p className="text-white/60 text-xs mt-0.5 drop-shadow">{(video.views ?? 0).toLocaleString()} views</p>
+            )}
+          </div>
+
+          {/* Button row */}
+          <div className="flex items-center justify-center gap-4">
+            <button onClick={() => seek(-5)}
+              className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+              aria-label="Back 5s">
+              <SkipBack className="w-5 h-5" />
+            </button>
+            <button onClick={togglePlay}
+              className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
+              aria-label={isPlaying ? "Pause" : "Play"}>
+              {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+            </button>
+            <button onClick={() => seek(5)}
+              className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+              aria-label="Forward 5s">
+              <SkipForward className="w-5 h-5" />
+            </button>
+            <button onClick={startRecording}
+              className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white active:scale-95 transition-transform shadow-lg shadow-red-900/50"
+              aria-label={t.clipping.record}>
+              <Circle className="w-5 h-5 fill-white text-white" />
+            </button>
+            <button
+              onClick={toggleFullscreen}
+              className="w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all"
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            >
+              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
       )}
 
+      {/* Recording controls */}
       {clipMode === "recording" && (
-        <div className="shrink-0 px-4 py-5 bg-black flex items-center justify-center">
+        <div className="absolute bottom-safe left-0 right-0 z-20 px-4 pb-5 flex items-center justify-center">
           <motion.button
             onClick={stopRecording}
             animate={{ scale: [1, 1.04, 1] }}
@@ -533,16 +564,14 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 80, opacity: 0 }}
             transition={{ type: "spring", damping: 26, stiffness: 300 }}
-            className="shrink-0 bg-zinc-900/96 backdrop-blur-md px-4 pt-5 pb-safe"
+            className="absolute bottom-0 left-0 right-0 z-30 bg-zinc-900/96 backdrop-blur-md px-4 pt-5 pb-safe"
           >
-            {/* Header */}
             <div className="flex items-center gap-2 mb-4">
               <CheckCircle2 className="w-5 h-5 text-primary shrink-0" />
               <span className="text-white font-bold text-sm">{t.clipping.reviewTitle}</span>
               <span className="ml-auto text-white/50 text-xs">{t.clipping.clipDuration(clipSeconds)}</span>
             </div>
 
-            {/* Title input */}
             <input
               className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm placeholder:text-white/40 outline-none focus:border-primary mb-4"
               placeholder={t.clipping.titlePlaceholder}
@@ -552,7 +581,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               autoFocus
             />
 
-            {/* Actions */}
             <div className="flex gap-2 pb-3">
               <button
                 onClick={discardClip}
@@ -572,16 +600,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Bottom video info — only in idle */}
-      {clipMode === "idle" && (
-        <div className="shrink-0 px-4 pb-safe pb-3 bg-black">
-          <p className="text-white font-bold text-sm leading-tight">{video.title}</p>
-          {(video.views ?? 0) > 0 && (
-            <p className="text-white/60 text-xs mt-0.5">{(video.views ?? 0).toLocaleString()} views</p>
-          )}
-        </div>
-      )}
     </motion.div>
   );
 }
