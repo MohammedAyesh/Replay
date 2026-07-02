@@ -1,17 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { Heart, ChevronRight, ExternalLink, Play } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
-import { useAuth } from "@/lib/auth";
 import {
   useGetNextAd,
   useListFields,
-  useListClips,
   getGetNextAdQueryKey,
   getListFieldsQueryKey,
-  getListClipsQueryKey,
 } from "@workspace/api-client-react";
 
 const BANNER_INTERVAL = 5000;
@@ -26,11 +23,8 @@ function splitName(name: string): string[] {
 
 export default function Home() {
   const { t } = useTranslation();
-  const { user, isGuest } = useAuth();
   const [slide, setSlide] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const firstName = user && !isGuest ? (user.name?.split(" ")[0] ?? user.email?.split("@")[0] ?? "") : "";
 
   /* Real ad data */
   const { data: adData } = useGetNextAd({
@@ -44,15 +38,6 @@ export default function Home() {
     query: { queryKey: getListFieldsQueryKey() },
   });
   const fields = (fieldsData ?? []).slice(0, 4);
-
-  /* Real clips — top 5 by likes */
-  const { data: clipsData } = useListClips({
-    query: { queryKey: getListClipsQueryKey() },
-  });
-  const clips = (clipsData ?? [])
-    .slice()
-    .sort((a, b) => (b.likeCount ?? 0) - (a.likeCount ?? 0))
-    .slice(0, 5);
 
   const slides = ad
     ? [
@@ -199,24 +184,17 @@ export default function Home() {
         )}
       </div>
 
-      {/* Greeting */}
-      <div className="px-4 pt-5 pb-1">
-        <p className="text-foreground/70 text-sm">
-          {firstName ? t.home.greeting(firstName) : t.home.guestGreeting}
-        </p>
-      </div>
-
-      {/* Nearest Fields — real cards with field-pattern background */}
-      <div className="mt-4">
-        <div className="flex items-center justify-between px-4 mb-3">
+      {/* Nearest Fields */}
+      <div className="mt-5 px-4">
+        <div className="flex items-center justify-between mb-3">
           <h3 className="font-bold text-base">{t.home.nearestFields}</h3>
           <Link href="/fields" className="flex items-center gap-0.5 text-primary text-xs font-semibold">
             {t.home.seeAll ?? "See all"} <ChevronRight className="w-3.5 h-3.5" />
           </Link>
         </div>
-        <div className="flex gap-3 overflow-x-auto px-4 pb-1 scrollbar-hide snap-x snap-mandatory">
+        <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide snap-x snap-mandatory">
           {fields.length === 0 && (
-            <p className="text-muted-foreground text-sm px-2">{t.home.noFields ?? "No fields yet"}</p>
+            <p className="text-muted-foreground text-sm">{t.home.noFields ?? "No fields yet"}</p>
           )}
           {fields.map((field) => {
             const words = splitName(field.name);
@@ -226,7 +204,6 @@ export default function Home() {
                 href={`/fields/${field.id}`}
                 className="snap-start flex-shrink-0 w-36 rounded-2xl overflow-hidden shadow-sm border border-border bg-card relative group"
               >
-                {/* Background — textured field pattern with gradient */}
                 <div className="relative w-full h-28 overflow-hidden">
                   <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
                   <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/50 to-black/80" />
@@ -247,7 +224,6 @@ export default function Home() {
                     </p>
                   </div>
                 </div>
-                {/* Info row below image */}
                 <div className="p-2.5">
                   <p className="font-semibold text-xs leading-tight truncate">{field.name}</p>
                   <p className="text-muted-foreground text-[10px] mt-0.5 truncate">{field.location}</p>
@@ -255,44 +231,6 @@ export default function Home() {
               </Link>
             );
           })}
-        </div>
-      </div>
-
-      {/* Trending Clips — clean cards without fake gradient thumbnails */}
-      <div className="mt-5">
-        <div className="flex items-center justify-between px-4 mb-3">
-          <h3 className="font-bold text-base">{t.home.trendingClips}</h3>
-          <Link href="/watch" className="flex items-center gap-0.5 text-primary text-xs font-semibold">
-            {t.home.seeAll ?? "See all"} <ChevronRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-        <div className="flex flex-col gap-2 px-4">
-          {clips.length === 0 && (
-            <p className="text-muted-foreground text-sm">{t.home.noClips ?? "No clips yet"}</p>
-          )}
-          {clips.map((clip, idx) => (
-            <Link
-              key={clip.id}
-              href={`/player/${clip.id}`}
-              className="flex items-center gap-3 bg-card rounded-xl border border-border p-3 active:scale-[0.98] transition-transform"
-            >
-              {/* Rank badge */}
-              <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold shrink-0">
-                {idx + 1}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm leading-tight truncate">{clip.momentLabel}</p>
-                <p className="text-muted-foreground text-xs mt-0.5 truncate">{clip.fieldName ?? clip.court ?? ""}</p>
-              </div>
-              <div className="flex items-center gap-1 shrink-0 text-muted-foreground">
-                <Heart className="w-3.5 h-3.5 text-rose-500" />
-                <span className="text-xs">{t.home.likes(clip.likeCount ?? 0)}</span>
-              </div>
-              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
-                <Play className="w-3.5 h-3.5 text-muted-foreground fill-muted-foreground" />
-              </div>
-            </Link>
-          ))}
         </div>
       </div>
     </div>
