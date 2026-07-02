@@ -21,7 +21,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
     return saved === "ar" ? "ar" : "en";
   });
 
-  const serverSynced = useRef(false);
+  const prevMeIdRef = useRef<number | undefined>(undefined);
 
   const { data: me } = useGetMe({
     query: {
@@ -34,15 +34,25 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
   const { mutate: persistLocale } = useUpdateLocale();
 
   useEffect(() => {
-    if (serverSynced.current) return;
     if (!me) return;
+
+    const isNewIdentity = prevMeIdRef.current !== me.id;
+    if (!isNewIdentity) return;
+    prevMeIdRef.current = me.id;
 
     const serverLocale = me.preferredLocale;
     if (serverLocale === "ar" || serverLocale === "en") {
       localStorage.setItem(STORAGE_KEY, serverLocale);
       setLocaleState(serverLocale);
+      return;
     }
-    serverSynced.current = true;
+
+    if (!me.isGuest) {
+      const localLocale = localStorage.getItem(STORAGE_KEY);
+      if (localLocale === "ar" || localLocale === "en") {
+        persistLocale({ data: { locale: localLocale } });
+      }
+    }
   }, [me]);
 
   const setLocale = (l: Locale) => {
