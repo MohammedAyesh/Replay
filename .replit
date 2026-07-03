@@ -47,15 +47,3 @@ channel = "stable-25_05"
 [userenv.shared]
 OSS_REGION = "oss-me-central-2"
 OSS_BUCKET = "cam9"
-
-[[ports]]
-localPort = 8080
-externalPort = 8080
-
-[[ports]]
-localPort = 8081
-externalPort = 80
-
-[[ports]]
-localPort = 20097
-externalPort = 3000
