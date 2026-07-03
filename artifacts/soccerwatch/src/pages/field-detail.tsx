@@ -175,6 +175,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
+  const [clipIsPublic, setClipIsPublic] = useState(true);
   const [isSavingClip, setIsSavingClip] = useState(false);
   const [recElapsed, setRecElapsed] = useState(0);
 
@@ -364,6 +365,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     recordingRef.current.keyframes = [];
     setClipMode("idle");
     setClipTitle("");
+    setClipIsPublic(true);
     setRecElapsed(0);
   };
 
@@ -399,6 +401,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           startTime: totalDuration > 0 ? startT / totalDuration : 0,
           endTime: totalDuration > 0 ? endT / totalDuration : 1,
           cropPath: keyframes,
+          isPublic: clipIsPublic,
         },
       });
       queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
@@ -575,13 +578,33 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             </div>
 
             <input
-              className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm placeholder:text-white/40 outline-none focus:border-primary mb-4"
+              className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm placeholder:text-white/40 outline-none focus:border-primary mb-3"
               placeholder={t.clipping.titlePlaceholder}
               value={clipTitle}
               onChange={(e) => setClipTitle(e.target.value)}
               maxLength={80}
               autoFocus
             />
+
+            <div className="flex items-center gap-3 mb-4">
+              <span className="text-white/60 text-xs">Visibility</span>
+              <div className="flex rounded-lg overflow-hidden border border-white/20 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setClipIsPublic(true)}
+                  className={`px-3 py-1.5 transition-colors ${clipIsPublic ? "bg-primary text-white" : "bg-white/10 text-white/60"}`}
+                >
+                  Public
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClipIsPublic(false)}
+                  className={`px-3 py-1.5 transition-colors ${!clipIsPublic ? "bg-primary text-white" : "bg-white/10 text-white/60"}`}
+                >
+                  Followers only
+                </button>
+              </div>
+            </div>
 
             <div className="flex gap-2 pb-3">
               <button

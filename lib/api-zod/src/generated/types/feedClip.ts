@@ -5,21 +5,27 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
-import type { CropKeyframe } from './cropKeyframe';
 
-export interface UserClip {
+export interface FeedClip {
   id: number;
   userId: number;
   videoId: string;
   title: string;
   startTime: number;
   endTime: number;
-  cropPath: CropKeyframe[];
-  isPublic: boolean;
   likeCount: number;
+  viewCount: number;
+  shareCount: number;
+  score: number;
+  isLiked: boolean;
+  isPublic: boolean;
   /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */
   playbackUrl?: string | null;
   createdAt: string;
+  creatorId: number;
+  creatorName: string;
+  /** @nullable */
+  creatorPosition?: string | null;
 }

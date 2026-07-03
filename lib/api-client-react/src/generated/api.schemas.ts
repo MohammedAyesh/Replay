@@ -145,11 +145,37 @@ export interface UserClip {
   startTime: number;
   endTime: number;
   cropPath: CropKeyframe[];
+  isPublic: boolean;
+  likeCount: number;
   /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */
   playbackUrl?: string | null;
   createdAt: string;
+}
+
+export interface FeedClip {
+  id: number;
+  userId: number;
+  videoId: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+  likeCount: number;
+  viewCount: number;
+  shareCount: number;
+  score: number;
+  isLiked: boolean;
+  isPublic: boolean;
+  /** @nullable */
+  thumbnailUrl?: string | null;
+  /** @nullable */
+  playbackUrl?: string | null;
+  createdAt: string;
+  creatorId: number;
+  creatorName: string;
+  /** @nullable */
+  creatorPosition?: string | null;
 }
 
 export interface CreateUserClipInput {
@@ -158,11 +184,25 @@ export interface CreateUserClipInput {
   startTime: number;
   endTime: number;
   cropPath: CropKeyframe[];
+  isPublic?: boolean;
 }
 
 export interface LikeResult {
   liked: boolean;
   likeCount: number;
+}
+
+export interface ViewInput {
+  /** @minimum 0 */
+  secondsWatched: number;
+}
+
+export interface EngagementResult {
+  ok: boolean;
+  viewCount: number;
+  shareCount: number;
+  likeCount: number;
+  score: number;
 }
 
 export type ProfileInputPosition = typeof ProfileInputPosition[keyof typeof ProfileInputPosition];

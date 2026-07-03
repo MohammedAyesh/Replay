@@ -220,7 +220,8 @@ export const CreateUserClipBody = zod.object({
   "y": zod.number(),
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
-}))
+})),
+  "isPublic": zod.boolean().optional()
 })
 
 export const CreateUserClipResponse = zod.object({
@@ -237,6 +238,8 @@ export const CreateUserClipResponse = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
+  "isPublic": zod.boolean(),
+  "likeCount": zod.number(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()
@@ -260,6 +263,8 @@ export const ListUserClipsResponseItem = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
+  "isPublic": zod.boolean(),
+  "likeCount": zod.number(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()
@@ -275,6 +280,85 @@ export const DeleteUserClipParams = zod.object({
 })
 
 export const DeleteUserClipResponse = zod.unknown()
+
+
+/**
+ * @summary Toggle like on a user clip
+ */
+export const ToggleUserClipLikeParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ToggleUserClipLikeResponse = zod.object({
+  "liked": zod.boolean(),
+  "likeCount": zod.number()
+})
+
+
+/**
+ * @summary Record a view for a user clip (engagement tracking)
+ */
+export const RecordViewParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const recordViewBodySecondsWatchedMin = 0;
+
+
+
+export const RecordViewBody = zod.object({
+  "secondsWatched": zod.number().min(recordViewBodySecondsWatchedMin)
+})
+
+export const RecordViewResponse = zod.object({
+  "ok": zod.boolean(),
+  "viewCount": zod.number(),
+  "shareCount": zod.number(),
+  "likeCount": zod.number(),
+  "score": zod.number()
+})
+
+
+/**
+ * @summary Record a share for a user clip
+ */
+export const RecordShareParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RecordShareResponse = zod.object({
+  "ok": zod.boolean(),
+  "viewCount": zod.number(),
+  "shareCount": zod.number(),
+  "likeCount": zod.number(),
+  "score": zod.number()
+})
+
+
+/**
+ * @summary Get the shared user clip feed, visibility-filtered, ordered by likes
+ */
+export const GetFeedResponseItem = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "videoId": zod.string(),
+  "title": zod.string(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "likeCount": zod.number(),
+  "viewCount": zod.number(),
+  "shareCount": zod.number(),
+  "score": zod.number(),
+  "isLiked": zod.boolean(),
+  "isPublic": zod.boolean(),
+  "thumbnailUrl": zod.string().nullish(),
+  "playbackUrl": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "creatorId": zod.number(),
+  "creatorName": zod.string(),
+  "creatorPosition": zod.string().nullish()
+})
+export const GetFeedResponse = zod.array(GetFeedResponseItem)
 
 
 /**

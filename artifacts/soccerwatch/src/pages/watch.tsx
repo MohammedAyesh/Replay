@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation } from "wouter";
 import Hls from "hls.js";
-import { useListClips, useToggleLike, useSaveClip, useUnsaveClip, getListClipsQueryKey, getListSavedClipsQueryKey, Clip, Ad } from "@workspace/api-client-react";
+import {
+  useGetFeed,
+  useToggleUserClipLike,
+  useRecordView,
+  useRecordShare,
+  getGetFeedQueryKey,
+  FeedClip,
+  Ad,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Heart, Share, Bookmark, Volume2, VolumeX, ExternalLink } from "lucide-react";
+import { Heart, Share, Volume2, VolumeX, ExternalLink, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
@@ -28,7 +36,6 @@ function isUsableUrl(url: string | null | undefined): url is string {
   if (!url) return false;
   try {
     const u = new URL(url);
-    // Reject if hostname has spaces or no dot (malformed placeholder URLs)
     return u.hostname.includes(".") && !u.hostname.includes(" ");
   } catch {
     return false;
@@ -36,12 +43,11 @@ function isUsableUrl(url: string | null | undefined): url is string {
 }
 
 export default function Watch() {
-  const { data: clips, isLoading } = useListClips();
+  const { data: clips, isLoading } = useGetFeed();
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const [slideHeight, setSlideHeight] = useState(0);
 
-  // Always-mounted ResizeObserver: containerRef is always attached to the root div
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -82,7 +88,7 @@ function handleAdClick(ad: Ad) {
   window.open(ad.clickUrl, "_blank", "noopener,noreferrer");
 }
 
-function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; slideHeight: number }) {
+function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: number; slideHeight: number }) {
   const queryClient = useQueryClient();
   const { isGuest } = useAuth();
   const { toast } = useToast();
@@ -93,7 +99,6 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
-  // Ad state
   const [adPhase, setAdPhase] = useState<AdPhase>("idle");
   const [currentAd, setCurrentAd] = useState<Ad | null>(null);
   const [skipSecondsLeft, setSkipSecondsLeft] = useState<number | null>(null);
@@ -103,16 +108,34 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
   const adCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const adImageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const toggleLikeMutation = useToggleLike();
-  const saveClipMutation = useSaveClip();
-  const unsaveClipMutation = useUnsaveClip();
+  const toggleLikeMutation = useToggleUserClipLike();
+  const recordViewMutation = useRecordView();
+  const recordShareMutation = useRecordShare();
+
+  // Track clip playback boundaries
+  const clipStartSec = useRef<number>(0);
+  const clipEndSec = useRef<number>(Infinity);
+  const durationRef = useRef<number>(0);
+  const startTimeRecorded = useRef<boolean>(false);
+  const viewStartRef = useRef<number>(0);
+
+  // Reset view tracking on mount so off-screen clips don't get false views
+  useEffect(() => {
+    viewStartRef.current = 0;
+    startTimeRecorded.current = false;
+  }, [clip.id]);
 
   const startClip = useCallback(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !durationRef.current) return;
+    const startSec = clip.startTime * durationRef.current;
+    const endSec = clip.endTime * durationRef.current;
+    clipStartSec.current = startSec;
+    clipEndSec.current = endSec;
+    video.currentTime = startSec;
     video.play().catch(() => {});
     setIsPlaying(true);
-  }, []);
+  }, [clip.startTime, clip.endTime]);
 
   const finishAd = useCallback((ad: Ad, skippedAt?: number) => {
     if (adCountdownRef.current) { clearInterval(adCountdownRef.current); adCountdownRef.current = null; }
@@ -133,13 +156,11 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
     startClip();
   }, [clip.id, startClip]);
 
-  // Clear all ad timers helper
   const clearAdTimers = useCallback(() => {
     if (adCountdownRef.current) { clearInterval(adCountdownRef.current); adCountdownRef.current = null; }
     if (adImageTimeoutRef.current) { clearTimeout(adImageTimeoutRef.current); adImageTimeoutRef.current = null; }
   }, []);
 
-  // Track whether this clip should be playing (set by IntersectionObserver)
   const shouldPlayRef = useRef(false);
 
   // Load clip video via HLS.js, with automatic fallback on error
@@ -147,12 +168,10 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
     const video = videoRef.current;
     if (!video) return;
 
-    // Force muted imperatively — React's muted prop doesn't reliably sync to the DOM
     video.muted = true;
+    startTimeRecorded.current = false;
 
-    const primary =
-      (isUsableUrl(clip.bunnyPlaybackUrl) ? clip.bunnyPlaybackUrl : null) ??
-      (isUsableUrl(clip.videoUrl) ? clip.videoUrl : null);
+    const primary = isUsableUrl(clip.playbackUrl) ? clip.playbackUrl : null;
     const fallbackSrc = FALLBACK_VIDEOS[index % FALLBACK_VIDEOS.length];
     let usedFallback = false;
 
@@ -169,10 +188,11 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
           hlsRef.current = hls;
           hls.loadSource(src);
           hls.attachMedia(video);
-          // Play as soon as the stream is ready — this fires even if play() was
-          // called earlier and rejected because the manifest wasn't loaded yet
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (shouldPlayRef.current) {
+              durationRef.current = video.duration || 0;
+              const startSec = clip.startTime * durationRef.current;
+              video.currentTime = startSec;
               video.play().catch(() => {});
             }
           });
@@ -183,10 +203,14 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
             }
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-          // Native HLS (Safari) — play once canplay fires
           video.src = src;
           video.addEventListener("canplay", () => {
-            if (shouldPlayRef.current) video.play().catch(() => {});
+            if (shouldPlayRef.current) {
+              durationRef.current = video.duration || 0;
+              const startSec = clip.startTime * durationRef.current;
+              video.currentTime = startSec;
+              video.play().catch(() => {});
+            }
           }, { once: true });
         }
       } else {
@@ -201,14 +225,34 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
       }
     }
 
+    // On loadedmetadata, compute clip boundaries
+    function handleLoadedMetadata() {
+      if (!video) return;
+      durationRef.current = video.duration || 0;
+      clipStartSec.current = clip.startTime * durationRef.current;
+      clipEndSec.current = clip.endTime * durationRef.current;
+    }
+
+    function handleTimeUpdate() {
+      if (!video || !durationRef.current) return;
+      // Loop within clip boundaries
+      if (video.currentTime >= clipEndSec.current) {
+        video.currentTime = clipStartSec.current;
+      }
+    }
+
     video.addEventListener("error", handleVideoError);
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("timeupdate", handleTimeUpdate);
     loadSrc(primary ?? fallbackSrc);
 
     return () => {
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       video.removeEventListener("error", handleVideoError);
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("timeupdate", handleTimeUpdate);
     };
-  }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, index]);
+  }, [clip.id, clip.playbackUrl, clip.startTime, clip.endTime, index]);
 
   // Load ad video when ad starts
   useEffect(() => {
@@ -259,7 +303,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
     };
   }, [adPhase, currentAd]);
 
-  // Intersection Observer: fetch ad then autoplay
+  // Intersection Observer: fetch ad then autoplay, track views
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -268,6 +312,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
       ([entry]) => {
         if (entry.isIntersecting) {
           shouldPlayRef.current = true;
+          viewStartRef.current = Date.now();
           setAdPhase("idle");
           setCurrentAd(null);
           fetch(`/api/ads/next?clipId=${clip.id}`, { credentials: "include" })
@@ -281,7 +326,6 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
                 setAdPhase("showing");
               } else {
                 setAdPhase("done");
-                // Try play now — MANIFEST_PARSED will retry if not ready yet
                 video.play().catch(() => {});
                 setIsPlaying(true);
               }
@@ -299,13 +343,37 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
           if (adHlsRef.current) { adHlsRef.current.destroy(); adHlsRef.current = null; }
           setAdPhase("idle");
           setCurrentAd(null);
+
+          // Record view on exit if the clip was actually intersected (>2s watched) and not already recorded
+          if (!startTimeRecorded.current && viewStartRef.current > 0) {
+            const watched = (Date.now() - viewStartRef.current) / 1000;
+            if (watched > 2) {
+              startTimeRecorded.current = true;
+              recordViewMutation.mutate(
+                { id: clip.id, data: { secondsWatched: watched } },
+                {
+                  onSuccess: (data) => {
+                    if (data.ok) {
+                      queryClient.setQueryData(getGetFeedQueryKey(), (old: FeedClip[] | undefined) =>
+                        old?.map((c) =>
+                          c.id === clip.id
+                            ? { ...c, viewCount: data.viewCount, score: data.score }
+                            : c
+                        )
+                      );
+                    }
+                  },
+                }
+              );
+            }
+          }
         }
       },
       { threshold: 0.6 }
     );
     observer.observe(video);
     return () => observer.disconnect();
-  }, [clip.id, clearAdTimers]);
+  }, [clip.id, clearAdTimers, queryClient, recordViewMutation]);
 
   const { t } = useTranslation();
 
@@ -318,7 +386,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
       { id: clip.id },
       {
         onSuccess: (data) => {
-          queryClient.setQueryData(getListClipsQueryKey(), (old: Clip[] | undefined) =>
+          queryClient.setQueryData(getGetFeedQueryKey(), (old: FeedClip[] | undefined) =>
             old?.map(c => c.id === clip.id ? { ...c, isLiked: data.liked, likeCount: data.likeCount } : c)
           );
         }
@@ -326,37 +394,29 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
     );
   };
 
-  const handleToggleSave = () => {
-    if (isGuest) {
-      toast({ title: t.watch.signInToSave, description: t.watch.signInToSaveDesc });
-      return;
-    }
+  const handleShare = () => {
+    // Track share on backend
+    recordShareMutation.mutate(
+      { id: clip.id },
+      {
+        onSuccess: (data) => {
+          if (data.ok) {
+            queryClient.setQueryData(getGetFeedQueryKey(), (old: FeedClip[] | undefined) =>
+              old?.map(c => c.id === clip.id ? { ...c, shareCount: data.shareCount, score: data.score } : c)
+            );
+          }
+        },
+      }
+    );
 
-    if (clip.isSaved) {
-      unsaveClipMutation.mutate(
-        { clipId: clip.id },
-        {
-          onSuccess: () => {
-            queryClient.setQueryData(getListClipsQueryKey(), (old: Clip[] | undefined) =>
-              old?.map(c => c.id === clip.id ? { ...c, isSaved: false } : c)
-            );
-            queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
-          }
-        }
-      );
+    // Native share if available
+    if (navigator.share) {
+      navigator.share({ title: clip.title, text: `Check out this clip by ${clip.creatorName}!` }).catch(() => {});
     } else {
-      saveClipMutation.mutate(
-        { clipId: clip.id },
-        {
-          onSuccess: () => {
-            queryClient.setQueryData(getListClipsQueryKey(), (old: Clip[] | undefined) =>
-              old?.map(c => c.id === clip.id ? { ...c, isSaved: true } : c)
-            );
-            queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
-            toast({ title: t.watch.savedToMyClips, className: "bg-primary text-white border-none" });
-          }
-        }
-      );
+      // Fallback: copy link to clipboard
+      const url = `${window.location.origin}/watch?clip=${clip.id}`;
+      navigator.clipboard.writeText(url).catch(() => {});
+      toast({ title: "Link copied!", className: "bg-primary text-white border-none" });
     }
   };
 
@@ -403,15 +463,9 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
       <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/80 pointer-events-none" />
 
       {/* Top Bar */}
-      <div className="absolute top-0 start-0 w-full h-1 bg-white/20">
-        <div className="h-full bg-primary w-1/3" />
-      </div>
+      <div className="absolute top-0 start-0 w-full h-1 bg-white/20" />
 
-      <div className="absolute top-safe pt-4 px-4 w-full flex justify-between items-start pointer-events-none">
-        <div className="bg-primary/90 text-white px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1.5">
-          <CrownIcon className="w-3 h-3" />
-          {clip.rank === 1 ? t.watch.rankFirst : t.watch.rankOther(clip.rank)}
-        </div>
+      <div className="absolute top-safe pt-4 px-4 w-full flex justify-end items-start pointer-events-none">
         <button
           onClick={toggleMute}
           className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white pointer-events-auto backdrop-blur-md"
@@ -421,7 +475,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
       </div>
 
       {/* Right Rail */}
-      <div className="absolute end-4 bottom-28 flex flex-col items-center gap-6 pointer-events-auto">
+      <div className="absolute end-4 bottom-28 flex flex-col items-center gap-5 pointer-events-auto">
         <div className="flex flex-col items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={handleToggleLike}
@@ -433,53 +487,46 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
         </div>
 
         <div className="flex flex-col items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={handleToggleSave}
-            className="w-12 h-12 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-md transition-transform active:scale-90"
-          >
-            <Bookmark className={cn("w-6 h-6 transition-colors", clip.isSaved ? "fill-primary text-primary" : "text-white")} />
+          <button className="w-12 h-12 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-md transition-transform active:scale-90">
+            <Eye className="w-6 h-6 text-white" />
           </button>
+          <span className="text-white font-medium text-xs shadow-black drop-shadow-md">{clip.viewCount}</span>
         </div>
 
         <div className="flex flex-col items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <button className="w-12 h-12 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-md transition-transform active:scale-90">
+          <button
+            onClick={handleShare}
+            className="w-12 h-12 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-md transition-transform active:scale-90"
+          >
             <Share className="w-6 h-6 text-white" />
           </button>
+          <span className="text-white font-medium text-xs shadow-black drop-shadow-md">{clip.shareCount}</span>
         </div>
       </div>
 
       {/* Bottom Info */}
       <div className="absolute bottom-24 start-4 end-20 text-white pointer-events-auto">
-        {clip.creatorId && clip.creatorName && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setLocation(`/players/${clip.creatorId}`); }}
-            className="flex items-center gap-2 mb-3 active:opacity-70 transition-opacity"
-          >
-            <div className="w-8 h-8 rounded-full bg-primary/90 flex items-center justify-center shadow-md border border-white/20 text-white text-xs font-bold shrink-0">
-              {getInitials(clip.creatorName)}
-            </div>
-            <div className="text-start">
-              <p className="text-white text-xs font-semibold leading-tight drop-shadow">{clip.creatorName}</p>
-              {clip.creatorPosition && (
-                <p className="text-white/70 text-[10px] capitalize leading-tight">{clip.creatorPosition}</p>
-              )}
-            </div>
-          </button>
-        )}
-        <div className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase inline-block mb-2">
-          {clip.momentLabel}
-        </div>
-        <h2 className="text-xl font-bold mb-1 shadow-black drop-shadow-md">{clip.fieldName || t.watch.localPitch}</h2>
-        <p className="text-white/80 text-sm mb-3 shadow-black drop-shadow-md">{clip.court || t.watch.court1} • {clip.date || t.watch.recent}</p>
-
-        {clip.playerTags && clip.playerTags.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {clip.playerTags.map((tag) => (
-              <span key={tag} className="text-xs bg-white/20 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 font-medium">
-                {tag}
-              </span>
-            ))}
+        <button
+          onClick={(e) => { e.stopPropagation(); setLocation(`/players/${clip.creatorId}`); }}
+          className="flex items-center gap-2 mb-3 active:opacity-70 transition-opacity"
+        >
+          <div className="w-9 h-9 rounded-full bg-primary/90 flex items-center justify-center shadow-md border border-white/20 text-white text-xs font-bold shrink-0">
+            {getInitials(clip.creatorName)}
           </div>
+          <div className="text-start">
+            <p className="text-white text-xs font-semibold leading-tight drop-shadow">{clip.creatorName}</p>
+            {clip.creatorPosition && (
+              <p className="text-white/70 text-[10px] capitalize leading-tight">{clip.creatorPosition}</p>
+            )}
+          </div>
+        </button>
+
+        <h2 className="text-xl font-bold mb-1 shadow-black drop-shadow-md">{clip.title}</h2>
+
+        {!clip.isPublic && (
+          <span className="text-[10px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full border border-white/20 font-medium">
+            Followers only
+          </span>
         )}
       </div>
 
@@ -516,7 +563,6 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
 
           <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/60 pointer-events-none" />
 
-          {/* Ad badge — clickable, opens click-through URL */}
           <div className="absolute top-safe pt-4 px-4 w-full flex justify-between items-start pointer-events-auto">
             <button
               onClick={() => handleAdClick(currentAd)}
@@ -538,7 +584,6 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
             )}
           </div>
 
-          {/* Visit button */}
           <div className="absolute bottom-safe pb-8 px-6 w-full pointer-events-auto">
             <button
               onClick={() => handleAdClick(currentAd)}
@@ -551,13 +596,5 @@ function ClipScreen({ clip, index, slideHeight }: { clip: Clip; index: number; s
         </div>
       )}
     </div>
-  );
-}
-
-function CrownIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
-    </svg>
   );
 }

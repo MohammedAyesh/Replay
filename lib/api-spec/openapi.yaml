@@ -296,6 +296,92 @@ paths:
         "404":
           description: Not found
 
+  /user-clips/{id}/like:
+    post:
+      operationId: toggleUserClipLike
+      tags: [likes]
+      summary: Toggle like on a user clip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Like toggled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LikeResult"
+        "401":
+          description: Unauthenticated
+        "404":
+          description: Not found
+
+  /user-clips/{id}/view:
+    post:
+      operationId: recordView
+      tags: [clips]
+      summary: Record a view for a user clip (engagement tracking)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ViewInput"
+      responses:
+        "200":
+          description: View recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngagementResult"
+        "404":
+          description: Not found
+
+  /user-clips/{id}/share:
+    post:
+      operationId: recordShare
+      tags: [clips]
+      summary: Record a share for a user clip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Share recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngagementResult"
+        "404":
+          description: Not found
+
+  /feed:
+    get:
+      operationId: getFeed
+      tags: [clips]
+      summary: Get the shared user clip feed, visibility-filtered, ordered by engagement score
+      responses:
+        "200":
+          description: Feed of user clips with creator info
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FeedClip"
+
   /clips:
     get:
       operationId: listClips
@@ -872,7 +958,7 @@ components:
 
     UserClip:
       type: object
-      required: [id, userId, videoId, title, startTime, endTime, cropPath, createdAt]
+      required: [id, userId, videoId, title, startTime, endTime, cropPath, isPublic, likeCount, createdAt]
       properties:
         id:
           type: integer
@@ -890,12 +976,57 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CropKeyframe"
+        isPublic:
+          type: boolean
+        likeCount:
+          type: integer
         thumbnailUrl:
           type: ["string", "null"]
         playbackUrl:
           type: ["string", "null"]
         createdAt:
           type: string
+
+    FeedClip:
+      type: object
+      required: [id, userId, videoId, title, startTime, endTime, likeCount, viewCount, shareCount, score, isLiked, isPublic, createdAt, creatorId, creatorName]
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        videoId:
+          type: string
+        title:
+          type: string
+        startTime:
+          type: number
+        endTime:
+          type: number
+        likeCount:
+          type: integer
+        viewCount:
+          type: integer
+        shareCount:
+          type: integer
+        score:
+          type: number
+        isLiked:
+          type: boolean
+        isPublic:
+          type: boolean
+        thumbnailUrl:
+          type: ["string", "null"]
+        playbackUrl:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        creatorId:
+          type: integer
+        creatorName:
+          type: string
+        creatorPosition:
+          type: ["string", "null"]
 
     CreateUserClipInput:
       type: object
@@ -913,6 +1044,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CropKeyframe"
+        isPublic:
+          type: boolean
 
     LikeResult:
       type: object
@@ -922,6 +1055,29 @@ components:
           type: boolean
         likeCount:
           type: integer
+
+    ViewInput:
+      type: object
+      required: [secondsWatched]
+      properties:
+        secondsWatched:
+          type: number
+          minimum: 0
+
+    EngagementResult:
+      type: object
+      required: [ok, viewCount, shareCount, likeCount, score]
+      properties:
+        ok:
+          type: boolean
+        viewCount:
+          type: integer
+        shareCount:
+          type: integer
+        likeCount:
+          type: integer
+        score:
+          type: number
 
     ProfileInput:
       type: object

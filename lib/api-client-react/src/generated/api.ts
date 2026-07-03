@@ -31,6 +31,8 @@ import type {
   Clip,
   CreateAdInput,
   CreateUserClipInput,
+  EngagementResult,
+  FeedClip,
   Field,
   FollowResult,
   HealthStatus,
@@ -43,7 +45,8 @@ import type {
   PublicProfile,
   Recording,
   User,
-  UserClip
+  UserClip,
+  ViewInput
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -1192,6 +1195,294 @@ export const useDeleteUserClip = <TError = ErrorType<void>,
       > => {
       return useMutation(getDeleteUserClipMutationOptions(options));
     }
+
+export const getToggleUserClipLikeUrl = (id: number,) => {
+
+
+
+
+  return `/api/user-clips/${id}/like`
+}
+
+/**
+ * @summary Toggle like on a user clip
+ */
+export const toggleUserClipLike = async (id: number, options?: RequestInit): Promise<LikeResult> => {
+
+  return customFetch<LikeResult>(getToggleUserClipLikeUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getToggleUserClipLikeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof toggleUserClipLike>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof toggleUserClipLike>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['toggleUserClipLike'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof toggleUserClipLike>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  toggleUserClipLike(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ToggleUserClipLikeMutationResult = NonNullable<Awaited<ReturnType<typeof toggleUserClipLike>>>
+
+    export type ToggleUserClipLikeMutationError = ErrorType<void>
+
+    /**
+ * @summary Toggle like on a user clip
+ */
+export const useToggleUserClipLike = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof toggleUserClipLike>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof toggleUserClipLike>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getToggleUserClipLikeMutationOptions(options));
+    }
+
+export const getRecordViewUrl = (id: number,) => {
+
+
+
+
+  return `/api/user-clips/${id}/view`
+}
+
+/**
+ * @summary Record a view for a user clip (engagement tracking)
+ */
+export const recordView = async (id: number,
+    viewInput: ViewInput, options?: RequestInit): Promise<EngagementResult> => {
+
+  return customFetch<EngagementResult>(getRecordViewUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(viewInput)
+  }
+);}
+
+
+
+
+export const getRecordViewMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordView>>, TError,{id: number;data: BodyType<ViewInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordView>>, TError,{id: number;data: BodyType<ViewInput>}, TContext> => {
+
+const mutationKey = ['recordView'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordView>>, {id: number;data: BodyType<ViewInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  recordView(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordViewMutationResult = NonNullable<Awaited<ReturnType<typeof recordView>>>
+    export type RecordViewMutationBody = BodyType<ViewInput>
+    export type RecordViewMutationError = ErrorType<void>
+
+    /**
+ * @summary Record a view for a user clip (engagement tracking)
+ */
+export const useRecordView = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordView>>, TError,{id: number;data: BodyType<ViewInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordView>>,
+        TError,
+        {id: number;data: BodyType<ViewInput>},
+        TContext
+      > => {
+      return useMutation(getRecordViewMutationOptions(options));
+    }
+
+export const getRecordShareUrl = (id: number,) => {
+
+
+
+
+  return `/api/user-clips/${id}/share`
+}
+
+/**
+ * @summary Record a share for a user clip
+ */
+export const recordShare = async (id: number, options?: RequestInit): Promise<EngagementResult> => {
+
+  return customFetch<EngagementResult>(getRecordShareUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRecordShareMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordShare>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordShare>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['recordShare'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordShare>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  recordShare(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordShareMutationResult = NonNullable<Awaited<ReturnType<typeof recordShare>>>
+
+    export type RecordShareMutationError = ErrorType<void>
+
+    /**
+ * @summary Record a share for a user clip
+ */
+export const useRecordShare = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordShare>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordShare>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getRecordShareMutationOptions(options));
+    }
+
+export const getGetFeedUrl = () => {
+
+
+
+
+  return `/api/feed`
+}
+
+/**
+ * @summary Get the shared user clip feed, visibility-filtered, ordered by likes
+ */
+export const getFeed = async ( options?: RequestInit): Promise<FeedClip[]> => {
+
+  return customFetch<FeedClip[]>(getGetFeedUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFeedQueryKey = () => {
+    return [
+    `/api/feed`
+    ] as const;
+    }
+
+
+export const getGetFeedQueryOptions = <TData = Awaited<ReturnType<typeof getFeed>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFeed>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFeedQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFeed>>> = ({ signal }) => getFeed({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFeed>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFeedQueryResult = NonNullable<Awaited<ReturnType<typeof getFeed>>>
+export type GetFeedQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the shared user clip feed, visibility-filtered, ordered by likes
+ */
+
+export function useGetFeed<TData = Awaited<ReturnType<typeof getFeed>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFeed>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFeedQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getListClipsUrl = () => {
 

@@ -13,4 +13,5 @@ export interface CreateUserClipInput {
   startTime: number;
   endTime: number;
   cropPath: CropKeyframe[];
+  isPublic?: boolean;
 }
