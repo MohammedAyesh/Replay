@@ -332,6 +332,9 @@ router.get("/feed", async (req, res): Promise<void> => {
 
   // Check which clips the current user has liked
   let likedSet = new Set<number>();
+  // Map of clipId -> array of { userId, name } (capped at 3) for followers who liked that clip
+  let socialLikesMap = new Map<number, { userId: number; name: string }[]>();
+
   if (userId && visible.length > 0) {
     const visibleIds = visible.map((r) => r.id);
     const liked = await db
@@ -344,6 +347,34 @@ router.get("/feed", async (req, res): Promise<void> => {
         )
       );
     likedSet = new Set(liked.map((l) => l.userClipId).filter((id): id is number => id !== null));
+
+    // Fetch social likes: followers of current user who liked visible clips
+    if (followedIds.length > 0) {
+      const socialRows = await db
+        .select({
+          userClipId: likesTable.userClipId,
+          likerUserId: usersTable.id,
+          likerName: usersTable.name,
+        })
+        .from(likesTable)
+        .innerJoin(usersTable, eq(likesTable.userId, usersTable.id))
+        .where(
+          and(
+            inArray(likesTable.userClipId, visibleIds),
+            inArray(likesTable.userId, followedIds)
+          )
+        );
+
+      for (const row of socialRows) {
+        if (row.userClipId === null) continue;
+        const clipId = row.userClipId;
+        const arr = socialLikesMap.get(clipId) ?? [];
+        if (arr.length < 3) {
+          arr.push({ userId: row.likerUserId, name: row.likerName });
+          socialLikesMap.set(clipId, arr);
+        }
+      }
+    }
   }
 
   const result = visible.map((row) => ({
@@ -365,6 +396,7 @@ router.get("/feed", async (req, res): Promise<void> => {
     creatorId: row.creatorId,
     creatorName: row.creatorName,
     creatorPosition: row.creatorPosition ?? null,
+    socialLikes: socialLikesMap.get(row.id) ?? [],
   }));
 
   res.json(GetFeedResponse.parse(result));

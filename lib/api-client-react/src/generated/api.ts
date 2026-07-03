@@ -1416,7 +1416,7 @@ export const getGetFeedUrl = () => {
 }
 
 /**
- * @summary Get the shared user clip feed, visibility-filtered, ordered by likes
+ * @summary Get the shared user clip feed, visibility-filtered, ordered by engagement score
  */
 export const getFeed = async ( options?: RequestInit): Promise<FeedClip[]> => {
 
@@ -1463,7 +1463,7 @@ export type GetFeedQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Get the shared user clip feed, visibility-filtered, ordered by likes
+ * @summary Get the shared user clip feed, visibility-filtered, ordered by engagement score
  */
 
 export function useGetFeed<TData = Awaited<ReturnType<typeof getFeed>>, TError = ErrorType<unknown>>(

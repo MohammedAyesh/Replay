@@ -987,9 +987,18 @@ components:
         createdAt:
           type: string
 
+    SocialLikeUser:
+      type: object
+      required: [userId, name]
+      properties:
+        userId:
+          type: integer
+        name:
+          type: string
+
     FeedClip:
       type: object
-      required: [id, userId, videoId, title, startTime, endTime, likeCount, viewCount, shareCount, score, isLiked, isPublic, createdAt, creatorId, creatorName]
+      required: [id, userId, videoId, title, startTime, endTime, likeCount, viewCount, shareCount, score, isLiked, isPublic, createdAt, creatorId, creatorName, socialLikes]
       properties:
         id:
           type: integer
@@ -1027,6 +1036,10 @@ components:
           type: string
         creatorPosition:
           type: ["string", "null"]
+        socialLikes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SocialLikeUser"
 
     CreateUserClipInput:
       type: object

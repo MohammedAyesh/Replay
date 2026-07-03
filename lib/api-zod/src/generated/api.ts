@@ -336,7 +336,7 @@ export const RecordShareResponse = zod.object({
 
 
 /**
- * @summary Get the shared user clip feed, visibility-filtered, ordered by likes
+ * @summary Get the shared user clip feed, visibility-filtered, ordered by engagement score
  */
 export const GetFeedResponseItem = zod.object({
   "id": zod.number(),
@@ -356,7 +356,11 @@ export const GetFeedResponseItem = zod.object({
   "createdAt": zod.string(),
   "creatorId": zod.number(),
   "creatorName": zod.string(),
-  "creatorPosition": zod.string().nullish()
+  "creatorPosition": zod.string().nullish(),
+  "socialLikes": zod.array(zod.object({
+  "userId": zod.number(),
+  "name": zod.string()
+}))
 })
 export const GetFeedResponse = zod.array(GetFeedResponseItem)
 

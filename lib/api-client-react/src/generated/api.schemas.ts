@@ -154,6 +154,11 @@ export interface UserClip {
   createdAt: string;
 }
 
+export interface SocialLikeUser {
+  userId: number;
+  name: string;
+}
+
 export interface FeedClip {
   id: number;
   userId: number;
@@ -176,6 +181,7 @@ export interface FeedClip {
   creatorName: string;
   /** @nullable */
   creatorPosition?: string | null;
+  socialLikes: SocialLikeUser[];
 }
 
 export interface CreateUserClipInput {

@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { SocialLikeUser } from './socialLikeUser';
 
 export interface FeedClip {
   id: number;
@@ -28,4 +29,5 @@ export interface FeedClip {
   creatorName: string;
   /** @nullable */
   creatorPosition?: string | null;
+  socialLikes: SocialLikeUser[];
 }

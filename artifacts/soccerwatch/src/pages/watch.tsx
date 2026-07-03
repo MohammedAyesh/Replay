@@ -42,6 +42,71 @@ function isUsableUrl(url: string | null | undefined): url is string {
   }
 }
 
+function SocialLikesLine({
+  socialLikes,
+  onNavigate,
+}: {
+  socialLikes: { userId: number; name: string }[];
+  onNavigate: (path: string) => void;
+}) {
+  const first = socialLikes[0];
+  const rest = socialLikes.length - 1;
+
+  let textNode: React.ReactNode;
+  if (socialLikes.length === 1) {
+    textNode = (
+      <>
+        <button
+          onClick={(e) => { e.stopPropagation(); onNavigate(`/players/${first.userId}`); }}
+          className="font-semibold underline-offset-2 hover:underline active:opacity-70"
+        >
+          {first.name}
+        </button>
+        {" liked this"}
+      </>
+    );
+  } else if (socialLikes.length === 2) {
+    const second = socialLikes[1];
+    textNode = (
+      <>
+        <button
+          onClick={(e) => { e.stopPropagation(); onNavigate(`/players/${first.userId}`); }}
+          className="font-semibold underline-offset-2 hover:underline active:opacity-70"
+        >
+          {first.name}
+        </button>
+        {" and "}
+        <button
+          onClick={(e) => { e.stopPropagation(); onNavigate(`/players/${second.userId}`); }}
+          className="font-semibold underline-offset-2 hover:underline active:opacity-70"
+        >
+          {second.name}
+        </button>
+        {" liked this"}
+      </>
+    );
+  } else {
+    textNode = (
+      <>
+        <button
+          onClick={(e) => { e.stopPropagation(); onNavigate(`/players/${first.userId}`); }}
+          className="font-semibold underline-offset-2 hover:underline active:opacity-70"
+        >
+          {first.name}
+        </button>
+        {` and ${rest} others you follow liked this`}
+      </>
+    );
+  }
+
+  return (
+    <p className="mt-1.5 text-[11px] text-white/80 leading-snug drop-shadow">
+      {"❤ "}
+      {textNode}
+    </p>
+  );
+}
+
 export default function Watch() {
   const { data: clips, isLoading } = useGetFeed();
   const { t } = useTranslation();
@@ -527,6 +592,10 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
           <span className="text-[10px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full border border-white/20 font-medium">
             Followers only
           </span>
+        )}
+
+        {clip.socialLikes && clip.socialLikes.length > 0 && (
+          <SocialLikesLine socialLikes={clip.socialLikes} onNavigate={setLocation} />
         )}
       </div>
 

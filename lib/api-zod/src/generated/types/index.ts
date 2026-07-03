@@ -33,6 +33,7 @@ export * from './profileInputGender';
 export * from './profileInputPosition';
 export * from './publicProfile';
 export * from './recording';
+export * from './socialLikeUser';
 export * from './user';
 export * from './userClip';
 export * from './viewInput';
