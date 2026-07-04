@@ -458,9 +458,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       {/* Top bar — floating over video */}
       <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between z-20 pointer-events-none">
         <button
-          onClick={clipMode === "idle" ? onClose : undefined}
-          disabled={clipMode !== "idle"}
-          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto disabled:opacity-40 active:scale-95 transition-transform"
+          onClick={onClose}
+          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto active:scale-95 transition-transform"
         >
           <X className="w-5 h-5" />
         </button>
