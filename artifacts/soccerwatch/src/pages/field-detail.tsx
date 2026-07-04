@@ -172,6 +172,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const seekDraggingRef = useRef(false);
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
@@ -223,10 +225,12 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     function onPlay() { setIsPlaying(true); }
     function onPause() { setIsPlaying(false); }
     function onDurationChange() { if (el) setDuration(el.duration || 0); }
+    function onTimeUpdate() { if (el && !seekDraggingRef.current) setCurrentTime(el.currentTime); }
 
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
     el.addEventListener("durationchange", onDurationChange);
+    el.addEventListener("timeupdate", onTimeUpdate);
 
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
@@ -246,6 +250,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       el.removeEventListener("play", onPlay);
       el.removeEventListener("pause", onPause);
       el.removeEventListener("durationchange", onDurationChange);
+      el.removeEventListener("timeupdate", onTimeUpdate);
     };
   }, [video.playbackUrl]);
 
@@ -510,6 +515,50 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             {(video.views ?? 0) > 0 && (
               <p className="text-white/60 text-xs mt-0.5 drop-shadow">{(video.views ?? 0).toLocaleString()} views</p>
             )}
+          </div>
+
+          {/* Seek Bar */}
+          <div className="px-1 select-none" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px]">
+                {formatDuration(currentTime)}
+              </span>
+              <div className="flex-1 relative h-8 flex items-center">
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-white/25 rounded-full" />
+                <div
+                  className="absolute left-0 top-1/2 -translate-y-1/2 h-2 bg-primary rounded-full pointer-events-none"
+                  style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                />
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 w-5 h-5 bg-white rounded-full shadow-lg ring-2 ring-white/30 pointer-events-none transition-transform"
+                  style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`, transform: `translate(-50%, -50%)` }}
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={duration || 1}
+                  step={0.1}
+                  value={currentTime}
+                  onMouseDown={() => { seekDraggingRef.current = true; }}
+                  onTouchStart={() => { seekDraggingRef.current = true; }}
+                  onChange={(e) => setCurrentTime(parseFloat(e.target.value))}
+                  onMouseUp={(e) => {
+                    const val = parseFloat((e.target as HTMLInputElement).value);
+                    if (videoRef.current) videoRef.current.currentTime = val;
+                    seekDraggingRef.current = false;
+                  }}
+                  onTouchEnd={(e) => {
+                    const val = parseFloat((e.target as HTMLInputElement).value);
+                    if (videoRef.current) videoRef.current.currentTime = val;
+                    seekDraggingRef.current = false;
+                  }}
+                  className="w-full h-full appearance-none cursor-pointer relative z-10 opacity-0"
+                />
+              </div>
+              <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px] text-right">
+                {formatDuration(duration)}
+              </span>
+            </div>
           </div>
 
           {/* Button row */}
