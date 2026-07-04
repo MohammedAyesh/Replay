@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Link, useRoute } from "wouter";
 import Hls from "hls.js";
 import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, Clip, CropKeyframe } from "@workspace/api-client-react";
@@ -10,6 +10,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
 
 const FALLBACK_VIDEO = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 function interpolateCropPath(cropPath: CropKeyframe[], t: number): CropKeyframe {
   if (cropPath.length === 0) return { t, x: 0, y: 0, w: 1, h: 1 };
@@ -68,8 +74,11 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
   const [isMuted, setIsMuted] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const seekDraggingRef = useRef(false);
 
   const clipStartSec = useRef<number>(0);
   const clipEndSec = useRef<number>(Infinity);
@@ -93,6 +102,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
     function handleLoadedMetadata() {
       if (!video) return;
       durationRef.current = video.duration || 0;
+      setDuration(durationRef.current);
       clipStartSec.current = clip.startTime * durationRef.current;
       clipEndSec.current = clip.endTime * durationRef.current;
       if (clip.cropPath.length > 0) {
@@ -106,6 +116,9 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       if (!video || !durationRef.current) return;
       if (video.currentTime >= clipEndSec.current) {
         video.currentTime = clipStartSec.current;
+      }
+      if (!seekDraggingRef.current) {
+        setCurrentTime(video.currentTime);
       }
       if (clip.cropPath.length > 0) {
         const clipDuration = clipEndSec.current - clipStartSec.current;
@@ -222,6 +235,26 @@ function PlayerScreen({ clip }: { clip: Clip }) {
     }
   };
 
+  const handleSeekStart = useCallback(() => {
+    seekDraggingRef.current = true;
+  }, []);
+
+  const handleSeekMove = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    setCurrentTime(val);
+  }, []);
+
+  const handleSeekEnd = useCallback((e: React.MouseEvent<HTMLInputElement> | React.TouchEvent<HTMLInputElement>) => {
+    const target = e.currentTarget;
+    const val = parseFloat(target.value);
+    if (videoRef.current) {
+      videoRef.current.currentTime = val;
+    }
+    seekDraggingRef.current = false;
+  }, []);
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
   return (
     <div className="relative w-full h-[100dvh] bg-black overflow-hidden" onClick={togglePlay}>
       <div className="absolute inset-0 field-pattern opacity-30" />
@@ -252,12 +285,43 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
       {/* Bottom Info & Action Bar */}
       <div className="absolute bottom-safe w-full px-6 pb-6 pointer-events-auto z-10">
-        <div className="mb-6">
+        <div className="mb-2">
           <div className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase inline-block mb-2 shadow-sm">
             {clip.momentLabel}
           </div>
           <h2 className="text-2xl font-bold text-white mb-1 shadow-black drop-shadow-md">{clip.fieldName || t.player.localPitch}</h2>
           <p className="text-white/80 text-sm shadow-black drop-shadow-md">{clip.court || t.player.court1} • {clip.date || t.player.recent}</p>
+        </div>
+
+        {/* Seek Bar */}
+        <div className="mb-4 select-none" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-white/70 font-medium tabular-nums min-w-[32px]">
+              {formatTime(currentTime)}
+            </span>
+            <div className="flex-1 relative h-6 flex items-center">
+              <input
+                type="range"
+                min={0}
+                max={duration || 1}
+                step={0.1}
+                value={currentTime}
+                onMouseDown={handleSeekStart}
+                onTouchStart={handleSeekStart}
+                onChange={handleSeekMove}
+                onMouseUp={handleSeekEnd}
+                onTouchEnd={handleSeekEnd}
+                className="w-full h-1.5 appearance-none bg-white/20 rounded-full cursor-pointer relative z-10 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:cursor-pointer"
+              />
+              <div
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-1.5 bg-primary rounded-full pointer-events-none"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <span className="text-[11px] text-white/70 font-medium tabular-nums min-w-[32px] text-right">
+              {formatTime(duration)}
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
