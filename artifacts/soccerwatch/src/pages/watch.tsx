@@ -195,6 +195,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
   const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const scrollRef9 = useRef<HTMLDivElement>(null);
 
   const [adPhase, setAdPhase] = useState<AdPhase>("idle");
   const [currentAd, setCurrentAd] = useState<Ad | null>(null);
@@ -322,6 +323,20 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       }
     }
 
+    function applyCrop(kf: CropKeyframe) {
+      if (clip.aspectRatio === "9:16") {
+        const scrollEl = scrollRef9.current;
+        if (scrollEl) {
+          const totalW = scrollEl.scrollWidth;
+          const viewW = scrollEl.clientWidth;
+          const cropCenterPx = (kf.x + kf.w / 2) * totalW;
+          scrollEl.scrollLeft = Math.max(0, Math.min(totalW - viewW, cropCenterPx - viewW / 2));
+        }
+      } else {
+        video!.style.transform = cropToTransform(kf);
+      }
+    }
+
     // On loadedmetadata, compute clip boundaries and apply initial crop
     function handleLoadedMetadata() {
       if (!video) return;
@@ -330,8 +345,10 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       clipEndSec.current = clip.endTime * durationRef.current;
       if (clip.cropPath.length > 0) {
         const kf = interpolateCropPath(clip.cropPath, 0);
-        video.style.transform = cropToTransform(kf);
-        video.style.transition = "transform 0.1s linear";
+        applyCrop(kf);
+        if (clip.aspectRatio !== "9:16") {
+          video.style.transition = "transform 0.1s linear";
+        }
       }
     }
 
@@ -341,14 +358,14 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       if (video.currentTime >= clipEndSec.current) {
         video.currentTime = clipStartSec.current;
       }
-      // Apply crop pan transform
+      // Apply crop pan
       if (clip.cropPath.length > 0) {
         const clipDuration = clipEndSec.current - clipStartSec.current;
         const t = clipDuration > 0
           ? (video.currentTime - clipStartSec.current) / clipDuration
           : 0;
         const kf = interpolateCropPath(clip.cropPath, Math.max(0, Math.min(1, t)));
-        video.style.transform = cropToTransform(kf);
+        applyCrop(kf);
       }
     }
 
@@ -362,10 +379,12 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       video.removeEventListener("error", handleVideoError);
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       video.removeEventListener("timeupdate", handleTimeUpdate);
-      video.style.transform = "";
-      video.style.transition = "";
+      if (clip.aspectRatio !== "9:16") {
+        video.style.transform = "";
+        video.style.transition = "";
+      }
     };
-  }, [clip.id, clip.playbackUrl, clip.startTime, clip.endTime, clip.cropPath, index]);
+  }, [clip.id, clip.playbackUrl, clip.startTime, clip.endTime, clip.cropPath, clip.aspectRatio, index]);
 
   // Load ad video when ad starts
   useEffect(() => {
@@ -563,15 +582,33 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     >
       <div className="absolute inset-0 field-pattern opacity-30" />
 
-      <div className="absolute inset-0 flex items-center bg-black">
-        <video
-          ref={videoRef}
-          className="w-full aspect-[16/9] object-cover"
-          playsInline
-          loop
-          muted={isMuted}
-        />
-      </div>
+      {clip.aspectRatio === "9:16" ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <div
+            ref={scrollRef9}
+            className="h-full aspect-[9/16] overflow-x-hidden overflow-y-hidden no-scrollbar relative"
+          >
+            <video
+              ref={videoRef}
+              className="h-full max-w-none pointer-events-none"
+              style={{ aspectRatio: "3840/1080" }}
+              playsInline
+              loop
+              muted={isMuted}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="absolute inset-0 flex items-center bg-black">
+          <video
+            ref={videoRef}
+            className="w-full aspect-[16/9] object-cover"
+            playsInline
+            loop
+            muted={isMuted}
+          />
+        </div>
+      )}
 
       <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/80 pointer-events-none" />
 

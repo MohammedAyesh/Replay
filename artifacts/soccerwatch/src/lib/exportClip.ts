@@ -29,15 +29,13 @@ export interface ExportClipOptions {
   endTime: number;
   cropPath: KF[];
   title: string;
+  aspectRatio?: string;
   onProgress?: (progress: number) => void;
 }
 
 /** Full source video dimensions (panoramic dual-camera) */
 const SRC_W = 3840;
 const SRC_H = 1080;
-/** Output canvas size (HD 16:9) */
-const OUT_W = 1920;
-const OUT_H = 1080;
 
 /** Maximum seconds to wait for video/HLS to become ready before giving up */
 const LOAD_TIMEOUT_MS = 45_000;
@@ -80,8 +78,13 @@ function triggerDownload(blob: Blob, filename: string) {
 }
 
 export async function exportClip(options: ExportClipOptions): Promise<void> {
-  const { playbackUrl, startTime, endTime, cropPath, title, onProgress } =
+  const { playbackUrl, startTime, endTime, cropPath, title, aspectRatio, onProgress } =
     options;
+
+  const is9to16 = aspectRatio === "9:16";
+  /** Output canvas dimensions — portrait for 9:16, landscape for 16:9 */
+  const OUT_W = is9to16 ? Math.round(SRC_H * 9 / 16) : 1920;
+  const OUT_H = SRC_H;
 
   if (!canExportVideo()) {
     await fallbackShare(playbackUrl, title);
@@ -142,10 +145,12 @@ export async function exportClip(options: ExportClipOptions): Promise<void> {
       const t = Math.max(0, Math.min(1, (now - startSec) / clipDuration));
       const x = interpolateX(cropPath, t);
 
-      const sourceX = Math.max(
-        0,
-        Math.min(SRC_W - OUT_W, x * SRC_W - OUT_W / 2)
-      );
+      // x is the left-edge fraction of the panoramic source.
+      // For 9:16 we center the crop window on the recorded crop center;
+      // for 16:9 the crop width ≈ OUT_W so left-edge positioning is equivalent.
+      const kfW = cropPath[0]?.w ?? (is9to16 ? 9 / 16 / (3840 / 1080) : 0.5);
+      const cropCenterSrc = (x + kfW / 2) * SRC_W;
+      const sourceX = Math.max(0, Math.min(SRC_W - OUT_W, cropCenterSrc - OUT_W / 2));
       ctx.drawImage(video, sourceX, 0, OUT_W, SRC_H, 0, 0, OUT_W, OUT_H);
 
       onProgress?.(t);

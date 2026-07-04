@@ -129,8 +129,9 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
       const totalW = scrollEl.scrollWidth;
       const viewW = scrollEl.clientWidth;
       const maxScroll = Math.max(0, totalW - viewW);
-      scrollEl.scrollLeft = x * totalW - (viewW / 2) + (viewW * (keyframes[0]?.w ?? 1) / 2);
-      scrollEl.scrollLeft = Math.max(0, Math.min(maxScroll, scrollEl.scrollLeft));
+      const kfW = keyframes[0]?.w ?? 1;
+      const cropCenterPx = (x + kfW / 2) * totalW;
+      scrollEl.scrollLeft = Math.max(0, Math.min(maxScroll, cropCenterPx - viewW / 2));
 
       rafRef.current = requestAnimationFrame(tick);
     };
@@ -208,6 +209,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
         endTime: clip.endTime,
         cropPath: clip.cropPath ?? [],
         title: clip.title,
+        aspectRatio: clip.aspectRatio,
         onProgress: (p) => setExportProgress(Math.round(p * 100)),
       });
 
@@ -243,11 +245,13 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-black"
     >
-      {/* Letterboxed 16:9 scrollable video — black bars top & bottom */}
-      <div className="absolute inset-0 flex items-center bg-black">
+      {/* Scrollable panoramic video — portrait for 9:16, landscape for 16:9 */}
+      <div className={`absolute inset-0 flex items-center bg-black ${clip.aspectRatio === "9:16" ? "justify-center" : ""}`}>
         <div
           ref={scrollRef}
-          className="w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
+          className={clip.aspectRatio === "9:16"
+            ? "h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
+            : "w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"}
         >
           <video
             ref={videoRef}
