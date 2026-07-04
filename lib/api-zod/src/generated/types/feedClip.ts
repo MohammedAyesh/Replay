@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { CropKeyframe } from './cropKeyframe';
 import type { SocialLikeUser } from './socialLikeUser';
 
 export interface FeedClip {
@@ -14,6 +15,7 @@ export interface FeedClip {
   title: string;
   startTime: number;
   endTime: number;
+  cropPath: CropKeyframe[];
   likeCount: number;
   viewCount: number;
   shareCount: number;

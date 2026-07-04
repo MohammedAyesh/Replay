@@ -345,6 +345,13 @@ export const GetFeedResponseItem = zod.object({
   "title": zod.string(),
   "startTime": zod.number(),
   "endTime": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
   "likeCount": zod.number(),
   "viewCount": zod.number(),
   "shareCount": zod.number(),

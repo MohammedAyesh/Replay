@@ -9,6 +9,7 @@ import {
   getGetFeedQueryKey,
   FeedClip,
   Ad,
+  CropKeyframe,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Heart, Share, Volume2, VolumeX, ExternalLink, Eye } from "lucide-react";
@@ -105,6 +106,37 @@ function SocialLikesLine({
       {textNode}
     </p>
   );
+}
+
+function interpolateCropPath(cropPath: CropKeyframe[], t: number): CropKeyframe {
+  if (cropPath.length === 0) return { t, x: 0, y: 0, w: 1, h: 1 };
+  if (cropPath.length === 1) return cropPath[0];
+  const first = cropPath[0];
+  const last = cropPath[cropPath.length - 1];
+  if (t <= first.t) return first;
+  if (t >= last.t) return last;
+  const nextIdx = cropPath.findIndex((kf) => kf.t > t);
+  const prevIdx = nextIdx - 1;
+  const kf0 = cropPath[prevIdx];
+  const kf1 = cropPath[nextIdx];
+  const alpha = (t - kf0.t) / (kf1.t - kf0.t);
+  return {
+    t,
+    x: kf0.x + (kf1.x - kf0.x) * alpha,
+    y: kf0.y + (kf1.y - kf0.y) * alpha,
+    w: kf0.w + (kf1.w - kf0.w) * alpha,
+    h: kf0.h + (kf1.h - kf0.h) * alpha,
+  };
+}
+
+function cropToTransform(kf: CropKeyframe): string {
+  if (!kf || kf.w <= 0) return "";
+  const cx = kf.x + kf.w / 2;
+  const cy = kf.y + kf.h / 2;
+  const scale = 1 / kf.w;
+  const tx = (0.5 - cx) / kf.w * 100;
+  const ty = (0.5 - cy) / kf.w * 100;
+  return `translateX(${tx}%) translateY(${ty}%) scale(${scale})`;
 }
 
 export default function Watch() {
@@ -290,12 +322,17 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       }
     }
 
-    // On loadedmetadata, compute clip boundaries
+    // On loadedmetadata, compute clip boundaries and apply initial crop
     function handleLoadedMetadata() {
       if (!video) return;
       durationRef.current = video.duration || 0;
       clipStartSec.current = clip.startTime * durationRef.current;
       clipEndSec.current = clip.endTime * durationRef.current;
+      if (clip.cropPath.length > 0) {
+        const kf = interpolateCropPath(clip.cropPath, 0);
+        video.style.transform = cropToTransform(kf);
+        video.style.transition = "transform 0.1s linear";
+      }
     }
 
     function handleTimeUpdate() {
@@ -303,6 +340,15 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       // Loop within clip boundaries
       if (video.currentTime >= clipEndSec.current) {
         video.currentTime = clipStartSec.current;
+      }
+      // Apply crop pan transform
+      if (clip.cropPath.length > 0) {
+        const clipDuration = clipEndSec.current - clipStartSec.current;
+        const t = clipDuration > 0
+          ? (video.currentTime - clipStartSec.current) / clipDuration
+          : 0;
+        const kf = interpolateCropPath(clip.cropPath, Math.max(0, Math.min(1, t)));
+        video.style.transform = cropToTransform(kf);
       }
     }
 
@@ -316,8 +362,10 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       video.removeEventListener("error", handleVideoError);
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       video.removeEventListener("timeupdate", handleTimeUpdate);
+      video.style.transform = "";
+      video.style.transition = "";
     };
-  }, [clip.id, clip.playbackUrl, clip.startTime, clip.endTime, index]);
+  }, [clip.id, clip.playbackUrl, clip.startTime, clip.endTime, clip.cropPath, index]);
 
   // Load ad video when ad starts
   useEffect(() => {

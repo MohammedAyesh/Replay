@@ -998,7 +998,7 @@ components:
 
     FeedClip:
       type: object
-      required: [id, userId, videoId, title, startTime, endTime, likeCount, viewCount, shareCount, score, isLiked, isPublic, createdAt, creatorId, creatorName, socialLikes]
+      required: [id, userId, videoId, title, startTime, endTime, cropPath, likeCount, viewCount, shareCount, score, isLiked, isPublic, createdAt, creatorId, creatorName, socialLikes]
       properties:
         id:
           type: integer
@@ -1012,6 +1012,10 @@ components:
           type: number
         endTime:
           type: number
+        cropPath:
+          type: array
+          items:
+            $ref: "#/components/schemas/CropKeyframe"
         likeCount:
           type: integer
         viewCount:

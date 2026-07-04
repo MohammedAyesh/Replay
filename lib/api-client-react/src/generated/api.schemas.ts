@@ -166,6 +166,7 @@ export interface FeedClip {
   title: string;
   startTime: number;
   endTime: number;
+  cropPath: CropKeyframe[];
   likeCount: number;
   viewCount: number;
   shareCount: number;
