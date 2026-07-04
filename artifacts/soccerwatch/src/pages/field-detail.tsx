@@ -183,6 +183,16 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [recElapsed, setRecElapsed] = useState(0);
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
   const selectedRatioRef = useRef<AspectRatio>("16:9");
+  const [scrollOffset, setScrollOffset] = useState(0);
+
+  // Track scroll position for live crop overlay
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    const onScroll = () => setScrollOffset(scrollEl.scrollLeft);
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    return () => scrollEl.removeEventListener("scroll", onScroll);
+  }, []);
 
   // Stable refs so callbacks always see current values
   const clipStartRef = useRef(0);
@@ -450,25 +460,40 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       <div className="absolute inset-0 flex items-center bg-black">
         {/* Wrapper holds the fixed overlay + scrollable video as siblings */}
         <div className="w-full aspect-[16/9] relative">
-          {/* Crop ratio overlay — OUTSIDE scroll container so it stays fixed on viewport */}
-          {(clipMode === "idle" || clipMode === "recording") && (
-            <div className="absolute inset-0 z-10 pointer-events-none">
-              {selectedRatio === "9:16" ? (
-                <>
-                  <div className="absolute inset-y-0 left-0 bg-black/55" style={{ width: "34.18%" }} />
-                  <div className="absolute inset-y-0 right-0 bg-black/55" style={{ width: "34.18%" }} />
+          {/* Crop ratio overlay — follows scroll across full video width */}
+          {(clipMode === "idle" || clipMode === "recording") && (() => {
+            const scrollEl = scrollRef.current;
+            if (!scrollEl) return null;
+            const totalW = scrollEl.scrollWidth;
+            const containerW = scrollEl.clientWidth;
+            const containerH = scrollEl.clientHeight;
+            if (selectedRatio === "9:16") {
+              const cropW = containerH * 9 / 16;
+              const maxScroll = totalW - containerW;
+              const cropLeft = maxScroll > 0
+                ? (scrollOffset / maxScroll) * (containerW - cropW)
+                : (containerW - cropW) / 2;
+              const leftBar = Math.max(0, cropLeft);
+              const rightBar = Math.max(0, containerW - cropLeft - cropW);
+              return (
+                <div className="absolute inset-0 z-10 pointer-events-none">
+                  <div className="absolute inset-y-0 bg-black/55" style={{ left: 0, width: leftBar }} />
+                  <div className="absolute inset-y-0 bg-black/55" style={{ right: 0, width: rightBar }} />
                   <div
                     className={`absolute inset-y-0 border-2 transition-colors ${clipMode === "recording" ? "border-red-500" : "border-white/80"}`}
-                    style={{ left: "34.18%", width: "31.64%" }}
+                    style={{ left: cropLeft, width: cropW }}
                   />
-                </>
-              ) : (
+                </div>
+              );
+            }
+            return (
+              <div className="absolute inset-0 z-10 pointer-events-none">
                 <div
                   className={`absolute inset-0 border-2 transition-colors ${clipMode === "recording" ? "border-red-500/70" : "border-white/30"}`}
                 />
-              )}
-            </div>
-          )}
+              </div>
+            );
+          })()}
 
           {/* Scrollable video container */}
           <div
