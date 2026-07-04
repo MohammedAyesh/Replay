@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { CreateUserClipInputAspectRatio } from './createUserClipInputAspectRatio';
 import type { CropKeyframe } from './cropKeyframe';
 
 export interface CreateUserClipInput {
@@ -14,4 +15,5 @@ export interface CreateUserClipInput {
   endTime: number;
   cropPath: CropKeyframe[];
   isPublic?: boolean;
+  aspectRatio?: CreateUserClipInputAspectRatio;
 }

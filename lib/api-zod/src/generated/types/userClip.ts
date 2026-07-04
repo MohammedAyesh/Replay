@@ -17,6 +17,7 @@ export interface UserClip {
   cropPath: CropKeyframe[];
   isPublic: boolean;
   likeCount: number;
+  aspectRatio: string;
   /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */

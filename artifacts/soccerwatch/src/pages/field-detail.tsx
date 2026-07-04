@@ -18,6 +18,7 @@ import Hls from "hls.js";
 
 type CropKeyframe = { t: number; x: number; y: number; w: number; h: number };
 type ClipMode = "idle" | "recording" | "review";
+type AspectRatio = "16:9" | "9:16";
 
 function splitName(name: string): string[] {
   return name
@@ -180,6 +181,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [clipIsPublic, setClipIsPublic] = useState(true);
   const [isSavingClip, setIsSavingClip] = useState(false);
   const [recElapsed, setRecElapsed] = useState(0);
+  const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
+  const selectedRatioRef = useRef<AspectRatio>("16:9");
 
   // Stable refs so callbacks always see current values
   const clipStartRef = useRef(0);
@@ -311,14 +314,20 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       if (!videoEl || !scrollEl) return;
       const totalW = scrollEl.scrollWidth;
       const containerW = scrollEl.clientWidth;
+      const containerH = scrollEl.clientHeight;
       const relT = videoEl.currentTime - clipStartRef.current;
-      recordingRef.current.keyframes.push({
-        t: relT,
-        x: totalW > 0 ? scrollEl.scrollLeft / totalW : 0,
-        y: 0,
-        w: totalW > 0 ? containerW / totalW : 1,
-        h: 1,
-      });
+
+      let x: number, w: number;
+      if (selectedRatioRef.current === "9:16") {
+        const cropPxW = containerH * 9 / 16;
+        x = totalW > 0 ? (scrollEl.scrollLeft + (containerW - cropPxW) / 2) / totalW : 0;
+        w = totalW > 0 ? cropPxW / totalW : 81 / 256;
+      } else {
+        x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
+        w = totalW > 0 ? containerW / totalW : 1;
+      }
+
+      recordingRef.current.keyframes.push({ t: relT, x, y: 0, w, h: 1 });
     };
 
     sampleFrame();
@@ -351,13 +360,17 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     if (el && scrollEl) {
       const totalW = scrollEl.scrollWidth;
       const containerW = scrollEl.clientWidth;
-      recordingRef.current.keyframes.push({
-        t: endT - clipStartRef.current,
-        x: totalW > 0 ? scrollEl.scrollLeft / totalW : 0,
-        y: 0,
-        w: totalW > 0 ? containerW / totalW : 1,
-        h: 1,
-      });
+      const containerH = scrollEl.clientHeight;
+      let x: number, w: number;
+      if (selectedRatioRef.current === "9:16") {
+        const cropPxW = containerH * 9 / 16;
+        x = totalW > 0 ? (scrollEl.scrollLeft + (containerW - cropPxW) / 2) / totalW : 0;
+        w = totalW > 0 ? cropPxW / totalW : 81 / 256;
+      } else {
+        x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
+        w = totalW > 0 ? containerW / totalW : 1;
+      }
+      recordingRef.current.keyframes.push({ t: endT - clipStartRef.current, x, y: 0, w, h: 1 });
     }
 
     el?.pause();
@@ -372,6 +385,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     setClipTitle("");
     setClipIsPublic(true);
     setRecElapsed(0);
+    setSelectedRatio("16:9");
+    selectedRatioRef.current = "16:9";
   };
 
   const saveClip = async () => {
@@ -407,6 +422,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           endTime: totalDuration > 0 ? endT / totalDuration : 1,
           cropPath: keyframes,
           isPublic: clipIsPublic,
+          aspectRatio: selectedRatioRef.current,
         },
       });
       queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
@@ -436,8 +452,24 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           ref={scrollRef}
           className="w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
         >
-          {clipMode === "recording" && (
-            <div className="absolute inset-0 border-2 border-red-500/70 z-10 pointer-events-none rounded" />
+          {/* Crop ratio overlay — visible in idle and recording modes */}
+          {(clipMode === "idle" || clipMode === "recording") && (
+            <div className="absolute inset-0 z-10 pointer-events-none">
+              {selectedRatio === "9:16" ? (
+                <>
+                  <div className="absolute inset-y-0 left-0 bg-black/55" style={{ width: "34.18%" }} />
+                  <div className="absolute inset-y-0 right-0 bg-black/55" style={{ width: "34.18%" }} />
+                  <div
+                    className={`absolute inset-y-0 border-2 transition-colors ${clipMode === "recording" ? "border-red-500" : "border-white/80"}`}
+                    style={{ left: "34.18%", width: "31.64%" }}
+                  />
+                </>
+              ) : (
+                <div
+                  className={`absolute inset-0 border-2 transition-colors ${clipMode === "recording" ? "border-red-500/70" : "border-white/30"}`}
+                />
+              )}
+            </div>
           )}
 
           <video
@@ -555,6 +587,23 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px] text-right">
                 {formatDuration(duration)}
               </span>
+            </div>
+          </div>
+
+          {/* Aspect ratio picker */}
+          <div className="flex items-center justify-center gap-2 mb-1">
+            <span className="text-white/50 text-xs font-medium">Crop</span>
+            <div className="flex rounded-lg overflow-hidden border border-white/20 text-xs font-bold">
+              {(["16:9", "9:16"] as AspectRatio[]).map((ratio) => (
+                <button
+                  key={ratio}
+                  type="button"
+                  onClick={() => { setSelectedRatio(ratio); selectedRatioRef.current = ratio; }}
+                  className={`px-3 py-1.5 transition-colors ${selectedRatio === ratio ? "bg-white text-black" : "bg-white/10 text-white/60"}`}
+                >
+                  {ratio}
+                </button>
+              ))}
             </div>
           </div>
 

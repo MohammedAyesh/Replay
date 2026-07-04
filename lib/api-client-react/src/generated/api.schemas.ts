@@ -150,6 +150,7 @@ export interface UserClip {
   cropPath: CropKeyframe[];
   isPublic: boolean;
   likeCount: number;
+  aspectRatio: string;
   /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */
@@ -176,6 +177,7 @@ export interface FeedClip {
   score: number;
   isLiked: boolean;
   isPublic: boolean;
+  aspectRatio: string;
   /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */
@@ -188,6 +190,14 @@ export interface FeedClip {
   socialLikes: SocialLikeUser[];
 }
 
+export type CreateUserClipInputAspectRatio = typeof CreateUserClipInputAspectRatio[keyof typeof CreateUserClipInputAspectRatio];
+
+
+export const CreateUserClipInputAspectRatio = {
+  '16:9': '16:9',
+  '9:16': '9:16',
+} as const;
+
 export interface CreateUserClipInput {
   videoId: string;
   title: string;
@@ -195,6 +205,7 @@ export interface CreateUserClipInput {
   endTime: number;
   cropPath: CropKeyframe[];
   isPublic?: boolean;
+  aspectRatio?: CreateUserClipInputAspectRatio;
 }
 
 export interface LikeResult {

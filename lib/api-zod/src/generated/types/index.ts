@@ -17,6 +17,7 @@ export * from './bunnyVideo';
 export * from './clip';
 export * from './createAdInput';
 export * from './createUserClipInput';
+export * from './createUserClipInputAspectRatio';
 export * from './cropKeyframe';
 export * from './engagementResult';
 export * from './feedClip';

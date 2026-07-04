@@ -221,7 +221,8 @@ export const CreateUserClipBody = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
-  "isPublic": zod.boolean().optional()
+  "isPublic": zod.boolean().optional(),
+  "aspectRatio": zod.enum(['16:9', '9:16']).optional()
 })
 
 export const CreateUserClipResponse = zod.object({
@@ -240,6 +241,7 @@ export const CreateUserClipResponse = zod.object({
 })),
   "isPublic": zod.boolean(),
   "likeCount": zod.number(),
+  "aspectRatio": zod.string(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()
@@ -265,6 +267,7 @@ export const ListUserClipsResponseItem = zod.object({
 })),
   "isPublic": zod.boolean(),
   "likeCount": zod.number(),
+  "aspectRatio": zod.string(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()
@@ -358,6 +361,7 @@ export const GetFeedResponseItem = zod.object({
   "score": zod.number(),
   "isLiked": zod.boolean(),
   "isPublic": zod.boolean(),
+  "aspectRatio": zod.string(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string(),

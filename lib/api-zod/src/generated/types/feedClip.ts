@@ -22,6 +22,7 @@ export interface FeedClip {
   score: number;
   isLiked: boolean;
   isPublic: boolean;
+  aspectRatio: string;
   /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */

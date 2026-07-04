@@ -50,7 +50,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
-  const { videoId, title, startTime, endTime, cropPath, isPublic } = body.data;
+  const { videoId, title, startTime, endTime, cropPath, isPublic, aspectRatio } = body.data;
 
   const [row] = await db
     .insert(userClipsTable)
@@ -62,6 +62,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       endTime: String(endTime),
       cropPath,
       isPublic: isPublic ?? true,
+      aspectRatio: aspectRatio ?? "16:9",
     })
     .returning();
 
@@ -78,6 +79,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       endTime: parseFloat(row.endTime),
       cropPath: row.cropPath,
       isPublic: row.isPublic,
+      aspectRatio: row.aspectRatio,
       likeCount: row.likeCount,
       viewCount: row.viewCount,
       shareCount: row.shareCount,
@@ -111,6 +113,7 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     endTime: parseFloat(row.endTime),
     cropPath: row.cropPath,
     isPublic: row.isPublic,
+    aspectRatio: row.aspectRatio,
     likeCount: row.likeCount,
     viewCount: row.viewCount,
     shareCount: row.shareCount,
@@ -309,6 +312,7 @@ router.get("/feed", async (req, res): Promise<void> => {
       startTime: userClipsTable.startTime,
       endTime: userClipsTable.endTime,
       cropPath: userClipsTable.cropPath,
+      aspectRatio: userClipsTable.aspectRatio,
       likeCount: userClipsTable.likeCount,
       viewCount: userClipsTable.viewCount,
       shareCount: userClipsTable.shareCount,
@@ -386,6 +390,7 @@ router.get("/feed", async (req, res): Promise<void> => {
     startTime: parseFloat(row.startTime),
     endTime: parseFloat(row.endTime),
     cropPath: row.cropPath,
+    aspectRatio: row.aspectRatio,
     likeCount: row.likeCount,
     viewCount: row.viewCount,
     shareCount: row.shareCount,
