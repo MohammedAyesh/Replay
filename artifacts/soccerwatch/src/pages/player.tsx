@@ -295,11 +295,23 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
         {/* Seek Bar */}
         <div className="mb-4 select-none" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-white/70 font-medium tabular-nums min-w-[32px]">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px]">
               {formatTime(currentTime)}
             </span>
-            <div className="flex-1 relative h-6 flex items-center">
+            <div className="flex-1 relative h-8 flex items-center">
+              {/* Track background */}
+              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-white/25 rounded-full" />
+              {/* Filled progress */}
+              <div
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-2 bg-primary rounded-full pointer-events-none"
+                style={{ width: `${progress}%` }}
+              />
+              {/* Thumb at progress end */}
+              <div
+                className="absolute top-1/2 -translate-y-1/2 w-5 h-5 bg-white rounded-full shadow-lg ring-2 ring-white/30 pointer-events-none transition-transform"
+                style={{ left: `${progress}%`, transform: `translate(-50%, -50%)` }}
+              />
               <input
                 type="range"
                 min={0}
@@ -311,14 +323,10 @@ function PlayerScreen({ clip }: { clip: Clip }) {
                 onChange={handleSeekMove}
                 onMouseUp={handleSeekEnd}
                 onTouchEnd={handleSeekEnd}
-                className="w-full h-1.5 appearance-none bg-white/20 rounded-full cursor-pointer relative z-10 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:cursor-pointer"
-              />
-              <div
-                className="absolute left-0 top-1/2 -translate-y-1/2 h-1.5 bg-primary rounded-full pointer-events-none"
-                style={{ width: `${progress}%` }}
+                className="w-full h-full appearance-none cursor-pointer relative z-10 opacity-0"
               />
             </div>
-            <span className="text-[11px] text-white/70 font-medium tabular-nums min-w-[32px] text-right">
+            <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px] text-right">
               {formatTime(duration)}
             </span>
           </div>
