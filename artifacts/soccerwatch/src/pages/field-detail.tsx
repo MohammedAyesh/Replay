@@ -448,11 +448,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     >
       {/* Letterboxed 16:9 scrollable video — black bars top & bottom */}
       <div className="absolute inset-0 flex items-center bg-black">
-        <div
-          ref={scrollRef}
-          className="w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
-        >
-          {/* Crop ratio overlay — visible in idle and recording modes */}
+        {/* Wrapper holds the fixed overlay + scrollable video as siblings */}
+        <div className="w-full aspect-[16/9] relative">
+          {/* Crop ratio overlay — OUTSIDE scroll container so it stays fixed on viewport */}
           {(clipMode === "idle" || clipMode === "recording") && (
             <div className="absolute inset-0 z-10 pointer-events-none">
               {selectedRatio === "9:16" ? (
@@ -472,18 +470,24 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             </div>
           )}
 
-          <video
-            ref={videoRef}
-            className="h-full max-w-none pointer-events-none"
-            style={{ aspectRatio: "3840/1080" }}
-            playsInline
-            loop
-            onLoadedMetadata={onLoadedMetadata}
-          />
+          {/* Scrollable video container */}
+          <div
+            ref={scrollRef}
+            className="w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
+          >
+            <video
+              ref={videoRef}
+              className="h-full max-w-none pointer-events-none"
+              style={{ aspectRatio: "3840/1080" }}
+              playsInline
+              loop
+              onLoadedMetadata={onLoadedMetadata}
+            />
 
-          {clipMode !== "recording" && (
-            <button onClick={togglePlay} className="absolute inset-0 z-10" aria-label={isPlaying ? "Pause" : "Play"} />
-          )}
+            {clipMode !== "recording" && (
+              <button onClick={togglePlay} className="absolute inset-0 z-10" aria-label={isPlaying ? "Pause" : "Play"} />
+            )}
+          </div>
         </div>
       </div>
 
@@ -682,6 +686,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             />
 
             <div className="flex items-center gap-3 mb-4">
+              <span className="text-white/60 text-xs">Crop</span>
+              <span className="bg-white/10 text-white/80 text-xs font-bold px-2 py-1 rounded">
+                {selectedRatio}
+              </span>
+              <div className="w-px h-4 bg-white/20" />
               <span className="text-white/60 text-xs">Visibility</span>
               <div className="flex rounded-lg overflow-hidden border border-white/20 text-xs font-semibold">
                 <button
