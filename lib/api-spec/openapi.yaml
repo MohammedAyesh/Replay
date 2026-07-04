@@ -899,7 +899,7 @@ components:
 
     Clip:
       type: object
-      required: [id, recordingId, rank, momentLabel, likeCount]
+      required: [id, recordingId, rank, momentLabel, likeCount, startTime, endTime, cropPath]
       properties:
         id:
           type: integer
@@ -915,6 +915,14 @@ components:
             type: string
         likeCount:
           type: integer
+        startTime:
+          type: number
+        endTime:
+          type: number
+        cropPath:
+          type: array
+          items:
+            $ref: "#/components/schemas/CropKeyframe"
         isLiked:
           type: boolean
         isSaved:

@@ -382,6 +382,15 @@ export const ListClipsResponseItem = zod.object({
   "momentLabel": zod.string(),
   "playerTags": zod.array(zod.string()).optional(),
   "likeCount": zod.number(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
   "isLiked": zod.boolean().optional(),
   "isSaved": zod.boolean().optional(),
   "videoUrl": zod.string().optional(),
@@ -411,6 +420,15 @@ export const GetClipResponse = zod.object({
   "momentLabel": zod.string(),
   "playerTags": zod.array(zod.string()).optional(),
   "likeCount": zod.number(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
   "isLiked": zod.boolean().optional(),
   "isSaved": zod.boolean().optional(),
   "videoUrl": zod.string().optional(),
@@ -448,6 +466,15 @@ export const ListSavedClipsResponseItem = zod.object({
   "momentLabel": zod.string(),
   "playerTags": zod.array(zod.string()).optional(),
   "likeCount": zod.number(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
   "isLiked": zod.boolean().optional(),
   "isSaved": zod.boolean().optional(),
   "videoUrl": zod.string().optional(),

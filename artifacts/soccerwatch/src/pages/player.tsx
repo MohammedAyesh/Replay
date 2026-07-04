@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useRoute } from "wouter";
 import Hls from "hls.js";
-import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, Clip } from "@workspace/api-client-react";
+import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, Clip, CropKeyframe } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Heart, Share, Bookmark, ChevronLeft, ChevronRight, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,37 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
 
 const FALLBACK_VIDEO = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
+
+function interpolateCropPath(cropPath: CropKeyframe[], t: number): CropKeyframe {
+  if (cropPath.length === 0) return { t, x: 0, y: 0, w: 1, h: 1 };
+  if (cropPath.length === 1) return cropPath[0];
+  const first = cropPath[0];
+  const last = cropPath[cropPath.length - 1];
+  if (t <= first.t) return first;
+  if (t >= last.t) return last;
+  const nextIdx = cropPath.findIndex((kf) => kf.t > t);
+  const prevIdx = nextIdx - 1;
+  const kf0 = cropPath[prevIdx];
+  const kf1 = cropPath[nextIdx];
+  const alpha = (t - kf0.t) / (kf1.t - kf0.t);
+  return {
+    t,
+    x: kf0.x + (kf1.x - kf0.x) * alpha,
+    y: kf0.y + (kf1.y - kf0.y) * alpha,
+    w: kf0.w + (kf1.w - kf0.w) * alpha,
+    h: kf0.h + (kf1.h - kf0.h) * alpha,
+  };
+}
+
+function cropToTransform(kf: CropKeyframe): string {
+  if (!kf || kf.w <= 0) return "";
+  const cx = kf.x + kf.w / 2;
+  const cy = kf.y + kf.h / 2;
+  const scale = 1 / kf.w;
+  const tx = (0.5 - cx) / kf.w * 100;
+  const ty = (0.5 - cy) / kf.w * 100;
+  return `translateX(${tx}%) translateY(${ty}%) scale(${scale})`;
+}
 
 export default function Player() {
   const [, params] = useRoute("/player/:id");
@@ -40,6 +71,10 @@ function PlayerScreen({ clip }: { clip: Clip }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
+  const clipStartSec = useRef<number>(0);
+  const clipEndSec = useRef<number>(Infinity);
+  const durationRef = useRef<number>(0);
+
   const toggleLikeMutation = useToggleLike();
   const saveClipMutation = useSaveClip();
   const unsaveClipMutation = useUnsaveClip();
@@ -55,6 +90,36 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
     const src = clip.bunnyPlaybackUrl ?? clip.videoUrl ?? FALLBACK_VIDEO;
 
+    function handleLoadedMetadata() {
+      if (!video) return;
+      durationRef.current = video.duration || 0;
+      clipStartSec.current = clip.startTime * durationRef.current;
+      clipEndSec.current = clip.endTime * durationRef.current;
+      if (clip.cropPath.length > 0) {
+        const kf = interpolateCropPath(clip.cropPath, 0);
+        video.style.transform = cropToTransform(kf);
+        video.style.transition = "transform 0.1s linear";
+      }
+    }
+
+    function handleTimeUpdate() {
+      if (!video || !durationRef.current) return;
+      if (video.currentTime >= clipEndSec.current) {
+        video.currentTime = clipStartSec.current;
+      }
+      if (clip.cropPath.length > 0) {
+        const clipDuration = clipEndSec.current - clipStartSec.current;
+        const t = clipDuration > 0
+          ? (video.currentTime - clipStartSec.current) / clipDuration
+          : 0;
+        const kf = interpolateCropPath(clip.cropPath, Math.max(0, Math.min(1, t)));
+        video.style.transform = cropToTransform(kf);
+      }
+    }
+
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("timeupdate", handleTimeUpdate);
+
     if (src.includes(".m3u8")) {
       if (Hls.isSupported()) {
         const hls = new Hls({ enableWorker: false });
@@ -62,6 +127,9 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         hls.loadSource(src);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          durationRef.current = video.duration || 0;
+          const startSec = clip.startTime * durationRef.current;
+          video.currentTime = startSec;
           video.play().then(() => setIsPlaying(true)).catch(() => {});
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -75,8 +143,12 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
     return () => {
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+      video.style.transform = "";
+      video.style.transition = "";
     };
-  }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl]);
+  }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, clip.startTime, clip.endTime, clip.cropPath]);
 
   const { t } = useTranslation();
 

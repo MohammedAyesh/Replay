@@ -98,6 +98,17 @@ export interface FollowResult {
   followerCount: number;
 }
 
+export interface CropKeyframe {
+  /** Time position as fraction (0-1) of clip duration */
+  t: number;
+  /** Crop left edge as fraction of total video width */
+  x: number;
+  y: number;
+  /** Crop width as fraction of total video width */
+  w: number;
+  h: number;
+}
+
 export interface Clip {
   id: number;
   recordingId: number;
@@ -105,6 +116,9 @@ export interface Clip {
   momentLabel: string;
   playerTags?: string[];
   likeCount: number;
+  startTime: number;
+  endTime: number;
+  cropPath: CropKeyframe[];
   isLiked?: boolean;
   isSaved?: boolean;
   videoUrl?: string;
@@ -124,17 +138,6 @@ export interface Clip {
   creatorName?: string | null;
   /** @nullable */
   creatorPosition?: string | null;
-}
-
-export interface CropKeyframe {
-  /** Time position as fraction (0-1) of clip duration */
-  t: number;
-  /** Crop left edge as fraction of total video width */
-  x: number;
-  y: number;
-  /** Crop width as fraction of total video width */
-  w: number;
-  h: number;
 }
 
 export interface UserClip {

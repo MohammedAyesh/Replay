@@ -71,6 +71,9 @@ router.get("/saved-clips", async (req, res): Promise<void> => {
         creatorId,
         creatorName,
         creatorPosition,
+        startTime: parseFloat(clip.startTime ?? "0"),
+        endTime: parseFloat(clip.endTime ?? "1"),
+        cropPath: (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[],
       };
     })
   );

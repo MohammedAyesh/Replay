@@ -76,6 +76,9 @@ async function buildClip(clipId: number, userId: number | null) {
     creatorId,
     creatorName,
     creatorPosition,
+    startTime: parseFloat(clip.startTime ?? "0"),
+    endTime: parseFloat(clip.endTime ?? "1"),
+    cropPath: (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[],
   };
 }
 

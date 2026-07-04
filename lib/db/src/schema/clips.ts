@@ -1,8 +1,9 @@
-import { pgTable, serial, integer, text } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, numeric, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { recordingsTable } from "./recordings";
 import { usersTable } from "./users";
+import type { CropKeyframe } from "./userClips";
 
 export const clipsTable = pgTable("clips", {
   id: serial("id").primaryKey(),
@@ -14,6 +15,9 @@ export const clipsTable = pgTable("clips", {
   likeCount: integer("like_count").notNull().default(0),
   bunnyVideoId: text("bunny_video_id"),
   bunnyPlaybackUrl: text("bunny_playback_url"),
+  startTime: numeric("start_time", { precision: 10, scale: 6 }).notNull().default("0"),
+  endTime: numeric("end_time", { precision: 10, scale: 6 }).notNull().default("1"),
+  cropPath: jsonb("crop_path").notNull().$type<CropKeyframe[]>().default([]),
 });
 
 export const insertClipSchema = createInsertSchema(clipsTable).omit({ id: true });

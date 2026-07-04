@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { CropKeyframe } from './cropKeyframe';
 
 export interface Clip {
   id: number;
@@ -13,6 +14,9 @@ export interface Clip {
   momentLabel: string;
   playerTags?: string[];
   likeCount: number;
+  startTime: number;
+  endTime: number;
+  cropPath: CropKeyframe[];
   isLiked?: boolean;
   isSaved?: boolean;
   videoUrl?: string;
