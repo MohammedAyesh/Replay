@@ -455,36 +455,34 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         </div>
       </div>
 
-      {/* Top bar — floating over video */}
-      <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between z-20 pointer-events-none">
-        <button
-          onClick={onClose}
-          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto active:scale-95 transition-transform"
-        >
-          <X className="w-5 h-5" />
-        </button>
+      {/* X close button — fixed to guarantee it sits above everything */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
+        className="fixed top-safe left-4 mt-4 z-[100] w-14 h-14 rounded-full bg-black/80 backdrop-blur-md flex items-center justify-center text-white active:scale-95 transition-transform shadow-xl border border-white/20"
+        aria-label="Close video"
+      >
+        <X className="w-7 h-7" />
+      </button>
 
-        <AnimatePresence>
-          {clipMode === "recording" && (
+      {/* Recording badge */}
+      <AnimatePresence>
+        {clipMode === "recording" && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            className="absolute top-safe left-1/2 -translate-x-1/2 mt-4 z-50 flex items-center gap-2 bg-black/70 backdrop-blur-md rounded-full px-3 py-1.5 pointer-events-none"
+          >
             <motion.div
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
-              className="flex items-center gap-2 bg-black/70 backdrop-blur-md rounded-full px-3 py-1.5 pointer-events-none"
-            >
-              <motion.div
-                animate={{ opacity: [1, 0.2, 1] }}
-                transition={{ repeat: Infinity, duration: 1, ease: "easeInOut" }}
-                className="w-2.5 h-2.5 rounded-full bg-red-500"
-              />
-              <span className="text-white text-xs font-bold tracking-wider">{t.clipping.recBadge}</span>
-              <span className="text-white/70 text-xs tabular-nums">{recElapsed.toFixed(1)}s</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div className="w-10" />
-      </div>
+              animate={{ opacity: [1, 0.2, 1] }}
+              transition={{ repeat: Infinity, duration: 1, ease: "easeInOut" }}
+              className="w-2.5 h-2.5 rounded-full bg-red-500"
+            />
+            <span className="text-white text-xs font-bold tracking-wider">{t.clipping.recBadge}</span>
+            <span className="text-white/70 text-xs tabular-nums">{recElapsed.toFixed(1)}s</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Pan hint overlay during recording */}
       <AnimatePresence>
