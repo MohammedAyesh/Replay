@@ -586,7 +586,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
         <div className="absolute inset-0 flex items-center justify-center bg-black">
           <div
             ref={scrollRef9}
-            className="h-full aspect-[9/16] overflow-x-hidden overflow-y-hidden no-scrollbar relative"
+            className="h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
           >
             <video
               ref={videoRef}

@@ -146,7 +146,8 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
     const tick = () => {
       const video = videoRef.current;
       const scrollEl = scrollRef.current;
-      if (!video || !scrollEl || keyframes.length === 0) {
+      // Local 9:16 clips are already cropped — no panning needed
+      if (!video || !scrollEl || keyframes.length === 0 || (isLocal && clip.aspectRatio === "9:16")) {
         rafRef.current = requestAnimationFrame(tick);
         return;
       }
@@ -174,7 +175,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [keyframes, clip.startTime, clip.endTime]);
+  }, [keyframes, clip.startTime, clip.endTime, isLocal, clip.aspectRatio]);
 
   /* Auto-stop when clip window ends — read duration live from the element */
   useEffect(() => {
@@ -272,6 +273,34 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
           playbackUrl: clip.playbackUrl,
         });
         setIsLocal(true);
+        // Immediately switch video to local Blob URL so it plays cropped 9:16
+        const localUrl = createLocalBlobUrl({
+          clipId: clip.id,
+          userId: user?.id ?? 0,
+          title: clip.title,
+          blob: result.blob,
+          mimeType: result.mimeType,
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+          cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
+          aspectRatio: clip.aspectRatio ?? "16:9",
+          downloadedAt: new Date().toISOString(),
+          playbackUrl: clip.playbackUrl,
+        });
+        localUrlRef.current = localUrl;
+        const video = videoRef.current;
+        if (video) {
+          if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+          video.pause();
+          video.src = localUrl;
+          video.addEventListener("loadedmetadata", () => {
+            const dur = video.duration || 0;
+            if (dur > 0) {
+              video.currentTime = clip.startTime * dur;
+              video.play().then(() => setIsPlaying(true)).catch(() => {});
+            }
+          }, { once: true });
+        }
       }
 
       setExportState("done");
@@ -316,8 +345,8 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
         >
           <video
             ref={videoRef}
-            className="h-full max-w-none pointer-events-none"
-            style={{ aspectRatio: "3840/1080" }}
+            className={isLocal && clip.aspectRatio === "9:16" ? "h-full w-full object-cover pointer-events-none" : "h-full max-w-none pointer-events-none"}
+            style={isLocal && clip.aspectRatio === "9:16" ? { aspectRatio: "9/16" } : { aspectRatio: "3840/1080" }}
             playsInline
             loop={false}
             muted={false}
