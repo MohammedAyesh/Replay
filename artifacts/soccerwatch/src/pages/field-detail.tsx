@@ -178,7 +178,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
-  const [clipIsPublic, setClipIsPublic] = useState(true);
+  const [clipVisibility, setClipVisibility] = useState<"public" | "followers" | "private">("public");
   const [isSavingClip, setIsSavingClip] = useState(false);
   const [recElapsed, setRecElapsed] = useState(0);
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
@@ -383,7 +383,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     recordingRef.current.keyframes = [];
     setClipMode("idle");
     setClipTitle("");
-    setClipIsPublic(true);
+    setClipVisibility("public");
     setRecElapsed(0);
     setSelectedRatio("16:9");
     selectedRatioRef.current = "16:9";
@@ -421,7 +421,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           startTime: totalDuration > 0 ? startT / totalDuration : 0,
           endTime: totalDuration > 0 ? endT / totalDuration : 1,
           cropPath: keyframes,
-          isPublic: clipIsPublic,
+          visibility: clipVisibility,
           aspectRatio: selectedRatioRef.current,
         },
       });
@@ -705,20 +705,16 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               <div className="w-px h-4 bg-white/20" />
               <span className="text-white/60 text-xs">Visibility</span>
               <div className="flex rounded-lg overflow-hidden border border-white/20 text-xs font-semibold">
-                <button
-                  type="button"
-                  onClick={() => setClipIsPublic(true)}
-                  className={`px-3 py-1.5 transition-colors ${clipIsPublic ? "bg-primary text-white" : "bg-white/10 text-white/60"}`}
-                >
-                  Public
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setClipIsPublic(false)}
-                  className={`px-3 py-1.5 transition-colors ${!clipIsPublic ? "bg-primary text-white" : "bg-white/10 text-white/60"}`}
-                >
-                  Followers only
-                </button>
+                {(["public", "followers", "private"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setClipVisibility(v)}
+                    className={`px-3 py-1.5 transition-colors ${clipVisibility === v ? "bg-primary text-white" : "bg-white/10 text-white/60"}`}
+                  >
+                    {v === "public" ? "Public" : v === "followers" ? "Followers" : "Private"}
+                  </button>
+                ))}
               </div>
             </div>
 

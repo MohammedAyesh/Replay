@@ -44,6 +44,7 @@ import type {
   ProfileInput,
   PublicProfile,
   Recording,
+  UpdateUserClipInput,
   User,
   UserClip,
   ViewInput
@@ -1194,6 +1195,77 @@ export const useDeleteUserClip = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeleteUserClipMutationOptions(options));
+    }
+
+export const getUpdateUserClipUrl = (id: number,) => {
+
+
+
+
+  return `/api/user-clips/${id}`
+}
+
+/**
+ * @summary Update a user-created clip (visibility or title)
+ */
+export const updateUserClip = async (id: number,
+    updateUserClipInput: UpdateUserClipInput, options?: RequestInit): Promise<UserClip> => {
+
+  return customFetch<UserClip>(getUpdateUserClipUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updateUserClipInput)
+  }
+);}
+
+
+
+
+export const getUpdateUserClipMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUserClip>>, TError,{id: number;data: BodyType<UpdateUserClipInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateUserClip>>, TError,{id: number;data: BodyType<UpdateUserClipInput>}, TContext> => {
+
+const mutationKey = ['updateUserClip'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateUserClip>>, {id: number;data: BodyType<UpdateUserClipInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateUserClip(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateUserClipMutationResult = NonNullable<Awaited<ReturnType<typeof updateUserClip>>>
+    export type UpdateUserClipMutationBody = BodyType<UpdateUserClipInput>
+    export type UpdateUserClipMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a user-created clip (visibility or title)
+ */
+export const useUpdateUserClip = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUserClip>>, TError,{id: number;data: BodyType<UpdateUserClipInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateUserClip>>,
+        TError,
+        {id: number;data: BodyType<UpdateUserClipInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateUserClipMutationOptions(options));
     }
 
 export const getToggleUserClipLikeUrl = (id: number,) => {

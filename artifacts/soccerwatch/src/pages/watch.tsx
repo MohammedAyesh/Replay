@@ -673,7 +673,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
 
         <h2 className="text-xl font-bold mb-1 shadow-black drop-shadow-md">{clip.title}</h2>
 
-        {!clip.isPublic && (
+        {clip.visibility === "followers" && (
           <span className="text-[10px] bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded-full border border-white/20 font-medium">
             Followers only
           </span>

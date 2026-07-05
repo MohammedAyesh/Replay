@@ -18,6 +18,7 @@ import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
 import Hls from "hls.js";
 import { exportClip, canExportVideo } from "@/lib/exportClip";
+import { saveLocalClip, getLocalClip, createLocalBlobUrl, revokeLocalBlobUrl } from "@/lib/localClips";
 
 function getBunnyThumbnailUrl(clip: Clip): string | null {
   if (clip.bunnyPlaybackUrl) {
@@ -64,19 +65,55 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
   const scrollRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const rafRef = useRef<number>(0);
+  const localUrlRef = useRef<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exportState, setExportState] = useState<ExportState>("idle");
   const [exportProgress, setExportProgress] = useState(0);
+  const [isLocal, setIsLocal] = useState(false);
   const { t } = useTranslation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const keyframes = clip.cropPath ?? [];
   // startTime/endTime are 0–1 fractions of total video duration
 
-  /* HLS init */
+  /* Check IndexedDB for local copy on mount */
+  useEffect(() => {
+    let cancelled = false;
+    async function checkLocal() {
+      const local = await getLocalClip(clip.id);
+      if (cancelled || !local) return;
+      const url = createLocalBlobUrl(local);
+      localUrlRef.current = url;
+      setIsLocal(true);
+      const video = videoRef.current;
+      if (video) {
+        if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+        video.pause();
+        video.src = url;
+        video.addEventListener("loadedmetadata", () => {
+          const dur = video.duration || 0;
+          if (dur > 0) {
+            video.currentTime = clip.startTime * dur;
+            video.play().then(() => setIsPlaying(true)).catch(() => {});
+          }
+        }, { once: true });
+      }
+    }
+    checkLocal();
+    return () => {
+      cancelled = true;
+      if (localUrlRef.current) {
+        revokeLocalBlobUrl(localUrlRef.current);
+        localUrlRef.current = null;
+      }
+    };
+  }, [clip.id, clip.startTime]);
+
+  /* HLS init — only if no local copy */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !clip.playbackUrl) return;
+    if (!video || !clip.playbackUrl || isLocal) return;
 
     function onLoaded() {
       if (!video) return;
@@ -203,7 +240,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
     setExportProgress(0);
 
     try {
-      await exportClip({
+      const result = await exportClip({
         playbackUrl: clip.playbackUrl,
         startTime: clip.startTime,
         endTime: clip.endTime,
@@ -211,7 +248,31 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
         title: clip.title,
         aspectRatio: clip.aspectRatio,
         onProgress: (p) => setExportProgress(Math.round(p * 100)),
+        returnBlob: true,
       });
+
+      if (result && typeof result === "object" && "blob" in result) {
+        await saveLocalClip({
+          clipId: clip.id,
+          userId: user?.id ?? 0,
+          title: clip.title,
+          blob: result.blob,
+          mimeType: result.mimeType,
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+          cropPath: (clip.cropPath ?? []).map((k) => ({
+            t: k.t,
+            x: k.x,
+            y: k.y,
+            w: k.w,
+            h: k.h,
+          })),
+          aspectRatio: clip.aspectRatio ?? "16:9",
+          downloadedAt: new Date().toISOString(),
+          playbackUrl: clip.playbackUrl,
+        });
+        setIsLocal(true);
+      }
 
       setExportState("done");
 
@@ -236,7 +297,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
       });
       setTimeout(() => setExportState("idle"), 3000);
     }
-  }, [clip, exportState, t, toast]);
+  }, [clip, exportState, t, toast, user?.id]);
 
   return (
     <motion.div

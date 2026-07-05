@@ -140,6 +140,15 @@ export interface Clip {
   creatorPosition?: string | null;
 }
 
+export type UserClipVisibility = typeof UserClipVisibility[keyof typeof UserClipVisibility];
+
+
+export const UserClipVisibility = {
+  public: 'public',
+  followers: 'followers',
+  private: 'private',
+} as const;
+
 export interface UserClip {
   id: number;
   userId: number;
@@ -148,7 +157,7 @@ export interface UserClip {
   startTime: number;
   endTime: number;
   cropPath: CropKeyframe[];
-  isPublic: boolean;
+  visibility: UserClipVisibility;
   likeCount: number;
   aspectRatio: string;
   /** @nullable */
@@ -163,6 +172,15 @@ export interface SocialLikeUser {
   name: string;
 }
 
+export type FeedClipVisibility = typeof FeedClipVisibility[keyof typeof FeedClipVisibility];
+
+
+export const FeedClipVisibility = {
+  public: 'public',
+  followers: 'followers',
+  private: 'private',
+} as const;
+
 export interface FeedClip {
   id: number;
   userId: number;
@@ -176,7 +194,7 @@ export interface FeedClip {
   shareCount: number;
   score: number;
   isLiked: boolean;
-  isPublic: boolean;
+  visibility: FeedClipVisibility;
   aspectRatio: string;
   /** @nullable */
   thumbnailUrl?: string | null;
@@ -189,6 +207,15 @@ export interface FeedClip {
   creatorPosition?: string | null;
   socialLikes: SocialLikeUser[];
 }
+
+export type CreateUserClipInputVisibility = typeof CreateUserClipInputVisibility[keyof typeof CreateUserClipInputVisibility];
+
+
+export const CreateUserClipInputVisibility = {
+  public: 'public',
+  followers: 'followers',
+  private: 'private',
+} as const;
 
 export type CreateUserClipInputAspectRatio = typeof CreateUserClipInputAspectRatio[keyof typeof CreateUserClipInputAspectRatio];
 
@@ -204,8 +231,22 @@ export interface CreateUserClipInput {
   startTime: number;
   endTime: number;
   cropPath: CropKeyframe[];
-  isPublic?: boolean;
+  visibility?: CreateUserClipInputVisibility;
   aspectRatio?: CreateUserClipInputAspectRatio;
+}
+
+export type UpdateUserClipInputVisibility = typeof UpdateUserClipInputVisibility[keyof typeof UpdateUserClipInputVisibility];
+
+
+export const UpdateUserClipInputVisibility = {
+  public: 'public',
+  followers: 'followers',
+  private: 'private',
+} as const;
+
+export interface UpdateUserClipInput {
+  title?: string;
+  visibility?: UpdateUserClipInputVisibility;
 }
 
 export interface LikeResult {

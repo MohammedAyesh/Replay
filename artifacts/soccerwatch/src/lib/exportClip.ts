@@ -31,7 +31,14 @@ export interface ExportClipOptions {
   title: string;
   aspectRatio?: string;
   onProgress?: (progress: number) => void;
+  /**
+   * When true, returns the Blob instead of triggering a download.
+   * Useful for saving to local storage (IndexedDB).
+   */
+  returnBlob?: boolean;
 }
+
+export type ExportResult = void | { blob: Blob; mimeType: string; ext: string };
 
 /** Full source video dimensions (panoramic dual-camera) */
 const SRC_W = 3840;
@@ -77,8 +84,8 @@ function triggerDownload(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export async function exportClip(options: ExportClipOptions): Promise<void> {
-  const { playbackUrl, startTime, endTime, cropPath, title, aspectRatio, onProgress } =
+export async function exportClip(options: ExportClipOptions): Promise<ExportResult> {
+  const { playbackUrl, startTime, endTime, cropPath, title, aspectRatio, onProgress, returnBlob } =
     options;
 
   const is9to16 = aspectRatio === "9:16";
@@ -91,7 +98,7 @@ export async function exportClip(options: ExportClipOptions): Promise<void> {
     return;
   }
 
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<ExportResult>((resolve, reject) => {
     const video = document.createElement("video");
     video.muted = true;
     video.playsInline = true;
@@ -121,6 +128,7 @@ export async function exportClip(options: ExportClipOptions): Promise<void> {
     let hlsInstance: Hls | null = null;
     let durationInitialized = false;
     let recordingStarted = false;
+    let finalMimeType = "";
 
     const loadTimeoutId = setTimeout(() => {
       cleanup();
@@ -168,6 +176,7 @@ export async function exportClip(options: ExportClipOptions): Promise<void> {
 
       const stream = canvas.captureStream(30);
       const mimeType = pickMimeType();
+      finalMimeType = mimeType;
       mediaRecorder = new MediaRecorder(
         stream,
         mimeType ? { mimeType } : undefined
@@ -179,10 +188,14 @@ export async function exportClip(options: ExportClipOptions): Promise<void> {
 
       mediaRecorder.onstop = () => {
         cleanup();
-        const ext = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
-        const blob = new Blob(chunks, { type: mimeType || "video/webm" });
-        triggerDownload(blob, `${title || "clip"}.${ext}`);
-        resolve();
+        const ext = finalMimeType.startsWith("video/mp4") ? "mp4" : "webm";
+        const blob = new Blob(chunks, { type: finalMimeType || "video/webm" });
+        if (returnBlob) {
+          resolve({ blob, mimeType: finalMimeType || "video/webm", ext });
+        } else {
+          triggerDownload(blob, `${title || "clip"}.${ext}`);
+          resolve();
+        }
       };
 
       mediaRecorder.onerror = () => {

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CropKeyframe } from './cropKeyframe';
+import type { UserClipVisibility } from './userClipVisibility';
 
 export interface UserClip {
   id: number;
@@ -15,7 +16,7 @@ export interface UserClip {
   startTime: number;
   endTime: number;
   cropPath: CropKeyframe[];
-  isPublic: boolean;
+  visibility: UserClipVisibility;
   likeCount: number;
   aspectRatio: string;
   /** @nullable */

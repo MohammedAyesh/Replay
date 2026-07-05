@@ -221,7 +221,7 @@ export const CreateUserClipBody = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
-  "isPublic": zod.boolean().optional(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "aspectRatio": zod.enum(['16:9', '9:16']).optional()
 })
 
@@ -239,7 +239,7 @@ export const CreateUserClipResponse = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
-  "isPublic": zod.boolean(),
+  "visibility": zod.enum(['public', 'followers', 'private']),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
   "thumbnailUrl": zod.string().nullish(),
@@ -265,7 +265,7 @@ export const ListUserClipsResponseItem = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
-  "isPublic": zod.boolean(),
+  "visibility": zod.enum(['public', 'followers', 'private']),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
   "thumbnailUrl": zod.string().nullish(),
@@ -283,6 +283,41 @@ export const DeleteUserClipParams = zod.object({
 })
 
 export const DeleteUserClipResponse = zod.unknown()
+
+
+/**
+ * @summary Update a user-created clip (visibility or title)
+ */
+export const UpdateUserClipParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateUserClipBody = zod.object({
+  "title": zod.string().optional(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional()
+})
+
+export const UpdateUserClipResponse = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "videoId": zod.string(),
+  "title": zod.string(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
+  "visibility": zod.enum(['public', 'followers', 'private']),
+  "likeCount": zod.number(),
+  "aspectRatio": zod.string(),
+  "thumbnailUrl": zod.string().nullish(),
+  "playbackUrl": zod.string().nullish(),
+  "createdAt": zod.string()
+})
 
 
 /**
@@ -360,7 +395,7 @@ export const GetFeedResponseItem = zod.object({
   "shareCount": zod.number(),
   "score": zod.number(),
   "isLiked": zod.boolean(),
-  "isPublic": zod.boolean(),
+  "visibility": zod.enum(['public', 'followers', 'private']),
   "aspectRatio": zod.string(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),

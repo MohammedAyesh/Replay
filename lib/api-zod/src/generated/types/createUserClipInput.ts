@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CreateUserClipInputAspectRatio } from './createUserClipInputAspectRatio';
+import type { CreateUserClipInputVisibility } from './createUserClipInputVisibility';
 import type { CropKeyframe } from './cropKeyframe';
 
 export interface CreateUserClipInput {
@@ -14,6 +15,6 @@ export interface CreateUserClipInput {
   startTime: number;
   endTime: number;
   cropPath: CropKeyframe[];
-  isPublic?: boolean;
+  visibility?: CreateUserClipInputVisibility;
   aspectRatio?: CreateUserClipInputAspectRatio;
 }

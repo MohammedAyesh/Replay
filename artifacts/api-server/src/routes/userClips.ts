@@ -6,6 +6,9 @@ import {
   CreateUserClipResponse,
   ListUserClipsResponse,
   DeleteUserClipParams,
+  UpdateUserClipBody,
+  UpdateUserClipParams,
+  UpdateUserClipResponse,
   ToggleUserClipLikeParams,
   ToggleUserClipLikeResponse,
   GetFeedResponse,
@@ -50,7 +53,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
-  const { videoId, title, startTime, endTime, cropPath, isPublic, aspectRatio } = body.data;
+  const { videoId, title, startTime, endTime, cropPath, visibility, aspectRatio } = body.data;
 
   const [row] = await db
     .insert(userClipsTable)
@@ -61,7 +64,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       startTime: String(startTime),
       endTime: String(endTime),
       cropPath,
-      isPublic: isPublic ?? true,
+      visibility: visibility ?? "public",
       aspectRatio: aspectRatio ?? "16:9",
     })
     .returning();
@@ -78,7 +81,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       startTime: parseFloat(row.startTime),
       endTime: parseFloat(row.endTime),
       cropPath: row.cropPath,
-      isPublic: row.isPublic,
+      visibility: row.visibility,
       aspectRatio: row.aspectRatio,
       likeCount: row.likeCount,
       viewCount: row.viewCount,
@@ -112,7 +115,7 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     startTime: parseFloat(row.startTime),
     endTime: parseFloat(row.endTime),
     cropPath: row.cropPath,
-    isPublic: row.isPublic,
+    visibility: row.visibility,
     aspectRatio: row.aspectRatio,
     likeCount: row.likeCount,
     viewCount: row.viewCount,
@@ -160,6 +163,76 @@ router.delete("/user-clips/:id", async (req, res): Promise<void> => {
     .where(and(eq(userClipsTable.id, params.data.id), eq(userClipsTable.userId, userId)));
 
   res.json({ ok: true });
+});
+
+router.patch("/user-clips/:id", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: "Unauthenticated" });
+    return;
+  }
+
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const params = UpdateUserClipParams.safeParse({ id: parseInt(raw, 10) });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const body = UpdateUserClipBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+
+  const [existing] = await db
+    .select()
+    .from(userClipsTable)
+    .where(eq(userClipsTable.id, params.data.id));
+
+  if (!existing) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
+
+  if (existing.userId !== userId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const updates: Partial<{ title: string; visibility: string }> = {};
+  if (body.data.title !== undefined) updates.title = body.data.title;
+  if (body.data.visibility !== undefined) updates.visibility = body.data.visibility;
+
+  const [row] = await db
+    .update(userClipsTable)
+    .set(updates)
+    .where(eq(userClipsTable.id, params.data.id))
+    .returning();
+
+  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null;
+  const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+
+  res.json(
+    UpdateUserClipResponse.parse({
+      id: row.id,
+      userId: row.userId,
+      videoId: row.videoId,
+      title: row.title,
+      startTime: parseFloat(row.startTime),
+      endTime: parseFloat(row.endTime),
+      cropPath: row.cropPath,
+      visibility: row.visibility,
+      aspectRatio: row.aspectRatio,
+      likeCount: row.likeCount,
+      viewCount: row.viewCount,
+      shareCount: row.shareCount,
+      score: row.score,
+      thumbnailUrl,
+      playbackUrl,
+      createdAt: row.createdAt.toISOString(),
+    })
+  );
 });
 
 router.post("/user-clips/:id/like", async (req, res): Promise<void> => {
@@ -317,7 +390,7 @@ router.get("/feed", async (req, res): Promise<void> => {
       viewCount: userClipsTable.viewCount,
       shareCount: userClipsTable.shareCount,
       score: userClipsTable.score,
-      isPublic: userClipsTable.isPublic,
+      visibility: userClipsTable.visibility,
       createdAt: userClipsTable.createdAt,
       creatorId: usersTable.id,
       creatorName: usersTable.name,
@@ -329,7 +402,8 @@ router.get("/feed", async (req, res): Promise<void> => {
 
   // Filter by visibility
   const visible = rows.filter((row) => {
-    if (row.isPublic) return true;
+    if (row.visibility === "public") return true;
+    if (row.visibility === "private") return row.creatorId === userId;
     if (!userId) return false;
     if (row.creatorId === userId) return true;
     return followedIds.includes(row.creatorId);
@@ -396,7 +470,7 @@ router.get("/feed", async (req, res): Promise<void> => {
     shareCount: row.shareCount,
     score: row.score,
     isLiked: likedSet.has(row.id),
-    isPublic: row.isPublic,
+    visibility: row.visibility,
     thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null,
     playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
     createdAt: row.createdAt.toISOString(),

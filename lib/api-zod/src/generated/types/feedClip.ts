@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CropKeyframe } from './cropKeyframe';
+import type { FeedClipVisibility } from './feedClipVisibility';
 import type { SocialLikeUser } from './socialLikeUser';
 
 export interface FeedClip {
@@ -21,7 +22,7 @@ export interface FeedClip {
   shareCount: number;
   score: number;
   isLiked: boolean;
-  isPublic: boolean;
+  visibility: FeedClipVisibility;
   aspectRatio: string;
   /** @nullable */
   thumbnailUrl?: string | null;
