@@ -105,10 +105,10 @@ export default function Onboarding() {
   }
 
   return (
-    <div className="flex-1 flex flex-col field-pattern relative text-white overflow-hidden">
+    <div className="flex-1 flex flex-col field-pattern relative text-white">
       <div className="absolute inset-0 bg-black/60" />
 
-      <div className="relative z-10 flex-1 flex flex-col px-6 pt-safe pt-8 pb-safe">
+      <div className="relative z-10 flex-1 flex flex-col px-6 pt-safe pt-8 pb-safe overflow-y-auto">
         {/* Header */}
         <motion.div {...fadeUp(0)} className="flex items-center gap-2 mb-8">
           <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
@@ -128,7 +128,7 @@ export default function Onboarding() {
         <motion.form
           {...fadeUp(0.2)}
           onSubmit={handleSubmit}
-          className="flex-1 flex flex-col gap-4 overflow-y-auto pb-4"
+          className="flex-1 flex flex-col gap-4 overflow-y-auto pb-safe"
         >
           <div className="space-y-1.5">
             <Label htmlFor="onboarding-name" className="text-white/80 text-sm font-medium">Full name</Label>
