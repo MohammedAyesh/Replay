@@ -183,6 +183,16 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [recElapsed, setRecElapsed] = useState(0);
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
   const selectedRatioRef = useRef<AspectRatio>("16:9");
+  const [scrollOffset, setScrollOffset] = useState(0);
+
+  // Track scroll position so the 9:16 crop overlay follows the user's scroll
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    const onScroll = () => setScrollOffset(scrollEl.scrollLeft);
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    return () => scrollEl.removeEventListener("scroll", onScroll);
+  }, []);
 
   // Stable refs so callbacks always see current values
   const clipStartRef = useRef(0);
@@ -320,7 +330,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       let x: number, w: number;
       if (selectedRatioRef.current === "9:16") {
         const cropPxW = containerH * 9 / 16;
-        x = totalW > 0 ? (scrollEl.scrollLeft + (containerW - cropPxW) / 2) / totalW : 0;
+        const maxScroll = Math.max(0, totalW - containerW);
+        const cropLeft = maxScroll > 0
+          ? (scrollEl.scrollLeft / maxScroll) * (containerW - cropPxW)
+          : (containerW - cropPxW) / 2;
+        x = totalW > 0 ? (scrollEl.scrollLeft + cropLeft) / totalW : 0;
         w = totalW > 0 ? cropPxW / totalW : 81 / 256;
       } else {
         x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
@@ -364,7 +378,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       let x: number, w: number;
       if (selectedRatioRef.current === "9:16") {
         const cropPxW = containerH * 9 / 16;
-        x = totalW > 0 ? (scrollEl.scrollLeft + (containerW - cropPxW) / 2) / totalW : 0;
+        const maxScroll = Math.max(0, totalW - containerW);
+        const cropLeft = maxScroll > 0
+          ? (scrollEl.scrollLeft / maxScroll) * (containerW - cropPxW)
+          : (containerW - cropPxW) / 2;
+        x = totalW > 0 ? (scrollEl.scrollLeft + cropLeft) / totalW : 0;
         w = totalW > 0 ? cropPxW / totalW : 81 / 256;
       } else {
         x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
@@ -459,7 +477,10 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             const containerH = scrollEl.clientHeight;
             if (selectedRatio === "9:16") {
               const cropW = containerH * 9 / 16;
-              const cropLeft = (containerW - cropW) / 2;
+              const maxScroll = totalW - containerW;
+              const cropLeft = maxScroll > 0
+                ? (scrollOffset / maxScroll) * (containerW - cropW)
+                : (containerW - cropW) / 2;
               const leftBar = Math.max(0, cropLeft);
               const rightBar = Math.max(0, containerW - cropLeft - cropW);
               return (
