@@ -1,12 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 import {
-  useListSavedClips,
   useListUserClips,
   useDeleteUserClip,
-  getListSavedClipsQueryKey,
   getListUserClipsQueryKey,
-  Clip,
   UserClip,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -17,12 +14,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
 import Hls from "hls.js";
-import { exportClip, canExportVideo } from "@/lib/exportClip";
-import { saveLocalClip, getLocalClip, createLocalBlobUrl, revokeLocalBlobUrl } from "@/lib/localClips";
+import { exportClip, canExportVideo, triggerDownload } from "@/lib/exportClip";
+import { saveLocalClip, getLocalClip, listLocalClips, deleteLocalClip, createLocalBlobUrl, revokeLocalBlobUrl, type LocalClipRecord } from "@/lib/localClips";
 
-function getBunnyThumbnailUrl(clip: Clip): string | null {
-  if (clip.bunnyPlaybackUrl) {
-    return clip.bunnyPlaybackUrl.replace("/playlist.m3u8", "/thumbnail.jpg");
+function localThumbnailUrl(record: LocalClipRecord): string | null {
+  if (record.playbackUrl) {
+    return record.playbackUrl.replace("/playlist.m3u8", "/thumbnail.jpg");
   }
   return null;
 }
@@ -60,7 +57,7 @@ function interpolateX(keyframes: KF[], t: number): number {
 
 type ExportState = "idle" | "exporting" | "done" | "error";
 
-function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void }) {
+function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClose: () => void; onDownloaded?: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -253,28 +250,9 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
       });
 
       if (result && typeof result === "object" && "blob" in result) {
-        await saveLocalClip({
-          clipId: clip.id,
-          userId: user?.id ?? 0,
-          title: clip.title,
-          blob: result.blob,
-          mimeType: result.mimeType,
-          startTime: clip.startTime,
-          endTime: clip.endTime,
-          cropPath: (clip.cropPath ?? []).map((k) => ({
-            t: k.t,
-            x: k.x,
-            y: k.y,
-            w: k.w,
-            h: k.h,
-          })),
-          aspectRatio: clip.aspectRatio ?? "16:9",
-          downloadedAt: new Date().toISOString(),
-          playbackUrl: clip.playbackUrl,
-        });
-        setIsLocal(true);
-        // Immediately switch video to local Blob URL so it plays cropped 9:16
-        const localUrl = createLocalBlobUrl({
+        const ext = result.mimeType.startsWith("video/mp4") ? "mp4" : "webm";
+        const filename = `${clip.title || "clip"}.${ext}`;
+        const record = {
           clipId: clip.id,
           userId: user?.id ?? 0,
           title: clip.title,
@@ -286,7 +264,26 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
           aspectRatio: clip.aspectRatio ?? "16:9",
           downloadedAt: new Date().toISOString(),
           playbackUrl: clip.playbackUrl,
-        });
+        };
+
+        // 1. Save to local IndexedDB gallery
+        await saveLocalClip(record);
+
+        // 2. Save file to device gallery/downloads
+        const file = new File([result.blob], filename, { type: result.mimeType });
+        const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
+        if (nav.canShare?.({ files: [file] })) {
+          try { await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file], title: clip.title }); } catch { /* user dismissed */ }
+        } else {
+          triggerDownload(result.blob, filename);
+        }
+
+        // 3. Notify parent so Saved tab refreshes
+        onDownloaded?.();
+
+        setIsLocal(true);
+        // Immediately switch video to local Blob URL so it plays cropped 9:16
+        const localUrl = createLocalBlobUrl(record);
         localUrlRef.current = localUrl;
         const video = videoRef.current;
         if (video) {
@@ -304,17 +301,7 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
       }
 
       setExportState("done");
-
-      if (supportsCapture) {
-        toast({ title: t.export.done, description: t.export.doneDesc });
-      } else if ("share" in navigator) {
-        toast({ title: t.export.fallbackShared });
-      } else {
-        toast({
-          title: t.export.fallbackCopied,
-          description: t.export.fallbackCopiedDesc,
-        });
-      }
+      toast({ title: "Saved to gallery", description: "Clip saved to your device and appears in Saved." });
 
       setTimeout(() => setExportState("idle"), 3000);
     } catch {
@@ -432,14 +419,26 @@ function UserClipPlayer({ clip, onClose }: { clip: UserClip; onClose: () => void
 type Tab = "saved" | "created";
 
 export default function MyClips() {
-  const { isGuest } = useAuth();
+  const { isGuest, user } = useAuth();
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("saved");
   const [activeClip, setActiveClip] = useState<UserClip | null>(null);
+  const [localClips, setLocalClips] = useState<LocalClipRecord[]>([]);
+  const [localLoading, setLocalLoading] = useState(true);
 
-  const { data: savedClips, isLoading: savedLoading } = useListSavedClips({
-    query: { enabled: !isGuest, queryKey: getListSavedClipsQueryKey() },
-  });
+  const loadLocalClips = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const clips = await listLocalClips(user.id);
+      setLocalClips(clips.sort((a, b) => new Date(b.downloadedAt).getTime() - new Date(a.downloadedAt).getTime()));
+    } catch { /* ignore */ }
+    setLocalLoading(false);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!isGuest) loadLocalClips();
+    else setLocalLoading(false);
+  }, [isGuest, loadLocalClips]);
 
   const { data: userClips, isLoading: userClipsLoading } = useListUserClips({
     query: { enabled: !isGuest, queryKey: getListUserClipsQueryKey() },
@@ -468,7 +467,7 @@ export default function MyClips() {
     );
   }
 
-  const savedCount = savedClips?.length ?? 0;
+  const savedCount = localClips.length;
   const createdCount = userClips?.length ?? 0;
 
   return (
@@ -527,7 +526,15 @@ export default function MyClips() {
               exit={{ opacity: 0, x: -10 }}
               transition={{ duration: 0.2 }}
             >
-              <SavedTab clips={savedClips} isLoading={savedLoading} />
+              <SavedTab
+                clips={localClips}
+                isLoading={localLoading}
+                onPlay={(r) => setActiveClip(localToUserClip(r))}
+                onDelete={async (clipId) => {
+                  await deleteLocalClip(clipId);
+                  loadLocalClips();
+                }}
+              />
             </motion.div>
           ) : (
             <motion.div
@@ -546,18 +553,46 @@ export default function MyClips() {
       {/* Inline player overlay */}
       <AnimatePresence>
         {activeClip && (
-          <UserClipPlayer clip={activeClip} onClose={() => setActiveClip(null)} />
+          <UserClipPlayer
+            clip={activeClip}
+            onClose={() => setActiveClip(null)}
+            onDownloaded={loadLocalClips}
+          />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
+function localToUserClip(r: LocalClipRecord): UserClip {
+  return {
+    id: r.clipId,
+    title: r.title,
+    startTime: r.startTime,
+    endTime: r.endTime,
+    cropPath: r.cropPath as unknown as UserClip["cropPath"],
+    playbackUrl: r.playbackUrl,
+    thumbnailUrl: localThumbnailUrl(r),
+    createdAt: r.downloadedAt,
+    aspectRatio: r.aspectRatio as UserClip["aspectRatio"],
+  } as unknown as UserClip;
+}
+
 /* ------------------------------------------------------------------ */
-/*  Saved tab                                                           */
+/*  Saved tab — local IndexedDB clips (downloaded to device)           */
 /* ------------------------------------------------------------------ */
 
-function SavedTab({ clips, isLoading }: { clips: Clip[] | undefined; isLoading: boolean }) {
+function SavedTab({
+  clips,
+  isLoading,
+  onPlay,
+  onDelete,
+}: {
+  clips: LocalClipRecord[];
+  isLoading: boolean;
+  onPlay: (r: LocalClipRecord) => void;
+  onDelete: (clipId: number) => void;
+}) {
   const { t } = useTranslation();
 
   if (isLoading) {
@@ -575,7 +610,7 @@ function SavedTab({ clips, isLoading }: { clips: Clip[] | undefined; isLoading: 
     );
   }
 
-  if (!clips || clips.length === 0) {
+  if (clips.length === 0) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 24 }}
@@ -587,10 +622,10 @@ function SavedTab({ clips, isLoading }: { clips: Clip[] | undefined; isLoading: 
           animate={{ scale: 1, opacity: 1, transition: { type: "spring", stiffness: 260, damping: 18, delay: 0.1 } }}
           className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4"
         >
-          <Video className="w-8 h-8 text-muted-foreground" />
+          <Download className="w-8 h-8 text-muted-foreground" />
         </motion.div>
         <p className="text-muted-foreground">{t.myClips.noClipsYet}</p>
-        <p className="text-sm text-muted-foreground mt-1">{t.myClips.noClipsDesc}</p>
+        <p className="text-sm text-muted-foreground mt-1">Download clips from the Watch feed to see them here.</p>
         <Link href="/watch">
           <Button variant="ghost" className="mt-6 text-primary font-semibold">{t.myClips.goToWatch}</Button>
         </Link>
@@ -600,25 +635,26 @@ function SavedTab({ clips, isLoading }: { clips: Clip[] | undefined; isLoading: 
 
   return (
     <div className="grid grid-cols-2 gap-4">
-      {clips.map((clip, i) => (
-        <SavedClipCard key={clip.id} clip={clip} index={i} />
+      {clips.map((record, i) => (
+        <LocalClipCard key={record.clipId} record={record} index={i} onPlay={onPlay} onDelete={onDelete} />
       ))}
     </div>
   );
 }
 
-function getInitials(name: string): string {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-function SavedClipCard({ clip, index }: { clip: Clip; index: number }) {
-  const thumbnailUrl = getBunnyThumbnailUrl(clip);
-  const [, setLocation] = useLocation();
+function LocalClipCard({
+  record,
+  index,
+  onPlay,
+  onDelete,
+}: {
+  record: LocalClipRecord;
+  index: number;
+  onPlay: (r: LocalClipRecord) => void;
+  onDelete: (clipId: number) => void;
+}) {
+  const thumbnailUrl = localThumbnailUrl(record);
+  const [showDelete, setShowDelete] = useState(false);
 
   return (
     <motion.div
@@ -627,50 +663,74 @@ function SavedClipCard({ clip, index }: { clip: Clip; index: number }) {
         opacity: 1, scale: 1, y: 0,
         transition: { delay: index * 0.07, duration: 0.4, ease: "easeOut" as const },
       }}
-      whileTap={{ scale: 0.95 }}
+      whileTap={{ scale: 0.97 }}
+      className="relative"
     >
-      <Link href={`/player/${clip.id}`}>
-        <div className="relative aspect-[3/4] rounded-xl overflow-hidden shadow-sm group cursor-pointer">
+      <button
+        onClick={() => onPlay(record)}
+        className="w-full text-left"
+      >
+        <div className="relative aspect-[3/4] rounded-xl overflow-hidden group cursor-pointer">
           <div className="absolute inset-0 field-pattern bg-[#0d1f0d]" />
 
           {thumbnailUrl && (
             <img
               src={thumbnailUrl}
-              alt={clip.momentLabel}
+              alt={record.title}
               className="absolute inset-0 w-full h-full object-cover"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
             />
           )}
 
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
           <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
 
-          <div className="absolute top-2 start-2 bg-primary text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm">
-            {clip.momentLabel}
+          <div className="absolute top-2 start-2 bg-primary/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
+            <Download className="w-2.5 h-2.5" />
+            Saved
           </div>
 
-          {clip.creatorId && clip.creatorName && (
-            <button
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setLocation(`/players/${clip.creatorId}`); }}
-              className="absolute top-2 end-2 w-6 h-6 rounded-full bg-primary/90 flex items-center justify-center border border-white/30 shadow-sm z-10 active:opacity-70 transition-opacity"
-              title={clip.creatorName}
-            >
-              <span className="text-white text-[8px] font-bold">{getInitials(clip.creatorName)}</span>
-            </button>
-          )}
-
-          <div className="absolute bottom-2 start-2 end-2">
-            <h3 className="text-white font-bold text-sm leading-tight mb-0.5 line-clamp-2">
-              {clip.fieldName}
-            </h3>
-            <p className="text-primary text-[10px] font-medium">
-              {clip.court} • {clip.date}
+          <div className="absolute bottom-2 start-2 end-8">
+            <h3 className="text-white font-bold text-sm leading-tight line-clamp-2">{record.title}</h3>
+            <p className="text-white/50 text-[10px] mt-0.5">
+              {new Date(record.downloadedAt).toLocaleDateString()}
             </p>
           </div>
         </div>
-      </Link>
+      </button>
+
+      {/* Delete button */}
+      <button
+        onClick={() => setShowDelete(true)}
+        className="absolute bottom-3 end-2 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center active:opacity-70 transition-opacity z-10"
+        title="Remove from saved"
+      >
+        <Trash2 className="w-3 h-3 text-white/80" />
+      </button>
+
+      {/* Delete confirmation */}
+      <AnimatePresence>
+        {showDelete && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 rounded-xl bg-black/80 flex flex-col items-center justify-center gap-2 z-20"
+          >
+            <p className="text-white text-xs font-semibold text-center px-2">Remove from saved?</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowDelete(false)}
+                className="px-3 py-1.5 rounded-lg bg-white/20 text-white text-xs font-medium"
+              >Cancel</button>
+              <button
+                onClick={() => { setShowDelete(false); onDelete(record.clipId); }}
+                className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold"
+              >Remove</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

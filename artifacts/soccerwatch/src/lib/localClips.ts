@@ -2,7 +2,7 @@ const DB_NAME = "SoccerWatchLocalClips";
 const DB_VERSION = 1;
 const STORE_NAME = "clips";
 
-interface LocalClipRecord {
+export interface LocalClipRecord {
   clipId: number;
   userId: number;
   title: string;
