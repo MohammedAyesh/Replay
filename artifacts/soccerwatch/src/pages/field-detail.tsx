@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Link, useRoute } from "wouter";
+import { Link, useRoute, useLocation } from "wouter";
 import {
   useGetBunnyCollections,
   useGetBunnyCollectionVideos,
@@ -15,10 +15,13 @@ import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import Hls from "hls.js";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 type CropKeyframe = { t: number; x: number; y: number; w: number; h: number };
 type ClipMode = "idle" | "recording" | "review";
 type AspectRatio = "16:9" | "9:16";
+
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function splitName(name: string): string[] {
   return name
@@ -169,6 +172,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const createUserClip = useCreateUserClip();
+  const [, setLocation] = useLocation();
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -181,6 +185,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [clipVisibility, setClipVisibility] = useState<"public" | "followers" | "private">("public");
   const [isSavingClip, setIsSavingClip] = useState(false);
   const [recElapsed, setRecElapsed] = useState(0);
+  const [showAuthPrompt, setShowAuthPrompt] = useState(false);
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
   const selectedRatioRef = useRef<AspectRatio>("16:9");
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -758,6 +763,36 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Guest auth prompt */}
+      <Dialog open={showAuthPrompt} onOpenChange={setShowAuthPrompt}>
+        <DialogContent className="sm:max-w-sm bg-zinc-900 border-zinc-700 text-white">
+          <DialogTitle className="text-white">{t.clipping.signInToClip}</DialogTitle>
+          <DialogDescription className="text-white/60">
+            {t.clipping.signInToClipDesc}
+          </DialogDescription>
+          <div className="flex flex-col gap-2 mt-2">
+            <button
+              onClick={() => setLocation(`${basePath}/sign-in`)}
+              className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-3 rounded-xl text-sm transition-colors"
+            >
+              {t.clipping.signInCTA}
+            </button>
+            <button
+              onClick={() => setLocation(`${basePath}/sign-up`)}
+              className="w-full bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold py-3 rounded-xl text-sm transition-colors"
+            >
+              {t.clipping.createAccountCTA}
+            </button>
+            <button
+              onClick={() => setShowAuthPrompt(false)}
+              className="w-full text-white/50 hover:text-white font-medium py-2 rounded-xl text-sm transition-colors"
+            >
+              {t.clipping.browseGuestCTA}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

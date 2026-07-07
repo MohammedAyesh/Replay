@@ -123,6 +123,9 @@ const strings = {
       savedDesc: "Find it in My Clips → Created.",
       signInToClip: "Sign in to create clips",
       signInToClipDesc: "Create an account to save your own clips.",
+      signInCTA: "Sign In",
+      createAccountCTA: "Create Account",
+      browseGuestCTA: "Continue as Guest",
       error: "Failed to save clip",
     },
     export: {
@@ -294,6 +297,9 @@ const strings = {
       savedDesc: "ابحث عنه في مقاطعي ← مقطوعة.",
       signInToClip: "سجّل دخولك لإنشاء المقاطع",
       signInToClipDesc: "أنشئ حسابًا لحفظ مقاطعك الخاصة.",
+      signInCTA: "تسجيل الدخول",
+      createAccountCTA: "إنشاء حساب",
+      browseGuestCTA: "تابع كضيف",
       error: "فشل حفظ المقطع",
     },
     export: {
