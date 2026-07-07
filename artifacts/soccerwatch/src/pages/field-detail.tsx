@@ -8,7 +8,7 @@ import {
   BunnyVideo,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Maximize, Minimize } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Maximize, Minimize, Video } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -764,29 +764,43 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         )}
       </AnimatePresence>
 
-      {/* Guest auth prompt */}
+      {/* Guest auth prompt — bottom-sheet style */}
       <Dialog open={showAuthPrompt} onOpenChange={setShowAuthPrompt}>
-        <DialogContent className="sm:max-w-sm bg-zinc-900 border-zinc-700 text-white">
-          <DialogTitle className="text-white">{t.clipping.signInToClip}</DialogTitle>
-          <DialogDescription className="text-white/60">
-            {t.clipping.signInToClipDesc}
-          </DialogDescription>
-          <div className="flex flex-col gap-2 mt-2">
+        <DialogContent
+          className="sm:max-w-sm bg-zinc-900/95 border-zinc-800/80 text-white p-0 overflow-hidden shadow-2xl shadow-black/50 backdrop-blur-md"
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          {/* Decorative top accent */}
+          <div className="h-1 w-16 mx-auto mt-3 rounded-full bg-white/20" />
+
+          <div className="flex flex-col items-center pt-5 pb-2 px-6">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/30 to-primary/10 border border-primary/20 flex items-center justify-center mb-4 shadow-lg">
+              <Video className="w-7 h-7 text-primary" />
+            </div>
+            <DialogTitle className="text-center text-white text-lg font-bold tracking-tight">
+              {t.clipping.signInToClip}
+            </DialogTitle>
+            <DialogDescription className="text-center text-white/50 text-sm mt-1 leading-relaxed">
+              {t.clipping.signInToClipDesc}
+            </DialogDescription>
+          </div>
+
+          <div className="flex flex-col gap-2.5 px-6 pb-6">
             <button
               onClick={() => setLocation(`${basePath}/sign-in`)}
-              className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-3 rounded-xl text-sm transition-colors"
+              className="w-full bg-primary hover:bg-primary/85 text-white font-semibold py-3.5 rounded-2xl text-sm transition-all active:scale-[0.98] shadow-lg shadow-primary/20"
             >
               {t.clipping.signInCTA}
             </button>
             <button
               onClick={() => setLocation(`${basePath}/sign-up`)}
-              className="w-full bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold py-3 rounded-xl text-sm transition-colors"
+              className="w-full bg-white/10 hover:bg-white/15 border border-white/10 text-white font-semibold py-3.5 rounded-2xl text-sm transition-all active:scale-[0.98]"
             >
               {t.clipping.createAccountCTA}
             </button>
             <button
               onClick={() => setShowAuthPrompt(false)}
-              className="w-full text-white/50 hover:text-white font-medium py-2 rounded-xl text-sm transition-colors"
+              className="w-full text-white/40 hover:text-white/70 font-medium py-2.5 rounded-2xl text-xs transition-colors"
             >
               {t.clipping.browseGuestCTA}
             </button>
