@@ -164,7 +164,7 @@ export default function Account() {
             type="button"
             variant="outline"
             disabled={isLoggingOut}
-            className="w-full text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive py-6 rounded-xl font-semibold disabled:opacity-50"
+            className="w-full text-destructive hover:bg-destructive/5 hover:text-destructive py-6 rounded-xl font-semibold disabled:opacity-50 border-0"
             onClick={handleLogout}
           >
             <LogOut className="w-5 h-5 me-2" />
@@ -192,9 +192,9 @@ export default function Account() {
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="bg-muted/40 rounded-xl p-3 text-center">
-      <div className="text-2xl font-bold text-foreground mb-1">{value}</div>
-      <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">{label}</div>
+    <div className="p-3 text-center">
+      <div className="text-2xl font-bold text-foreground mb-0.5">{value}</div>
+      <div className="text-[10px] uppercase font-medium text-muted-foreground tracking-wider">{label}</div>
     </div>
   );
 }

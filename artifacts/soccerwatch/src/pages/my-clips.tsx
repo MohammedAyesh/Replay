@@ -592,7 +592,7 @@ function SavedTab({ clips, isLoading }: { clips: Clip[] | undefined; isLoading: 
         <p className="text-muted-foreground">{t.myClips.noClipsYet}</p>
         <p className="text-sm text-muted-foreground mt-1">{t.myClips.noClipsDesc}</p>
         <Link href="/watch">
-          <Button variant="outline" className="mt-6">{t.myClips.goToWatch}</Button>
+          <Button variant="ghost" className="mt-6 text-primary font-semibold">{t.myClips.goToWatch}</Button>
         </Link>
       </motion.div>
     );

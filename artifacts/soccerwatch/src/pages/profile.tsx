@@ -200,7 +200,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
 
 function StatCard({ value, label, icon }: { value: number; label: string; icon: React.ReactNode }) {
   return (
-    <div className="bg-muted/40 rounded-xl p-3 flex flex-col items-center gap-1">
+    <div className="p-3 flex flex-col items-center gap-1">
       <div className="text-muted-foreground">{icon}</div>
       <span className="text-xl font-bold">{value}</span>
       <span className="text-xs text-muted-foreground">{label}</span>
