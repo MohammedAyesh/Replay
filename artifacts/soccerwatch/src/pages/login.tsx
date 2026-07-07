@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListBannersQueryKey, getListFieldsQueryKey } from "@workspace/api-client-react";
+import { useClerk } from "@clerk/react";
 
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 28 },
@@ -22,6 +23,7 @@ export default function Login() {
   const { t, locale, setLocale } = useTranslation();
   const guestMutation = useLoginAsGuest();
   const queryClient = useQueryClient();
+  const { signOut } = useClerk();
 
   /* Preload banners & fields while logging in */
   const preloadHomeData = () => {
@@ -35,8 +37,11 @@ export default function Login() {
     });
   };
 
-  const handleGuest = () => {
+  const handleGuest = async () => {
     preloadHomeData();
+    // Sign out of any existing Clerk session first so the backend
+    // treats us as a guest rather than a signed-in user.
+    await signOut().catch(() => {});
     guestMutation.mutate(undefined, {
       onSuccess: () => setLocation("/watch"),
       onError: () => {
