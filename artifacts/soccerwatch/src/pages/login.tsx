@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useQueryClient } from "@tanstack/react-query";
-import { getListBannersQueryKey, getListFieldsQueryKey } from "@workspace/api-client-react";
+import { getListBannersQueryKey, getListFieldsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useClerk } from "@clerk/react";
 
 const fadeUp = (delay = 0) => ({
@@ -38,12 +38,19 @@ export default function Login() {
   };
 
   const handleGuest = async () => {
-    preloadHomeData();
     // Sign out of any existing Clerk session first so the backend
     // treats us as a guest rather than a signed-in user.
     await signOut().catch(() => {});
+    // Wipe stale cached user data so the new guest identity takes effect immediately.
+    queryClient.clear();
+    preloadHomeData();
     guestMutation.mutate(undefined, {
-      onSuccess: () => setLocation("/watch"),
+      onSuccess: (data) => {
+        // Write the guest user straight into the cache so useAuth sees isGuest=true
+        // without waiting for a re-fetch.
+        queryClient.setQueryData(getGetMeQueryKey(), data.user);
+        setLocation("/watch");
+      },
       onError: () => {
         toast({ variant: "destructive", title: t.login.guestLoginFailed, description: t.login.guestLoginError });
       },
