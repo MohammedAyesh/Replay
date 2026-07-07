@@ -91,6 +91,9 @@ export const ListFieldsResponseItem = zod.object({
   "location": zod.string(),
   "courts": zod.number(),
   "clipCount": zod.number(),
+  "weight": zod.number().describe('Admin-controlled recommendation weight (higher = more prominent)'),
+  "latitude": zod.number().nullish(),
+  "longitude": zod.number().nullish(),
   "lastRecordedAt": zod.string().nullish()
 })
 export const ListFieldsResponse = zod.array(ListFieldsResponseItem)
@@ -109,6 +112,9 @@ export const GetFieldResponse = zod.object({
   "location": zod.string(),
   "courts": zod.number(),
   "clipCount": zod.number(),
+  "weight": zod.number().describe('Admin-controlled recommendation weight (higher = more prominent)'),
+  "latitude": zod.number().nullish(),
+  "longitude": zod.number().nullish(),
   "lastRecordedAt": zod.string().nullish()
 })
 

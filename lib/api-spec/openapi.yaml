@@ -824,7 +824,7 @@ components:
 
     Field:
       type: object
-      required: [id, name, location, courts, clipCount]
+      required: [id, name, location, courts, clipCount, weight]
       properties:
         id:
           type: integer
@@ -836,6 +836,13 @@ components:
           type: integer
         clipCount:
           type: integer
+        weight:
+          type: number
+          description: Admin-controlled recommendation weight (higher = more prominent)
+        latitude:
+          type: ["number", "null"]
+        longitude:
+          type: ["number", "null"]
         lastRecordedAt:
           type: ["string", "null"]
 

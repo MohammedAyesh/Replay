@@ -28,6 +28,9 @@ router.get("/fields", async (req, res): Promise<void> => {
         name: f.name,
         location: f.location,
         courts: f.courts,
+        weight: f.weight,
+        latitude: f.latitude ?? null,
+        longitude: f.longitude ?? null,
         clipCount,
         lastRecordedAt: f.lastRecordedAt ? f.lastRecordedAt.toISOString() : null,
       };
@@ -63,6 +66,9 @@ router.get("/fields/:id", async (req, res): Promise<void> => {
       name: field.name,
       location: field.location,
       courts: field.courts,
+      weight: field.weight,
+      latitude: field.latitude ?? null,
+      longitude: field.longitude ?? null,
       clipCount: Number(clips[0]?.count ?? 0),
       lastRecordedAt: field.lastRecordedAt ? field.lastRecordedAt.toISOString() : null,
     })

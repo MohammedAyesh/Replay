@@ -12,6 +12,12 @@ export interface Field {
   location: string;
   courts: number;
   clipCount: number;
+  /** Admin-controlled recommendation weight (higher = more prominent) */
+  weight: number;
+  /** @nullable */
+  latitude?: number | null;
+  /** @nullable */
+  longitude?: number | null;
   /** @nullable */
   lastRecordedAt?: string | null;
 }
