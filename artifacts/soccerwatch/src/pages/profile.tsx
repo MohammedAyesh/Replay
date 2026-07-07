@@ -106,7 +106,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-y-auto">
       {/* Top bar */}
-      <div className="pt-safe px-4 pt-4 flex items-center gap-2 sticky top-0 z-10 bg-background/95 backdrop-blur-md border-b pb-3">
+      <div className="pt-safe px-4 pt-4 flex items-center gap-2 sticky top-0 z-10 bg-background/95 backdrop-blur-md pb-3">
         <button
           onClick={() => history.back()}
           className="w-9 h-9 rounded-full bg-muted flex items-center justify-center text-foreground active:scale-95 transition-transform"
@@ -164,7 +164,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
               className={cn(
                 "w-full py-3.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-95",
                 profile.isFollowing
-                  ? "bg-muted text-foreground border border-border"
+                  ? "bg-muted text-foreground"
                   : "bg-primary text-white"
               )}
             >
@@ -200,7 +200,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
 
 function StatCard({ value, label, icon }: { value: number; label: string; icon: React.ReactNode }) {
   return (
-    <div className="bg-muted/50 rounded-xl p-3 flex flex-col items-center gap-1 border border-border/50">
+    <div className="bg-muted/40 rounded-xl p-3 flex flex-col items-center gap-1">
       <div className="text-muted-foreground">{icon}</div>
       <span className="text-xl font-bold">{value}</span>
       <span className="text-xs text-muted-foreground">{label}</span>

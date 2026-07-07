@@ -54,7 +54,7 @@ export default function FieldDetail() {
       <motion.header
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } }}
-        className="pt-safe px-4 py-4 bg-white border-b sticky top-0 z-10 flex items-center gap-3 shadow-sm"
+        className="pt-safe px-4 py-4 bg-background sticky top-0 z-10 flex items-center gap-3"
       >
         <Link href="/fields" className="w-10 h-10 flex items-center justify-center -ms-2 rounded-full hover:bg-muted text-foreground">
           <ChevronLeft className="w-6 h-6 rtl:hidden" />

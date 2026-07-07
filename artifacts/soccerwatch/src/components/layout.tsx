@@ -27,10 +27,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {!hideTabBar && (
         <nav
           className={cn(
-            "absolute bottom-0 start-0 end-0 z-50 flex items-center justify-around pb-safe pt-2 px-4 h-16 border-t backdrop-blur-md",
+            "absolute bottom-0 start-0 end-0 z-50 flex items-center justify-around pb-safe pt-2 px-4 h-16 backdrop-blur-md",
             useTranslucentBar
-              ? "bg-black/80 border-white/20 text-white"
-              : "bg-white border-border text-muted-foreground"
+              ? "bg-black/80 text-white"
+              : "bg-white/95 text-muted-foreground shadow-[0_-1px_0_0_rgba(0,0,0,0.04)]"
           )}
         >
           <NavItem

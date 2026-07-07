@@ -477,7 +477,7 @@ export default function MyClips() {
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } }}
-        className="pt-safe px-4 pt-6 pb-0 bg-white border-b sticky top-0 z-10 shadow-sm"
+        className="pt-safe px-4 pt-6 pb-0 bg-background sticky top-0 z-10"
       >
         <h1 className="text-2xl font-bold text-foreground px-0 mb-3">{t.myClips.title}</h1>
 

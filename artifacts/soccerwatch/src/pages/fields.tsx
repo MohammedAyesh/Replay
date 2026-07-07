@@ -37,7 +37,7 @@ export default function Fields() {
       <motion.div
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } }}
-        className="pt-safe px-4 py-6 bg-white border-b sticky top-0 z-10 shadow-sm"
+        className="pt-safe px-4 py-6 bg-background sticky top-0 z-10"
       >
         <h1 className="text-2xl font-bold text-foreground">{t.fields.title}</h1>
         <p className="text-muted-foreground text-sm mb-4">{t.fields.subtitle}</p>

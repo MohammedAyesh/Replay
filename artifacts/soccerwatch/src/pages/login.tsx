@@ -117,13 +117,8 @@ export default function Login() {
             <a href={`${basePath}/sign-up`}>{t.login.createAccount}</a>
           </Button>
 
-          <div className="relative my-2">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/20" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="px-2 text-white/50">{t.login.or}</span>
-            </div>
+          <div className="relative my-2 flex justify-center">
+            <span className="px-2 text-white/40 text-xs uppercase">{t.login.or}</span>
           </div>
 
           <Button

@@ -95,14 +95,14 @@ export default function Account() {
 
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
-      <div className="pt-safe px-4 py-6 bg-white border-b shadow-sm">
+      <div className="pt-safe px-4 py-6 bg-background">
         <h1 className="text-2xl font-bold text-foreground">{t.account.title}</h1>
         <p className="text-muted-foreground text-sm">{isGuest ? t.account.guestSubtitle : t.account.subtitle}</p>
       </div>
 
       <div className="flex-1 overflow-y-auto pb-24">
         {/* Profile Card */}
-        <div className="p-6 flex flex-col items-center border-b bg-white">
+        <div className="p-6 flex flex-col items-center bg-background">
           <div className="w-24 h-24 rounded-full bg-[#0d1f0d] text-primary flex items-center justify-center text-4xl font-bold mb-4 shadow-inner">
             {initial}
           </div>
@@ -131,7 +131,7 @@ export default function Account() {
 
         {/* Stats */}
         {!isGuest && (
-          <div className="p-4 bg-white border-b">
+          <div className="px-4 pb-4 bg-background">
             <div className="grid grid-cols-3 gap-4">
               <StatCard label={t.account.savedClips} value={stats?.savedClips ?? 0} />
               <StatCard label={t.account.likesGiven} value={stats?.likesGiven ?? 0} />
@@ -141,11 +141,11 @@ export default function Account() {
         )}
 
         {/* Settings List */}
-        <div className="mt-4 bg-white border-y">
+        <div className="mt-2 bg-background">
           {!isGuest && user && (
             <button
               onClick={() => setIsEditOpen(true)}
-              className="w-full flex items-center justify-between p-4 bg-white hover:bg-muted/50 transition-colors border-b border-border"
+              className="w-full flex items-center justify-between p-4 bg-background hover:bg-muted/30 transition-colors"
             >
               <div className="flex items-center gap-3">
                 <Pencil className="w-5 h-5 text-muted-foreground" />
@@ -192,16 +192,16 @@ export default function Account() {
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="bg-muted/50 rounded-xl p-3 text-center border border-border">
+    <div className="bg-muted/40 rounded-xl p-3 text-center">
       <div className="text-2xl font-bold text-foreground mb-1">{value}</div>
       <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">{label}</div>
     </div>
   );
 }
 
-function SettingRow({ icon, label, borderBottom = true }: { icon: React.ReactNode; label: string; borderBottom?: boolean }) {
+function SettingRow({ icon, label }: { icon: React.ReactNode; label: string; borderBottom?: boolean }) {
   return (
-    <button className={`w-full flex items-center justify-between p-4 bg-white hover:bg-muted/50 transition-colors ${borderBottom ? 'border-b border-border' : ''}`}>
+    <button className="w-full flex items-center justify-between p-4 bg-background hover:bg-muted/30 transition-colors">
       <div className="flex items-center gap-3">
         {icon}
         <span className="font-medium text-foreground">{label}</span>
@@ -215,7 +215,7 @@ function SettingRow({ icon, label, borderBottom = true }: { icon: React.ReactNod
 function LanguageToggle() {
   const { t, locale, setLocale } = useTranslation();
   return (
-    <div className="w-full flex items-center justify-between p-4 bg-white border-b border-border">
+    <div className="w-full flex items-center justify-between p-4 bg-background">
       <div className="flex items-center gap-3">
         <Globe className="w-5 h-5 text-muted-foreground" />
         <span className="font-medium text-foreground">{t.account.language}</span>
@@ -286,7 +286,7 @@ function EditProfileDialog({
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-4 border-b bg-white">
+      <div className="flex items-center justify-between px-4 py-4 bg-white">
         <button
           onClick={onClose}
           className="flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
