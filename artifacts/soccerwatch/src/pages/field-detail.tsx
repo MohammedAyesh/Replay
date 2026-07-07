@@ -312,7 +312,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
   const startRecording = () => {
     if (isGuest) {
-      toast({ title: t.clipping.signInToClip, description: t.clipping.signInToClipDesc });
+      setShowAuthPrompt(true);
       return;
     }
     const el = videoRef.current;
