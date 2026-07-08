@@ -2,14 +2,14 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, MapPin, Heart, Play } from "lucide-react";
+// MapPin kept for location state UI
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import {
   useListBanners,
-  useListFields,
+  useGetBunnyCollections,
   useGetFeed,
   getListBannersQueryKey,
-  getListFieldsQueryKey,
   getGetFeedQueryKey,
 } from "@workspace/api-client-react";
 
@@ -23,23 +23,9 @@ function splitName(name: string): string[] {
     .map((w) => w.toUpperCase());
 }
 
-function haversineKm(
-  lat1: number, lon1: number,
-  lat2: number, lon2: number
-): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 type DiscoverItem =
-  | { kind: "field"; id: number; name: string; location: string; clipCount: number; courts: number; score: number; distanceKm: number | null }
+  | { kind: "field"; id: string; name: string; videoCount: number; previewImageUrl: string | null }
   | { kind: "clip"; id: number; title: string; thumbnailUrl: string | null; likeCount: number; viewCount: number; score: number };
 
 export default function Home() {
@@ -75,14 +61,8 @@ export default function Home() {
   });
   const banners = bannersData ?? [];
 
-  const { data: fieldsData } = useListFields({
-    query: {
-      queryKey: getListFieldsQueryKey(),
-      staleTime: 10 * 60 * 1000,
-      gcTime: 10 * 60 * 1000,
-    },
-  });
-  const fields = fieldsData ?? [];
+  const { data: collectionsData } = useGetBunnyCollections();
+  const collections = collectionsData ?? [];
 
   const { data: feedData } = useGetFeed({
     query: {
@@ -94,24 +74,13 @@ export default function Home() {
   const clips = feedData ?? [];
 
   const discoverItems = useMemo<DiscoverItem[]>(() => {
-    const scoredFields: DiscoverItem[] = fields.map((f) => {
-      let distanceKm: number | null = null;
-      let distanceFactor = 1;
-      if (userLocation && f.latitude != null && f.longitude != null) {
-        distanceKm = haversineKm(userLocation.lat, userLocation.lng, f.latitude, f.longitude);
-        distanceFactor = 1 / (1 + distanceKm * 0.05);
-      }
-      return {
-        kind: "field" as const,
-        id: f.id,
-        name: f.name,
-        location: f.location,
-        clipCount: f.clipCount,
-        courts: f.courts,
-        score: f.weight * distanceFactor,
-        distanceKm,
-      };
-    }).sort((a, b) => b.score - a.score);
+    const fieldItems: DiscoverItem[] = collections.map((c) => ({
+      kind: "field" as const,
+      id: c.guid,
+      name: c.name,
+      videoCount: c.videoCount,
+      previewImageUrl: c.previewImageUrl ?? null,
+    }));
 
     const hoursAgo = (iso: string) =>
       Math.max(0, (Date.now() - new Date(iso).getTime()) / 36e5);
@@ -131,13 +100,13 @@ export default function Home() {
     }).sort((a, b) => b.score - a.score);
 
     const mixed: DiscoverItem[] = [];
-    const len = Math.max(scoredFields.length, scoredClips.length);
+    const len = Math.max(fieldItems.length, scoredClips.length);
     for (let i = 0; i < len; i++) {
-      if (i < scoredFields.length) mixed.push(scoredFields[i]);
+      if (i < fieldItems.length) mixed.push(fieldItems[i]);
       if (i < scoredClips.length) mixed.push(scoredClips[i]);
     }
     return mixed;
-  }, [fields, clips, userLocation]);
+  }, [collections, clips]);
 
   const bannerSlides = banners.map((b) => ({
     id: b.id,
@@ -319,7 +288,16 @@ function FieldCard({
         href={`/fields/${item.id}`}
         className="relative shrink-0 snap-start w-44 aspect-[4/5] rounded-2xl overflow-hidden block group"
       >
-        <div className="absolute inset-0 field-pattern" />
+        {item.previewImageUrl ? (
+          <img
+            src={item.previewImageUrl}
+            alt={item.name}
+            className="absolute inset-0 w-full h-full object-cover"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : (
+          <div className="absolute inset-0 field-pattern" />
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
         <div className="absolute top-2.5 start-2.5">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60 bg-black/30 rounded-full px-2 py-0.5">
@@ -330,22 +308,11 @@ function FieldCard({
           <h3 className="text-white font-bold text-sm leading-snug">
             {splitName(item.name).join(" ")}
           </h3>
-          <p className="text-white/50 text-xs mt-0.5 truncate">{item.location}</p>
-          <div className="flex items-center gap-2 mt-1.5">
-            {item.clipCount > 0 && (
-              <span className="text-white/60 text-xs">
-                {t.home.clips(item.clipCount)}
-              </span>
-            )}
-            {item.distanceKm != null && (
-              <span className="flex items-center gap-0.5 text-emerald-400 text-xs">
-                <MapPin className="w-3 h-3" />
-                {item.distanceKm < 1
-                  ? `${Math.round(item.distanceKm * 1000)} m`
-                  : `${item.distanceKm.toFixed(1)} km`}
-              </span>
-            )}
-          </div>
+          {item.videoCount > 0 && (
+            <p className="text-white/60 text-xs mt-1">
+              {t.home.clips(item.videoCount)}
+            </p>
+          )}
         </div>
       </Link>
     </motion.div>
