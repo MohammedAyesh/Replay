@@ -74,7 +74,8 @@ export default function Home() {
   const clips = feedData ?? [];
 
   const discoverItems = useMemo<DiscoverItem[]>(() => {
-    const fieldItems: DiscoverItem[] = collections.map((c) => ({
+    // Top 3 fields — Bunny returns them newest-first by default
+    const topFields: DiscoverItem[] = collections.slice(0, 3).map((c) => ({
       kind: "field" as const,
       id: c.guid,
       name: c.name,
@@ -82,28 +83,32 @@ export default function Home() {
       previewImageUrl: c.previewImageUrl ?? null,
     }));
 
+    // Top 3 reels — scored by engagement × time decay (168 h half-life)
     const hoursAgo = (iso: string) =>
       Math.max(0, (Date.now() - new Date(iso).getTime()) / 36e5);
 
-    const scoredClips: DiscoverItem[] = clips.map((c) => {
-      const h = hoursAgo(c.createdAt);
-      const decay = Math.exp(-h / 168);
-      return {
-        kind: "clip" as const,
-        id: c.id,
-        title: c.title,
-        thumbnailUrl: c.thumbnailUrl ?? null,
-        likeCount: c.likeCount,
-        viewCount: c.viewCount,
-        score: (c.likeCount * 5 + c.viewCount + c.shareCount * 10) * decay,
-      };
-    }).sort((a, b) => b.score - a.score);
+    const topClips: DiscoverItem[] = clips
+      .map((c) => {
+        const h = hoursAgo(c.createdAt);
+        const decay = Math.exp(-h / 168);
+        return {
+          kind: "clip" as const,
+          id: c.id,
+          title: c.title,
+          thumbnailUrl: c.thumbnailUrl ?? null,
+          likeCount: c.likeCount,
+          viewCount: c.viewCount,
+          score: (c.likeCount * 5 + c.viewCount + c.shareCount * 10) * decay,
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
 
+    // Interleave: reel, field, reel, field, reel, field
     const mixed: DiscoverItem[] = [];
-    const len = Math.max(fieldItems.length, scoredClips.length);
-    for (let i = 0; i < len; i++) {
-      if (i < fieldItems.length) mixed.push(fieldItems[i]);
-      if (i < scoredClips.length) mixed.push(scoredClips[i]);
+    for (let i = 0; i < 3; i++) {
+      if (i < topClips.length) mixed.push(topClips[i]);
+      if (i < topFields.length) mixed.push(topFields[i]);
     }
     return mixed;
   }, [collections, clips]);
