@@ -136,7 +136,7 @@ function cropToTransform(kf: CropKeyframe): string {
   const cy = kf.y + kf.h / 2;
   const scale = 1 / kf.w;
   const tx = (0.5 - cx) / kf.w * 100;
-  const ty = (0.5 - cy) / kf.w * 100;
+  const ty = (0.5 - cy) / kf.h * 100;
   return `translateX(${tx}%) translateY(${ty}%) scale(${scale})`;
 }
 

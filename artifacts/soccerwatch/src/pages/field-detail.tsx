@@ -185,6 +185,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
   const selectedRatioRef = useRef<AspectRatio>("16:9");
   const [scrollOffset, setScrollOffset] = useState(0);
+  const clipModeRef = useRef<ClipMode>("idle");
+  const stopRecordingRef = useRef<(overrideEndTime?: number) => void>(() => {});
 
   // Track scroll position so the 9:16 crop overlay follows the user's scroll
   useEffect(() => {
@@ -194,6 +196,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     scrollEl.addEventListener("scroll", onScroll, { passive: true });
     return () => scrollEl.removeEventListener("scroll", onScroll);
   }, []);
+
+  // Keep clipModeRef in sync so stable event handlers can read current mode
+  useEffect(() => { clipModeRef.current = clipMode; }, [clipMode]);
 
   // Stable refs so callbacks always see current values
   const clipStartRef = useRef(0);
@@ -254,7 +259,24 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     function onPlay() { setIsPlaying(true); }
     function onPause() { setIsPlaying(false); }
     function onDurationChange() { if (el) setDuration(el.duration || 0); }
-    function onTimeUpdate() { if (el && !seekDraggingRef.current) setCurrentTime(el.currentTime); }
+    let prevTime = -1;
+    function onTimeUpdate() {
+      if (!el || seekDraggingRef.current) return;
+      const now = el.currentTime;
+      setCurrentTime(now);
+      if (clipModeRef.current === "recording") {
+        if (prevTime >= 0 && now < prevTime - 0.3) {
+          // currentTime jumped backward — video looped while recording.
+          // Pass prevTime (last valid pre-loop timestamp) as the clip end so
+          // stopRecording() doesn't use the already-wrapped el.currentTime.
+          stopRecordingRef.current(prevTime);
+        } else {
+          prevTime = now;
+        }
+      } else {
+        prevTime = -1;
+      }
+    }
 
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
@@ -372,7 +394,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     setClipMode("recording");
   };
 
-  const stopRecording = () => {
+  const stopRecording = (overrideEndTime?: number) => {
     if (recordingRef.current.interval) {
       clearInterval(recordingRef.current.interval);
       recordingRef.current.interval = null;
@@ -384,7 +406,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
     const el = videoRef.current;
     const scrollEl = scrollRef.current;
-    const endT = el?.currentTime ?? clipStartRef.current;
+    const endT = overrideEndTime ?? el?.currentTime ?? clipStartRef.current;
 
     // Capture final frame
     if (el && scrollEl) {
@@ -404,7 +426,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
         w = totalW > 0 ? containerW / totalW : 1;
       }
-      recordingRef.current.keyframes.push({ t: endT - clipStartRef.current, x, y: 0, w, h: 1 });
+      recordingRef.current.keyframes.push({ t: Math.max(0, endT - clipStartRef.current), x, y: 0, w, h: 1 });
     }
 
     el?.pause();
@@ -412,6 +434,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     setClipTitle(video.title);
     setClipMode("review");
   };
+  stopRecordingRef.current = stopRecording;
 
   const discardClip = () => {
     recordingRef.current.keyframes = [];
@@ -424,7 +447,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
   const saveClip = async () => {
     const el = videoRef.current;
-    const totalDuration = el?.duration || duration || 1;
+    const totalDuration = el?.duration || duration || 0;
+    if (totalDuration <= 0) {
+      toast({ title: t.clipping.error, description: "Wait for the video to load before saving.", variant: "destructive" });
+      return;
+    }
     const startT = clipStartRef.current;
     const endT = clipEndTime;
     const clipDuration = Math.max(0.1, endT - startT);
@@ -445,14 +472,21 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       keyframes = [{ ...keyframes[0], t: 0 }, { ...keyframes[0], t: 1 }];
     }
 
+    const startTime = Math.max(0, Math.min(1, startT / totalDuration));
+    const endTime = Math.max(0, Math.min(1, endT / totalDuration));
+    if (endTime <= startTime) {
+      toast({ title: t.clipping.error, description: "Clip range is invalid. Please try recording again.", variant: "destructive" });
+      return;
+    }
+
     setIsSavingClip(true);
     try {
       await createUserClip.mutateAsync({
         data: {
           videoId: video.guid,
           title: clipTitle.trim() || video.title,
-          startTime: totalDuration > 0 ? startT / totalDuration : 0,
-          endTime: totalDuration > 0 ? endT / totalDuration : 1,
+          startTime,
+          endTime,
           cropPath: keyframes,
           visibility: "private",
           aspectRatio: selectedRatioRef.current,
@@ -462,6 +496,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       toast({ title: t.clipping.saved, description: t.clipping.savedDesc, className: "bg-primary text-white border-none" });
       setClipMode("idle");
       setClipTitle("");
+      setSelectedRatio("16:9");
+      selectedRatioRef.current = "16:9";
       recordingRef.current.keyframes = [];
     } catch {
       toast({ title: t.clipping.error, variant: "destructive" });
@@ -705,7 +741,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       {clipMode === "recording" && (
         <div className="absolute bottom-safe left-0 right-0 z-20 px-4 pb-5 flex items-center justify-center">
           <motion.button
-            onClick={stopRecording}
+            onClick={() => stopRecording()}
             animate={{ scale: [1, 1.04, 1] }}
             transition={{ repeat: Infinity, duration: 1.5 }}
             className="w-20 h-20 rounded-full bg-red-600 flex flex-col items-center justify-center text-white shadow-xl shadow-red-900/60 active:scale-95"
