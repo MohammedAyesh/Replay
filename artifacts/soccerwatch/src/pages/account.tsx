@@ -91,7 +91,8 @@ export default function Account() {
 
   const initial = displayUser?.name?.charAt(0)?.toUpperCase() || "G";
   const name = isGuest ? t.account.guestName : displayUser?.name || t.account.playerFallback;
-  const email = isGuest ? "" : displayUser?.email || "";
+  const rawEmail = isGuest ? "" : displayUser?.email || "";
+  const email = rawEmail.startsWith("_user_") ? "" : rawEmail;
 
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
