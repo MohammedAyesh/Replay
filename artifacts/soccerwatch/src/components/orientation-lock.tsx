@@ -23,11 +23,16 @@ export function OrientationLock() {
   }, []);
 
   useEffect(() => {
-    if (typeof screen.orientation?.lock !== "function") return;
-    screen.orientation.lock("portrait-primary").catch(() => {});
+    type ExtendedOrientation = ScreenOrientation & {
+      lock?: (orientation: string) => Promise<void>;
+      unlock?: () => void;
+    };
+    const orientation = screen.orientation as ExtendedOrientation | undefined;
+    if (typeof orientation?.lock !== "function") return;
+    orientation.lock("portrait-primary").catch(() => {});
     return () => {
-      if (typeof screen.orientation?.unlock === "function") {
-        screen.orientation.unlock();
+      if (typeof orientation?.unlock === "function") {
+        orientation.unlock();
       }
     };
   }, []);

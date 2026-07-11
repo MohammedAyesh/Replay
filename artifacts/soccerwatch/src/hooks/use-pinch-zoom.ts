@@ -26,6 +26,7 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
     }
 
     function clampPan() {
+      if (!el) return;
       const maxX = (el.clientWidth * (st.scale - 1)) / 2;
       const maxY = (el.clientHeight * (st.scale - 1)) / 2;
       st.panX = Math.max(-maxX, Math.min(maxX, st.panX));
@@ -33,18 +34,20 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
     }
 
     function applyTransform() {
+      if (!el) return;
       clampPan();
       el.style.transform = `scale(${st.scale}) translate(${st.panX / st.scale}px, ${st.panY / st.scale}px)`;
     }
 
     function resetZoom() {
+      if (!el) return;
       el.style.transition = "transform 0.22s ease";
       st.scale = 1;
       st.panX = 0;
       st.panY = 0;
       el.style.transform = "";
       setIsZoomed(false);
-      setTimeout(() => { el.style.transition = ""; }, 230);
+      setTimeout(() => { if (el) el.style.transition = ""; }, 230);
     }
 
     function onTouchStart(e: TouchEvent) {
