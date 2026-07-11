@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { Link, useRoute, useLocation } from "wouter";
 import {
   useGetBunnyCollections,
@@ -186,6 +187,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const seekDraggingRef = useRef(false);
+  const zoomRef = useRef<HTMLDivElement>(null);
+  const { isZoomed } = usePinchZoom(zoomRef);
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
@@ -477,7 +480,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       className="fixed inset-0 z-50 bg-black"
     >
       {/* Letterboxed 16:9 scrollable video — black bars top & bottom */}
-      <div className="absolute inset-0 flex items-center bg-black">
+      <div ref={zoomRef} className="absolute inset-0 flex items-center bg-black">
         {/* Wrapper holds the fixed overlay + scrollable video as siblings */}
         <div className="w-full aspect-[16/9] relative">
           {/* Crop ratio overlay — follows scroll across full video width */}
@@ -529,7 +532,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               onLoadedMetadata={onLoadedMetadata}
             />
 
-            {clipMode !== "recording" && (
+            {clipMode !== "recording" && !isZoomed && (
               <button onClick={togglePlay} className="absolute inset-0 z-10" aria-label={isPlaying ? "Pause" : "Play"} />
             )}
           </div>
