@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { Link, useRoute } from "wouter";
 import Hls from "hls.js";
 import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, getGetFeedQueryKey, getGetAccountStatsQueryKey, Clip, CropKeyframe, FeedClip } from "@workspace/api-client-react";
@@ -79,6 +80,8 @@ function PlayerScreen({ clip }: { clip: Clip }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const seekDraggingRef = useRef(false);
+  const zoomRef = useRef<HTMLDivElement>(null);
+  const { isZoomed } = usePinchZoom(zoomRef);
 
   const clipStartSec = useRef<number>(0);
   const clipEndSec = useRef<number>(Infinity);
@@ -262,16 +265,18 @@ function PlayerScreen({ clip }: { clip: Clip }) {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className="relative w-full h-[100dvh] bg-black overflow-hidden" onClick={togglePlay}>
+    <div className="relative w-full h-[100dvh] bg-black overflow-hidden" onClick={isZoomed ? undefined : togglePlay}>
       <div className="absolute inset-0 field-pattern opacity-30" />
 
-      <video
-        ref={videoRef}
-        className="absolute inset-0 w-full h-full object-cover"
-        playsInline
-        loop
-        muted={isMuted}
-      />
+      <div ref={zoomRef} className="absolute inset-0">
+        <video
+          ref={videoRef}
+          className="w-full h-full object-cover"
+          playsInline
+          loop
+          muted={isMuted}
+        />
+      </div>
 
       <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/90 pointer-events-none" />
 

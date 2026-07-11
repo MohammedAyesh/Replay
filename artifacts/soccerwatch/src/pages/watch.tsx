@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation } from "wouter";
+import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import Hls from "hls.js";
 import {
   useGetFeed,
@@ -202,6 +203,8 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const scrollRef9 = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef<HTMLDivElement>(null);
+  const { isZoomed } = usePinchZoom(zoomRef);
 
   const [adPhase, setAdPhase] = useState<AdPhase>("idle");
   const [currentAd, setCurrentAd] = useState<Ad | null>(null);
@@ -584,37 +587,39 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     <div
       className="relative w-full shrink-0 snap-start bg-black overflow-hidden"
       style={{ height: slideHeight }}
-      onClick={togglePlay}
+      onClick={isZoomed ? undefined : togglePlay}
     >
       <div className="absolute inset-0 field-pattern opacity-30" />
 
-      {clip.aspectRatio === "9:16" ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-black">
-          <div
-            ref={scrollRef9}
-            className="h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
-          >
+      <div ref={zoomRef} className="absolute inset-0">
+        {clip.aspectRatio === "9:16" ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-black">
+            <div
+              ref={scrollRef9}
+              className="h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
+            >
+              <video
+                ref={videoRef}
+                className="h-full max-w-none pointer-events-none"
+                style={{ aspectRatio: "3840/1080" }}
+                playsInline
+                loop
+                muted={isMuted}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="absolute inset-0 flex items-center bg-black">
             <video
               ref={videoRef}
-              className="h-full max-w-none pointer-events-none"
-              style={{ aspectRatio: "3840/1080" }}
+              className="w-full aspect-[16/9] object-cover"
               playsInline
               loop
               muted={isMuted}
             />
           </div>
-        </div>
-      ) : (
-        <div className="absolute inset-0 flex items-center bg-black">
-          <video
-            ref={videoRef}
-            className="w-full aspect-[16/9] object-cover"
-            playsInline
-            loop
-            muted={isMuted}
-          />
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/80 pointer-events-none" />
 
