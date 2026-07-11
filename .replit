@@ -47,3 +47,6 @@ channel = "stable-25_05"
 [userenv.shared]
 OSS_REGION = "oss-me-central-2"
 OSS_BUCKET = "cam9"
+
+[objectStorage]
+defaultBucketID = "replit-objstore-2c134a01-f9f8-464d-94bb-e95a0528ae27"

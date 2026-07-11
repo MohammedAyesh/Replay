@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import { InstallBanner } from "@/components/install-banner";
+import { OrientationLock } from "@/components/orientation-lock";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -25,6 +26,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
+      <OrientationLock />
       <InstallBanner />
 
       {!hideTabBar && (

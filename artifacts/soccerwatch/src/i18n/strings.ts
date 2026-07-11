@@ -188,6 +188,10 @@ const strings = {
       iosStep1: "Tap the Share button in Safari",
       iosStep2: "Tap \"Add to Home Screen\"",
     },
+    orientationLock: {
+      title: "Rotate your device",
+      subtitle: "This app works best in portrait mode",
+    },
   },
   ar: {
     nav: {
@@ -374,6 +378,10 @@ const strings = {
       iosDesc: "ثبّت التطبيق للوصول الفوري كأي تطبيق أصلي.",
       iosStep1: "اضغط على زر المشاركة في Safari",
       iosStep2: "اضغط \"إضافة إلى الشاشة الرئيسية\"",
+    },
+    orientationLock: {
+      title: "دوّر جهازك",
+      subtitle: "يعمل هذا التطبيق بشكل أفضل في الوضع الرأسي",
     },
   },
 } as const;

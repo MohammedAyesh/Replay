@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
+import { useSkipTap } from "@/hooks/use-skip-tap";
+import { SkipFlash } from "@/components/skip-flash";
 import { Link, useRoute, useLocation } from "wouter";
 import {
   useGetBunnyCollections,
@@ -189,6 +191,14 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const seekDraggingRef = useRef(false);
   const zoomRef = useRef<HTMLDivElement>(null);
   const { isZoomed } = usePinchZoom(zoomRef);
+  const [showControls, setShowControls] = useState(true);
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetControlsTimer = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    controlsTimerRef.current = setTimeout(() => setShowControls(false), 4000);
+  }, []);
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
@@ -239,11 +249,26 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
   // Cleanup on unmount
   useEffect(() => {
+    resetControlsTimer();
     return () => {
       if (recordingRef.current.interval) clearInterval(recordingRef.current.interval);
       if (elapsedRef.current) clearInterval(elapsedRef.current);
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     };
   }, []);
+
+  const handleSkip = useCallback((delta: number) => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.currentTime = Math.max(0, Math.min(el.duration || Infinity, el.currentTime + delta));
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
+  const { flash: skipFlash, onTouchEnd: skipOnTouchEnd } = useSkipTap({
+    onSkip: handleSkip,
+    onSingleTap: resetControlsTimer,
+    disabled: isZoomed || clipMode !== "idle",
+  });
 
   useEffect(() => {
     const el = videoRef.current;
@@ -533,7 +558,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             />
 
             {clipMode !== "recording" && !isZoomed && (
-              <button onClick={togglePlay} className="absolute inset-0 z-10" aria-label={isPlaying ? "Pause" : "Play"} />
+              <div className="absolute inset-0 z-10" onTouchEnd={skipOnTouchEnd}>
+                <SkipFlash flash={skipFlash} />
+              </div>
             )}
           </div>
         </div>
@@ -584,11 +611,17 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         )}
       </AnimatePresence>
 
-      {/* Idle controls — floating overlay at bottom */}
-      {clipMode === "idle" && (
-        <div
+      {/* Idle controls — floating overlay at bottom, auto-hides after inactivity */}
+      <AnimatePresence>
+      {clipMode === "idle" && showControls && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.22 }}
           className="absolute bottom-safe left-0 right-0 z-20 px-4 pb-3 flex flex-col gap-3"
           style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}
+          onTouchStart={resetControlsTimer}
         >
           {/* Title + views */}
           <div className="px-1">
@@ -689,8 +722,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
             </button>
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Recording controls */}
       {clipMode === "recording" && (
