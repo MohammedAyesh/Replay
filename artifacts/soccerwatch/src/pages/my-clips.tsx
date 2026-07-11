@@ -326,6 +326,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       <div className={`absolute inset-0 flex items-center bg-black ${clip.aspectRatio === "9:16" ? "justify-center" : ""}`}>
         <div
           ref={scrollRef}
+          dir="ltr"
           className={clip.aspectRatio === "9:16"
             ? "h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
             : "w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"}
@@ -364,7 +365,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         <div className="flex-1 min-w-0 pb-1 pointer-events-auto">
           <p className="text-white font-bold text-sm truncate drop-shadow">{clip.title}</p>
           <p className="text-white/70 text-xs drop-shadow">
-            {(clip.endTime - clip.startTime).toFixed(3)} × video duration
+            {clip.aspectRatio ?? "16:9"} · {new Date(clip.createdAt).toLocaleDateString()}
           </p>
         </div>
 

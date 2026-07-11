@@ -174,7 +174,16 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       if (recordingStarted) return;
       recordingStarted = true;
 
-      const stream = canvas.captureStream(30);
+      let stream: MediaStream;
+      try {
+        stream = canvas.captureStream(30);
+      } catch (err) {
+        // canvas.captureStream() throws SecurityError when the canvas is tainted
+        // (CORS not configured on the CDN). Fail fast instead of hanging 45 s.
+        cleanup();
+        reject(err instanceof Error ? err : new Error("captureStream failed — canvas tainted (CORS)"));
+        return;
+      }
       const mimeType = pickMimeType();
       finalMimeType = mimeType;
       mediaRecorder = new MediaRecorder(
