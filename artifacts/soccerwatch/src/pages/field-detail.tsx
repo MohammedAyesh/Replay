@@ -265,11 +265,14 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       const now = el.currentTime;
       setCurrentTime(now);
       if (clipModeRef.current === "recording") {
-        if (prevTime >= 0 && now < prevTime - 0.3) {
-          // currentTime jumped backward — video looped while recording.
-          // Pass prevTime (last valid pre-loop timestamp) as the clip end so
-          // stopRecording() doesn't use the already-wrapped el.currentTime.
-          stopRecordingRef.current(prevTime);
+        // Detect a backward jump (loop) — either within the recording window
+        // or past the recording start point (missed loop on first timeupdate).
+        const jumpedBack = prevTime >= 0 && now < prevTime - 0.3;
+        const loopedPastStart = now < clipStartRef.current - 0.5;
+        if (jumpedBack || loopedPastStart) {
+          // Use the last known valid timestamp as the clip end.
+          stopRecordingRef.current(jumpedBack ? prevTime : undefined);
+          prevTime = -1; // prevent re-triggering before clipModeRef propagates
         } else {
           prevTime = now;
         }
@@ -353,6 +356,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
     el.play().catch(() => {});
     clipStartRef.current = el.currentTime;
+    clipModeRef.current = "recording";   // sync immediately; don't wait for useEffect
     recordingRef.current.keyframes = [];
     setRecElapsed(0);
 
@@ -395,6 +399,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   };
 
   const stopRecording = (overrideEndTime?: number) => {
+    clipModeRef.current = "review";      // prevent re-entry before React re-renders
     if (recordingRef.current.interval) {
       clearInterval(recordingRef.current.interval);
       recordingRef.current.interval = null;
