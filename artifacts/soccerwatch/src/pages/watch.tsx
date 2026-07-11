@@ -140,7 +140,13 @@ function cropToTransform(kf: CropKeyframe): string {
 }
 
 export default function Watch() {
-  const { data: clips, isLoading } = useGetFeed();
+  const { data: clips, isLoading } = useGetFeed({
+    query: {
+      queryKey: getGetFeedQueryKey(),
+      staleTime: 5 * 60 * 1000,
+      gcTime: 5 * 60 * 1000,
+    },
+  });
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const [slideHeight, setSlideHeight] = useState(0);

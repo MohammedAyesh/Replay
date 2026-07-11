@@ -5,6 +5,7 @@ import {
   useGetBunnyCollectionVideos,
   useCreateUserClip,
   getListUserClipsQueryKey,
+  getGetBunnyCollectionsQueryKey,
   BunnyVideo,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -43,7 +44,13 @@ export default function FieldDetail() {
   const guid = params?.id ?? "";
   const { t } = useTranslation();
 
-  const { data: collections } = useGetBunnyCollections();
+  const { data: collections } = useGetBunnyCollections({
+    query: {
+      queryKey: getGetBunnyCollectionsQueryKey(),
+      staleTime: 5 * 60 * 1000,
+      gcTime: 5 * 60 * 1000,
+    },
+  });
   const collection = collections?.find((c) => c.guid === guid);
   const { data: videos, isLoading: videosLoading } = useGetBunnyCollectionVideos(guid);
   const words = collection ? splitName(collection.name) : [];

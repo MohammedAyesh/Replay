@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { useGetBunnyCollections, BunnyCollection } from "@workspace/api-client-react";
+import { useGetBunnyCollections, getGetBunnyCollectionsQueryKey, BunnyCollection } from "@workspace/api-client-react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
@@ -24,7 +24,13 @@ const cardVariants = {
 };
 
 export default function Fields() {
-  const { data: collections, isLoading } = useGetBunnyCollections();
+  const { data: collections, isLoading } = useGetBunnyCollections({
+    query: {
+      queryKey: getGetBunnyCollectionsQueryKey(),
+      staleTime: 5 * 60 * 1000,
+      gcTime: 5 * 60 * 1000,
+    },
+  });
   const [search, setSearch] = useState("");
   const { t } = useTranslation();
 

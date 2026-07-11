@@ -24,7 +24,14 @@ import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/lib/auth";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000,
+      retry: 1,
+    },
+  },
+});
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,

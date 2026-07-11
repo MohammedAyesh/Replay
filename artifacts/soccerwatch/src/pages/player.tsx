@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Link, useRoute } from "wouter";
 import Hls from "hls.js";
-import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, Clip, CropKeyframe } from "@workspace/api-client-react";
+import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, getGetFeedQueryKey, getGetAccountStatsQueryKey, Clip, CropKeyframe, FeedClip } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Heart, Share, Bookmark, ChevronLeft, ChevronRight, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -177,7 +177,11 @@ function PlayerScreen({ clip }: { clip: Clip }) {
           queryClient.setQueryData(getGetClipQueryKey(clip.id), (old: Clip | undefined) =>
             old ? { ...old, isLiked: data.liked, likeCount: data.likeCount } : old
           );
+          queryClient.setQueryData(getGetFeedQueryKey(), (old: FeedClip[] | undefined) =>
+            old?.map((c) => c.id === clip.id ? { ...c, isLiked: data.liked, likeCount: data.likeCount } : c)
+          );
           queryClient.invalidateQueries({ queryKey: getListClipsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetAccountStatsQueryKey() });
         }
       }
     );
@@ -198,6 +202,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
               old ? { ...old, isSaved: false } : old
             );
             queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
+            queryClient.invalidateQueries({ queryKey: getGetAccountStatsQueryKey() });
           }
         }
       );
@@ -210,6 +215,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
               old ? { ...old, isSaved: true } : old
             );
             queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
+            queryClient.invalidateQueries({ queryKey: getGetAccountStatsQueryKey() });
             toast({ title: t.player.savedToMyClips, className: "bg-primary text-white border-none" });
           }
         }

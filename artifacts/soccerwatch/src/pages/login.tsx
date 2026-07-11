@@ -1,12 +1,11 @@
 import { useLocation } from "wouter";
-import { useLoginAsGuest } from "@workspace/api-client-react";
+import { useLoginAsGuest, listBanners, getBunnyCollections, getListBannersQueryKey, getGetBunnyCollectionsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Crown, Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useQueryClient } from "@tanstack/react-query";
-import { getListBannersQueryKey, getListFieldsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useClerk } from "@clerk/react";
 
 const fadeUp = (delay = 0) => ({
@@ -25,14 +24,16 @@ export default function Login() {
   const queryClient = useQueryClient();
   const { signOut } = useClerk();
 
-  /* Preload banners & fields while logging in */
+  /* Preload banners & Bunny collections while logging in */
   const preloadHomeData = () => {
     queryClient.prefetchQuery({
       queryKey: getListBannersQueryKey(),
+      queryFn: () => listBanners(),
       staleTime: 24 * 60 * 60 * 1000,
     });
     queryClient.prefetchQuery({
-      queryKey: getListFieldsQueryKey(),
+      queryKey: getGetBunnyCollectionsQueryKey(),
+      queryFn: () => getBunnyCollections(),
       staleTime: 24 * 60 * 60 * 1000,
     });
   };
