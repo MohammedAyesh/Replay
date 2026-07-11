@@ -281,10 +281,18 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       }
     }
 
+    function onEnded() {
+      if (clipModeRef.current === "recording") {
+        // Video reached the end while recording — stop with the true end time.
+        stopRecordingRef.current(videoRef.current?.duration);
+      }
+    }
+
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
     el.addEventListener("durationchange", onDurationChange);
     el.addEventListener("timeupdate", onTimeUpdate);
+    el.addEventListener("ended", onEnded);
 
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
@@ -305,6 +313,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       el.removeEventListener("pause", onPause);
       el.removeEventListener("durationchange", onDurationChange);
       el.removeEventListener("timeupdate", onTimeUpdate);
+      el.removeEventListener("ended", onEnded);
     };
   }, [video.playbackUrl]);
 
@@ -351,6 +360,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       setShowAuthPrompt(true);
       return;
     }
+    if (clipModeRef.current === "recording") return; // prevent double-start
     const el = videoRef.current;
     if (!el) return;
 
@@ -368,6 +378,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       const containerW = scrollEl.clientWidth;
       const containerH = scrollEl.clientHeight;
       const relT = videoEl.currentTime - clipStartRef.current;
+      if (relT < 0) return; // video looped; stopRecording already in-flight
 
       let x: number, w: number;
       if (selectedRatioRef.current === "9:16") {
@@ -442,6 +453,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   stopRecordingRef.current = stopRecording;
 
   const discardClip = () => {
+    clipModeRef.current = "idle";        // sync immediately
     recordingRef.current.keyframes = [];
     setClipMode("idle");
     setClipTitle("");
