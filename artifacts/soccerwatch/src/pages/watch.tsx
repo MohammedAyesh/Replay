@@ -282,6 +282,21 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     const fallbackSrc = FALLBACK_VIDEOS[index % FALLBACK_VIDEOS.length];
     let usedFallback = false;
 
+    let didSeek = false;
+    function seekToStart() {
+      if (!video || didSeek) return;
+      const dur = video.duration || 0;
+      if (!(dur > 0 && isFinite(dur))) return;
+      didSeek = true;
+      durationRef.current = dur;
+      clipStartSec.current = clip.startTime * dur;
+      clipEndSec.current = clip.endTime * dur;
+      video.currentTime = clipStartSec.current;
+      if (shouldPlayRef.current) {
+        video.play().catch(() => {});
+      }
+    }
+
     function loadSrc(src: string) {
       if (!video) return;
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
@@ -295,14 +310,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
           hlsRef.current = hls;
           hls.loadSource(src);
           hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (shouldPlayRef.current) {
-              durationRef.current = video.duration || 0;
-              const startSec = clip.startTime * durationRef.current;
-              video.currentTime = startSec;
-              video.play().catch(() => {});
-            }
-          });
+          hls.on(Hls.Events.MANIFEST_PARSED, seekToStart);
           hls.on(Hls.Events.ERROR, (_, data) => {
             if (data.fatal && !usedFallback) {
               usedFallback = true;
@@ -311,14 +319,6 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
           video.src = src;
-          video.addEventListener("canplay", () => {
-            if (shouldPlayRef.current) {
-              durationRef.current = video.duration || 0;
-              const startSec = clip.startTime * durationRef.current;
-              video.currentTime = startSec;
-              video.play().catch(() => {});
-            }
-          }, { once: true });
         }
       } else {
         video.src = src;
@@ -359,6 +359,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
           video.style.transition = "transform 0.1s linear";
         }
       }
+      seekToStart();
     }
 
     function handleTimeUpdate() {
@@ -380,6 +381,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
 
     video.addEventListener("error", handleVideoError);
     video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("durationchange", seekToStart);
     video.addEventListener("timeupdate", handleTimeUpdate);
     loadSrc(primary ?? fallbackSrc);
 
@@ -387,6 +389,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       video.removeEventListener("error", handleVideoError);
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("durationchange", seekToStart);
       video.removeEventListener("timeupdate", handleTimeUpdate);
       if (clip.aspectRatio !== "9:16") {
         video.style.transform = "";

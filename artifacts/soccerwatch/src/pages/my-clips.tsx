@@ -78,6 +78,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   /* Check IndexedDB for local copy on mount */
   useEffect(() => {
     let cancelled = false;
+    let cleanupListeners: (() => void) | null = null;
     async function checkLocal() {
       const local = await getLocalClip(clip.id);
       if (cancelled || !local) return;
@@ -89,18 +90,26 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
         video.pause();
         video.src = url;
-        video.addEventListener("loadedmetadata", () => {
+        let didSeek = false;
+        const seekLocal = () => {
           const dur = video.duration || 0;
-          if (dur > 0) {
-            video.currentTime = clip.startTime * dur;
-            video.play().then(() => setIsPlaying(true)).catch(() => {});
-          }
-        }, { once: true });
+          if (didSeek || !(dur > 0 && isFinite(dur))) return;
+          didSeek = true;
+          video.currentTime = clip.startTime * dur;
+          video.play().then(() => setIsPlaying(true)).catch(() => {});
+        };
+        video.addEventListener("loadedmetadata", seekLocal);
+        video.addEventListener("durationchange", seekLocal);
+        cleanupListeners = () => {
+          video.removeEventListener("loadedmetadata", seekLocal);
+          video.removeEventListener("durationchange", seekLocal);
+        };
       }
     }
     checkLocal();
     return () => {
       cancelled = true;
+      cleanupListeners?.();
       if (localUrlRef.current) {
         revokeLocalBlobUrl(localUrlRef.current);
         localUrlRef.current = null;
@@ -113,28 +122,32 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     const video = videoRef.current;
     if (!video || !clip.playbackUrl || isLocal) return;
 
-    function onLoaded() {
-      if (!video) return;
+    let didSeek = false;
+    function seekToStartAndPlay() {
+      if (!video || didSeek) return;
       const dur = video.duration || 0;
-      if (dur > 0) {
-        video.currentTime = clip.startTime * dur;
-        video.play().then(() => setIsPlaying(true)).catch(() => {});
-      }
+      if (!(dur > 0 && isFinite(dur))) return;
+      didSeek = true;
+      video.currentTime = clip.startTime * dur;
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
     }
+
+    video.addEventListener("loadedmetadata", seekToStartAndPlay);
+    video.addEventListener("durationchange", seekToStartAndPlay);
 
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
       hlsRef.current = hls;
       hls.loadSource(clip.playbackUrl);
       hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, onLoaded);
+      hls.on(Hls.Events.MANIFEST_PARSED, seekToStartAndPlay);
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = clip.playbackUrl;
-      video.addEventListener("loadedmetadata", onLoaded, { once: true });
-      video.play().catch(() => {});
     }
 
     return () => {
+      video.removeEventListener("loadedmetadata", seekToStartAndPlay);
+      video.removeEventListener("durationchange", seekToStartAndPlay);
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     };
   }, [clip.playbackUrl, clip.startTime]);

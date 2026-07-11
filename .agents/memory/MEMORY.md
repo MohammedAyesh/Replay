@@ -1,3 +1,4 @@
 - [HEVC→H264 HLS transcode](hevc-hls-transcode.md) — fMP4 HLS output option is `-hls_fmp4_init_filename`, not `-hls_init_filename`; 4096×1152 HEVC takes ~17s for first segment on Replit CPU.
 - [Clerk auth setup](clerk-auth.md) — Replit-managed Clerk replaces cookie auth; real users JIT-provisioned via clerkId in DB; guests use guestId httpOnly cookie alongside Clerk.
 - [customFetch cookie credentials](custom-fetch-cookies.md) — `customFetch` must pass `credentials: "include"` or httpOnly session cookies are silently dropped; breaks guest auth and any cookie-based auth flow.
+- [HLS.js seek-on-load duration](hls-seek-duration.md) — video.duration is 0/NaN at Hls MANIFEST_PARSED; seek to startTime*duration must wait for loadedmetadata/durationchange or clips play from 0 / freeze.

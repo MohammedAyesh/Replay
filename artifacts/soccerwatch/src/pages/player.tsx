@@ -102,6 +102,20 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
     const src = clip.bunnyPlaybackUrl ?? clip.videoUrl ?? FALLBACK_VIDEO;
 
+    let didSeek = false;
+    function seekToStartAndPlay() {
+      if (!video || didSeek) return;
+      const dur = video.duration || 0;
+      if (!(dur > 0 && isFinite(dur))) return;
+      didSeek = true;
+      durationRef.current = dur;
+      setDuration(dur);
+      clipStartSec.current = clip.startTime * dur;
+      clipEndSec.current = clip.endTime * dur;
+      video.currentTime = clipStartSec.current;
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
+    }
+
     function handleLoadedMetadata() {
       if (!video) return;
       durationRef.current = video.duration || 0;
@@ -113,6 +127,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         video.style.transform = cropToTransform(kf);
         video.style.transition = "transform 0.1s linear";
       }
+      seekToStartAndPlay();
     }
 
     function handleTimeUpdate() {
@@ -134,6 +149,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
     }
 
     video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("durationchange", seekToStartAndPlay);
     video.addEventListener("timeupdate", handleTimeUpdate);
 
     if (src.includes(".m3u8")) {
@@ -142,24 +158,18 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         hlsRef.current = hls;
         hls.loadSource(src);
         hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          durationRef.current = video.duration || 0;
-          const startSec = clip.startTime * durationRef.current;
-          video.currentTime = startSec;
-          video.play().then(() => setIsPlaying(true)).catch(() => {});
-        });
+        hls.on(Hls.Events.MANIFEST_PARSED, seekToStartAndPlay);
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = src;
-        video.play().then(() => setIsPlaying(true)).catch(() => {});
       }
     } else {
       video.src = src;
-      video.play().then(() => setIsPlaying(true)).catch(() => {});
     }
 
     return () => {
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("durationchange", seekToStartAndPlay);
       video.removeEventListener("timeupdate", handleTimeUpdate);
       video.style.transform = "";
       video.style.transition = "";
