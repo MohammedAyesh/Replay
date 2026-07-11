@@ -151,10 +151,10 @@ function ClerkProviderWithRoutes() {
     ? arSA
     : {
         signIn: {
-          start: { title: "Welcome back", subtitle: "Sign in to your SoccerWatch account" },
+          start: { title: "Welcome back", subtitle: "Sign in to your Replay account" },
         },
         signUp: {
-          start: { title: "Join SoccerWatch", subtitle: "Create your account to save and like clips" },
+          start: { title: "Join Replay", subtitle: "Create your account to save and like clips" },
         },
       };
 

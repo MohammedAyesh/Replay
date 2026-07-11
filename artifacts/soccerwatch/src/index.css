@@ -63,24 +63,24 @@
 
 :root {
   --background: 0 0% 100%;
-  --foreground: 120 50% 8%;
+  --foreground: 220 55% 12%;
   --card: 0 0% 100%;
-  --card-foreground: 120 50% 8%;
+  --card-foreground: 220 55% 12%;
   --popover: 0 0% 100%;
-  --popover-foreground: 120 50% 8%;
-  --primary: 142 71% 45%;
+  --popover-foreground: 220 55% 12%;
+  --primary: 24 95% 53%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 120 8% 94%;
-  --secondary-foreground: 120 50% 8%;
-  --muted: 120 6% 95%;
-  --muted-foreground: 120 8% 52%;
-  --accent: 142 71% 45%;
+  --secondary: 220 14% 94%;
+  --secondary-foreground: 220 55% 12%;
+  --muted: 220 12% 95%;
+  --muted-foreground: 220 10% 50%;
+  --accent: 24 95% 53%;
   --accent-foreground: 0 0% 100%;
   --destructive: 348 100% 58%;
   --destructive-foreground: 0 0% 100%;
   --border: 0 0% 92%;
   --input: 0 0% 92%;
-  --ring: 142 71% 45%;
+  --ring: 24 95% 53%;
   --radius: 0.75rem;
 
   --app-font-sans: 'Space Grotesk', sans-serif;
@@ -88,7 +88,6 @@
   --app-font-mono: 'Space Grotesk', monospace;
   --app-font-arabic: 'IBM Plex Sans Arabic', 'Space Grotesk', sans-serif;
 
-  /* Automatic computation of border around primary / danger buttons */
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
@@ -96,24 +95,24 @@
 
 .dark {
   --background: 0 0% 100%;
-  --foreground: 120 50% 8%;
+  --foreground: 220 55% 12%;
   --card: 0 0% 100%;
-  --card-foreground: 120 50% 8%;
+  --card-foreground: 220 55% 12%;
   --popover: 0 0% 100%;
-  --popover-foreground: 120 50% 8%;
-  --primary: 142 71% 45%;
+  --popover-foreground: 220 55% 12%;
+  --primary: 24 95% 53%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 120 8% 94%;
-  --secondary-foreground: 120 50% 8%;
-  --muted: 120 6% 95%;
-  --muted-foreground: 120 8% 52%;
-  --accent: 142 71% 45%;
+  --secondary: 220 14% 94%;
+  --secondary-foreground: 220 55% 12%;
+  --muted: 220 12% 95%;
+  --muted-foreground: 220 10% 50%;
+  --accent: 24 95% 53%;
   --accent-foreground: 0 0% 100%;
   --destructive: 348 100% 58%;
   --destructive-foreground: 0 0% 100%;
   --border: 0 0% 92%;
   --input: 0 0% 92%;
-  --ring: 142 71% 45%;
+  --ring: 24 95% 53%;
 }
 
 @layer base {
@@ -125,23 +124,20 @@
   }
 }
 
-/* Arabic font — applied when root is RTL */
 [dir="rtl"] {
   --app-font-sans: 'IBM Plex Sans Arabic', 'Space Grotesk', sans-serif;
   --app-font-serif: 'IBM Plex Sans Arabic', 'Space Grotesk', serif;
 }
 
-/* Custom Field Pattern */
 .field-pattern {
-  background-color: #0d1f0d;
+  background-color: #0d1b3e;
   background-image: 
-    linear-gradient(rgba(34, 197, 94, 0.1) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(34, 197, 94, 0.1) 1px, transparent 1px);
+    linear-gradient(rgba(59, 130, 246, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(249, 115, 22, 0.08) 1px, transparent 1px);
   background-size: 60px 60px;
   background-position: center center;
 }
 
-/* Hide scrollbar for immersive feed */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }

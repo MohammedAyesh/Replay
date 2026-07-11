@@ -1,7 +1,8 @@
 import { useLocation } from "wouter";
 import { useLoginAsGuest, listBanners, getBunnyCollections, getListBannersQueryKey, getGetBunnyCollectionsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
+import replayLogo from "@/assets/replay-logo.png";
 import { Button } from "@/components/ui/button";
-import { Crown, Globe } from "lucide-react";
+import { Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
@@ -82,11 +83,10 @@ export default function Login() {
               initial={{ scale: 0, rotate: -20 }}
               animate={{ scale: 1, rotate: 0 }}
               transition={{ type: "spring", stiffness: 300, damping: 18, delay: 0.05 }}
-              className="w-8 h-8 rounded-full bg-primary flex items-center justify-center"
             >
-              <Crown className="w-5 h-5 text-white" />
+              <img src={replayLogo} alt="Replay" className="w-10 h-10 object-contain" />
             </motion.div>
-            <span className="font-bold text-xl tracking-tight">SOCCERWATCH</span>
+            <span className="font-bold text-xl tracking-tight text-white">REPLAY</span>
           </motion.div>
 
           <motion.h1 {...fadeUp(0.12)} className="text-5xl font-bold leading-[1.1] mb-4">

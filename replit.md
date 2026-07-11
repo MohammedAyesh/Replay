@@ -1,4 +1,4 @@
-# SoccerWatch
+# Replay
 
 A mobile-first web app where amateur soccer players browse pre-recorded footage from local soccer fields, watch a TikTok-style highlights feed, and save their best moments as clips.
 
@@ -39,7 +39,7 @@ A mobile-first web app where amateur soccer players browse pre-recorded footage 
 
 ## Product
 
-- **Login** — dark forest green hero with field-pattern background, email login + guest option
+- **Login** — dark navy hero with field-pattern background, Replay logo, orange CTA, email login + guest option
 - **Watch** — full-screen TikTok-style scroll-snap clip feed, ranked by likes, with like/save/share actions
 - **Fields** — searchable list of local soccer fields with clip counts; tap to see recordings
 - **Player** — immersive single-clip view with like/save action bar

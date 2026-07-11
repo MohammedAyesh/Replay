@@ -5,7 +5,7 @@ import { useUpdateProfile, useGetMe, getGetMeQueryKey, type ProfileInputPosition
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Crown } from "lucide-react";
+import replayLogo from "@/assets/replay-logo.png";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/i18n";
@@ -111,17 +111,15 @@ export default function Onboarding() {
       <div className="relative z-10 flex-1 flex flex-col px-6 pt-safe pt-8 pb-safe overflow-y-auto">
         {/* Header */}
         <motion.div {...fadeUp(0)} className="flex items-center gap-2 mb-8">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-            <Crown className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-bold text-xl tracking-tight">SOCCERWATCH</span>
+          <img src={replayLogo} alt="Replay" className="w-10 h-10 object-contain" />
+          <span className="font-bold text-xl tracking-tight">REPLAY</span>
         </motion.div>
 
         <motion.h1 {...fadeUp(0.1)} className="text-3xl font-bold leading-tight mb-2">
           Complete your profile
         </motion.h1>
         <motion.p {...fadeUp(0.15)} className="text-white/70 mb-8">
-          Help us personalize your SoccerWatch experience.
+          Help us personalize your Replay experience.
         </motion.p>
 
         {/* Form */}
