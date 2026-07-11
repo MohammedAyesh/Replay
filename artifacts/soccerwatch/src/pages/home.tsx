@@ -15,14 +15,6 @@ import {
 
 const BANNER_INTERVAL = 5000;
 
-function splitName(name: string): string[] {
-  return name
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w.toUpperCase());
-}
-
 
 type DiscoverItem =
   | { kind: "field"; id: string; name: string; videoCount: number; previewImageUrl: string | null }
@@ -310,11 +302,8 @@ function FieldCard({
           </span>
         </div>
         <div className="absolute inset-0 flex flex-col justify-end p-3">
-          <h3 className="text-white font-bold text-sm leading-snug">
-            {splitName(item.name).join(" ")}
-          </h3>
           {item.videoCount > 0 && (
-            <p className="text-white/60 text-xs mt-1">
+            <p className="text-white/60 text-xs">
               {t.home.clips(item.videoCount)}
             </p>
           )}

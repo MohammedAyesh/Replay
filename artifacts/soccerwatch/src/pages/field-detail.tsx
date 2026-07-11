@@ -27,14 +27,6 @@ type AspectRatio = "16:9" | "9:16";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-function splitName(name: string): string[] {
-  return name
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w.toUpperCase());
-}
-
 function formatDuration(seconds: number): string {
   if (!seconds) return "";
   const m = Math.floor(seconds / 60);
@@ -56,7 +48,6 @@ export default function FieldDetail() {
   });
   const collection = collections?.find((c) => c.guid === guid);
   const { data: videos, isLoading: videosLoading } = useGetBunnyCollectionVideos(guid);
-  const words = collection ? splitName(collection.name) : [];
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
 
   return (
@@ -71,8 +62,7 @@ export default function FieldDetail() {
           <ChevronRight className="w-6 h-6 ltr:hidden" />
         </Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold truncate">{collection?.name ?? t.fieldDetail.loading}</h1>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {videosLoading ? "…" : `${videos?.length ?? 0} videos`}
           </p>
         </div>
@@ -92,16 +82,6 @@ export default function FieldDetail() {
           <div className="absolute inset-0 field-pattern" />
         )}
         <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80" />
-        {words.length > 0 && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 px-4">
-            {words.map((word, wi) => (
-              <span key={wi} className="text-white font-black leading-none tracking-tight drop-shadow-lg text-center"
-                style={{ fontSize: `clamp(1.4rem, ${Math.min(6, 12 / word.length)}vw + 0.5rem, 3rem)` }}>
-                {word}
-              </span>
-            ))}
-          </div>
-        )}
         {collection && (
           <div className="absolute bottom-3 start-0 end-0 flex flex-col items-center">
             <p className="text-white/60 text-[10px]">
@@ -165,9 +145,6 @@ function VideoCard({ video, index, onPlay }: { video: BunnyVideo; index: number;
           {formatDuration(video.duration ?? 0)}
         </span>
       )}
-      <p className="absolute bottom-1.5 start-2 end-10 text-[10px] text-white/80 font-medium truncate leading-tight">
-        {video.title}
-      </p>
     </motion.button>
   );
 }
@@ -624,13 +601,12 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}
           onTouchStart={resetControlsTimer}
         >
-          {/* Title + views */}
-          <div className="px-1">
-            <p className="text-white font-bold text-sm leading-tight drop-shadow">{video.title}</p>
-            {(video.views ?? 0) > 0 && (
-              <p className="text-white/60 text-xs mt-0.5 drop-shadow">{(video.views ?? 0).toLocaleString()} views</p>
-            )}
-          </div>
+          {/* Views */}
+          {(video.views ?? 0) > 0 && (
+            <div className="px-1">
+              <p className="text-white/60 text-xs drop-shadow">{(video.views ?? 0).toLocaleString()} views</p>
+            </div>
+          )}
 
           {/* Seek Bar */}
           <div className="px-1 select-none" onClick={(e) => e.stopPropagation()}>

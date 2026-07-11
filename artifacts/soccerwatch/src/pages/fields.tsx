@@ -6,14 +6,6 @@ import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
 
-function splitName(name: string): string[] {
-  return name
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w.toUpperCase());
-}
-
 const cardVariants = {
   hidden: { opacity: 0, y: 32 },
   show: (i: number) => ({
@@ -89,8 +81,6 @@ export default function Fields() {
 }
 
 function CollectionCard({ collection, index }: { collection: BunnyCollection; index: number }) {
-  const words = splitName(collection.name);
-
   return (
     <motion.div
       custom={index}
@@ -115,18 +105,6 @@ function CollectionCard({ collection, index }: { collection: BunnyCollection; in
             <div className="absolute inset-0 field-pattern group-hover:scale-105 transition-transform duration-500" />
           )}
           <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80" />
-
-          <div className="absolute inset-0 flex flex-col items-center justify-center px-3 gap-1">
-            {words.map((word, wi) => (
-              <span
-                key={wi}
-                className="text-white font-black leading-none tracking-tight text-center drop-shadow-lg"
-                style={{ fontSize: `clamp(1rem, ${Math.min(5, 10 / word.length)}vw + 0.5rem, 2.2rem)` }}
-              >
-                {word}
-              </span>
-            ))}
-          </div>
 
           <div className="absolute bottom-3 start-0 end-0 px-3">
             <p className="text-white/70 text-[10px] font-medium text-center">
