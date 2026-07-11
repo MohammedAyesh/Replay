@@ -248,6 +248,7 @@ export const CreateUserClipResponse = zod.object({
   "visibility": zod.enum(['public', 'followers', 'private']),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
+  "thumbnailTime": zod.number().nullish(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()
@@ -274,6 +275,7 @@ export const ListUserClipsResponseItem = zod.object({
   "visibility": zod.enum(['public', 'followers', 'private']),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
+  "thumbnailTime": zod.number().nullish(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()
@@ -300,7 +302,8 @@ export const UpdateUserClipParams = zod.object({
 
 export const UpdateUserClipBody = zod.object({
   "title": zod.string().optional(),
-  "visibility": zod.enum(['public', 'followers', 'private']).optional()
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
+  "thumbnailTime": zod.number().nullish()
 })
 
 export const UpdateUserClipResponse = zod.object({
@@ -320,6 +323,7 @@ export const UpdateUserClipResponse = zod.object({
   "visibility": zod.enum(['public', 'followers', 'private']),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
+  "thumbnailTime": zod.number().nullish(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
   "createdAt": zod.string()

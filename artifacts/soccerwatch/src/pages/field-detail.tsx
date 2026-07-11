@@ -179,7 +179,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
-  const [clipVisibility, setClipVisibility] = useState<"public" | "followers" | "private">("public");
   const [isSavingClip, setIsSavingClip] = useState(false);
   const [recElapsed, setRecElapsed] = useState(0);
   const [showAuthPrompt, setShowAuthPrompt] = useState(false);
@@ -418,7 +417,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     recordingRef.current.keyframes = [];
     setClipMode("idle");
     setClipTitle("");
-    setClipVisibility("public");
     setRecElapsed(0);
     setSelectedRatio("16:9");
     selectedRatioRef.current = "16:9";
@@ -456,7 +454,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           startTime: totalDuration > 0 ? startT / totalDuration : 0,
           endTime: totalDuration > 0 ? endT / totalDuration : 1,
           cropPath: keyframes,
-          visibility: clipVisibility,
+          visibility: "private",
           aspectRatio: selectedRatioRef.current,
         },
       });
@@ -749,19 +747,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               <span className="bg-white/10 text-white/80 text-xs font-bold px-2 py-1 rounded">
                 {selectedRatio}
               </span>
-              <div className="w-px h-4 bg-white/20" />
-              <span className="text-white/60 text-xs">Visibility</span>
-              <div className="flex rounded-lg overflow-hidden border border-white/20 text-xs font-semibold">
-                {(["public", "followers", "private"] as const).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setClipVisibility(v)}
-                    className={`px-3 py-1.5 transition-colors ${clipVisibility === v ? "bg-primary text-white" : "bg-white/10 text-white/60"}`}
-                  >
-                    {v === "public" ? "Public" : v === "followers" ? "Followers" : "Private"}
-                  </button>
-                ))}
+              <div className="ml-auto flex items-center gap-1.5 bg-white/10 border border-white/20 rounded-lg px-2.5 py-1">
+                <svg className="w-3 h-3 text-white/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <span className="text-white/60 text-xs font-medium">Saved privately</span>
               </div>
             </div>
 

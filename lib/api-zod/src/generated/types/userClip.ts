@@ -20,6 +20,8 @@ export interface UserClip {
   likeCount: number;
   aspectRatio: string;
   /** @nullable */
+  thumbnailTime?: number | null;
+  /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */
   playbackUrl?: string | null;

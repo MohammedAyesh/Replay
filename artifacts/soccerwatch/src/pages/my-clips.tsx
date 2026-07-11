@@ -3,11 +3,12 @@ import { Link, useLocation } from "wouter";
 import {
   useListUserClips,
   useDeleteUserClip,
+  useUpdateUserClip,
   getListUserClipsQueryKey,
   UserClip,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bookmark, Video, Scissors, Trash2, X, Play, Pause, Download, Maximize, Minimize } from "lucide-react";
+import { Bookmark, Video, Scissors, Trash2, X, Play, Pause, Download, Maximize, Minimize, Lock, Globe, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
@@ -424,6 +425,7 @@ export default function MyClips() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("saved");
   const [activeClip, setActiveClip] = useState<UserClip | null>(null);
+  const [publishClip, setPublishClip] = useState<UserClip | null>(null);
   const [localClips, setLocalClips] = useState<LocalClipRecord[]>([]);
   const [localLoading, setLocalLoading] = useState(true);
 
@@ -545,7 +547,12 @@ export default function MyClips() {
               exit={{ opacity: 0, x: 10 }}
               transition={{ duration: 0.2 }}
             >
-              <CreatedTab clips={userClips} isLoading={userClipsLoading} onPlay={setActiveClip} />
+              <CreatedTab
+                clips={userClips}
+                isLoading={userClipsLoading}
+                onPlay={setActiveClip}
+                onPublish={setPublishClip}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -559,6 +566,13 @@ export default function MyClips() {
             onClose={() => setActiveClip(null)}
             onDownloaded={loadLocalClips}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Publish panel */}
+      <AnimatePresence>
+        {publishClip && (
+          <PublishPanel clip={publishClip} onClose={() => setPublishClip(null)} />
         )}
       </AnimatePresence>
     </div>
@@ -744,10 +758,12 @@ function CreatedTab({
   clips,
   isLoading,
   onPlay,
+  onPublish,
 }: {
   clips: UserClip[] | undefined;
   isLoading: boolean;
   onPlay: (clip: UserClip) => void;
+  onPublish: (clip: UserClip) => void;
 }) {
   const { t } = useTranslation();
 
@@ -792,22 +808,219 @@ function CreatedTab({
   return (
     <div className="grid grid-cols-2 gap-4">
       {clips.map((clip, i) => (
-        <UserClipCard key={clip.id} clip={clip} index={i} onPlay={onPlay} />
+        <UserClipCard key={clip.id} clip={clip} index={i} onPlay={onPlay} onPublish={onPublish} />
       ))}
     </div>
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Publish panel — bottom sheet                                        */
+/* ------------------------------------------------------------------ */
+
+function PublishPanel({ clip, onClose }: { clip: UserClip; onClose: () => void }) {
+  const [title, setTitle] = useState(clip.title);
+  const [visibility, setVisibility] = useState<"public" | "followers">("public");
+  const [thumbnailTime, setThumbnailTime] = useState(clip.thumbnailTime ?? 0);
+  const [duration, setDuration] = useState(0);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const updateUserClip = useUpdateUserClip();
+
+  useEffect(() => {
+    if (!clip.playbackUrl) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const onReady = () => {
+      const dur = video.duration || 0;
+      setDuration(dur);
+      const t = clip.thumbnailTime != null ? clip.thumbnailTime : clip.startTime * dur;
+      video.currentTime = t;
+      setThumbnailTime(t);
+    };
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: false });
+      hlsRef.current = hls;
+      hls.loadSource(clip.playbackUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, onReady);
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = clip.playbackUrl;
+      video.addEventListener("loadedmetadata", onReady, { once: true });
+    }
+
+    return () => {
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clip.playbackUrl]);
+
+  const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const t = parseFloat(e.target.value);
+    setThumbnailTime(t);
+    if (videoRef.current) videoRef.current.currentTime = t;
+  };
+
+  const handlePublish = async () => {
+    setIsPublishing(true);
+    try {
+      await updateUserClip.mutateAsync({
+        id: clip.id,
+        data: { title: title.trim() || clip.title, visibility, thumbnailTime },
+      });
+      queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+      toast({ title: "Clip published!", className: "bg-primary text-white border-none" });
+      onClose();
+    } catch {
+      toast({ title: "Failed to publish", variant: "destructive" });
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "spring", damping: 28, stiffness: 320 }}
+        className="w-full bg-zinc-900 rounded-t-2xl px-4 pt-4 pb-safe"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Handle */}
+        <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mb-4" />
+
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-white font-bold text-lg">Publish Clip</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center"
+          >
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+
+        {/* Thumbnail frame picker */}
+        <div className="mb-4">
+          <p className="text-white/50 text-[10px] font-semibold uppercase tracking-widest mb-2">Thumbnail Frame</p>
+          <div className="relative aspect-video rounded-xl overflow-hidden bg-black mb-2">
+            <video
+              ref={videoRef}
+              muted
+              playsInline
+              preload="metadata"
+              className="w-full h-full object-cover"
+            />
+            {!clip.playbackUrl && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <p className="text-white/40 text-xs">No preview available</p>
+              </div>
+            )}
+          </div>
+          {duration > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-white/40 text-[10px] tabular-nums">
+                {Math.floor(thumbnailTime / 60)}:{String(Math.floor(thumbnailTime % 60)).padStart(2, "0")}
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={duration}
+                step={0.25}
+                value={thumbnailTime}
+                onChange={handleScrub}
+                className="flex-1 accent-primary h-1"
+              />
+              <span className="text-white/40 text-[10px] tabular-nums">
+                {Math.floor(duration / 60)}:{String(Math.floor(duration % 60)).padStart(2, "0")}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Title */}
+        <div className="mb-4">
+          <p className="text-white/50 text-[10px] font-semibold uppercase tracking-widest mb-2">Title</p>
+          <input
+            className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm placeholder:text-white/40 outline-none focus:border-primary transition-colors"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={80}
+            placeholder="Clip title"
+          />
+        </div>
+
+        {/* Visibility */}
+        <div className="mb-5">
+          <p className="text-white/50 text-[10px] font-semibold uppercase tracking-widest mb-2">Visibility</p>
+          <div className="grid grid-cols-2 gap-2">
+            {([["public", "Public", Globe], ["followers", "Followers", Users]] as const).map(([v, label, Icon]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setVisibility(v)}
+                className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-sm font-semibold transition-colors ${
+                  visibility === v
+                    ? "bg-primary border-primary text-white"
+                    : "bg-white/10 border-white/20 text-white/60"
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-3 pb-3">
+          <button
+            onClick={onClose}
+            className="flex-1 bg-white/10 border border-white/20 rounded-xl py-3 text-white text-sm font-semibold active:scale-95 transition-transform"
+          >
+            Keep Private
+          </button>
+          <button
+            onClick={handlePublish}
+            disabled={isPublishing}
+            className="flex-[2] bg-primary rounded-xl py-3 text-white text-sm font-bold active:scale-95 transition-transform disabled:opacity-60"
+          >
+            {isPublishing ? "Publishing…" : "Publish"}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Individual clip card in Created grid                               */
+/* ------------------------------------------------------------------ */
+
 function UserClipCard({
   clip,
   index,
   onPlay,
+  onPublish,
 }: {
   clip: UserClip;
   index: number;
   onPlay: (clip: UserClip) => void;
+  onPublish: (clip: UserClip) => void;
 }) {
-  const { t } = useTranslation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const deleteUserClip = useDeleteUserClip();
@@ -816,6 +1029,7 @@ function UserClipCard({
   const startPct = (clip.startTime * 100).toFixed(0);
   const endPct = (clip.endTime * 100).toFixed(0);
   const durationHint = `${startPct}%–${endPct}%`;
+  const isPrivate = clip.visibility === "private";
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -860,11 +1074,18 @@ function UserClipCard({
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
       <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
 
-      {/* Scissors badge */}
-      <div className="absolute top-2 start-2 bg-black/60 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
-        <Scissors className="w-2.5 h-2.5" />
-        {durationHint}
-      </div>
+      {/* Top-left badge: lock for private, scissors for public */}
+      {isPrivate ? (
+        <div className="absolute top-2 start-2 bg-black/60 text-amber-400 text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
+          <Lock className="w-2.5 h-2.5" />
+          Private
+        </div>
+      ) : (
+        <div className="absolute top-2 start-2 bg-black/60 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
+          <Scissors className="w-2.5 h-2.5" />
+          {durationHint}
+        </div>
+      )}
 
       {/* Delete button */}
       <button
@@ -880,12 +1101,21 @@ function UserClipCard({
       </button>
 
       <div className="absolute bottom-2 start-2 end-2">
-        <h3 className="text-white font-bold text-sm leading-tight mb-0.5 line-clamp-2">
+        <h3 className="text-white font-bold text-sm leading-tight mb-1 line-clamp-1">
           {clip.title}
         </h3>
-        <p className="text-primary text-[10px] font-medium">
-          {new Date(clip.createdAt).toLocaleDateString()}
-        </p>
+        {isPrivate ? (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPublish(clip); }}
+            className="w-full bg-primary/90 backdrop-blur-sm text-white text-[11px] font-bold py-1.5 rounded-lg active:scale-95 transition-transform"
+          >
+            Publish →
+          </button>
+        ) : (
+          <p className="text-primary text-[10px] font-medium">
+            {new Date(clip.createdAt).toLocaleDateString()}
+          </p>
+        )}
       </div>
     </motion.div>
   );

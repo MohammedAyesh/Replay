@@ -64,12 +64,13 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       startTime: String(startTime),
       endTime: String(endTime),
       cropPath,
-      visibility: visibility ?? "public",
+      visibility: visibility ?? "private",
       aspectRatio: aspectRatio ?? "16:9",
     })
     .returning();
 
-  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null;
+  const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
+  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
   const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
 
   res.status(201).json(
@@ -87,6 +88,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       viewCount: row.viewCount,
       shareCount: row.shareCount,
       score: row.score,
+      thumbnailTime,
       thumbnailUrl,
       playbackUrl,
       createdAt: row.createdAt.toISOString(),
@@ -107,24 +109,28 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     .where(eq(userClipsTable.userId, userId))
     .orderBy(desc(userClipsTable.createdAt));
 
-  const result = rows.map((row) => ({
-    id: row.id,
-    userId: row.userId,
-    videoId: row.videoId,
-    title: row.title,
-    startTime: parseFloat(row.startTime),
-    endTime: parseFloat(row.endTime),
-    cropPath: row.cropPath,
-    visibility: row.visibility,
-    aspectRatio: row.aspectRatio,
-    likeCount: row.likeCount,
-    viewCount: row.viewCount,
-    shareCount: row.shareCount,
-    score: row.score,
-    thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null,
-    playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
-    createdAt: row.createdAt.toISOString(),
-  }));
+  const result = rows.map((row) => {
+    const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
+    return {
+      id: row.id,
+      userId: row.userId,
+      videoId: row.videoId,
+      title: row.title,
+      startTime: parseFloat(row.startTime),
+      endTime: parseFloat(row.endTime),
+      cropPath: row.cropPath,
+      visibility: row.visibility,
+      aspectRatio: row.aspectRatio,
+      likeCount: row.likeCount,
+      viewCount: row.viewCount,
+      shareCount: row.shareCount,
+      score: row.score,
+      thumbnailTime,
+      thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
+      playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+      createdAt: row.createdAt.toISOString(),
+    };
+  });
 
   res.json(ListUserClipsResponse.parse(result));
 });
@@ -200,9 +206,11 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const updates: Partial<{ title: string; visibility: string }> = {};
+  const updates: Partial<{ title: string; visibility: string; thumbnailTime: string | null }> = {};
   if (body.data.title !== undefined) updates.title = body.data.title;
   if (body.data.visibility !== undefined) updates.visibility = body.data.visibility;
+  if (body.data.thumbnailTime !== undefined)
+    updates.thumbnailTime = body.data.thumbnailTime != null ? String(body.data.thumbnailTime) : null;
 
   const [row] = await db
     .update(userClipsTable)
@@ -210,7 +218,8 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     .where(eq(userClipsTable.id, params.data.id))
     .returning();
 
-  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null;
+  const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
+  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
   const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
 
   res.json(
@@ -228,6 +237,7 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
       viewCount: row.viewCount,
       shareCount: row.shareCount,
       score: row.score,
+      thumbnailTime,
       thumbnailUrl,
       playbackUrl,
       createdAt: row.createdAt.toISOString(),

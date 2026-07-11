@@ -167,6 +167,8 @@ export interface UserClip {
   likeCount: number;
   aspectRatio: string;
   /** @nullable */
+  thumbnailTime?: number | null;
+  /** @nullable */
   thumbnailUrl?: string | null;
   /** @nullable */
   playbackUrl?: string | null;
@@ -253,6 +255,8 @@ export const UpdateUserClipInputVisibility = {
 export interface UpdateUserClipInput {
   title?: string;
   visibility?: UpdateUserClipInputVisibility;
+  /** @nullable */
+  thumbnailTime?: number | null;
 }
 
 export interface LikeResult {
