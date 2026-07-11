@@ -543,9 +543,10 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             );
           })()}
 
-          {/* Scrollable video container */}
+          {/* Scrollable video container — force LTR so scrollLeft is always "pixels from left" regardless of document dir (RTL Arabic breaks crop math otherwise) */}
           <div
             ref={scrollRef}
+            dir="ltr"
             className="w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
           >
             <video
