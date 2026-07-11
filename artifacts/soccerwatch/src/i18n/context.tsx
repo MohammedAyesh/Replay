@@ -12,14 +12,14 @@ interface LocaleContextValue {
 }
 
 const LocaleContext = createContext<LocaleContextValue>({
-  locale: "en",
+  locale: "ar",
   setLocale: () => {},
 });
 
 export function LocaleProvider({ children }: { children: React.ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved === "ar" ? "ar" : "en";
+    return saved === "en" ? "en" : "ar";
   });
 
   const prevMeIdRef = useRef<number | undefined>(undefined);
