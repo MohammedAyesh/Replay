@@ -179,6 +179,15 @@ const strings = {
       localeSaveFailed: "Couldn't save language setting",
       localeSaveFailedDesc: "Your preference is shown but wasn't saved. Please try again.",
     },
+    install: {
+      androidTitle: "Add Replay to your home screen",
+      androidDesc: "Get the full app experience — instant access, offline-ready.",
+      installBtn: "Install",
+      iosTitle: "Add Replay to your home screen",
+      iosDesc: "Install for instant access, just like a native app.",
+      iosStep1: "Tap the Share button in Safari",
+      iosStep2: "Tap \"Add to Home Screen\"",
+    },
   },
   ar: {
     nav: {
@@ -356,6 +365,15 @@ const strings = {
       profileUpdateFailedDesc: "يرجى المحاولة مرة أخرى.",
       localeSaveFailed: "تعذّر حفظ إعداد اللغة",
       localeSaveFailedDesc: "يظهر الإعداد ولكنه لم يُحفظ. يرجى المحاولة مرة أخرى.",
+    },
+    install: {
+      androidTitle: "أضف Replay إلى شاشتك الرئيسية",
+      androidDesc: "احصل على تجربة التطبيق الكاملة — وصول فوري وجاهز.",
+      installBtn: "تثبيت",
+      iosTitle: "أضف Replay إلى شاشتك الرئيسية",
+      iosDesc: "ثبّت التطبيق للوصول الفوري كأي تطبيق أصلي.",
+      iosStep1: "اضغط على زر المشاركة في Safari",
+      iosStep2: "اضغط \"إضافة إلى الشاشة الرئيسية\"",
     },
   },
 } as const;
