@@ -235,8 +235,8 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
   const startClip = useCallback(() => {
     const video = videoRef.current;
     if (!video || !durationRef.current) return;
-    const startSec = clip.startTime * durationRef.current;
-    const endSec = clip.endTime * durationRef.current;
+    const startSec = isFinite(clip.startTime) ? clip.startTime * durationRef.current : 0;
+    const endSec = isFinite(clip.endTime) ? clip.endTime * durationRef.current : durationRef.current;
     clipStartSec.current = startSec;
     clipEndSec.current = endSec;
     video.currentTime = startSec;
@@ -289,8 +289,8 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       if (!(dur > 0 && isFinite(dur))) return;
       didSeek = true;
       durationRef.current = dur;
-      clipStartSec.current = clip.startTime * dur;
-      clipEndSec.current = clip.endTime * dur;
+      clipStartSec.current = isFinite(clip.startTime) ? clip.startTime * dur : 0;
+      clipEndSec.current = isFinite(clip.endTime) ? clip.endTime * dur : dur;
       video.currentTime = clipStartSec.current;
       if (shouldPlayRef.current) {
         video.play().catch(() => {});
@@ -350,8 +350,8 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     function handleLoadedMetadata() {
       if (!video) return;
       durationRef.current = video.duration || 0;
-      clipStartSec.current = clip.startTime * durationRef.current;
-      clipEndSec.current = clip.endTime * durationRef.current;
+      clipStartSec.current = isFinite(clip.startTime) ? clip.startTime * durationRef.current : 0;
+      clipEndSec.current = isFinite(clip.endTime) ? clip.endTime * durationRef.current : durationRef.current;
       if (clip.cropPath.length > 0) {
         const kf = interpolateCropPath(clip.cropPath, 0);
         applyCrop(kf);

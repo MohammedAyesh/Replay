@@ -93,7 +93,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         let didSeek = false;
         const seekLocal = () => {
           const dur = video.duration || 0;
-          if (didSeek || !(dur > 0 && isFinite(dur))) return;
+          if (didSeek || !(dur > 0 && isFinite(dur) && isFinite(clip.startTime))) return;
           didSeek = true;
           video.currentTime = clip.startTime * dur;
           video.play().then(() => setIsPlaying(true)).catch(() => {});
@@ -126,7 +126,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     function seekToStartAndPlay() {
       if (!video || didSeek) return;
       const dur = video.duration || 0;
-      if (!(dur > 0 && isFinite(dur))) return;
+      if (!(dur > 0 && isFinite(dur) && isFinite(clip.startTime))) return;
       didSeek = true;
       video.currentTime = clip.startTime * dur;
       video.play().then(() => setIsPlaying(true)).catch(() => {});
@@ -169,8 +169,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         return;
       }
 
-      const sSec = clip.startTime * dur;
-      const eSec = clip.endTime * dur;
+      const sSec = isFinite(clip.startTime) ? clip.startTime * dur : 0;
+      const eSec = isFinite(clip.endTime) ? clip.endTime * dur : dur;
       const cDur = Math.max(0.1, eSec - sSec);
       const now = video.currentTime;
       const t = Math.max(0, Math.min(1, (now - sSec) / cDur));
@@ -195,8 +195,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     const onTime = () => {
       const dur = video.duration || 0;
       if (dur === 0) return;
-      const sSec = clip.startTime * dur;
-      const eSec = clip.endTime * dur;
+      const sSec = isFinite(clip.startTime) ? clip.startTime * dur : 0;
+      const eSec = isFinite(clip.endTime) ? clip.endTime * dur : dur;
       if (video.currentTime >= eSec) {
         video.pause();
         setIsPlaying(false);
@@ -212,8 +212,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     if (!video) return;
     const dur = video.duration || 0;
     if (dur === 0) return;
-    const sSec = clip.startTime * dur;
-    const eSec = clip.endTime * dur;
+    const sSec = isFinite(clip.startTime) ? clip.startTime * dur : 0;
+    const eSec = isFinite(clip.endTime) ? clip.endTime * dur : dur;
     if (video.paused) {
       if (video.currentTime >= eSec) video.currentTime = sSec;
       video.play().then(() => setIsPlaying(true)).catch(() => {});
@@ -306,7 +306,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
           video.src = localUrl;
           video.addEventListener("loadedmetadata", () => {
             const dur = video.duration || 0;
-            if (dur > 0) {
+            if (dur > 0 && isFinite(clip.startTime)) {
               video.currentTime = clip.startTime * dur;
               video.play().then(() => setIsPlaying(true)).catch(() => {});
             }
@@ -851,7 +851,7 @@ function PublishPanel({ clip, onClose }: { clip: UserClip; onClose: () => void }
     const onReady = () => {
       const dur = video.duration || 0;
       setDuration(dur);
-      const t = clip.thumbnailTime != null ? clip.thumbnailTime : clip.startTime * dur;
+      const t = clip.thumbnailTime != null ? clip.thumbnailTime : (isFinite(clip.startTime) ? clip.startTime * dur : 0);
       video.currentTime = t;
       setThumbnailTime(t);
     };

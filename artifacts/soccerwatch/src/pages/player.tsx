@@ -110,8 +110,8 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       didSeek = true;
       durationRef.current = dur;
       setDuration(dur);
-      clipStartSec.current = clip.startTime * dur;
-      clipEndSec.current = clip.endTime * dur;
+      clipStartSec.current = isFinite(clip.startTime) ? clip.startTime * dur : 0;
+      clipEndSec.current = isFinite(clip.endTime) ? clip.endTime * dur : dur;
       video.currentTime = clipStartSec.current;
       video.play().then(() => setIsPlaying(true)).catch(() => {});
     }
@@ -120,8 +120,8 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       if (!video) return;
       durationRef.current = video.duration || 0;
       setDuration(durationRef.current);
-      clipStartSec.current = clip.startTime * durationRef.current;
-      clipEndSec.current = clip.endTime * durationRef.current;
+      clipStartSec.current = isFinite(clip.startTime) ? clip.startTime * durationRef.current : 0;
+      clipEndSec.current = isFinite(clip.endTime) ? clip.endTime * durationRef.current : durationRef.current;
       if (clip.cropPath.length > 0) {
         const kf = interpolateCropPath(clip.cropPath, 0);
         video.style.transform = cropToTransform(kf);

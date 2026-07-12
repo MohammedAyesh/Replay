@@ -233,8 +233,8 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       if (!dur || isNaN(dur) || !isFinite(dur)) return;
       durationInitialized = true;
 
-      startSec = startTime * dur;
-      endSec = endTime * dur;
+      startSec = isFinite(startTime) ? startTime * dur : 0;
+      endSec = isFinite(endTime) ? endTime * dur : dur;
       clipDuration = Math.max(0.1, endSec - startSec);
 
       if (startSec < 0.05) {
