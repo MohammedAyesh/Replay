@@ -15,8 +15,7 @@ export interface FfmpegExportOptions {
   videoUrl: string;
   /**
    * Total recording duration in seconds.
-   * When provided, ffprobe is skipped entirely; must be obtained from
-   * the Bunny Stream Management API which is always accessible server-side.
+   * Obtained from the Bunny Stream Management API (server-to-server, no CDN access needed).
    */
   totalDuration: number;
   /** 0-1 fraction of total recording duration */
@@ -25,6 +24,12 @@ export interface FfmpegExportOptions {
   cropPath: KF[];
   aspectRatio: string;
   title: string;
+  /**
+   * Optional Referer header to include in FFmpeg's HTTP requests.
+   * Bunny CDN blocks requests without a matching Referer; pass the CDN origin
+   * (e.g. "https://vz-xxx.b-cdn.net/") so the CDN accepts server-side fetches.
+   */
+  referer?: string;
 }
 
 
@@ -97,7 +102,7 @@ function buildCropFilter(keyframes: KF[], clipDuration: number, is9to16: boolean
  * Returns the path to a temporary file that the caller is responsible for deleting.
  */
 export async function renderClip(options: FfmpegExportOptions): Promise<string> {
-  const { videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title } = options;
+  const { videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title, referer } = options;
 
   logger.info({ title, startTime, endTime, totalDuration }, "Starting FFmpeg render");
 
@@ -112,8 +117,18 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
 
   logger.info({ tmpPath, startSec, endSec, clipDuration, cropFilter }, "FFmpeg args ready");
 
+  // Build HTTP headers string for CDN access.
+  // Bunny CDN blocks server-side requests without browser-like headers;
+  // adding a matching Referer + a browser User-Agent bypasses that restriction.
+  const headerVal = [
+    referer ? `Referer: ${referer}` : null,
+    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  ].filter(Boolean).join("\r\n") + "\r\n";
+
   const args = [
-    // Fast seek before input (keyframe-accurate for both HLS and direct MP4)
+    // HTTP headers must come before -i so they apply to the input request
+    "-headers", headerVal,
+    // Fast seek before input (segment-level for HLS)
     "-ss", String(startSec),
     "-i", videoUrl,
     // Clip duration

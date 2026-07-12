@@ -571,11 +571,13 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
       const { duration: totalDuration } = await getBunnyVideoInfo(videoId);
       logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
 
-      // Use direct MP4 URL; more reliable than HLS for server-side FFmpeg access
-      const videoUrl = getBunnyDirectMp4Url(videoId);
-      logger.info({ clipId, videoUrl }, "Using direct MP4 URL for FFmpeg input");
+      // Use HLS URL for FFmpeg — pass CDN origin as Referer so Bunny CDN
+      // accepts the server-side request (CDN blocks requests without it).
+      const videoUrl = getBunnyPlaybackUrl(videoId);
+      const referer = `https://${new URL(videoUrl).host}/`;
+      logger.info({ clipId, videoUrl }, "Using HLS URL for FFmpeg input");
 
-      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title });
+      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer });
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
       await db
         .update(userClipsTable)
