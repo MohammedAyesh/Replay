@@ -71,13 +71,10 @@ function buildCropFilter(keyframes: KF[], clipDuration: number, is9to16: boolean
     x: kfToSourceX(kf),
   }));
 
-  // Build piecewise linear expression. Outside [t0..tN], clamp to first/last value.
-  // FFmpeg expression: if(lt(t\,tN)\,lerp_expr\,xLast)
-  // Commas in option values must be \, (backslash-comma) to avoid ambiguity.
-  function esc(s: string): string {
-    return s.replace(/,/g, "\\,");
-  }
-
+  // Build piecewise linear expression with plain commas throughout,
+  // then escape exactly once at the end before embedding in the filter string.
+  // Calling esc() inside the loop AND on the outer wrap causes double-escaping:
+  //   \,  →  \\,  which FFmpeg reads as literal-backslash + filter-separator.
   let xExpr = `${pts[pts.length - 1].x}`;
   for (let i = pts.length - 2; i >= 0; i--) {
     const a = pts[i];
@@ -90,11 +87,13 @@ function buildCropFilter(keyframes: KF[], clipDuration: number, is9to16: boolean
       const slope = (b.x - a.x) / tDiff;
       segExpr = `${a.x}+${slope.toFixed(4)}*(t-${a.t.toFixed(4)})`;
     }
-    xExpr = esc(`if(lt(t,${b.t.toFixed(4)}),${segExpr},${xExpr})`);
+    xExpr = `if(lt(t,${b.t.toFixed(4)}),${segExpr},${xExpr})`;
   }
-  xExpr = esc(`max(0,min(${SRC_W - OUT_W},${xExpr}))`);
+  // Clamp to valid pixel range, then escape commas once for the FFmpeg filter graph
+  const rawExpr = `max(0,min(${SRC_W - OUT_W},${xExpr}))`;
+  const escapedExpr = rawExpr.replace(/,/g, "\\,");
 
-  return `crop=${OUT_W}:${OUT_H}:${xExpr}:0`;
+  return `crop=${OUT_W}:${OUT_H}:${escapedExpr}:0`;
 }
 
 /**
