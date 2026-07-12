@@ -45,28 +45,50 @@ export interface FfmpegExportOptions {
  * In FFmpeg filter option values, commas must be escaped as \, because the
  * filter graph parser uses comma to separate filters.
  */
+// Maximum number of keyframes in the FFmpeg crop expression.
+// FFmpeg's expression evaluator hits a recursion/depth limit with deeply nested if() chains;
+// 30 segments is smooth enough for any pan and well within the limit.
+const MAX_CROP_KEYFRAMES = 30;
+
+/**
+ * Downsample keyframes to at most MAX_CROP_KEYFRAMES by picking evenly-spaced indices.
+ * Always retains the first and last keyframe so the pan path endpoints are preserved.
+ */
+function downsampleKeyframes(kfs: KF[]): KF[] {
+  if (kfs.length <= MAX_CROP_KEYFRAMES) return kfs;
+  const result: KF[] = [];
+  for (let i = 0; i < MAX_CROP_KEYFRAMES; i++) {
+    const idx = Math.round(i * (kfs.length - 1) / (MAX_CROP_KEYFRAMES - 1));
+    result.push(kfs[idx]);
+  }
+  return result;
+}
+
 function buildCropFilter(keyframes: KF[], clipDuration: number, is9to16: boolean): string {
   const OUT_W = is9to16 ? Math.round(SRC_H * 9 / 16) : 1920;
   const OUT_H = SRC_H;
 
-  const kfW0 = keyframes[0]?.w ?? (is9to16 ? (SRC_H * 9 / 16) / SRC_W : 0.5);
+  // Downsample before building the expression to avoid FFmpeg filter depth limits
+  const kfs = downsampleKeyframes(keyframes);
+
+  const kfW0 = kfs[0]?.w ?? (is9to16 ? (SRC_H * 9 / 16) / SRC_W : 0.5);
 
   function kfToSourceX(kf: KF): number {
     const cropCenterSrc = (kf.x + kfW0 / 2) * SRC_W;
     return Math.round(Math.max(0, Math.min(SRC_W - OUT_W, cropCenterSrc - OUT_W / 2)));
   }
 
-  if (keyframes.length === 0) {
+  if (kfs.length === 0) {
     const x = Math.round((SRC_W - OUT_W) / 2);
     return `crop=${OUT_W}:${OUT_H}:${x}:0`;
   }
 
-  if (keyframes.length === 1) {
-    return `crop=${OUT_W}:${OUT_H}:${kfToSourceX(keyframes[0])}:0`;
+  if (kfs.length === 1) {
+    return `crop=${OUT_W}:${OUT_H}:${kfToSourceX(kfs[0])}:0`;
   }
 
   // Convert keyframe t-fractions to absolute seconds within the clip (filter t starts at 0)
-  const pts = keyframes.map(kf => ({
+  const pts = kfs.map(kf => ({
     t: kf.t * clipDuration,
     x: kfToSourceX(kf),
   }));
