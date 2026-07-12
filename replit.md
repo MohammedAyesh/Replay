@@ -48,8 +48,14 @@ A mobile-first web app where amateur soccer players browse pre-recorded footage 
 
 ## Demo accounts
 
-- `alex@soccerwatch.com` / `demo`
+- `alex@soccerwatch.com` / `demo` (admin)
 - `sam@soccerwatch.com` / `demo`
+
+## Admin console
+
+- URL: `/admin` (not linked in the nav — navigate directly)
+- Access is controlled by `users.is_admin = true` in the DB; set it via SQL: `UPDATE users SET is_admin = true WHERE email = '...'`
+- Tabs: **Clips** (hide/show any clip from public feeds), **Accounts** (enable/disable users, grant admin), **Fields** (set thumbnail URL and recommendation weight), **Banners** (create/edit/delete banners with optional hyperlinks)
 
 ## Gotchas
 

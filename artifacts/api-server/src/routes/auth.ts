@@ -16,6 +16,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     name: user.name,
     email: user.email,
     isGuest: user.isGuest,
+    isAdmin: user.isAdmin,
     phone: user.phone ?? null,
     position: user.position ?? null,
     age: user.age ?? null,

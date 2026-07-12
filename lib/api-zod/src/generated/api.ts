@@ -30,6 +30,7 @@ export const LoginResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "isGuest": zod.boolean(),
+  "isAdmin": zod.boolean().optional(),
   "phone": zod.string().nullish(),
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
@@ -49,6 +50,7 @@ export const LoginAsGuestResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "isGuest": zod.boolean(),
+  "isAdmin": zod.boolean().optional(),
   "phone": zod.string().nullish(),
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
@@ -73,6 +75,7 @@ export const GetMeResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "isGuest": zod.boolean(),
+  "isAdmin": zod.boolean().optional(),
   "phone": zod.string().nullish(),
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
@@ -92,6 +95,7 @@ export const ListFieldsResponseItem = zod.object({
   "courts": zod.number(),
   "clipCount": zod.number(),
   "weight": zod.number().describe('Admin-controlled recommendation weight (higher = more prominent)'),
+  "thumbnailUrl": zod.string().nullish(),
   "latitude": zod.number().nullish(),
   "longitude": zod.number().nullish(),
   "lastRecordedAt": zod.string().nullish()
@@ -113,6 +117,7 @@ export const GetFieldResponse = zod.object({
   "courts": zod.number(),
   "clipCount": zod.number(),
   "weight": zod.number().describe('Admin-controlled recommendation weight (higher = more prominent)'),
+  "thumbnailUrl": zod.string().nullish(),
   "latitude": zod.number().nullish(),
   "longitude": zod.number().nullish(),
   "lastRecordedAt": zod.string().nullish()
@@ -587,6 +592,7 @@ export const UpdateLocaleResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "isGuest": zod.boolean(),
+  "isAdmin": zod.boolean().optional(),
   "phone": zod.string().nullish(),
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
@@ -617,6 +623,7 @@ export const UpdateProfileResponse = zod.object({
   "name": zod.string(),
   "email": zod.string(),
   "isGuest": zod.boolean(),
+  "isAdmin": zod.boolean().optional(),
   "phone": zod.string().nullish(),
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
@@ -718,7 +725,8 @@ export const ListBannersResponseItem = zod.object({
   "upperSubtext": zod.string().optional(),
   "title": zod.string(),
   "lowerSubtext": zod.string().optional(),
-  "imageUrl": zod.string()
+  "imageUrl": zod.string(),
+  "hyperlink": zod.string().nullish()
 })
 export const ListBannersResponse = zod.array(ListBannersResponseItem)
 

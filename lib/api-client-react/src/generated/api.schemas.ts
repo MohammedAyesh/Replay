@@ -19,6 +19,7 @@ export interface User {
   name: string;
   email: string;
   isGuest: boolean;
+  isAdmin?: boolean;
   /** @nullable */
   phone?: string | null;
   /** @nullable */
@@ -44,6 +45,8 @@ export interface Field {
   clipCount: number;
   /** Admin-controlled recommendation weight (higher = more prominent) */
   weight: number;
+  /** @nullable */
+  thumbnailUrl?: string | null;
   /** @nullable */
   latitude?: number | null;
   /** @nullable */
@@ -337,6 +340,8 @@ export interface Banner {
   title: string;
   lowerSubtext?: string;
   imageUrl: string;
+  /** @nullable */
+  hyperlink?: string | null;
 }
 
 export interface ImpressionInput {

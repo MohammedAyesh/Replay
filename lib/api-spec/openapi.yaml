@@ -802,6 +802,8 @@ components:
           type: string
         isGuest:
           type: boolean
+        isAdmin:
+          type: boolean
         phone:
           type: ["string", "null"]
         position:
@@ -839,6 +841,8 @@ components:
         weight:
           type: number
           description: Admin-controlled recommendation weight (higher = more prominent)
+        thumbnailUrl:
+          type: ["string", "null"]
         latitude:
           type: ["number", "null"]
         longitude:
@@ -1235,6 +1239,8 @@ components:
           type: string
         imageUrl:
           type: string
+        hyperlink:
+          type: ["string", "null"]
 
     ImpressionInput:
       type: object

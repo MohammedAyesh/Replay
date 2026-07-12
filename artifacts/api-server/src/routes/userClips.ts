@@ -422,6 +422,7 @@ router.get("/feed", async (req, res): Promise<void> => {
       shareCount: userClipsTable.shareCount,
       score: userClipsTable.score,
       visibility: userClipsTable.visibility,
+      isHidden: userClipsTable.isHidden,
       createdAt: userClipsTable.createdAt,
       creatorId: usersTable.id,
       creatorName: usersTable.name,
@@ -431,8 +432,9 @@ router.get("/feed", async (req, res): Promise<void> => {
     .innerJoin(usersTable, eq(userClipsTable.userId, usersTable.id))
     .orderBy(desc(userClipsTable.score), desc(userClipsTable.createdAt));
 
-  // Filter by visibility
+  // Filter by visibility and admin-hidden status
   const visible = rows.filter((row) => {
+    if ((row as { isHidden?: boolean }).isHidden) return false;
     if (row.visibility === "public") return true;
     if (row.visibility === "private") return row.creatorId === userId;
     if (!userId) return false;

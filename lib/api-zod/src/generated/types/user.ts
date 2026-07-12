@@ -11,6 +11,7 @@ export interface User {
   name: string;
   email: string;
   isGuest: boolean;
+  isAdmin?: boolean;
   /** @nullable */
   phone?: string | null;
   /** @nullable */

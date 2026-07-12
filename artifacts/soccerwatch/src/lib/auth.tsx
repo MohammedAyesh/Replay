@@ -18,10 +18,11 @@ export function useAuth() {
   const user = localUser ?? null;
   const isLoading = !isLoaded || (isLoaded && isMeLoading && isSignedIn === true);
   const isGuest = user?.isGuest ?? false;
+  const isAdmin = user?.isAdmin ?? false;
 
   const setUser = (_u: User | null) => {};
 
-  return { user, isLoading, isGuest, setUser };
+  return { user, isLoading, isGuest, isAdmin, setUser };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

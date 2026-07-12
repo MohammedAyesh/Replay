@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 
-function getStorageConfig(): { base: string; zone: string; key: string } | null {
+export function getStorageConfig(): { base: string; zone: string; key: string } | null {
   const accessKey = process.env.STORAGE_ACCESS_KEY ?? "";
   const zoneRegion = process.env.STORAGE_ZONE_REGION ?? "";
 
@@ -39,10 +39,11 @@ interface BunnyStorageItem {
   ContentType?: string;
 }
 
-interface BannerJson {
+export interface BannerJson {
   upperSubtext?: string;
   title?: string;
   lowerSubtext?: string;
+  hyperlink?: string | null;
 }
 
 export interface BannerItem {
@@ -51,6 +52,7 @@ export interface BannerItem {
   title: string;
   lowerSubtext: string;
   imageUrl: string;
+  hyperlink: string | null;
 }
 
 const cfg = getStorageConfig();
@@ -100,6 +102,7 @@ router.get("/banners", async (_req, res): Promise<void> => {
         title: json.title ?? folder.ObjectName,
         lowerSubtext: json.lowerSubtext ?? "",
         imageUrl: `/api/banners/${encodeURIComponent(folder.ObjectName)}/image`,
+        hyperlink: json.hyperlink ?? null,
       });
     }
 

@@ -15,6 +15,8 @@ export interface Field {
   /** Admin-controlled recommendation weight (higher = more prominent) */
   weight: number;
   /** @nullable */
+  thumbnailUrl?: string | null;
+  /** @nullable */
   latitude?: number | null;
   /** @nullable */
   longitude?: number | null;

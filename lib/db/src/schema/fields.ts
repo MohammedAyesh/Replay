@@ -10,6 +10,7 @@ export const fieldsTable = pgTable("fields", {
   weight: real("weight").notNull().default(1.0),
   latitude: real("latitude"),
   longitude: real("longitude"),
+  thumbnailUrl: text("thumbnail_url"),
   lastRecordedAt: timestamp("last_recorded_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

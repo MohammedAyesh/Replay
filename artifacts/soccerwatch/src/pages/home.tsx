@@ -68,6 +68,7 @@ export default function Home() {
     upperSubtext: b.upperSubtext ?? "",
     title: b.title ?? "",
     lowerSubtext: b.lowerSubtext ?? "",
+    hyperlink: b.hyperlink ?? null,
   }));
 
   const fallbackSlides = [
@@ -146,19 +147,29 @@ export default function Home() {
               </>
             )}
 
-            <div className="absolute inset-0 flex flex-col justify-end p-5">
-              <div className="relative z-10">
-                {slides[slide].upperSubtext && (
-                  <p className="text-primary text-[10px] font-bold uppercase tracking-widest mb-1">
-                    {slides[slide].upperSubtext}
-                  </p>
-                )}
-                <h2 className="font-display font-black text-white text-3xl leading-none uppercase mb-1">
-                  {slides[slide].title}
-                </h2>
-                <p className="text-white/70 text-sm">{slides[slide].lowerSubtext}</p>
-              </div>
-            </div>
+            {(() => {
+              const hl = (slides[slide] as { hyperlink?: string | null }).hyperlink;
+              const content = (
+                <div className="absolute inset-0 flex flex-col justify-end p-5">
+                  <div className="relative z-10">
+                    {slides[slide].upperSubtext && (
+                      <p className="text-primary text-[10px] font-bold uppercase tracking-widest mb-1">
+                        {slides[slide].upperSubtext}
+                      </p>
+                    )}
+                    <h2 className="font-display font-black text-white text-3xl leading-none uppercase mb-1">
+                      {slides[slide].title}
+                    </h2>
+                    <p className="text-white/70 text-sm">{slides[slide].lowerSubtext}</p>
+                  </div>
+                </div>
+              );
+              return hl ? (
+                <a href={hl} target="_blank" rel="noopener noreferrer" className="block absolute inset-0">
+                  {content}
+                </a>
+              ) : content;
+            })()}
           </motion.div>
         </AnimatePresence>
 

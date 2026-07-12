@@ -14,6 +14,7 @@ export const usersTable = pgTable("users", {
   position: text("position"),
   age: integer("age"),
   gender: text("gender"),
+  isDisabled: boolean("is_disabled").notNull().default(false),
   profileComplete: boolean("profile_complete").notNull().default(false),
   preferredLocale: text("preferred_locale"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

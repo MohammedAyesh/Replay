@@ -12,4 +12,6 @@ export interface Banner {
   title: string;
   lowerSubtext?: string;
   imageUrl: string;
+  /** @nullable */
+  hyperlink?: string | null;
 }
