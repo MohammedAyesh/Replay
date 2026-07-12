@@ -1138,21 +1138,14 @@ function UserClipCard({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const deleteUserClip = useDeleteUserClip();
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
 
   const startPct = (clip.startTime * 100).toFixed(0);
   const endPct = (clip.endTime * 100).toFixed(0);
   const durationHint = `${startPct}%–${endPct}%`;
   const isPrivate = clip.visibility === "private";
 
-  const handleDelete = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!confirmDelete) {
-      setConfirmDelete(true);
-      setTimeout(() => setConfirmDelete(false), 3000);
-      return;
-    }
+  const handleDelete = async () => {
     try {
       await deleteUserClip.mutateAsync({ id: clip.id });
       queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
@@ -1203,16 +1196,36 @@ function UserClipCard({
 
       {/* Delete button */}
       <button
-        onClick={handleDelete}
-        className={`absolute top-2 end-2 w-6 h-6 rounded-full flex items-center justify-center transition-colors z-10 ${
-          confirmDelete
-            ? "bg-destructive text-white"
-            : "bg-black/40 text-white/70 hover:bg-black/60"
-        }`}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDelete(true); }}
+        className="absolute bottom-3 end-2 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center active:opacity-70 transition-opacity z-10"
         aria-label="Delete clip"
       >
-        <Trash2 className="w-3 h-3" />
+        <Trash2 className="w-3 h-3 text-white/80" />
       </button>
+
+      {/* Delete confirmation overlay */}
+      <AnimatePresence>
+        {showDelete && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 rounded-xl bg-black/80 flex flex-col items-center justify-center gap-2 z-20"
+          >
+            <p className="text-white text-xs font-semibold text-center px-2">Delete clip?</p>
+            <div className="flex gap-2">
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDelete(false); }}
+                className="px-3 py-1.5 rounded-lg bg-white/20 text-white text-xs font-medium"
+              >Cancel</button>
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDelete(false); handleDelete(); }}
+                className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold"
+              >Delete</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="absolute bottom-2 start-2 end-2">
         <h3 className="text-white font-bold text-sm leading-tight mb-1 line-clamp-1">
