@@ -52,35 +52,46 @@ if (!clerkPubKey) {
   throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY");
 }
 
-function SignInPage() {
+function AuthHeroLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center field-pattern relative">
-      <div className="absolute inset-0 bg-black/50" />
+    <div className="flex min-h-[100dvh] items-center justify-center relative overflow-hidden bg-black">
+      <img
+        src={`${basePath}/auth-hero.png`}
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover object-center"
+        aria-hidden="true"
+      />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/40 to-black/80" />
       <div className="relative z-10 w-full flex justify-center px-4 py-12">
-        <SignIn
-          routing="path"
-          path={`${basePath}/sign-in`}
-          signUpUrl={`${basePath}/sign-up`}
-          forceRedirectUrl={`${basePath}/home`}
-        />
+        {children}
       </div>
     </div>
   );
 }
 
+function SignInPage() {
+  return (
+    <AuthHeroLayout>
+      <SignIn
+        routing="path"
+        path={`${basePath}/sign-in`}
+        signUpUrl={`${basePath}/sign-up`}
+        forceRedirectUrl={`${basePath}/home`}
+      />
+    </AuthHeroLayout>
+  );
+}
+
 function SignUpPage() {
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center field-pattern relative">
-      <div className="absolute inset-0 bg-black/50" />
-      <div className="relative z-10 w-full flex justify-center px-4 py-12">
-        <SignUp
-          routing="path"
-          path={`${basePath}/sign-up`}
-          signInUrl={`${basePath}/sign-in`}
-          forceRedirectUrl={`${basePath}/home`}
-        />
-      </div>
-    </div>
+    <AuthHeroLayout>
+      <SignUp
+        routing="path"
+        path={`${basePath}/sign-up`}
+        signInUrl={`${basePath}/sign-in`}
+        forceRedirectUrl={`${basePath}/home`}
+      />
+    </AuthHeroLayout>
   );
 }
 

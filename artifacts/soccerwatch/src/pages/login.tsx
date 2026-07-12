@@ -59,7 +59,7 @@ export default function Login() {
     <div className="flex-1 flex flex-col relative text-white overflow-hidden bg-black">
       {/* Full-bleed hero image */}
       <img
-        src={`${basePath}/brand-hero.jpg`}
+        src={`${basePath}/auth-hero.png`}
         alt=""
         className="absolute inset-0 w-full h-full object-cover object-center"
         aria-hidden="true"
