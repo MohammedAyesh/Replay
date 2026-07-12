@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
+import { Readable } from "stream";
 import { eq, and, desc, inArray } from "drizzle-orm";
-import fs from "fs";
 import { db, userClipsTable, usersTable, likesTable, followsTable } from "@workspace/db";
 import {
   CreateUserClipBody,
@@ -20,10 +20,20 @@ import {
   RecordShareResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { getBunnyPlaybackUrl, getBunnyThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
+import {
+  getBunnyPlaybackUrl,
+  getBunnyThumbnailUrl,
+  isBunnyConfigured,
+  isBunnyStorageConfigured,
+  uploadToBunnyStorage,
+} from "../lib/bunny";
 import { renderClip, cleanupTempFile } from "../lib/ffmpegExport";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
+
+/** Clip IDs currently being rendered — prevents duplicate concurrent jobs. */
+const inFlight = new Set<number>();
 
 // Engagement scoring: weighted composite of likes, views, and recency
 function computeScore(likeCount: number, viewCount: number, shareCount: number, createdAt: Date): number {
@@ -93,6 +103,8 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       thumbnailTime,
       thumbnailUrl,
       playbackUrl,
+      exportStatus: row.exportStatus ?? null,
+      exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
     })
   );
@@ -130,6 +142,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       thumbnailTime,
       thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
       playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+      exportStatus: row.exportStatus ?? null,
+      exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
     };
   });
@@ -242,6 +256,8 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
       thumbnailTime,
       thumbnailUrl,
       playbackUrl,
+      exportStatus: row.exportStatus ?? null,
+      exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
     })
   );
@@ -497,79 +513,135 @@ router.get("/feed", async (req, res): Promise<void> => {
 
 /**
  * POST /user-clips/:id/export
- * Server-side FFmpeg render — trims + crops the clip and returns an MP4.
- * Works on all platforms including iOS (no MediaRecorder needed on device).
+ * Kick off a background FFmpeg render + Bunny Storage upload.
+ * Returns immediately with { status: "pending" | "done", url? }.
+ * If already exported, returns the cached URL without re-rendering.
  */
 router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
-  if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
-    return;
-  }
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
 
   const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const clipId = parseInt(rawId, 10);
-  if (isNaN(clipId)) {
-    res.status(400).json({ error: "Invalid clip id" });
-    return;
-  }
+  if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
 
   const [clip] = await db
     .select()
     .from(userClipsTable)
     .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
 
-  if (!clip) {
-    res.status(404).json({ error: "Clip not found" });
+  if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  if (!isBunnyConfigured()) { res.status(400).json({ error: "Video playback not configured" }); return; }
+  if (!isBunnyStorageConfigured()) { res.status(400).json({ error: "Export storage not configured" }); return; }
+
+  // Already exported — return the cached URL immediately (no re-render)
+  if (clip.exportStatus === "done" && clip.exportedUrl) {
+    res.json({ status: "done", url: clip.exportedUrl });
     return;
   }
 
-  if (!isBunnyConfigured()) {
-    res.status(400).json({ error: "Video playback not configured" });
+  // Render already in progress (in this process or leftover from last restart)
+  if (inFlight.has(clipId) || clip.exportStatus === "pending") {
+    res.json({ status: "pending" });
     return;
   }
 
+  // Mark pending and respond immediately so the client can start polling
+  inFlight.add(clipId);
+  await db
+    .update(userClipsTable)
+    .set({ exportStatus: "pending", exportedUrl: null })
+    .where(eq(userClipsTable.id, clipId));
+  res.json({ status: "pending" });
+
+  // Fire-and-forget: render → upload → update DB
   const hlsUrl = getBunnyPlaybackUrl(clip.videoId);
   const startTime = parseFloat(clip.startTime);
   const endTime = parseFloat(clip.endTime);
   const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
 
-  req.log.info({ clipId, startTime, endTime, aspectRatio: clip.aspectRatio }, "Exporting clip via FFmpeg");
-
-  let tmpPath: string | null = null;
-  try {
-    tmpPath = await renderClip({
-      hlsUrl,
-      startTime,
-      endTime,
-      cropPath,
-      aspectRatio: clip.aspectRatio,
-      title: clip.title,
-    });
-
-    const stat = fs.statSync(tmpPath);
-    const safeName = clip.title.replace(/[^a-z0-9_\-]/gi, "_") || "clip";
-
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);
-    res.setHeader("Content-Length", stat.size);
-    res.setHeader("Cache-Control", "no-store");
-
-    const stream = fs.createReadStream(tmpPath);
-    stream.pipe(res);
-    stream.on("end", () => {
+  void (async () => {
+    let tmpPath: string | null = null;
+    try {
+      logger.info({ clipId, startTime, endTime }, "Starting background clip export");
+      tmpPath = await renderClip({ hlsUrl, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title });
+      const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
+      await db
+        .update(userClipsTable)
+        .set({ exportStatus: "done", exportedUrl })
+        .where(eq(userClipsTable.id, clipId));
+      logger.info({ clipId, exportedUrl }, "Clip export complete");
+    } catch (err) {
+      logger.error({ err, clipId }, "Background clip export failed");
+      await db
+        .update(userClipsTable)
+        .set({ exportStatus: "error" })
+        .where(eq(userClipsTable.id, clipId));
+    } finally {
+      inFlight.delete(clipId);
       if (tmpPath) cleanupTempFile(tmpPath);
-    });
-    stream.on("error", (err) => {
-      req.log.error({ err }, "Error streaming clip file");
-      if (tmpPath) cleanupTempFile(tmpPath);
-      if (!res.headersSent) res.status(500).json({ error: "Stream error" });
-    });
-  } catch (err) {
-    req.log.error({ err, clipId }, "FFmpeg export failed");
-    if (tmpPath) cleanupTempFile(tmpPath);
-    if (!res.headersSent) res.status(500).json({ error: "Export failed" });
-  }
+    }
+  })();
+});
+
+/**
+ * GET /user-clips/:id/export-status
+ * Poll this while waiting for a background export to finish.
+ * Returns { status: "idle"|"pending"|"done"|"error", url: string|null }.
+ */
+router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+
+  const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const clipId = parseInt(rawId, 10);
+  if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
+
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
+
+  if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
+
+  res.json({ status: clip.exportStatus ?? "idle", url: clip.exportedUrl ?? null });
+});
+
+/**
+ * GET /user-clips/:id/download
+ * Proxy-downloads the rendered MP4 from Bunny Storage through our server.
+ * Avoids CORS issues and works uniformly on iOS and desktop.
+ */
+router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+
+  const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const clipId = parseInt(rawId, 10);
+  if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
+
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
+
+  if (!clip || !clip.exportedUrl) { res.status(404).json({ error: "Export not ready" }); return; }
+
+  const safeName = clip.title.replace(/[^a-z0-9_\-]/gi, "_") || "clip";
+  const upstream = await fetch(clip.exportedUrl);
+  if (!upstream.ok || !upstream.body) { res.status(502).json({ error: "Could not fetch from storage" }); return; }
+
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);
+  const contentLength = upstream.headers.get("content-length");
+  if (contentLength) res.setHeader("Content-Length", contentLength);
+
+  const nodeStream = Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>);
+  nodeStream.pipe(res);
+  nodeStream.on("error", (err) => {
+    logger.error({ err }, "Error proxying clip download");
+    if (!res.headersSent) res.status(500).json({ error: "Download failed" });
+  });
 });
 
 export default router;

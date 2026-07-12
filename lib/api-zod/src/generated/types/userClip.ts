@@ -25,5 +25,9 @@ export interface UserClip {
   thumbnailUrl?: string | null;
   /** @nullable */
   playbackUrl?: string | null;
+  /** @nullable */
+  exportStatus?: string | null;
+  /** @nullable */
+  exportedUrl?: string | null;
   createdAt: string;
 }

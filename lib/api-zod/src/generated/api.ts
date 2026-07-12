@@ -251,6 +251,8 @@ export const CreateUserClipResponse = zod.object({
   "thumbnailTime": zod.number().nullish(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
+  "exportStatus": zod.string().nullish(),
+  "exportedUrl": zod.string().nullish(),
   "createdAt": zod.string()
 })
 
@@ -278,6 +280,8 @@ export const ListUserClipsResponseItem = zod.object({
   "thumbnailTime": zod.number().nullish(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
+  "exportStatus": zod.string().nullish(),
+  "exportedUrl": zod.string().nullish(),
   "createdAt": zod.string()
 })
 export const ListUserClipsResponse = zod.array(ListUserClipsResponseItem)
@@ -326,6 +330,8 @@ export const UpdateUserClipResponse = zod.object({
   "thumbnailTime": zod.number().nullish(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),
+  "exportStatus": zod.string().nullish(),
+  "exportedUrl": zod.string().nullish(),
   "createdAt": zod.string()
 })
 

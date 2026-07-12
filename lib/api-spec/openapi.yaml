@@ -1033,6 +1033,10 @@ components:
           type: ["string", "null"]
         playbackUrl:
           type: ["string", "null"]
+        exportStatus:
+          type: ["string", "null"]
+        exportedUrl:
+          type: ["string", "null"]
         createdAt:
           type: string
 

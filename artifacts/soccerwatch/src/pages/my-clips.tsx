@@ -56,7 +56,7 @@ function interpolateX(keyframes: KF[], t: number): number {
 /*  Player overlay for user-created clips                               */
 /* ------------------------------------------------------------------ */
 
-type ExportState = "idle" | "exporting" | "done" | "error";
+type ExportState = "idle" | "polling" | "ready" | "error";
 
 function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClose: () => void; onDownloaded?: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -66,8 +66,12 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const localUrlRef = useRef<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [exportState, setExportState] = useState<ExportState>("idle");
-  const [exportProgress, setExportProgress] = useState(0);
+  const [exportState, setExportState] = useState<ExportState>(
+    clip.exportStatus === "done" ? "ready" : "idle"
+  );
+  const [exportedUrl, setExportedUrl] = useState<string | null>(clip.exportedUrl ?? null);
+  /** Set to false on unmount to abort the polling loop. */
+  const pollingRef = useRef(false);
   const [isLocal, setIsLocal] = useState(false);
   /**
    * Local blobs are already trimmed+cropped (they start at t=0 and run to clipDuration).
@@ -234,6 +238,9 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     }
   }, [lStart, lEnd]);
 
+  /* Stop polling when the player closes */
+  useEffect(() => () => { pollingRef.current = false; }, []);
+
   /* Fullscreen toggle */
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -249,12 +256,13 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     return () => document.removeEventListener("fullscreenchange", handler);
   }, []);
 
-  /** Save a rendered blob to IndexedDB and deliver it to the user's device. */
+  /**
+   * Deliver a blob (client-side fallback path) — saves to IDB and triggers
+   * share sheet or file download.
+   */
   const deliverBlob = useCallback(async (blob: Blob, mimeType: string) => {
     const ext = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
     const filename = `${clip.title || "clip"}.${ext}`;
-
-    // Local blobs are already trimmed — always start/end at 0/1
     const record: Parameters<typeof saveLocalClip>[0] = {
       clipId: clip.id,
       userId: user?.id ?? 0,
@@ -268,22 +276,16 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       downloadedAt: new Date().toISOString(),
       playbackUrl: clip.playbackUrl ?? null,
     };
-
     await saveLocalClip(record);
-
     const file = new File([blob], filename, { type: mimeType });
     const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
     if (nav.canShare?.({ files: [file] })) {
-      try {
-        await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file], title: clip.title });
-      } catch { /* user dismissed */ }
+      try { await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file], title: clip.title }); }
+      catch { /* dismissed */ }
     } else {
       triggerDownload(blob, filename);
     }
-
     onDownloaded?.();
-
-    // Switch player to the local blob immediately (plays from 0 to end)
     setLocalTimingOverride({ start: 0, end: 1 });
     setIsLocal(true);
     const localUrl = createLocalBlobUrl(record);
@@ -300,64 +302,110 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     }
   }, [clip, user?.id, onDownloaded]);
 
+  /**
+   * Fetch the server-rendered MP4 through our proxy and deliver to the device.
+   * The proxy avoids CORS issues and sets proper Content-Disposition headers.
+   */
+  const deliverViaProxy = useCallback(async () => {
+    const filename = `${clip.title || "clip"}.mp4`;
+    const res = await fetch(`/api/user-clips/${clip.id}/download`, { credentials: "include" });
+    if (!res.ok) throw new Error("Proxy download failed");
+    const blob = await res.blob();
+    const file = new File([blob], filename, { type: "video/mp4" });
+    const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
+    if (nav.canShare?.({ files: [file] })) {
+      try { await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file], title: clip.title }); }
+      catch { /* dismissed */ }
+    } else {
+      triggerDownload(blob, filename);
+    }
+    toast({ title: "Saved!", description: "Clip saved to your device." });
+  }, [clip, toast]);
+
   const handleExport = useCallback(async () => {
-    if (exportState === "exporting") return;
+    if (exportState === "polling") return;
+
+    // Already exported — re-deliver without re-rendering
+    if (exportState === "ready" && exportedUrl) {
+      await deliverViaProxy();
+      return;
+    }
 
     if (!clip.playbackUrl) {
       toast({ title: t.export.noUrl, variant: "destructive" });
       return;
     }
 
-    setExportState("exporting");
-    setExportProgress(0);
+    setExportState("polling");
+    pollingRef.current = true;
 
     try {
-      // Prefer server-side FFmpeg render — works on iOS and all browsers
-      const serverRes = await fetch(`/api/user-clips/${clip.id}/export`, {
+      const startRes = await fetch(`/api/user-clips/${clip.id}/export`, {
         method: "POST",
         credentials: "include",
       });
 
-      if (serverRes.ok) {
-        const blob = await serverRes.blob();
-        await deliverBlob(blob, "video/mp4");
-        setExportState("done");
-        toast({ title: "Saved to gallery", description: "Clip saved to your device and appears in Saved." });
-        setTimeout(() => setExportState("idle"), 3000);
+      if (!startRes.ok) {
+        // Bunny storage not configured — fall back to client-side capture
+        const result = await exportClip({
+          playbackUrl: clip.playbackUrl,
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+          cropPath: clip.cropPath ?? [],
+          title: clip.title,
+          aspectRatio: clip.aspectRatio,
+          returnBlob: true,
+        });
+        if (result && typeof result === "object" && "blob" in result) {
+          await deliverBlob(result.blob, result.mimeType);
+          pollingRef.current = false;
+          setExportState("ready");
+        } else {
+          throw new Error("Client-side export produced no output");
+        }
         return;
       }
 
-      // Fall back to client-side export (dev mode / Bunny not configured)
-      const result = await exportClip({
-        playbackUrl: clip.playbackUrl,
-        startTime: clip.startTime,
-        endTime: clip.endTime,
-        cropPath: clip.cropPath ?? [],
-        title: clip.title,
-        aspectRatio: clip.aspectRatio,
-        onProgress: (p) => setExportProgress(Math.round(p * 100)),
-        returnBlob: true,
-      });
+      const startData = await startRes.json() as { status: string; url?: string };
 
-      if (result && typeof result === "object" && "blob" in result) {
-        await deliverBlob(result.blob, result.mimeType);
-        setExportState("done");
-        toast({ title: "Saved to gallery", description: "Clip saved to your device and appears in Saved." });
-        setTimeout(() => setExportState("idle"), 3000);
-      } else {
-        // Server failed and client-side produced nothing — surface the error
-        throw new Error("Export produced no output");
+      if (startData.status === "done" && startData.url) {
+        // Was already exported before — deliver right away
+        setExportedUrl(startData.url);
+        pollingRef.current = false;
+        setExportState("ready");
+        await deliverViaProxy();
+        return;
       }
+
+      // status === "pending" — poll until done (max 3 minutes)
+      const maxAttempts = 90;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise<void>((r) => setTimeout(r, 2000));
+        if (!pollingRef.current) return; // player closed
+
+        const statusRes = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
+        if (!statusRes.ok) throw new Error("Status check failed");
+        const status = await statusRes.json() as { status: string; url?: string };
+
+        if (status.status === "done" && status.url) {
+          setExportedUrl(status.url);
+          pollingRef.current = false;
+          setExportState("ready");
+          await deliverViaProxy();
+          return;
+        }
+        if (status.status === "error") throw new Error("Server render failed");
+        // still pending — keep polling
+      }
+
+      throw new Error("Export timed out after 3 minutes");
     } catch {
+      pollingRef.current = false;
       setExportState("error");
-      toast({
-        title: t.export.error,
-        description: t.export.errorDesc,
-        variant: "destructive",
-      });
-      setTimeout(() => setExportState("idle"), 3000);
+      toast({ title: t.export.error, description: t.export.errorDesc, variant: "destructive" });
+      setTimeout(() => setExportState("idle"), 4000);
     }
-  }, [clip, exportState, t, toast, deliverBlob]);
+  }, [clip, exportState, exportedUrl, t, toast, deliverBlob, deliverViaProxy]);
 
   return (
     <motion.div
@@ -416,11 +464,11 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         {/* Export button */}
         <button
           onClick={handleExport}
-          disabled={exportState === "exporting"}
+          disabled={exportState === "polling"}
           className={`flex items-center gap-1.5 px-3 h-10 rounded-full text-sm font-semibold transition-all active:scale-95 shrink-0 pointer-events-auto ${
-            exportState === "exporting"
+            exportState === "polling"
               ? "bg-white/20 text-white/60 cursor-not-allowed"
-              : exportState === "done"
+              : exportState === "ready"
               ? "bg-green-500 text-white"
               : exportState === "error"
               ? "bg-red-500/80 text-white"
@@ -428,10 +476,14 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
           }`}
           aria-label={t.export.button}
         >
-          <Download className="w-4 h-4 shrink-0" />
+          {exportState === "polling"
+            ? <span className="w-4 h-4 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+            : <Download className="w-4 h-4 shrink-0" />}
           <span>
-            {exportState === "exporting"
-              ? t.export.exporting(exportProgress)
+            {exportState === "polling"
+              ? "Processing…"
+              : exportState === "ready"
+              ? "Download"
               : exportState === "error"
               ? t.export.error
               : t.export.button}
