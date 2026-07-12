@@ -13,7 +13,7 @@ import { FullscreenVideoProvider } from "@/lib/fullscreen-video";
 
 import Landing from "@/pages/login";
 import Home from "@/pages/home";
-import Watch from "@/pages/watch";
+// import Watch from "@/pages/watch";
 import Fields from "@/pages/fields";
 import FieldDetail from "@/pages/field-detail";
 import Player from "@/pages/player";
@@ -130,7 +130,7 @@ function AppRouter() {
         <Route path="/sign-up/*?" component={SignUpPage} />
         <Route path="/onboarding" component={Onboarding} />
         <Route path="/home" component={Home} />
-        <Route path="/watch" component={Watch} />
+        {/* <Route path="/watch" component={Watch} /> */}
         <Route path="/fields" component={Fields} />
         <Route path="/fields/:id" component={FieldDetail} />
         <Route path="/player/:id" component={Player} />

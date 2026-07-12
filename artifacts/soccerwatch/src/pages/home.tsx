@@ -1,24 +1,20 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronRight, MapPin, Heart, Play } from "lucide-react";
+import { ChevronRight, MapPin } from "lucide-react";
 // MapPin kept for location state UI
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import {
   useListBanners,
   useGetBunnyCollections,
-  useGetFeed,
   getListBannersQueryKey,
-  getGetFeedQueryKey,
 } from "@workspace/api-client-react";
 
 const BANNER_INTERVAL = 5000;
 
 
-type DiscoverItem =
-  | { kind: "field"; id: string; name: string; videoCount: number; previewImageUrl: string | null }
-  | { kind: "clip"; id: number; title: string; thumbnailUrl: string | null; likeCount: number; viewCount: number; score: number };
+type DiscoverItem = { kind: "field"; id: string; name: string; videoCount: number; previewImageUrl: string | null };
 
 export default function Home() {
   const { t } = useTranslation();
@@ -56,54 +52,16 @@ export default function Home() {
   const { data: collectionsData } = useGetBunnyCollections();
   const collections = collectionsData ?? [];
 
-  const { data: feedData } = useGetFeed({
-    query: {
-      queryKey: getGetFeedQueryKey(),
-      staleTime: 5 * 60 * 1000,
-      gcTime: 5 * 60 * 1000,
-    },
-  });
-  const clips = feedData ?? [];
-
   const discoverItems = useMemo<DiscoverItem[]>(() => {
-    // Top 3 fields — Bunny returns them newest-first by default
-    const topFields: DiscoverItem[] = collections.slice(0, 3).map((c) => ({
+    // Show only fields in the Discover section
+    return collections.slice(0, 6).map((c) => ({
       kind: "field" as const,
       id: c.guid,
       name: c.name,
       videoCount: c.videoCount,
       previewImageUrl: c.previewImageUrl ?? null,
     }));
-
-    // Top 3 reels — scored by engagement × time decay (168 h half-life)
-    const hoursAgo = (iso: string) =>
-      Math.max(0, (Date.now() - new Date(iso).getTime()) / 36e5);
-
-    const topClips: DiscoverItem[] = clips
-      .map((c) => {
-        const h = hoursAgo(c.createdAt);
-        const decay = Math.exp(-h / 168);
-        return {
-          kind: "clip" as const,
-          id: c.id,
-          title: c.title,
-          thumbnailUrl: c.thumbnailUrl ?? null,
-          likeCount: c.likeCount,
-          viewCount: c.viewCount,
-          score: (c.likeCount * 5 + c.viewCount + c.shareCount * 10) * decay,
-        };
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
-
-    // Interleave: reel, field, reel, field, reel, field
-    const mixed: DiscoverItem[] = [];
-    for (let i = 0; i < 3; i++) {
-      if (i < topClips.length) mixed.push(topClips[i]);
-      if (i < topFields.length) mixed.push(topFields[i]);
-    }
-    return mixed;
-  }, [collections, clips]);
+  }, [collections]);
 
   const bannerSlides = banners.map((b) => ({
     id: b.id,
@@ -249,13 +207,9 @@ export default function Home() {
 
       {discoverItems.length > 0 ? (
         <div className="flex gap-3 overflow-x-auto px-4 pb-4 snap-x snap-mandatory no-scrollbar">
-          {discoverItems.map((item, idx) =>
-            item.kind === "field" ? (
-              <FieldCard key={`field-${item.id}`} item={item} t={t} idx={idx} />
-            ) : (
-              <ClipCard key={`clip-${item.id}`} item={item} t={t} idx={idx} />
-            )
-          )}
+          {discoverItems.map((item, idx) => (
+            <FieldCard key={`field-${item.id}`} item={item} t={t} idx={idx} />
+          ))}
         </div>
       ) : (
         <div className="px-4 pb-4 text-center py-8">
@@ -313,56 +267,3 @@ function FieldCard({
   );
 }
 
-function ClipCard({
-  item,
-  t,
-  idx,
-}: {
-  item: Extract<DiscoverItem, { kind: "clip" }>;
-  t: ReturnType<typeof useTranslation>["t"];
-  idx: number;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: idx * 0.04, duration: 0.3 }}
-    >
-      <Link
-        href="/watch"
-        className="relative shrink-0 snap-start w-36 aspect-[9/16] rounded-2xl overflow-hidden block group"
-      >
-        {item.thumbnailUrl ? (
-          <img
-            src={item.thumbnailUrl}
-            alt={item.title}
-            className="absolute inset-0 w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="absolute inset-0 field-pattern bg-[#0d1f0d]" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-        <div className="absolute top-2.5 start-2.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60 bg-black/30 rounded-full px-2 py-0.5">
-            Reel
-          </span>
-        </div>
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-active:opacity-100 transition-opacity">
-          <div className="w-9 h-9 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-            <Play className="w-4 h-4 text-white fill-white" />
-          </div>
-        </div>
-        <div className="absolute inset-0 flex flex-col justify-end p-2.5">
-          <p className="text-white font-semibold text-xs leading-snug line-clamp-2">{item.title}</p>
-          {item.likeCount > 0 && (
-            <span className="flex items-center gap-1 text-white/60 text-xs mt-1">
-              <Heart className="w-3 h-3" />
-              {item.likeCount.toLocaleString()}
-            </span>
-          )}
-        </div>
-      </Link>
-    </motion.div>
-  );
-}
