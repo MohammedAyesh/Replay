@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;900&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
@@ -54,6 +54,7 @@
   --font-sans: var(--app-font-sans);
   --font-serif: var(--app-font-serif);
   --font-mono: var(--app-font-mono);
+  --font-display: var(--app-font-display);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -62,57 +63,66 @@
 }
 
 :root {
-  --background: 0 0% 100%;
-  --foreground: 220 55% 12%;
-  --card: 0 0% 100%;
-  --card-foreground: 220 55% 12%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 220 55% 12%;
-  --primary: 24 95% 53%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 94%;
-  --secondary-foreground: 220 55% 12%;
-  --muted: 220 12% 95%;
-  --muted-foreground: 220 10% 50%;
-  --accent: 24 95% 53%;
-  --accent-foreground: 0 0% 100%;
+  /* Near-black backgrounds */
+  --background: 0 0% 4%;
+  --foreground: 0 0% 96%;
+  --card: 0 0% 7%;
+  --card-foreground: 0 0% 96%;
+  --popover: 0 0% 7%;
+  --popover-foreground: 0 0% 96%;
+
+  /* Neon green primary — #39FF14 ≈ hsl(106 100% 54%) */
+  --primary: 106 100% 54%;
+  --primary-foreground: 0 0% 0%;
+
+  --secondary: 0 0% 12%;
+  --secondary-foreground: 0 0% 90%;
+
+  --muted: 0 0% 12%;
+  --muted-foreground: 0 0% 55%;
+
+  --accent: 106 100% 54%;
+  --accent-foreground: 0 0% 0%;
+
   --destructive: 348 100% 58%;
   --destructive-foreground: 0 0% 100%;
-  --border: 0 0% 92%;
-  --input: 0 0% 92%;
-  --ring: 24 95% 53%;
+
+  --border: 0 0% 16%;
+  --input: 0 0% 14%;
+  --ring: 106 100% 54%;
   --radius: 0.75rem;
 
   --app-font-sans: 'Space Grotesk', sans-serif;
   --app-font-serif: 'Space Grotesk', serif;
   --app-font-mono: 'Space Grotesk', monospace;
+  --app-font-display: 'Barlow Condensed', 'Space Grotesk', sans-serif;
   --app-font-arabic: 'IBM Plex Sans Arabic', 'Space Grotesk', sans-serif;
 
   --opaque-button-border-intensity: -8;
-  --elevate-1: rgba(0,0,0, .03);
-  --elevate-2: rgba(0,0,0, .08);
+  --elevate-1: rgba(255,255,255, .03);
+  --elevate-2: rgba(255,255,255, .06);
 }
 
 .dark {
-  --background: 0 0% 100%;
-  --foreground: 220 55% 12%;
-  --card: 0 0% 100%;
-  --card-foreground: 220 55% 12%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 220 55% 12%;
-  --primary: 24 95% 53%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 94%;
-  --secondary-foreground: 220 55% 12%;
-  --muted: 220 12% 95%;
-  --muted-foreground: 220 10% 50%;
-  --accent: 24 95% 53%;
-  --accent-foreground: 0 0% 100%;
+  --background: 0 0% 4%;
+  --foreground: 0 0% 96%;
+  --card: 0 0% 7%;
+  --card-foreground: 0 0% 96%;
+  --popover: 0 0% 7%;
+  --popover-foreground: 0 0% 96%;
+  --primary: 106 100% 54%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 0 0% 12%;
+  --secondary-foreground: 0 0% 90%;
+  --muted: 0 0% 12%;
+  --muted-foreground: 0 0% 55%;
+  --accent: 106 100% 54%;
+  --accent-foreground: 0 0% 0%;
   --destructive: 348 100% 58%;
   --destructive-foreground: 0 0% 100%;
-  --border: 0 0% 92%;
-  --input: 0 0% 92%;
-  --ring: 24 95% 53%;
+  --border: 0 0% 16%;
+  --input: 0 0% 14%;
+  --ring: 106 100% 54%;
 }
 
 @layer base {
@@ -129,11 +139,15 @@
   --app-font-serif: 'IBM Plex Sans Arabic', 'Space Grotesk', serif;
 }
 
+.font-display {
+  font-family: var(--app-font-display);
+}
+
 .field-pattern {
-  background-color: #0d1b3e;
-  background-image: 
-    linear-gradient(rgba(59, 130, 246, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(249, 115, 22, 0.08) 1px, transparent 1px);
+  background-color: #0a0a0a;
+  background-image:
+    linear-gradient(rgba(57, 255, 20, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(57, 255, 20, 0.06) 1px, transparent 1px);
   background-size: 60px 60px;
   background-position: center center;
 }

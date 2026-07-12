@@ -32,10 +32,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {!hideTabBar && (
         <nav
           className={cn(
-            "absolute bottom-0 start-0 end-0 z-50 flex items-center justify-around pb-safe pt-2 px-4 h-16 backdrop-blur-md",
+            "absolute bottom-0 start-0 end-0 z-50 flex items-center justify-around pb-safe pt-2 px-4 h-16 backdrop-blur-md border-t",
             useTranslucentBar
-              ? "bg-black/80 text-white"
-              : "bg-background/95 text-muted-foreground"
+              ? "bg-black/85 border-white/5 text-white"
+              : "bg-zinc-950/95 border-zinc-800/60 text-muted-foreground"
           )}
         >
           <NavItem
@@ -86,15 +86,15 @@ function NavItem({
   isTranslucent: boolean;
 }) {
   return (
-    <Link href={href} className="flex flex-col items-center justify-center gap-1 w-16">
+    <Link href={href} className="flex flex-col items-center justify-center gap-0.5 w-16 py-1">
       <div
         className={cn(
           "transition-colors",
           isActive
             ? "text-primary"
             : isTranslucent
-            ? "text-white/70 hover:text-white"
-            : "text-muted-foreground hover:text-foreground"
+            ? "text-white/60 hover:text-white"
+            : "text-zinc-500 hover:text-zinc-300"
         )}
       >
         {icon}
@@ -105,12 +105,15 @@ function NavItem({
           isActive
             ? "text-primary"
             : isTranslucent
-            ? "text-white/70"
-            : "text-muted-foreground"
+            ? "text-white/50"
+            : "text-zinc-500"
         )}
       >
         {label}
       </span>
+      {isActive && (
+        <span className="w-1 h-1 rounded-full bg-primary mt-0.5" />
+      )}
     </Link>
   );
 }

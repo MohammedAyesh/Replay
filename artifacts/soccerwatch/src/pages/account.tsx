@@ -104,7 +104,7 @@ export default function Account() {
       <div className="flex-1 overflow-y-auto pb-24">
         {/* Profile Card */}
         <div className="p-6 flex flex-col items-center bg-background">
-          <div className="w-24 h-24 rounded-full bg-[#0d1f0d] text-primary flex items-center justify-center text-4xl font-bold mb-4 shadow-inner">
+          <div className="w-24 h-24 rounded-full bg-zinc-800 text-primary flex items-center justify-center text-4xl font-bold mb-4 shadow-inner">
             {initial}
           </div>
           <h2 className="text-xl font-bold text-foreground">{name}</h2>
@@ -226,7 +226,7 @@ function LanguageToggle() {
           onClick={() => setLocale("en")}
           className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
             locale === "en"
-              ? "bg-white text-foreground shadow-sm"
+              ? "bg-zinc-700 text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
@@ -236,7 +236,7 @@ function LanguageToggle() {
           onClick={() => setLocale("ar")}
           className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
             locale === "ar"
-              ? "bg-white text-foreground shadow-sm"
+              ? "bg-zinc-700 text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
@@ -285,9 +285,9 @@ function EditProfileDialog({
   const rtl = locale === "ar";
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-white">
+    <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-4 bg-white">
+      <div className="flex items-center justify-between px-4 py-4 bg-zinc-950">
         <button
           onClick={onClose}
           className="flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"

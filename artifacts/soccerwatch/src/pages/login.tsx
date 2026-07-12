@@ -25,7 +25,6 @@ export default function Login() {
   const queryClient = useQueryClient();
   const { signOut } = useClerk();
 
-  /* Preload banners & Bunny collections while logging in */
   const preloadHomeData = () => {
     queryClient.prefetchQuery({
       queryKey: getListBannersQueryKey(),
@@ -40,16 +39,11 @@ export default function Login() {
   };
 
   const handleGuest = async () => {
-    // Sign out of any existing Clerk session first so the backend
-    // treats us as a guest rather than a signed-in user.
     await signOut().catch(() => {});
-    // Wipe stale cached user data so the new guest identity takes effect immediately.
     queryClient.clear();
     preloadHomeData();
     guestMutation.mutate(undefined, {
       onSuccess: (data) => {
-        // Write the guest user straight into the cache so useAuth sees isGuest=true
-        // without waiting for a re-fetch.
         queryClient.setQueryData(getGetMeQueryKey(), data.user);
         setLocation("/watch");
       },
@@ -62,8 +56,16 @@ export default function Login() {
   const [tagline1, tagline2] = t.login.tagline.split("\n");
 
   return (
-    <div className="flex-1 flex flex-col field-pattern relative text-white overflow-hidden">
-      <div className="absolute inset-0 bg-black/40" />
+    <div className="flex-1 flex flex-col relative text-white overflow-hidden bg-black">
+      {/* Full-bleed hero image */}
+      <img
+        src={`${basePath}/brand-hero.jpg`}
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover object-center"
+        aria-hidden="true"
+      />
+      {/* Dark gradient overlay — heavier at bottom for button legibility */}
+      <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/50 to-black/85" />
 
       {/* Language selector — top right */}
       <div className="absolute top-safe right-4 z-20">
@@ -86,13 +88,17 @@ export default function Login() {
             >
               <img src={replayLogo} alt="Replay" className="w-10 h-10 object-contain" />
             </motion.div>
-            <span className="font-bold text-xl tracking-tight text-white">REPLAY</span>
+            <span className="font-display font-black text-2xl tracking-tight text-white uppercase">REPLAY</span>
           </motion.div>
 
-          <motion.h1 {...fadeUp(0.12)} className="text-5xl font-bold leading-[1.1] mb-4">
-            {tagline1}<br />{tagline2}
+          <motion.h1
+            {...fadeUp(0.12)}
+            className="font-display font-black text-6xl leading-[0.95] mb-4 uppercase tracking-tight"
+          >
+            {tagline1}<br />
+            <span className="text-primary">{tagline2}</span>
           </motion.h1>
-          <motion.p {...fadeUp(0.2)} className="text-lg text-white/80 leading-snug">
+          <motion.p {...fadeUp(0.2)} className="text-base text-white/75 leading-snug">
             {t.login.description}
           </motion.p>
         </div>
@@ -105,7 +111,7 @@ export default function Login() {
         >
           <Button
             asChild
-            className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-6 rounded-xl text-base"
+            className="w-full bg-primary hover:bg-primary/90 text-black font-bold py-6 rounded-xl text-base uppercase tracking-wide"
           >
             <a href={`${basePath}/sign-in`}>{t.login.signIn}</a>
           </Button>
@@ -113,7 +119,7 @@ export default function Login() {
           <Button
             asChild
             variant="outline"
-            className="w-full font-semibold py-6 rounded-xl text-base bg-white/10 border-white/30 text-white hover:bg-white/20 hover:text-white"
+            className="w-full font-semibold py-6 rounded-xl text-base bg-white/10 border-white/20 text-white hover:bg-white/20 hover:text-white"
           >
             <a href={`${basePath}/sign-up`}>{t.login.createAccount}</a>
           </Button>
@@ -125,7 +131,7 @@ export default function Login() {
           <Button
             type="button"
             variant="ghost"
-            className="w-full text-white/70 hover:text-white hover:bg-white/10 font-medium py-4 rounded-xl"
+            className="w-full text-white/60 hover:text-white hover:bg-white/10 font-medium py-4 rounded-xl"
             onClick={handleGuest}
             disabled={guestMutation.isPending}
           >

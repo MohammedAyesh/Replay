@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, MapPin } from "lucide-react";
-// MapPin kept for location state UI
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import {
@@ -13,6 +12,7 @@ import {
 
 const BANNER_INTERVAL = 5000;
 
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type DiscoverItem = { kind: "field"; id: string; name: string; videoCount: number; previewImageUrl: string | null };
 
@@ -53,7 +53,6 @@ export default function Home() {
   const collections = collectionsData ?? [];
 
   const discoverItems = useMemo<DiscoverItem[]>(() => {
-    // Show only fields in the Discover section
     return collections.slice(0, 6).map((c) => ({
       kind: "field" as const,
       id: c.guid,
@@ -136,22 +135,28 @@ export default function Home() {
                 <div className="absolute inset-0 bg-black/40" />
               </>
             ) : (
-              <div className="absolute inset-0 field-pattern bg-[#0d1f0d]">
-                <div className="absolute inset-0 bg-gradient-to-br from-emerald-900/60 via-green-800/40 to-black/70" />
-              </div>
+              <>
+                <img
+                  src={`${basePath}/brand-hero.jpg`}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-cover object-center"
+                  aria-hidden="true"
+                />
+                <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/40 to-black/80" />
+              </>
             )}
 
             <div className="absolute inset-0 flex flex-col justify-end p-5">
               <div className="relative z-10">
                 {slides[slide].upperSubtext && (
-                  <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">
+                  <p className="text-primary text-[10px] font-bold uppercase tracking-widest mb-1">
                     {slides[slide].upperSubtext}
                   </p>
                 )}
-                <h2 className="text-white text-2xl font-bold leading-tight mb-1">
+                <h2 className="font-display font-black text-white text-3xl leading-none uppercase mb-1">
                   {slides[slide].title}
                 </h2>
-                <p className="text-white/80 text-sm">{slides[slide].lowerSubtext}</p>
+                <p className="text-white/70 text-sm">{slides[slide].lowerSubtext}</p>
               </div>
             </div>
           </motion.div>
@@ -165,7 +170,7 @@ export default function Home() {
                 onClick={() => goToSlide(i)}
                 className={cn(
                   "rounded-full transition-all duration-300",
-                  i === slide ? "w-5 h-1.5 bg-white" : "w-1.5 h-1.5 bg-white/40"
+                  i === slide ? "w-5 h-1.5 bg-primary" : "w-1.5 h-1.5 bg-white/30"
                 )}
               />
             ))}
@@ -190,7 +195,7 @@ export default function Home() {
               </button>
             )}
             {locationState === "granted" && (
-              <span className="flex items-center gap-1 text-xs text-emerald-500">
+              <span className="flex items-center gap-1 text-xs text-primary">
                 <MapPin className="w-3.5 h-3.5" />
                 {t.home.usingLocation ?? "Near you"}
               </span>
@@ -251,13 +256,14 @@ function FieldCard({
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
         <div className="absolute top-2.5 start-2.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60 bg-black/30 rounded-full px-2 py-0.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-primary/90 bg-black/40 rounded-full px-2 py-0.5">
             Field
           </span>
         </div>
         <div className="absolute inset-0 flex flex-col justify-end p-3">
+          <p className="text-white font-display font-bold text-sm uppercase leading-tight">{item.name}</p>
           {item.videoCount > 0 && (
-            <p className="text-white/60 text-xs">
+            <p className="text-white/50 text-xs">
               {t.home.clips(item.videoCount)}
             </p>
           )}
@@ -266,4 +272,3 @@ function FieldCard({
     </motion.div>
   );
 }
-
