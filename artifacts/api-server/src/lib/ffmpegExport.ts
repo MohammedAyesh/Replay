@@ -136,8 +136,8 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     "-vf", `${cropFilter},scale=${OUT_W}:${SRC_H}:force_original_aspect_ratio=disable`,
     // H.264 video, fast encode, web-compatible
     "-c:v", "libx264",
-    "-preset", "fast",
-    "-crf", "23",
+    "-preset", "slow",
+    "-crf", "16",
     "-pix_fmt", "yuv420p",
     // AAC audio
     "-c:a", "aac",
