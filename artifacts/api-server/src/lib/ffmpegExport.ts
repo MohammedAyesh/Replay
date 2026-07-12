@@ -11,7 +11,14 @@ const SRC_H = 1080;
 type KF = { t: number; x: number; y: number; w: number; h: number };
 
 export interface FfmpegExportOptions {
-  hlsUrl: string;
+  /** URL passed to FFmpeg as the input source (HLS or direct MP4). */
+  videoUrl: string;
+  /**
+   * Total recording duration in seconds.
+   * When provided, ffprobe is skipped entirely; must be obtained from
+   * the Bunny Stream Management API which is always accessible server-side.
+   */
+  totalDuration: number;
   /** 0-1 fraction of total recording duration */
   startTime: number;
   endTime: number;
@@ -20,38 +27,6 @@ export interface FfmpegExportOptions {
   title: string;
 }
 
-/** Run ffprobe to get total stream duration in seconds. */
-async function getVideoDuration(hlsUrl: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("ffprobe", [
-      "-v", "quiet",
-      "-print_format", "json",
-      "-show_format",
-      hlsUrl,
-    ]);
-    let stdout = "";
-    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr.on("data", () => {});
-    proc.on("error", reject);
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`ffprobe exited with code ${code}`));
-        return;
-      }
-      try {
-        const data = JSON.parse(stdout) as { format?: { duration?: string } };
-        const dur = parseFloat(data.format?.duration ?? "0");
-        if (!isFinite(dur) || dur <= 0) {
-          reject(new Error("Could not determine video duration from ffprobe"));
-          return;
-        }
-        resolve(dur);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  });
-}
 
 /**
  * Build an FFmpeg crop filter string for the given keyframes.
@@ -122,11 +97,10 @@ function buildCropFilter(keyframes: KF[], clipDuration: number, is9to16: boolean
  * Returns the path to a temporary file that the caller is responsible for deleting.
  */
 export async function renderClip(options: FfmpegExportOptions): Promise<string> {
-  const { hlsUrl, startTime, endTime, cropPath, aspectRatio, title } = options;
+  const { videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title } = options;
 
-  logger.info({ title, startTime, endTime }, "Starting FFmpeg render");
+  logger.info({ title, startTime, endTime, totalDuration }, "Starting FFmpeg render");
 
-  const totalDuration = await getVideoDuration(hlsUrl);
   const startSec = isFinite(startTime) ? startTime * totalDuration : 0;
   const endSec = isFinite(endTime) ? endTime * totalDuration : totalDuration;
   const clipDuration = Math.max(0.1, endSec - startSec);
@@ -139,9 +113,9 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   logger.info({ tmpPath, startSec, endSec, clipDuration, cropFilter }, "FFmpeg args ready");
 
   const args = [
-    // Fast seek before input (segment-level accuracy for HLS)
+    // Fast seek before input (keyframe-accurate for both HLS and direct MP4)
     "-ss", String(startSec),
-    "-i", hlsUrl,
+    "-i", videoUrl,
     // Clip duration
     "-t", String(clipDuration),
     // Crop pan filter, then ensure even dimensions

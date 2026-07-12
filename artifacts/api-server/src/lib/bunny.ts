@@ -26,6 +26,36 @@ export function isBunnyStorageConfigured(): boolean {
   return !!BUNNY_STORAGE_ZONE && !!BUNNY_STORAGE_API_KEY && !!BUNNY_STORAGE_CDN_URL;
 }
 
+/**
+ * Fetch video metadata from the Bunny Stream Management API.
+ * Returns duration in seconds (from the `length` field).
+ * This is reliable from server-to-server and doesn't depend on CDN access.
+ */
+export async function getBunnyVideoInfo(videoId: string): Promise<{ duration: number }> {
+  const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`;
+  const response = await fetch(url, {
+    headers: { AccessKey: BUNNY_API_KEY },
+  });
+  if (!response.ok) {
+    throw new Error(`Bunny API error ${response.status} fetching video info for ${videoId}`);
+  }
+  const data = await response.json() as { length?: number };
+  const duration = typeof data.length === "number" ? data.length : 0;
+  if (!isFinite(duration) || duration <= 0) {
+    throw new Error(`Could not determine duration for video ${videoId}: length=${data.length}`);
+  }
+  return { duration };
+}
+
+/**
+ * Returns a direct MP4 URL for a specific resolution.
+ * Bunny Stream transcodes to multiple MP4 resolutions; 1080p is the target.
+ * Fallback: use 720p if available.
+ */
+export function getBunnyDirectMp4Url(videoId: string, height = 1080): string {
+  return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/play_${height}p.mp4`;
+}
+
 /** Returns the public CDN URL for a rendered clip export. */
 export function getBunnyExportUrl(clipId: number): string {
   const base = BUNNY_STORAGE_CDN_URL.replace(/\/$/, "");

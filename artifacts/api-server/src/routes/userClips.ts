@@ -23,6 +23,8 @@ import { getLocalUserId } from "../lib/clerkUserBridge";
 import {
   getBunnyPlaybackUrl,
   getBunnyThumbnailUrl,
+  getBunnyDirectMp4Url,
+  getBunnyVideoInfo,
   isBunnyConfigured,
   isBunnyStorageConfigured,
   uploadToBunnyStorage,
@@ -555,16 +557,25 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
   res.json({ status: "pending" });
 
   // Fire-and-forget: render → upload → update DB
-  const hlsUrl = getBunnyPlaybackUrl(clip.videoId);
   const startTime = parseFloat(clip.startTime);
   const endTime = parseFloat(clip.endTime);
   const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
+  const videoId = clip.videoId;
 
   void (async () => {
     let tmpPath: string | null = null;
     try {
       logger.info({ clipId, startTime, endTime }, "Starting background clip export");
-      tmpPath = await renderClip({ hlsUrl, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title });
+
+      // Get duration from Bunny Stream API — avoids ffprobe needing CDN access
+      const { duration: totalDuration } = await getBunnyVideoInfo(videoId);
+      logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
+
+      // Use direct MP4 URL; more reliable than HLS for server-side FFmpeg access
+      const videoUrl = getBunnyDirectMp4Url(videoId);
+      logger.info({ clipId, videoUrl }, "Using direct MP4 URL for FFmpeg input");
+
+      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title });
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
       await db
         .update(userClipsTable)
