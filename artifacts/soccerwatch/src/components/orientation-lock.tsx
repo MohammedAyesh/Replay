@@ -7,6 +7,10 @@ function isLandscape() {
   return window.innerWidth > window.innerHeight;
 }
 
+function isTouchDevice() {
+  return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+}
+
 export function OrientationLock() {
   const { isFullscreenVideo } = useFullscreenVideo();
   const { t } = useTranslation();
@@ -37,7 +41,7 @@ export function OrientationLock() {
     };
   }, []);
 
-  const show = landscape && !isFullscreenVideo;
+  const show = isTouchDevice() && landscape && !isFullscreenVideo;
 
   return (
     <AnimatePresence>
