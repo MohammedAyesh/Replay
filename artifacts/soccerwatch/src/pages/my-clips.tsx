@@ -341,11 +341,13 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 
       if (result && typeof result === "object" && "blob" in result) {
         await deliverBlob(result.blob, result.mimeType);
+        setExportState("done");
+        toast({ title: "Saved to gallery", description: "Clip saved to your device and appears in Saved." });
+        setTimeout(() => setExportState("idle"), 3000);
+      } else {
+        // Server failed and client-side produced nothing — surface the error
+        throw new Error("Export produced no output");
       }
-
-      setExportState("done");
-      toast({ title: "Saved to gallery", description: "Clip saved to your device and appears in Saved." });
-      setTimeout(() => setExportState("idle"), 3000);
     } catch {
       setExportState("error");
       toast({
@@ -430,6 +432,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
           <span>
             {exportState === "exporting"
               ? t.export.exporting(exportProgress)
+              : exportState === "error"
+              ? t.export.error
               : t.export.button}
           </span>
         </button>
