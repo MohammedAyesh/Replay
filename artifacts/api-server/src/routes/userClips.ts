@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and, desc, inArray } from "drizzle-orm";
+import fs from "fs";
 import { db, userClipsTable, usersTable, likesTable, followsTable } from "@workspace/db";
 import {
   CreateUserClipBody,
@@ -20,6 +21,7 @@ import {
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBunnyPlaybackUrl, getBunnyThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
+import { renderClip, cleanupTempFile } from "../lib/ffmpegExport";
 
 const router: IRouter = Router();
 
@@ -491,6 +493,83 @@ router.get("/feed", async (req, res): Promise<void> => {
   }));
 
   res.json(GetFeedResponse.parse(result));
+});
+
+/**
+ * POST /user-clips/:id/export
+ * Server-side FFmpeg render — trims + crops the clip and returns an MP4.
+ * Works on all platforms including iOS (no MediaRecorder needed on device).
+ */
+router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: "Unauthenticated" });
+    return;
+  }
+
+  const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const clipId = parseInt(rawId, 10);
+  if (isNaN(clipId)) {
+    res.status(400).json({ error: "Invalid clip id" });
+    return;
+  }
+
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
+
+  if (!clip) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
+
+  if (!isBunnyConfigured()) {
+    res.status(400).json({ error: "Video playback not configured" });
+    return;
+  }
+
+  const hlsUrl = getBunnyPlaybackUrl(clip.videoId);
+  const startTime = parseFloat(clip.startTime);
+  const endTime = parseFloat(clip.endTime);
+  const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
+
+  req.log.info({ clipId, startTime, endTime, aspectRatio: clip.aspectRatio }, "Exporting clip via FFmpeg");
+
+  let tmpPath: string | null = null;
+  try {
+    tmpPath = await renderClip({
+      hlsUrl,
+      startTime,
+      endTime,
+      cropPath,
+      aspectRatio: clip.aspectRatio,
+      title: clip.title,
+    });
+
+    const stat = fs.statSync(tmpPath);
+    const safeName = clip.title.replace(/[^a-z0-9_\-]/gi, "_") || "clip";
+
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);
+    res.setHeader("Content-Length", stat.size);
+    res.setHeader("Cache-Control", "no-store");
+
+    const stream = fs.createReadStream(tmpPath);
+    stream.pipe(res);
+    stream.on("end", () => {
+      if (tmpPath) cleanupTempFile(tmpPath);
+    });
+    stream.on("error", (err) => {
+      req.log.error({ err }, "Error streaming clip file");
+      if (tmpPath) cleanupTempFile(tmpPath);
+      if (!res.headersSent) res.status(500).json({ error: "Stream error" });
+    });
+  } catch (err) {
+    req.log.error({ err, clipId }, "FFmpeg export failed");
+    if (tmpPath) cleanupTempFile(tmpPath);
+    if (!res.headersSent) res.status(500).json({ error: "Export failed" });
+  }
 });
 
 export default router;

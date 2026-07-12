@@ -69,11 +69,20 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const [exportState, setExportState] = useState<ExportState>("idle");
   const [exportProgress, setExportProgress] = useState(0);
   const [isLocal, setIsLocal] = useState(false);
+  /**
+   * Local blobs are already trimmed+cropped (they start at t=0 and run to clipDuration).
+   * localTimingOverride tracks this: when set, use these fractions instead of clip.startTime/endTime
+   * for seek and stop logic so we play from 0 → 1 of the blob, not some fraction of recording duration.
+   */
+  const [localTimingOverride, setLocalTimingOverride] = useState<{ start: number; end: number } | null>(null);
   const { t } = useTranslation();
   const { toast } = useToast();
   const { user } = useAuth();
   const keyframes = clip.cropPath ?? [];
-  // startTime/endTime are 0–1 fractions of total video duration
+
+  // Effective timing: use override for local blobs, raw clip fractions for HLS
+  const lStart = isLocal ? (localTimingOverride?.start ?? 0) : clip.startTime;
+  const lEnd   = isLocal ? (localTimingOverride?.end   ?? 1) : clip.endTime;
 
   /* Check IndexedDB for local copy on mount */
   useEffect(() => {
@@ -84,6 +93,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       if (cancelled || !local) return;
       const url = createLocalBlobUrl(local);
       localUrlRef.current = url;
+      // Local blobs are trimmed clips — always play from 0 to end
+      setLocalTimingOverride({ start: 0, end: 1 });
       setIsLocal(true);
       const video = videoRef.current;
       if (video) {
@@ -93,9 +104,9 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         let didSeek = false;
         const seekLocal = () => {
           const dur = video.duration || 0;
-          if (didSeek || !(dur > 0 && isFinite(dur) && isFinite(clip.startTime))) return;
+          if (didSeek || !(dur > 0 && isFinite(dur))) return;
           didSeek = true;
-          video.currentTime = clip.startTime * dur;
+          video.currentTime = 0;
           video.play().then(() => setIsPlaying(true)).catch(() => {});
         };
         video.addEventListener("loadedmetadata", seekLocal);
@@ -115,7 +126,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         localUrlRef.current = null;
       }
     };
-  }, [clip.id, clip.startTime]);
+  }, [clip.id]);
 
   /* HLS init — only if no local copy */
   useEffect(() => {
@@ -169,8 +180,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         return;
       }
 
-      const sSec = isFinite(clip.startTime) ? clip.startTime * dur : 0;
-      const eSec = isFinite(clip.endTime) ? clip.endTime * dur : dur;
+      const sSec = isFinite(lStart) ? lStart * dur : 0;
+      const eSec = isFinite(lEnd) ? lEnd * dur : dur;
       const cDur = Math.max(0.1, eSec - sSec);
       const now = video.currentTime;
       const t = Math.max(0, Math.min(1, (now - sSec) / cDur));
@@ -186,7 +197,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [keyframes, clip.startTime, clip.endTime, isLocal, clip.aspectRatio]);
+  }, [keyframes, lStart, lEnd, isLocal, clip.aspectRatio]);
 
   /* Auto-stop when clip window ends — read duration live from the element */
   useEffect(() => {
@@ -195,8 +206,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     const onTime = () => {
       const dur = video.duration || 0;
       if (dur === 0) return;
-      const sSec = isFinite(clip.startTime) ? clip.startTime * dur : 0;
-      const eSec = isFinite(clip.endTime) ? clip.endTime * dur : dur;
+      const sSec = isFinite(lStart) ? lStart * dur : 0;
+      const eSec = isFinite(lEnd) ? lEnd * dur : dur;
       if (video.currentTime >= eSec) {
         video.pause();
         setIsPlaying(false);
@@ -205,15 +216,15 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     };
     const id = setInterval(onTime, 100);
     return () => clearInterval(id);
-  }, [clip.startTime, clip.endTime]);
+  }, [lStart, lEnd]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
     const dur = video.duration || 0;
     if (dur === 0) return;
-    const sSec = isFinite(clip.startTime) ? clip.startTime * dur : 0;
-    const eSec = isFinite(clip.endTime) ? clip.endTime * dur : dur;
+    const sSec = isFinite(lStart) ? lStart * dur : 0;
+    const eSec = isFinite(lEnd) ? lEnd * dur : dur;
     if (video.paused) {
       if (video.currentTime >= eSec) video.currentTime = sSec;
       video.play().then(() => setIsPlaying(true)).catch(() => {});
@@ -221,7 +232,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       video.pause();
       setIsPlaying(false);
     }
-  }, [clip.startTime, clip.endTime]);
+  }, [lStart, lEnd]);
 
   /* Fullscreen toggle */
   const toggleFullscreen = useCallback(() => {
@@ -238,6 +249,57 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     return () => document.removeEventListener("fullscreenchange", handler);
   }, []);
 
+  /** Save a rendered blob to IndexedDB and deliver it to the user's device. */
+  const deliverBlob = useCallback(async (blob: Blob, mimeType: string) => {
+    const ext = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
+    const filename = `${clip.title || "clip"}.${ext}`;
+
+    // Local blobs are already trimmed — always start/end at 0/1
+    const record: Parameters<typeof saveLocalClip>[0] = {
+      clipId: clip.id,
+      userId: user?.id ?? 0,
+      title: clip.title,
+      blob,
+      mimeType,
+      startTime: 0,
+      endTime: 1,
+      cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
+      aspectRatio: clip.aspectRatio ?? "16:9",
+      downloadedAt: new Date().toISOString(),
+      playbackUrl: clip.playbackUrl ?? null,
+    };
+
+    await saveLocalClip(record);
+
+    const file = new File([blob], filename, { type: mimeType });
+    const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
+    if (nav.canShare?.({ files: [file] })) {
+      try {
+        await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file], title: clip.title });
+      } catch { /* user dismissed */ }
+    } else {
+      triggerDownload(blob, filename);
+    }
+
+    onDownloaded?.();
+
+    // Switch player to the local blob immediately (plays from 0 to end)
+    setLocalTimingOverride({ start: 0, end: 1 });
+    setIsLocal(true);
+    const localUrl = createLocalBlobUrl(record);
+    localUrlRef.current = localUrl;
+    const video = videoRef.current;
+    if (video) {
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      video.pause();
+      video.src = localUrl;
+      video.addEventListener("loadedmetadata", () => {
+        video.currentTime = 0;
+        video.play().then(() => setIsPlaying(true)).catch(() => {});
+      }, { once: true });
+    }
+  }, [clip, user?.id, onDownloaded]);
+
   const handleExport = useCallback(async () => {
     if (exportState === "exporting") return;
 
@@ -246,12 +308,26 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       return;
     }
 
-    const supportsCapture = canExportVideo();
-
     setExportState("exporting");
     setExportProgress(0);
 
     try {
+      // Prefer server-side FFmpeg render — works on iOS and all browsers
+      const serverRes = await fetch(`/api/user-clips/${clip.id}/export`, {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (serverRes.ok) {
+        const blob = await serverRes.blob();
+        await deliverBlob(blob, "video/mp4");
+        setExportState("done");
+        toast({ title: "Saved to gallery", description: "Clip saved to your device and appears in Saved." });
+        setTimeout(() => setExportState("idle"), 3000);
+        return;
+      }
+
+      // Fall back to client-side export (dev mode / Bunny not configured)
       const result = await exportClip({
         playbackUrl: clip.playbackUrl,
         startTime: clip.startTime,
@@ -264,59 +340,11 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       });
 
       if (result && typeof result === "object" && "blob" in result) {
-        const ext = result.mimeType.startsWith("video/mp4") ? "mp4" : "webm";
-        const filename = `${clip.title || "clip"}.${ext}`;
-        const record = {
-          clipId: clip.id,
-          userId: user?.id ?? 0,
-          title: clip.title,
-          blob: result.blob,
-          mimeType: result.mimeType,
-          startTime: clip.startTime,
-          endTime: clip.endTime,
-          cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
-          aspectRatio: clip.aspectRatio ?? "16:9",
-          downloadedAt: new Date().toISOString(),
-          playbackUrl: clip.playbackUrl,
-        };
-
-        // 1. Save to local IndexedDB gallery
-        await saveLocalClip(record);
-
-        // 2. Save file to device gallery/downloads
-        const file = new File([result.blob], filename, { type: result.mimeType });
-        const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
-        if (nav.canShare?.({ files: [file] })) {
-          try { await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file], title: clip.title }); } catch { /* user dismissed */ }
-        } else {
-          triggerDownload(result.blob, filename);
-        }
-
-        // 3. Notify parent so Saved tab refreshes
-        onDownloaded?.();
-
-        setIsLocal(true);
-        // Immediately switch video to local Blob URL so it plays cropped 9:16
-        const localUrl = createLocalBlobUrl(record);
-        localUrlRef.current = localUrl;
-        const video = videoRef.current;
-        if (video) {
-          if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-          video.pause();
-          video.src = localUrl;
-          video.addEventListener("loadedmetadata", () => {
-            const dur = video.duration || 0;
-            if (dur > 0 && isFinite(clip.startTime)) {
-              video.currentTime = clip.startTime * dur;
-              video.play().then(() => setIsPlaying(true)).catch(() => {});
-            }
-          }, { once: true });
-        }
+        await deliverBlob(result.blob, result.mimeType);
       }
 
       setExportState("done");
       toast({ title: "Saved to gallery", description: "Clip saved to your device and appears in Saved." });
-
       setTimeout(() => setExportState("idle"), 3000);
     } catch {
       setExportState("error");
@@ -327,7 +355,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       });
       setTimeout(() => setExportState("idle"), 3000);
     }
-  }, [clip, exportState, t, toast, user?.id]);
+  }, [clip, exportState, t, toast, deliverBlob]);
 
   return (
     <motion.div
