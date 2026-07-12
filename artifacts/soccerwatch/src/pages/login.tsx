@@ -1,6 +1,5 @@
 import { useLocation } from "wouter";
 import { useLoginAsGuest, listBanners, getBunnyCollections, getListBannersQueryKey, getGetBunnyCollectionsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
-import replayLogo from "@/assets/replay-logo.png";
 import { Button } from "@/components/ui/button";
 import { Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -81,13 +80,6 @@ export default function Login() {
       <div className="relative z-10 flex-1 flex flex-col justify-between p-6">
         <div className="pt-12">
           <motion.div {...fadeUp(0)} className="flex items-center gap-2 mb-8">
-            <motion.div
-              initial={{ scale: 0, rotate: -20 }}
-              animate={{ scale: 1, rotate: 0 }}
-              transition={{ type: "spring", stiffness: 300, damping: 18, delay: 0.05 }}
-            >
-              <img src={replayLogo} alt="Replay" className="w-10 h-10 object-contain" />
-            </motion.div>
             <span className="font-display font-black text-2xl tracking-tight text-white uppercase">REPLAY</span>
           </motion.div>
 
