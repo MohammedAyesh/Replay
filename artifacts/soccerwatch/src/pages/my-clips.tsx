@@ -311,6 +311,23 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     const res = await fetch(`/api/user-clips/${clip.id}/download`, { credentials: "include" });
     if (!res.ok) throw new Error("Proxy download failed");
     const blob = await res.blob();
+
+    // Save to local IndexedDB so it appears in the Saved tab
+    await saveLocalClip({
+      clipId: clip.id,
+      userId: user?.id ?? 0,
+      title: clip.title,
+      blob,
+      mimeType: "video/mp4",
+      startTime: clip.startTime,
+      endTime: clip.endTime,
+      cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
+      aspectRatio: clip.aspectRatio ?? "16:9",
+      downloadedAt: new Date().toISOString(),
+      playbackUrl: clip.playbackUrl ?? null,
+    });
+    onDownloaded?.();
+
     const file = new File([blob], filename, { type: "video/mp4" });
     const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
     if (nav.canShare?.({ files: [file] })) {
@@ -320,7 +337,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       triggerDownload(blob, filename);
     }
     toast({ title: "Saved!", description: "Clip saved to your device." });
-  }, [clip, toast]);
+  }, [clip, user?.id, toast, onDownloaded]);
 
   const handleExport = useCallback(async () => {
     if (exportState === "polling") return;
