@@ -28,6 +28,7 @@ import {
   isBunnyConfigured,
   isBunnyStorageConfigured,
   uploadToBunnyStorage,
+  BUNNY_STORAGE_API_KEY,
 } from "../lib/bunny";
 import { renderClip, cleanupTempFile } from "../lib/ffmpegExport";
 import { logger } from "../lib/logger";
@@ -641,7 +642,9 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   if (!clip || !clip.exportedUrl) { res.status(404).json({ error: "Export not ready" }); return; }
 
   const safeName = clip.title.replace(/[^a-z0-9_\-]/gi, "_") || "clip";
-  const upstream = await fetch(clip.exportedUrl);
+  const upstream = await fetch(clip.exportedUrl, {
+    headers: { AccessKey: BUNNY_STORAGE_API_KEY },
+  });
   if (!upstream.ok || !upstream.body) { res.status(502).json({ error: "Could not fetch from storage" }); return; }
 
   res.setHeader("Content-Type", "video/mp4");

@@ -4,7 +4,9 @@ export const BUNNY_CDN_HOSTNAME = process.env.BUNNY_CDN_HOSTNAME ?? "";
 export const BUNNY_API_KEY = process.env.BUNNY_API_KEY ?? "";
 export const BUNNY_LIBRARY_ID = process.env.BUNNY_LIBRARY_ID ?? "";
 
-export const BUNNY_STORAGE_ZONE = process.env.BUNNY_STORAGE_ZONE ?? "";
+// Strip full URL prefix if user accidentally set the full endpoint URL instead of just the zone name
+const _rawStorageZone = process.env.BUNNY_STORAGE_ZONE ?? "";
+export const BUNNY_STORAGE_ZONE = _rawStorageZone.replace(/^https?:\/\/[^/]+\//, "").replace(/\/$/, "");
 export const BUNNY_STORAGE_API_KEY = process.env.BUNNY_STORAGE_API_KEY ?? "";
 export const BUNNY_STORAGE_CDN_URL = process.env.BUNNY_STORAGE_CDN_URL ?? "";
 export const BUNNY_STORAGE_HOSTNAME = process.env.BUNNY_STORAGE_HOSTNAME ?? "storage.bunnycdn.com";

@@ -47,6 +47,8 @@ channel = "stable-25_05"
 [userenv.shared]
 OSS_REGION = "oss-me-central-2"
 OSS_BUCKET = "cam9"
+BUNNY_STORAGE_API_KEY = "a6e58181-023e-44b2-b8407c320c72-ee16-4227"
+BUNNY_STORAGE_HOSTNAME = "storage.bunnycdn.com"
 
 [objectStorage]
 defaultBucketID = "replit-objstore-2c134a01-f9f8-464d-94bb-e95a0528ae27"
