@@ -1,11 +1,26 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Eye, EyeOff, UserCheck, UserX, Shield, ShieldOff, Trash2, Plus, Save, X,
   ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  getGetFeedQueryKey,
+  getListClipsQueryKey,
+  getListUserClipsQueryKey,
+  getGetMeQueryKey,
+  getGetAccountStatsQueryKey,
+  getGetUserProfileQueryKey,
+  getListSavedClipsQueryKey,
+  getGetBunnyCollectionsQueryKey,
+  getGetFieldQueryKey,
+  getGetFieldVideosQueryKey,
+  getGetFieldRecordingsQueryKey,
+  getListBannersQueryKey,
+} from "@workspace/api-client-react";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -88,6 +103,7 @@ function ClipsTab() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<number | null>(null);
+  const queryClient = useQueryClient();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -106,6 +122,9 @@ function ClipsTab() {
       body: JSON.stringify({ isHidden: !clip.isHidden }),
     });
     setClips((prev) => prev.map((c) => c.id === clip.id ? { ...c, isHidden: !c.isHidden } : c));
+    queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getListClipsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
   };
 
   const deleteClip = async (clip: AdminClip) => {
@@ -114,6 +133,9 @@ function ClipsTab() {
     try {
       await apiFetch(`/admin/clips/${clip.id}`, { method: "DELETE" });
       setClips((prev) => prev.filter((c) => c.id !== clip.id));
+      queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListClipsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
     } catch { /* silent */ }
     setDeleting(null);
   };
@@ -216,6 +238,7 @@ function AccountsTab() {
   const [editForm, setEditForm] = useState<Partial<AdminUser>>({});
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const queryClient = useQueryClient();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -262,6 +285,11 @@ function AccountsTab() {
       });
       setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, ...updated } : u));
       cancelEdit();
+      queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetAccountStatsQueryKey() });
+      if (user.clerkId) {
+        queryClient.invalidateQueries({ queryKey: getGetUserProfileQueryKey(user.id) });
+      }
     } catch { /* silent */ }
     setSaving(false);
   };
@@ -273,6 +301,11 @@ function AccountsTab() {
         body: JSON.stringify(updates),
       });
       setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, ...updates } : u));
+      queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetAccountStatsQueryKey() });
+      if (user.clerkId) {
+        queryClient.invalidateQueries({ queryKey: getGetUserProfileQueryKey(user.id) });
+      }
     } catch { /* silent */ }
   };
 
@@ -282,6 +315,11 @@ function AccountsTab() {
     try {
       await apiFetch(`/admin/users/${user.id}`, { method: "DELETE" });
       setUsers((prev) => prev.filter((u) => u.id !== user.id));
+      queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetAccountStatsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListSavedClipsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListClipsQueryKey() });
     } catch { /* silent */ }
     setDeleting(null);
   };
@@ -480,6 +518,7 @@ function FieldsTab() {
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState<number | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const queryClient = useQueryClient();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -497,6 +536,7 @@ function FieldsTab() {
     try {
       const data = await apiFetch("/admin/fields/sync", { method: "POST" });
       if (data?.fields) setFields(data.fields);
+      queryClient.invalidateQueries({ queryKey: getGetBunnyCollectionsQueryKey() });
     } catch { /* silent */ }
     setSyncing(false);
   };
@@ -532,6 +572,10 @@ function FieldsTab() {
           : f
       ));
       cancelEdit();
+      queryClient.invalidateQueries({ queryKey: getGetBunnyCollectionsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetFieldQueryKey(field.id) });
+      queryClient.invalidateQueries({ queryKey: getGetFieldVideosQueryKey(field.id) });
+      queryClient.invalidateQueries({ queryKey: getGetFieldRecordingsQueryKey(field.id) });
     } catch { /* silent */ }
     setSaving(false);
   };
@@ -546,6 +590,10 @@ function FieldsTab() {
       setFields((prev) => prev.map((f) =>
         f.id === field.id ? { ...f, isHidden: !f.isHidden } : f
       ));
+      queryClient.invalidateQueries({ queryKey: getGetBunnyCollectionsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetFieldQueryKey(field.id) });
+      queryClient.invalidateQueries({ queryKey: getGetFieldVideosQueryKey(field.id) });
+      queryClient.invalidateQueries({ queryKey: getGetFieldRecordingsQueryKey(field.id) });
     } catch { /* silent */ }
     setToggling(null);
   };
@@ -685,6 +733,7 @@ function BannersTab() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -748,6 +797,7 @@ function BannersTab() {
         setBanners((prev) => prev.map((b) => b.id === editing ? { ...b, ...data } : b));
       }
       cancel();
+      queryClient.invalidateQueries({ queryKey: getListBannersQueryKey() });
     } catch { /* silent */ }
     setSaving(false);
   };
@@ -757,6 +807,7 @@ function BannersTab() {
     try {
       await apiFetch(`/admin/banners/${id}`, { method: "DELETE" });
       setBanners((prev) => prev.filter((b) => b.id !== id));
+      queryClient.invalidateQueries({ queryKey: getListBannersQueryKey() });
     } catch { /* silent */ }
     setDeleting(null);
   };
