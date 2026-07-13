@@ -9,7 +9,13 @@ export function useAuth() {
   const { data: localUser, isLoading: isMeLoading } = useGetMe({
     query: {
       enabled: isLoaded,
-      retry: false,
+      // Retry when Clerk says the user IS signed in but the server returns an
+      // error — this handles the race condition where the Clerk session cookie
+      // is set in the browser but the server middleware hasn't verified it yet.
+      // For genuinely unauthenticated users (isSignedIn = false) we skip retries
+      // so the login screen appears instantly.
+      retry: (failureCount) => isSignedIn === true && failureCount < 3,
+      retryDelay: 600,
       staleTime: 5 * 60 * 1000,
       queryKey: getGetMeQueryKey(),
     },
