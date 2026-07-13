@@ -30,10 +30,12 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
   const lastName = clerkUser?.lastName?.trim() ?? "";
   const name = [firstName, lastName].filter(Boolean).join(" ") || "Player";
 
-  const primaryEmail = clerkUser?.emailAddresses?.find(
-    (e) => e.id === clerkUser?.primaryEmailAddressId
-  )?.emailAddress;
-  const email = primaryEmail ?? `clerk_${clerkId}@soccerwatch.local`;
+  // Extract best available email from Clerk: primary > verified > any.
+  const emails = clerkUser?.emailAddresses ?? [];
+  const primaryEmail = emails.find((e) => e.id === clerkUser?.primaryEmailAddressId)?.emailAddress;
+  const verifiedEmail = emails.find((e) => e.verification?.status === "verified")?.emailAddress;
+  const anyEmail = emails[0]?.emailAddress;
+  const email = primaryEmail ?? verifiedEmail ?? anyEmail ?? `clerk_${clerkId}@soccerwatch.local`;
 
   const [created] = await db
     .insert(usersTable)
