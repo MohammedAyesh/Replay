@@ -28,12 +28,12 @@ export default function Login() {
     queryClient.prefetchQuery({
       queryKey: getListBannersQueryKey(),
       queryFn: () => listBanners(),
-      staleTime: 24 * 60 * 60 * 1000,
+      staleTime: 0,
     });
     queryClient.prefetchQuery({
       queryKey: getGetBunnyCollectionsQueryKey(),
       queryFn: () => getBunnyCollections(),
-      staleTime: 24 * 60 * 60 * 1000,
+      staleTime: 5 * 60 * 1000,
     });
   };
 

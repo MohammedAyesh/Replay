@@ -102,6 +102,8 @@ function ClipsTab() {
   const [clips, setClips] = useState<AdminClip[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
+  const [bulkWorking, setBulkWorking] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
@@ -116,15 +118,19 @@ function ClipsTab() {
 
   useEffect(() => { load(); }, [load]);
 
+  const invalidateFeeds = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getListClipsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+  }, [queryClient]);
+
   const toggleHidden = async (clip: AdminClip) => {
     await apiFetch(`/admin/clips/${clip.id}`, {
       method: "PATCH",
       body: JSON.stringify({ isHidden: !clip.isHidden }),
     });
     setClips((prev) => prev.map((c) => c.id === clip.id ? { ...c, isHidden: !c.isHidden } : c));
-    queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getListClipsQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+    invalidateFeeds();
   };
 
   const deleteClip = async (clip: AdminClip) => {
@@ -133,21 +139,85 @@ function ClipsTab() {
     try {
       await apiFetch(`/admin/clips/${clip.id}`, { method: "DELETE" });
       setClips((prev) => prev.filter((c) => c.id !== clip.id));
-      queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey() });
-      queryClient.invalidateQueries({ queryKey: getListClipsQueryKey() });
-      queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+      invalidateFeeds();
     } catch { /* silent */ }
     setDeleting(null);
   };
 
-  const filtered = clips.filter((c) =>
-    c.title.toLowerCase().includes(search.toLowerCase()) ||
-    c.userName.toLowerCase().includes(search.toLowerCase()) ||
-    c.userEmail.toLowerCase().includes(search.toLowerCase())
-  );
+  const players = Array.from(
+    new Map(clips.map((c) => [c.userId, { id: c.userId, name: c.userName }])).values()
+  ).sort((a, b) => a.name.localeCompare(b.name));
+
+  const bulkSetHidden = async (hidden: boolean) => {
+    const targets = clips.filter((c) => c.userId === selectedPlayer && c.isHidden !== hidden);
+    if (!targets.length) return;
+    setBulkWorking(true);
+    try {
+      for (const clip of targets) {
+        await apiFetch(`/admin/clips/${clip.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ isHidden: hidden }),
+        });
+      }
+      setClips((prev) =>
+        prev.map((c) => c.userId === selectedPlayer ? { ...c, isHidden: hidden } : c)
+      );
+      invalidateFeeds();
+    } catch { /* silent */ }
+    setBulkWorking(false);
+  };
+
+  const filtered = clips.filter((c) => {
+    if (selectedPlayer !== null && c.userId !== selectedPlayer) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      c.title.toLowerCase().includes(q) ||
+      c.userName.toLowerCase().includes(q) ||
+      c.userEmail.toLowerCase().includes(q)
+    );
+  });
+
+  const selectedPlayerClips = selectedPlayer !== null ? clips.filter((c) => c.userId === selectedPlayer) : [];
+  const allHidden = selectedPlayerClips.length > 0 && selectedPlayerClips.every((c) => c.isHidden);
+  const noneHidden = selectedPlayerClips.every((c) => !c.isHidden);
 
   return (
     <div className="space-y-4">
+      {/* Player filter row */}
+      <div className="flex items-center gap-2">
+        <select
+          value={selectedPlayer ?? ""}
+          onChange={(e) => setSelectedPlayer(e.target.value === "" ? null : Number(e.target.value))}
+          className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary appearance-none"
+        >
+          <option value="">All players</option>
+          {players.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        {selectedPlayer !== null && (
+          <>
+            <button
+              onClick={() => bulkSetHidden(true)}
+              disabled={bulkWorking || allHidden}
+              className="px-3 py-2 rounded-xl bg-red-900/40 text-red-400 border border-red-800/50 text-xs font-medium hover:bg-red-900/60 disabled:opacity-40 transition-colors"
+              title="Hide all clips from this player"
+            >
+              <EyeOff className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => bulkSetHidden(false)}
+              disabled={bulkWorking || noneHidden}
+              className="px-3 py-2 rounded-xl bg-primary/20 text-primary border border-primary/30 text-xs font-medium hover:bg-primary/30 disabled:opacity-40 transition-colors"
+              title="Show all clips from this player"
+            >
+              <Eye className="w-4 h-4" />
+            </button>
+          </>
+        )}
+      </div>
+      {/* Search + count row */}
       <div className="flex items-center gap-3">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
