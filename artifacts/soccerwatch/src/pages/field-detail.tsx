@@ -168,6 +168,10 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const seekDraggingRef = useRef(false);
   const zoomRef = useRef<HTMLDivElement>(null);
   const { isZoomed } = usePinchZoom(zoomRef);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isLandscape, setIsLandscape] = useState(
+    typeof window !== "undefined" && window.innerWidth > window.innerHeight
+  );
   const [showControls, setShowControls] = useState(true);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -213,19 +217,39 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     return () => setFullscreenVideo(false);
   }, [setFullscreenVideo]);
 
-  /* Fullscreen toggle */
+  /* Landscape detection */
+  useEffect(() => {
+    const update = () => setIsLandscape(window.innerWidth > window.innerHeight);
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+
+  /* Fullscreen toggle — targets the player container, supports webkit prefix */
   const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
+    const el = containerRef.current as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+    const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void };
+    const isFs = document.fullscreenElement || doc.webkitFullscreenElement;
+    if (!el) return;
+    if (!isFs) {
+      (el.requestFullscreen ?? el.webkitRequestFullscreen)?.call(el)?.catch?.(() => {});
     } else {
-      document.exitFullscreen().catch(() => {});
+      (document.exitFullscreen ?? doc.webkitExitFullscreen)?.call(document)?.catch?.(() => {});
     }
   }, []);
 
   useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    const doc = document as Document & { webkitFullscreenElement?: Element };
+    const handler = () => setIsFullscreen(!!(document.fullscreenElement || doc.webkitFullscreenElement));
     document.addEventListener("fullscreenchange", handler);
-    return () => document.removeEventListener("fullscreenchange", handler);
+    document.addEventListener("webkitfullscreenchange", handler);
+    return () => {
+      document.removeEventListener("fullscreenchange", handler);
+      document.removeEventListener("webkitfullscreenchange", handler);
+    };
   }, []);
 
   // Cleanup on unmount
@@ -533,6 +557,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
   return (
     <motion.div
+      ref={containerRef}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -654,12 +679,13 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.22 }}
-          className="absolute bottom-safe left-0 right-0 z-20 px-4 pb-3 flex flex-col gap-3"
-          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}
+          className={`absolute left-0 right-0 z-20 flex flex-col ${isLandscape ? "bottom-0 pb-2 gap-1 px-3" : "bottom-safe pb-3 gap-3 px-4"}`}
+          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 100%)", paddingTop: isLandscape ? "2.5rem" : "3rem" }}
           onTouchStart={resetControlsTimer}
+          onClick={resetControlsTimer}
         >
-          {/* Views */}
-          {(video.views ?? 0) > 0 && (
+          {/* Views — portrait only */}
+          {!isLandscape && (video.views ?? 0) > 0 && (
             <div className="px-1">
               <p className="text-white/60 text-xs drop-shadow">{(video.views ?? 0).toLocaleString()} views</p>
             </div>
@@ -667,18 +693,18 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
           {/* Seek Bar */}
           <div className="px-1 select-none" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px]">
+            <div className="flex items-center gap-2">
+              <span className={`text-white/80 font-semibold tabular-nums ${isLandscape ? "text-[11px] min-w-[32px]" : "text-xs min-w-[38px]"}`}>
                 {formatDuration(currentTime)}
               </span>
-              <div className="flex-1 relative h-8 flex items-center">
-                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-white/25 rounded-full" />
+              <div className={`flex-1 relative flex items-center ${isLandscape ? "h-6" : "h-8"}`}>
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1.5 bg-white/25 rounded-full" />
                 <div
-                  className="absolute left-0 top-1/2 -translate-y-1/2 h-2 bg-primary rounded-full pointer-events-none"
+                  className="absolute left-0 top-1/2 -translate-y-1/2 h-1.5 bg-primary rounded-full pointer-events-none"
                   style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
                 />
                 <div
-                  className="absolute top-1/2 -translate-y-1/2 w-5 h-5 bg-white rounded-full shadow-lg ring-2 ring-white/30 pointer-events-none transition-transform"
+                  className={`absolute top-1/2 -translate-y-1/2 bg-white rounded-full shadow-lg ring-2 ring-white/30 pointer-events-none ${isLandscape ? "w-3.5 h-3.5" : "w-5 h-5"}`}
                   style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`, transform: `translate(-50%, -50%)` }}
                 />
                 <input
@@ -688,7 +714,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
                   step={0.1}
                   value={currentTime}
                   onMouseDown={() => { seekDraggingRef.current = true; }}
-                  onTouchStart={() => { seekDraggingRef.current = true; }}
+                  onTouchStart={() => { seekDraggingRef.current = true; resetControlsTimer(); }}
                   onChange={(e) => setCurrentTime(parseFloat(e.target.value))}
                   onMouseUp={(e) => {
                     const val = parseFloat((e.target as HTMLInputElement).value);
@@ -703,59 +729,108 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
                   className="w-full h-full appearance-none cursor-pointer relative z-10 opacity-0"
                 />
               </div>
-              <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px] text-right">
+              <span className={`text-white/80 font-semibold tabular-nums text-right ${isLandscape ? "text-[11px] min-w-[32px]" : "text-xs min-w-[38px]"}`}>
                 {formatDuration(duration)}
               </span>
             </div>
           </div>
 
-          {/* Aspect ratio picker */}
-          <div className="flex items-center justify-center gap-2 mb-1">
-            <span className="text-white/50 text-xs font-medium">Crop</span>
-            <div className="flex rounded-lg overflow-hidden border border-white/20 text-xs font-bold">
-              {(["16:9", "9:16"] as AspectRatio[]).map((ratio) => (
-                <button
-                  key={ratio}
-                  type="button"
-                  onClick={() => { setSelectedRatio(ratio); selectedRatioRef.current = ratio; }}
-                  className={`px-3 py-1.5 transition-colors ${selectedRatio === ratio ? "bg-white text-black" : "bg-white/10 text-white/60"}`}
-                >
-                  {ratio}
-                </button>
-              ))}
+          {/* Landscape: single compact button row with crop picker inline */}
+          {isLandscape ? (
+            <div className="flex items-center justify-center gap-2.5 pb-1">
+              <button onClick={() => seek(-5)}
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+                aria-label="Back 5s">
+                <SkipBack className="w-4 h-4" />
+              </button>
+              <button onClick={togglePlay}
+                className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
+                aria-label={isPlaying ? "Pause" : "Play"}>
+                {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+              </button>
+              <button onClick={() => seek(5)}
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+                aria-label="Forward 5s">
+                <SkipForward className="w-4 h-4" />
+              </button>
+              <button onClick={startRecording}
+                className="w-9 h-9 rounded-full bg-red-600 flex items-center justify-center text-white active:scale-95 transition-transform shadow-md shadow-red-900/50"
+                aria-label={t.clipping.record}>
+                <Circle className="w-4 h-4 fill-white text-white" />
+              </button>
+              <div className="w-px h-5 bg-white/20 mx-0.5" />
+              <div className="flex rounded-md overflow-hidden border border-white/20 text-[10px] font-bold">
+                {(["16:9", "9:16"] as AspectRatio[]).map((ratio) => (
+                  <button
+                    key={ratio}
+                    type="button"
+                    onClick={() => { setSelectedRatio(ratio); selectedRatioRef.current = ratio; }}
+                    className={`px-2 py-1 transition-colors ${selectedRatio === ratio ? "bg-white text-black" : "bg-white/10 text-white/60"}`}
+                  >
+                    {ratio}
+                  </button>
+                ))}
+              </div>
+              <div className="w-px h-5 bg-white/20 mx-0.5" />
+              <button
+                onClick={toggleFullscreen}
+                className="w-8 h-8 rounded-full bg-white/15 text-white flex items-center justify-center active:scale-95 transition-all"
+                aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              >
+                {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+              </button>
             </div>
-          </div>
+          ) : (
+            <>
+              {/* Portrait: aspect ratio picker */}
+              <div className="flex items-center justify-center gap-2 mb-1">
+                <span className="text-white/50 text-xs font-medium">Crop</span>
+                <div className="flex rounded-lg overflow-hidden border border-white/20 text-xs font-bold">
+                  {(["16:9", "9:16"] as AspectRatio[]).map((ratio) => (
+                    <button
+                      key={ratio}
+                      type="button"
+                      onClick={() => { setSelectedRatio(ratio); selectedRatioRef.current = ratio; }}
+                      className={`px-3 py-1.5 transition-colors ${selectedRatio === ratio ? "bg-white text-black" : "bg-white/10 text-white/60"}`}
+                    >
+                      {ratio}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          {/* Button row */}
-          <div className="flex items-center justify-center gap-4">
-            <button onClick={() => seek(-5)}
-              className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
-              aria-label="Back 5s">
-              <SkipBack className="w-5 h-5" />
-            </button>
-            <button onClick={togglePlay}
-              className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
-              aria-label={isPlaying ? "Pause" : "Play"}>
-              {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
-            </button>
-            <button onClick={() => seek(5)}
-              className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
-              aria-label="Forward 5s">
-              <SkipForward className="w-5 h-5" />
-            </button>
-            <button onClick={startRecording}
-              className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white active:scale-95 transition-transform shadow-lg shadow-red-900/50"
-              aria-label={t.clipping.record}>
-              <Circle className="w-5 h-5 fill-white text-white" />
-            </button>
-            <button
-              onClick={toggleFullscreen}
-              className="w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all"
-              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            >
-              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-            </button>
-          </div>
+              {/* Portrait: button row */}
+              <div className="flex items-center justify-center gap-4">
+                <button onClick={() => seek(-5)}
+                  className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+                  aria-label="Back 5s">
+                  <SkipBack className="w-5 h-5" />
+                </button>
+                <button onClick={togglePlay}
+                  className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform"
+                  aria-label={isPlaying ? "Pause" : "Play"}>
+                  {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+                </button>
+                <button onClick={() => seek(5)}
+                  className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-colors"
+                  aria-label="Forward 5s">
+                  <SkipForward className="w-5 h-5" />
+                </button>
+                <button onClick={startRecording}
+                  className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white active:scale-95 transition-transform shadow-lg shadow-red-900/50"
+                  aria-label={t.clipping.record}>
+                  <Circle className="w-5 h-5 fill-white text-white" />
+                </button>
+                <button
+                  onClick={toggleFullscreen}
+                  className="w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all"
+                  aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                >
+                  {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+                </button>
+              </div>
+            </>
+          )}
         </motion.div>
       )}
       </AnimatePresence>
