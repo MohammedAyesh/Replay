@@ -4,8 +4,9 @@ import { z } from "zod/v4";
 
 export const fieldsTable = pgTable("fields", {
   id: serial("id").primaryKey(),
+  bunnyGuid: text("bunny_guid").unique(),
   name: text("name").notNull(),
-  location: text("location").notNull(),
+  location: text("location").notNull().default(""),
   courts: integer("courts").notNull().default(1),
   weight: real("weight").notNull().default(1.0),
   latitude: real("latitude"),

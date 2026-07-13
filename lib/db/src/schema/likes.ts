@@ -10,7 +10,7 @@ export const likesTable = pgTable(
     id: serial("id").primaryKey(),
     userId: integer("user_id").notNull().references(() => usersTable.id),
     clipId: integer("clip_id").references(() => clipsTable.id),
-    userClipId: integer("user_clip_id").references(() => userClipsTable.id),
+    userClipId: integer("user_clip_id").references(() => userClipsTable.id, { onDelete: "cascade" }),
     likedAt: timestamp("liked_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

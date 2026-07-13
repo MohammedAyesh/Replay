@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq, count, and, desc } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable } from "@workspace/db";
+import { eq, count, and, desc, sql } from "drizzle-orm";
+import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable } from "@workspace/db";
 import {
   UpdateAdParams,
   UpdateAdBody,
@@ -12,7 +12,7 @@ import {
   GetAdStatsResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
+import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID } from "../lib/bunny";
 import { getStorageConfig as getBannerStorageConfig, type BannerJson } from "./banners";
 import multer from "multer";
 
@@ -240,6 +240,20 @@ router.patch("/admin/clips/:id", async (req, res): Promise<void> => {
   res.json({ id: clip.id, isHidden: clip.isHidden, visibility: clip.visibility });
 });
 
+router.delete("/admin/clips/:id", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  await db.delete(likesTable).where(eq(likesTable.userClipId, id));
+  await db.delete(userClipsTable).where(eq(userClipsTable.id, id));
+  // savedClipsTable references clipsTable (legacy), not userClipsTable — skip
+
+  res.json({ ok: true });
+});
+
 // ─── Admin: Users ─────────────────────────────────────────────────────────────
 
 router.get("/admin/users", async (req, res): Promise<void> => {
@@ -260,6 +274,11 @@ router.get("/admin/users", async (req, res): Promise<void> => {
     isDisabled: u.isDisabled,
     isGuest: u.isGuest,
     profileComplete: u.profileComplete,
+    phone: u.phone ?? null,
+    position: u.position ?? null,
+    age: u.age ?? null,
+    gender: u.gender ?? null,
+    clerkId: u.clerkId ?? null,
     createdAt: u.createdAt.toISOString(),
   })));
 });
@@ -271,15 +290,47 @@ router.patch("/admin/users/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const { isDisabled, isAdmin } = req.body as { isDisabled?: boolean; isAdmin?: boolean };
+  const body = req.body as Partial<{
+    name: string; email: string; phone: string; position: string;
+    age: number | null; gender: string; isDisabled: boolean; isAdmin: boolean;
+  }>;
   const updates: Partial<typeof usersTable.$inferInsert> = {};
-  if (isDisabled !== undefined) updates.isDisabled = isDisabled;
-  if (isAdmin !== undefined) updates.isAdmin = isAdmin;
+  if (body.name !== undefined && body.name.trim()) updates.name = body.name.trim();
+  if (body.email !== undefined && body.email.trim()) updates.email = body.email.trim();
+  if (body.phone !== undefined) updates.phone = body.phone.trim() || null;
+  if (body.position !== undefined) updates.position = body.position.trim() || null;
+  if (body.age !== undefined) updates.age = body.age ?? null;
+  if (body.gender !== undefined) updates.gender = body.gender.trim() || null;
+  if (body.isDisabled !== undefined) updates.isDisabled = body.isDisabled;
+  if (body.isAdmin !== undefined) updates.isAdmin = body.isAdmin;
 
   const [user] = await db.update(usersTable).set(updates).where(eq(usersTable.id, id)).returning();
   if (!user) { res.status(404).json({ error: "User not found" }); return; }
 
-  res.json({ id: user.id, isAdmin: user.isAdmin, isDisabled: user.isDisabled });
+  res.json({
+    id: user.id, name: user.name, email: user.email, isAdmin: user.isAdmin,
+    isDisabled: user.isDisabled, phone: user.phone ?? null, position: user.position ?? null,
+    age: user.age ?? null, gender: user.gender ?? null,
+  });
+});
+
+router.delete("/admin/users/:id", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  if (id === adminId) { res.status(409).json({ error: "Cannot delete yourself" }); return; }
+
+  await db.delete(savedClipsTable).where(eq(savedClipsTable.userId, id));
+  await db.delete(likesTable).where(eq(likesTable.userId, id));
+  await db.delete(followsTable).where(eq(followsTable.followerId, id));
+  await db.delete(followsTable).where(eq(followsTable.followeeId, id));
+  await db.delete(userClipsTable).where(eq(userClipsTable.userId, id));
+  await db.delete(usersTable).where(eq(usersTable.id, id));
+
+  res.json({ ok: true });
 });
 
 // ─── Admin: Fields ────────────────────────────────────────────────────────────
@@ -324,6 +375,58 @@ router.patch("/admin/fields/:id", async (req, res): Promise<void> => {
   if (!field) { res.status(404).json({ error: "Field not found" }); return; }
 
   res.json({ id: field.id, name: field.name, thumbnailUrl: field.thumbnailUrl ?? null, weight: field.weight, isHidden: field.isHidden });
+});
+
+
+router.post("/admin/fields/sync", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  if (!BUNNY_API_KEY || !BUNNY_LIBRARY_ID) {
+    res.status(503).json({ error: "Bunny not configured" }); return;
+  }
+
+  const bunnyRes = await fetch(
+    `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/collections?page=1&itemsPerPage=100&orderBy=date&includeThumbnails=true`,
+    { headers: { AccessKey: BUNNY_API_KEY, accept: "application/json" } }
+  );
+  if (!bunnyRes.ok) { res.status(502).json({ error: "Bunny API error" }); return; }
+
+  const data = (await bunnyRes.json()) as { items?: Array<{ guid?: string; name?: string; videoCount?: number; previewImageUrls?: string[] }> };
+  const collections = (data.items ?? []).filter((c) => typeof c.guid === "string" && typeof c.name === "string");
+
+  const existing = await db.select().from(fieldsTable);
+  const existingByGuid = new Map(existing.filter((f) => f.bunnyGuid).map((f) => [f.bunnyGuid!, f]));
+
+  const results = [];
+  for (const c of collections) {
+    const guid = c.guid as string;
+    const name = c.name as string;
+    const thumb = c.previewImageUrls?.[0] ?? null;
+    const existingField = existingByGuid.get(guid);
+    if (existingField) {
+      if (existingField.name !== name || existingField.thumbnailUrl !== thumb) {
+        const [updated] = await db.update(fieldsTable)
+          .set({ name, thumbnailUrl: thumb ?? undefined })
+          .where(eq(fieldsTable.id, existingField.id))
+          .returning();
+        results.push(updated);
+      } else {
+        results.push(existingField);
+      }
+    } else {
+      const [created] = await db.insert(fieldsTable)
+        .values({ bunnyGuid: guid, name, location: "", thumbnailUrl: thumb, courts: 1, weight: 1.0 })
+        .returning();
+      results.push(created);
+    }
+  }
+
+  res.json({ synced: results.length, fields: results.map((f) => ({
+    id: f.id, name: f.name, location: f.location, courts: f.courts,
+    weight: f.weight, thumbnailUrl: f.thumbnailUrl ?? null, isHidden: f.isHidden,
+    lastRecordedAt: f.lastRecordedAt?.toISOString() ?? null,
+  })) });
 });
 
 // ─── Admin: Banners ───────────────────────────────────────────────────────────

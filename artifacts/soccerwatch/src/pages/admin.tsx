@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
-import { Eye, EyeOff, UserCheck, UserX, Shield, ShieldOff, Trash2, Plus, Save, X, ExternalLink, Image } from "lucide-react";
+import {
+  Eye, EyeOff, UserCheck, UserX, Shield, ShieldOff, Trash2, Plus, Save, X,
+  ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -36,6 +39,11 @@ interface AdminUser {
   isDisabled: boolean;
   isGuest: boolean;
   profileComplete: boolean;
+  phone: string | null;
+  position: string | null;
+  age: number | null;
+  gender: string | null;
+  clerkId: string | null;
   createdAt: string;
 }
 
@@ -48,6 +56,7 @@ interface AdminField {
   thumbnailUrl: string | null;
   isHidden: boolean;
   lastRecordedAt: string | null;
+  bunnyGuid: string | null;
 }
 
 interface AdminBanner {
@@ -78,6 +87,7 @@ function ClipsTab() {
   const [clips, setClips] = useState<AdminClip[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [deleting, setDeleting] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,21 +108,35 @@ function ClipsTab() {
     setClips((prev) => prev.map((c) => c.id === clip.id ? { ...c, isHidden: !c.isHidden } : c));
   };
 
+  const deleteClip = async (clip: AdminClip) => {
+    if (!confirm(`Delete "${clip.title}"? This cannot be undone.`)) return;
+    setDeleting(clip.id);
+    try {
+      await apiFetch(`/admin/clips/${clip.id}`, { method: "DELETE" });
+      setClips((prev) => prev.filter((c) => c.id !== clip.id));
+    } catch { /* silent */ }
+    setDeleting(null);
+  };
+
   const filtered = clips.filter((c) =>
     c.title.toLowerCase().includes(search.toLowerCase()) ||
-    c.userName.toLowerCase().includes(search.toLowerCase())
+    c.userName.toLowerCase().includes(search.toLowerCase()) ||
+    c.userEmail.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search clips or users…"
-          className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
-        />
-        <span className="text-zinc-500 text-xs">{filtered.length} clips</span>
+        <div className="flex-1 relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search clips or players…"
+            className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
+          />
+        </div>
+        <span className="text-zinc-500 text-xs shrink-0">{filtered.length} clips</span>
       </div>
 
       {loading ? (
@@ -164,6 +188,14 @@ function ClipsTab() {
                 >
                   {clip.isHidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                 </button>
+                <button
+                  onClick={() => deleteClip(clip)}
+                  disabled={deleting === clip.id}
+                  className="p-2 rounded-lg bg-zinc-800 text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-50"
+                  title="Delete clip"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             </div>
           ))}
@@ -180,6 +212,10 @@ function AccountsTab() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const { user: me } = useAuth();
+  const [editing, setEditing] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<Partial<AdminUser>>({});
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -192,29 +228,83 @@ function AccountsTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  const patch = async (user: AdminUser, updates: Partial<AdminUser>) => {
-    await apiFetch(`/admin/users/${user.id}`, {
-      method: "PATCH",
-      body: JSON.stringify(updates),
+  const startEdit = (user: AdminUser) => {
+    setEditing(user.id);
+    setEditForm({
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? "",
+      position: user.position ?? "",
+      age: user.age ?? undefined,
+      gender: user.gender ?? "",
     });
-    setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, ...updates } : u));
+  };
+
+  const cancelEdit = () => {
+    setEditing(null);
+    setEditForm({});
+  };
+
+  const saveUser = async (user: AdminUser) => {
+    setSaving(true);
+    const body: Record<string, unknown> = {};
+    if (editForm.name !== undefined) body.name = editForm.name;
+    if (editForm.email !== undefined) body.email = editForm.email;
+    if (editForm.phone !== undefined) body.phone = editForm.phone;
+    if (editForm.position !== undefined) body.position = editForm.position;
+    if (editForm.age !== undefined) body.age = editForm.age == null ? null : Number(editForm.age);
+    if (editForm.gender !== undefined) body.gender = editForm.gender;
+
+    try {
+      const updated = await apiFetch(`/admin/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+      setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, ...updated } : u));
+      cancelEdit();
+    } catch { /* silent */ }
+    setSaving(false);
+  };
+
+  const patchToggle = async (user: AdminUser, updates: Partial<AdminUser>) => {
+    try {
+      await apiFetch(`/admin/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(updates),
+      });
+      setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, ...updates } : u));
+    } catch { /* silent */ }
+  };
+
+  const deleteUser = async (user: AdminUser) => {
+    if (!confirm(`Permanently delete ${user.name} (${user.email})? This cannot be undone.`)) return;
+    setDeleting(user.id);
+    try {
+      await apiFetch(`/admin/users/${user.id}`, { method: "DELETE" });
+      setUsers((prev) => prev.filter((u) => u.id !== user.id));
+    } catch { /* silent */ }
+    setDeleting(null);
   };
 
   const filtered = users.filter((u) =>
     u.name.toLowerCase().includes(search.toLowerCase()) ||
-    u.email.toLowerCase().includes(search.toLowerCase())
+    u.email.toLowerCase().includes(search.toLowerCase()) ||
+    (u.phone ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search accounts…"
-          className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
-        />
-        <span className="text-zinc-500 text-xs">{filtered.length} accounts</span>
+        <div className="flex-1 relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search accounts…"
+            className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
+          />
+        </div>
+        <span className="text-zinc-500 text-xs shrink-0">{filtered.length} accounts</span>
       </div>
 
       {loading ? (
@@ -223,61 +313,150 @@ function AccountsTab() {
         <div className="space-y-2">
           {filtered.map((user) => {
             const isSelf = user.id === me?.id;
+            const isEdit = editing === user.id;
             return (
               <div
                 key={user.id}
                 className={cn(
-                  "flex items-center gap-3 p-3 rounded-xl border",
+                  "rounded-xl border overflow-hidden",
                   user.isDisabled ? "bg-zinc-900/50 border-zinc-800 opacity-60" : "bg-zinc-900 border-zinc-800"
                 )}
               >
-                <div className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center text-sm font-bold text-zinc-300 flex-shrink-0">
-                  {user.name[0]?.toUpperCase() ?? "?"}
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-white text-sm font-medium truncate">{user.name}</p>
-                    {user.isAdmin && (
-                      <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full border border-primary/30">
-                        Admin
-                      </span>
-                    )}
-                    {isSelf && (
-                      <span className="text-[10px] bg-zinc-700 text-zinc-400 px-1.5 py-0.5 rounded-full">
-                        You
-                      </span>
-                    )}
+                <div className="flex items-center gap-3 p-3">
+                  <div className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center text-sm font-bold text-zinc-300 flex-shrink-0">
+                    {user.name[0]?.toUpperCase() ?? "?"}
                   </div>
-                  <p className="text-zinc-500 text-xs truncate">{user.email}</p>
-                </div>
 
-                {!isSelf && (
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-white text-sm font-medium truncate">{user.name}</p>
+                      {user.isAdmin && (
+                        <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full border border-primary/30">
+                          Admin
+                        </span>
+                      )}
+                      {isSelf && (
+                        <span className="text-[10px] bg-zinc-700 text-zinc-400 px-1.5 py-0.5 rounded-full">
+                          You
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-zinc-500 text-xs truncate">{user.email}</p>
+                  </div>
+
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
-                      onClick={() => patch(user, { isAdmin: !user.isAdmin })}
-                      className={cn(
-                        "p-2 rounded-lg transition-colors",
-                        user.isAdmin
-                          ? "bg-primary/20 text-primary hover:bg-primary/30"
-                          : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
-                      )}
-                      title={user.isAdmin ? "Remove admin" : "Make admin"}
+                      onClick={() => isEdit ? cancelEdit() : startEdit(user)}
+                      className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
+                      title={isEdit ? "Cancel" : "Edit account"}
                     >
-                      {user.isAdmin ? <Shield className="w-4 h-4" /> : <ShieldOff className="w-4 h-4" />}
+                      {isEdit ? <X className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
                     </button>
-                    <button
-                      onClick={() => patch(user, { isDisabled: !user.isDisabled })}
-                      className={cn(
-                        "p-2 rounded-lg transition-colors",
-                        user.isDisabled
-                          ? "bg-red-900/30 text-red-400 hover:bg-red-900/50"
-                          : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
-                      )}
-                      title={user.isDisabled ? "Enable account" : "Disable account"}
-                    >
-                      {user.isDisabled ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
-                    </button>
+                    {!isSelf && (
+                      <>
+                        <button
+                          onClick={() => patchToggle(user, { isAdmin: !user.isAdmin })}
+                          className={cn(
+                            "p-2 rounded-lg transition-colors",
+                            user.isAdmin
+                              ? "bg-primary/20 text-primary hover:bg-primary/30"
+                              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
+                          )}
+                          title={user.isAdmin ? "Remove admin" : "Make admin"}
+                        >
+                          {user.isAdmin ? <Shield className="w-4 h-4" /> : <ShieldOff className="w-4 h-4" />}
+                        </button>
+                        <button
+                          onClick={() => patchToggle(user, { isDisabled: !user.isDisabled })}
+                          className={cn(
+                            "p-2 rounded-lg transition-colors",
+                            user.isDisabled
+                              ? "bg-red-900/30 text-red-400 hover:bg-red-900/50"
+                              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
+                          )}
+                          title={user.isDisabled ? "Enable account" : "Disable account"}
+                        >
+                          {user.isDisabled ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
+                        </button>
+                        <button
+                          onClick={() => deleteUser(user)}
+                          disabled={deleting === user.id}
+                          className="p-2 rounded-lg bg-zinc-800 text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-50"
+                          title="Delete account"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {isEdit && (
+                  <div className="border-t border-zinc-800 p-3 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">Name</label>
+                        <input
+                          value={editForm.name ?? ""}
+                          onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">Email</label>
+                        <input
+                          value={editForm.email ?? ""}
+                          onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">Phone</label>
+                        <input
+                          value={editForm.phone ?? ""}
+                          onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">Position</label>
+                        <input
+                          value={editForm.position ?? ""}
+                          onChange={(e) => setEditForm((f) => ({ ...f, position: e.target.value }))}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">Age</label>
+                        <input
+                          type="number"
+                          value={editForm.age ?? ""}
+                          onChange={(e) => setEditForm((f) => ({ ...f, age: e.target.value === "" ? undefined : Number(e.target.value) }))}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">Gender</label>
+                        <input
+                          value={editForm.gender ?? ""}
+                          onChange={(e) => setEditForm((f) => ({ ...f, gender: e.target.value }))}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveUser(user)}
+                        disabled={saving}
+                        className="flex-1 flex items-center justify-center gap-2 bg-primary text-black font-bold py-2.5 rounded-xl text-sm disabled:opacity-50"
+                      >
+                        <Save className="w-4 h-4" />
+                        {saving ? "Saving…" : "Save Changes"}
+                      </button>
+                      <button onClick={cancelEdit} className="px-4 py-2.5 bg-zinc-800 text-zinc-400 rounded-xl text-sm hover:bg-zinc-700">
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -300,6 +479,7 @@ function FieldsTab() {
   const [weightInput, setWeightInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -311,6 +491,15 @@ function FieldsTab() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const syncFields = async () => {
+    setSyncing(true);
+    try {
+      const data = await apiFetch("/admin/fields/sync", { method: "POST" });
+      if (data?.fields) setFields(data.fields);
+    } catch { /* silent */ }
+    setSyncing(false);
+  };
 
   const startEdit = (field: AdminField) => {
     setEditing(field.id);
@@ -363,6 +552,18 @@ function FieldsTab() {
 
   return (
     <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-500 text-xs">{fields.length} field{fields.length !== 1 ? "s" : ""}</span>
+        <button
+          onClick={syncFields}
+          disabled={syncing}
+          className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 rounded-xl text-sm hover:bg-zinc-700 disabled:opacity-50"
+        >
+          <RefreshCw className={cn("w-4 h-4", syncing && "animate-spin")} />
+          {syncing ? "Syncing…" : "Sync from Bunny"}
+        </button>
+      </div>
+
       {loading ? (
         <div className="text-center py-16 text-zinc-500">Loading…</div>
       ) : (

@@ -1,5 +1,6 @@
 import { pgTable, serial, integer, text, numeric, timestamp, jsonb, boolean } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
+import { fieldsTable } from "./fields";
 
 export type CropKeyframe = {
   t: number;
