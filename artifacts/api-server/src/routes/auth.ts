@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { GetMeResponse, LoginAsGuestResponse } from "@workspace/api-zod";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
@@ -51,6 +52,41 @@ router.post("/auth/guest", async (req, res): Promise<void> => {
 router.post("/auth/logout", async (req, res): Promise<void> => {
   res.clearCookie("guestId");
   res.json({ ok: true });
+});
+
+// One-time secure admin bootstrap: requires a shared secret token set in
+// environment variables. Call this once from your browser console or curl
+// after signing in, then delete the secret so the route is disabled.
+router.post("/auth/admin-setup", async (req, res): Promise<void> => {
+  const expectedToken = process.env.ADMIN_SETUP_SECRET;
+  if (!expectedToken) {
+    res.status(403).json({ error: "Admin setup is disabled (no token configured)" });
+    return;
+  }
+  const { token } = req.body as { token?: string };
+  if (token !== expectedToken) {
+    res.status(403).json({ error: "Invalid token" });
+    return;
+  }
+
+  const user = await getLocalUserRecord(req);
+  if (!user) {
+    res.status(401).json({ error: "Unauthenticated" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(usersTable)
+    .set({ isAdmin: true })
+    .where(eq(usersTable.id, user.id))
+    .returning();
+
+  if (!updated) {
+    res.status(500).json({ error: "Failed to update user" });
+    return;
+  }
+
+  res.json({ ok: true, isAdmin: updated.isAdmin });
 });
 
 export default router;
