@@ -21,6 +21,7 @@ import Profile from "@/pages/profile";
 import MyClips from "@/pages/my-clips";
 import Account from "@/pages/account";
 import Admin from "@/pages/admin";
+import AdminSetup from "@/pages/admin-setup";
 import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/lib/auth";
@@ -150,6 +151,7 @@ function AppRouter() {
         <Route path="/my-clips" component={MyClips} />
         <Route path="/account" component={Account} />
         <Route path="/admin" component={Admin} />
+        <Route path="/admin/setup" component={AdminSetup} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
