@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, isBunnyConfigured } from "../lib/bunny.js";
+import { db, fieldsTable } from "@workspace/db";
 
 const router: IRouter = Router();
 
@@ -31,7 +32,7 @@ async function bunnyGet(path: string, req: { log: { warn: (...args: unknown[]) =
   return Array.isArray(data) ? data : (data.items ?? []);
 }
 
-// List all collections
+// List all collections — merged with DB overrides so admin controls apply
 router.get("/bunny/collections", async (req, res): Promise<void> => {
   if (!isBunnyConfigured()) {
     res.json([]);
@@ -44,14 +45,26 @@ router.get("/bunny/collections", async (req, res): Promise<void> => {
     return;
   }
 
+  // Pull DB overrides
+  const dbFields = await db.select().from(fieldsTable);
+  const dbByGuid = new Map(dbFields.map((f) => [f.bunnyGuid, f]));
+
   const collections = (raw as BunnyApiCollection[])
     .filter((c) => typeof c.guid === "string" && typeof c.name === "string")
-    .map((c) => ({
-      guid: c.guid as string,
-      name: c.name as string,
-      videoCount: c.videoCount ?? 0,
-      previewImageUrl: c.previewImageUrls?.[0] ?? null,
-    }));
+    .map((c) => {
+      const guid = c.guid as string;
+      const dbField = dbByGuid.get(guid);
+      return {
+        guid,
+        name: dbField?.name ?? (c.name as string),
+        videoCount: c.videoCount ?? 0,
+        previewImageUrl: dbField?.thumbnailUrl ?? c.previewImageUrls?.[0] ?? null,
+        // include DB id so detail pages can link by integer id
+        id: dbField?.id ?? null,
+        isHidden: dbField?.isHidden ?? false,
+      };
+    })
+    .filter((c) => !c.isHidden);
 
   res.json(collections);
 });
