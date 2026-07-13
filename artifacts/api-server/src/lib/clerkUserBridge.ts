@@ -5,20 +5,54 @@ import type { Request } from "express";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
+function isSyntheticEmail(email: string): boolean {
+  return email.startsWith("clerk_") || email.startsWith("guest_") || email.endsWith("@soccerwatch.local");
+}
+
+function extractClerkEmail(clerkUser: Awaited<ReturnType<typeof clerkClient.users.getUser>> | null): string | null {
+  if (!clerkUser) return null;
+  const emails = clerkUser.emailAddresses ?? [];
+  const primary = emails.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress;
+  const verified = emails.find((e) => e.verification?.status === "verified")?.emailAddress;
+  const anyEmail = emails[0]?.emailAddress;
+  return primary ?? verified ?? anyEmail ?? null;
+}
+
 async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | null> {
-  const [existing] = await db
-    .select({ id: usersTable.id })
-    .from(usersTable)
-    .where(eq(usersTable.clerkId, clerkId));
-
-  if (existing) return existing.id;
-
-  // Fetch Clerk user once to get real name, email, and provider info.
+  // Fetch Clerk user first — we need it whether the user is new or existing.
   let clerkUser: Awaited<ReturnType<typeof clerkClient.users.getUser>> | null = null;
   try {
     clerkUser = await clerkClient.users.getUser(clerkId);
   } catch {
     // If Clerk is unreachable, fall back to synthetic values below.
+  }
+
+  const [existing] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.clerkId, clerkId));
+
+  if (existing) {
+    // Sync name and email from Clerk if the local record is stale.
+    const freshEmail = extractClerkEmail(clerkUser);
+    const firstName = clerkUser?.firstName?.trim() ?? "";
+    const lastName = clerkUser?.lastName?.trim() ?? "";
+    const freshName = [firstName, lastName].filter(Boolean).join(" ") || undefined;
+
+    const needsNameUpdate = freshName && freshName !== existing.name;
+    const needsEmailUpdate = freshEmail && (isSyntheticEmail(existing.email) || freshEmail !== existing.email);
+
+    if (needsNameUpdate || needsEmailUpdate) {
+      await db
+        .update(usersTable)
+        .set({
+          ...(needsNameUpdate ? { name: freshName } : {}),
+          ...(needsEmailUpdate ? { email: freshEmail } : {}),
+        })
+        .where(eq(usersTable.id, existing.id));
+    }
+
+    return existing.id;
   }
 
   // Social login users (Google, Apple, etc.) start with profileComplete=false
@@ -29,13 +63,7 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
   const firstName = clerkUser?.firstName?.trim() ?? "";
   const lastName = clerkUser?.lastName?.trim() ?? "";
   const name = [firstName, lastName].filter(Boolean).join(" ") || "Player";
-
-  // Extract best available email from Clerk: primary > verified > any.
-  const emails = clerkUser?.emailAddresses ?? [];
-  const primaryEmail = emails.find((e) => e.id === clerkUser?.primaryEmailAddressId)?.emailAddress;
-  const verifiedEmail = emails.find((e) => e.verification?.status === "verified")?.emailAddress;
-  const anyEmail = emails[0]?.emailAddress;
-  const email = primaryEmail ?? verifiedEmail ?? anyEmail ?? `clerk_${clerkId}@soccerwatch.local`;
+  const email = extractClerkEmail(clerkUser) ?? `clerk_${clerkId}@soccerwatch.local`;
 
   const [created] = await db
     .insert(usersTable)
