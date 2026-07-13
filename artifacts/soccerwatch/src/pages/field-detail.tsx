@@ -154,7 +154,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const scrollRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const { setFullscreenVideo } = useFullscreenVideo();
-  const { isGuest } = useAuth();
+  const { user, isGuest } = useAuth();
   const { toast } = useToast();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -356,7 +356,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   };
 
   const startRecording = () => {
-    if (isGuest) {
+    if (!user || isGuest) {
       setShowAuthPrompt(true);
       return;
     }
@@ -463,6 +463,10 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   };
 
   const saveClip = async () => {
+    if (!user || isGuest) {
+      setShowAuthPrompt(true);
+      return;
+    }
     const el = videoRef.current;
     const totalDuration = el?.duration || duration || 0;
     if (totalDuration <= 0) {
@@ -516,8 +520,10 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       setSelectedRatio("16:9");
       selectedRatioRef.current = "16:9";
       recordingRef.current.keyframes = [];
-    } catch {
-      toast({ title: t.clipping.error, variant: "destructive" });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : t.clipping.error;
+      toast({ title: t.clipping.error, description: message, variant: "destructive" });
     } finally {
       setIsSavingClip(false);
     }
