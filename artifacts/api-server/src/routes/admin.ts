@@ -14,6 +14,7 @@ import {
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
 import { getStorageConfig as getBannerStorageConfig, type BannerJson } from "./banners";
+import multer from "multer";
 
 const router: IRouter = Router();
 
@@ -345,7 +346,7 @@ router.get("/admin/banners", async (req, res): Promise<void> => {
         upperSubtext: json.upperSubtext ?? "",
         lowerSubtext: json.lowerSubtext ?? "",
         hyperlink: json.hyperlink ?? null,
-        imageUrl: `/api/banners/${encodeURIComponent(f.ObjectName)}/image`,
+        imageUrl: json.imageUrl ?? `/api/banners/${encodeURIComponent(f.ObjectName)}/image`,
       };
     }));
 
@@ -362,14 +363,14 @@ router.post("/admin/banners", async (req, res): Promise<void> => {
   const cfg = getBannerCfg();
   if (!cfg) { res.status(503).json({ error: "Storage not configured" }); return; }
 
-  const { id, title, upperSubtext, lowerSubtext, hyperlink } = req.body as {
-    id: string; title?: string; upperSubtext?: string; lowerSubtext?: string; hyperlink?: string | null;
+  const { id, title, upperSubtext, lowerSubtext, hyperlink, imageUrl } = req.body as {
+    id: string; title?: string; upperSubtext?: string; lowerSubtext?: string; hyperlink?: string | null; imageUrl?: string | null;
   };
   if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
     res.status(400).json({ error: "id must be alphanumeric/dash/underscore" }); return;
   }
 
-  const json: BannerJson = { title: title ?? id, upperSubtext: upperSubtext ?? "", lowerSubtext: lowerSubtext ?? "", hyperlink: hyperlink ?? null };
+  const json: BannerJson = { title: title ?? id, upperSubtext: upperSubtext ?? "", lowerSubtext: lowerSubtext ?? "", hyperlink: hyperlink ?? null, imageUrl: imageUrl ?? null };
   const body = JSON.stringify(json);
 
   const putRes = await fetch(`${cfg.base}/${cfg.zone}/${id}/banner.json`, {
@@ -380,7 +381,7 @@ router.post("/admin/banners", async (req, res): Promise<void> => {
 
   if (!putRes.ok) { res.status(502).json({ error: "Failed to create banner" }); return; }
 
-  res.status(201).json({ id, title: json.title, upperSubtext: json.upperSubtext, lowerSubtext: json.lowerSubtext, hyperlink: json.hyperlink, imageUrl: `/api/banners/${encodeURIComponent(id)}/image` });
+  res.status(201).json({ id, title: json.title, upperSubtext: json.upperSubtext, lowerSubtext: json.lowerSubtext, hyperlink: json.hyperlink, imageUrl: json.imageUrl ?? `/api/banners/${encodeURIComponent(id)}/image` });
 });
 
 router.patch("/admin/banners/:id", async (req, res): Promise<void> => {
@@ -391,8 +392,8 @@ router.patch("/admin/banners/:id", async (req, res): Promise<void> => {
   if (!cfg) { res.status(503).json({ error: "Storage not configured" }); return; }
 
   const folderId = req.params.id as string;
-  const { title, upperSubtext, lowerSubtext, hyperlink } = req.body as {
-    title?: string; upperSubtext?: string; lowerSubtext?: string; hyperlink?: string | null;
+  const { title, upperSubtext, lowerSubtext, hyperlink, imageUrl } = req.body as {
+    title?: string; upperSubtext?: string; lowerSubtext?: string; hyperlink?: string | null; imageUrl?: string | null;
   };
 
   // Fetch existing json first
@@ -404,6 +405,7 @@ router.patch("/admin/banners/:id", async (req, res): Promise<void> => {
     upperSubtext: upperSubtext !== undefined ? upperSubtext : existing.upperSubtext,
     lowerSubtext: lowerSubtext !== undefined ? lowerSubtext : existing.lowerSubtext,
     hyperlink: hyperlink !== undefined ? hyperlink : existing.hyperlink,
+    imageUrl: imageUrl !== undefined ? imageUrl : existing.imageUrl,
   };
 
   const putRes = await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json`, {
@@ -414,7 +416,62 @@ router.patch("/admin/banners/:id", async (req, res): Promise<void> => {
 
   if (!putRes.ok) { res.status(502).json({ error: "Failed to update banner" }); return; }
 
-  res.json({ id: folderId, ...updated, imageUrl: `/api/banners/${encodeURIComponent(folderId)}/image` });
+  res.json({ id: folderId, ...updated, imageUrl: updated.imageUrl ?? `/api/banners/${encodeURIComponent(folderId)}/image` });
+});
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+router.post("/admin/banners/:id/image", upload.single("image"), async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const bannerCfg = getBannerCfg();
+  if (!bannerCfg) { res.status(503).json({ error: "Storage not configured" }); return; }
+
+  const folderId = req.params.id as string;
+  const file = req.file;
+  if (!file) { res.status(400).json({ error: "No image file provided" }); return; }
+
+  const ext = file.mimetype === "image/png" ? "png" : file.mimetype === "image/jpeg" ? "jpg" : "png";
+  const remotePath = `banners/${folderId}/image.${ext}`;
+
+  try {
+    // Upload to banner storage zone (not clip-export zone)
+    const uploadUrl = `${bannerCfg.base}/${bannerCfg.zone}/${remotePath}`;
+    const bannerPut = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        AccessKey: bannerCfg.key,
+        "Content-Type": file.mimetype,
+      },
+      body: file.buffer,
+    });
+    if (!bannerPut.ok) {
+      const text = await bannerPut.text().catch(() => "");
+      res.status(502).json({ error: `Failed to upload image: ${bannerPut.status} ${text}` });
+      return;
+    }
+
+    // Build CDN URL from banner config base (the storage base doubles as CDN base for banners)
+    const cdnUrl = `${bannerCfg.base}/${bannerCfg.zone}/${remotePath}`;
+
+    // Update banner.json with the new imageUrl
+    const cfg = getBannerCfg();
+    if (cfg) {
+      const existingRes = await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json`, { headers: { AccessKey: cfg.key } });
+      const existing: BannerJson = existingRes.ok ? (await existingRes.json() as BannerJson) : {};
+      const updated: BannerJson = { ...existing, imageUrl: cdnUrl };
+      await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json`, {
+        method: "PUT",
+        headers: { AccessKey: cfg.key, "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      });
+    }
+
+    res.json({ imageUrl: cdnUrl });
+  } catch {
+    res.status(502).json({ error: "Failed to upload image" });
+  }
 });
 
 router.delete("/admin/banners/:id", async (req, res): Promise<void> => {

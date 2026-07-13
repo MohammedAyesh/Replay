@@ -419,7 +419,8 @@ function BannersTab() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ id: "", title: "", upperSubtext: "", lowerSubtext: "", hyperlink: "" });
+  const [form, setForm] = useState({ id: "", title: "", upperSubtext: "", lowerSubtext: "", hyperlink: "", imageUrl: "" });
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
@@ -443,13 +444,14 @@ function BannersTab() {
       upperSubtext: banner.upperSubtext,
       lowerSubtext: banner.lowerSubtext,
       hyperlink: banner.hyperlink ?? "",
+      imageUrl: banner.imageUrl ?? "",
     });
   };
 
   const startNew = () => {
     setEditing(null);
     setShowNew(true);
-    setForm({ id: "", title: "", upperSubtext: "", lowerSubtext: "", hyperlink: "" });
+    setForm({ id: "", title: "", upperSubtext: "", lowerSubtext: "", hyperlink: "", imageUrl: "" });
   };
 
   const cancel = () => { setEditing(null); setShowNew(false); };
@@ -466,6 +468,7 @@ function BannersTab() {
             upperSubtext: form.upperSubtext,
             lowerSubtext: form.lowerSubtext,
             hyperlink: form.hyperlink || null,
+            imageUrl: form.imageUrl.trim() || null,
           }),
         });
         setBanners((prev) => [...prev, data]);
@@ -477,6 +480,7 @@ function BannersTab() {
             upperSubtext: form.upperSubtext,
             lowerSubtext: form.lowerSubtext,
             hyperlink: form.hyperlink || null,
+            imageUrl: form.imageUrl.trim() || null,
           }),
         });
         setBanners((prev) => prev.map((b) => b.id === editing ? { ...b, ...data } : b));
@@ -495,54 +499,106 @@ function BannersTab() {
     setDeleting(null);
   };
 
-  const BannerForm = () => (
-    <div className="bg-zinc-900 border border-primary/30 rounded-xl p-4 space-y-3">
-      {showNew && (
+  const BannerForm = () => {
+    const effectiveImageUrl = form.imageUrl.trim() || (showNew ? "" : `/api/banners/${encodeURIComponent(editing ?? form.id)}/image`);
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const bannerId = showNew ? form.id : editing;
+      if (!bannerId) return;
+      setUploadingImage(true);
+      try {
+        const fd = new FormData();
+        fd.append("image", file);
+        const res = await fetch(`${basePath}/api/admin/banners/${bannerId}/image`, {
+          method: "POST",
+          credentials: "include",
+          body: fd,
+        });
+        if (res.ok) {
+          const data = await res.json() as { imageUrl: string };
+          setForm((f) => ({ ...f, imageUrl: data.imageUrl }));
+        }
+      } catch { /* silent */ }
+      setUploadingImage(false);
+      e.target.value = "";
+    };
+
+    return (
+      <div className="bg-zinc-900 border border-primary/30 rounded-xl p-4 space-y-3">
+        {showNew && (
+          <div>
+            <label className="text-xs text-zinc-400 mb-1 block">Banner ID (slug, no spaces)</label>
+            <input
+              value={form.id}
+              onChange={(e) => setForm((f) => ({ ...f, id: e.target.value.replace(/[^a-zA-Z0-9_-]/g, "") }))}
+              placeholder="my-banner"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
+            />
+          </div>
+        )}
+        {(["title", "upperSubtext", "lowerSubtext"] as const).map((field) => (
+          <div key={field}>
+            <label className="text-xs text-zinc-400 mb-1 block capitalize">{field.replace(/([A-Z])/g, " $1")}</label>
+            <input
+              value={form[field]}
+              onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))}
+              placeholder={field}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
+            />
+          </div>
+        ))}
         <div>
-          <label className="text-xs text-zinc-400 mb-1 block">Banner ID (slug, no spaces)</label>
+          <label className="text-xs text-zinc-400 mb-1 block">Hyperlink (optional)</label>
           <input
-            value={form.id}
-            onChange={(e) => setForm((f) => ({ ...f, id: e.target.value.replace(/[^a-zA-Z0-9_-]/g, "") }))}
-            placeholder="my-banner"
+            value={form.hyperlink}
+            onChange={(e) => setForm((f) => ({ ...f, hyperlink: e.target.value }))}
+            placeholder="https://example.com"
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
           />
         </div>
-      )}
-      {(["title", "upperSubtext", "lowerSubtext"] as const).map((field) => (
-        <div key={field}>
-          <label className="text-xs text-zinc-400 mb-1 block capitalize">{field.replace(/([A-Z])/g, " $1")}</label>
-          <input
-            value={form[field]}
-            onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))}
-            placeholder={field}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
-          />
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Image</label>
+          <div className="flex gap-2">
+            <input
+              value={form.imageUrl}
+              onChange={(e) => setForm((f) => ({ ...f, imageUrl: e.target.value }))}
+              placeholder="https://example.com/image.jpg or upload below"
+              className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
+            />
+            <label className="cursor-pointer px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-sm flex items-center gap-1.5 flex-shrink-0">
+              <Image className="w-4 h-4" />
+              <span>Upload</span>
+              <input type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+            </label>
+          </div>
+          {uploadingImage && <p className="text-xs text-zinc-500 mt-1">Uploading image…</p>}
+          {effectiveImageUrl && (
+            <img
+              src={effectiveImageUrl}
+              alt="Banner preview"
+              className="mt-2 h-24 w-full object-cover rounded-lg bg-zinc-800"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0.3"; }}
+            />
+          )}
         </div>
-      ))}
-      <div>
-        <label className="text-xs text-zinc-400 mb-1 block">Hyperlink (optional)</label>
-        <input
-          value={form.hyperlink}
-          onChange={(e) => setForm((f) => ({ ...f, hyperlink: e.target.value }))}
-          placeholder="https://example.com"
-          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
-        />
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={saveBanner}
+            disabled={saving || uploadingImage || (showNew && !form.id)}
+            className="flex-1 flex items-center justify-center gap-2 bg-primary text-black font-bold py-2.5 rounded-xl text-sm disabled:opacity-50"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? "Saving…" : showNew ? "Create Banner" : "Save Changes"}
+          </button>
+          <button onClick={cancel} className="px-4 py-2.5 bg-zinc-800 text-zinc-400 rounded-xl text-sm hover:bg-zinc-700">
+            Cancel
+          </button>
+        </div>
       </div>
-      <div className="flex gap-2 pt-1">
-        <button
-          onClick={saveBanner}
-          disabled={saving || (showNew && !form.id)}
-          className="flex-1 flex items-center justify-center gap-2 bg-primary text-black font-bold py-2.5 rounded-xl text-sm disabled:opacity-50"
-        >
-          <Save className="w-4 h-4" />
-          {saving ? "Saving…" : showNew ? "Create Banner" : "Save Changes"}
-        </button>
-        <button onClick={cancel} className="px-4 py-2.5 bg-zinc-800 text-zinc-400 rounded-xl text-sm hover:bg-zinc-700">
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-3">

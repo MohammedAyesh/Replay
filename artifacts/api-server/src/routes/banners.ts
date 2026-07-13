@@ -44,6 +44,7 @@ export interface BannerJson {
   title?: string;
   lowerSubtext?: string;
   hyperlink?: string | null;
+  imageUrl?: string | null;
 }
 
 export interface BannerItem {
@@ -101,7 +102,7 @@ router.get("/banners", async (_req, res): Promise<void> => {
         upperSubtext: json.upperSubtext ?? "",
         title: json.title ?? folder.ObjectName,
         lowerSubtext: json.lowerSubtext ?? "",
-        imageUrl: `/api/banners/${encodeURIComponent(folder.ObjectName)}/image`,
+        imageUrl: json.imageUrl ?? `/api/banners/${encodeURIComponent(folder.ObjectName)}/image`,
         hyperlink: json.hyperlink ?? null,
       });
     }

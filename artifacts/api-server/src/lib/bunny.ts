@@ -90,3 +90,33 @@ export async function uploadToBunnyStorage(filePath: string, clipId: number): Pr
 
   return getBunnyExportUrl(clipId);
 }
+
+/**
+ * Upload a buffer to Bunny Storage at a given path and return its public CDN URL.
+ */
+export async function uploadBufferToBunnyStorage(
+  buffer: Buffer,
+  remotePath: string,
+  contentType: string,
+): Promise<string> {
+  const uploadUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${remotePath}`;
+
+  const response = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      AccessKey: BUNNY_STORAGE_API_KEY,
+      "Content-Type": contentType,
+    },
+    body: buffer,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(
+      `Bunny Storage upload failed: ${response.status} ${response.statusText} — ${text}`,
+    );
+  }
+
+  const base = BUNNY_STORAGE_CDN_URL.replace(/\/$/, "");
+  return `${base}/${remotePath}`;
+}
