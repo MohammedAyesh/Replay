@@ -12,7 +12,7 @@ import {
 const router: IRouter = Router();
 
 router.get("/fields", async (req, res): Promise<void> => {
-  const fields = await db.select().from(fieldsTable).orderBy(fieldsTable.name);
+  const fields = (await db.select().from(fieldsTable).orderBy(fieldsTable.name)).filter((f) => !f.isHidden);
 
   const fieldsWithCounts = await Promise.all(
     fields.map(async (f) => {

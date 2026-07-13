@@ -296,6 +296,7 @@ router.get("/admin/fields", async (req, res): Promise<void> => {
     courts: f.courts,
     weight: f.weight,
     thumbnailUrl: f.thumbnailUrl ?? null,
+    isHidden: f.isHidden,
     lastRecordedAt: f.lastRecordedAt?.toISOString() ?? null,
   })));
 });
@@ -307,15 +308,22 @@ router.patch("/admin/fields/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const { thumbnailUrl, weight } = req.body as { thumbnailUrl?: string | null; weight?: number };
+  const { thumbnailUrl, weight, name, isHidden } = req.body as {
+    thumbnailUrl?: string | null;
+    weight?: number;
+    name?: string;
+    isHidden?: boolean;
+  };
   const updates: Partial<typeof fieldsTable.$inferInsert> = {};
   if (thumbnailUrl !== undefined) updates.thumbnailUrl = thumbnailUrl ?? undefined;
   if (weight !== undefined) updates.weight = weight;
+  if (name !== undefined && name.trim()) updates.name = name.trim();
+  if (isHidden !== undefined) updates.isHidden = isHidden;
 
   const [field] = await db.update(fieldsTable).set(updates).where(eq(fieldsTable.id, id)).returning();
   if (!field) { res.status(404).json({ error: "Field not found" }); return; }
 
-  res.json({ id: field.id, thumbnailUrl: field.thumbnailUrl ?? null, weight: field.weight });
+  res.json({ id: field.id, name: field.name, thumbnailUrl: field.thumbnailUrl ?? null, weight: field.weight, isHidden: field.isHidden });
 });
 
 // ─── Admin: Banners ───────────────────────────────────────────────────────────

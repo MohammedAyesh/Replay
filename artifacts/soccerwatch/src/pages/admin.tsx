@@ -46,6 +46,7 @@ interface AdminField {
   courts: number;
   weight: number;
   thumbnailUrl: string | null;
+  isHidden: boolean;
   lastRecordedAt: string | null;
 }
 
@@ -294,9 +295,11 @@ function FieldsTab() {
   const [fields, setFields] = useState<AdminField[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<number | null>(null);
+  const [nameInput, setNameInput] = useState("");
   const [thumbInput, setThumbInput] = useState("");
   const [weightInput, setWeightInput] = useState("");
   const [saving, setSaving] = useState(false);
+  const [toggling, setToggling] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -311,11 +314,17 @@ function FieldsTab() {
 
   const startEdit = (field: AdminField) => {
     setEditing(field.id);
+    setNameInput(field.name);
     setThumbInput(field.thumbnailUrl ?? "");
     setWeightInput(String(field.weight));
   };
 
-  const cancelEdit = () => { setEditing(null); setThumbInput(""); setWeightInput(""); };
+  const cancelEdit = () => {
+    setEditing(null);
+    setNameInput("");
+    setThumbInput("");
+    setWeightInput("");
+  };
 
   const saveField = async (field: AdminField) => {
     setSaving(true);
@@ -323,18 +332,33 @@ function FieldsTab() {
       await apiFetch(`/admin/fields/${field.id}`, {
         method: "PATCH",
         body: JSON.stringify({
+          name: nameInput.trim() || field.name,
           thumbnailUrl: thumbInput.trim() || null,
           weight: parseFloat(weightInput) || 1.0,
         }),
       });
       setFields((prev) => prev.map((f) =>
         f.id === field.id
-          ? { ...f, thumbnailUrl: thumbInput.trim() || null, weight: parseFloat(weightInput) || 1.0 }
+          ? { ...f, name: nameInput.trim() || f.name, thumbnailUrl: thumbInput.trim() || null, weight: parseFloat(weightInput) || 1.0 }
           : f
       ));
       cancelEdit();
     } catch { /* silent */ }
     setSaving(false);
+  };
+
+  const toggleHidden = async (field: AdminField) => {
+    setToggling(field.id);
+    try {
+      await apiFetch(`/admin/fields/${field.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isHidden: !field.isHidden }),
+      });
+      setFields((prev) => prev.map((f) =>
+        f.id === field.id ? { ...f, isHidden: !f.isHidden } : f
+      ));
+    } catch { /* silent */ }
+    setToggling(null);
   };
 
   return (
@@ -343,7 +367,13 @@ function FieldsTab() {
         <div className="text-center py-16 text-zinc-500">Loading…</div>
       ) : (
         fields.map((field) => (
-          <div key={field.id} className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+          <div
+            key={field.id}
+            className={cn(
+              "border rounded-xl overflow-hidden transition-colors",
+              field.isHidden ? "bg-zinc-900/50 border-zinc-800/50 opacity-60" : "bg-zinc-900 border-zinc-800"
+            )}
+          >
             <div className="flex items-center gap-3 p-3">
               <div className="w-14 h-14 rounded-lg overflow-hidden bg-zinc-800 flex-shrink-0">
                 {field.thumbnailUrl ? (
@@ -353,20 +383,51 @@ function FieldsTab() {
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-white font-medium text-sm">{field.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-white font-medium text-sm truncate">{field.name}</p>
+                  {field.isHidden && (
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-full">
+                      Hidden
+                    </span>
+                  )}
+                </div>
                 <p className="text-zinc-500 text-xs truncate">{field.location}</p>
                 <p className="text-zinc-600 text-xs">Weight: {field.weight} · {field.courts} court{field.courts !== 1 ? "s" : ""}</p>
               </div>
-              <button
-                onClick={() => editing === field.id ? cancelEdit() : startEdit(field)}
-                className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
-              >
-                {editing === field.id ? <X className="w-4 h-4" /> : <Image className="w-4 h-4" />}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => toggleHidden(field)}
+                  disabled={toggling === field.id}
+                  title={field.isHidden ? "Show field" : "Hide field"}
+                  className={cn(
+                    "p-2 rounded-lg transition-colors disabled:opacity-50",
+                    field.isHidden
+                      ? "bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+                      : "bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
+                  )}
+                >
+                  {field.isHidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                </button>
+                <button
+                  onClick={() => editing === field.id ? cancelEdit() : startEdit(field)}
+                  className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
+                >
+                  {editing === field.id ? <X className="w-4 h-4" /> : <Image className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             {editing === field.id && (
               <div className="border-t border-zinc-800 p-3 space-y-3">
+                <div>
+                  <label className="text-xs text-zinc-400 mb-1 block">Field Name</label>
+                  <input
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    placeholder="Field name"
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
+                  />
+                </div>
                 <div>
                   <label className="text-xs text-zinc-400 mb-1 block">Thumbnail URL</label>
                   <input

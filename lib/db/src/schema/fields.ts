@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, real } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, real, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -11,6 +11,7 @@ export const fieldsTable = pgTable("fields", {
   latitude: real("latitude"),
   longitude: real("longitude"),
   thumbnailUrl: text("thumbnail_url"),
+  isHidden: boolean("is_hidden").notNull().default(false),
   lastRecordedAt: timestamp("last_recorded_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
