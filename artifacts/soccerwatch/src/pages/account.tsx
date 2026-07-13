@@ -1,9 +1,10 @@
 import * as React from "react";
+import { Link, useLocation } from "wouter";
 import { useGetMe, useGetAccountStats, useUpdateProfile, getGetAccountStatsQueryKey, getGetMeQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil } from "lucide-react";
+import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,7 +28,7 @@ const GENDERS = [
 ];
 
 export default function Account() {
-  const { isGuest, user: authUser } = useAuth();
+  const { isGuest, user: authUser, isAdmin } = useAuth();
   const { t, locale } = useTranslation();
   const { signOut } = useClerk();
   const queryClient = useQueryClient();
@@ -158,6 +159,20 @@ export default function Account() {
           )}
           {/* Language toggle */}
           <LanguageToggle />
+
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="w-full flex items-center justify-between p-4 bg-background hover:bg-muted/30 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-primary" />
+                <span className="font-medium text-foreground">Admin Panel</span>
+              </div>
+              <ChevronRight className="w-5 h-5 text-muted-foreground rtl:hidden" />
+              <ChevronLeft className="w-5 h-5 text-muted-foreground ltr:hidden" />
+            </Link>
+          )}
         </div>
 
         <div className="p-6 mt-4">
