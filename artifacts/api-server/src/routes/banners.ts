@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
 
 export function getStorageConfig(): { base: string; zone: string; key: string } | null {
-  const accessKey = process.env.STORAGE_ACCESS_KEY ?? "";
+  // Dedicated banner key takes priority over shared storage key
+  const accessKey = process.env.BANNER_STORAGE_API_KEY ?? process.env.STORAGE_ACCESS_KEY ?? "";
   const zoneRegion = process.env.STORAGE_ZONE_REGION ?? "";
 
   if (!accessKey && !zoneRegion) return null;
