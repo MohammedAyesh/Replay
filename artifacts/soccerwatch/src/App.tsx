@@ -125,7 +125,11 @@ function AuthRedirectGuard() {
     if (!user || isGuest) return;
 
     const isPublicPage = location === "/" || location.startsWith("/sign-in") || location.startsWith("/sign-up");
-    if (!user.profileComplete && !isPublicPage && location !== "/onboarding") {
+    if (isPublicPage) {
+      setLocation("/home");
+      return;
+    }
+    if (!user.profileComplete && location !== "/onboarding") {
       setLocation("/onboarding");
     }
   }, [isLoading, user, isGuest, location, setLocation]);

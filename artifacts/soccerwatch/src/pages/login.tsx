@@ -44,7 +44,7 @@ export default function Login() {
     guestMutation.mutate(undefined, {
       onSuccess: (data) => {
         queryClient.setQueryData(getGetMeQueryKey(), data.user);
-        setLocation("/watch");
+        setLocation("/home");
       },
       onError: () => {
         toast({ variant: "destructive", title: t.login.guestLoginFailed, description: t.login.guestLoginError });
