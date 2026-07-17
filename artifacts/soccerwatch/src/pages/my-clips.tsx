@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
+import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import Hls from "hls.js";
 import { exportClip, canExportVideo, triggerDownload } from "@/lib/exportClip";
 import { saveLocalClip, getLocalClip, listLocalClips, deleteLocalClip, createLocalBlobUrl, revokeLocalBlobUrl, type LocalClipRecord } from "@/lib/localClips";
@@ -57,6 +58,10 @@ function interpolateX(keyframes: KF[], t: number): number {
 
 type ExportState = "idle" | "polling" | "ready" | "error";
 
+function isLandscape() {
+  return window.innerWidth > window.innerHeight;
+}
+
 function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClose: () => void; onDownloaded?: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -65,6 +70,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const localUrlRef = useRef<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [landscape, setLandscape] = useState(() => isLandscape());
   const [exportState, setExportState] = useState<ExportState>(
     clip.exportStatus === "done" ? "ready" : "idle"
   );
@@ -81,7 +87,14 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const { t } = useTranslation();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { setFullscreenVideo } = useFullscreenVideo();
   const keyframes = clip.cropPath ?? [];
+
+  // Notify layout that a fullscreen video is active — suppresses orientation lock
+  useEffect(() => {
+    setFullscreenVideo(true);
+    return () => setFullscreenVideo(false);
+  }, [setFullscreenVideo]);
 
   // Effective timing: use override for local blobs, raw clip fractions for HLS
   const lStart = isLocal ? (localTimingOverride?.start ?? 0) : clip.startTime;
@@ -253,6 +266,17 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", handler);
     return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
+
+  /* Track orientation so controls can reflow */
+  useEffect(() => {
+    const update = () => setLandscape(isLandscape());
+    window.addEventListener("resize", update, { passive: true });
+    window.addEventListener("orientationchange", update, { passive: true });
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
   }, []);
 
   /**
@@ -430,98 +454,106 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-black"
     >
-      {/* Scrollable panoramic video — portrait for 9:16, landscape for 16:9 */}
-      <div className={`absolute inset-0 flex items-center bg-black ${clip.aspectRatio === "9:16" ? "justify-center" : ""}`}>
+      <div className={`w-full h-full flex ${landscape ? "flex-row" : "flex-col"}`}>
+        {/* Video area */}
+        <div className={`flex items-center bg-black ${landscape ? "flex-1 h-full" : "flex-1 w-full relative"} ${clip.aspectRatio === "9:16" ? "justify-center" : ""}`}>
+          <div
+            ref={scrollRef}
+            dir="ltr"
+            className={clip.aspectRatio === "9:16"
+              ? "h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
+              : "w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"}
+          >
+            <video
+              ref={videoRef}
+              className={isLocal && clip.aspectRatio === "9:16" ? "h-full w-full object-cover pointer-events-none" : "h-full max-w-none pointer-events-none"}
+              style={isLocal && clip.aspectRatio === "9:16" ? { aspectRatio: "9/16" } : { aspectRatio: "3840/1080" }}
+              playsInline
+              loop={false}
+              muted={false}
+            />
+            {/* Tap to play/pause */}
+            <button
+              onClick={togglePlay}
+              className="absolute inset-0 z-10"
+              aria-label={isPlaying ? "Pause" : "Play"}
+            />
+          </div>
+
+          {/* Floating close — always top-left of video */}
+          <div className={`absolute ${landscape ? "top-3 left-3" : "top-safe pt-3 px-3"} z-30 pointer-events-none`}>
+            <button
+              onClick={onClose}
+              className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto active:scale-95 transition-transform"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Controls panel — bottom bar in portrait, side rail in landscape */}
         <div
-          ref={scrollRef}
-          dir="ltr"
-          className={clip.aspectRatio === "9:16"
-            ? "h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
-            : "w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"}
+          className={landscape
+            ? "w-[220px] h-full flex flex-col justify-end gap-3 px-4 py-4 bg-black/90 backdrop-blur-md z-20 pointer-events-auto shrink-0"
+            : "w-full px-4 pb-safe pt-3 flex items-end gap-3 pointer-events-auto shrink-0"
+          }
+          style={landscape ? undefined : { background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}
         >
-          <video
-            ref={videoRef}
-            className={isLocal && clip.aspectRatio === "9:16" ? "h-full w-full object-cover pointer-events-none" : "h-full max-w-none pointer-events-none"}
-            style={isLocal && clip.aspectRatio === "9:16" ? { aspectRatio: "9/16" } : { aspectRatio: "3840/1080" }}
-            playsInline
-            loop={false}
-            muted={false}
-          />
-          {/* Tap to play/pause */}
-          <button
-            onClick={togglePlay}
-            className="absolute inset-0 z-10"
-            aria-label={isPlaying ? "Pause" : "Play"}
-          />
+          <div className={`${landscape ? "mb-auto" : "flex-1 min-w-0 pb-1"}`}>
+            <p className="text-white font-bold text-sm truncate drop-shadow">{clip.title}</p>
+            <p className="text-white/70 text-xs drop-shadow">
+              {clip.aspectRatio ?? "16:9"} · {new Date(clip.createdAt).toLocaleDateString()}
+            </p>
+          </div>
+
+          <div className={`flex items-center gap-3 ${landscape ? "flex-col w-full" : ""}`}>
+            {/* Export button */}
+            <button
+              onClick={handleExport}
+              disabled={exportState === "polling"}
+              className={`flex items-center justify-center gap-1.5 px-3 h-10 rounded-full text-sm font-semibold transition-all active:scale-95 shrink-0 pointer-events-auto ${
+                exportState === "polling"
+                  ? "bg-white/20 text-white/60 cursor-not-allowed"
+                  : exportState === "ready"
+                  ? "bg-green-500 text-white"
+                  : exportState === "error"
+                  ? "bg-red-500/80 text-white"
+                  : "bg-white/15 text-white hover:bg-white/25"
+              } ${landscape ? "w-full" : ""}`}
+              aria-label={t.export.button}
+            >
+              {exportState === "polling"
+                ? <span className="w-4 h-4 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                : <Download className="w-4 h-4 shrink-0" />}
+              <span>
+                {exportState === "polling"
+                  ? "Processing…"
+                  : exportState === "ready"
+                  ? "Download"
+                  : exportState === "error"
+                  ? t.export.error
+                  : t.export.button}
+              </span>
+            </button>
+
+            {/* Fullscreen toggle */}
+            <button
+              onClick={toggleFullscreen}
+              className={`w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all shrink-0 pointer-events-auto ${landscape ? "" : ""}`}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            >
+              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+            </button>
+
+            {/* Play/Pause */}
+            <button
+              onClick={togglePlay}
+              className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform shrink-0 pointer-events-auto"
+            >
+              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
-      </div>
-
-      {/* Top close button */}
-      <div className="absolute top-safe pt-4 px-4 w-full flex items-center justify-between z-20 pointer-events-none">
-        <button
-          onClick={onClose}
-          className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white pointer-events-auto active:scale-95 transition-transform"
-        >
-          <X className="w-5 h-5" />
-        </button>
-        <div className="w-10" />
-      </div>
-
-      {/* Bottom controls — floating overlay, not a separate bar */}
-      <div className="absolute bottom-safe left-0 right-0 z-20 px-4 pb-3 flex items-end gap-3 pointer-events-none"
-        style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}>
-        <div className="flex-1 min-w-0 pb-1 pointer-events-auto">
-          <p className="text-white font-bold text-sm truncate drop-shadow">{clip.title}</p>
-          <p className="text-white/70 text-xs drop-shadow">
-            {clip.aspectRatio ?? "16:9"} · {new Date(clip.createdAt).toLocaleDateString()}
-          </p>
-        </div>
-
-        {/* Export button */}
-        <button
-          onClick={handleExport}
-          disabled={exportState === "polling"}
-          className={`flex items-center gap-1.5 px-3 h-10 rounded-full text-sm font-semibold transition-all active:scale-95 shrink-0 pointer-events-auto ${
-            exportState === "polling"
-              ? "bg-white/20 text-white/60 cursor-not-allowed"
-              : exportState === "ready"
-              ? "bg-green-500 text-white"
-              : exportState === "error"
-              ? "bg-red-500/80 text-white"
-              : "bg-white/15 text-white hover:bg-white/25"
-          }`}
-          aria-label={t.export.button}
-        >
-          {exportState === "polling"
-            ? <span className="w-4 h-4 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-            : <Download className="w-4 h-4 shrink-0" />}
-          <span>
-            {exportState === "polling"
-              ? "Processing…"
-              : exportState === "ready"
-              ? "Download"
-              : exportState === "error"
-              ? t.export.error
-              : t.export.button}
-          </span>
-        </button>
-
-        {/* Fullscreen toggle */}
-        <button
-          onClick={toggleFullscreen}
-          className="w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all shrink-0 pointer-events-auto"
-          aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-        >
-          {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-        </button>
-
-        {/* Play/Pause */}
-        <button
-          onClick={togglePlay}
-          className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform shrink-0 pointer-events-auto"
-        >
-          {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-        </button>
       </div>
     </motion.div>
   );
