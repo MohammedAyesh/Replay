@@ -279,6 +279,23 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     };
   }, []);
 
+  /* Auto fullscreen on landscape — hides browser chrome (address bar) */
+  useEffect(() => {
+    if (landscape) {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+      // iOS Safari fallback: use video native fullscreen
+      const video = videoRef.current;
+      const iosFull = video && (video as HTMLVideoElement & { webkitEnterFullscreen?: () => void }).webkitEnterFullscreen;
+      if (iosFull) iosFull.call(video);
+    } else {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+  }, [landscape]);
+
   /**
    * Deliver a blob (client-side fallback path) — saves to IDB and triggers
    * share sheet or file download.
