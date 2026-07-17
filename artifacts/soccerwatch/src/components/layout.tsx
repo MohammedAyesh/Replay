@@ -13,7 +13,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isLogin = location === "/";
   const isImmersivePlayer = location.startsWith("/player/");
-  const isWatchFeed = location === "/watch";
+  const isWatchFeed = location === "/home";
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/onboarding";

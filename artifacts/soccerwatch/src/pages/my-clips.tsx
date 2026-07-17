@@ -816,7 +816,7 @@ function SavedTab({
         </motion.div>
         <p className="text-muted-foreground">{t.myClips.noClipsYet}</p>
         <p className="text-sm text-muted-foreground mt-1">Download clips from the Watch feed to see them here.</p>
-        <Link href="/watch">
+        <Link href="/home">
           <Button variant="ghost" className="mt-6 text-primary font-semibold">{t.myClips.goToWatch}</Button>
         </Link>
       </motion.div>

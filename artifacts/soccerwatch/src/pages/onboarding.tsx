@@ -55,11 +55,11 @@ export default function Onboarding() {
     }
   }, [authLoading, isGuest, user, setLocation]);
 
-  // Guard: already complete users go to watch
+  // Guard: already complete users go to home
   useEffect(() => {
     if (authLoading) return;
     if (user?.profileComplete) {
-      setLocation("/watch");
+      setLocation("/home");
     }
   }, [authLoading, user, setLocation]);
 
@@ -83,7 +83,7 @@ export default function Onboarding() {
         onSuccess: (data) => {
           // Update the cached user immediately so the auth guard sees profileComplete=true
           queryClient.setQueryData(getGetMeQueryKey(), data);
-          setLocation("/watch");
+          setLocation("/home");
         },
         onError: () => {
           toast({ variant: "destructive", title: "Failed to save profile", description: "Please try again" });
