@@ -234,6 +234,41 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     return () => clearInterval(id);
   }, [lStart, lEnd]);
 
+  /**
+   * Enter fullscreen.
+   * iOS Safari / Chrome iOS only support webkitEnterFullscreen on the
+   * <video> element, and it MUST come from a user gesture (tap).
+   * The standard Fullscreen API works on Android / Desktop.
+   */
+  const tryEnterFullscreen = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (isIOS) {
+      const iosFull = (video as HTMLVideoElement & { webkitEnterFullscreen?: () => void }).webkitEnterFullscreen;
+      if (iosFull) {
+        try { iosFull.call(video); } catch { /* iOS requires user gesture */ }
+      }
+      return;
+    }
+    if (!document.fullscreenElement && typeof document.documentElement.requestFullscreen === "function") {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }, []);
+
+  const tryExitFullscreen = useCallback(() => {
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (isIOS) {
+      const video = videoRef.current;
+      const iosExit = video && (video as HTMLVideoElement & { webkitExitFullscreen?: () => void }).webkitExitFullscreen;
+      if (iosExit) { try { iosExit.call(video); } catch {} }
+      return;
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, []);
+
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -243,12 +278,15 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     const eSec = isFinite(lEnd) ? lEnd * dur : dur;
     if (video.paused) {
       if (video.currentTime >= eSec) video.currentTime = sSec;
+      // iOS: entering fullscreen requires a user gesture — tap qualifies
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      if (isIOS && isLandscape()) tryEnterFullscreen();
       video.play().then(() => setIsPlaying(true)).catch(() => {});
     } else {
       video.pause();
       setIsPlaying(false);
     }
-  }, [lStart, lEnd]);
+  }, [lStart, lEnd, tryEnterFullscreen]);
 
   /* Stop polling when the player closes */
   useEffect(() => () => { pollingRef.current = false; }, []);
@@ -256,11 +294,11 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   /* Fullscreen toggle */
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
+      tryEnterFullscreen();
     } else {
-      document.exitFullscreen().catch(() => {});
+      tryExitFullscreen();
     }
-  }, []);
+  }, [tryEnterFullscreen, tryExitFullscreen]);
 
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
@@ -278,23 +316,6 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       window.removeEventListener("orientationchange", update);
     };
   }, []);
-
-  /* Auto fullscreen on landscape — hides browser chrome (address bar) */
-  useEffect(() => {
-    if (landscape) {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-      }
-      // iOS Safari fallback: use video native fullscreen
-      const video = videoRef.current;
-      const iosFull = video && (video as HTMLVideoElement & { webkitEnterFullscreen?: () => void }).webkitEnterFullscreen;
-      if (iosFull) iosFull.call(video);
-    } else {
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
-      }
-    }
-  }, [landscape]);
 
   /**
    * Deliver a blob (client-side fallback path) — saves to IDB and triggers
@@ -471,15 +492,15 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-black"
     >
-      <div className={`w-full h-full flex ${landscape ? "flex-row" : "flex-col"}`}>
+      <div className={`w-full flex ${landscape ? "flex-row" : "flex-col"}`} style={{ height: "100dvh" }}>
         {/* Video area */}
-        <div className={`flex items-center bg-black ${landscape ? "flex-1 h-full" : "flex-1 w-full relative"} ${clip.aspectRatio === "9:16" ? "justify-center" : ""}`}>
+        <div className={`flex items-center bg-black min-h-0 ${landscape ? "flex-1 h-full" : "flex-1 w-full relative"} ${clip.aspectRatio === "9:16" ? "justify-center" : ""}`}>
           <div
             ref={scrollRef}
             dir="ltr"
             className={clip.aspectRatio === "9:16"
               ? "h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
-              : "w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"}
+              : "h-full overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"}
           >
             <video
               ref={videoRef}
