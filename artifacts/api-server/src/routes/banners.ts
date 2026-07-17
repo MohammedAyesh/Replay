@@ -61,7 +61,11 @@ const cfg = getStorageConfig();
 
 async function listBunnyDirectory(path: string): Promise<BunnyStorageItem[]> {
   if (!cfg) throw new Error("Bunny storage not configured");
-  const url = `${cfg.base}/${cfg.zone}/${path}`;
+  // Cache-bust so Bunny Storage (and any intermediate proxy) always returns
+  // the live directory listing — critical so newly-created banners appear
+  // immediately for every user, including brand-new accounts.
+  const bust = Date.now();
+  const url = `${cfg.base}/${cfg.zone}/${path}?_=${bust}`;
   const res = await fetch(url, {
     headers: { AccessKey: cfg.key },
   });
@@ -73,7 +77,8 @@ async function listBunnyDirectory(path: string): Promise<BunnyStorageItem[]> {
 
 async function fetchBannerJson(folder: string): Promise<BannerJson> {
   if (!cfg) return { upperSubtext: "", title: folder, lowerSubtext: "" };
-  const url = `${cfg.base}/${cfg.zone}/${folder}/banner.json`;
+  const bust = Date.now();
+  const url = `${cfg.base}/${cfg.zone}/${folder}/banner.json?_=${bust}`;
   const res = await fetch(url, {
     headers: { AccessKey: cfg.key },
   });
@@ -108,6 +113,7 @@ router.get("/banners", async (_req, res): Promise<void> => {
       });
     }
 
+    res.setHeader("Cache-Control", "no-store");
     res.json(banners);
   } catch (err) {
     res.status(502).json({ error: "Failed to fetch banners" });
@@ -121,7 +127,8 @@ router.get("/banners/:folder/image", async (req, res): Promise<void> => {
   }
 
   const folder = req.params.folder;
-  const url = `${cfg.base}/${cfg.zone}/${folder}/banner.png`;
+  const bust = Date.now();
+  const url = `${cfg.base}/${cfg.zone}/${folder}/banner.png?_=${bust}`;
 
   try {
     const bunnyRes = await fetch(url, {
@@ -133,7 +140,7 @@ router.get("/banners/:folder/image", async (req, res): Promise<void> => {
     }
 
     res.setHeader("Content-Type", "image/png");
-    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader("Cache-Control", "no-store");
     const buffer = Buffer.from(await bunnyRes.arrayBuffer());
     res.send(buffer);
   } catch (err) {

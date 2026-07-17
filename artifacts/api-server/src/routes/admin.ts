@@ -449,7 +449,7 @@ router.get("/admin/banners", async (req, res): Promise<void> => {
     const folders = items.filter((i) => i.IsDirectory);
 
     const banners = await Promise.all(folders.map(async (f) => {
-      const jsonRes = await fetch(`${cfg.base}/${cfg.zone}/${f.ObjectName}/banner.json`, { headers: { AccessKey: cfg.key } });
+      const jsonRes = await fetch(`${cfg.base}/${cfg.zone}/${f.ObjectName}/banner.json?bust=${Date.now()}`, { headers: { AccessKey: cfg.key } });
       const json: BannerJson = jsonRes.ok ? (await jsonRes.json() as BannerJson) : {};
       return {
         id: f.ObjectName,
@@ -484,7 +484,7 @@ router.post("/admin/banners", async (req, res): Promise<void> => {
   const json: BannerJson = { title: title ?? id, upperSubtext: upperSubtext ?? "", lowerSubtext: lowerSubtext ?? "", hyperlink: hyperlink ?? null, imageUrl: imageUrl ?? null };
   const body = JSON.stringify(json);
 
-  const putRes = await fetch(`${cfg.base}/${cfg.zone}/${id}/banner.json`, {
+  const putRes = await fetch(`${cfg.base}/${cfg.zone}/${id}/banner.json?bust=${Date.now()}`, {
     method: "PUT",
     headers: { AccessKey: cfg.key, "Content-Type": "application/json" },
     body,
@@ -508,7 +508,7 @@ router.patch("/admin/banners/:id", async (req, res): Promise<void> => {
   };
 
   // Fetch existing json first
-  const existingRes = await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json`, { headers: { AccessKey: cfg.key } });
+  const existingRes = await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json?bust=${Date.now()}`, { headers: { AccessKey: cfg.key } });
   const existing: BannerJson = existingRes.ok ? (await existingRes.json() as BannerJson) : {};
 
   const updated: BannerJson = {
@@ -569,10 +569,10 @@ router.post("/admin/banners/:id/image", upload.single("image"), async (req, res)
     // Update banner.json with the new imageUrl
     const cfg = getBannerCfg();
     if (cfg) {
-      const existingRes = await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json`, { headers: { AccessKey: cfg.key } });
+      const existingRes = await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json?bust=${Date.now()}`, { headers: { AccessKey: cfg.key } });
       const existing: BannerJson = existingRes.ok ? (await existingRes.json() as BannerJson) : {};
       const updated: BannerJson = { ...existing, imageUrl: cdnUrl };
-      await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json`, {
+      await fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json?bust=${Date.now()}`, {
         method: "PUT",
         headers: { AccessKey: cfg.key, "Content-Type": "application/json" },
         body: JSON.stringify(updated),
@@ -596,8 +596,8 @@ router.delete("/admin/banners/:id", async (req, res): Promise<void> => {
 
   // Delete banner.json and banner.png
   await Promise.allSettled([
-    fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json`, { method: "DELETE", headers: { AccessKey: cfg.key } }),
-    fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.png`, { method: "DELETE", headers: { AccessKey: cfg.key } }),
+    fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json?bust=${Date.now()}`, { method: "DELETE", headers: { AccessKey: cfg.key } }),
+    fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.png?bust=${Date.now()}`, { method: "DELETE", headers: { AccessKey: cfg.key } }),
   ]);
 
   res.json({ ok: true });
