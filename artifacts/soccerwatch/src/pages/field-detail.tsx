@@ -564,9 +564,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       className="fixed inset-0 z-50 bg-black"
     >
       {/* Letterboxed 16:9 scrollable video — black bars top & bottom */}
-      <div ref={zoomRef} className="absolute inset-0 flex items-center bg-black">
-        {/* Wrapper holds the fixed overlay + scrollable video as siblings */}
-        <div className="w-full aspect-[16/9] relative">
+      <div ref={zoomRef} className="absolute inset-0 flex items-center justify-center bg-black">
+        {/* Constrain to fit within both viewport dimensions in landscape */}
+        <div className="relative" style={{ width: "min(100%, calc(100dvh * 16 / 9))", aspectRatio: "16/9" }}>
           {/* Crop ratio overlay — follows scroll across full video width */}
           {(clipMode === "idle" || clipMode === "recording") && (() => {
             const scrollEl = scrollRef.current;
@@ -606,7 +606,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           <div
             ref={scrollRef}
             dir="ltr"
-            className="w-full aspect-[16/9] overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"
+            className="absolute inset-0 overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar"
           >
             <video
               ref={videoRef}
