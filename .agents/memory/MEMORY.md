@@ -1,5 +1,6 @@
 - [HEVC→H264 HLS transcode](hevc-hls-transcode.md) — fMP4 HLS output option is `-hls_fmp4_init_filename`, not `-hls_init_filename`; 4096×1152 HEVC takes ~17s for first segment on Replit CPU.
 - [Clerk auth setup](clerk-auth.md) — Replit-managed Clerk replaces cookie auth; real users JIT-provisioned via clerkId in DB; guests use guestId httpOnly cookie alongside Clerk.
+- [Clerk ↔ local user race](clerk-local-user-race.md) — After sign-in, Clerk's `isSignedIn` is true before the server has verified the session cookie. Guards that redirect on `!user` must also check `isSignedIn` to avoid bouncing the user back to login during the handshake window.
 - [customFetch cookie credentials](custom-fetch-cookies.md) — `customFetch` must pass `credentials: "include"` or httpOnly session cookies are silently dropped; breaks guest auth and any cookie-based auth flow.
 - [HLS.js seek-on-load duration](hls-seek-duration.md) — video.duration is 0/NaN at Hls MANIFEST_PARSED; seek to startTime*duration must wait for loadedmetadata/durationchange or clips play from 0 / freeze.
 - [Clip export architecture](clip-export-arch.md) — background FFmpeg render → Bunny Storage upload; dedup via inFlight Set + exportStatus DB column; download proxied through /api/user-clips/:id/download to avoid CORS.

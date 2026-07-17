@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { ClerkProvider, SignIn, SignUp, useClerk } from "@clerk/react";
+import { ClerkProvider, SignIn, SignUp, useClerk, useUser } from "@clerk/react";
 import { publishableKeyFromHost } from "@clerk/react/internal";
 import { arSA } from "@clerk/localizations";
 import { Toaster } from "@/components/ui/toaster";
@@ -118,10 +118,17 @@ function ClerkQueryClientCacheInvalidator() {
 
 function AuthRedirectGuard() {
   const { user, isLoading, isGuest } = useAuth();
+  const { isSignedIn } = useUser();
   const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (isLoading) return;
+
+    // If Clerk says the user IS signed in but our local user record isn't
+    // ready yet (common right after sign-in), don't do anything — let the
+    // page stay so we don't bounce back to login while the server catches up.
+    if (isSignedIn && !user && !isGuest) return;
+
     if (!user || isGuest) return;
 
     const isPublicPage = location === "/" || location.startsWith("/sign-in") || location.startsWith("/sign-up");
@@ -132,7 +139,7 @@ function AuthRedirectGuard() {
     if (!user.profileComplete && location !== "/onboarding") {
       setLocation("/onboarding");
     }
-  }, [isLoading, user, isGuest, location, setLocation]);
+  }, [isLoading, user, isGuest, isSignedIn, location, setLocation]);
 
   return null;
 }

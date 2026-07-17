@@ -6,7 +6,8 @@ import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useQueryClient } from "@tanstack/react-query";
-import { useClerk } from "@clerk/react";
+import { useClerk, useUser } from "@clerk/react";
+import { useEffect } from "react";
 
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 28 },
@@ -23,6 +24,15 @@ export default function Login() {
   const guestMutation = useLoginAsGuest();
   const queryClient = useQueryClient();
   const { signOut } = useClerk();
+  const { isSignedIn, isLoaded } = useUser();
+
+  // If already signed in, redirect straight to home — avoids the
+  // "press login again" symptom after Clerk's own redirect stalls.
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      setLocation("/home");
+    }
+  }, [isLoaded, isSignedIn, setLocation]);
 
   const preloadHomeData = () => {
     queryClient.prefetchQuery({

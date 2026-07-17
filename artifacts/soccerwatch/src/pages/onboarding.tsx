@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import replayLogo from "@/assets/replay-logo.png";
 import { motion } from "framer-motion";
+import { useUser } from "@clerk/react";
 import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
@@ -35,6 +36,7 @@ export default function Onboarding() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { user: authUser, isLoading: authLoading, isGuest } = useAuth();
+  const { isSignedIn } = useUser();
   const { data: me } = useGetMe();
   const user = me ?? authUser;
 
@@ -47,13 +49,16 @@ export default function Onboarding() {
   const queryClient = useQueryClient();
   const updateProfile = useUpdateProfile();
 
-  // Guard: guests and unauthenticated users go to login
+  // Guard: only kick truly unauthenticated users to login. If Clerk says
+  // the user IS signed in, wait for the local user record to arrive instead
+  // of bouncing them back to login during the sign-in handshake window.
   useEffect(() => {
     if (authLoading) return;
+    if (isSignedIn) return;
     if (isGuest || !user) {
       setLocation("/");
     }
-  }, [authLoading, isGuest, user, setLocation]);
+  }, [authLoading, isSignedIn, isGuest, user, setLocation]);
 
   // Guard: already complete users go to home
   useEffect(() => {
