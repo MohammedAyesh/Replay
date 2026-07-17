@@ -55,11 +55,6 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
     return existing.id;
   }
 
-  // Social login users (Google, Apple, etc.) start with profileComplete=false
-  // so they are guided through onboarding to fill in their soccer profile.
-  // Email-signup users skip onboarding since they already completed Clerk's flow.
-  const isSocial = (clerkUser?.externalAccounts?.length ?? 0) > 0;
-
   const firstName = clerkUser?.firstName?.trim() ?? "";
   const lastName = clerkUser?.lastName?.trim() ?? "";
   const name = [firstName, lastName].filter(Boolean).join(" ") || "Player";
@@ -72,7 +67,7 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
       name,
       email,
       isGuest: false,
-      profileComplete: !isSocial,
+      profileComplete: false,
     })
     .onConflictDoNothing()
     .returning({ id: usersTable.id });
