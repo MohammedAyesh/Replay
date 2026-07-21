@@ -970,6 +970,34 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               </button>
             </div>
 
+            {/* Bottom bar — zoom + record */}
+            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3 w-full">
+              <div className="flex items-center gap-2 w-full">
+                <ZoomOut className="w-3.5 h-3.5 text-white/60 shrink-0" />
+                <input
+                  type="range"
+                  min={30}
+                  max={100}
+                  step={5}
+                  value={Math.round(cropZoom * 100)}
+                  onChange={(e) => {
+                    const z = parseInt(e.target.value) / 100;
+                    setCropZoom(z);
+                    cropZoomRef.current = z;
+                  }}
+                  className="flex-1 accent-primary h-1"
+                />
+                <ZoomIn className="w-3.5 h-3.5 text-white/60 shrink-0" />
+              </div>
+              <button
+                onClick={startRecording}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-black font-bold text-sm"
+              >
+                <Circle className="w-4 h-4 fill-black" />
+                {t.clipping.record}
+              </button>
+            </div>
+
           </motion.div>
         )}
       </AnimatePresence>
