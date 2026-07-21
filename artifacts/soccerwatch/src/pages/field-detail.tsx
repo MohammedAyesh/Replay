@@ -470,6 +470,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
   const selectedRatioRef = useRef<AspectRatio>("16:9");
   const [scrollOffset, setScrollOffset] = useState(0);
+  // Draggable crop box: left edge as fraction of container width (0–1)
+  const BOX_W_FRAC = 81 / 256; // 9:16 box width inside 16:9 frame = (9/16)/(16/9)
+  const [cropBoxX, setCropBoxX] = useState((1 - BOX_W_FRAC) / 2);
+  const cropBoxXRef = useRef((1 - BOX_W_FRAC) / 2);
+  const boxDragRef = useRef<{ active: boolean; startClientX: number; startFrac: number }>({ active: false, startClientX: 0, startFrac: 0 });
   const clipModeRef = useRef<ClipMode>("idle");
   const stopRecordingRef = useRef<(overrideEndTime?: number) => void>(() => {});
 
@@ -489,6 +494,33 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     keyframes: [],
   });
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Drag handlers for the crop box
+  const handleBoxPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    boxDragRef.current = { active: true, startClientX: e.clientX, startFrac: cropBoxXRef.current };
+  }, []);
+
+  const handleBoxPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!boxDragRef.current.active) return;
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    const containerW = scrollEl.clientWidth;
+    const containerH = scrollEl.clientHeight;
+    const boxPxW = containerH * 9 / 16;
+    const maxLeftPx = Math.max(0, containerW - boxPxW);
+    const dx = e.clientX - boxDragRef.current.startClientX;
+    const newLeftPx = Math.max(0, Math.min(maxLeftPx, boxDragRef.current.startFrac * containerW + dx));
+    const newFrac = containerW > 0 ? newLeftPx / containerW : 0;
+    setCropBoxX(newFrac);
+    cropBoxXRef.current = newFrac;
+  }, []);
+
+  const handleBoxPointerUp = useCallback(() => {
+    boxDragRef.current.active = false;
+  }, []);
 
   useEffect(() => {
     setFullscreenVideo(true);
@@ -676,16 +708,12 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
       let x: number, w: number;
       if (selectedRatioRef.current === "9:16") {
-        const cropPxW = containerH * 9 / 16;
-        const maxScroll = Math.max(0, totalW - containerW);
-        const cropLeft = maxScroll > 0
-          ? (scrollEl.scrollLeft / maxScroll) * (containerW - cropPxW)
-          : (containerW - cropPxW) / 2;
-        x = totalW > 0 ? (scrollEl.scrollLeft + cropLeft) / totalW : 0;
-        w = totalW > 0 ? cropPxW / totalW : 81 / 256;
+        const boxPxW = containerH * 9 / 16;
+        x = cropBoxXRef.current;
+        w = containerW > 0 ? boxPxW / containerW : BOX_W_FRAC;
       } else {
-        x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
-        w = totalW > 0 ? containerW / totalW : 1;
+        x = 0;
+        w = 1;
       }
 
       recordingRef.current.keyframes.push({ t: relT, x, y: 0, w, h: 1 });
@@ -718,21 +746,16 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     const endT = overrideEndTime ?? el?.currentTime ?? clipStartRef.current;
 
     if (el && scrollEl) {
-      const totalW = scrollEl.scrollWidth;
       const containerW = scrollEl.clientWidth;
       const containerH = scrollEl.clientHeight;
       let x: number, w: number;
       if (selectedRatioRef.current === "9:16") {
-        const cropPxW = containerH * 9 / 16;
-        const maxScroll = Math.max(0, totalW - containerW);
-        const cropLeft = maxScroll > 0
-          ? (scrollEl.scrollLeft / maxScroll) * (containerW - cropPxW)
-          : (containerW - cropPxW) / 2;
-        x = totalW > 0 ? (scrollEl.scrollLeft + cropLeft) / totalW : 0;
-        w = totalW > 0 ? cropPxW / totalW : 81 / 256;
+        const boxPxW = containerH * 9 / 16;
+        x = cropBoxXRef.current;
+        w = containerW > 0 ? boxPxW / containerW : BOX_W_FRAC;
       } else {
-        x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
-        w = totalW > 0 ? containerW / totalW : 1;
+        x = 0;
+        w = 1;
       }
       recordingRef.current.keyframes.push({ t: Math.max(0, endT - clipStartRef.current), x, y: 0, w, h: 1 });
     }
@@ -752,6 +775,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     setRecElapsed(0);
     setSelectedRatio("16:9");
     selectedRatioRef.current = "16:9";
+    const centered = (1 - BOX_W_FRAC) / 2;
+    setCropBoxX(centered);
+    cropBoxXRef.current = centered;
   };
 
   const saveClip = async () => {
@@ -833,25 +859,22 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       {/* Letterboxed 16:9 scrollable video */}
       <div ref={zoomRef} className="absolute inset-0 flex items-center justify-center bg-black">
         <div className="relative" style={{ width: "min(100%, calc(100dvh * 16 / 9))", aspectRatio: "16/9" }}>
-          {/* 9:16 crop overlay */}
-          {(clipMode === "idle" || clipMode === "recording") && (() => {
-            if (selectedRatio !== "9:16") return null;
-            const scrollEl = scrollRef.current;
-            const totalW = scrollEl?.scrollWidth ?? 1;
-            const containerW = scrollEl?.clientWidth ?? totalW;
-            const containerH = scrollEl?.clientHeight ?? 1;
-            const cropPxW = containerH * 9 / 16;
-            const maxScroll = Math.max(0, totalW - containerW);
-            const cropLeft = maxScroll > 0
-              ? (scrollOffset / maxScroll) * (containerW - cropPxW)
-              : (containerW - cropPxW) / 2;
-            const leftFrac = totalW > 0 ? (scrollOffset + cropLeft) / totalW : 0;
-            const widthFrac = totalW > 0 ? cropPxW / totalW : 81 / 256;
+          {/* 9:16 draggable crop box — shown during idle (to pre-position) and recording */}
+          {(clipMode === "idle" || clipMode === "recording") && selectedRatio === "9:16" && (() => {
+            const leftPct = cropBoxX * 100;
+            const widthPct = BOX_W_FRAC * 100;
             return (
               <>
-                <div className="absolute inset-y-0 bg-black/50 z-10 pointer-events-none" style={{ left: 0, width: `${leftFrac * 100}%` }} />
-                <div className="absolute inset-y-0 bg-black/50 z-10 pointer-events-none" style={{ left: `${(leftFrac + widthFrac) * 100}%`, right: 0 }} />
-                <div className="absolute inset-y-0 border-2 border-white/60 z-10 pointer-events-none rounded-sm" style={{ left: `${leftFrac * 100}%`, width: `${widthFrac * 100}%` }} />
+                <div className="absolute inset-y-0 bg-black/50 z-10 pointer-events-none" style={{ left: 0, width: `${leftPct}%` }} />
+                <div className="absolute inset-y-0 bg-black/50 z-10 pointer-events-none" style={{ left: `${leftPct + widthPct}%`, right: 0 }} />
+                <div
+                  className="absolute inset-y-0 z-10 border-2 border-white rounded-sm cursor-grab active:cursor-grabbing"
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%`, touchAction: "none" }}
+                  onPointerDown={handleBoxPointerDown}
+                  onPointerMove={handleBoxPointerMove}
+                  onPointerUp={handleBoxPointerUp}
+                  onPointerCancel={handleBoxPointerUp}
+                />
               </>
             );
           })()}
