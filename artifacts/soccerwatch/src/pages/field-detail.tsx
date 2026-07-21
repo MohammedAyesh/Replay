@@ -469,8 +469,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [showAuthPrompt, setShowAuthPrompt] = useState(false);
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
   const selectedRatioRef = useRef<AspectRatio>("16:9");
-  const [cropZoom, setCropZoom] = useState(1.0);
-  const cropZoomRef = useRef(1.0);
+  const [cropZoom, setCropZoom] = useState(0.8);
+  const cropZoomRef = useRef(0.8);
   const [scrollOffset, setScrollOffset] = useState(0);
   const clipModeRef = useRef<ClipMode>("idle");
   const stopRecordingRef = useRef<(overrideEndTime?: number) => void>(() => {});
@@ -762,8 +762,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     setRecElapsed(0);
     setSelectedRatio("16:9");
     selectedRatioRef.current = "16:9";
-    setCropZoom(1.0);
-    cropZoomRef.current = 1.0;
+    setCropZoom(0.8);
+    cropZoomRef.current = 0.8;
   };
 
   const saveClip = async () => {
@@ -838,8 +838,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       setClipTitle("");
       setSelectedRatio("16:9");
       selectedRatioRef.current = "16:9";
-      setCropZoom(1.0);
-      cropZoomRef.current = 1.0;
+      setCropZoom(0.8);
+      cropZoomRef.current = 0.8;
       recordingRef.current.keyframes = [];
     } catch (err) {
       const message = err instanceof Error ? err.message : t.clipping.error;
@@ -922,30 +922,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
         </div>
       </div>
 
-      {/* Zoom slider — always visible during idle/recording */}
-      {(clipMode === "idle" || clipMode === "recording") && (
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-1.5 pointer-events-auto select-none">
-          <ZoomIn className="w-3.5 h-3.5 text-white/70" />
-          <div style={{ height: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <input
-              type="range"
-              min={30}
-              max={100}
-              step={5}
-              value={Math.round(cropZoom * 100)}
-              onChange={(e) => {
-                const z = parseInt(e.target.value) / 100;
-                setCropZoom(z);
-                cropZoomRef.current = z;
-              }}
-              className="accent-primary"
-              style={{ transform: "rotate(-90deg)", width: 90, cursor: "pointer" }}
-            />
-          </div>
-          <ZoomOut className="w-3.5 h-3.5 text-white/70" />
-        </div>
-      )}
-
       {/* Controls overlay */}
       <AnimatePresence>
         {showControls && clipMode === "idle" && (
@@ -999,6 +975,25 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
             {/* Bottom bar */}
             <div className="px-4 pb-safe pb-6 pointer-events-auto space-y-3">
+              {/* Zoom slider */}
+              <div className="flex items-center gap-2">
+                <ZoomOut className="w-3.5 h-3.5 text-white/60 shrink-0" />
+                <input
+                  type="range"
+                  min={30}
+                  max={100}
+                  step={5}
+                  value={Math.round(cropZoom * 100)}
+                  onChange={(e) => {
+                    const z = parseInt(e.target.value) / 100;
+                    setCropZoom(z);
+                    cropZoomRef.current = z;
+                  }}
+                  className="flex-1 accent-primary h-1"
+                />
+                <ZoomIn className="w-3.5 h-3.5 text-white/60 shrink-0" />
+              </div>
+
               {/* Seek bar */}
               {duration > 0 && (
                 <div className="flex items-center gap-2">
@@ -1049,10 +1044,28 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             className="absolute inset-0 z-20 flex flex-col pointer-events-none"
           >
             <div className="flex-1" />
-            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3">
+            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3 w-full">
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/20 border border-red-500/40">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 <span className="text-red-400 text-xs font-bold tabular-nums">{formatDuration(recElapsed)}</span>
+              </div>
+              {/* Zoom slider during recording */}
+              <div className="flex items-center gap-2 w-full">
+                <ZoomOut className="w-3.5 h-3.5 text-white/60 shrink-0" />
+                <input
+                  type="range"
+                  min={30}
+                  max={100}
+                  step={5}
+                  value={Math.round(cropZoom * 100)}
+                  onChange={(e) => {
+                    const z = parseInt(e.target.value) / 100;
+                    setCropZoom(z);
+                    cropZoomRef.current = z;
+                  }}
+                  className="flex-1 accent-primary h-1"
+                />
+                <ZoomIn className="w-3.5 h-3.5 text-white/60 shrink-0" />
               </div>
               <button
                 onClick={() => stopRecording()}
