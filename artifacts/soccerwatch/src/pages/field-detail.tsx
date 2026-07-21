@@ -448,7 +448,13 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [currentTime, setCurrentTime] = useState(0);
   const seekDraggingRef = useRef(false);
   const zoomRef = useRef<HTMLDivElement>(null);
-  const { isZoomed } = usePinchZoom(zoomRef);
+  const { isZoomed } = usePinchZoom(zoomRef, {
+    onZoomChange: (z) => {
+      setCropZoom(z);
+      cropZoomRef.current = z;
+    },
+    currentZoom: cropZoom,
+  });
   const containerRef = useRef<HTMLDivElement>(null);
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== "undefined" && window.innerWidth > window.innerHeight

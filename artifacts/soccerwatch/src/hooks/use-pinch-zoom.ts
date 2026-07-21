@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 
-export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null>) {
+interface PinchZoomOptions {
+  onZoomChange?: (zoom: number) => void;
+  currentZoom?: number;
+}
+
+export function usePinchZoom(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  options?: PinchZoomOptions,
+) {
   const [isZoomed, setIsZoomed] = useState(false);
 
   const s = useRef({
@@ -12,7 +20,13 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
     lastMidY: 0,
     isPinching: false,
     lastTap: 0,
+    onZoomChange: undefined as ((zoom: number) => void) | undefined,
+    currentZoom: 1,
   });
+
+  // Keep callbacks fresh without adding hooks
+  s.current.onZoomChange = options?.onZoomChange;
+  s.current.currentZoom = options?.currentZoom ?? 1;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -60,7 +74,7 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
       } else if (e.touches.length === 1) {
         st.lastMidX = e.touches[0].clientX;
         st.lastMidY = e.touches[0].clientY;
-        if (st.scale > 1.05) {
+        if (!st.onZoomChange && st.scale > 1.05) {
           e.preventDefault();
         }
         const now = Date.now();
@@ -78,18 +92,24 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
         const newMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
         const newMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
 
-        if (st.lastDist) {
+        if (st.lastDist && st.onZoomChange) {
+          const ratio = newDist / st.lastDist;
+          const newZoom = Math.max(0.3, Math.min(1.0, st.currentZoom * (1 / ratio)));
+          st.currentZoom = newZoom;
+          st.onZoomChange(newZoom);
+          setIsZoomed(newZoom < 0.95);
+        } else if (st.lastDist) {
           st.scale = Math.min(5, Math.max(1, st.scale * (newDist / st.lastDist)));
+          st.panX += newMidX - st.lastMidX;
+          st.panY += newMidY - st.lastMidY;
+          if (st.scale > 1.05) setIsZoomed(true);
+          applyTransform();
         }
-        st.panX += newMidX - st.lastMidX;
-        st.panY += newMidY - st.lastMidY;
+
         st.lastDist = newDist;
         st.lastMidX = newMidX;
         st.lastMidY = newMidY;
-
-        applyTransform();
-        if (st.scale > 1.05) setIsZoomed(true);
-      } else if (e.touches.length === 1 && st.scale > 1.05) {
+      } else if (e.touches.length === 1 && !st.onZoomChange && st.scale > 1.05) {
         e.preventDefault();
         st.panX += e.touches[0].clientX - st.lastMidX;
         st.panY += e.touches[0].clientY - st.lastMidY;
@@ -104,7 +124,7 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
         st.lastDist = null;
         st.isPinching = false;
       }
-      if (e.touches.length === 0 && st.scale < 1.15) {
+      if (!st.onZoomChange && e.touches.length === 0 && st.scale < 1.15) {
         resetZoom();
       }
     }
