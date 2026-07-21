@@ -894,17 +894,19 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           {/* Scrollable video */}
           <div
             ref={scrollRef}
-            className="absolute inset-0 overflow-x-auto overflow-y-hidden flex items-center"
+            className="absolute inset-0 overflow-x-auto overflow-y-hidden"
             style={{ scrollbarWidth: "none" }}
             onTouchEnd={skipOnTouchEnd}
             onClick={resetControlsTimer}
           >
-            <video
-              ref={videoRef}
-              style={{ height: `${Math.round(100 / cropZoom)}%`, width: "auto", flexShrink: 0 }}
-              playsInline
-              onLoadedMetadata={onLoadedMetadata}
-            />
+            <div style={{ position: "relative", height: "100%", width: `${Math.round(100 / cropZoom)}%`, minWidth: "100%" }}>
+              <video
+                ref={videoRef}
+                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                playsInline
+                onLoadedMetadata={onLoadedMetadata}
+              />
+            </div>
           </div>
 
           {/* Skip flash */}
