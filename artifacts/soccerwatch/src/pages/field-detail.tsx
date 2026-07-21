@@ -862,8 +862,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       {/* Letterboxed 16:9 scrollable video */}
       <div ref={zoomRef} className="absolute inset-0 flex items-center justify-center bg-black">
         <div className="relative" style={{ width: "min(100%, calc(100dvh * 16 / 9))", aspectRatio: "16/9" }}>
-          {/* Crop overlay (9:16 always, 16:9 when zoom < 1) */}
-          {(clipMode === "idle" || clipMode === "recording") && (() => {
+          {/* Crop overlay — only shown while recording */}
+          {clipMode === "recording" && (() => {
             const scrollEl = scrollRef.current;
             const totalW = scrollEl?.scrollWidth ?? 1;
             const containerW = scrollEl?.clientWidth ?? totalW;
