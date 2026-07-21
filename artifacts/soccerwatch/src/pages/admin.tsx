@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
@@ -92,6 +92,7 @@ interface AdminAcademy {
   fieldLocation: string;
   daysOfWeek: string[];
   description: string | null;
+  logoUrl: string | null;
   recordingCount: number;
 }
 
@@ -1093,7 +1094,7 @@ function AcademiesTab() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | "new" | null>(null);
-  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "" });
+  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "" });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
 
@@ -1143,12 +1144,12 @@ function AcademiesTab() {
 
   const startNew = () => {
     setEditing("new");
-    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "" });
+    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "" });
   };
 
   const startEdit = (a: AdminAcademy) => {
     setEditing(a.id);
-    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "" });
+    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "" });
   };
 
   const cancelEdit = () => { setEditing(null); };
@@ -1171,6 +1172,7 @@ function AcademiesTab() {
         fieldId: form.fieldId,
         daysOfWeek: form.daysOfWeek,
         description: form.description.trim() || null,
+        logoUrl: form.logoUrl.trim() || null,
       };
       if (editing === "new") {
         const created = await apiFetch("/admin/academies", { method: "POST", body: JSON.stringify(body) });
@@ -1268,8 +1270,12 @@ function AcademiesTab() {
               <div key={academy.id} className="border border-zinc-800 rounded-xl overflow-hidden bg-zinc-900">
                 {/* Academy header row */}
                 <div className="flex items-center gap-3 p-3">
-                  <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <GraduationCap className="w-4 h-4 text-primary" />
+                  <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {academy.logoUrl ? (
+                      <img src={academy.logoUrl} alt={academy.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <GraduationCap className="w-4 h-4 text-primary" />
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-medium text-sm truncate">{academy.name}</p>
@@ -1317,6 +1323,7 @@ function AcademiesTab() {
                       form={form}
                       fields={fields}
                       saving={saving}
+                      academyId={academy.id}
                       onToggleDay={toggleDay}
                       onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
                       onSave={saveAcademy}
@@ -1418,24 +1425,95 @@ function AcademyForm({
   form,
   fields,
   saving,
+  academyId,
   onToggleDay,
   onChange,
   onSave,
   onCancel,
   title,
 }: {
-  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string };
+  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string };
   fields: AdminField[];
   saving: boolean;
+  academyId?: number;
   onToggleDay: (day: string) => void;
   onChange: (patch: Partial<typeof form>) => void;
   onSave: () => void;
   onCancel: () => void;
   title: string;
 }) {
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !academyId) return;
+    setUploadingLogo(true);
+    try {
+      const fd = new FormData();
+      fd.append("logo", file);
+      const res = await fetch(`${basePath}/api/admin/academies/${academyId}/logo`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      if (res.ok) {
+        const data = await res.json() as { logoUrl: string };
+        onChange({ logoUrl: data.logoUrl });
+      }
+    } catch { /* silent */ }
+    setUploadingLogo(false);
+    e.target.value = "";
+  };
+
   return (
     <div className="space-y-3">
       <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{title}</p>
+
+      {/* Logo preview */}
+      <div>
+        <label className="text-xs text-zinc-400 mb-1 block">Logo (optional)</label>
+        <div className="flex items-center gap-3">
+          <div className="w-14 h-14 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center flex-shrink-0 overflow-hidden">
+            {form.logoUrl ? (
+              <img src={form.logoUrl} alt="Logo" className="w-full h-full object-cover" />
+            ) : (
+              <GraduationCap className="w-6 h-6 text-zinc-600" />
+            )}
+          </div>
+          <div className="flex-1 space-y-1.5">
+            <input
+              value={form.logoUrl}
+              onChange={(e) => onChange({ logoUrl: e.target.value })}
+              placeholder="https://example.com/logo.png"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
+            />
+            {academyId && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploadingLogo}
+                  className="text-xs text-primary hover:underline disabled:opacity-50"
+                >
+                  {uploadingLogo ? "Uploading…" : "or upload file"}
+                </button>
+                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+              </>
+            )}
+          </div>
+          {form.logoUrl && (
+            <button
+              type="button"
+              onClick={() => onChange({ logoUrl: "" })}
+              className="text-zinc-500 hover:text-red-400 transition-colors text-xs"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+
       <div>
         <label className="text-xs text-zinc-400 mb-1 block">Academy Name</label>
         <input

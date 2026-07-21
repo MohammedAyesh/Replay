@@ -10,6 +10,7 @@ export const academiesTable = pgTable("academies", {
   fieldId: integer("field_id").notNull().references(() => fieldsTable.id, { onDelete: "cascade" }),
   daysOfWeek: text("days_of_week").notNull().default(""),
   description: text("description"),
+  logoUrl: text("logo_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

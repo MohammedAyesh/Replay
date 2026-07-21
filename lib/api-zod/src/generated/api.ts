@@ -228,6 +228,7 @@ export const ListAcademiesResponseItem = zod.object({
   "fieldLocation": zod.string(),
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
+  "logoUrl": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 export const ListAcademiesResponse = zod.array(ListAcademiesResponseItem)
@@ -248,6 +249,7 @@ export const GetAcademyResponse = zod.object({
   "fieldLocation": zod.string(),
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
+  "logoUrl": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 
@@ -285,6 +287,7 @@ export const ListAdminAcademiesResponseItem = zod.object({
   "fieldLocation": zod.string(),
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
+  "logoUrl": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 export const ListAdminAcademiesResponse = zod.array(ListAdminAcademiesResponseItem)
@@ -297,7 +300,8 @@ export const CreateAcademyBody = zod.object({
   "name": zod.string(),
   "fieldId": zod.number(),
   "daysOfWeek": zod.array(zod.string()),
-  "description": zod.string().nullish()
+  "description": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 })
 
 export const CreateAcademyResponse = zod.object({
@@ -308,6 +312,7 @@ export const CreateAcademyResponse = zod.object({
   "fieldLocation": zod.string(),
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
+  "logoUrl": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 
@@ -323,7 +328,8 @@ export const UpdateAcademyBody = zod.object({
   "name": zod.string().optional(),
   "fieldId": zod.number().optional(),
   "daysOfWeek": zod.array(zod.string()).optional(),
-  "description": zod.string().nullish()
+  "description": zod.string().nullish(),
+  "logoUrl": zod.string().nullish()
 })
 
 export const UpdateAcademyResponse = zod.object({
@@ -334,6 +340,7 @@ export const UpdateAcademyResponse = zod.object({
   "fieldLocation": zod.string(),
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
+  "logoUrl": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 

@@ -343,6 +343,8 @@ export interface AcademySummary {
   daysOfWeek: string[];
   /** @nullable */
   description?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
   recordingCount: number;
 }
 
@@ -352,6 +354,8 @@ export interface CreateAcademyInput {
   daysOfWeek: string[];
   /** @nullable */
   description?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
 }
 
 export interface UpdateAcademyInput {
@@ -360,6 +364,8 @@ export interface UpdateAcademyInput {
   daysOfWeek?: string[];
   /** @nullable */
   description?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
 }
 
 export interface AddAcademyRecordingInput {

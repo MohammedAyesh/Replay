@@ -43,6 +43,7 @@ function AcademyCard({
     fieldLocation: string;
     daysOfWeek: string[];
     description?: string | null;
+    logoUrl?: string | null;
     recordingCount: number;
   };
   index: number;
@@ -64,8 +65,12 @@ function AcademyCard({
         onClick={onToggle}
         className="w-full flex items-start gap-3 p-4 text-left hover:bg-muted/30 transition-colors"
       >
-        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <GraduationCap className="w-5 h-5 text-primary" />
+        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5 overflow-hidden">
+          {academy.logoUrl ? (
+            <img src={academy.logoUrl} alt={academy.name} className="w-full h-full object-cover" />
+          ) : (
+            <GraduationCap className="w-5 h-5 text-primary" />
+          )}
         </div>
 
         <div className="flex-1 min-w-0">

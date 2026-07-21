@@ -12,4 +12,6 @@ export interface CreateAcademyInput {
   daysOfWeek: string[];
   /** @nullable */
   description?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
 }
