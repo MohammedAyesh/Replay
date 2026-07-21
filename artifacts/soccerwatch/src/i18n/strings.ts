@@ -128,7 +128,7 @@ const strings = {
       savedDesc: "Publish it anytime from My Clips → Created.",
       signInToClip: "Sign in to create clips",
       signInToClipDesc: "Create an account to save your own clips.",
-      signInCTA: "Sign In",
+      signInCTA: "Sign Up",
       createAccountCTA: "Create Account",
       browseGuestCTA: "Continue as Guest",
       error: "Failed to save clip",
