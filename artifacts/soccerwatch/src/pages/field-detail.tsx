@@ -639,6 +639,18 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     return () => clearTimeout(timer);
   }, []);
 
+  // Re-center scroll when zoom changes so the view stays on the middle of the field
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    const timer = setTimeout(() => {
+      const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
+      const currentFrac = maxScroll > 0 ? scrollEl.scrollLeft / maxScroll : 0.5;
+      scrollEl.scrollLeft = currentFrac * (scrollEl.scrollWidth - scrollEl.clientWidth);
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [cropZoom]);
+
   const togglePlay = () => {
     const el = videoRef.current;
     if (!el) return;
@@ -676,25 +688,21 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       const relT = videoEl.currentTime - clipStartRef.current;
       if (relT < 0) return;
 
-      const zoom = cropZoomRef.current;
       let x: number, w: number;
       if (selectedRatioRef.current === "9:16") {
-        const cropPxH = containerH * zoom;
-        const cropPxW = cropPxH * 9 / 16;
+        const cropPxW = containerH * 9 / 16;
         const maxScroll = Math.max(0, totalW - containerW);
         const cropLeft = maxScroll > 0
           ? (scrollEl.scrollLeft / maxScroll) * (containerW - cropPxW)
           : (containerW - cropPxW) / 2;
         x = totalW > 0 ? (scrollEl.scrollLeft + cropLeft) / totalW : 0;
-        w = totalW > 0 ? cropPxW / totalW : 81 / 256 * zoom;
+        w = totalW > 0 ? cropPxW / totalW : 81 / 256;
       } else {
-        const cropPxW = containerW * zoom;
-        const cropLeft = (containerW - cropPxW) / 2;
-        x = totalW > 0 ? (scrollEl.scrollLeft + cropLeft) / totalW : (1 - zoom) / 2;
-        w = totalW > 0 ? cropPxW / totalW : zoom;
+        x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
+        w = totalW > 0 ? containerW / totalW : 1;
       }
 
-      recordingRef.current.keyframes.push({ t: relT, x, y: (1 - zoom) / 2, w, h: zoom });
+      recordingRef.current.keyframes.push({ t: relT, x, y: 0, w, h: 1 });
     };
 
     sampleFrame();
@@ -727,24 +735,20 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       const totalW = scrollEl.scrollWidth;
       const containerW = scrollEl.clientWidth;
       const containerH = scrollEl.clientHeight;
-      const zoom = cropZoomRef.current;
       let x: number, w: number;
       if (selectedRatioRef.current === "9:16") {
-        const cropPxH = containerH * zoom;
-        const cropPxW = cropPxH * 9 / 16;
+        const cropPxW = containerH * 9 / 16;
         const maxScroll = Math.max(0, totalW - containerW);
         const cropLeft = maxScroll > 0
           ? (scrollEl.scrollLeft / maxScroll) * (containerW - cropPxW)
           : (containerW - cropPxW) / 2;
         x = totalW > 0 ? (scrollEl.scrollLeft + cropLeft) / totalW : 0;
-        w = totalW > 0 ? cropPxW / totalW : 81 / 256 * zoom;
+        w = totalW > 0 ? cropPxW / totalW : 81 / 256;
       } else {
-        const cropPxW = containerW * zoom;
-        const cropLeft = (containerW - cropPxW) / 2;
-        x = totalW > 0 ? (scrollEl.scrollLeft + cropLeft) / totalW : (1 - zoom) / 2;
-        w = totalW > 0 ? cropPxW / totalW : zoom;
+        x = totalW > 0 ? scrollEl.scrollLeft / totalW : 0;
+        w = totalW > 0 ? containerW / totalW : 1;
       }
-      recordingRef.current.keyframes.push({ t: Math.max(0, endT - clipStartRef.current), x, y: (1 - zoom) / 2, w, h: zoom });
+      recordingRef.current.keyframes.push({ t: Math.max(0, endT - clipStartRef.current), x, y: 0, w, h: 1 });
     }
 
     el?.pause();
@@ -790,24 +794,21 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       const scrollEl = scrollRef.current;
       const totalW = scrollEl?.scrollWidth ?? 1;
       const containerW = scrollEl?.clientWidth ?? totalW;
-      const zoom = cropZoomRef.current;
       let x: number, w: number;
       if (selectedRatioRef.current === "9:16") {
         const containerH = scrollEl?.clientHeight ?? 1;
-        const cropPxH = containerH * zoom;
-        const cropPxW = cropPxH * 9 / 16;
+        const cropPxW = containerH * 9 / 16;
         const maxScroll = Math.max(0, totalW - containerW);
         const sl = scrollEl?.scrollLeft ?? 0;
         const cropLeft = maxScroll > 0 ? (sl / maxScroll) * (containerW - cropPxW) : (containerW - cropPxW) / 2;
         x = totalW > 0 ? (sl + cropLeft) / totalW : 0;
-        w = totalW > 0 ? cropPxW / totalW : 81 / 256 * zoom;
+        w = totalW > 0 ? cropPxW / totalW : 81 / 256;
       } else {
-        const cropPxW = containerW * zoom;
         const sl = scrollEl?.scrollLeft ?? 0;
-        x = totalW > 0 ? (sl + (containerW - cropPxW) / 2) / totalW : (1 - zoom) / 2;
-        w = totalW > 0 ? cropPxW / totalW : zoom;
+        x = totalW > 0 ? sl / totalW : 0;
+        w = totalW > 0 ? containerW / totalW : 1;
       }
-      keyframes = [{ t: 0, x, y: (1 - zoom) / 2, w, h: zoom }, { t: 1, x, y: (1 - zoom) / 2, w, h: zoom }];
+      keyframes = [{ t: 0, x, y: 0, w, h: 1 }, { t: 1, x, y: 0, w, h: 1 }];
     } else if (keyframes.length === 1) {
       keyframes = [{ ...keyframes[0], t: 0 }, { ...keyframes[0], t: 1 }];
     }
@@ -862,40 +863,24 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       {/* Letterboxed 16:9 scrollable video */}
       <div ref={zoomRef} className="absolute inset-0 flex items-center justify-center bg-black">
         <div className="relative" style={{ width: "min(100%, calc(100dvh * 16 / 9))", aspectRatio: "16/9" }}>
-          {/* Crop overlay — only shown while recording */}
-          {clipMode === "recording" && (() => {
+          {/* Crop overlay — only shown while recording in 9:16 mode */}
+          {clipMode === "recording" && selectedRatio === "9:16" && (() => {
             const scrollEl = scrollRef.current;
             const totalW = scrollEl?.scrollWidth ?? 1;
             const containerW = scrollEl?.clientWidth ?? totalW;
             const containerH = scrollEl?.clientHeight ?? 1;
-            const zoom = cropZoom;
-
-            let leftFrac: number, widthFrac: number;
-            if (selectedRatio === "9:16") {
-              const cropPxH = containerH * zoom;
-              const cropPxW = cropPxH * 9 / 16;
-              const maxScroll = Math.max(0, totalW - containerW);
-              const cropLeft = maxScroll > 0
-                ? (scrollOffset / maxScroll) * (containerW - cropPxW)
-                : (containerW - cropPxW) / 2;
-              leftFrac = totalW > 0 ? (scrollOffset + cropLeft) / totalW : 0;
-              widthFrac = totalW > 0 ? cropPxW / totalW : 81 / 256;
-            } else {
-              if (zoom >= 1.0) return null;
-              const cropPxW = containerW * zoom;
-              const cropLeft = (containerW - cropPxW) / 2;
-              leftFrac = totalW > 0 ? (scrollOffset + cropLeft) / totalW : (1 - zoom) / 2;
-              widthFrac = totalW > 0 ? cropPxW / totalW : zoom;
-            }
-
-            const topFrac = (1 - zoom) / 2;
+            const cropPxW = containerH * 9 / 16;
+            const maxScroll = Math.max(0, totalW - containerW);
+            const cropLeft = maxScroll > 0
+              ? (scrollOffset / maxScroll) * (containerW - cropPxW)
+              : (containerW - cropPxW) / 2;
+            const leftFrac = totalW > 0 ? (scrollOffset + cropLeft) / totalW : 0;
+            const widthFrac = totalW > 0 ? cropPxW / totalW : 81 / 256;
             return (
               <>
-                {topFrac > 0 && <div className="absolute inset-x-0 bg-black/50 z-10 pointer-events-none" style={{ top: 0, height: `${topFrac * 100}%` }} />}
-                {topFrac > 0 && <div className="absolute inset-x-0 bg-black/50 z-10 pointer-events-none" style={{ bottom: 0, height: `${topFrac * 100}%` }} />}
-                <div className="absolute bg-black/50 z-10 pointer-events-none" style={{ top: `${topFrac * 100}%`, bottom: `${topFrac * 100}%`, left: 0, width: `${leftFrac * 100}%` }} />
-                <div className="absolute bg-black/50 z-10 pointer-events-none" style={{ top: `${topFrac * 100}%`, bottom: `${topFrac * 100}%`, left: `${(leftFrac + widthFrac) * 100}%`, right: 0 }} />
-                <div className="absolute border-2 border-white/60 z-10 pointer-events-none rounded-sm" style={{ top: `${topFrac * 100}%`, height: `${zoom * 100}%`, left: `${leftFrac * 100}%`, width: `${widthFrac * 100}%` }} />
+                <div className="absolute inset-y-0 bg-black/50 z-10 pointer-events-none" style={{ left: 0, width: `${leftFrac * 100}%` }} />
+                <div className="absolute inset-y-0 bg-black/50 z-10 pointer-events-none" style={{ left: `${(leftFrac + widthFrac) * 100}%`, right: 0 }} />
+                <div className="absolute inset-y-0 border-2 border-white/60 z-10 pointer-events-none rounded-sm" style={{ left: `${leftFrac * 100}%`, width: `${widthFrac * 100}%` }} />
               </>
             );
           })()}
@@ -903,15 +888,14 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           {/* Scrollable video */}
           <div
             ref={scrollRef}
-            className="absolute inset-0 overflow-x-auto overflow-y-hidden"
+            className="absolute inset-0 overflow-x-auto overflow-y-hidden flex items-center"
             style={{ scrollbarWidth: "none" }}
             onTouchEnd={skipOnTouchEnd}
             onClick={resetControlsTimer}
           >
             <video
               ref={videoRef}
-              className="h-full object-contain"
-              style={{ minWidth: "100%", width: "auto" }}
+              style={{ height: `${Math.round(100 / cropZoom)}%`, width: "auto", flexShrink: 0 }}
               playsInline
               onLoadedMetadata={onLoadedMetadata}
             />
