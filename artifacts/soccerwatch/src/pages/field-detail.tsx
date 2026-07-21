@@ -447,6 +447,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const seekDraggingRef = useRef(false);
+  const [cropZoom, setCropZoom] = useState(0.8);
+  const cropZoomRef = useRef(0.8);
   const zoomRef = useRef<HTMLDivElement>(null);
   const { isZoomed } = usePinchZoom(zoomRef, {
     onZoomChange: (z) => {
@@ -475,8 +477,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [showAuthPrompt, setShowAuthPrompt] = useState(false);
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
   const selectedRatioRef = useRef<AspectRatio>("16:9");
-  const [cropZoom, setCropZoom] = useState(0.8);
-  const cropZoomRef = useRef(0.8);
   const [scrollOffset, setScrollOffset] = useState(0);
   const clipModeRef = useRef<ClipMode>("idle");
   const stopRecordingRef = useRef<(overrideEndTime?: number) => void>(() => {});
