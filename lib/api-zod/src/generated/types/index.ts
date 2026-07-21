@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './academySummary';
 export * from './accountStats';
 export * from './ad';
+export * from './addAcademyRecordingInput';
 export * from './adminAdEntry';
 export * from './adStats';
 export * from './authResponse';
@@ -15,6 +17,7 @@ export * from './banner';
 export * from './bunnyCollection';
 export * from './bunnyVideo';
 export * from './clip';
+export * from './createAcademyInput';
 export * from './createAdInput';
 export * from './createUserClipInput';
 export * from './createUserClipInputAspectRatio';
@@ -37,6 +40,7 @@ export * from './profileInputPosition';
 export * from './publicProfile';
 export * from './recording';
 export * from './socialLikeUser';
+export * from './updateAcademyInput';
 export * from './updateUserClipInput';
 export * from './updateUserClipInputVisibility';
 export * from './user';

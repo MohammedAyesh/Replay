@@ -8,6 +8,7 @@ const strings = {
       fields: "Fields",
       myClips: "My Clips",
       account: "Account",
+      academies: "Academies",
     },
     home: {
       greeting: (name: string) => `Hey, ${name} 👋`,
@@ -192,6 +193,15 @@ const strings = {
       title: "Rotate your device",
       subtitle: "This app works best in portrait mode",
     },
+    academies: {
+      title: "Academies",
+      subtitle: "Local soccer academies and their sessions",
+      searchPlaceholder: "Search academies or fields…",
+      noAcademiesFound: "No academies found",
+      noAcademiesYet: "No academies yet",
+      noAcademiesDesc: "Academies will appear here once added by an admin.",
+      recordings: (n: number) => `${n} ${n === 1 ? "recording" : "recordings"}`,
+    },
   },
   ar: {
     nav: {
@@ -200,6 +210,7 @@ const strings = {
       fields: "الملاعب",
       myClips: "مقاطعي",
       account: "الحساب",
+      academies: "الأكاديميات",
     },
     home: {
       greeting: (name: string) => `أهلاً، ${name} 👋`,
@@ -382,6 +393,15 @@ const strings = {
     orientationLock: {
       title: "دوّر جهازك",
       subtitle: "يعمل هذا التطبيق بشكل أفضل في الوضع الرأسي",
+    },
+    academies: {
+      title: "الأكاديميات",
+      subtitle: "أكاديميات كرة القدم المحلية وجلساتها",
+      searchPlaceholder: "ابحث عن أكاديمية أو ملعب…",
+      noAcademiesFound: "لم يُعثر على أكاديميات",
+      noAcademiesYet: "لا توجد أكاديميات بعد",
+      noAcademiesDesc: "ستظهر الأكاديميات هنا بعد إضافتها من قِبل المشرف.",
+      recordings: (n: number) => `${n} ${n === 1 ? "تسجيل" : "تسجيلات"}`,
     },
   },
 } as const;

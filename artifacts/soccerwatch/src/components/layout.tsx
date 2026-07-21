@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Home, MapPin, Bookmark, User as UserIcon } from "lucide-react";
+import { Home, MapPin, Bookmark, User as UserIcon, GraduationCap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -50,6 +50,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
             icon={<MapPin className="w-6 h-6" />}
             label={t.nav.fields}
             isActive={location.startsWith("/fields")}
+            isTranslucent={useTranslucentBar}
+          />
+          <NavItem
+            href="/academies"
+            icon={<GraduationCap className="w-6 h-6" />}
+            label={t.nav.academies}
+            isActive={location === "/academies"}
             isTranslucent={useTranslucentBar}
           />
           <NavItem

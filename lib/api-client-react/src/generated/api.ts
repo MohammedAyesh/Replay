@@ -20,15 +20,18 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AcademySummary,
   AccountStats,
   Ad,
   AdStats,
+  AddAcademyRecordingInput,
   AdminAdEntry,
   AuthResponse,
   Banner,
   BunnyCollection,
   BunnyVideo,
   Clip,
+  CreateAcademyInput,
   CreateAdInput,
   CreateUserClipInput,
   EngagementResult,
@@ -44,6 +47,7 @@ import type {
   ProfileInput,
   PublicProfile,
   Recording,
+  UpdateAcademyInput,
   UpdateUserClipInput,
   User,
   UserClip,
@@ -979,6 +983,668 @@ export function useGetRecording<TData = Awaited<ReturnType<typeof getRecording>>
 
 
 
+
+export const getListAcademiesUrl = () => {
+
+
+
+
+  return `/api/academies`
+}
+
+/**
+ * @summary List all academies
+ */
+export const listAcademies = async ( options?: RequestInit): Promise<AcademySummary[]> => {
+
+  return customFetch<AcademySummary[]>(getListAcademiesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademiesQueryKey = () => {
+    return [
+    `/api/academies`
+    ] as const;
+    }
+
+
+export const getListAcademiesQueryOptions = <TData = Awaited<ReturnType<typeof listAcademies>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademiesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademies>>> = ({ signal }) => listAcademies({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademies>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademiesQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademies>>>
+export type ListAcademiesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all academies
+ */
+
+export function useListAcademies<TData = Awaited<ReturnType<typeof listAcademies>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademiesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAcademyUrl = (id: number,) => {
+
+
+
+
+  return `/api/academies/${id}`
+}
+
+/**
+ * @summary Get an academy by ID
+ */
+export const getAcademy = async (id: number, options?: RequestInit): Promise<AcademySummary> => {
+
+  return customFetch<AcademySummary>(getGetAcademyUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyQueryKey = (id: number,) => {
+    return [
+    `/api/academies/${id}`
+    ] as const;
+    }
+
+
+export const getGetAcademyQueryOptions = <TData = Awaited<ReturnType<typeof getAcademy>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademy>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademy>>> = ({ signal }) => getAcademy(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademy>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademy>>>
+export type GetAcademyQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get an academy by ID
+ */
+
+export function useGetAcademy<TData = Awaited<ReturnType<typeof getAcademy>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademy>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAcademyRecordingsUrl = (id: number,) => {
+
+
+
+
+  return `/api/academies/${id}/recordings`
+}
+
+/**
+ * @summary Get recordings linked to an academy
+ */
+export const getAcademyRecordings = async (id: number, options?: RequestInit): Promise<Recording[]> => {
+
+  return customFetch<Recording[]>(getGetAcademyRecordingsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyRecordingsQueryKey = (id: number,) => {
+    return [
+    `/api/academies/${id}/recordings`
+    ] as const;
+    }
+
+
+export const getGetAcademyRecordingsQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyRecordings>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyRecordings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyRecordingsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyRecordings>>> = ({ signal }) => getAcademyRecordings(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyRecordings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyRecordingsQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyRecordings>>>
+export type GetAcademyRecordingsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get recordings linked to an academy
+ */
+
+export function useGetAcademyRecordings<TData = Awaited<ReturnType<typeof getAcademyRecordings>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyRecordings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyRecordingsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAdminAcademiesUrl = () => {
+
+
+
+
+  return `/api/admin/academies`
+}
+
+/**
+ * @summary List all academies (admin)
+ */
+export const listAdminAcademies = async ( options?: RequestInit): Promise<AcademySummary[]> => {
+
+  return customFetch<AcademySummary[]>(getListAdminAcademiesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminAcademiesQueryKey = () => {
+    return [
+    `/api/admin/academies`
+    ] as const;
+    }
+
+
+export const getListAdminAcademiesQueryOptions = <TData = Awaited<ReturnType<typeof listAdminAcademies>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminAcademies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminAcademiesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminAcademies>>> = ({ signal }) => listAdminAcademies({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminAcademies>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminAcademiesQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminAcademies>>>
+export type ListAdminAcademiesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all academies (admin)
+ */
+
+export function useListAdminAcademies<TData = Awaited<ReturnType<typeof listAdminAcademies>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminAcademies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminAcademiesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyUrl = () => {
+
+
+
+
+  return `/api/admin/academies`
+}
+
+/**
+ * @summary Create a new academy
+ */
+export const createAcademy = async (createAcademyInput: CreateAcademyInput, options?: RequestInit): Promise<AcademySummary> => {
+
+  return customFetch<AcademySummary>(getCreateAcademyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createAcademyInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademy>>, TError,{data: BodyType<CreateAcademyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademy>>, TError,{data: BodyType<CreateAcademyInput>}, TContext> => {
+
+const mutationKey = ['createAcademy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademy>>, {data: BodyType<CreateAcademyInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAcademy(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademy>>>
+    export type CreateAcademyMutationBody = BodyType<CreateAcademyInput>
+    export type CreateAcademyMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a new academy
+ */
+export const useCreateAcademy = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademy>>, TError,{data: BodyType<CreateAcademyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademy>>,
+        TError,
+        {data: BodyType<CreateAcademyInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyMutationOptions(options));
+    }
+
+export const getUpdateAcademyUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/academies/${id}`
+}
+
+/**
+ * @summary Update an academy
+ */
+export const updateAcademy = async (id: number,
+    updateAcademyInput: UpdateAcademyInput, options?: RequestInit): Promise<AcademySummary> => {
+
+  return customFetch<AcademySummary>(getUpdateAcademyUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updateAcademyInput)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademy>>, TError,{id: number;data: BodyType<UpdateAcademyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademy>>, TError,{id: number;data: BodyType<UpdateAcademyInput>}, TContext> => {
+
+const mutationKey = ['updateAcademy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademy>>, {id: number;data: BodyType<UpdateAcademyInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateAcademy(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademy>>>
+    export type UpdateAcademyMutationBody = BodyType<UpdateAcademyInput>
+    export type UpdateAcademyMutationError = ErrorType<void>
+
+    /**
+ * @summary Update an academy
+ */
+export const useUpdateAcademy = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademy>>, TError,{id: number;data: BodyType<UpdateAcademyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademy>>,
+        TError,
+        {id: number;data: BodyType<UpdateAcademyInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyMutationOptions(options));
+    }
+
+export const getDeleteAcademyUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/academies/${id}`
+}
+
+/**
+ * @summary Delete an academy
+ */
+export const deleteAcademy = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAcademyUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteAcademyMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademy>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAcademy>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteAcademy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAcademy>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAcademy(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAcademyMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAcademy>>>
+
+    export type DeleteAcademyMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete an academy
+ */
+export const useDeleteAcademy = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademy>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAcademy>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAcademyMutationOptions(options));
+    }
+
+export const getAddAcademyRecordingUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/academies/${id}/recordings`
+}
+
+/**
+ * @summary Link a recording to an academy
+ */
+export const addAcademyRecording = async (id: number,
+    addAcademyRecordingInput: AddAcademyRecordingInput, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getAddAcademyRecordingUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(addAcademyRecordingInput)
+  }
+);}
+
+
+
+
+export const getAddAcademyRecordingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAcademyRecording>>, TError,{id: number;data: BodyType<AddAcademyRecordingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addAcademyRecording>>, TError,{id: number;data: BodyType<AddAcademyRecordingInput>}, TContext> => {
+
+const mutationKey = ['addAcademyRecording'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addAcademyRecording>>, {id: number;data: BodyType<AddAcademyRecordingInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  addAcademyRecording(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddAcademyRecordingMutationResult = NonNullable<Awaited<ReturnType<typeof addAcademyRecording>>>
+    export type AddAcademyRecordingMutationBody = BodyType<AddAcademyRecordingInput>
+    export type AddAcademyRecordingMutationError = ErrorType<void>
+
+    /**
+ * @summary Link a recording to an academy
+ */
+export const useAddAcademyRecording = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAcademyRecording>>, TError,{id: number;data: BodyType<AddAcademyRecordingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addAcademyRecording>>,
+        TError,
+        {id: number;data: BodyType<AddAcademyRecordingInput>},
+        TContext
+      > => {
+      return useMutation(getAddAcademyRecordingMutationOptions(options));
+    }
+
+export const getRemoveAcademyRecordingUrl = (id: number,
+    recordingId: number,) => {
+
+
+
+
+  return `/api/admin/academies/${id}/recordings/${recordingId}`
+}
+
+/**
+ * @summary Unlink a recording from an academy
+ */
+export const removeAcademyRecording = async (id: number,
+    recordingId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRemoveAcademyRecordingUrl(id,recordingId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getRemoveAcademyRecordingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyRecording>>, TError,{id: number;recordingId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeAcademyRecording>>, TError,{id: number;recordingId: number}, TContext> => {
+
+const mutationKey = ['removeAcademyRecording'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeAcademyRecording>>, {id: number;recordingId: number}> = (props) => {
+          const {id,recordingId} = props ?? {};
+
+          return  removeAcademyRecording(id,recordingId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveAcademyRecordingMutationResult = NonNullable<Awaited<ReturnType<typeof removeAcademyRecording>>>
+
+    export type RemoveAcademyRecordingMutationError = ErrorType<void>
+
+    /**
+ * @summary Unlink a recording from an academy
+ */
+export const useRemoveAcademyRecording = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyRecording>>, TError,{id: number;recordingId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeAcademyRecording>>,
+        TError,
+        {id: number;recordingId: number},
+        TContext
+      > => {
+      return useMutation(getRemoveAcademyRecordingMutationOptions(options));
+    }
 
 export const getCreateUserClipUrl = () => {
 

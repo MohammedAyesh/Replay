@@ -31,6 +31,8 @@ tags:
     description: Admin ad management
   - name: users
     description: User profiles and follows
+  - name: academies
+    description: Soccer academies
 
 paths:
   /healthz:
@@ -238,6 +240,186 @@ paths:
                 $ref: "#/components/schemas/Recording"
         "404":
           description: Not found
+
+  /academies:
+    get:
+      operationId: listAcademies
+      tags: [academies]
+      summary: List all academies
+      responses:
+        "200":
+          description: List of academies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademySummary"
+
+  /academies/{id}:
+    get:
+      operationId: getAcademy
+      tags: [academies]
+      summary: Get an academy by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Academy detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademySummary"
+        "404":
+          description: Not found
+
+  /academies/{id}/recordings:
+    get:
+      operationId: getAcademyRecordings
+      tags: [academies]
+      summary: Get recordings linked to an academy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of recordings for this academy
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Recording"
+
+  /admin/academies:
+    get:
+      operationId: listAdminAcademies
+      tags: [admin]
+      summary: List all academies (admin)
+      responses:
+        "200":
+          description: List of academies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademySummary"
+    post:
+      operationId: createAcademy
+      tags: [admin]
+      summary: Create a new academy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAcademyInput"
+      responses:
+        "201":
+          description: Academy created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademySummary"
+        "403":
+          description: Forbidden
+
+  /admin/academies/{id}:
+    patch:
+      operationId: updateAcademy
+      tags: [admin]
+      summary: Update an academy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAcademyInput"
+      responses:
+        "200":
+          description: Academy updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademySummary"
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteAcademy
+      tags: [admin]
+      summary: Delete an academy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "403":
+          description: Forbidden
+
+  /admin/academies/{id}/recordings:
+    post:
+      operationId: addAcademyRecording
+      tags: [admin]
+      summary: Link a recording to an academy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddAcademyRecordingInput"
+      responses:
+        "204":
+          description: Added
+        "403":
+          description: Forbidden
+
+  /admin/academies/{id}/recordings/{recordingId}:
+    delete:
+      operationId: removeAcademyRecording
+      tags: [admin]
+      summary: Unlink a recording from an academy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: recordingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Removed
+        "403":
+          description: Forbidden
 
   /user-clips:
     post:
@@ -1224,6 +1406,65 @@ components:
           type: integer
         targetType:
           type: string
+
+    AcademySummary:
+      type: object
+      required: [id, name, fieldId, fieldName, fieldLocation, daysOfWeek, recordingCount]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        fieldId:
+          type: integer
+        fieldName:
+          type: string
+        fieldLocation:
+          type: string
+        daysOfWeek:
+          type: array
+          items:
+            type: string
+        description:
+          type: ["string", "null"]
+        recordingCount:
+          type: integer
+
+    CreateAcademyInput:
+      type: object
+      required: [name, fieldId, daysOfWeek]
+      properties:
+        name:
+          type: string
+        fieldId:
+          type: integer
+        daysOfWeek:
+          type: array
+          items:
+            type: string
+        description:
+          type: ["string", "null"]
+
+    UpdateAcademyInput:
+      type: object
+      properties:
+        name:
+          type: string
+        fieldId:
+          type: integer
+        daysOfWeek:
+          type: array
+          items:
+            type: string
+        description:
+          type: ["string", "null"]
+
+    AddAcademyRecordingInput:
+      type: object
+      required: [recordingId]
+      properties:
+        recordingId:
+          type: integer
 
     Banner:
       type: object

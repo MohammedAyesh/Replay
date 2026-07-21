@@ -334,6 +334,38 @@ export interface Ad {
   targetType: string;
 }
 
+export interface AcademySummary {
+  id: number;
+  name: string;
+  fieldId: number;
+  fieldName: string;
+  fieldLocation: string;
+  daysOfWeek: string[];
+  /** @nullable */
+  description?: string | null;
+  recordingCount: number;
+}
+
+export interface CreateAcademyInput {
+  name: string;
+  fieldId: number;
+  daysOfWeek: string[];
+  /** @nullable */
+  description?: string | null;
+}
+
+export interface UpdateAcademyInput {
+  name?: string;
+  fieldId?: number;
+  daysOfWeek?: string[];
+  /** @nullable */
+  description?: string | null;
+}
+
+export interface AddAcademyRecordingInput {
+  recordingId: number;
+}
+
 export interface Banner {
   id: string;
   upperSubtext?: string;

@@ -13,6 +13,7 @@ import bannersRouter from "./banners";
 import bunnyVideosRouter from "./bunnyVideos";
 import bunnyCollectionsRouter from "./bunnyCollections";
 import usersRouter from "./users";
+import academiesRouter from "./academies";
 
 const router: IRouter = Router();
 
@@ -30,5 +31,6 @@ router.use(adsRouter);
 router.use(bannersRouter);
 router.use(adminRouter);
 router.use(usersRouter);
+router.use(academiesRouter);
 
 export default router;

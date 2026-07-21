@@ -218,6 +218,162 @@ export const GetRecordingResponse = zod.object({
 
 
 /**
+ * @summary List all academies
+ */
+export const ListAcademiesResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "fieldLocation": zod.string(),
+  "daysOfWeek": zod.array(zod.string()),
+  "description": zod.string().nullish(),
+  "recordingCount": zod.number()
+})
+export const ListAcademiesResponse = zod.array(ListAcademiesResponseItem)
+
+
+/**
+ * @summary Get an academy by ID
+ */
+export const GetAcademyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetAcademyResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "fieldLocation": zod.string(),
+  "daysOfWeek": zod.array(zod.string()),
+  "description": zod.string().nullish(),
+  "recordingCount": zod.number()
+})
+
+
+/**
+ * @summary Get recordings linked to an academy
+ */
+export const GetAcademyRecordingsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetAcademyRecordingsResponseItem = zod.object({
+  "id": zod.number(),
+  "fieldId": zod.number(),
+  "court": zod.string(),
+  "date": zod.string(),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullish(),
+  "videoUrl": zod.string().optional(),
+  "highlightMoment": zod.string().nullish(),
+  "fieldName": zod.string().nullish()
+})
+export const GetAcademyRecordingsResponse = zod.array(GetAcademyRecordingsResponseItem)
+
+
+/**
+ * @summary List all academies (admin)
+ */
+export const ListAdminAcademiesResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "fieldLocation": zod.string(),
+  "daysOfWeek": zod.array(zod.string()),
+  "description": zod.string().nullish(),
+  "recordingCount": zod.number()
+})
+export const ListAdminAcademiesResponse = zod.array(ListAdminAcademiesResponseItem)
+
+
+/**
+ * @summary Create a new academy
+ */
+export const CreateAcademyBody = zod.object({
+  "name": zod.string(),
+  "fieldId": zod.number(),
+  "daysOfWeek": zod.array(zod.string()),
+  "description": zod.string().nullish()
+})
+
+export const CreateAcademyResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "fieldLocation": zod.string(),
+  "daysOfWeek": zod.array(zod.string()),
+  "description": zod.string().nullish(),
+  "recordingCount": zod.number()
+})
+
+
+/**
+ * @summary Update an academy
+ */
+export const UpdateAcademyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateAcademyBody = zod.object({
+  "name": zod.string().optional(),
+  "fieldId": zod.number().optional(),
+  "daysOfWeek": zod.array(zod.string()).optional(),
+  "description": zod.string().nullish()
+})
+
+export const UpdateAcademyResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "fieldLocation": zod.string(),
+  "daysOfWeek": zod.array(zod.string()),
+  "description": zod.string().nullish(),
+  "recordingCount": zod.number()
+})
+
+
+/**
+ * @summary Delete an academy
+ */
+export const DeleteAcademyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteAcademyResponse = zod.void()
+
+
+/**
+ * @summary Link a recording to an academy
+ */
+export const AddAcademyRecordingParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const AddAcademyRecordingBody = zod.object({
+  "recordingId": zod.number()
+})
+
+export const AddAcademyRecordingResponse = zod.void()
+
+
+/**
+ * @summary Unlink a recording from an academy
+ */
+export const RemoveAcademyRecordingParams = zod.object({
+  "id": zod.coerce.number(),
+  "recordingId": zod.coerce.number()
+})
+
+export const RemoveAcademyRecordingResponse = zod.void()
+
+
+/**
  * @summary Create a user clip from a full match video
  */
 export const CreateUserClipBody = zod.object({

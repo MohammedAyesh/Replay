@@ -4,7 +4,8 @@ import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Eye, EyeOff, UserCheck, UserX, Shield, ShieldOff, Trash2, Plus, Save, X,
-  ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp
+  ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp,
+  GraduationCap, Video, Check
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -24,7 +25,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,6 +82,29 @@ interface AdminBanner {
   lowerSubtext: string;
   hyperlink: string | null;
   imageUrl: string;
+}
+
+interface AdminAcademy {
+  id: number;
+  name: string;
+  fieldId: number;
+  fieldName: string;
+  fieldLocation: string;
+  daysOfWeek: string[];
+  description: string | null;
+  recordingCount: number;
+}
+
+interface AdminRecording {
+  id: number;
+  fieldId: number;
+  court: string;
+  date: string;
+  timeSlot: string;
+  duration: string;
+  score: string | null;
+  videoUrl: string;
+  fieldName: string | null;
 }
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
@@ -1055,6 +1079,437 @@ function BannersTab() {
   );
 }
 
+// ─── Academies Tab ────────────────────────────────────────────────────────────
+
+const ALL_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const DAY_LABELS: Record<string, string> = {
+  monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu",
+  friday: "Fri", saturday: "Sat", sunday: "Sun",
+};
+
+function AcademiesTab() {
+  const [academies, setAcademies] = useState<AdminAcademy[]>([]);
+  const [fields, setFields] = useState<AdminField[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<number | "new" | null>(null);
+  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "" });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<number | null>(null);
+
+  // Per-academy recording data
+  const [recMap, setRecMap] = useState<Record<number, AdminRecording[]>>({});
+  const [fieldRecMap, setFieldRecMap] = useState<Record<number, AdminRecording[]>>({});
+  const [recLoading, setRecLoading] = useState<number | null>(null);
+  const [addingRec, setAddingRec] = useState<number | null>(null);
+  const [removingRec, setRemovingRec] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [acData, fData] = await Promise.all([
+        apiFetch("/admin/academies"),
+        apiFetch("/admin/fields"),
+      ]);
+      setAcademies(acData ?? []);
+      setFields(fData ?? []);
+    } catch { /* silent */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const loadRecordings = useCallback(async (academyId: number, fieldId: number) => {
+    setRecLoading(academyId);
+    try {
+      const [acRecs, fieldRecs] = await Promise.all([
+        apiFetch(`/academies/${academyId}/recordings`),
+        apiFetch(`/fields/${fieldId}/recordings`),
+      ]);
+      setRecMap((p) => ({ ...p, [academyId]: acRecs ?? [] }));
+      setFieldRecMap((p) => ({ ...p, [fieldId]: fieldRecs ?? [] }));
+    } catch { /* silent */ }
+    setRecLoading(null);
+  }, []);
+
+  const toggleExpand = (academy: AdminAcademy) => {
+    if (expandedId === academy.id) {
+      setExpandedId(null);
+    } else {
+      setExpandedId(academy.id);
+      if (!recMap[academy.id]) loadRecordings(academy.id, academy.fieldId);
+    }
+  };
+
+  const startNew = () => {
+    setEditing("new");
+    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "" });
+  };
+
+  const startEdit = (a: AdminAcademy) => {
+    setEditing(a.id);
+    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "" });
+  };
+
+  const cancelEdit = () => { setEditing(null); };
+
+  const toggleDay = (day: string) => {
+    setForm((f) => ({
+      ...f,
+      daysOfWeek: f.daysOfWeek.includes(day)
+        ? f.daysOfWeek.filter((d) => d !== day)
+        : [...f.daysOfWeek, day],
+    }));
+  };
+
+  const saveAcademy = async () => {
+    if (!form.name.trim() || !form.fieldId) return;
+    setSaving(true);
+    try {
+      const body = {
+        name: form.name.trim(),
+        fieldId: form.fieldId,
+        daysOfWeek: form.daysOfWeek,
+        description: form.description.trim() || null,
+      };
+      if (editing === "new") {
+        const created = await apiFetch("/admin/academies", { method: "POST", body: JSON.stringify(body) });
+        setAcademies((p) => [...p, created]);
+      } else {
+        const updated = await apiFetch(`/admin/academies/${editing}`, { method: "PATCH", body: JSON.stringify(body) });
+        setAcademies((p) => p.map((a) => a.id === editing ? updated : a));
+      }
+      cancelEdit();
+    } catch { /* silent */ }
+    setSaving(false);
+  };
+
+  const deleteAcademy = async (id: number, name: string) => {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    setDeleting(id);
+    try {
+      await apiFetch(`/admin/academies/${id}`, { method: "DELETE" });
+      setAcademies((p) => p.filter((a) => a.id !== id));
+      if (expandedId === id) setExpandedId(null);
+    } catch { /* silent */ }
+    setDeleting(null);
+  };
+
+  const addRecording = async (academy: AdminAcademy, recordingId: number) => {
+    setAddingRec(recordingId);
+    try {
+      await apiFetch(`/admin/academies/${academy.id}/recordings`, {
+        method: "POST",
+        body: JSON.stringify({ recordingId }),
+      });
+      await loadRecordings(academy.id, academy.fieldId);
+      setAcademies((p) => p.map((a) => a.id === academy.id ? { ...a, recordingCount: a.recordingCount + 1 } : a));
+    } catch { /* silent */ }
+    setAddingRec(null);
+  };
+
+  const removeRecording = async (academy: AdminAcademy, recordingId: number) => {
+    setRemovingRec(`${academy.id}-${recordingId}`);
+    try {
+      await apiFetch(`/admin/academies/${academy.id}/recordings/${recordingId}`, { method: "DELETE" });
+      setRecMap((p) => ({ ...p, [academy.id]: (p[academy.id] ?? []).filter((r) => r.id !== recordingId) }));
+      setAcademies((p) => p.map((a) => a.id === academy.id ? { ...a, recordingCount: Math.max(0, a.recordingCount - 1) } : a));
+    } catch { /* silent */ }
+    setRemovingRec(null);
+  };
+
+  const linkedIds = (academyId: number) => new Set((recMap[academyId] ?? []).map((r) => r.id));
+
+  return (
+    <div className="space-y-4">
+      {/* Header row */}
+      <div className="flex items-center justify-between">
+        <span className="text-zinc-500 text-xs">{academies.length} {academies.length === 1 ? "academy" : "academies"}</span>
+        <button
+          onClick={startNew}
+          className="flex items-center gap-1.5 px-3 py-2 bg-primary text-black rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors"
+        >
+          <Plus className="w-4 h-4" />
+          New Academy
+        </button>
+      </div>
+
+      {/* New academy form */}
+      {editing === "new" && (
+        <AcademyForm
+          form={form}
+          fields={fields}
+          saving={saving}
+          onToggleDay={toggleDay}
+          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+          onSave={saveAcademy}
+          onCancel={cancelEdit}
+          title="New Academy"
+        />
+      )}
+
+      {loading ? (
+        <div className="text-center py-16 text-zinc-500">Loading…</div>
+      ) : academies.length === 0 && editing !== "new" ? (
+        <div className="text-center py-12 text-zinc-500">
+          <GraduationCap className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p>No academies yet. Create one above.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {academies.map((academy) => {
+            const isExpanded = expandedId === academy.id;
+            const isEditing = editing === academy.id;
+            const linked = linkedIds(academy.id);
+            const fieldRecs = fieldRecMap[academy.fieldId] ?? [];
+            const availableToAdd = fieldRecs.filter((r) => !linked.has(r.id));
+
+            return (
+              <div key={academy.id} className="border border-zinc-800 rounded-xl overflow-hidden bg-zinc-900">
+                {/* Academy header row */}
+                <div className="flex items-center gap-3 p-3">
+                  <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <GraduationCap className="w-4 h-4 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-medium text-sm truncate">{academy.name}</p>
+                    <p className="text-zinc-500 text-xs truncate">{academy.fieldLocation} · {academy.recordingCount} rec.</p>
+                    {academy.daysOfWeek.length > 0 && (
+                      <div className="flex gap-1 mt-0.5 flex-wrap">
+                        {academy.daysOfWeek.map((d) => (
+                          <span key={d} className="text-[9px] font-bold uppercase tracking-wide bg-primary/15 text-primary px-1 py-0.5 rounded">
+                            {DAY_LABELS[d] ?? d}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      onClick={() => toggleExpand(academy)}
+                      className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
+                      title={isExpanded ? "Collapse" : "Manage recordings"}
+                    >
+                      {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </button>
+                    <button
+                      onClick={() => isEditing ? cancelEdit() : startEdit(academy)}
+                      className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
+                      title={isEditing ? "Cancel" : "Edit academy"}
+                    >
+                      {isEditing ? <X className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
+                    </button>
+                    <button
+                      onClick={() => deleteAcademy(academy.id, academy.name)}
+                      disabled={deleting === academy.id}
+                      className="p-2 rounded-lg bg-zinc-800 text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-50"
+                      title="Delete academy"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Edit form */}
+                {isEditing && (
+                  <div className="border-t border-zinc-800 p-3">
+                    <AcademyForm
+                      form={form}
+                      fields={fields}
+                      saving={saving}
+                      onToggleDay={toggleDay}
+                      onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+                      onSave={saveAcademy}
+                      onCancel={cancelEdit}
+                      title="Edit Academy"
+                    />
+                  </div>
+                )}
+
+                {/* Recordings panel */}
+                {isExpanded && !isEditing && (
+                  <div className="border-t border-zinc-800 p-3 space-y-3">
+                    {recLoading === academy.id ? (
+                      <div className="text-center py-4 text-zinc-500 text-sm">Loading recordings…</div>
+                    ) : (
+                      <>
+                        {/* Linked recordings */}
+                        <div>
+                          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                            Linked Recordings ({(recMap[academy.id] ?? []).length})
+                          </p>
+                          {(recMap[academy.id] ?? []).length === 0 ? (
+                            <p className="text-zinc-600 text-xs py-2">No recordings linked yet.</p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {(recMap[academy.id] ?? []).map((rec) => (
+                                <div key={rec.id} className="flex items-center gap-2 p-2 rounded-lg bg-zinc-800/50">
+                                  <Video className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-white text-xs font-medium truncate">{rec.date} · {rec.timeSlot}</p>
+                                    <p className="text-zinc-500 text-[11px] truncate">{rec.court} · {rec.duration}{rec.score ? ` · ${rec.score}` : ""}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => removeRecording(academy, rec.id)}
+                                    disabled={removingRec === `${academy.id}-${rec.id}`}
+                                    className="p-1.5 rounded-lg bg-zinc-700 text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-50 flex-shrink-0"
+                                    title="Remove recording"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Add from field recordings */}
+                        {availableToAdd.length > 0 && (
+                          <div>
+                            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                              Add from {academy.fieldName}
+                            </p>
+                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                              {availableToAdd.map((rec) => (
+                                <div key={rec.id} className="flex items-center gap-2 p-2 rounded-lg bg-zinc-800/30 border border-zinc-800">
+                                  <Video className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-zinc-300 text-xs font-medium truncate">{rec.date} · {rec.timeSlot}</p>
+                                    <p className="text-zinc-600 text-[11px] truncate">{rec.court} · {rec.duration}{rec.score ? ` · ${rec.score}` : ""}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => addRecording(academy, rec.id)}
+                                    disabled={addingRec === rec.id}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-50 flex-shrink-0 text-xs font-medium"
+                                    title="Add recording"
+                                  >
+                                    {addingRec === rec.id ? (
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <>
+                                        <Plus className="w-3 h-3" />
+                                        Add
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {fieldRecs.length === 0 && (
+                          <p className="text-zinc-600 text-xs py-2">No recordings for this field yet.</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AcademyForm({
+  form,
+  fields,
+  saving,
+  onToggleDay,
+  onChange,
+  onSave,
+  onCancel,
+  title,
+}: {
+  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string };
+  fields: AdminField[];
+  saving: boolean;
+  onToggleDay: (day: string) => void;
+  onChange: (patch: Partial<typeof form>) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  title: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{title}</p>
+      <div>
+        <label className="text-xs text-zinc-400 mb-1 block">Academy Name</label>
+        <input
+          value={form.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="e.g. Elite Youth Academy"
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
+        />
+      </div>
+      <div>
+        <label className="text-xs text-zinc-400 mb-1 block">Field</label>
+        <select
+          value={form.fieldId}
+          onChange={(e) => onChange({ fieldId: Number(e.target.value) })}
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary appearance-none"
+        >
+          {fields.map((f) => (
+            <option key={f.id} value={f.id}>{f.name} — {f.location}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-zinc-400 mb-2 block">Days of Week</label>
+        <div className="flex flex-wrap gap-1.5">
+          {ALL_DAYS.map((day) => {
+            const active = form.daysOfWeek.includes(day);
+            return (
+              <button
+                key={day}
+                type="button"
+                onClick={() => onToggleDay(day)}
+                className={cn(
+                  "px-2.5 py-1 rounded-lg text-xs font-semibold uppercase tracking-wide transition-colors",
+                  active
+                    ? "bg-primary text-black"
+                    : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
+                )}
+              >
+                {DAY_LABELS[day]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-zinc-400 mb-1 block">Description (optional)</label>
+        <textarea
+          value={form.description}
+          onChange={(e) => onChange({ description: e.target.value })}
+          placeholder="Brief description of the academy…"
+          rows={2}
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary resize-none"
+        />
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={onSave}
+          disabled={saving || !form.name.trim()}
+          className="flex-1 flex items-center justify-center gap-2 bg-primary text-black font-bold py-2.5 rounded-xl text-sm disabled:opacity-50"
+        >
+          <Save className="w-4 h-4" />
+          {saving ? "Saving…" : "Save Academy"}
+        </button>
+        <button
+          onClick={onCancel}
+          className="px-4 py-2.5 bg-zinc-800 text-zinc-400 rounded-xl text-sm hover:bg-zinc-700"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Admin Console ───────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
@@ -1062,6 +1517,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "accounts", label: "Accounts" },
   { id: "fields", label: "Fields" },
   { id: "banners", label: "Banners" },
+  { id: "academies", label: "Academies" },
 ];
 
 export default function Admin() {
@@ -1112,6 +1568,7 @@ export default function Admin() {
         {tab === "accounts" && <AccountsTab />}
         {tab === "fields" && <FieldsTab />}
         {tab === "banners" && <BannersTab />}
+        {tab === "academies" && <AcademiesTab />}
       </div>
     </div>
   );
