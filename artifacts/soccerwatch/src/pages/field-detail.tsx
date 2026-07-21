@@ -447,6 +447,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const seekDraggingRef = useRef(false);
+  const scrollFracRef = useRef(0.5);
   const [cropZoom, setCropZoom] = useState(0.8);
   const cropZoomRef = useRef(0.8);
   const zoomRef = useRef<HTMLDivElement>(null);
@@ -484,7 +485,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   useEffect(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl) return;
-    const onScroll = () => setScrollOffset(scrollEl.scrollLeft);
+    const onScroll = () => {
+      setScrollOffset(scrollEl.scrollLeft);
+      const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
+      scrollFracRef.current = maxScroll > 0 ? scrollEl.scrollLeft / maxScroll : 0.5;
+    };
     scrollEl.addEventListener("scroll", onScroll, { passive: true });
     return () => scrollEl.removeEventListener("scroll", onScroll);
   }, []);
@@ -645,15 +650,15 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     return () => clearTimeout(timer);
   }, []);
 
-  // Re-center scroll when zoom changes so the view stays on the middle of the field
+  // Re-center scroll when zoom changes, preserving the fraction the user was looking at
   useEffect(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl) return;
+    const frac = scrollFracRef.current;
     const timer = setTimeout(() => {
       const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
-      const currentFrac = maxScroll > 0 ? scrollEl.scrollLeft / maxScroll : 0.5;
-      scrollEl.scrollLeft = currentFrac * (scrollEl.scrollWidth - scrollEl.clientWidth);
-    }, 50);
+      scrollEl.scrollLeft = frac * maxScroll;
+    }, 16);
     return () => clearTimeout(timer);
   }, [cropZoom]);
 
