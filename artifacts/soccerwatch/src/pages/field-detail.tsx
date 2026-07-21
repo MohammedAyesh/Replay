@@ -12,7 +12,7 @@ import {
   BunnyVideo,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Maximize, Minimize, Video, Clock, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Maximize, Minimize, Video, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -447,17 +447,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const seekDraggingRef = useRef(false);
-  const scrollFracRef = useRef(0.5);
-  const [cropZoom, setCropZoom] = useState(1.0);
-  const cropZoomRef = useRef(1.0);
   const zoomRef = useRef<HTMLDivElement>(null);
-  const { isZoomed } = usePinchZoom(zoomRef, {
-    onZoomChange: (z) => {
-      setCropZoom(z);
-      cropZoomRef.current = z;
-    },
-    currentZoom: cropZoom,
-  });
+  const { isZoomed } = usePinchZoom(zoomRef);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== "undefined" && window.innerWidth > window.innerHeight
@@ -485,11 +476,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   useEffect(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl) return;
-    const onScroll = () => {
-      setScrollOffset(scrollEl.scrollLeft);
-      const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
-      scrollFracRef.current = maxScroll > 0 ? scrollEl.scrollLeft / maxScroll : 0.5;
-    };
+    const onScroll = () => setScrollOffset(scrollEl.scrollLeft);
     scrollEl.addEventListener("scroll", onScroll, { passive: true });
     return () => scrollEl.removeEventListener("scroll", onScroll);
   }, []);
@@ -650,18 +637,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     return () => clearTimeout(timer);
   }, []);
 
-  // Re-center scroll when zoom changes, preserving the fraction the user was looking at
-  useEffect(() => {
-    const scrollEl = scrollRef.current;
-    if (!scrollEl) return;
-    const frac = scrollFracRef.current;
-    const timer = setTimeout(() => {
-      const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
-      scrollEl.scrollLeft = frac * maxScroll;
-    }, 16);
-    return () => clearTimeout(timer);
-  }, [cropZoom]);
-
   const togglePlay = () => {
     const el = videoRef.current;
     if (!el) return;
@@ -777,8 +752,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     setRecElapsed(0);
     setSelectedRatio("16:9");
     selectedRatioRef.current = "16:9";
-    setCropZoom(1.0);
-    cropZoomRef.current = 1.0;
   };
 
   const saveClip = async () => {
@@ -805,20 +778,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       const scrollEl = scrollRef.current;
       const totalW = scrollEl?.scrollWidth ?? 1;
       const containerW = scrollEl?.clientWidth ?? totalW;
-      let x: number, w: number;
-      if (selectedRatioRef.current === "9:16") {
-        const containerH = scrollEl?.clientHeight ?? 1;
-        const cropPxW = containerH * 9 / 16;
-        const maxScroll = Math.max(0, totalW - containerW);
-        const sl = scrollEl?.scrollLeft ?? 0;
-        const cropLeft = maxScroll > 0 ? (sl / maxScroll) * (containerW - cropPxW) : (containerW - cropPxW) / 2;
-        x = totalW > 0 ? (sl + cropLeft) / totalW : 0;
-        w = totalW > 0 ? cropPxW / totalW : 81 / 256;
-      } else {
-        const sl = scrollEl?.scrollLeft ?? 0;
-        x = totalW > 0 ? sl / totalW : 0;
-        w = totalW > 0 ? containerW / totalW : 1;
-      }
+      const x = scrollEl ? scrollEl.scrollLeft / totalW : 0;
+      const w = scrollEl ? containerW / totalW : 1;
       keyframes = [{ t: 0, x, y: 0, w, h: 1 }, { t: 1, x, y: 0, w, h: 1 }];
     } else if (keyframes.length === 1) {
       keyframes = [{ ...keyframes[0], t: 0 }, { ...keyframes[0], t: 1 }];
@@ -850,8 +811,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       setClipTitle("");
       setSelectedRatio("16:9");
       selectedRatioRef.current = "16:9";
-      setCropZoom(1.0);
-      cropZoomRef.current = 1.0;
       recordingRef.current.keyframes = [];
     } catch (err) {
       const message = err instanceof Error ? err.message : t.clipping.error;
@@ -874,8 +833,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       {/* Letterboxed 16:9 scrollable video */}
       <div ref={zoomRef} className="absolute inset-0 flex items-center justify-center bg-black">
         <div className="relative" style={{ width: "min(100%, calc(100dvh * 16 / 9))", aspectRatio: "16/9" }}>
-          {/* Crop overlay — only shown while recording in 9:16 mode */}
-          {clipMode === "recording" && selectedRatio === "9:16" && (() => {
+          {/* 9:16 crop overlay */}
+          {(clipMode === "idle" || clipMode === "recording") && (() => {
+            if (selectedRatio !== "9:16") return null;
             const scrollEl = scrollRef.current;
             const totalW = scrollEl?.scrollWidth ?? 1;
             const containerW = scrollEl?.clientWidth ?? totalW;
@@ -904,14 +864,13 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             onTouchEnd={skipOnTouchEnd}
             onClick={resetControlsTimer}
           >
-            <div style={{ position: "relative", height: "100%", width: `${Math.round(100 / cropZoom)}%`, minWidth: "100%" }}>
-              <video
-                ref={videoRef}
-                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
-                playsInline
-                onLoadedMetadata={onLoadedMetadata}
-              />
-            </div>
+            <video
+              ref={videoRef}
+              className="h-full object-contain"
+              style={{ minWidth: "100%", width: "auto" }}
+              playsInline
+              onLoadedMetadata={onLoadedMetadata}
+            />
           </div>
 
           {/* Skip flash */}
@@ -970,34 +929,44 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               </button>
             </div>
 
-            {/* Bottom bar — zoom + record */}
-            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3 w-full">
-              <div className="flex items-center gap-2 w-full">
-                <ZoomOut className="w-3.5 h-3.5 text-white/60 shrink-0" />
-                <input
-                  type="range"
-                  min={30}
-                  max={100}
-                  step={5}
-                  value={Math.round(cropZoom * 100)}
-                  onChange={(e) => {
-                    const z = parseInt(e.target.value) / 100;
-                    setCropZoom(z);
-                    cropZoomRef.current = z;
-                  }}
-                  className="flex-1 accent-primary h-1"
-                />
-                <ZoomIn className="w-3.5 h-3.5 text-white/60 shrink-0" />
-              </div>
-              <button
-                onClick={startRecording}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-black font-bold text-sm"
-              >
-                <Circle className="w-4 h-4 fill-black" />
-                {t.clipping.record}
-              </button>
-            </div>
+            {/* Bottom bar */}
+            <div className="px-4 pb-safe pb-6 pointer-events-auto space-y-3">
+              {/* Seek bar */}
+              {duration > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-white text-xs tabular-nums w-10 text-end">{formatDuration(currentTime)}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={duration}
+                    step={0.1}
+                    value={currentTime}
+                    onMouseDown={() => { seekDraggingRef.current = true; }}
+                    onTouchStart={() => { seekDraggingRef.current = true; }}
+                    onMouseUp={() => { seekDraggingRef.current = false; }}
+                    onTouchEnd={() => { seekDraggingRef.current = false; }}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      setCurrentTime(v);
+                      if (videoRef.current) videoRef.current.currentTime = v;
+                    }}
+                    className="flex-1 accent-primary h-1"
+                  />
+                  <span className="text-white text-xs tabular-nums w-10">{formatDuration(duration)}</span>
+                </div>
+              )}
 
+              {/* Clip button */}
+              <div className="flex justify-center">
+                <button
+                  onClick={startRecording}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-black font-bold text-sm"
+                >
+                  <Circle className="w-4 h-4 fill-black" />
+                  {t.clipping.record}
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1012,28 +981,10 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             className="absolute inset-0 z-20 flex flex-col pointer-events-none"
           >
             <div className="flex-1" />
-            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3 w-full">
+            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3">
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/20 border border-red-500/40">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 <span className="text-red-400 text-xs font-bold tabular-nums">{formatDuration(recElapsed)}</span>
-              </div>
-              {/* Zoom slider during recording */}
-              <div className="flex items-center gap-2 w-full">
-                <ZoomOut className="w-3.5 h-3.5 text-white/60 shrink-0" />
-                <input
-                  type="range"
-                  min={30}
-                  max={100}
-                  step={5}
-                  value={Math.round(cropZoom * 100)}
-                  onChange={(e) => {
-                    const z = parseInt(e.target.value) / 100;
-                    setCropZoom(z);
-                    cropZoomRef.current = z;
-                  }}
-                  className="flex-1 accent-primary h-1"
-                />
-                <ZoomIn className="w-3.5 h-3.5 text-white/60 shrink-0" />
               </div>
               <button
                 onClick={() => stopRecording()}
