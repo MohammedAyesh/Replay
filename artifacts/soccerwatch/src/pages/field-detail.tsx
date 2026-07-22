@@ -509,21 +509,33 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     }
     const loop = () => {
       const el = zoomRef.current;
+      const scrollEl = scrollRef.current;
       const st = transformRef.current;
       if (el && st) {
-        const W = el.clientWidth;
-        const H = el.clientHeight;
-        const S = st.scale;
-        const visW = 1 / S;
-        const visH = 1 / S;
-        const visX = (S - 1) / (2 * S) - st.panX / (S * W);
-        const visY = (S - 1) / (2 * S) - st.panY / (S * H);
-        setMinimapBox({
-          x: Math.max(0, Math.min(1 - visW, visX)),
-          y: Math.max(0, Math.min(1 - visH, visY)),
-          w: visW,
-          h: visH,
-        });
+        if (selectedRatioRef.current === "9:16" && scrollEl) {
+          // 9:16: minimap shows the crop box position (matches what sampleFrame records)
+          const containerW = scrollEl.clientWidth;
+          const containerH = scrollEl.clientHeight;
+          const boxPxW = containerH * 9 / 16;
+          const w = containerW > 0 ? boxPxW / containerW : BOX_W_FRAC;
+          const x = cropBoxXRef.current;
+          setMinimapBox({ x: Math.max(0, Math.min(1 - w, x)), y: 0, w, h: 1 });
+        } else {
+          // 16:9: minimap shows the zoom viewport (matches what sampleFrame records)
+          const W = el.clientWidth;
+          const H = el.clientHeight;
+          const S = st.scale;
+          const visW = 1 / S;
+          const visH = 1 / S;
+          const visX = (S - 1) / (2 * S) - st.panX / (S * W);
+          const visY = (S - 1) / (2 * S) - st.panY / (S * H);
+          setMinimapBox({
+            x: Math.max(0, Math.min(1 - visW, visX)),
+            y: Math.max(0, Math.min(1 - visH, visY)),
+            w: visW,
+            h: visH,
+          });
+        }
       }
       minimapRafRef.current = requestAnimationFrame(loop);
     };
@@ -752,17 +764,32 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       const relT = videoEl.currentTime - clipStartRef.current;
       if (relT < 0) return;
 
-      let x: number, w: number;
+      let x: number, y: number, w: number, h: number;
       if (selectedRatioRef.current === "9:16") {
+        // 9:16: crop box position defines the recorded area
         const boxPxW = containerH * 9 / 16;
         x = cropBoxXRef.current;
+        y = 0;
         w = containerW > 0 ? boxPxW / containerW : BOX_W_FRAC;
+        h = 1;
       } else {
-        x = 0;
-        w = 1;
+        // 16:9: zoom viewport defines the recorded area (what you see = what you get)
+        const zoomEl = zoomRef.current;
+        const st = transformRef.current;
+        if (zoomEl && st && st.scale > 1.001) {
+          const W = zoomEl.clientWidth;
+          const H = zoomEl.clientHeight;
+          const S = st.scale;
+          w = 1 / S;
+          h = 1 / S;
+          x = Math.max(0, Math.min(1 - w, (S - 1) / (2 * S) - st.panX / (S * W)));
+          y = Math.max(0, Math.min(1 - h, (S - 1) / (2 * S) - st.panY / (S * H)));
+        } else {
+          x = 0; y = 0; w = 1; h = 1;
+        }
       }
 
-      recordingRef.current.keyframes.push({ t: relT, x, y: 0, w, h: 1 });
+      recordingRef.current.keyframes.push({ t: relT, x, y, w, h });
     };
 
     sampleFrame();
