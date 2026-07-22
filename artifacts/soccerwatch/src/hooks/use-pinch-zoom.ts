@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 
-export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null>) {
-  const [isZoomed, setIsZoomed] = useState(false);
+interface PinchZoomOptions {
+  initialScale?: number;
+}
+
+export function usePinchZoom(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  options: PinchZoomOptions = {}
+) {
+  const { initialScale = 1 } = options;
+  const [isZoomed, setIsZoomed] = useState(initialScale > 1.05);
 
   const s = useRef({
-    scale: 1,
+    scale: initialScale,
     panX: 0,
     panY: 0,
     lastDist: null as number | null,
@@ -33,21 +41,28 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
       st.panY = Math.max(-maxY, Math.min(maxY, st.panY));
     }
 
-    function applyTransform() {
+    function applyTransform(animated = false) {
       if (!el) return;
       clampPan();
+      if (animated) {
+        el.style.transition = "transform 0.22s ease";
+        setTimeout(() => { if (el) el.style.transition = ""; }, 230);
+      }
       el.style.transform = `scale(${st.scale}) translate(${st.panX / st.scale}px, ${st.panY / st.scale}px)`;
     }
 
     function resetZoom() {
       if (!el) return;
-      el.style.transition = "transform 0.22s ease";
       st.scale = 1;
       st.panX = 0;
       st.panY = 0;
-      el.style.transform = "";
+      applyTransform(true);
       setIsZoomed(false);
-      setTimeout(() => { if (el) el.style.transition = ""; }, 230);
+    }
+
+    // Apply initial scale immediately
+    if (initialScale > 1.05) {
+      el.style.transform = `scale(${initialScale}) translate(0px, 0px)`;
     }
 
     function onTouchStart(e: TouchEvent) {
@@ -89,6 +104,7 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
 
         applyTransform();
         if (st.scale > 1.05) setIsZoomed(true);
+        else setIsZoomed(false);
       } else if (e.touches.length === 1 && st.scale > 1.05) {
         e.preventDefault();
         st.panX += e.touches[0].clientX - st.lastMidX;
@@ -118,7 +134,7 @@ export function usePinchZoom(containerRef: React.RefObject<HTMLDivElement | null
       el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("touchend", onTouchEnd);
     };
-  }, [containerRef]);
+  }, [containerRef, initialScale]);
 
   return { isZoomed };
 }
