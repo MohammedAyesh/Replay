@@ -465,7 +465,12 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   useEffect(() => { resetControlsTimerRef.current = resetControlsTimer; }, [resetControlsTimer]);
   const stableOnTap = useCallback(() => resetControlsTimerRef.current(), []);
 
-  const { isZoomed } = usePinchZoom(zoomRef, { initialScale: 1.7, onTap: stableOnTap });
+  const { isZoomed, transformRef } = usePinchZoom(zoomRef, { initialScale: 1.7, onTap: stableOnTap });
+
+  // Minimap: fraction of the full frame currently visible {x,y,w,h}
+  const [minimapBox, setMinimapBox] = useState({ x: 0.15, y: 0.15, w: 0.59, h: 0.59 });
+  const minimapRafRef = useRef<number | null>(null);
+
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
@@ -492,6 +497,41 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   }, []);
 
   useEffect(() => { clipModeRef.current = clipMode; }, [clipMode]);
+
+  // Drive minimap with rAF while recording
+  useEffect(() => {
+    if (clipMode !== "recording") {
+      if (minimapRafRef.current !== null) {
+        cancelAnimationFrame(minimapRafRef.current);
+        minimapRafRef.current = null;
+      }
+      return;
+    }
+    const loop = () => {
+      const el = zoomRef.current;
+      const st = transformRef.current;
+      if (el && st) {
+        const W = el.clientWidth;
+        const H = el.clientHeight;
+        const S = st.scale;
+        const visW = 1 / S;
+        const visH = 1 / S;
+        const visX = (S - 1) / (2 * S) - st.panX / (S * W);
+        const visY = (S - 1) / (2 * S) - st.panY / (S * H);
+        setMinimapBox({
+          x: Math.max(0, Math.min(1 - visW, visX)),
+          y: Math.max(0, Math.min(1 - visH, visY)),
+          w: visW,
+          h: visH,
+        });
+      }
+      minimapRafRef.current = requestAnimationFrame(loop);
+    };
+    minimapRafRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (minimapRafRef.current !== null) cancelAnimationFrame(minimapRafRef.current);
+    };
+  }, [clipMode, transformRef]);
 
   const clipStartRef = useRef(0);
   const recordingRef = useRef<{ interval: ReturnType<typeof setInterval> | null; keyframes: CropKeyframe[] }>({
@@ -1008,12 +1048,50 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
             exit={{ opacity: 0 }}
             className="absolute inset-0 z-20 flex flex-col pointer-events-none"
           >
-            <div className="flex-1" />
-            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/20 border border-red-500/40">
+            {/* Top bar: REC badge + minimap */}
+            <div className="pt-safe pt-4 px-4 flex items-start justify-between">
+              {/* REC indicator */}
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-red-500/40">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 <span className="text-red-400 text-xs font-bold tabular-nums">{formatDuration(recElapsed)}</span>
               </div>
+
+              {/* Minimap */}
+              <div
+                className="relative rounded-md overflow-hidden border border-white/30 shadow-lg"
+                style={{ width: 108, height: 60, background: "rgba(0,0,0,0.55)" }}
+              >
+                {/* Field grid lines for context */}
+                <div className="absolute inset-0 opacity-20">
+                  <div className="absolute left-1/2 inset-y-0 w-px bg-white" />
+                  <div className="absolute top-1/2 inset-x-0 h-px bg-white" />
+                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border border-white" />
+                </div>
+                {/* Viewport highlight box */}
+                <div
+                  className="absolute rounded-sm border-2 border-primary bg-primary/20"
+                  style={{
+                    left: `${minimapBox.x * 100}%`,
+                    top: `${minimapBox.y * 100}%`,
+                    width: `${minimapBox.w * 100}%`,
+                    height: `${minimapBox.h * 100}%`,
+                  }}
+                />
+                {/* Dimmed areas outside the viewport */}
+                <div className="absolute inset-0 pointer-events-none" style={{
+                  background: `linear-gradient(to right,
+                    rgba(0,0,0,0.45) ${minimapBox.x * 100}%,
+                    transparent ${minimapBox.x * 100}%,
+                    transparent ${(minimapBox.x + minimapBox.w) * 100}%,
+                    rgba(0,0,0,0.45) ${(minimapBox.x + minimapBox.w) * 100}%
+                  )`
+                }} />
+                <p className="absolute bottom-0.5 left-0 right-0 text-center text-[8px] text-white/50 font-medium tracking-wide uppercase">field view</p>
+              </div>
+            </div>
+
+            <div className="flex-1" />
+            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3">
               <button
                 onClick={() => stopRecording()}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-red-500 text-white font-bold text-sm"
