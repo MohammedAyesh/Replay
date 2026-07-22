@@ -556,7 +556,8 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     const containerH = scrollEl.clientHeight;
     const boxPxW = containerH * 9 / 16;
     const maxLeftPx = Math.max(0, containerW - boxPxW);
-    const dx = e.clientX - boxDragRef.current.startClientX;
+    const scale = transformRef.current.scale;
+    const dx = (e.clientX - boxDragRef.current.startClientX) / scale;
     const newLeftPx = Math.max(0, Math.min(maxLeftPx, boxDragRef.current.startFrac * containerW + dx));
     const newFrac = containerW > 0 ? newLeftPx / containerW : 0;
     setCropBoxX(newFrac);
