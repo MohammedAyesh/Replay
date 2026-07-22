@@ -448,7 +448,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [currentTime, setCurrentTime] = useState(0);
   const seekDraggingRef = useRef(false);
   const zoomRef = useRef<HTMLDivElement>(null);
-  const { isZoomed } = usePinchZoom(zoomRef, { initialScale: 1.7 });
   const containerRef = useRef<HTMLDivElement>(null);
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== "undefined" && window.innerWidth > window.innerHeight
@@ -461,6 +460,12 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     controlsTimerRef.current = setTimeout(() => setShowControls(false), 4000);
   }, []);
+
+  const resetControlsTimerRef = useRef(resetControlsTimer);
+  useEffect(() => { resetControlsTimerRef.current = resetControlsTimer; }, [resetControlsTimer]);
+  const stableOnTap = useCallback(() => resetControlsTimerRef.current(), []);
+
+  const { isZoomed } = usePinchZoom(zoomRef, { initialScale: 1.7, onTap: stableOnTap });
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
@@ -903,7 +908,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
       {/* Controls overlay */}
       <AnimatePresence>
-        {(showControls || isZoomed) && clipMode === "idle" && (
+        {showControls && clipMode === "idle" && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

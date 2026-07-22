@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 
 interface PinchZoomOptions {
   initialScale?: number;
+  onTap?: () => void;
 }
 
 export function usePinchZoom(
   containerRef: React.RefObject<HTMLDivElement | null>,
   options: PinchZoomOptions = {}
 ) {
-  const { initialScale = 1 } = options;
+  const { initialScale = 1, onTap } = options;
   const [isZoomed, setIsZoomed] = useState(initialScale > 1.05);
 
   const s = useRef({
@@ -18,9 +19,15 @@ export function usePinchZoom(
     lastDist: null as number | null,
     lastMidX: 0,
     lastMidY: 0,
+    startX: 0,
+    startY: 0,
     isPinching: false,
     lastTap: 0,
   });
+
+  // keep onTap in a ref so the effect closure never goes stale
+  const onTapRef = useRef(onTap);
+  useEffect(() => { onTapRef.current = onTap; }, [onTap]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -75,6 +82,8 @@ export function usePinchZoom(
       } else if (e.touches.length === 1) {
         st.lastMidX = e.touches[0].clientX;
         st.lastMidY = e.touches[0].clientY;
+        st.startX = e.touches[0].clientX;
+        st.startY = e.touches[0].clientY;
         if (st.scale > 1.05) {
           e.preventDefault();
         }
@@ -120,8 +129,18 @@ export function usePinchZoom(
         st.lastDist = null;
         st.isPinching = false;
       }
-      if (e.touches.length === 0 && st.scale < 1.15) {
-        resetZoom();
+      if (e.touches.length === 0) {
+        if (st.scale < 1.15) {
+          resetZoom();
+        } else {
+          // Fire onTap if the finger barely moved (tap, not pan)
+          const dx = (e.changedTouches[0]?.clientX ?? st.startX) - st.startX;
+          const dy = (e.changedTouches[0]?.clientY ?? st.startY) - st.startY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 12) {
+            onTapRef.current?.();
+          }
+        }
       }
     }
 
