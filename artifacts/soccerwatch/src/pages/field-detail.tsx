@@ -509,33 +509,21 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     }
     const loop = () => {
       const el = zoomRef.current;
-      const scrollEl = scrollRef.current;
       const st = transformRef.current;
       if (el && st) {
-        if (selectedRatioRef.current === "9:16" && scrollEl) {
-          // 9:16: minimap shows the crop box position (matches what sampleFrame records)
-          const containerW = scrollEl.clientWidth;
-          const containerH = scrollEl.clientHeight;
-          const boxPxW = containerH * 9 / 16;
-          const w = containerW > 0 ? boxPxW / containerW : BOX_W_FRAC;
-          const x = cropBoxXRef.current;
-          setMinimapBox({ x: Math.max(0, Math.min(1 - w, x)), y: 0, w, h: 1 });
-        } else {
-          // 16:9: minimap shows the zoom viewport (matches what sampleFrame records)
-          const W = el.clientWidth;
-          const H = el.clientHeight;
-          const S = st.scale;
-          const visW = 1 / S;
-          const visH = 1 / S;
-          const visX = (S - 1) / (2 * S) - st.panX / (S * W);
-          const visY = (S - 1) / (2 * S) - st.panY / (S * H);
-          setMinimapBox({
-            x: Math.max(0, Math.min(1 - visW, visX)),
-            y: Math.max(0, Math.min(1 - visH, visY)),
-            w: visW,
-            h: visH,
-          });
-        }
+        const W = el.clientWidth;
+        const H = el.clientHeight;
+        const S = st.scale;
+        const visW = 1 / S;
+        const visH = 1 / S;
+        const visX = (S - 1) / (2 * S) - st.panX / (S * W);
+        const visY = (S - 1) / (2 * S) - st.panY / (S * H);
+        setMinimapBox({
+          x: Math.max(0, Math.min(1 - visW, visX)),
+          y: Math.max(0, Math.min(1 - visH, visY)),
+          w: visW,
+          h: visH,
+        });
       }
       minimapRafRef.current = requestAnimationFrame(loop);
     };
@@ -578,6 +566,46 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
   const handleBoxPointerUp = useCallback(() => {
     boxDragRef.current.active = false;
+  }, []);
+
+  /**
+   * Compute the current crop rect as fractions of the FULL source frame.
+   *
+   * The source is panoramic (much wider than the 16:9 letterbox window), so the
+   * video sits inside a horizontally scrollable container: only `clientWidth` of
+   * `scrollWidth` is visible at any moment, offset by `scrollLeft`. Playback
+   * (cropToTransform / the scroll interpolation in watch.tsx + my-clips.tsx) and
+   * the server-side ffmpeg export both interpret cropPath x/w as fractions of the
+   * full source frame — so the on-screen selection must be converted into that
+   * space here, or the saved clip won't match what was framed while recording.
+   *
+   * - 16:9: the crop IS the visible window → scrollLeft/scrollWidth.
+   * - 9:16: the crop is the draggable box, whose left edge is stored as a
+   *   fraction of the *visible container*, so it must be offset by scrollLeft
+   *   before being normalised against scrollWidth.
+   */
+  const computeCropRect = useCallback((): { x: number; w: number } => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return { x: 0, w: 1 };
+    const totalW = scrollEl.scrollWidth;
+    const containerW = scrollEl.clientWidth;
+    const containerH = scrollEl.clientHeight;
+    if (!(totalW > 0) || !(containerW > 0)) return { x: 0, w: 1 };
+    const scrollLeft = scrollEl.scrollLeft;
+
+    let leftPx: number;
+    let widthPx: number;
+    if (selectedRatioRef.current === "9:16") {
+      widthPx = containerH * 9 / 16;
+      leftPx = scrollLeft + cropBoxXRef.current * containerW;
+    } else {
+      widthPx = containerW;
+      leftPx = scrollLeft;
+    }
+
+    const w = Math.max(0, Math.min(1, widthPx / totalW));
+    const x = Math.max(0, Math.min(Math.max(0, 1 - w), leftPx / totalW));
+    return { x, w };
   }, []);
 
   useEffect(() => {
@@ -758,38 +786,13 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       const videoEl = videoRef.current;
       const scrollEl = scrollRef.current;
       if (!videoEl || !scrollEl) return;
-      const totalW = scrollEl.scrollWidth;
-      const containerW = scrollEl.clientWidth;
-      const containerH = scrollEl.clientHeight;
       const relT = videoEl.currentTime - clipStartRef.current;
       if (relT < 0) return;
 
-      let x: number, y: number, w: number, h: number;
-      if (selectedRatioRef.current === "9:16") {
-        // 9:16: crop box position defines the recorded area
-        const boxPxW = containerH * 9 / 16;
-        x = cropBoxXRef.current;
-        y = 0;
-        w = containerW > 0 ? boxPxW / containerW : BOX_W_FRAC;
-        h = 1;
-      } else {
-        // 16:9: zoom viewport defines the recorded area (what you see = what you get)
-        const zoomEl = zoomRef.current;
-        const st = transformRef.current;
-        if (zoomEl && st && st.scale > 1.001) {
-          const W = zoomEl.clientWidth;
-          const H = zoomEl.clientHeight;
-          const S = st.scale;
-          w = 1 / S;
-          h = 1 / S;
-          x = Math.max(0, Math.min(1 - w, (S - 1) / (2 * S) - st.panX / (S * W)));
-          y = Math.max(0, Math.min(1 - h, (S - 1) / (2 * S) - st.panY / (S * H)));
-        } else {
-          x = 0; y = 0; w = 1; h = 1;
-        }
-      }
-
-      recordingRef.current.keyframes.push({ t: relT, x, y, w, h });
+      // Captures the live scroll position, so panning during recording is
+      // preserved in both 16:9 and 9:16 modes.
+      const { x, w } = computeCropRect();
+      recordingRef.current.keyframes.push({ t: relT, x, y: 0, w, h: 1 });
     };
 
     sampleFrame();
@@ -819,17 +822,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     const endT = overrideEndTime ?? el?.currentTime ?? clipStartRef.current;
 
     if (el && scrollEl) {
-      const containerW = scrollEl.clientWidth;
-      const containerH = scrollEl.clientHeight;
-      let x: number, w: number;
-      if (selectedRatioRef.current === "9:16") {
-        const boxPxW = containerH * 9 / 16;
-        x = cropBoxXRef.current;
-        w = containerW > 0 ? boxPxW / containerW : BOX_W_FRAC;
-      } else {
-        x = 0;
-        w = 1;
-      }
+      const { x, w } = computeCropRect();
       recordingRef.current.keyframes.push({ t: Math.max(0, endT - clipStartRef.current), x, y: 0, w, h: 1 });
     }
 
@@ -874,11 +867,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     }));
 
     if (keyframes.length === 0) {
-      const scrollEl = scrollRef.current;
-      const totalW = scrollEl?.scrollWidth ?? 1;
-      const containerW = scrollEl?.clientWidth ?? totalW;
-      const x = scrollEl ? scrollEl.scrollLeft / totalW : 0;
-      const w = scrollEl ? containerW / totalW : 1;
+      // Same source-frame conversion as the recording path, so a clip saved
+      // without any sampled keyframes still respects the 9:16 box position.
+      const { x, w } = computeCropRect();
       keyframes = [{ t: 0, x, y: 0, w, h: 1 }, { t: 1, x, y: 0, w, h: 1 }];
     } else if (keyframes.length === 1) {
       keyframes = [{ ...keyframes[0], t: 0 }, { ...keyframes[0], t: 1 }];

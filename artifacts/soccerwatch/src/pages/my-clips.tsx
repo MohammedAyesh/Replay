@@ -35,6 +35,14 @@ function lerp(a: number, b: number, p: number) {
   return a + (b - a) * p;
 }
 
+/** Format seconds as m:ss for the clip-relative timeline (never the full recording). */
+function formatTime(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) seconds = 0;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function interpolateX(keyframes: KF[], t: number): number {
   if (keyframes.length === 0) return 0.5;
   if (keyframes.length === 1) return keyframes[0].x;
@@ -84,6 +92,16 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
    * for seek and stop logic so we play from 0 → 1 of the blob, not some fraction of recording duration.
    */
   const [localTimingOverride, setLocalTimingOverride] = useState<{ start: number; end: number } | null>(null);
+  /**
+   * Clip-relative timeline (seconds since the clip's own start, not the
+   * underlying recording's absolute time). progressSec is always in
+   * [0, clipDurationSec] regardless of where the clip sits inside the
+   * source video or local blob.
+   */
+  const [progressSec, setProgressSec] = useState(0);
+  const [clipDurationSec, setClipDurationSec] = useState(0);
+  /** True while the user is dragging the scrub handle — suppresses timeupdate overwrites. */
+  const seekDraggingRef = useRef(false);
   const { t } = useTranslation();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -233,6 +251,63 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     const id = setInterval(onTime, 100);
     return () => clearInterval(id);
   }, [lStart, lEnd]);
+
+  /**
+   * Track clip-relative timeline position for the scrub bar.
+   * durationSec/progressSec are always scoped to the clip itself
+   * (0 → clip length), never the underlying recording's full length —
+   * this is what makes the clip feel like its own self-contained video
+   * with a normal timeline, rather than a fragment of the source match.
+   */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onTimeUpdate = () => {
+      const dur = video.duration || 0;
+      if (dur === 0) return;
+      const sSec = isFinite(lStart) ? lStart * dur : 0;
+      const eSec = isFinite(lEnd) ? lEnd * dur : dur;
+      const cDur = Math.max(0, eSec - sSec);
+      setClipDurationSec(cDur);
+      if (!seekDraggingRef.current) {
+        setProgressSec(Math.max(0, Math.min(cDur, video.currentTime - sSec)));
+      }
+    };
+    video.addEventListener("timeupdate", onTimeUpdate);
+    video.addEventListener("durationchange", onTimeUpdate);
+    return () => {
+      video.removeEventListener("timeupdate", onTimeUpdate);
+      video.removeEventListener("durationchange", onTimeUpdate);
+    };
+  }, [lStart, lEnd, isLocal]);
+
+  /** Scrub bar handlers — drag position stays purely local (progressSec) until release. */
+  const handleScrubStart = useCallback(() => {
+    seekDraggingRef.current = true;
+  }, []);
+
+  const handleScrubChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setProgressSec(parseFloat(e.target.value));
+  }, []);
+
+  const handleScrubEnd = useCallback(
+    (e: React.MouseEvent<HTMLInputElement> | React.TouchEvent<HTMLInputElement>) => {
+      const video = videoRef.current;
+      seekDraggingRef.current = false;
+      if (!video) return;
+      const dur = video.duration || 0;
+      if (dur === 0) return;
+      const sSec = isFinite(lStart) ? lStart * dur : 0;
+      const eSec = isFinite(lEnd) ? lEnd * dur : dur;
+      const val = parseFloat(e.currentTarget.value);
+      // Clamp to the clip's own bounds — this is the fix for the player.tsx bug
+      // where scrubbing could escape into the rest of the underlying recording.
+      const clamped = Math.max(0, Math.min(eSec - sSec, val));
+      video.currentTime = sSec + clamped;
+      setProgressSec(clamped);
+    },
+    [lStart, lEnd]
+  );
 
   /**
    * Enter fullscreen.
@@ -533,10 +608,49 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         <div
           className={landscape
             ? "w-[220px] h-full flex flex-col justify-end gap-3 px-4 py-4 bg-black/90 backdrop-blur-md z-20 pointer-events-auto shrink-0"
-            : "w-full px-4 pb-safe pt-3 flex items-end gap-3 pointer-events-auto shrink-0"
+            : "w-full px-4 pb-safe pt-3 flex flex-col gap-2 pointer-events-auto shrink-0"
           }
           style={landscape ? undefined : { background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}
         >
+          {/* Timeline — scoped to the clip's own duration, not the source recording's */}
+          <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
+            <span className="text-[11px] text-white/70 tabular-nums min-w-[30px] drop-shadow">
+              {formatTime(progressSec)}
+            </span>
+            <div className="flex-1 relative h-6 flex items-center">
+              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1.5 bg-white/25 rounded-full" />
+              <div
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-1.5 bg-primary rounded-full pointer-events-none"
+                style={{ width: `${clipDurationSec > 0 ? (progressSec / clipDurationSec) * 100 : 0}%` }}
+              />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow pointer-events-none"
+                style={{
+                  left: `${clipDurationSec > 0 ? (progressSec / clipDurationSec) * 100 : 0}%`,
+                  transform: "translate(-50%, -50%)",
+                }}
+              />
+              <input
+                type="range"
+                min={0}
+                max={clipDurationSec || 1}
+                step={0.05}
+                value={progressSec}
+                onMouseDown={handleScrubStart}
+                onTouchStart={handleScrubStart}
+                onChange={handleScrubChange}
+                onMouseUp={handleScrubEnd}
+                onTouchEnd={handleScrubEnd}
+                className="w-full h-full appearance-none cursor-pointer relative z-10 opacity-0"
+                aria-label="Clip position"
+              />
+            </div>
+            <span className="text-[11px] text-white/70 tabular-nums min-w-[30px] text-right drop-shadow">
+              {formatTime(clipDurationSec)}
+            </span>
+          </div>
+
+          <div className={`flex items-end gap-3 ${landscape ? "flex-col w-full" : ""}`}>
           <div className={`${landscape ? "mb-auto" : "flex-1 min-w-0 pb-1"}`}>
             <p className="text-white font-bold text-sm truncate drop-shadow">{clip.title}</p>
             <p className="text-white/70 text-xs drop-shadow">
@@ -590,6 +704,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
             >
               {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
             </button>
+          </div>
           </div>
         </div>
       </div>
