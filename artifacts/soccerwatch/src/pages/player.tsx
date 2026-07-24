@@ -18,8 +18,6 @@ import {
   normalizePath,
 } from "@/lib/cropFrame";
 
-const FALLBACK_VIDEO = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
-
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -85,7 +83,10 @@ function PlayerScreen({ clip }: { clip: Clip }) {
     video.removeAttribute("src");
     video.load();
 
-    const src = clip.bunnyPlaybackUrl ?? clip.videoUrl ?? FALLBACK_VIDEO;
+    // No stock-footage fallback: playing an unrelated demo stream under this
+    // clip's trim and crop misrepresents it as the user's own recording.
+    const src = clip.bunnyPlaybackUrl ?? clip.videoUrl;
+    if (!src) return;
 
     let didSeek = false;
     function seekToStartAndPlay() {

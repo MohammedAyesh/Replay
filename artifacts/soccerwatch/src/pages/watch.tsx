@@ -36,11 +36,19 @@ function getInitials(name: string): string {
     .slice(0, 2);
 }
 
-const FALLBACK_VIDEOS = [
-  "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-  "https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8",
-  "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-];
+/**
+ * Path portion of a URL. Extension tests must ignore query strings and
+ * fragments: signed CDN links routinely end in "?token=...", which defeated the
+ * $-anchored regexes below and made video ads fall through to the <img> branch.
+ */
+function urlPath(url: string): string {
+  return url.split(/[?#]/)[0];
+}
+
+function isVideoUrl(url: string): boolean {
+  const p = urlPath(url);
+  return p.includes(".m3u8") || /\.(mp4|webm|ogg|mov|m4v)$/i.test(p);
+}
 
 function isUsableUrl(url: string | null | undefined): url is string {
   if (!url) return false;
@@ -221,6 +229,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
   const startClip = useCallback(() => {
     const video = videoRef.current;
     if (!video || !durationRef.current) return;
+    if (!shouldPlayRef.current) return;
     const startSec = isFinite(clip.startTime) ? clip.startTime * durationRef.current : 0;
     const endSec = isFinite(clip.endTime) ? clip.endTime * durationRef.current : durationRef.current;
     clipStartSec.current = startSec;
@@ -255,6 +264,12 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
   }, []);
 
   const shouldPlayRef = useRef(false);
+  const [loadFailed, setLoadFailedState] = useState(false);
+  const loadFailedRef = useRef(false);
+  const setLoadFailed = useCallback((v: boolean) => {
+    loadFailedRef.current = v;
+    setLoadFailedState(v);
+  }, []);
 
   // Load clip video via HLS.js, with automatic fallback on error
   useEffect(() => {
@@ -263,10 +278,9 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
 
     video.muted = true;
     startTimeRecorded.current = false;
+    setLoadFailed(false);
 
     const primary = isUsableUrl(clip.playbackUrl) ? clip.playbackUrl : null;
-    const fallbackSrc = FALLBACK_VIDEOS[index % FALLBACK_VIDEOS.length];
-    let usedFallback = false;
 
     let didSeek = false;
     function seekToStart() {
@@ -298,10 +312,13 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, seekToStart);
           hls.on(Hls.Events.ERROR, (_, data) => {
-            if (data.fatal && !usedFallback) {
-              usedFallback = true;
-              loadSrc(fallbackSrc);
-            }
+            if (!data.fatal) return;
+            // Previously swapped in an unrelated demo stream, which played the
+            // clip's trim and crop over someone else's footage and still
+            // recorded a view against it.
+            hls.destroy();
+            if (hlsRef.current === hls) hlsRef.current = null;
+            setLoadFailed(true);
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
           video.src = src;
@@ -312,10 +329,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     }
 
     function handleVideoError() {
-      if (!usedFallback) {
-        usedFallback = true;
-        loadSrc(fallbackSrc);
-      }
+      setLoadFailed(true);
     }
 
     /**
@@ -361,7 +375,8 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     video.addEventListener("loadedmetadata", handleLoadedMetadata);
     video.addEventListener("durationchange", seekToStart);
     video.addEventListener("timeupdate", handleTimeUpdate);
-    loadSrc(primary ?? fallbackSrc);
+    if (primary) loadSrc(primary);
+    else setLoadFailed(true);
 
     return () => {
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
@@ -380,7 +395,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     if (!adVideo) return;
 
     const src = currentAd.creativeUrl;
-    if (src.includes(".m3u8")) {
+    if (urlPath(src).includes(".m3u8")) {
       if (Hls.isSupported()) {
         const hls = new Hls({ enableWorker: false });
         adHlsRef.current = hls;
@@ -393,7 +408,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
         adVideo.src = src;
         adVideo.play().catch(() => {});
       }
-    } else if (src.match(/\.(mp4|webm|ogg)$/i)) {
+    } else {
       adVideo.src = src;
       adVideo.play().catch(() => {});
     }
@@ -445,14 +460,18 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
                 setAdPhase("showing");
               } else {
                 setAdPhase("done");
-                video.play().catch(() => {});
-                setIsPlaying(true);
+                if (shouldPlayRef.current) {
+                  video.play().catch(() => {});
+                  setIsPlaying(true);
+                }
               }
             })
             .catch(() => {
               setAdPhase("done");
-              video.play().catch(() => {});
-              setIsPlaying(true);
+              if (shouldPlayRef.current) {
+                video.play().catch(() => {});
+                setIsPlaying(true);
+              }
             });
         } else {
           shouldPlayRef.current = false;
@@ -464,7 +483,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
           setCurrentAd(null);
 
           // Record view on exit if the clip was actually intersected (>2s watched) and not already recorded
-          if (!startTimeRecorded.current && viewStartRef.current > 0) {
+          if (!startTimeRecorded.current && viewStartRef.current > 0 && !loadFailedRef.current) {
             const watched = (Date.now() - viewStartRef.current) / 1000;
             if (watched > 2) {
               startTimeRecorded.current = true;
@@ -556,10 +575,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     setIsPlaying(!isPlaying);
   };
 
-  const isVideoAd = currentAd && (
-    currentAd.creativeUrl.includes(".m3u8") ||
-    currentAd.creativeUrl.match(/\.(mp4|webm|ogg)$/i)
-  );
+  const isVideoAd = currentAd ? isVideoUrl(currentAd.creativeUrl) : false;
 
   return (
     <div
@@ -665,6 +681,14 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
         )}
       </div>
 
+      {/* Load failure — shown plainly rather than substituting other footage */}
+      {loadFailed && (
+        <div className="absolute inset-0 z-30 bg-black/90 flex flex-col items-center justify-center gap-2 px-6 text-center">
+          <p className="text-white text-sm font-semibold">This clip couldn&apos;t be loaded</p>
+          <p className="text-white/60 text-xs">Swipe to the next clip.</p>
+        </div>
+      )}
+
       {/* Ad Overlay */}
       {adPhase === "showing" && currentAd && (
         <div
@@ -693,6 +717,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
                   currentAd.durationSeconds * 1000
                 );
               }}
+              onError={() => finishAd(currentAd)}
             />
           )}
 
