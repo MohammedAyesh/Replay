@@ -1,14 +1,22 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { Link, useRoute } from "wouter";
 import Hls from "hls.js";
-import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, getGetFeedQueryKey, getGetAccountStatsQueryKey, Clip, CropKeyframe, FeedClip } from "@workspace/api-client-react";
+import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, getGetFeedQueryKey, getGetAccountStatsQueryKey, Clip, FeedClip } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Heart, Share, Bookmark, ChevronLeft, ChevronRight, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
+import {
+  DEFAULT_SRC_ASPECT,
+  OUT_ASPECT,
+  applyFrameToVideo,
+  frameToVideoStyle,
+  interpolateFrame,
+  normalizePath,
+} from "@/lib/cropFrame";
 
 const FALLBACK_VIDEO = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
@@ -16,37 +24,6 @@ function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function interpolateCropPath(cropPath: CropKeyframe[], t: number): CropKeyframe {
-  if (cropPath.length === 0) return { t, x: 0, y: 0, w: 1, h: 1 };
-  if (cropPath.length === 1) return cropPath[0];
-  const first = cropPath[0];
-  const last = cropPath[cropPath.length - 1];
-  if (t <= first.t) return first;
-  if (t >= last.t) return last;
-  const nextIdx = cropPath.findIndex((kf) => kf.t > t);
-  const prevIdx = nextIdx - 1;
-  const kf0 = cropPath[prevIdx];
-  const kf1 = cropPath[nextIdx];
-  const alpha = (t - kf0.t) / (kf1.t - kf0.t);
-  return {
-    t,
-    x: kf0.x + (kf1.x - kf0.x) * alpha,
-    y: kf0.y + (kf1.y - kf0.y) * alpha,
-    w: kf0.w + (kf1.w - kf0.w) * alpha,
-    h: kf0.h + (kf1.h - kf0.h) * alpha,
-  };
-}
-
-function cropToTransform(kf: CropKeyframe): string {
-  if (!kf || kf.w <= 0) return "";
-  const cx = kf.x + kf.w / 2;
-  const cy = kf.y + kf.h / 2;
-  const scale = 1 / kf.w;
-  const tx = (0.5 - cx) / kf.w * 100;
-  const ty = (0.5 - cy) / kf.w * 100;
-  return `translateX(${tx}%) translateY(${ty}%) scale(${scale})`;
 }
 
 export default function Player() {
@@ -78,6 +55,14 @@ function PlayerScreen({ clip }: { clip: Clip }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
+  /**
+   * Auto-detected highlight clips are always 16:9. Legacy keyframes are
+   * rewritten to zoom-1 frames so they centre-crop rather than stretch.
+   */
+  const framePath = useMemo(
+    () => normalizePath(clip.cropPath ?? [], DEFAULT_SRC_ASPECT, OUT_ASPECT["16:9"]),
+    [clip.cropPath]
+  );
   const hlsRef = useRef<Hls | null>(null);
   const seekDraggingRef = useRef(false);
   const zoomRef = useRef<HTMLDivElement>(null);
@@ -122,11 +107,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       setDuration(durationRef.current);
       clipStartSec.current = isFinite(clip.startTime) ? clip.startTime * durationRef.current : 0;
       clipEndSec.current = isFinite(clip.endTime) ? clip.endTime * durationRef.current : durationRef.current;
-      if (clip.cropPath.length > 0) {
-        const kf = interpolateCropPath(clip.cropPath, 0);
-        video.style.transform = cropToTransform(kf);
-        video.style.transition = "transform 0.1s linear";
-      }
+      if (framePath.length > 0) applyFrameToVideo(video, interpolateFrame(framePath, 0));
       seekToStartAndPlay();
     }
 
@@ -138,13 +119,12 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       if (!seekDraggingRef.current) {
         setCurrentTime(video.currentTime);
       }
-      if (clip.cropPath.length > 0) {
+      if (framePath.length > 0) {
         const clipDuration = clipEndSec.current - clipStartSec.current;
         const t = clipDuration > 0
           ? (video.currentTime - clipStartSec.current) / clipDuration
           : 0;
-        const kf = interpolateCropPath(clip.cropPath, Math.max(0, Math.min(1, t)));
-        video.style.transform = cropToTransform(kf);
+        applyFrameToVideo(video, interpolateFrame(framePath, Math.max(0, Math.min(1, t))));
       }
     }
 
@@ -172,9 +152,8 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       video.removeEventListener("durationchange", seekToStartAndPlay);
       video.removeEventListener("timeupdate", handleTimeUpdate);
       video.style.transform = "";
-      video.style.transition = "";
     };
-  }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, clip.startTime, clip.endTime, clip.cropPath]);
+  }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, clip.startTime, clip.endTime, framePath]);
 
   const { t } = useTranslation();
 
@@ -279,13 +258,20 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       <div className="absolute inset-0 field-pattern opacity-30" />
 
       <div ref={zoomRef} className="absolute inset-0">
-        <video
-          ref={videoRef}
-          className="w-full h-full object-cover"
-          playsInline
-          loop
-          muted={isMuted}
-        />
+        {/* 16:9 container with a black backdrop so uncovered frame area
+            renders as a real black bar, matching the export. */}
+        <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <div className="relative w-full aspect-video overflow-hidden bg-black">
+            <video
+              ref={videoRef}
+              className="pointer-events-none"
+              style={frameToVideoStyle(interpolateFrame(framePath, 0))}
+              playsInline
+              loop
+              muted={isMuted}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/90 pointer-events-none" />

@@ -17,6 +17,8 @@ import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import Hls from "hls.js";
 import { exportClip, canExportVideo, triggerDownload } from "@/lib/exportClip";
 import { saveLocalClip, getLocalClip, listLocalClips, deleteLocalClip, createLocalBlobUrl, revokeLocalBlobUrl, type LocalClipRecord } from "@/lib/localClips";
+import { cn } from "@/lib/utils";
+import { applyFrameToVideo, frameToVideoStyle, interpolateFrame } from "@/lib/cropFrame";
 
 function localThumbnailUrl(record: LocalClipRecord): string | null {
   if (record.playbackUrl) {
@@ -31,33 +33,12 @@ function localThumbnailUrl(record: LocalClipRecord): string | null {
 
 type KF = { t: number; x: number; y: number; w: number; h: number };
 
-function lerp(a: number, b: number, p: number) {
-  return a + (b - a) * p;
-}
-
 /** Format seconds as m:ss for the clip-relative timeline (never the full recording). */
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) seconds = 0;
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function interpolateX(keyframes: KF[], t: number): number {
-  if (keyframes.length === 0) return 0.5;
-  if (keyframes.length === 1) return keyframes[0].x;
-  if (t <= keyframes[0].t) return keyframes[0].x;
-  if (t >= keyframes[keyframes.length - 1].t) return keyframes[keyframes.length - 1].x;
-
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const a = keyframes[i];
-    const b = keyframes[i + 1];
-    if (t >= a.t && t <= b.t) {
-      const p = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t);
-      return lerp(a.x, b.x, p);
-    }
-  }
-  return keyframes[keyframes.length - 1].x;
 }
 
 /* ------------------------------------------------------------------ */
@@ -197,13 +178,19 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     };
   }, [clip.playbackUrl, clip.startTime]);
 
-  /* Scroll interpolation loop — reads duration live from the element */
+  /**
+   * Pan loop. Writes the interpolated crop frame straight to the video element's
+   * style (no React state), so the container — which has the clip's output aspect
+   * ratio and a black background — shows real black bars wherever the frame
+   * extends past the source.
+   *
+   * Local blobs are skipped entirely: they were already trimmed, cropped and
+   * letterboxed by the server render, so re-applying the crop would double it.
+   */
   useEffect(() => {
     const tick = () => {
       const video = videoRef.current;
-      const scrollEl = scrollRef.current;
-      // Local 9:16 clips are already cropped — no panning needed
-      if (!video || !scrollEl || keyframes.length === 0 || (isLocal && clip.aspectRatio === "9:16")) {
+      if (!video || keyframes.length === 0 || isLocal) {
         rafRef.current = requestAnimationFrame(tick);
         return;
       }
@@ -217,15 +204,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       const sSec = isFinite(lStart) ? lStart * dur : 0;
       const eSec = isFinite(lEnd) ? lEnd * dur : dur;
       const cDur = Math.max(0.1, eSec - sSec);
-      const now = video.currentTime;
-      const t = Math.max(0, Math.min(1, (now - sSec) / cDur));
-      const x = interpolateX(keyframes, t);
-      const totalW = scrollEl.scrollWidth;
-      const viewW = scrollEl.clientWidth;
-      const maxScroll = Math.max(0, totalW - viewW);
-      const kfW = keyframes[0]?.w ?? 1;
-      const cropCenterPx = (x + kfW / 2) * totalW;
-      scrollEl.scrollLeft = Math.max(0, Math.min(maxScroll, cropCenterPx - viewW / 2));
+      const t = Math.max(0, Math.min(1, (video.currentTime - sSec) / cDur));
+      applyFrameToVideo(video, interpolateFrame(keyframes, t));
 
       rafRef.current = requestAnimationFrame(tick);
     };
@@ -570,17 +550,25 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       <div className={`w-full flex ${landscape ? "flex-row" : "flex-col"}`} style={{ height: "100dvh" }}>
         {/* Video area */}
         <div className={`flex items-center bg-black min-h-0 ${landscape ? "flex-1 h-full" : "flex-1 w-full relative"} ${clip.aspectRatio === "9:16" ? "justify-center" : ""}`}>
+          {/*
+            Container carries the clip's OUTPUT aspect ratio with a black
+            background. The video is positioned inside it by the pan loop, so
+            any area the frame doesn't cover renders as a real black bar.
+          */}
           <div
             ref={scrollRef}
             dir="ltr"
-            className={clip.aspectRatio === "9:16"
-              ? "h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
-              : "h-full overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar relative"}
+            className={cn(
+              "relative overflow-hidden bg-black",
+              clip.aspectRatio === "9:16" ? "h-full aspect-[9/16]" : "h-full w-full max-h-full aspect-video"
+            )}
           >
             <video
               ref={videoRef}
-              className={isLocal && clip.aspectRatio === "9:16" ? "h-full w-full object-cover pointer-events-none" : "h-full max-w-none pointer-events-none"}
-              style={isLocal && clip.aspectRatio === "9:16" ? { aspectRatio: "9/16" } : { aspectRatio: "3840/1080" }}
+              className="pointer-events-none"
+              style={isLocal
+                ? { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" }
+                : frameToVideoStyle(interpolateFrame(keyframes, 0))}
               playsInline
               loop={false}
               muted={false}

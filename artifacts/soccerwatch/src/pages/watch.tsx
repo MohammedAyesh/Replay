@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import Hls from "hls.js";
@@ -18,6 +18,14 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
+import {
+  DEFAULT_SRC_ASPECT,
+  OUT_ASPECT,
+  applyFrameToVideo,
+  frameToVideoStyle,
+  interpolateFrame,
+  normalizePath,
+} from "@/lib/cropFrame";
 
 function getInitials(name: string): string {
   return name
@@ -109,37 +117,6 @@ function SocialLikesLine({
   );
 }
 
-function interpolateCropPath(cropPath: CropKeyframe[], t: number): CropKeyframe {
-  if (cropPath.length === 0) return { t, x: 0, y: 0, w: 1, h: 1 };
-  if (cropPath.length === 1) return cropPath[0];
-  const first = cropPath[0];
-  const last = cropPath[cropPath.length - 1];
-  if (t <= first.t) return first;
-  if (t >= last.t) return last;
-  const nextIdx = cropPath.findIndex((kf) => kf.t > t);
-  const prevIdx = nextIdx - 1;
-  const kf0 = cropPath[prevIdx];
-  const kf1 = cropPath[nextIdx];
-  const alpha = (t - kf0.t) / (kf1.t - kf0.t);
-  return {
-    t,
-    x: kf0.x + (kf1.x - kf0.x) * alpha,
-    y: kf0.y + (kf1.y - kf0.y) * alpha,
-    w: kf0.w + (kf1.w - kf0.w) * alpha,
-    h: kf0.h + (kf1.h - kf0.h) * alpha,
-  };
-}
-
-function cropToTransform(kf: CropKeyframe): string {
-  if (!kf || kf.w <= 0) return "";
-  const cx = kf.x + kf.w / 2;
-  const cy = kf.y + kf.h / 2;
-  const scale = 1 / kf.w;
-  const tx = (0.5 - cx) / kf.w * 100;
-  const ty = (0.5 - cy) / kf.h * 100;
-  return `translateX(${tx}%) translateY(${ty}%) scale(${scale})`;
-}
-
 export default function Watch() {
   const { data: clips, isLoading } = useGetFeed({
     query: {
@@ -202,7 +179,6 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
   const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const scrollRef9 = useRef<HTMLDivElement>(null);
   const zoomRef = useRef<HTMLDivElement>(null);
   const { isZoomed } = usePinchZoom(zoomRef);
 
@@ -218,6 +194,16 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
   const toggleLikeMutation = useToggleUserClipLike();
   const recordViewMutation = useRecordView();
   const recordShareMutation = useRecordShare();
+
+  /**
+   * cropPath with any pre-frame-model keyframes rewritten to zoom-1 frames, so
+   * clips saved before the editor rewrite still render as a centre-crop rather
+   * than a stretched panorama.
+   */
+  const framePath = useMemo(
+    () => normalizePath(clip.cropPath ?? [], DEFAULT_SRC_ASPECT, OUT_ASPECT[clip.aspectRatio === "9:16" ? "9:16" : "16:9"]),
+    [clip.cropPath, clip.aspectRatio]
+  );
 
   // Track clip playback boundaries
   const clipStartSec = useRef<number>(0);
@@ -332,18 +318,17 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       }
     }
 
+    /**
+     * One code path for both ratios: position the video inside a container that
+     * already has the clip's output aspect ratio and a black background, so any
+     * area the frame does not cover renders as a real black bar.
+     *
+     * The old split applied a uniform scale=1/w transform for 16:9 on top of an
+     * object-cover element that had already centre-cropped the panorama, which
+     * double-zoomed any frame narrower than the full source.
+     */
     function applyCrop(kf: CropKeyframe) {
-      if (clip.aspectRatio === "9:16") {
-        const scrollEl = scrollRef9.current;
-        if (scrollEl) {
-          const totalW = scrollEl.scrollWidth;
-          const viewW = scrollEl.clientWidth;
-          const cropCenterPx = (kf.x + kf.w / 2) * totalW;
-          scrollEl.scrollLeft = Math.max(0, Math.min(totalW - viewW, cropCenterPx - viewW / 2));
-        }
-      } else {
-        video!.style.transform = cropToTransform(kf);
-      }
+      if (video) applyFrameToVideo(video, kf);
     }
 
     // On loadedmetadata, compute clip boundaries and apply initial crop
@@ -352,13 +337,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       durationRef.current = video.duration || 0;
       clipStartSec.current = isFinite(clip.startTime) ? clip.startTime * durationRef.current : 0;
       clipEndSec.current = isFinite(clip.endTime) ? clip.endTime * durationRef.current : durationRef.current;
-      if (clip.cropPath.length > 0) {
-        const kf = interpolateCropPath(clip.cropPath, 0);
-        applyCrop(kf);
-        if (clip.aspectRatio !== "9:16") {
-          video.style.transition = "transform 0.1s linear";
-        }
-      }
+      if (framePath.length > 0) applyCrop(interpolateFrame(framePath, 0));
       seekToStart();
     }
 
@@ -369,13 +348,12 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
         video.currentTime = clipStartSec.current;
       }
       // Apply crop pan
-      if (clip.cropPath.length > 0) {
+      if (framePath.length > 0) {
         const clipDuration = clipEndSec.current - clipStartSec.current;
         const t = clipDuration > 0
           ? (video.currentTime - clipStartSec.current) / clipDuration
           : 0;
-        const kf = interpolateCropPath(clip.cropPath, Math.max(0, Math.min(1, t)));
-        applyCrop(kf);
+        applyCrop(interpolateFrame(framePath, Math.max(0, Math.min(1, t))));
       }
     }
 
@@ -391,12 +369,9 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       video.removeEventListener("durationchange", seekToStart);
       video.removeEventListener("timeupdate", handleTimeUpdate);
-      if (clip.aspectRatio !== "9:16") {
-        video.style.transform = "";
-        video.style.transition = "";
-      }
+      video.style.transform = "";
     };
-  }, [clip.id, clip.playbackUrl, clip.startTime, clip.endTime, clip.cropPath, clip.aspectRatio, index]);
+  }, [clip.id, clip.playbackUrl, clip.startTime, clip.endTime, framePath, clip.aspectRatio, index]);
 
   // Load ad video when ad starts
   useEffect(() => {
@@ -595,33 +570,25 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       <div className="absolute inset-0 field-pattern opacity-30" />
 
       <div ref={zoomRef} className="absolute inset-0">
-        {clip.aspectRatio === "9:16" ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-black">
-            <div
-              ref={scrollRef9}
-              className="h-full aspect-[9/16] overflow-x-auto overflow-y-hidden no-scrollbar relative"
-            >
-              <video
-                ref={videoRef}
-                className="h-full max-w-none pointer-events-none"
-                style={{ aspectRatio: "3840/1080" }}
-                playsInline
-                loop
-                muted={isMuted}
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="absolute inset-0 flex items-center bg-black">
+        {/* Output-aspect container with a black backdrop: whatever the frame
+            doesn't cover shows through as a real black bar, matching the export. */}
+        <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <div
+            className={cn(
+              "relative overflow-hidden bg-black",
+              clip.aspectRatio === "9:16" ? "h-full aspect-[9/16]" : "w-full aspect-video"
+            )}
+          >
             <video
               ref={videoRef}
-              className="w-full aspect-[16/9] object-cover"
+              className="pointer-events-none"
+              style={frameToVideoStyle(interpolateFrame(framePath, 0))}
               playsInline
               loop
               muted={isMuted}
             />
           </div>
-        )}
+        </div>
       </div>
 
       <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/80 pointer-events-none" />
