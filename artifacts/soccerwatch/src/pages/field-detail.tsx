@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { SkipFlash } from "@/components/skip-flash";
 import { Link, useRoute, useLocation } from "wouter";
@@ -21,10 +20,17 @@ import { useToast } from "@/hooks/use-toast";
 import Hls from "hls.js";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import {
+  DEFAULT_SRC_ASPECT,
+  OUT_ASPECT,
+  makeFrame,
+  frameToVideoStyle,
+  formatClock,
+  type AspectRatio,
+  type CropKeyframe,
+} from "@/lib/cropFrame";
 
-type CropKeyframe = { t: number; x: number; y: number; w: number; h: number };
 type ClipMode = "idle" | "recording" | "review";
-type AspectRatio = "16:9" | "9:16";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -428,11 +434,133 @@ export default function FieldDetail() {
   );
 }
 
+/**
+ * Frame zoom limits. 1.0 = frame exactly fills the source height, so the output
+ * is entirely live footage with no black.
+ *
+ * 16:9 is a view onto the camera's own field of view: the user pans it around
+ * while the video plays to frame what they want, and it must always be full of
+ * picture. So it caps at 1.0 — zooming past that would grow the frame beyond
+ * the source and introduce black bars.
+ *
+ * 9:16 is a reframe for vertical, where deliberate letterboxing is useful, so it
+ * is allowed to exceed the source.
+ */
+const MIN_FRAME_ZOOM = 0.4;
+const MAX_FRAME_ZOOM = 4;
+
+export function maxZoomFor(ratio: AspectRatio): number {
+  return ratio === "9:16" ? MAX_FRAME_ZOOM : 1;
+}
+
+/**
+ * Resizes the crop frame. Above 1.0 the frame grows beyond the source and the
+ * uncovered area becomes black bars in both the preview and the export, so this
+ * doubles as "how much black space do I want".
+ */
+function FrameSizeSlider({
+  zoom,
+  onChange,
+  frame,
+  maxZoom,
+  compact,
+}: {
+  zoom: number;
+  onChange: (z: number) => void;
+  frame: { x: number; y: number; w: number; h: number };
+  maxZoom: number;
+  compact?: boolean;
+}) {
+  // Fraction of the output frame that is black bar, for a readable label
+  const coveredW = Math.max(0, Math.min(1, (Math.min(1, frame.x + frame.w) - Math.max(0, frame.x)) / frame.w));
+  const coveredH = Math.max(0, Math.min(1, (Math.min(1, frame.y + frame.h) - Math.max(0, frame.y)) / frame.h));
+  const blackPct = Math.round((1 - coveredW * coveredH) * 100);
+  return (
+    <div
+      className={cn(
+        "pointer-events-auto rounded-2xl bg-black/60 backdrop-blur-sm px-3 py-2",
+        compact ? "w-56" : "w-full max-w-sm"
+      )}
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] uppercase tracking-wide text-white/60 font-semibold">Frame size</span>
+        <span className="text-[10px] text-white/70 tabular-nums">
+          {zoom.toFixed(2)}x{blackPct > 0 ? ` · ${blackPct}% black` : ""}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={MIN_FRAME_ZOOM}
+        max={maxZoom}
+        step={0.02}
+        value={zoom}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="w-full accent-primary"
+        aria-label="Frame size"
+      />
+    </div>
+  );
+}
+
+/**
+ * Overview of where the crop frame sits within the whole recording.
+ *
+ * Rendered at the source's real aspect ratio (a wide panorama, not 16:9), and
+ * the frame is plotted in the same source-fraction coords that are recorded
+ * into cropPath. Because the container clips, a frame larger than the source
+ * visibly runs off the edge — which is precisely the black bar region.
+ */
+function MiniMap({ frame, srcAspect }: { frame: { x: number; y: number; w: number; h: number }; srcAspect: number }) {
+  const W = 128;
+  const H = Math.max(24, Math.round(W / (srcAspect > 0 ? srcAspect : DEFAULT_SRC_ASPECT)));
+  return (
+    <div
+      className="relative rounded-md overflow-hidden border border-white/30 shadow-lg shrink-0"
+      style={{ width: W, height: H, background: "rgba(0,0,0,0.55)" }}
+    >
+      {/* Pitch reference lines, drawn across the full panorama */}
+      <div className="absolute inset-0 opacity-20">
+        <div className="absolute left-1/2 inset-y-0 w-px bg-white" />
+        <div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white"
+          style={{ width: H * 0.5, height: H * 0.5 }}
+        />
+      </div>
+      {/* Dim everything outside the frame */}
+      <div
+        className="absolute inset-0 bg-black/55"
+        style={{
+          clipPath: `polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%,
+            ${frame.x * 100}% ${frame.y * 100}%,
+            ${frame.x * 100}% ${(frame.y + frame.h) * 100}%,
+            ${(frame.x + frame.w) * 100}% ${(frame.y + frame.h) * 100}%,
+            ${(frame.x + frame.w) * 100}% ${frame.y * 100}%,
+            ${frame.x * 100}% ${frame.y * 100}%)`,
+        }}
+      />
+      {/* The frame itself */}
+      <div
+        className="absolute border-2 border-primary"
+        style={{
+          left: `${frame.x * 100}%`,
+          top: `${frame.y * 100}%`,
+          width: `${frame.w * 100}%`,
+          height: `${frame.h * 100}%`,
+        }}
+      />
+      <p className="absolute bottom-0.5 left-0 right-0 text-center text-[8px] text-white/50 font-medium tracking-wide uppercase pointer-events-none">
+        field view
+      </p>
+    </div>
+  );
+}
+
 // ── Video Player (unchanged) ──────────────────────────────────────────────────
 
 function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const { setFullscreenVideo } = useFullscreenVideo();
   const { user, isGuest } = useAuth();
@@ -447,7 +575,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const seekDraggingRef = useRef(false);
-  const zoomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== "undefined" && window.innerWidth > window.innerHeight
@@ -463,13 +590,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
   const resetControlsTimerRef = useRef(resetControlsTimer);
   useEffect(() => { resetControlsTimerRef.current = resetControlsTimer; }, [resetControlsTimer]);
-  const stableOnTap = useCallback(() => resetControlsTimerRef.current(), []);
-
-  const { isZoomed, transformRef } = usePinchZoom(zoomRef, { initialScale: 1.7, onTap: stableOnTap });
-
-  // Minimap: fraction of the full frame currently visible {x,y,w,h}
-  const [minimapBox, setMinimapBox] = useState({ x: 0.15, y: 0.15, w: 0.59, h: 0.59 });
-  const minimapRafRef = useRef<number | null>(null);
 
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
@@ -479,63 +599,100 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const [showAuthPrompt, setShowAuthPrompt] = useState(false);
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
   const selectedRatioRef = useRef<AspectRatio>("16:9");
-  const [scrollOffset, setScrollOffset] = useState(0);
-  // Draggable crop box: left edge as fraction of container width (0–1)
-  const BOX_W_FRAC = 81 / 256; // 9:16 box width inside 16:9 frame at scale=1
-  const [cropBoxX, setCropBoxX] = useState((1 - BOX_W_FRAC) / 2);
-  const cropBoxXRef = useRef((1 - BOX_W_FRAC) / 2);
-  const boxDragRef = useRef<{ active: boolean; startClientX: number; startFrac: number }>({ active: false, startClientX: 0, startFrac: 0 });
-  // Resizable crop box height: 0.3–1.0 fraction of the 16:9 container height
-  const [cropBoxScale, setCropBoxScale] = useState(1.0);
-  const cropBoxScaleRef = useRef(1.0);
-  const scaleDragRef = useRef<{ active: boolean; startClientY: number; startScale: number; containerH: number }>({ active: false, startClientY: 0, startScale: 1, containerH: 0 });
+
+  /**
+   * Crop frame model.
+   *
+   * The preview is WYSIWYG: the on-screen box has the OUTPUT aspect ratio and
+   * shows exactly what the exported clip will contain, black bars included.
+   * Dragging moves the frame (this replaces the old scroll container) and the
+   * zoom slider resizes it (this replaces pinch-zoom). Both used to live on
+   * separate layers from the crop that actually got recorded, which is why the
+   * old minimap and the saved clip disagreed with each other.
+   *
+   * zoom 1.0  = frame exactly fills the source height (tightest, no black).
+   * zoom > 1  = frame is larger than the source -> black bars.
+   */
+  const [srcAspect, setSrcAspect] = useState(DEFAULT_SRC_ASPECT);
+  const srcAspectRef = useRef(DEFAULT_SRC_ASPECT);
+  const [frameZoom, setFrameZoom] = useState(1);
+  const frameZoomRef = useRef(1);
+  const [frameOrigin, setFrameOrigin] = useState({ x: 0.25, y: 0 });
+  const frameOriginRef = useRef({ x: 0.25, y: 0 });
+  const frameBoxRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ active: boolean; startX: number; startY: number; originX: number; originY: number }>({
+    active: false, startX: 0, startY: 0, originX: 0, originY: 0,
+  });
+  /**
+   * Set once a pointer travels far enough to count as a pan. The frame box also
+   * carries useSkipTap's touch handler, so without this a drag to re-frame the
+   * shot registered as a double-tap and jumped the video +/-10s.
+   */
+  const draggedRef = useRef(false);
+
   const clipModeRef = useRef<ClipMode>("idle");
   const stopRecordingRef = useRef<(overrideEndTime?: number) => void>(() => {});
 
-  useEffect(() => {
-    const scrollEl = scrollRef.current;
-    if (!scrollEl) return;
-    const onScroll = () => setScrollOffset(scrollEl.scrollLeft);
-    scrollEl.addEventListener("scroll", onScroll, { passive: true });
-    return () => scrollEl.removeEventListener("scroll", onScroll);
+  const outAspect = OUT_ASPECT[selectedRatio];
+
+  /** Current frame in source-fraction coords. Derived, never stored twice. */
+  const frame = makeFrame(frameOrigin.x, frameOrigin.y, frameZoom, srcAspect, outAspect);
+
+  /** Same value read from refs — safe to call from intervals/handlers. */
+  const readFrame = useCallback(() => makeFrame(
+    frameOriginRef.current.x,
+    frameOriginRef.current.y,
+    frameZoomRef.current,
+    srcAspectRef.current,
+    OUT_ASPECT[selectedRatioRef.current]
+  ), []);
+
+  const setOrigin = useCallback((x: number, y: number) => {
+    const f = makeFrame(x, y, frameZoomRef.current, srcAspectRef.current, OUT_ASPECT[selectedRatioRef.current]);
+    frameOriginRef.current = { x: f.x, y: f.y };
+    setFrameOrigin({ x: f.x, y: f.y });
+  }, []);
+
+  /**
+   * Change zoom and/or output ratio, keeping the current centre point.
+   *
+   * This performs ALL the mutation itself and reads the outgoing frame first.
+   * Callers must not pre-assign frameZoomRef/selectedRatioRef: doing so made the
+   * "previous" frame read back with the new zoom already applied, so the centre
+   * came out wrong and zooming out in 16:9 parked the picture at the top of the
+   * frame with every black pixel below it instead of splitting the bars evenly.
+   */
+  const applyFrameChange = useCallback((requestedZoom: number, nextRatio: AspectRatio) => {
+    // Clamped per ratio: 16:9 must stay full of picture, so it never exceeds 1.0.
+    const nextZoom = Math.max(MIN_FRAME_ZOOM, Math.min(maxZoomFor(nextRatio), requestedZoom));
+    const prev = makeFrame(
+      frameOriginRef.current.x,
+      frameOriginRef.current.y,
+      frameZoomRef.current,
+      srcAspectRef.current,
+      OUT_ASPECT[selectedRatioRef.current]
+    );
+    const cx = prev.x + prev.w / 2;
+    const cy = prev.y + prev.h / 2;
+
+    const oa = OUT_ASPECT[nextRatio];
+    const sized = makeFrame(0, 0, nextZoom, srcAspectRef.current, oa);
+    const f = makeFrame(cx - sized.w / 2, cy - sized.h / 2, nextZoom, srcAspectRef.current, oa);
+
+    frameZoomRef.current = nextZoom;
+    selectedRatioRef.current = nextRatio;
+    frameOriginRef.current = { x: f.x, y: f.y };
+    setFrameZoom(nextZoom);
+    setSelectedRatio(nextRatio);
+    setFrameOrigin({ x: f.x, y: f.y });
   }, []);
 
   useEffect(() => { clipModeRef.current = clipMode; }, [clipMode]);
 
-  // Drive minimap with rAF while recording
-  useEffect(() => {
-    if (clipMode !== "recording") {
-      if (minimapRafRef.current !== null) {
-        cancelAnimationFrame(minimapRafRef.current);
-        minimapRafRef.current = null;
-      }
-      return;
-    }
-    const loop = () => {
-      const el = zoomRef.current;
-      const st = transformRef.current;
-      if (el && st) {
-        const W = el.clientWidth;
-        const H = el.clientHeight;
-        const S = st.scale;
-        const visW = 1 / S;
-        const visH = 1 / S;
-        const visX = (S - 1) / (2 * S) - st.panX / (S * W);
-        const visY = (S - 1) / (2 * S) - st.panY / (S * H);
-        setMinimapBox({
-          x: Math.max(0, Math.min(1 - visW, visX)),
-          y: Math.max(0, Math.min(1 - visH, visY)),
-          w: visW,
-          h: visH,
-        });
-      }
-      minimapRafRef.current = requestAnimationFrame(loop);
-    };
-    minimapRafRef.current = requestAnimationFrame(loop);
-    return () => {
-      if (minimapRafRef.current !== null) cancelAnimationFrame(minimapRafRef.current);
-    };
-  }, [clipMode, transformRef]);
+  // The minimap now renders straight from `frame`, which only changes when the
+  // user drags or zooms. The old rAF loop called setState ~60x/sec with a fresh
+  // object, re-rendering this entire component every frame for the whole
+  // recording — that was the source of the stutter.
 
   const clipStartRef = useRef(0);
   const recordingRef = useRef<{ interval: ReturnType<typeof setInterval> | null; keyframes: CropKeyframe[] }>({
@@ -544,112 +701,59 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   });
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Drag handlers for the crop box
-  const handleBoxPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
+  /**
+   * Drag-to-pan the frame. Movement is converted from preview pixels into
+   * source-frame fractions via the frame's own width, so panning feels the same
+   * at every zoom level. Dragging the image right moves the frame left, which
+   * is why the delta is subtracted.
+   */
+  const handleFramePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    boxDragRef.current = { active: true, startClientX: e.clientX, startFrac: cropBoxXRef.current };
+    draggedRef.current = false;
+    dragRef.current = {
+      active: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: frameOriginRef.current.x,
+      originY: frameOriginRef.current.y,
+    };
+    resetControlsTimerRef.current();
   }, []);
 
-  const handleBoxPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!boxDragRef.current.active) return;
-    const scrollEl = scrollRef.current;
-    if (!scrollEl) return;
-    const containerW = scrollEl.clientWidth;
-    const containerH = scrollEl.clientHeight;
-    const boxPxW = containerH * 9 / 16 * cropBoxScaleRef.current;
-    const maxLeftPx = Math.max(0, containerW - boxPxW);
-    const scale = transformRef.current.scale;
-    const dx = (e.clientX - boxDragRef.current.startClientX) / scale;
-    const newLeftPx = Math.max(0, Math.min(maxLeftPx, boxDragRef.current.startFrac * containerW + dx));
-    const newFrac = containerW > 0 ? newLeftPx / containerW : 0;
-    setCropBoxX(newFrac);
-    cropBoxXRef.current = newFrac;
-  }, []);
+  const handleFramePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current.active) return;
+    const box = frameBoxRef.current;
+    if (!box) return;
+    const bw = box.clientWidth;
+    const bh = box.clientHeight;
+    if (!(bw > 0) || !(bh > 0)) return;
+    const rawX = e.clientX - dragRef.current.startX;
+    const rawY = e.clientY - dragRef.current.startY;
+    if (!draggedRef.current && Math.hypot(rawX, rawY) > 8) draggedRef.current = true;
+    const f = readFrame();
+    setOrigin(
+      dragRef.current.originX - (rawX / bw) * f.w,
+      dragRef.current.originY - (rawY / bh) * f.h
+    );
+  }, [readFrame, setOrigin]);
 
-  const handleBoxPointerUp = useCallback(() => {
-    boxDragRef.current.active = false;
-  }, []);
-
-  const handleResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    const containerH = scrollRef.current?.clientHeight ?? window.innerHeight;
-    scaleDragRef.current = { active: true, startClientY: e.clientY, startScale: cropBoxScaleRef.current, containerH };
-  }, []);
-
-  const handleResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!scaleDragRef.current.active) return;
-    const { startClientY, startScale, containerH } = scaleDragRef.current;
-    // dragging down = bigger, dragging up = smaller; *2 because box is centered (both ends move)
-    const dy = e.clientY - startClientY;
-    const newScale = Math.max(0.25, Math.min(1.0, startScale + (dy * 2) / containerH));
-    setCropBoxScale(newScale);
-    cropBoxScaleRef.current = newScale;
-    // Clamp X so the box stays within the container
-    const scrollEl = scrollRef.current;
-    if (scrollEl) {
-      const containerW = scrollEl.clientWidth;
-      const boxPxW = scrollEl.clientHeight * 9 / 16 * newScale;
-      const maxLeftFrac = containerW > 0 ? Math.max(0, containerW - boxPxW) / containerW : 0;
-      const clamped = Math.min(cropBoxXRef.current, maxLeftFrac);
-      if (clamped !== cropBoxXRef.current) {
-        setCropBoxX(clamped);
-        cropBoxXRef.current = clamped;
-      }
+  const handleFramePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current.active) {
+      try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* already released */ }
     }
-  }, []);
-
-  const handleResizePointerUp = useCallback(() => {
-    scaleDragRef.current.active = false;
+    dragRef.current.active = false;
   }, []);
 
   /**
-   * Compute the current crop rect as fractions of the FULL source frame.
-   *
-   * The source is panoramic (much wider than the 16:9 letterbox window), so the
-   * video sits inside a horizontally scrollable container: only `clientWidth` of
-   * `scrollWidth` is visible at any moment, offset by `scrollLeft`. Playback
-   * (cropToTransform / the scroll interpolation in watch.tsx + my-clips.tsx) and
-   * the server-side ffmpeg export both interpret cropPath x/w as fractions of the
-   * full source frame — so the on-screen selection must be converted into that
-   * space here, or the saved clip won't match what was framed while recording.
-   *
-   * - 16:9: the crop IS the visible window → scrollLeft/scrollWidth.
-   * - 9:16: the crop is the draggable box, whose left edge is stored as a
-   *   fraction of the *visible container*, so it must be offset by scrollLeft
-   *   before being normalised against scrollWidth.
+   * The crop rect for the current instant, in source-frame fractions.
+   * This is literally what the preview is showing, so what gets recorded and
+   * what the user sees can no longer drift apart.
    */
   const computeCropRect = useCallback((): { x: number; y: number; w: number; h: number } => {
-    const scrollEl = scrollRef.current;
-    if (!scrollEl) return { x: 0, y: 0, w: 1, h: 1 };
-    const totalW = scrollEl.scrollWidth;
-    const containerW = scrollEl.clientWidth;
-    const containerH = scrollEl.clientHeight;
-    if (!(totalW > 0) || !(containerW > 0)) return { x: 0, y: 0, w: 1, h: 1 };
-    const scrollLeft = scrollEl.scrollLeft;
-
-    let leftPx: number;
-    let widthPx: number;
-    let y = 0;
-    let h = 1;
-    if (selectedRatioRef.current === "9:16") {
-      const scale = cropBoxScaleRef.current;
-      widthPx = containerH * 9 / 16 * scale;
-      leftPx = scrollLeft + cropBoxXRef.current * containerW;
-      h = scale;
-      y = (1 - scale) / 2;
-    } else {
-      widthPx = containerW;
-      leftPx = scrollLeft;
-    }
-
-    const w = Math.max(0, Math.min(1, widthPx / totalW));
-    const x = Math.max(0, Math.min(Math.max(0, 1 - w), leftPx / totalW));
-    return { x, y, w, h };
-  }, []);
+    const f = readFrame();
+    return { x: f.x, y: f.y, w: f.w, h: f.h };
+  }, [readFrame]);
 
   useEffect(() => {
     setFullscreenVideo(true);
@@ -708,7 +812,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
   const { flash: skipFlash, onTouchEnd: skipOnTouchEnd } = useSkipTap({
     onSkip: handleSkip,
     onSingleTap: resetControlsTimer,
-    disabled: isZoomed || clipMode !== "idle",
+    disabled: clipMode !== "idle",
   });
 
   useEffect(() => {
@@ -773,30 +877,23 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     };
   }, [video.playbackUrl]);
 
+  /**
+   * Read the real source aspect from the decoded stream rather than assuming
+   * 3840x1080, then centre the frame on the field.
+   */
   function onLoadedMetadata(e: React.SyntheticEvent<HTMLVideoElement>) {
     const v = e.currentTarget;
-    const scrollEl = scrollRef.current;
-    if (!scrollEl || !v.videoWidth || !v.videoHeight) return;
-    const containerH = scrollEl.clientHeight;
-    const ar = v.videoWidth / v.videoHeight;
-    const w = Math.round(containerH * ar);
-    scrollEl.dataset.videoWidth = String(w);
     setDuration(v.duration || 0);
-    requestAnimationFrame(() => {
-      const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
-      scrollEl.scrollLeft = maxScroll / 2;
-    });
+    if (!v.videoWidth || !v.videoHeight) return;
+    const ar = v.videoWidth / v.videoHeight;
+    if (!(ar > 0) || Math.abs(ar - srcAspectRef.current) < 1e-6) return;
+    srcAspectRef.current = ar;
+    setSrcAspect(ar);
+    const f = makeFrame(0, 0, frameZoomRef.current, ar, OUT_ASPECT[selectedRatioRef.current]);
+    const centred = makeFrame((1 - f.w) / 2, (1 - f.h) / 2, frameZoomRef.current, ar, OUT_ASPECT[selectedRatioRef.current]);
+    frameOriginRef.current = { x: centred.x, y: centred.y };
+    setFrameOrigin({ x: centred.x, y: centred.y });
   }
-
-  useEffect(() => {
-    const scrollEl = scrollRef.current;
-    if (!scrollEl) return;
-    const timer = setTimeout(() => {
-      const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
-      scrollEl.scrollLeft = maxScroll / 2;
-    }, 200);
-    return () => clearTimeout(timer);
-  }, []);
 
   const togglePlay = () => {
     const el = videoRef.current;
@@ -827,13 +924,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
 
     const sampleFrame = () => {
       const videoEl = videoRef.current;
-      const scrollEl = scrollRef.current;
-      if (!videoEl || !scrollEl) return;
+      if (!videoEl) return;
       const relT = videoEl.currentTime - clipStartRef.current;
       if (relT < 0) return;
 
-      // Captures the live scroll position, so panning during recording is
-      // preserved in both 16:9 and 9:16 modes.
+      // Exactly the rect the preview is displaying, including any black bars.
       const { x, y, w, h } = computeCropRect();
       recordingRef.current.keyframes.push({ t: relT, x, y, w, h });
     };
@@ -841,9 +936,11 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     sampleFrame();
     recordingRef.current.interval = setInterval(sampleFrame, 150);
 
+    // Clamped at 0: HLS re-buffering can nudge currentTime slightly backwards,
+    // which previously rendered as a negative duration in the REC badge.
     elapsedRef.current = setInterval(() => {
       const videoEl = videoRef.current;
-      if (videoEl) setRecElapsed(videoEl.currentTime - clipStartRef.current);
+      if (videoEl) setRecElapsed(Math.max(0, videoEl.currentTime - clipStartRef.current));
     }, 100);
 
     setClipMode("recording");
@@ -861,10 +958,9 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     }
 
     const el = videoRef.current;
-    const scrollEl = scrollRef.current;
     const endT = overrideEndTime ?? el?.currentTime ?? clipStartRef.current;
 
-    if (el && scrollEl) {
+    if (el) {
       const { x, y, w, h } = computeCropRect();
       recordingRef.current.keyframes.push({ t: Math.max(0, endT - clipStartRef.current), x, y, w, h });
     }
@@ -882,13 +978,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     setClipMode("idle");
     setClipTitle("");
     setRecElapsed(0);
-    setSelectedRatio("16:9");
-    selectedRatioRef.current = "16:9";
-    const centered = (1 - BOX_W_FRAC) / 2;
-    setCropBoxX(centered);
-    cropBoxXRef.current = centered;
-    setCropBoxScale(1.0);
-    cropBoxScaleRef.current = 1.0;
+    applyFrameChange(1, "16:9");
   };
 
   const saveClip = async () => {
@@ -912,8 +1002,6 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     }));
 
     if (keyframes.length === 0) {
-      // Same source-frame conversion as the recording path, so a clip saved
-      // without any sampled keyframes still respects the 9:16 box position.
       const { x, y, w, h } = computeCropRect();
       keyframes = [{ t: 0, x, y, w, h }, { t: 1, x, y, w, h }];
     } else if (keyframes.length === 1) {
@@ -944,8 +1032,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       toast({ title: t.clipping.saved, description: t.clipping.savedDesc, className: "bg-primary text-white border-none" });
       setClipMode("idle");
       setClipTitle("");
-      setSelectedRatio("16:9");
-      selectedRatioRef.current = "16:9";
+      applyFrameChange(1, "16:9");
       recordingRef.current.keyframes = [];
     } catch (err) {
       const message = err instanceof Error ? err.message : t.clipping.error;
@@ -965,71 +1052,49 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-black"
     >
-      {/* Letterboxed 16:9 scrollable video */}
-      <div ref={zoomRef} className="absolute inset-0 flex items-center justify-center bg-black">
-        <div className="relative" style={{ width: "min(100%, calc(100dvh * 16 / 9))", aspectRatio: "16/9" }}>
-          {/* 9:16 draggable + resizable crop box — shown during idle (to pre-position) and recording */}
-          {(clipMode === "idle" || clipMode === "recording") && selectedRatio === "9:16" && (() => {
-            const leftPct = cropBoxX * 100;
-            const widthPct = BOX_W_FRAC * cropBoxScale * 100;
-            const topPct = (1 - cropBoxScale) / 2 * 100;
-            const heightPct = cropBoxScale * 100;
-            const boxRight = leftPct + widthPct;
-            return (
-              <>
-                {/* Top bar */}
-                <div className="absolute bg-black/60 z-10 pointer-events-none" style={{ top: 0, left: 0, right: 0, height: `${topPct}%` }} />
-                {/* Bottom bar */}
-                <div className="absolute bg-black/60 z-10 pointer-events-none" style={{ bottom: 0, left: 0, right: 0, height: `${topPct}%` }} />
-                {/* Left bar (within the crop height) */}
-                <div className="absolute bg-black/60 z-10 pointer-events-none" style={{ top: `${topPct}%`, height: `${heightPct}%`, left: 0, width: `${leftPct}%` }} />
-                {/* Right bar (within the crop height) */}
-                <div className="absolute bg-black/60 z-10 pointer-events-none" style={{ top: `${topPct}%`, height: `${heightPct}%`, left: `${boxRight}%`, right: 0 }} />
-                {/* Crop box — drag left/right to reposition */}
-                <div
-                  className="absolute z-10 border-2 border-white/80 rounded-sm cursor-grab active:cursor-grabbing"
-                  style={{ top: `${topPct}%`, height: `${heightPct}%`, left: `${leftPct}%`, width: `${widthPct}%`, touchAction: "none" }}
-                  onPointerDown={handleBoxPointerDown}
-                  onPointerMove={handleBoxPointerMove}
-                  onPointerUp={handleBoxPointerUp}
-                  onPointerCancel={handleBoxPointerUp}
-                >
-                  {/* Resize handle at the bottom edge — drag up/down to resize */}
-                  <div
-                    className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 z-20 flex items-center justify-center cursor-ns-resize"
-                    style={{ touchAction: "none", width: 44, height: 28 }}
-                    onPointerDown={handleResizePointerDown}
-                    onPointerMove={handleResizePointerMove}
-                    onPointerUp={handleResizePointerUp}
-                    onPointerCancel={handleResizePointerUp}
-                  >
-                    <div className="bg-white rounded-full px-3 py-1 flex items-center gap-0.5">
-                      <div className="w-px h-3 bg-black/60 rounded-full" />
-                      <div className="w-px h-3 bg-black/60 rounded-full" />
-                      <div className="w-px h-3 bg-black/60 rounded-full" />
-                    </div>
-                  </div>
-                </div>
-              </>
-            );
-          })()}
+      {/*
+        WYSIWYG frame preview.
 
-          {/* Scrollable video */}
-          <div
-            ref={scrollRef}
-            className="absolute inset-0 overflow-x-auto overflow-y-hidden"
-            style={{ scrollbarWidth: "none" }}
-            onTouchEnd={skipOnTouchEnd}
-            onClick={resetControlsTimer}
-          >
-            <video
-              ref={videoRef}
-              className="h-full object-contain"
-              style={{ minWidth: "100%", width: "auto" }}
-              playsInline
-              onLoadedMetadata={onLoadedMetadata}
-            />
-          </div>
+        The box below has the OUTPUT aspect ratio and its background is black,
+        so whenever the frame is zoomed out past the source the uncovered
+        area renders as real black bars — exactly what the export produces.
+        Drag to pan, use the size slider to resize.
+      */}
+      <div className="absolute inset-0 flex items-center justify-center bg-black">
+        <div
+          ref={frameBoxRef}
+          className={cn(
+            "relative overflow-hidden bg-black touch-none",
+            clipMode === "recording" ? "ring-2 ring-red-500" : "ring-1 ring-white/25"
+          )}
+          style={
+            selectedRatio === "9:16"
+              ? { height: "min(100%, calc(100vw * 16 / 9))", aspectRatio: "9/16" }
+              : { width: "min(100%, calc(100dvh * 16 / 9))", aspectRatio: "16/9" }
+          }
+          onPointerDown={handleFramePointerDown}
+          onPointerMove={handleFramePointerMove}
+          onPointerUp={handleFramePointerUp}
+          onPointerCancel={handleFramePointerUp}
+          onTouchEnd={(e) => {
+            if (draggedRef.current) return;
+            skipOnTouchEnd(e);
+          }}
+          onClick={() => {
+            if (draggedRef.current) {
+              draggedRef.current = false;
+              return;
+            }
+            resetControlsTimer();
+          }}
+        >
+          <video
+            ref={videoRef}
+            className="pointer-events-none select-none"
+            style={frameToVideoStyle(frame)}
+            playsInline
+            onLoadedMetadata={onLoadedMetadata}
+          />
 
           {/* Skip flash */}
           <SkipFlash flash={skipFlash} />
@@ -1056,11 +1121,10 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               <div className="flex items-center gap-2">
                 {/* Ratio toggle */}
                 <button
-                  onClick={() => {
-                    const next: AspectRatio = selectedRatio === "16:9" ? "9:16" : "16:9";
-                    setSelectedRatio(next);
-                    selectedRatioRef.current = next;
-                  }}
+                  onClick={() => applyFrameChange(
+                    frameZoomRef.current,
+                    selectedRatio === "16:9" ? "9:16" : "16:9"
+                  )}
                   className="px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-bold"
                 >
                   {selectedRatio}
@@ -1114,6 +1178,16 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
                 </div>
               )}
 
+              {/* Frame sizing — set the shot (and any black bars) before recording */}
+              <div className="flex justify-center">
+                <FrameSizeSlider
+                  zoom={frameZoom}
+                  frame={frame}
+                  maxZoom={maxZoomFor(selectedRatio)}
+                  onChange={(z) => applyFrameChange(z, selectedRatioRef.current)}
+                />
+              </div>
+
               {/* Clip button */}
               <div className="flex justify-center">
                 <button
@@ -1140,48 +1214,32 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           >
             {/* Top bar: REC badge + minimap */}
             <div className="pt-safe pt-4 px-4 flex items-start justify-between">
-              {/* REC indicator */}
+              {/* REC indicator — formatClock never returns "" or a negative value */}
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-red-500/40">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-red-400 text-xs font-bold tabular-nums">{formatDuration(recElapsed)}</span>
+                <span className="text-red-400 text-xs font-bold tabular-nums">{formatClock(recElapsed)}</span>
               </div>
 
-              {/* Minimap */}
-              <div
-                className="relative rounded-md overflow-hidden border border-white/30 shadow-lg"
-                style={{ width: 108, height: 60, background: "rgba(0,0,0,0.55)" }}
-              >
-                {/* Field grid lines for context */}
-                <div className="absolute inset-0 opacity-20">
-                  <div className="absolute left-1/2 inset-y-0 w-px bg-white" />
-                  <div className="absolute top-1/2 inset-x-0 h-px bg-white" />
-                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border border-white" />
-                </div>
-                {/* Viewport highlight box */}
-                <div
-                  className="absolute rounded-sm border-2 border-primary bg-primary/20"
-                  style={{
-                    left: `${minimapBox.x * 100}%`,
-                    top: `${minimapBox.y * 100}%`,
-                    width: `${minimapBox.w * 100}%`,
-                    height: `${minimapBox.h * 100}%`,
-                  }}
-                />
-                {/* Dimmed areas outside the viewport */}
-                <div className="absolute inset-0 pointer-events-none" style={{
-                  background: `linear-gradient(to right,
-                    rgba(0,0,0,0.45) ${minimapBox.x * 100}%,
-                    transparent ${minimapBox.x * 100}%,
-                    transparent ${(minimapBox.x + minimapBox.w) * 100}%,
-                    rgba(0,0,0,0.45) ${(minimapBox.x + minimapBox.w) * 100}%
-                  )`
-                }} />
-                <p className="absolute bottom-0.5 left-0 right-0 text-center text-[8px] text-white/50 font-medium tracking-wide uppercase">field view</p>
-              </div>
+              {/*
+                Minimap. Drawn at the SOURCE aspect ratio (panoramic), with the
+                frame rect plotted in the same source-fraction coords that get
+                recorded — so it now tracks panning, and a frame extending past
+                the source visibly clips at the edge (that overflow is the black
+                bars in the output).
+              */}
+              <MiniMap frame={frame} srcAspect={srcAspect} />
             </div>
 
             <div className="flex-1" />
             <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3">
+              {/* Resizing mid-recording is captured like any other frame change */}
+              <FrameSizeSlider
+                zoom={frameZoom}
+                frame={frame}
+                maxZoom={maxZoomFor(selectedRatio)}
+                compact
+                onChange={(z) => applyFrameChange(z, selectedRatioRef.current)}
+              />
               <button
                 onClick={() => stopRecording()}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-red-500 text-white font-bold text-sm"
