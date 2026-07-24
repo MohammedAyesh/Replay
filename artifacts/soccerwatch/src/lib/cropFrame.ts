@@ -167,8 +167,13 @@ export function interpolateFrame(path: CropKeyframe[], t: number): CropKeyframe 
   };
 }
 
-/** m:ss — used for clip-relative timers, never returns an empty or negative string. */
-export function formatClock(seconds: number): string {
+/**
+ * m:ss for elapsed clip time. Never returns an empty or negative string.
+ * Named formatElapsed rather than formatClock because field-detail.tsx already
+ * has a formatClock for wall-clock times of day (with AM/PM) — the two mean
+ * different things and must not collide.
+ */
+export function formatElapsed(seconds: number): string {
   const s = !isFinite(seconds) || seconds < 0 ? 0 : seconds;
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);

@@ -25,7 +25,7 @@ import {
   OUT_ASPECT,
   makeFrame,
   frameToVideoStyle,
-  formatClock,
+  formatElapsed,
   type AspectRatio,
   type CropKeyframe,
 } from "@/lib/cropFrame";
@@ -1214,10 +1214,10 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           >
             {/* Top bar: REC badge + minimap */}
             <div className="pt-safe pt-4 px-4 flex items-start justify-between">
-              {/* REC indicator — formatClock never returns "" or a negative value */}
+              {/* REC indicator — formatElapsed never returns "" or a negative value */}
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-red-500/40">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-red-400 text-xs font-bold tabular-nums">{formatClock(recElapsed)}</span>
+                <span className="text-red-400 text-xs font-bold tabular-nums">{formatElapsed(recElapsed)}</span>
               </div>
 
               {/*
