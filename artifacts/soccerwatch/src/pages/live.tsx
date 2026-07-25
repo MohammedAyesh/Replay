@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import { Radio, WifiOff, Lock } from "lucide-react";
-import { useAuth } from "@/lib/auth";
+import { Radio, WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const LIVE_PLAYBACK_BASE = "https://replayjo.b-cdn.net";
@@ -93,32 +92,6 @@ function HlsPlayer({
 }
 
 export default function Live() {
-  const { user, isLoading } = useAuth();
-
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-background">
-        <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-      </div>
-    );
-  }
-
-  if (!user?.liveAccess) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-background px-8">
-        <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
-          <Lock className="w-7 h-7 text-zinc-600" />
-        </div>
-        <div className="text-center">
-          <p className="text-white font-semibold text-base mb-1">Live Access Required</p>
-          <p className="text-zinc-500 text-sm leading-relaxed">
-            Live streaming is available to academy members only. Contact your academy to get access.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       {/* Header */}
