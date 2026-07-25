@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Home, MapPin, Bookmark, User as UserIcon, Radio } from "lucide-react";
+import { Home, MapPin, Bookmark, User as UserIcon, Radio, GraduationCap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
