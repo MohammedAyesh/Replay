@@ -1,66 +1,76 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import Hls from "hls.js";
 import { Radio, WifiOff } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 const LIVE_PLAYBACK_BASE = "https://replayjo.b-cdn.net";
+const PING_INTERVAL_MS = 15_000;
 
 const CAMERAS = [
   { id: "camera1", label: "Camera 1" },
   { id: "camera2", label: "Camera 2" },
 ];
 
-function HlsPlayer({
-  url,
-  label,
-}: {
-  url: string;
-  label: string;
-}) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [error, setError] = useState(false);
-  const [ready, setReady] = useState(false);
+async function pingStream(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { method: "HEAD", cache: "no-store" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
+function HlsPlayer({ url, label }: { url: string; label: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [live, setLive] = useState<boolean | null>(null); // null = checking
+  const [playerReady, setPlayerReady] = useState(false);
+
+  const check = useCallback(async () => {
+    const isLive = await pingStream(url);
+    setLive(isLive);
+  }, [url]);
+
+  // Initial ping + periodic re-check
+  useEffect(() => {
+    check();
+    const interval = setInterval(check, PING_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [check]);
+
+  // Mount / unmount HLS player based on live status
   useEffect(() => {
     const el = videoRef.current;
-    if (!el) return;
+    if (!el || !live) return;
 
-    setError(false);
-    setReady(false);
+    setPlayerReady(false);
 
     if (Hls.isSupported()) {
       const hls = new Hls({ liveSyncDurationCount: 3 });
       hls.loadSource(url);
       hls.attachMedia(el);
-
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setReady(true);
+        setPlayerReady(true);
         el.play().catch(() => {});
       });
-
       hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (data.fatal) setError(true);
+        if (data.fatal) setLive(false);
       });
-
       return () => hls.destroy();
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
       el.src = url;
       el.addEventListener("loadedmetadata", () => {
-        setReady(true);
+        setPlayerReady(true);
         el.play().catch(() => {});
       });
-      el.addEventListener("error", () => setError(true));
+      el.addEventListener("error", () => setLive(false));
     }
-  }, [url]);
+  }, [url, live]);
 
   return (
     <div className="relative rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800">
-      {/* Label + live indicator */}
+      {/* Label */}
       <div className="absolute top-3 start-3 z-10 flex items-center gap-1.5">
         <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/70 backdrop-blur-sm text-xs font-semibold text-white">
-          {!error && (
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-          )}
+          {live && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
           {label}
         </span>
       </div>
@@ -68,21 +78,29 @@ function HlsPlayer({
       <video
         ref={videoRef}
         className="w-full aspect-video bg-black"
+        style={{ display: live ? "block" : "none" }}
         playsInline
         muted
         controls
       />
 
-      {/* Not live overlay */}
-      {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/90 gap-3">
+      {/* Checking */}
+      {live === null && (
+        <div className="w-full aspect-video flex items-center justify-center bg-zinc-950">
+          <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        </div>
+      )}
+
+      {/* Not live */}
+      {live === false && (
+        <div className="w-full aspect-video flex flex-col items-center justify-center bg-zinc-950 gap-3">
           <WifiOff className="w-8 h-8 text-zinc-600" />
           <p className="text-zinc-500 text-sm font-medium">Not live right now</p>
         </div>
       )}
 
-      {/* Loading overlay */}
-      {!ready && !error && (
+      {/* Player loading */}
+      {live && !playerReady && (
         <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60">
           <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
         </div>
@@ -100,10 +118,6 @@ export default function Live() {
           <Radio className="w-5 h-5 text-red-500" />
           <h1 className="text-white text-xl font-bold">Live</h1>
         </div>
-        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-xs font-bold text-red-400 uppercase tracking-wider">
-          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-          Live
-        </span>
       </div>
 
       {/* Camera players */}
@@ -115,9 +129,8 @@ export default function Live() {
             label={cam.label}
           />
         ))}
-
         <p className="text-center text-zinc-600 text-xs pt-2">
-          Stream is live during your academy sessions
+          Checks for live stream every 15 seconds
         </p>
       </div>
     </div>
