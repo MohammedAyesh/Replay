@@ -8,7 +8,11 @@ const router: IRouter = Router();
 
 // ─── Env / secrets ───────────────────────────────────────────────────────────
 
-const CONTROL_URL = () => process.env.CONTABO_CONTROL_URL?.replace(/\/$/, "") ?? "";
+const CONTROL_URL = () => {
+  let url = process.env.CONTABO_CONTROL_URL?.trim() ?? "";
+  if (url && !/^https?:\/\//i.test(url)) url = `http://${url}`;
+  return url.replace(/\/$/, "");
+};
 const CONTROL_KEY = () => process.env.CONTABO_CONTROL_KEY ?? "";
 const ADMIN_PASSWORD = () => process.env.ADMIN_PASSWORD ?? "";
 
