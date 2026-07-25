@@ -31,6 +31,9 @@ export interface User {
   profileComplete: boolean;
   /** @nullable */
   preferredLocale?: string | null;
+  /** @nullable */
+  academyId?: number | null;
+  liveAccess?: boolean;
 }
 
 export interface AuthResponse {

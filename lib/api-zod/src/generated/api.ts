@@ -81,7 +81,9 @@ export const GetMeResponse = zod.object({
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
   "profileComplete": zod.boolean(),
-  "preferredLocale": zod.string().nullish()
+  "preferredLocale": zod.string().nullish(),
+  "academyId": zod.number().nullish(),
+  "liveAccess": zod.boolean().optional()
 })
 
 

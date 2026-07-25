@@ -36,6 +36,7 @@ async function buildSummary(academy: typeof academiesTable.$inferSelect) {
     daysOfWeek: parseDays(academy.daysOfWeek),
     description: academy.description ?? null,
     logoUrl: academy.logoUrl ?? null,
+    liveAccess: academy.liveAccess,
     recordingCount: Number(recCount?.value ?? 0),
   };
 }
@@ -100,6 +101,7 @@ const UpdateAcademyBody = z.object({
   daysOfWeek: z.array(z.string()).optional(),
   description: z.string().nullable().optional(),
   logoUrl: z.string().nullable().optional(),
+  liveAccess: z.boolean().optional(),
 });
 
 const AddRecordingBody = z.object({
@@ -152,6 +154,7 @@ router.patch("/admin/academies/:id", async (req, res): Promise<void> => {
   if (body.data.daysOfWeek !== undefined) updates.daysOfWeek = body.data.daysOfWeek.join(",");
   if (body.data.description !== undefined) updates.description = body.data.description;
   if (body.data.logoUrl !== undefined) updates.logoUrl = body.data.logoUrl;
+  if (body.data.liveAccess !== undefined) updates.liveAccess = body.data.liveAccess;
 
   const [academy] = await db
     .update(academiesTable)

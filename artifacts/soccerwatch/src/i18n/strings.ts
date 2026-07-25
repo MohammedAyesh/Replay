@@ -9,6 +9,7 @@ const strings = {
       myClips: "My Clips",
       account: "Account",
       academies: "Academies",
+      live: "Live",
     },
     home: {
       greeting: (name: string) => `Hey, ${name} 👋`,
@@ -211,6 +212,7 @@ const strings = {
       myClips: "مقاطعي",
       account: "الحساب",
       academies: "الأكاديميات",
+      live: "مباشر",
     },
     home: {
       greeting: (name: string) => `أهلاً، ${name} 👋`,

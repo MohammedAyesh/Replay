@@ -17,6 +17,7 @@ export const usersTable = pgTable("users", {
   isDisabled: boolean("is_disabled").notNull().default(false),
   profileComplete: boolean("profile_complete").notNull().default(false),
   preferredLocale: text("preferred_locale"),
+  academyId: integer("academy_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

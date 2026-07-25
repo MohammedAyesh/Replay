@@ -280,6 +280,7 @@ router.get("/admin/users", async (req, res): Promise<void> => {
     gender: u.gender ?? null,
     clerkId: u.clerkId ?? null,
     createdAt: u.createdAt.toISOString(),
+    academyId: u.academyId ?? null,
   })));
 });
 
@@ -293,6 +294,7 @@ router.patch("/admin/users/:id", async (req, res): Promise<void> => {
   const body = req.body as Partial<{
     name: string; email: string; phone: string; position: string;
     age: number | null; gender: string; isDisabled: boolean; isAdmin: boolean;
+    academyId: number | null;
   }>;
   const updates: Partial<typeof usersTable.$inferInsert> = {};
   if (body.name !== undefined && body.name.trim()) updates.name = body.name.trim();
@@ -303,6 +305,7 @@ router.patch("/admin/users/:id", async (req, res): Promise<void> => {
   if (body.gender !== undefined) updates.gender = body.gender.trim() || null;
   if (body.isDisabled !== undefined) updates.isDisabled = body.isDisabled;
   if (body.isAdmin !== undefined) updates.isAdmin = body.isAdmin;
+  if (body.academyId !== undefined) updates.academyId = body.academyId ?? null;
 
   const [user] = await db.update(usersTable).set(updates).where(eq(usersTable.id, id)).returning();
   if (!user) { res.status(404).json({ error: "User not found" }); return; }
@@ -310,7 +313,7 @@ router.patch("/admin/users/:id", async (req, res): Promise<void> => {
   res.json({
     id: user.id, name: user.name, email: user.email, isAdmin: user.isAdmin,
     isDisabled: user.isDisabled, phone: user.phone ?? null, position: user.position ?? null,
-    age: user.age ?? null, gender: user.gender ?? null,
+    age: user.age ?? null, gender: user.gender ?? null, academyId: user.academyId ?? null,
   });
 });
 

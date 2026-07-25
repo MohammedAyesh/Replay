@@ -63,6 +63,7 @@ interface AdminUser {
   gender: string | null;
   clerkId: string | null;
   createdAt: string;
+  academyId: number | null;
 }
 
 interface AdminField {
@@ -95,6 +96,7 @@ interface AdminAcademy {
   daysOfWeek: string[];
   description: string | null;
   logoUrl: string | null;
+  liveAccess: boolean;
   recordingCount: number;
 }
 
@@ -328,6 +330,7 @@ function ClipsTab() {
 
 function AccountsTab() {
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [academies, setAcademies] = useState<{ id: number; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const { user: me } = useAuth();
@@ -340,8 +343,12 @@ function AccountsTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiFetch("/admin/users");
+      const [data, acData] = await Promise.all([
+        apiFetch("/admin/users"),
+        apiFetch("/academies"),
+      ]);
       setUsers(data ?? []);
+      setAcademies((acData ?? []).map((a: AdminAcademy) => ({ id: a.id, name: a.name })));
     } catch { /* silent */ }
     setLoading(false);
   }, []);
@@ -357,6 +364,7 @@ function AccountsTab() {
       position: user.position ?? "",
       age: user.age ?? undefined,
       gender: user.gender ?? "",
+      academyId: user.academyId ?? null,
     });
   };
 
@@ -374,6 +382,7 @@ function AccountsTab() {
     if (editForm.position !== undefined) body.position = editForm.position;
     if (editForm.age !== undefined) body.age = editForm.age == null ? null : Number(editForm.age);
     if (editForm.gender !== undefined) body.gender = editForm.gender;
+    if (editForm.academyId !== undefined) body.academyId = editForm.academyId ?? null;
 
     try {
       const updated = await apiFetch(`/admin/users/${user.id}`, {
@@ -578,6 +587,19 @@ function AccountsTab() {
                           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary"
                         />
                       </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">Academy (Live Access)</label>
+                      <select
+                        value={editForm.academyId ?? ""}
+                        onChange={(e) => setEditForm((f) => ({ ...f, academyId: e.target.value === "" ? null : Number(e.target.value) }))}
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary"
+                      >
+                        <option value="">— No academy —</option>
+                        {academies.map((a) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -1199,6 +1221,20 @@ function AcademiesTab() {
     setDeleting(null);
   };
 
+  const toggleLiveAccess = async (academy: AdminAcademy) => {
+    const next = !academy.liveAccess;
+    setAcademies((p) => p.map((a) => a.id === academy.id ? { ...a, liveAccess: next } : a));
+    try {
+      await apiFetch(`/admin/academies/${academy.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ liveAccess: next }),
+      });
+    } catch {
+      // Revert on failure
+      setAcademies((p) => p.map((a) => a.id === academy.id ? { ...a, liveAccess: !next } : a));
+    }
+  };
+
   const addRecording = async (academy: AdminAcademy, recordingId: number) => {
     setAddingRec(recordingId);
     try {
@@ -1293,6 +1329,18 @@ function AcademiesTab() {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      onClick={() => toggleLiveAccess(academy)}
+                      className={cn(
+                        "p-2 rounded-lg transition-colors",
+                        academy.liveAccess
+                          ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                          : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+                      )}
+                      title={academy.liveAccess ? "Revoke live access" : "Grant live access"}
+                    >
+                      <Radio className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => toggleExpand(academy)}
                       className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"

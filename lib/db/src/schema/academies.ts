@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { fieldsTable } from "./fields";
@@ -11,6 +11,7 @@ export const academiesTable = pgTable("academies", {
   daysOfWeek: text("days_of_week").notNull().default(""),
   description: text("description"),
   logoUrl: text("logo_url"),
+  liveAccess: boolean("live_access").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

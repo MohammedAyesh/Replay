@@ -25,6 +25,7 @@ import AdminSetup from "@/pages/admin-setup";
 import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import Academies from "@/pages/academies";
+import Live from "@/pages/live";
 import { useAuth } from "@/lib/auth";
 
 const queryClient = new QueryClient({
@@ -162,6 +163,7 @@ function AppRouter() {
         <Route path="/player/:id" component={Player} />
         <Route path="/players/:id" component={Profile} />
         <Route path="/my-clips" component={MyClips} />
+        <Route path="/live" component={Live} />
         <Route path="/account" component={Account} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />

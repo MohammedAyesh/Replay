@@ -1,15 +1,18 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Home, MapPin, Bookmark, User as UserIcon, GraduationCap } from "lucide-react";
+import { Home, MapPin, Bookmark, User as UserIcon, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
+import { useAuth } from "@/lib/auth";
 import { InstallBanner } from "@/components/install-banner";
 import { OrientationLock } from "@/components/orientation-lock";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const hasLiveAccess = user?.liveAccess === true;
 
   const isLogin = location === "/";
   const isImmersivePlayer = location.startsWith("/player/");
@@ -68,6 +71,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isActive={location === "/my-clips"}
             isTranslucent={useTranslucentBar}
           />
+          {hasLiveAccess && (
+            <NavItem
+              href="/live"
+              icon={<Radio className="w-6 h-6" />}
+              label={t.nav.live}
+              isActive={location === "/live"}
+              isTranslucent={useTranslucentBar}
+            />
+          )}
           <NavItem
             href="/account"
             icon={<UserIcon className="w-6 h-6" />}

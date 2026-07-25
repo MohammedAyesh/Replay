@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, usersTable } from "@workspace/db";
+import { db, usersTable, academiesTable } from "@workspace/db";
 import { GetMeResponse, LoginAsGuestResponse } from "@workspace/api-zod";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
 
@@ -12,6 +12,16 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthenticated" });
     return;
   }
+
+  let liveAccess = false;
+  if (user.academyId) {
+    const [academy] = await db
+      .select({ liveAccess: academiesTable.liveAccess })
+      .from(academiesTable)
+      .where(eq(academiesTable.id, user.academyId));
+    liveAccess = academy?.liveAccess ?? false;
+  }
+
   res.json(GetMeResponse.parse({
     id: user.id,
     name: user.name,
@@ -24,6 +34,8 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     gender: user.gender ?? null,
     profileComplete: user.profileComplete,
     preferredLocale: user.preferredLocale ?? null,
+    academyId: user.academyId ?? null,
+    liveAccess,
   }));
 });
 
