@@ -12,7 +12,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { t } = useTranslation();
   const { user } = useAuth();
-  const hasLiveAccess = user?.liveAccess === true;
+  const hasLiveAccess = user?.liveAccess === true || user?.isAdmin === true;
 
   const isLogin = location === "/";
   const isImmersivePlayer = location.startsWith("/player/");
