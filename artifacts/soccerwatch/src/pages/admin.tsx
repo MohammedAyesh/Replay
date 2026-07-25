@@ -2236,13 +2236,13 @@ export default function Admin() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-zinc-800/60 bg-zinc-950 flex-shrink-0 px-2">
+      <div className="flex border-b border-zinc-800/60 bg-zinc-950 flex-shrink-0 px-2 overflow-x-auto scrollbar-none" style={{ scrollbarWidth: "none" }}>
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             className={cn(
-              "px-4 py-3 text-sm font-semibold transition-colors relative",
+              "px-4 py-3 text-sm font-semibold transition-colors relative whitespace-nowrap flex-shrink-0",
               tab === t.id ? "text-primary" : "text-zinc-500 hover:text-zinc-300"
             )}
           >
