@@ -55,7 +55,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isActive={location.startsWith("/fields")}
             isTranslucent={useTranslucentBar}
           />
-          {/* Academies tab — hidden until feature is ready
           <NavItem
             href="/academies"
             icon={<GraduationCap className="w-6 h-6" />}
@@ -63,7 +62,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isActive={location === "/academies"}
             isTranslucent={useTranslucentBar}
           />
-          */}
           <NavItem
             href="/my-clips"
             icon={<Bookmark className="w-6 h-6" />}
