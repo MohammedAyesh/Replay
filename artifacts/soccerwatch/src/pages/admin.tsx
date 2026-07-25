@@ -5,8 +5,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Eye, EyeOff, UserCheck, UserX, Shield, ShieldOff, Trash2, Plus, Save, X,
   ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp,
-  GraduationCap, Video, Check
+  GraduationCap, Video, Check, Radio, Square, AlertTriangle, Lock,
+  Play, Clock, CheckCircle2, XCircle, Loader2, ExternalLink as LinkIcon,
 } from "lucide-react";
+import Hls from "hls.js";
 import { cn } from "@/lib/utils";
 import {
   getGetFeedQueryKey,
@@ -25,7 +27,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1588,6 +1590,617 @@ function AcademyForm({
   );
 }
 
+// ─── Live Control Tab ─────────────────────────────────────────────────────────
+
+const CAMERAS = ["camera1", "camera2"] as const;
+type Camera = typeof CAMERAS[number];
+
+const LIVE_PLAYBACK_BASE = "https://replayjo.b-cdn.net";
+
+interface CameraStatus {
+  live: boolean;
+  startedAt?: string;
+  viewers?: number;
+  [k: string]: unknown;
+}
+
+interface RecordingJob {
+  id: string;
+  camera: string;
+  title: string;
+  startTime: string;
+  duration: number;
+  submittedAt: string;
+  status: string;
+  jobId?: string;
+}
+
+function HlsPlayer({ url, className }: { url: string; className?: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return undefined;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ liveSyncDurationCount: 3 });
+      hls.loadSource(url);
+      hls.attachMedia(el);
+      el.muted = true;
+      el.play().catch(() => { /* autoplay blocked */ });
+      return () => hls.destroy();
+    } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
+      el.src = url;
+      el.muted = true;
+      el.play().catch(() => { /* autoplay blocked */ });
+    }
+    return undefined;
+  }, [url]);
+
+  return (
+    <video
+      ref={videoRef}
+      className={cn("w-full rounded-xl bg-black", className)}
+      playsInline
+      muted
+      controls
+    />
+  );
+}
+
+function CameraCard({
+  camera,
+  adminPassword,
+}: {
+  camera: Camera;
+  adminPassword: string;
+}) {
+  const [status, setStatus] = useState<CameraStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showPlayer, setShowPlayer] = useState(false);
+
+  const contaboFetch = useCallback(async (path: string, opts?: RequestInit) => {
+    const res = await fetch(`${basePath}/api${path}`, {
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Password": adminPassword,
+        ...(opts?.headers ?? {}),
+      },
+      ...opts,
+    });
+    if (res.status === 401) throw new Error("bad_password");
+    if (!res.ok) throw new Error(`${res.status}`);
+    if (res.status === 204) return null;
+    return res.json();
+  }, [adminPassword]);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const data = await contaboFetch(`/admin/contabo/status/${camera}`);
+      setStatus(data as CameraStatus);
+      setError(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Error";
+      setError(msg === "bad_password" ? "Wrong password" : "Could not reach control server");
+    } finally {
+      setLoading(false);
+    }
+  }, [camera, contaboFetch]);
+
+  useEffect(() => {
+    fetchStatus();
+    const id = setInterval(fetchStatus, 8000);
+    return () => clearInterval(id);
+  }, [fetchStatus]);
+
+  const handleStart = async () => {
+    setWorking(true);
+    try {
+      await contaboFetch(`/admin/contabo/live/start/${camera}`, { method: "POST" });
+      await fetchStatus();
+    } catch {
+      setError("Start failed");
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleStop = async () => {
+    if (!confirm(`Stop live stream for ${camera}?`)) return;
+    setWorking(true);
+    try {
+      await contaboFetch(`/admin/contabo/live/stop/${camera}`, { method: "POST" });
+      setShowPlayer(false);
+      await fetchStatus();
+    } catch {
+      setError("Stop failed");
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const playbackUrl = `${LIVE_PLAYBACK_BASE}/${camera}/index.m3u8`;
+  const isLive = status?.live === true;
+  const label = camera === "camera1" ? "Camera 1" : "Camera 2";
+
+  return (
+    <div className={cn(
+      "rounded-2xl border overflow-hidden transition-colors",
+      isLive ? "border-red-600/60 bg-zinc-900" : "border-zinc-800 bg-zinc-900/60",
+    )}>
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800/60">
+        <div className={cn(
+          "w-2.5 h-2.5 rounded-full flex-shrink-0",
+          loading ? "bg-zinc-600 animate-pulse" :
+          isLive ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse" :
+          "bg-zinc-600"
+        )} />
+        <span className="text-white font-semibold text-sm">{label}</span>
+        {isLive && (
+          <span className="text-[10px] bg-red-600/20 text-red-400 border border-red-600/40 px-2 py-0.5 rounded-full font-medium tracking-wide ml-auto">
+            LIVE
+          </span>
+        )}
+        {!isLive && !loading && (
+          <span className="text-[10px] text-zinc-500 ml-auto">Offline</span>
+        )}
+      </div>
+
+      {/* Status info */}
+      <div className="px-4 py-3 space-y-3">
+        {error && (
+          <div className="flex items-center gap-2 text-amber-400 text-xs bg-amber-900/20 border border-amber-700/40 rounded-xl px-3 py-2">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <div className="flex items-center gap-2 text-zinc-500 text-xs">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Checking status…
+          </div>
+        )}
+
+        {!loading && isLive && status?.startedAt && (
+          <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+            <Clock className="w-3 h-3" />
+            Started {new Date(status.startedAt as string).toLocaleTimeString()}
+          </div>
+        )}
+
+        {/* Playback link when live */}
+        {isLive && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <a
+                href={playbackUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors truncate"
+              >
+                <LinkIcon className="w-3 h-3 flex-shrink-0" />
+                <span className="truncate">{playbackUrl}</span>
+              </a>
+            </div>
+            <button
+              onClick={() => setShowPlayer((p) => !p)}
+              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors"
+            >
+              <Play className="w-3 h-3" />
+              {showPlayer ? "Hide preview" : "Preview stream"}
+            </button>
+            {showPlayer && (
+              <HlsPlayer url={playbackUrl} className="max-h-48" />
+            )}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={handleStart}
+            disabled={working || loading || isLive}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold bg-red-600 text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Radio className="w-3.5 h-3.5" />
+            Start Live
+          </button>
+          <button
+            onClick={handleStop}
+            disabled={working || loading || !isLive}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Square className="w-3.5 h-3.5" />
+            Stop Live
+          </button>
+          <button
+            onClick={fetchStatus}
+            disabled={loading}
+            className="px-3 py-2.5 rounded-xl bg-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-40"
+            title="Refresh"
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecordingRequestForm({
+  adminPassword,
+  onSubmitted,
+}: {
+  adminPassword: string;
+  onSubmitted: () => void;
+}) {
+  const [camera, setCamera] = useState<Camera>("camera1");
+  const [startTime, setStartTime] = useState("");
+  const [duration, setDuration] = useState("");
+  const [title, setTitle] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const contaboPost = async (path: string, body: unknown) => {
+    const res = await fetch(`${basePath}/api${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Password": adminPassword,
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 401) throw new Error("Wrong password");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? `Error ${res.status}`);
+    return data;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const dur = parseFloat(duration);
+    if (!startTime.trim()) { setError("Start time is required"); return; }
+    if (isNaN(dur) || dur <= 0) { setError("Duration must be a positive number (seconds)"); return; }
+    if (!title.trim()) { setError("Title is required"); return; }
+
+    setSubmitting(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      await contaboPost(`/admin/contabo/record/${camera}`, {
+        startTime: startTime.trim(),
+        duration: dur,
+        title: title.trim(),
+      });
+      setSuccess(true);
+      setStartTime("");
+      setDuration("");
+      setTitle("");
+      onSubmitted();
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Camera</label>
+          <select
+            value={camera}
+            onChange={(e) => setCamera(e.target.value as Camera)}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary appearance-none"
+          >
+            <option value="camera1">Camera 1</option>
+            <option value="camera2">Camera 2</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Duration (seconds)</label>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={duration}
+            onChange={(e) => setDuration(e.target.value)}
+            placeholder="e.g. 300"
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
+          />
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-zinc-400 mb-1.5 block font-medium">
+          Start Time <span className="text-zinc-600 font-normal">(offset in live stream, e.g. "00:02:30" or seconds from start)</span>
+        </label>
+        <input
+          type="text"
+          value={startTime}
+          onChange={(e) => setStartTime(e.target.value)}
+          placeholder="e.g. 00:02:30 or 150"
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
+        />
+      </div>
+      <div>
+        <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Recording Title</label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Galaxy Field – Morning Session"
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
+        />
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 text-red-400 text-xs bg-red-900/20 border border-red-700/40 rounded-xl px-3 py-2">
+          <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="flex items-center gap-2 text-green-400 text-xs bg-green-900/20 border border-green-700/40 rounded-xl px-3 py-2">
+          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+          Recording request submitted — check the list below for status
+        </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={submitting}
+        className="w-full flex items-center justify-center gap-2 bg-primary text-black font-bold py-3 rounded-xl text-sm disabled:opacity-50 hover:opacity-90 transition-opacity"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Video className="w-4 h-4" />}
+        {submitting ? "Submitting…" : "Request Recording"}
+      </button>
+    </form>
+  );
+}
+
+function RecordingsList({
+  adminPassword,
+  refreshKey,
+}: {
+  adminPassword: string;
+  refreshKey: number;
+}) {
+  const [jobs, setJobs] = useState<RecordingJob[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchJobs = useCallback(async () => {
+    try {
+      const res = await fetch(`${basePath}/api/admin/contabo/recordings`, {
+        credentials: "include",
+        headers: { "X-Admin-Password": adminPassword },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setJobs(Array.isArray(data) ? data : []);
+      }
+    } catch { /* silent */ } finally {
+      setLoading(false);
+    }
+  }, [adminPassword]);
+
+  useEffect(() => { fetchJobs(); }, [fetchJobs, refreshKey]);
+  useEffect(() => {
+    const id = setInterval(fetchJobs, 10000);
+    return () => clearInterval(id);
+  }, [fetchJobs]);
+
+  const statusColor = (s: string) => {
+    if (s === "done" || s === "completed") return "text-green-400 bg-green-900/20 border-green-700/40";
+    if (s === "error" || s === "failed") return "text-red-400 bg-red-900/20 border-red-700/40";
+    if (s === "processing") return "text-blue-400 bg-blue-900/20 border-blue-700/40";
+    return "text-amber-400 bg-amber-900/20 border-amber-700/40"; // queued / submitted
+  };
+
+  const StatusIcon = ({ s }: { s: string }) => {
+    if (s === "done" || s === "completed") return <CheckCircle2 className="w-3 h-3" />;
+    if (s === "error" || s === "failed") return <XCircle className="w-3 h-3" />;
+    if (s === "processing") return <Loader2 className="w-3 h-3 animate-spin" />;
+    return <Clock className="w-3 h-3" />;
+  };
+
+  if (loading) return <div className="text-center py-8 text-zinc-500 text-sm">Loading…</div>;
+  if (!jobs.length) return (
+    <div className="text-center py-8 text-zinc-600 text-sm">No recording requests yet</div>
+  );
+
+  return (
+    <div className="space-y-2">
+      {jobs.map((job) => (
+        <div key={job.id} className="flex items-start gap-3 p-3 rounded-xl border border-zinc-800 bg-zinc-900">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-white text-sm font-medium truncate">{job.title}</span>
+              <span className={cn(
+                "text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 font-medium",
+                statusColor(job.status)
+              )}>
+                <StatusIcon s={job.status} />
+                {job.status}
+              </span>
+            </div>
+            <p className="text-zinc-500 text-xs mt-0.5">
+              {job.camera} · start: {job.startTime} · {job.duration}s
+            </p>
+            <p className="text-zinc-600 text-[10px] mt-0.5">
+              {new Date(job.submittedAt).toLocaleString()}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LiveTab() {
+  const [unlocked, setUnlocked] = useState<boolean>(() => {
+    try { return sessionStorage.getItem("contabo_unlocked") === "1"; } catch { return false; }
+  });
+  const [passwordInput, setPasswordInput] = useState("");
+  const [pwError, setPwError] = useState(false);
+  const [adminPassword, setAdminPassword] = useState<string>(() => {
+    try { return sessionStorage.getItem("contabo_pw") ?? ""; } catch { return ""; }
+  });
+  const [configMissing, setConfigMissing] = useState<string[]>([]);
+  const [recordRefresh, setRecordRefresh] = useState(0);
+
+  // Verify password by calling /admin/contabo/config — if it returns 401, password is wrong
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwError(false);
+    try {
+      const res = await fetch(`${basePath}/api/admin/contabo/config`, {
+        credentials: "include",
+        headers: { "X-Admin-Password": passwordInput },
+      });
+      if (res.status === 401) { setPwError(true); return; }
+      const data = await res.json() as { configured: boolean; missing?: string[] };
+      if (data.missing && data.missing.length > 0) setConfigMissing(data.missing);
+      setAdminPassword(passwordInput);
+      setUnlocked(true);
+      try {
+        sessionStorage.setItem("contabo_unlocked", "1");
+        sessionStorage.setItem("contabo_pw", passwordInput);
+      } catch { /* no sessionStorage */ }
+    } catch {
+      setPwError(true);
+    }
+  };
+
+  if (!unlocked) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 px-4">
+        <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-4">
+          <Lock className="w-5 h-5 text-zinc-400" />
+        </div>
+        <h2 className="text-white font-bold text-lg mb-1">Live Control</h2>
+        <p className="text-zinc-500 text-sm mb-6 text-center">Enter the admin password to access the live stream controls</p>
+        <form onSubmit={handleUnlock} className="w-full max-w-xs space-y-3">
+          <input
+            type="password"
+            value={passwordInput}
+            onChange={(e) => setPasswordInput(e.target.value)}
+            placeholder="Admin password"
+            autoFocus
+            className={cn(
+              "w-full bg-zinc-800 border rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-500 outline-none transition-colors",
+              pwError ? "border-red-600" : "border-zinc-700 focus:border-primary"
+            )}
+          />
+          {pwError && (
+            <p className="text-red-400 text-xs flex items-center gap-1.5">
+              <XCircle className="w-3.5 h-3.5" /> Incorrect password
+            </p>
+          )}
+          <button
+            type="submit"
+            className="w-full bg-primary text-black font-bold py-3 rounded-xl text-sm hover:opacity-90 transition-opacity"
+          >
+            Unlock
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Config warning */}
+      {configMissing.length > 0 && (
+        <div className="rounded-2xl border border-amber-600/40 bg-amber-900/10 px-4 py-4 space-y-2">
+          <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm">
+            <AlertTriangle className="w-4 h-4" />
+            Missing Replit Secrets
+          </div>
+          <p className="text-zinc-400 text-xs">
+            Add these secrets in the Replit Secrets panel, then restart the API server:
+          </p>
+          <ul className="space-y-1">
+            {configMissing.map((k) => (
+              <li key={k} className="text-xs font-mono bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-amber-300">
+                {k}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ── Live Control ───────────────────────────────────── */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <Radio className="w-4 h-4 text-red-500" />
+          <h2 className="text-white font-bold text-base">Live Control</h2>
+        </div>
+        <div className="grid grid-cols-1 gap-3">
+          {CAMERAS.map((cam) => (
+            <CameraCard key={cam} camera={cam} adminPassword={adminPassword} />
+          ))}
+        </div>
+      </section>
+
+      {/* ── Recording Request ─────────────────────────────── */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <Video className="w-4 h-4 text-primary" />
+          <h2 className="text-white font-bold text-base">Create Recording</h2>
+        </div>
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-4">
+          <p className="text-zinc-500 text-xs mb-4">
+            Clips a segment from the live stream and uploads it to the <span className="text-zinc-300 font-medium">galaxyfield</span> Bunny Stream collection. The control server handles the upload.
+          </p>
+          <RecordingRequestForm
+            adminPassword={adminPassword}
+            onSubmitted={() => setRecordRefresh((n) => n + 1)}
+          />
+        </div>
+      </section>
+
+      {/* ── Recent Recording Requests ─────────────────────── */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-zinc-500" />
+            <h2 className="text-white font-bold text-base">Recent Requests</h2>
+          </div>
+          <button
+            onClick={() => setRecordRefresh((n) => n + 1)}
+            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <RecordingsList adminPassword={adminPassword} refreshKey={recordRefresh} />
+      </section>
+
+      {/* Lock button */}
+      <button
+        onClick={() => {
+          setUnlocked(false);
+          setAdminPassword("");
+          try { sessionStorage.removeItem("contabo_unlocked"); sessionStorage.removeItem("contabo_pw"); } catch { /* ok */ }
+        }}
+        className="flex items-center gap-2 text-zinc-600 text-xs hover:text-zinc-400 transition-colors mx-auto"
+      >
+        <Lock className="w-3 h-3" /> Lock console
+      </button>
+    </div>
+  );
+}
+
 // ─── Main Admin Console ───────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
@@ -1596,6 +2209,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "fields", label: "Fields" },
   { id: "banners", label: "Banners" },
   { id: "academies", label: "Academies" },
+  { id: "live", label: "Live Control" },
 ];
 
 export default function Admin() {
@@ -1647,6 +2261,7 @@ export default function Admin() {
         {tab === "fields" && <FieldsTab />}
         {tab === "banners" && <BannersTab />}
         {tab === "academies" && <AcademiesTab />}
+        {tab === "live" && <LiveTab />}
       </div>
     </div>
   );

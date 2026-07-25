@@ -14,6 +14,7 @@ import bunnyVideosRouter from "./bunnyVideos";
 import bunnyCollectionsRouter from "./bunnyCollections";
 import usersRouter from "./users";
 import academiesRouter from "./academies";
+import contaboRouter from "./contabo";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(bannersRouter);
 router.use(adminRouter);
 router.use(usersRouter);
 router.use(academiesRouter);
+router.use(contaboRouter);
 
 export default router;
