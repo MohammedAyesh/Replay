@@ -22,6 +22,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     liveAccess = academy?.liveAccess ?? false;
   }
 
+  res.setHeader("Cache-Control", "no-store");
   res.json(GetMeResponse.parse({
     id: user.id,
     name: user.name,

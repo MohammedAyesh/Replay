@@ -11,8 +11,8 @@ import { OrientationLock } from "@/components/orientation-lock";
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { t } = useTranslation();
-  const { user } = useAuth();
-  const hasLiveAccess = user?.liveAccess === true || user?.isAdmin === true;
+  const { user, isAdmin } = useAuth();
+  const hasLiveAccess = user?.liveAccess === true || isAdmin;
 
   const isLogin = location === "/";
   const isImmersivePlayer = location.startsWith("/player/");
