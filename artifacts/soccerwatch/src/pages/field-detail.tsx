@@ -428,7 +428,7 @@ export default function FieldDetail() {
       </div>
 
       <AnimatePresence>
-        {activeVideo && <VideoPlayer source={{ kind: "vod", video: activeVideo }} onClose={() => setActiveVideo(null)} />}
+        {activeVideo && <VideoPlayer video={activeVideo} onClose={() => setActiveVideo(null)} />}
       </AnimatePresence>
     </div>
   );
