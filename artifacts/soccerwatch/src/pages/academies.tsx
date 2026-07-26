@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { GraduationCap, MapPin, Calendar, ChevronRight, Search, Video, Radio } from "lucide-react";
+import { GraduationCap, MapPin, Calendar, ChevronRight, Search, Video, Maximize } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import Hls from "hls.js";
+import { VideoPlayer } from "@/components/video-player";
 import {
   useListAcademies,
   useGetAcademyRecordings,
@@ -30,57 +30,28 @@ function DayBadge({ day }: { day: string }) {
   );
 }
 
-function LivePlayer({ cameraId }: { cameraId: string }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-    setReady(false);
-
-    const url = `/api/live/${cameraId}/index.m3u8`;
-
-    if (Hls.isSupported()) {
-      const hls = new Hls({ liveSyncDurationCount: 3 });
-      hls.loadSource(url);
-      hls.attachMedia(el);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setReady(true);
-        el.play().catch(() => {});
-      });
-      return () => hls.destroy();
-    } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
-      el.src = url;
-      el.addEventListener("loadedmetadata", () => {
-        setReady(true);
-        el.play().catch(() => {});
-      });
-    }
-  }, [cameraId]);
-
+function LiveTile({ cameraId, title, onOpen }: { cameraId: string; title: string; onOpen: () => void }) {
   return (
-    <div className="aspect-[3/4] relative overflow-hidden rounded-2xl shadow-md bg-black group">
-      <video
-        ref={videoRef}
-        className="absolute inset-0 w-full h-full object-cover"
-        playsInline
-        muted
-        controls
+    <button
+      onClick={onOpen}
+      className="block w-full aspect-[3/4] relative overflow-hidden rounded-2xl shadow-md bg-black group"
+    >
+      <div
+        className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80 pointer-events-none"
       />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80 pointer-events-none" />
-
       <div className="absolute top-3 start-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/90 backdrop-blur-sm">
         <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
         <span className="text-white text-[10px] font-bold uppercase tracking-wider">Live</span>
       </div>
-
-      {!ready && (
-        <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60">
-          <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+      <div className="absolute inset-0 flex items-center justify-center opacity-80 group-hover:opacity-100 transition-opacity">
+        <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-110 transition-transform">
+          <Maximize className="w-6 h-6 text-white" />
         </div>
-      )}
-    </div>
+      </div>
+      <p className="absolute bottom-3 start-0 end-0 px-3 text-white text-sm font-medium text-center pointer-events-none">
+        Tap to watch · Record your shot
+      </p>
+    </button>
   );
 }
 
@@ -181,7 +152,11 @@ function AcademyCard({
               {academy.cameraId && (
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Live</p>
-                  <LivePlayer cameraId={academy.cameraId} />
+                  <LiveTile
+                    cameraId={academy.cameraId}
+                    title={`${academy.name} live`}
+                    onOpen={() => setLiveFor({ cameraId: academy.cameraId!, title: `${academy.name} live` })}
+                  />
                 </div>
               )}
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
@@ -235,6 +210,7 @@ export default function Academies() {
   });
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [liveFor, setLiveFor] = useState<{ cameraId: string; title: string } | null>(null);
 
   const filtered = (academies ?? []).filter(
     (a) =>
@@ -296,6 +272,15 @@ export default function Academies() {
           ))
         )}
       </div>
+
+      <AnimatePresence>
+        {liveFor && (
+          <VideoPlayer
+            source={{ kind: "live", cameraId: liveFor.cameraId, title: liveFor.title }}
+            onClose={() => setLiveFor(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
