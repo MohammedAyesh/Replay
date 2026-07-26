@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import { Radio, WifiOff } from "lucide-react";
+import { Radio } from "lucide-react";
 
 const LIVE_PLAYBACK_BASE = "https://replayjo.b-cdn.net";
 
@@ -11,14 +11,12 @@ const CAMERAS = [
 
 function HlsPlayer({ url, label }: { url: string; label: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [error, setError] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
 
-    setError(false);
     setReady(false);
 
     if (Hls.isSupported()) {
@@ -29,9 +27,6 @@ function HlsPlayer({ url, label }: { url: string; label: string }) {
         setReady(true);
         el.play().catch(() => {});
       });
-      hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (data.fatal) setError(true);
-      });
       return () => hls.destroy();
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
       el.src = url;
@@ -39,7 +34,6 @@ function HlsPlayer({ url, label }: { url: string; label: string }) {
         setReady(true);
         el.play().catch(() => {});
       });
-      el.addEventListener("error", () => setError(true));
     }
   }, [url]);
 
@@ -47,7 +41,7 @@ function HlsPlayer({ url, label }: { url: string; label: string }) {
     <div className="relative rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800">
       <div className="absolute top-3 start-3 z-10 flex items-center gap-1.5">
         <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/70 backdrop-blur-sm text-xs font-semibold text-white">
-          {!error && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
           {label}
         </span>
       </div>
@@ -55,20 +49,12 @@ function HlsPlayer({ url, label }: { url: string; label: string }) {
       <video
         ref={videoRef}
         className="w-full aspect-video bg-black"
-        style={{ display: error ? "none" : "block" }}
         playsInline
         muted
         controls
       />
 
-      {error && (
-        <div className="w-full aspect-video flex flex-col items-center justify-center bg-zinc-950 gap-3">
-          <WifiOff className="w-8 h-8 text-zinc-600" />
-          <p className="text-zinc-500 text-sm font-medium">Not live right now</p>
-        </div>
-      )}
-
-      {!ready && !error && (
+      {!ready && (
         <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60">
           <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
         </div>
