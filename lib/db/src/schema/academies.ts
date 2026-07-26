@@ -12,6 +12,7 @@ export const academiesTable = pgTable("academies", {
   description: text("description"),
   logoUrl: text("logo_url"),
   liveAccess: boolean("live_access").notNull().default(false),
+  cameraId: text("camera_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

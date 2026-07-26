@@ -37,6 +37,7 @@ async function buildSummary(academy: typeof academiesTable.$inferSelect) {
     description: academy.description ?? null,
     logoUrl: academy.logoUrl ?? null,
     liveAccess: academy.liveAccess,
+    cameraId: academy.cameraId ?? null,
     recordingCount: Number(recCount?.value ?? 0),
   };
 }
@@ -87,12 +88,15 @@ router.get("/academies/:id/recordings", async (req, res): Promise<void> => {
 
 // ── Admin routes ─────────────────────────────────────────────────────────────
 
+const VALID_CAMERAS = ["camera1", "camera2"] as const;
+
 const CreateAcademyBody = z.object({
   name: z.string().min(1),
   fieldId: z.number().int(),
   daysOfWeek: z.array(z.string()).default([]),
   description: z.string().nullable().optional(),
   logoUrl: z.string().nullable().optional(),
+  cameraId: z.enum(VALID_CAMERAS).nullable().optional(),
 });
 
 const UpdateAcademyBody = z.object({
@@ -102,6 +106,7 @@ const UpdateAcademyBody = z.object({
   description: z.string().nullable().optional(),
   logoUrl: z.string().nullable().optional(),
   liveAccess: z.boolean().optional(),
+  cameraId: z.enum(VALID_CAMERAS).nullable().optional(),
 });
 
 const AddRecordingBody = z.object({
@@ -132,6 +137,7 @@ router.post("/admin/academies", async (req, res): Promise<void> => {
       daysOfWeek: body.data.daysOfWeek.join(","),
       description: body.data.description ?? null,
       logoUrl: body.data.logoUrl ?? null,
+      cameraId: body.data.cameraId ?? null,
     })
     .returning();
 
@@ -155,6 +161,7 @@ router.patch("/admin/academies/:id", async (req, res): Promise<void> => {
   if (body.data.description !== undefined) updates.description = body.data.description;
   if (body.data.logoUrl !== undefined) updates.logoUrl = body.data.logoUrl;
   if (body.data.liveAccess !== undefined) updates.liveAccess = body.data.liveAccess;
+  if (body.data.cameraId !== undefined) updates.cameraId = body.data.cameraId;
 
   const [academy] = await db
     .update(academiesTable)

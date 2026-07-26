@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Home, MapPin, Bookmark, User as UserIcon, Radio, GraduationCap } from "lucide-react";
+import { Home, MapPin, Bookmark, User as UserIcon, GraduationCap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -65,13 +65,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             icon={<Bookmark className="w-6 h-6" />}
             label={t.nav.myClips}
             isActive={location === "/my-clips"}
-            isTranslucent={useTranslucentBar}
-          />
-          <NavItem
-            href="/live"
-            icon={<Radio className="w-6 h-6" />}
-            label={t.nav.live}
-            isActive={location === "/live"}
             isTranslucent={useTranslucentBar}
           />
           <NavItem

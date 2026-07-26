@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { GraduationCap, MapPin, Calendar, ChevronRight, Search, Video } from "lucide-react";
+import { GraduationCap, MapPin, Calendar, ChevronRight, Search, Video, Radio } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import Hls from "hls.js";
 import {
   useListAcademies,
   useGetAcademyRecordings,
@@ -29,6 +30,52 @@ function DayBadge({ day }: { day: string }) {
   );
 }
 
+function LivePlayer({ cameraId }: { cameraId: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    setReady(false);
+
+    const url = `/api/live/${cameraId}/index.m3u8`;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ liveSyncDurationCount: 3 });
+      hls.loadSource(url);
+      hls.attachMedia(el);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setReady(true);
+        el.play().catch(() => {});
+      });
+      return () => hls.destroy();
+    } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
+      el.src = url;
+      el.addEventListener("loadedmetadata", () => {
+        setReady(true);
+        el.play().catch(() => {});
+      });
+    }
+  }, [cameraId]);
+
+  return (
+    <div className="relative rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
+      <div className="absolute top-2 start-2 z-10 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/70 backdrop-blur-sm">
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+        <Radio className="w-3 h-3 text-white" />
+        <span className="text-white text-[10px] font-semibold">Live</span>
+      </div>
+      <video ref={videoRef} className="w-full aspect-video bg-black" playsInline muted controls />
+      {!ready && (
+        <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60">
+          <div className="w-5 h-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AcademyCard({
   academy,
   index,
@@ -44,6 +91,7 @@ function AcademyCard({
     daysOfWeek: string[];
     description?: string | null;
     logoUrl?: string | null;
+    cameraId?: string | null;
     recordingCount: number;
   };
   index: number;
@@ -121,7 +169,13 @@ function AcademyCard({
             exit={{ height: 0, opacity: 0, transition: { duration: 0.2 } }}
             className="overflow-hidden"
           >
-            <div className="border-t border-border px-4 py-3 space-y-2">
+            <div className="border-t border-border px-4 py-3 space-y-3">
+              {academy.cameraId && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Live</p>
+                  <LivePlayer cameraId={academy.cameraId} />
+                </div>
+              )}
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                 Recordings
               </p>

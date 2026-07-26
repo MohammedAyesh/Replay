@@ -97,6 +97,7 @@ interface AdminAcademy {
   description: string | null;
   logoUrl: string | null;
   liveAccess: boolean;
+  cameraId: string | null;
   recordingCount: number;
 }
 
@@ -1118,7 +1119,7 @@ function AcademiesTab() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | "new" | null>(null);
-  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "" });
+  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "", cameraId: "" });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
 
@@ -1168,12 +1169,12 @@ function AcademiesTab() {
 
   const startNew = () => {
     setEditing("new");
-    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "" });
+    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "", cameraId: "" });
   };
 
   const startEdit = (a: AdminAcademy) => {
     setEditing(a.id);
-    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "" });
+    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "", cameraId: a.cameraId ?? "" });
   };
 
   const cancelEdit = () => { setEditing(null); };
@@ -1197,6 +1198,7 @@ function AcademiesTab() {
         daysOfWeek: form.daysOfWeek,
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim() || null,
+        cameraId: form.cameraId || null,
       };
       if (editing === "new") {
         const created = await apiFetch("/admin/academies", { method: "POST", body: JSON.stringify(body) });
@@ -1482,7 +1484,7 @@ function AcademyForm({
   onCancel,
   title,
 }: {
-  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string };
+  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string; cameraId: string };
   fields: AdminField[];
   saving: boolean;
   academyId?: number;
@@ -1607,6 +1609,18 @@ function AcademyForm({
             );
           })}
         </div>
+      </div>
+      <div>
+        <label className="text-xs text-zinc-400 mb-1 block">Camera (optional)</label>
+        <select
+          value={form.cameraId}
+          onChange={(e) => onChange({ cameraId: e.target.value })}
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary appearance-none"
+        >
+          <option value="">— No camera —</option>
+          <option value="camera1">Camera 1</option>
+          <option value="camera2">Camera 2</option>
+        </select>
       </div>
       <div>
         <label className="text-xs text-zinc-400 mb-1 block">Description (optional)</label>
