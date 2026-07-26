@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { Radio } from "lucide-react";
 
-const LIVE_PLAYBACK_BASE = "https://replayjo.b-cdn.net";
+const LIVE_PLAYBACK_BASE = "/api/live";
 
 const CAMERAS = [
   { id: "camera1", label: "Camera 1" },
