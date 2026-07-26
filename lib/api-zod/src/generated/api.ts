@@ -231,6 +231,7 @@ export const ListAcademiesResponseItem = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "cameraId": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 export const ListAcademiesResponse = zod.array(ListAcademiesResponseItem)
@@ -252,6 +253,7 @@ export const GetAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "cameraId": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 
@@ -290,6 +292,7 @@ export const ListAdminAcademiesResponseItem = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "cameraId": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 export const ListAdminAcademiesResponse = zod.array(ListAdminAcademiesResponseItem)
@@ -315,6 +318,7 @@ export const CreateAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "cameraId": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 
@@ -343,6 +347,7 @@ export const UpdateAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "cameraId": zod.string().nullish(),
   "recordingCount": zod.number()
 })
 
