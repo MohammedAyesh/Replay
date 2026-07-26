@@ -134,9 +134,7 @@ router.get("/admin/contabo/status/:camera", requireContaboAuth as import("expres
 
   try {
     const result = await controlFetch(`/live/status/${camera}`, { method: "GET" });
-    if (!result.ok) {
-      logger.warn({ camera, status: result.status }, "Control server status error");
-    }
+    logger.info({ camera, ok: result.ok, status: result.status, body: result.body }, "Control server status");
     res.status(result.ok ? 200 : result.status).json(result.body);
   } catch (err) {
     logger.error({ err }, "Failed to reach control server");
