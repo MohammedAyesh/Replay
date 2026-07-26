@@ -60,6 +60,7 @@ function AcademyCard({
   index,
   isExpanded,
   onToggle,
+  onOpenLive,
 }: {
   academy: {
     id: number;
@@ -76,6 +77,7 @@ function AcademyCard({
   index: number;
   isExpanded: boolean;
   onToggle: () => void;
+  onOpenLive: (cameraId: string, title: string) => void;
 }) {
   const { data: recordings, isLoading: recLoading } = useGetAcademyRecordings(
     academy.id,
@@ -155,7 +157,7 @@ function AcademyCard({
                   <LiveTile
                     cameraId={academy.cameraId}
                     title={`${academy.name} live`}
-                    onOpen={() => setLiveFor({ cameraId: academy.cameraId!, title: `${academy.name} live` })}
+                    onOpen={() => onOpenLive(academy.cameraId!, `${academy.name} live`)}
                   />
                 </div>
               )}
@@ -268,6 +270,7 @@ export default function Academies() {
               index={i}
               isExpanded={expandedId === academy.id}
               onToggle={() => setExpandedId(expandedId === academy.id ? null : academy.id)}
+              onOpenLive={(cameraId, title) => setLiveFor({ cameraId, title })}
             />
           ))
         )}
