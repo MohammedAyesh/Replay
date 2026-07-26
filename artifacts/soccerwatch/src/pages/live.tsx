@@ -10,24 +10,26 @@ const CAMERAS = [
   { id: "camera2", label: "Camera 2" },
 ];
 
-async function pingStream(url: string): Promise<boolean> {
+async function pingStream(cameraId: string): Promise<boolean> {
   try {
-    const res = await fetch(url, { method: "HEAD", cache: "no-store" });
-    return res.ok;
+    const res = await fetch(`/api/live/status/${cameraId}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = await res.json() as { live: boolean };
+    return data.live;
   } catch {
     return false;
   }
 }
 
-function HlsPlayer({ url, label }: { url: string; label: string }) {
+function HlsPlayer({ cameraId, url, label }: { cameraId: string; url: string; label: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [live, setLive] = useState<boolean | null>(null); // null = checking
   const [playerReady, setPlayerReady] = useState(false);
 
   const check = useCallback(async () => {
-    const isLive = await pingStream(url);
+    const isLive = await pingStream(cameraId);
     setLive(isLive);
-  }, [url]);
+  }, [cameraId]);
 
   // Initial ping + periodic re-check
   useEffect(() => {
@@ -125,6 +127,7 @@ export default function Live() {
         {CAMERAS.map((cam) => (
           <HlsPlayer
             key={cam.id}
+            cameraId={cam.id}
             url={`${LIVE_PLAYBACK_BASE}/${cam.id}/index.m3u8`}
             label={cam.label}
           />
