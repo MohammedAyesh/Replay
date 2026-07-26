@@ -9,7 +9,7 @@ const VALID_CAMERAS = ["camera1", "camera2"];
  * GET /api/live/status/:camera
  * Server-side HEAD ping to the CDN m3u8 — avoids browser CORS restrictions.
  */
-router.get("/api/live/status/:camera", async (req, res): Promise<void> => {
+router.get("/live/status/:camera", async (req, res): Promise<void> => {
   const camera = req.params.camera as string;
   if (!VALID_CAMERAS.includes(camera)) {
     res.status(400).json({ live: false, error: "Invalid camera" });
