@@ -60,16 +60,24 @@ function LivePlayer({ cameraId }: { cameraId: string }) {
   }, [cameraId]);
 
   return (
-    <div className="relative rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
-      <div className="absolute top-2 start-2 z-10 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/70 backdrop-blur-sm">
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-        <Radio className="w-3 h-3 text-white" />
-        <span className="text-white text-[10px] font-semibold">Live</span>
+    <div className="aspect-[3/4] relative overflow-hidden rounded-2xl shadow-md bg-black group">
+      <video
+        ref={videoRef}
+        className="absolute inset-0 w-full h-full object-cover"
+        playsInline
+        muted
+        controls
+      />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80 pointer-events-none" />
+
+      <div className="absolute top-3 start-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/90 backdrop-blur-sm">
+        <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+        <span className="text-white text-[10px] font-bold uppercase tracking-wider">Live</span>
       </div>
-      <video ref={videoRef} className="w-full aspect-video bg-black" playsInline muted controls />
+
       {!ready && (
         <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60">
-          <div className="w-5 h-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
         </div>
       )}
     </div>
