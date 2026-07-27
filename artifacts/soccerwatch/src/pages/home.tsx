@@ -115,7 +115,7 @@ export default function Home() {
   return (
     <div className="flex-1 flex flex-col overflow-y-auto bg-background pb-20">
       {/* Banner carousel */}
-      <div className="relative w-full aspect-[16/9] overflow-hidden">
+      <div className="relative w-full h-[50vh] overflow-hidden">
         <AnimatePresence mode="wait">
           <motion.div
             key={slide}
