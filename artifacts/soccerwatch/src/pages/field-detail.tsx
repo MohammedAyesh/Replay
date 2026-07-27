@@ -880,15 +880,16 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
     el.addEventListener("timeupdate", onTimeUpdate);
     el.addEventListener("ended", onEnded);
 
+    const proxiedUrl = `/api/hls-proxy/manifest?url=${encodeURIComponent(video.playbackUrl)}`;
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
       hlsRef.current = hls;
-      hls.loadSource(video.playbackUrl);
+      hls.loadSource(proxiedUrl);
       hls.attachMedia(el);
       hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));
       hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) el.dispatchEvent(new Event("error")); });
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
-      el.src = video.playbackUrl;
+      el.src = proxiedUrl;
       el.addEventListener("canplay", () => el.play().catch(() => {}), { once: true });
     }
 

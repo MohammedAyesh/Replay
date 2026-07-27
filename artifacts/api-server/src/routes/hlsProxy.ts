@@ -37,7 +37,11 @@ router.get("/hls-proxy/manifest", async (req, res): Promise<void> => {
   }
 
   try {
-    const upstream = await fetch(raw, { signal: AbortSignal.timeout(10_000) });
+    const { hostname } = new URL(raw);
+    const upstream = await fetch(raw, {
+      signal: AbortSignal.timeout(10_000),
+      headers: { Referer: `https://${hostname}/` },
+    });
     if (!upstream.ok) {
       res.status(upstream.status).send("Upstream error");
       return;
@@ -91,7 +95,11 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
   }
 
   try {
-    const upstream = await fetch(raw, { signal: AbortSignal.timeout(30_000) });
+    const { hostname } = new URL(raw);
+    const upstream = await fetch(raw, {
+      signal: AbortSignal.timeout(30_000),
+      headers: { Referer: `https://${hostname}/` },
+    });
     if (!upstream.ok || !upstream.body) {
       res.status(upstream.status).send("Segment unavailable");
       return;
