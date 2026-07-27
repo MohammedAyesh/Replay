@@ -21,6 +21,10 @@ function parseDays(raw: string): string[] {
   return raw ? raw.split(",").map((d) => d.trim()).filter(Boolean) : [];
 }
 
+function parseCameras(raw: string): string[] {
+  return raw ? raw.split(",").map((c) => c.trim()).filter(Boolean) : [];
+}
+
 async function buildSummary(academy: typeof academiesTable.$inferSelect) {
   const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, academy.fieldId));
   const [recCount] = await db
@@ -37,7 +41,7 @@ async function buildSummary(academy: typeof academiesTable.$inferSelect) {
     description: academy.description ?? null,
     logoUrl: academy.logoUrl ?? null,
     liveAccess: academy.liveAccess,
-    cameraId: academy.cameraId ?? null,
+    cameraIds: parseCameras(academy.cameraIds),
     recordingCount: Number(recCount?.value ?? 0),
   };
 }
@@ -96,7 +100,7 @@ const CreateAcademyBody = z.object({
   daysOfWeek: z.array(z.string()).default([]),
   description: z.string().nullable().optional(),
   logoUrl: z.string().nullable().optional(),
-  cameraId: z.enum(VALID_CAMERAS).nullable().optional(),
+  cameraIds: z.array(z.enum(VALID_CAMERAS)).default([]),
 });
 
 const UpdateAcademyBody = z.object({
@@ -106,7 +110,7 @@ const UpdateAcademyBody = z.object({
   description: z.string().nullable().optional(),
   logoUrl: z.string().nullable().optional(),
   liveAccess: z.boolean().optional(),
-  cameraId: z.enum(VALID_CAMERAS).nullable().optional(),
+  cameraIds: z.array(z.enum(VALID_CAMERAS)).optional(),
 });
 
 const AddRecordingBody = z.object({
@@ -137,7 +141,7 @@ router.post("/admin/academies", async (req, res): Promise<void> => {
       daysOfWeek: body.data.daysOfWeek.join(","),
       description: body.data.description ?? null,
       logoUrl: body.data.logoUrl ?? null,
-      cameraId: body.data.cameraId ?? null,
+      cameraIds: body.data.cameraIds.join(","),
     })
     .returning();
 
@@ -161,7 +165,7 @@ router.patch("/admin/academies/:id", async (req, res): Promise<void> => {
   if (body.data.description !== undefined) updates.description = body.data.description;
   if (body.data.logoUrl !== undefined) updates.logoUrl = body.data.logoUrl;
   if (body.data.liveAccess !== undefined) updates.liveAccess = body.data.liveAccess;
-  if (body.data.cameraId !== undefined) updates.cameraId = body.data.cameraId;
+  if (body.data.cameraIds !== undefined) updates.cameraIds = body.data.cameraIds.join(",");
 
   const [academy] = await db
     .update(academiesTable)

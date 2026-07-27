@@ -17,7 +17,6 @@ export interface AcademySummary {
   description?: string | null;
   /** @nullable */
   logoUrl?: string | null;
-  /** @nullable */
-  cameraId?: string | null;
+  cameraIds: string[];
   recordingCount: number;
 }

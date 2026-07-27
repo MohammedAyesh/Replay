@@ -97,7 +97,7 @@ interface AdminAcademy {
   description: string | null;
   logoUrl: string | null;
   liveAccess: boolean;
-  cameraId: string | null;
+  cameraIds: string[];
   recordingCount: number;
 }
 
@@ -1119,7 +1119,7 @@ function AcademiesTab() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | "new" | null>(null);
-  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "", cameraId: "" });
+  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "", cameraIds: [] as string[] });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
 
@@ -1169,12 +1169,12 @@ function AcademiesTab() {
 
   const startNew = () => {
     setEditing("new");
-    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "", cameraId: "" });
+    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "", cameraIds: [] });
   };
 
   const startEdit = (a: AdminAcademy) => {
     setEditing(a.id);
-    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "", cameraId: a.cameraId ?? "" });
+    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "", cameraIds: a.cameraIds ?? [] });
   };
 
   const cancelEdit = () => { setEditing(null); };
@@ -1198,7 +1198,7 @@ function AcademiesTab() {
         daysOfWeek: form.daysOfWeek,
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim() || null,
-        cameraId: form.cameraId || null,
+        cameraIds: form.cameraIds,
       };
       if (editing === "new") {
         const created = await apiFetch("/admin/academies", { method: "POST", body: JSON.stringify(body) });
@@ -1484,7 +1484,7 @@ function AcademyForm({
   onCancel,
   title,
 }: {
-  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string; cameraId: string };
+  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string; cameraIds: string[] };
   fields: AdminField[];
   saving: boolean;
   academyId?: number;
@@ -1611,16 +1611,34 @@ function AcademyForm({
         </div>
       </div>
       <div>
-        <label className="text-xs text-zinc-400 mb-1 block">Camera (optional)</label>
-        <select
-          value={form.cameraId}
-          onChange={(e) => onChange({ cameraId: e.target.value })}
-          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary appearance-none"
-        >
-          <option value="">— No camera —</option>
-          <option value="camera1">Camera 1</option>
-          <option value="camera2">Camera 2</option>
-        </select>
+        <label className="text-xs text-zinc-400 mb-2 block">Cameras (optional)</label>
+        <div className="flex gap-2">
+          {(["camera1", "camera2"] as const).map((cam) => {
+            const label = cam === "camera1" ? "Camera 1" : "Camera 2";
+            const active = form.cameraIds.includes(cam);
+            return (
+              <button
+                key={cam}
+                type="button"
+                onClick={() =>
+                  onChange({
+                    cameraIds: active
+                      ? form.cameraIds.filter((c) => c !== cam)
+                      : [...form.cameraIds, cam],
+                  })
+                }
+                className={cn(
+                  "flex-1 py-2 rounded-lg text-xs font-semibold transition-colors border",
+                  active
+                    ? "bg-primary text-black border-primary"
+                    : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:text-white"
+                )}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
       <div>
         <label className="text-xs text-zinc-400 mb-1 block">Description (optional)</label>
@@ -1649,6 +1667,266 @@ function AcademyForm({
         </button>
       </div>
     </div>
+  );
+}
+
+// ─── Live Schedules ───────────────────────────────────────────────────────────
+
+const SCHEDULE_DAYS = [
+  { key: "monday",    label: "Mo" },
+  { key: "tuesday",   label: "Tu" },
+  { key: "wednesday", label: "We" },
+  { key: "thursday",  label: "Th" },
+  { key: "friday",    label: "Fr" },
+  { key: "saturday",  label: "Sa" },
+  { key: "sunday",    label: "Su" },
+] as const;
+
+interface LiveSchedule {
+  id: number;
+  camera: string;
+  startTime: string;
+  endTime: string;
+  daysOfWeek: string[];
+  enabled: boolean;
+}
+
+function LiveSchedulesSection({ adminPassword }: { adminPassword: string }) {
+  const [schedules, setSchedules] = useState<LiveSchedule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({
+    camera: "camera1" as "camera1" | "camera2",
+    startTime: "",
+    endTime: "",
+    daysOfWeek: [] as string[],
+  });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const apiFetch = useCallback(async (path: string, opts?: RequestInit) => {
+    const res = await fetch(`${basePath}/api${path}`, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-Admin-Password": adminPassword, ...(opts?.headers ?? {}) },
+      ...opts,
+    });
+    if (!res.ok && res.status !== 204) throw new Error(`${res.status}`);
+    return res.status === 204 ? null : res.json();
+  }, [adminPassword]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch("/admin/live-schedules");
+      setSchedules(Array.isArray(data) ? data : []);
+    } catch { /* silent */ }
+    setLoading(false);
+  }, [apiFetch]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggleDay = (day: string) =>
+    setForm((f) => ({
+      ...f,
+      daysOfWeek: f.daysOfWeek.includes(day)
+        ? f.daysOfWeek.filter((d) => d !== day)
+        : [...f.daysOfWeek, day],
+    }));
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    if (!form.startTime || !form.endTime) { setFormError("Start and end times are required"); return; }
+    setSaving(true);
+    try {
+      const row = await apiFetch("/admin/live-schedules", {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      setSchedules((s) => [...s, row as LiveSchedule]);
+      setForm({ camera: "camera1", startTime: "", endTime: "", daysOfWeek: [] });
+      setAdding(false);
+    } catch {
+      setFormError("Failed to save schedule");
+    }
+    setSaving(false);
+  };
+
+  const toggleEnabled = async (s: LiveSchedule) => {
+    try {
+      const updated = await apiFetch(`/admin/live-schedules/${s.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: !s.enabled }),
+      });
+      setSchedules((prev) => prev.map((x) => x.id === s.id ? updated as LiveSchedule : x));
+    } catch { /* silent */ }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Delete this schedule?")) return;
+    try {
+      await apiFetch(`/admin/live-schedules/${id}`, { method: "DELETE" });
+      setSchedules((s) => s.filter((x) => x.id !== id));
+    } catch { /* silent */ }
+  };
+
+  const dayLabel = (d: string) => SCHEDULE_DAYS.find((x) => x.key === d)?.label ?? d;
+  const cameraLabel = (c: string) => c === "camera1" ? "Cam 1" : "Cam 2";
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-primary" />
+          <h2 className="text-white font-bold text-base">Live Schedules</h2>
+        </div>
+        {!adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1 text-xs text-primary hover:opacity-80 transition-opacity"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add
+          </button>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 space-y-3">
+        <p className="text-zinc-500 text-xs">
+          Schedules fire in <span className="text-zinc-300 font-medium">Asia/Amman</span> time. Empty days = every day.
+        </p>
+
+        {/* Add form */}
+        {adding && (
+          <form onSubmit={handleAdd} className="space-y-3 pb-3 border-b border-zinc-800">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-zinc-400 mb-1 block">Camera</label>
+                <select
+                  value={form.camera}
+                  onChange={(e) => setForm((f) => ({ ...f, camera: e.target.value as "camera1" | "camera2" }))}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-white outline-none focus:border-primary appearance-none"
+                >
+                  <option value="camera1">Camera 1</option>
+                  <option value="camera2">Camera 2</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 col-span-1">
+                <div>
+                  <label className="text-xs text-zinc-400 mb-1 block">Start</label>
+                  <input
+                    type="time"
+                    value={form.startTime}
+                    onChange={(e) => setForm((f) => ({ ...f, startTime: e.target.value }))}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-white outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 mb-1 block">End</label>
+                  <input
+                    type="time"
+                    value={form.endTime}
+                    onChange={(e) => setForm((f) => ({ ...f, endTime: e.target.value }))}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-white outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400 mb-1.5 block">Days (empty = every day)</label>
+              <div className="flex gap-1">
+                {SCHEDULE_DAYS.map(({ key, label }) => {
+                  const active = form.daysOfWeek.includes(key);
+                  return (
+                    <button
+                      key={key} type="button" onClick={() => toggleDay(key)}
+                      className={cn(
+                        "flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-colors",
+                        active ? "bg-primary text-black" : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-white"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {formError && (
+              <p className="text-red-400 text-xs flex items-center gap-1">
+                <XCircle className="w-3.5 h-3.5" /> {formError}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="submit" disabled={saving}
+                className="flex-1 flex items-center justify-center gap-1.5 bg-primary text-black font-bold py-2.5 rounded-xl text-xs disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                {saving ? "Saving…" : "Save Schedule"}
+              </button>
+              <button
+                type="button" onClick={() => { setAdding(false); setFormError(null); }}
+                className="px-4 py-2.5 bg-zinc-800 text-zinc-400 rounded-xl text-xs hover:bg-zinc-700"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* List */}
+        {loading ? (
+          <div className="text-zinc-600 text-xs text-center py-3">Loading…</div>
+        ) : schedules.length === 0 && !adding ? (
+          <p className="text-zinc-600 text-xs text-center py-3">No schedules yet. Add one to auto-start and stop streams.</p>
+        ) : (
+          <div className="space-y-2">
+            {schedules.map((s) => (
+              <div key={s.id} className={cn(
+                "flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors",
+                s.enabled ? "border-zinc-700 bg-zinc-800/60" : "border-zinc-800 bg-zinc-900/40 opacity-60"
+              )}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-white">{cameraLabel(s.camera)}</span>
+                    <span className="text-xs text-zinc-300 font-mono">
+                      {s.startTime} → {s.endTime}
+                    </span>
+                    {s.daysOfWeek.length > 0 ? (
+                      <span className="text-[10px] text-zinc-500">
+                        {s.daysOfWeek.map(dayLabel).join(" · ")}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-zinc-600">Every day</span>
+                    )}
+                  </div>
+                </div>
+                {/* Enabled toggle */}
+                <button
+                  onClick={() => toggleEnabled(s)}
+                  title={s.enabled ? "Disable" : "Enable"}
+                  className={cn(
+                    "w-8 h-5 rounded-full transition-colors flex-shrink-0 relative",
+                    s.enabled ? "bg-primary" : "bg-zinc-700"
+                  )}
+                >
+                  <span className={cn(
+                    "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                    s.enabled ? "translate-x-3" : "translate-x-0.5"
+                  )} />
+                </button>
+                <button
+                  onClick={() => handleDelete(s.id)}
+                  className="p-1.5 rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors flex-shrink-0"
+                  title="Delete"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -2213,40 +2491,9 @@ function LiveTab() {
         </div>
       </section>
 
-      {/* ── Recording Request ─────────────────────────────── */}
-      <section>
-        <div className="flex items-center gap-2 mb-3">
-          <Video className="w-4 h-4 text-primary" />
-          <h2 className="text-white font-bold text-base">Create Recording</h2>
-        </div>
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-4">
-          <p className="text-zinc-500 text-xs mb-4">
-            Clips a segment from the live stream and uploads it to the <span className="text-zinc-300 font-medium">galaxyfield</span> Bunny Stream collection. The control server handles the upload.
-          </p>
-          <RecordingRequestForm
-            adminPassword={adminPassword}
-            onSubmitted={() => setRecordRefresh((n) => n + 1)}
-          />
-        </div>
-      </section>
+      {/* ── Live Schedules ────────────────────────────────── */}
+      <LiveSchedulesSection adminPassword={adminPassword} />
 
-      {/* ── Recent Recording Requests ─────────────────────── */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-zinc-500" />
-            <h2 className="text-white font-bold text-base">Recent Requests</h2>
-          </div>
-          <button
-            onClick={() => setRecordRefresh((n) => n + 1)}
-            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
-        </div>
-        <RecordingsList adminPassword={adminPassword} refreshKey={recordRefresh} />
-      </section>
 
       {/* Lock button */}
       <button

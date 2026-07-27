@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { GraduationCap, MapPin, Calendar, ChevronRight, Search, Video, Maximize,
-  Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Minimize } from "lucide-react";
+import { GraduationCap, MapPin, Calendar, ChevronRight, Search, Video,
+  Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Minimize, Maximize } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useQueryClient } from "@tanstack/react-query";
@@ -47,22 +47,31 @@ function DayBadge({ day }: { day: string }) {
   );
 }
 
-function LiveTile({ cameraId, title, onOpen }: { cameraId: string; title: string; onOpen: () => void }) {
+const CAMERA_LABELS: Record<string, string> = {
+  camera1: "Camera 1",
+  camera2: "Camera 2",
+};
+
+function LiveRow({ cameraId, onOpen }: { cameraId: string; onOpen: () => void }) {
   return (
-    <button onClick={onOpen} className="block w-full aspect-[3/4] relative overflow-hidden rounded-2xl shadow-md bg-black group">
-      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/40 to-black/80 pointer-events-none" />
-      <div className="absolute top-3 start-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/90 backdrop-blur-sm">
-        <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-        <span className="text-white text-[10px] font-bold uppercase tracking-wider">Live</span>
+    <button
+      onClick={onOpen}
+      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-muted/50 hover:bg-muted transition-colors group"
+    >
+      <div className="w-9 h-9 rounded-lg bg-red-500/15 flex items-center justify-center flex-shrink-0">
+        <Play className="w-4 h-4 text-red-500 fill-red-500" />
       </div>
-      <div className="absolute inset-0 flex items-center justify-center opacity-80 group-hover:opacity-100 transition-opacity">
-        <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-110 transition-transform">
-          <Maximize className="w-6 h-6 text-white" />
+      <div className="flex-1 text-start">
+        <p className="text-sm font-semibold text-foreground">
+          {CAMERA_LABELS[cameraId] ?? cameraId}
+        </p>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-[11px] font-medium text-red-500 uppercase tracking-wide">Live</span>
         </div>
       </div>
-      <p className="absolute bottom-3 start-0 end-0 px-3 text-white text-sm font-medium text-center pointer-events-none">
-        Tap to watch · Record your shot
-      </p>
+      <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors rtl:hidden" />
+      <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors ltr:hidden rotate-180" />
     </button>
   );
 }
@@ -71,7 +80,7 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive }: {
   academy: {
     id: number; name: string; fieldId: number; fieldName: string; fieldLocation: string;
     daysOfWeek: string[]; description?: string | null; logoUrl?: string | null;
-    cameraId?: string | null; recordingCount: number;
+    cameraIds?: string[] | null; recordingCount: number;
   };
   index: number; isExpanded: boolean; onToggle: () => void;
   onOpenLive: (cameraId: string, title: string) => void;
@@ -127,14 +136,18 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive }: {
             exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} className="overflow-hidden"
           >
             <div className="border-t border-border px-4 py-3 space-y-3">
-              {academy.cameraId && (
+              {academy.cameraIds && academy.cameraIds.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Live</p>
-                  <LiveTile
-                    cameraId={academy.cameraId}
-                    title={`${academy.name} live`}
-                    onOpen={() => onOpenLive(academy.cameraId!, `${academy.name} live`)}
-                  />
+                  <div className="space-y-1.5">
+                    {academy.cameraIds.map((cam) => (
+                      <LiveRow
+                        key={cam}
+                        cameraId={cam}
+                        onOpen={() => onOpenLive(cam, `${academy.name} · ${CAMERA_LABELS[cam] ?? cam}`)}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Recordings</p>

@@ -8,3 +8,4 @@ export * from "./follows";
 export * from "./ads";
 export * from "./userClips";
 export * from "./academies";
+export * from "./liveSchedules";

@@ -35,6 +35,7 @@ function HlsPlayer({ url, label }: { url: string; label: string }) {
         el.play().catch(() => {});
       });
     }
+    return undefined;
   }, [url]);
 
   return (
