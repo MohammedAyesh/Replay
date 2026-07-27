@@ -140,6 +140,25 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         hls.loadSource(src);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, seekToStartAndPlay);
+        // Without this, a fatal error (dropped connection, CDN hiccup, media
+        // decode fault) leaves hls.js detached and the player permanently
+        // frozen with no feedback. Recover from the recoverable classes and
+        // surface the rest so the UI can show an error state.
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal) return;
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              hls.destroy();
+              if (hlsRef.current === hls) hlsRef.current = null;
+              video.dispatchEvent(new Event("error"));
+          }
+        });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = src;
       }

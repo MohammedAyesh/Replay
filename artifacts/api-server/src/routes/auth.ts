@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, usersTable, academiesTable } from "@workspace/db";
 import { GetMeResponse, LoginAsGuestResponse } from "@workspace/api-zod";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
+import { GUEST_COOKIE_OPTIONS } from "../lib/cookies";
 
 const router: IRouter = Router();
 
@@ -46,7 +47,7 @@ router.post("/auth/guest", async (req, res): Promise<void> => {
     .values({ name: "Guest", email: `guest_${Date.now()}@soccerwatch.local`, isGuest: true, profileComplete: true })
     .returning();
 
-  res.cookie("guestId", String(guest.id), { httpOnly: true, sameSite: "lax" });
+  res.cookie("guestId", String(guest.id), GUEST_COOKIE_OPTIONS);
   res.json(LoginAsGuestResponse.parse({
     user: {
       id: guest.id,
@@ -63,7 +64,10 @@ router.post("/auth/guest", async (req, res): Promise<void> => {
 });
 
 router.post("/auth/logout", async (req, res): Promise<void> => {
-  res.clearCookie("guestId");
+  // clearCookie only matches if path/sameSite/secure match how it was set —
+  // otherwise the browser keeps the original cookie and logout silently fails.
+  const { maxAge: _maxAge, ...clearOptions } = GUEST_COOKIE_OPTIONS;
+  res.clearCookie("guestId", clearOptions);
   res.json({ ok: true });
 });
 
@@ -85,6 +89,13 @@ router.post("/auth/admin-setup", async (req, res): Promise<void> => {
   const user = await getLocalUserRecord(req);
   if (!user) {
     res.status(401).json({ error: "Unauthenticated" });
+    return;
+  }
+
+  // Guest accounts are anonymous and disposable — never grant admin to one.
+  // The bootstrap must be run while signed in with a real (Clerk) account.
+  if (user.isGuest || !user.clerkId) {
+    res.status(403).json({ error: "Sign in with a real account before running admin setup" });
     return;
   }
 
