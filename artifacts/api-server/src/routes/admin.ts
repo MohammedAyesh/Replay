@@ -408,9 +408,10 @@ router.post("/admin/fields/sync", async (req, res): Promise<void> => {
     const thumb = c.previewImageUrls?.[0] ?? null;
     const existingField = existingByGuid.get(guid);
     if (existingField) {
-      if (existingField.name !== name || existingField.thumbnailUrl !== thumb) {
+      // Preserve any admin-set display name; only sync the thumbnail from Bunny.
+      if (existingField.thumbnailUrl !== thumb) {
         const [updated] = await db.update(fieldsTable)
-          .set({ name, thumbnailUrl: thumb ?? undefined })
+          .set({ thumbnailUrl: thumb ?? undefined })
           .where(eq(fieldsTable.id, existingField.id))
           .returning();
         results.push(updated);

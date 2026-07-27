@@ -781,7 +781,7 @@ function FieldsTab() {
                   onClick={() => editing === field.id ? cancelEdit() : startEdit(field)}
                   className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
                 >
-                  {editing === field.id ? <X className="w-4 h-4" /> : <Image className="w-4 h-4" />}
+                  {editing === field.id ? <X className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
                 </button>
               </div>
             </div>
