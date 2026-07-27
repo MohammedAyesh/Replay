@@ -45,28 +45,54 @@ interface VideoMeta {
   startSeconds: number;
 }
 
-// Parse "jordangalaxy_19072026_150000.mp4" → { isoDate, startSeconds }
+// Supports two filename formats:
+//
+// Format A (long): cam{N}_{...}_{DDMMYYYY}_{HHMMSS}
+//   e.g. "cam1_GalaxyField_01_19072026_150000"
+//   last two underscore-segments = 8-digit DDMMYYYY + 6-digit HHMMSS
+//
+// Format B (short): cam{N}_{YYYYMMDD}{HH}
+//   e.g. "cam1_2026072714"  (14 = 14:00 / 2 pm)
+//   second segment is exactly 10 digits: first 8 = YYYYMMDD, last 2 = HH
+//   start time = HH:00; end time is derived from the video's duration field
 function parseVideoFilename(title: string): VideoMeta | null {
   const name = title.replace(/\.mp4$/i, "");
   const parts = name.split("_");
-  if (parts.length < 3) return null;
 
-  const datePart = parts[parts.length - 2]; // "19072026" DDMMYYYY
-  const timePart = parts[parts.length - 1]; // "150000"   HHMMSS
+  // ── Format A ──────────────────────────────────────────────────────────────
+  if (parts.length >= 3) {
+    const datePart = parts[parts.length - 2]; // "19072026" DDMMYYYY
+    const timePart = parts[parts.length - 1]; // "150000"   HHMMSS
 
-  if (!/^\d{8}$/.test(datePart) || !/^\d{6}$/.test(timePart)) return null;
+    if (/^\d{8}$/.test(datePart) && /^\d{6}$/.test(timePart)) {
+      const day   = datePart.slice(0, 2);
+      const month = datePart.slice(2, 4);
+      const year  = datePart.slice(4, 8);
+      const hh = parseInt(timePart.slice(0, 2), 10);
+      const mm = parseInt(timePart.slice(2, 4), 10);
+      const ss = parseInt(timePart.slice(4, 6), 10);
+      return {
+        isoDate: `${year}-${month}-${day}`,
+        startSeconds: hh * 3600 + mm * 60 + ss,
+      };
+    }
+  }
 
-  const day   = datePart.slice(0, 2);
-  const month = datePart.slice(2, 4);
-  const year  = datePart.slice(4, 8);
-  const hh = parseInt(timePart.slice(0, 2), 10);
-  const mm = parseInt(timePart.slice(2, 4), 10);
-  const ss = parseInt(timePart.slice(4, 6), 10);
+  // ── Format B ──────────────────────────────────────────────────────────────
+  // cam1_2026072714  →  parts = ["cam1", "2026072714"]
+  if (parts.length === 2 && /^\d{10}$/.test(parts[1])) {
+    const chunk = parts[1];
+    const year  = chunk.slice(0, 4);
+    const month = chunk.slice(4, 6);
+    const day   = chunk.slice(6, 8);
+    const hh    = parseInt(chunk.slice(8, 10), 10);
+    return {
+      isoDate: `${year}-${month}-${day}`,
+      startSeconds: hh * 3600, // start of the hour; end = startSeconds + video.duration
+    };
+  }
 
-  return {
-    isoDate: `${year}-${month}-${day}`,
-    startSeconds: hh * 3600 + mm * 60 + ss,
-  };
+  return null;
 }
 
 function formatClock(totalSeconds: number): string {
