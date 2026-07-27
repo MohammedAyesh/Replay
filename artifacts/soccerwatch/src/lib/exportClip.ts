@@ -84,9 +84,26 @@ export function triggerDownload(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+/**
+ * Rewrite a Bunny Stream HLS URL to go through our server-side proxy so the
+ * canvas never directly touches the CDN. This prevents the canvas from being
+ * tainted (no CORS headers needed from Bunny).
+ */
+function toProxiedHlsUrl(url: string): string {
+  try {
+    const { hostname } = new URL(url);
+    if (/^[a-zA-Z0-9-]+\.b-cdn\.net$|^video\.bunnycdn\.com$/.test(hostname)) {
+      return `${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`;
+    }
+  } catch { /* not a valid URL — leave unchanged */ }
+  return url;
+}
+
 export async function exportClip(options: ExportClipOptions): Promise<ExportResult> {
-  const { playbackUrl, startTime, endTime, cropPath, title, aspectRatio, onProgress, returnBlob } =
-    options;
+  const { startTime, endTime, cropPath, title, aspectRatio, onProgress, returnBlob } = options;
+  const playbackUrl = toProxiedHlsUrl(options.playbackUrl);
 
   const is9to16 = aspectRatio === "9:16";
   /** Output canvas dimensions — portrait for 9:16, landscape for 16:9 */

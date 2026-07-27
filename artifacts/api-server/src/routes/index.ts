@@ -16,6 +16,7 @@ import usersRouter from "./users";
 import academiesRouter from "./academies";
 import contaboRouter from "./contabo";
 import liveRouter from "./live";
+import hlsProxyRouter from "./hlsProxy";
 
 const router: IRouter = Router();
 
@@ -36,5 +37,6 @@ router.use(usersRouter);
 router.use(academiesRouter);
 router.use(contaboRouter);
 router.use(liveRouter);
+router.use(hlsProxyRouter);
 
 export default router;
