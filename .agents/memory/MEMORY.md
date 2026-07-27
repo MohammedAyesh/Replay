@@ -4,3 +4,4 @@
 - [customFetch cookie credentials](custom-fetch-cookies.md) — `customFetch` must pass `credentials: "include"` or httpOnly session cookies are silently dropped; breaks guest auth and any cookie-based auth flow.
 - [HLS.js seek-on-load duration](hls-seek-duration.md) — video.duration is 0/NaN at Hls MANIFEST_PARSED; seek to startTime*duration must wait for loadedmetadata/durationchange or clips play from 0 / freeze.
 - [Clip export architecture](clip-export-arch.md) — background FFmpeg render → Bunny Storage upload; dedup via inFlight Set + exportStatus DB column; download proxied through /api/user-clips/:id/download to avoid CORS.
+- [Camera upload filename format](camera-filename-format.md) — `cam{N}_{title}_{NN}_{YYYYMMDDhhmmss}.mp4`; trailing 14 digits = capture timestamp; title may contain spaces.
