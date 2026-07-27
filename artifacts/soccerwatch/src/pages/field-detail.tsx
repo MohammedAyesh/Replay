@@ -78,6 +78,21 @@ function parseVideoFilename(title: string): VideoMeta | null {
     }
   }
 
+  // ── Format C ──────────────────────────────────────────────────────────────
+  // cam2_2026-07-27_17:00  →  parts = ["cam2", "2026-07-27", "17:00"]
+  //   last two segments = ISO date (YYYY-MM-DD) + HH:MM time
+  if (parts.length >= 3) {
+    const datePart = parts[parts.length - 2];
+    const timePart = parts[parts.length - 1];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart) && /^\d{1,2}:\d{2}$/.test(timePart)) {
+      const [hh, mm] = timePart.split(":").map(Number);
+      return {
+        isoDate: datePart,
+        startSeconds: hh * 3600 + mm * 60,
+      };
+    }
+  }
+
   // ── Format B ──────────────────────────────────────────────────────────────
   // cam1_2026072714  →  parts = ["cam1", "2026072714"]
   if (parts.length === 2 && /^\d{10}$/.test(parts[1])) {
