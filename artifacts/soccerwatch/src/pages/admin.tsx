@@ -854,10 +854,6 @@ function BannersTab() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const queryClient = useQueryClient();
-  const [introUrl, setIntroUrl] = useState<string | null>(null);
-  const [introLoading, setIntroLoading] = useState(true);
-  const [introUploading, setIntroUploading] = useState(false);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -868,33 +864,6 @@ function BannersTab() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    apiFetch("/admin/clip-intro")
-      .then((data) => setIntroUrl(data?.introVideoUrl ?? null))
-      .catch(() => {})
-      .finally(() => setIntroLoading(false));
-  }, []);
-
-  const uploadIntro = async (file: File) => {
-    setIntroUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("video", file);
-      const response = await fetch(`${basePath}/api/admin/clip-intro`, {
-        method: "POST", credentials: "include", body: formData,
-      });
-      if (!response.ok) throw new Error("Upload failed");
-      const data = await response.json();
-      setIntroUrl(data.introVideoUrl);
-    } catch { /* keep current intro */ }
-    setIntroUploading(false);
-  };
-
-  const removeIntro = async () => {
-    await apiFetch("/admin/clip-intro", { method: "DELETE" });
-    setIntroUrl(null);
-  };
 
   const startEdit = (banner: AdminBanner) => {
     setEditing(banner.id);
@@ -1065,41 +1034,6 @@ function BannersTab() {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-        <div className="flex items-center gap-2 mb-1">
-          <Video className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold text-white">Clip intro video</h3>
-        </div>
-        <p className="text-xs text-zinc-500 mb-3">
-          This video is added to the beginning of every newly exported player clip.
-        </p>
-        {introLoading ? (
-          <p className="text-xs text-zinc-500">Loading…</p>
-        ) : (
-          <div className="flex items-center gap-2">
-            <label className="cursor-pointer rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-black hover:bg-primary/90">
-              {introUploading ? "Uploading…" : introUrl ? "Replace intro" : "Choose intro video"}
-              <input
-                type="file"
-                accept="video/mp4,video/webm,video/quicktime"
-                className="hidden"
-                disabled={introUploading}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void uploadIntro(file);
-                  event.target.value = "";
-                }}
-              />
-            </label>
-            {introUrl && (
-              <button type="button" onClick={() => void removeIntro()} className="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-red-400 hover:bg-zinc-700">
-                Remove
-              </button>
-            )}
-            <span className="text-xs text-zinc-500">{introUrl ? "Active" : "No intro selected"}</span>
-          </div>
-        )}
-      </div>
       <div className="flex items-center justify-between">
         <span className="text-zinc-500 text-xs">{banners.length} banner{banners.length !== 1 ? "s" : ""}</span>
         <button
@@ -1195,6 +1129,16 @@ function AcademiesTab() {
   const [addingRec, setAddingRec] = useState<number | null>(null);
   const [removingRec, setRemovingRec] = useState<string | null>(null);
 
+  // Intro video
+  const [introUrl, setIntroUrl] = useState<string | null>(null);
+  const [introLoading, setIntroLoading] = useState(true);
+  const [introUploading, setIntroUploading] = useState(false);
+
+  // Add-recording form
+  const [showAddRec, setShowAddRec] = useState(false);
+  const [recForm, setRecForm] = useState({ fieldId: 0, court: "", date: "", timeSlot: "", duration: "", score: "", videoUrl: "" });
+  const [creatingRec, setCreatingRec] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -1209,6 +1153,64 @@ function AcademiesTab() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    apiFetch("/admin/clip-intro")
+      .then((data) => setIntroUrl(data?.introVideoUrl ?? null))
+      .catch(() => {})
+      .finally(() => setIntroLoading(false));
+  }, []);
+
+  // Initialise fieldId once fields load
+  useEffect(() => {
+    if (fields.length > 0 && !recForm.fieldId) {
+      setRecForm((f) => ({ ...f, fieldId: fields[0].id }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fields]);
+
+  const uploadIntro = async (file: File) => {
+    setIntroUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("video", file);
+      const response = await fetch(`${basePath}/api/admin/clip-intro`, {
+        method: "POST", credentials: "include", body: formData,
+      });
+      if (!response.ok) throw new Error("Upload failed");
+      const data = await response.json();
+      setIntroUrl(data.introVideoUrl);
+    } catch { /* keep current intro */ }
+    setIntroUploading(false);
+  };
+
+  const removeIntro = async () => {
+    await apiFetch("/admin/clip-intro", { method: "DELETE" });
+    setIntroUrl(null);
+  };
+
+  const createRecording = async () => {
+    if (!recForm.fieldId || !recForm.court.trim() || !recForm.date || !recForm.timeSlot.trim() || !recForm.duration.trim()) return;
+    setCreatingRec(true);
+    try {
+      const rec: AdminRecording = await apiFetch("/admin/recordings", {
+        method: "POST",
+        body: JSON.stringify({
+          fieldId: recForm.fieldId,
+          court: recForm.court.trim(),
+          date: recForm.date,
+          timeSlot: recForm.timeSlot.trim(),
+          duration: recForm.duration.trim(),
+          score: recForm.score.trim() || null,
+          videoUrl: recForm.videoUrl.trim(),
+        }),
+      });
+      setAllRecordings((p) => [...p, rec]);
+      setShowAddRec(false);
+      setRecForm({ fieldId: fields[0]?.id ?? 0, court: "", date: "", timeSlot: "", duration: "", score: "", videoUrl: "" });
+    } catch { /* silent */ }
+    setCreatingRec(false);
+  };
 
   const loadRecordings = useCallback(async (academyId: number) => {
     setRecLoading(academyId);
@@ -1226,9 +1228,11 @@ function AcademiesTab() {
   const toggleExpand = (academy: AdminAcademy) => {
     if (expandedId === academy.id) {
       setExpandedId(null);
+      setShowAddRec(false);
     } else {
       setExpandedId(academy.id);
-        if (!recMap[academy.id]) loadRecordings(academy.id);
+      setShowAddRec(false);
+      if (!recMap[academy.id]) loadRecordings(academy.id);
     }
   };
 
@@ -1329,6 +1333,43 @@ function AcademiesTab() {
 
   return (
     <div className="space-y-4">
+      {/* Clip intro video */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Video className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold text-white">Clip intro video</h3>
+        </div>
+        <p className="text-xs text-zinc-500 mb-3">
+          This video is prepended to every newly exported player clip.
+        </p>
+        {introLoading ? (
+          <p className="text-xs text-zinc-500">Loading…</p>
+        ) : (
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="cursor-pointer rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-black hover:bg-primary/90">
+              {introUploading ? "Uploading…" : introUrl ? "Replace intro" : "Choose intro video"}
+              <input
+                type="file"
+                accept="video/mp4,video/webm,video/quicktime"
+                className="hidden"
+                disabled={introUploading}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void uploadIntro(file);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            {introUrl && (
+              <button type="button" onClick={() => void removeIntro()} className="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-red-400 hover:bg-zinc-700">
+                Remove
+              </button>
+            )}
+            <span className="text-xs text-zinc-500">{introUrl ? "✓ Active" : "No intro selected"}</span>
+          </div>
+        )}
+      </div>
+
       {/* Header row */}
       <div className="flex items-center justify-between">
         <span className="text-zinc-500 text-xs">{academies.length} {academies.length === 1 ? "academy" : "academies"}</span>
@@ -1521,8 +1562,105 @@ function AcademiesTab() {
                           </div>
                         )}
 
-                        {allRecordings.length === 0 && (
+                        {allRecordings.length === 0 && !showAddRec && (
                           <p className="text-zinc-600 text-xs py-2">No recordings available in any field.</p>
+                        )}
+
+                        {/* Add recording button / form */}
+                        {!showAddRec ? (
+                          <button
+                            onClick={() => { setShowAddRec(true); setRecForm((f) => ({ ...f, fieldId: fields[0]?.id ?? 0 })); }}
+                            className="flex items-center gap-1 mt-1 px-2 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-xs"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            Add recording
+                          </button>
+                        ) : (
+                          <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3 space-y-2 mt-1">
+                            <p className="text-xs font-semibold text-zinc-300">New recording</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[11px] text-zinc-500 block mb-0.5">Field</label>
+                                <select
+                                  value={recForm.fieldId}
+                                  onChange={(e) => setRecForm((f) => ({ ...f, fieldId: parseInt(e.target.value) }))}
+                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                                >
+                                  {fields.map((fld) => <option key={fld.id} value={fld.id}>{fld.name}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-[11px] text-zinc-500 block mb-0.5">Court</label>
+                                <input
+                                  value={recForm.court}
+                                  onChange={(e) => setRecForm((f) => ({ ...f, court: e.target.value }))}
+                                  placeholder="e.g. Court A"
+                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[11px] text-zinc-500 block mb-0.5">Date</label>
+                                <input
+                                  type="date"
+                                  value={recForm.date}
+                                  onChange={(e) => setRecForm((f) => ({ ...f, date: e.target.value }))}
+                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[11px] text-zinc-500 block mb-0.5">Time slot</label>
+                                <input
+                                  value={recForm.timeSlot}
+                                  onChange={(e) => setRecForm((f) => ({ ...f, timeSlot: e.target.value }))}
+                                  placeholder="e.g. 10:00–11:00"
+                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[11px] text-zinc-500 block mb-0.5">Duration</label>
+                                <input
+                                  value={recForm.duration}
+                                  onChange={(e) => setRecForm((f) => ({ ...f, duration: e.target.value }))}
+                                  placeholder="e.g. 90min"
+                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[11px] text-zinc-500 block mb-0.5">Score (optional)</label>
+                                <input
+                                  value={recForm.score}
+                                  onChange={(e) => setRecForm((f) => ({ ...f, score: e.target.value }))}
+                                  placeholder="e.g. 2–1"
+                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-[11px] text-zinc-500 block mb-0.5">Video URL (optional)</label>
+                              <input
+                                value={recForm.videoUrl}
+                                onChange={(e) => setRecForm((f) => ({ ...f, videoUrl: e.target.value }))}
+                                placeholder="https://…"
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => void createRecording()}
+                                disabled={creatingRec || !recForm.fieldId || !recForm.court.trim() || !recForm.date || !recForm.timeSlot.trim() || !recForm.duration.trim()}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-black text-xs font-bold hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                              >
+                                {creatingRec ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                Create
+                              </button>
+                              <button
+                                onClick={() => setShowAddRec(false)}
+                                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 text-xs transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
                         )}
                       </>
                     )}

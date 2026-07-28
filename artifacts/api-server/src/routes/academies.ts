@@ -141,6 +141,51 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
   })));
 });
 
+router.post("/admin/recordings", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const Body = z.object({
+    fieldId: z.number().int().positive(),
+    court: z.string().min(1),
+    date: z.string().min(1),
+    timeSlot: z.string().min(1),
+    duration: z.string().min(1),
+    score: z.string().nullish(),
+    videoUrl: z.string().optional().default(""),
+  });
+
+  const body = Body.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+
+  const [recording] = await db
+    .insert(recordingsTable)
+    .values({
+      fieldId: body.data.fieldId,
+      court: body.data.court,
+      date: body.data.date,
+      timeSlot: body.data.timeSlot,
+      duration: body.data.duration,
+      score: body.data.score ?? null,
+      videoUrl: body.data.videoUrl ?? "",
+    })
+    .returning();
+
+  const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, recording.fieldId));
+
+  res.status(201).json({
+    id: recording.id,
+    fieldId: recording.fieldId,
+    court: recording.court,
+    date: recording.date,
+    timeSlot: recording.timeSlot,
+    duration: recording.duration,
+    score: recording.score ?? null,
+    videoUrl: recording.videoUrl,
+    fieldName: field?.name ?? null,
+  });
+});
+
 router.post("/admin/academies", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
