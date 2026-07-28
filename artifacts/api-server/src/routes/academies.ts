@@ -228,12 +228,15 @@ router.post("/admin/academies/:id/intro", uploadVideo.single("intro"), async (re
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const file = req.file;
+  req.log.info({ hasFile: !!file, mime: file?.mimetype, size: file?.size }, "intro upload: file check");
   if (!file) { res.status(400).json({ error: "No file uploaded" }); return; }
   if (!file.mimetype.startsWith("video/")) {
     res.status(400).json({ error: "File must be a video" });
     return;
   }
-  if (!isBunnyStorageConfigured()) {
+  const storageOk = isBunnyStorageConfigured();
+  req.log.info({ storageOk }, "intro upload: storage check");
+  if (!storageOk) {
     res.status(503).json({ error: "Export storage not configured" });
     return;
   }
@@ -245,21 +248,28 @@ router.post("/admin/academies/:id/intro", uploadVideo.single("intro"), async (re
 
   let introVideoUrl: string;
   try {
+    req.log.info({ remotePath }, "intro upload: starting bunny upload");
     introVideoUrl = await uploadBufferToBunnyStorage(file.buffer, remotePath, file.mimetype);
+    req.log.info({ introVideoUrl }, "intro upload: bunny upload done");
   } catch (err) {
+    req.log.error({ err }, "intro upload: bunny upload failed");
     res.status(502).json({ error: err instanceof Error ? err.message : "Upload failed" });
     return;
   }
 
-  const [academy] = await db
-    .update(academiesTable)
-    .set({ introVideoUrl })
-    .where(eq(academiesTable.id, id))
-    .returning();
-
-  if (!academy) { res.status(404).json({ error: "Academy not found" }); return; }
-
-  res.json({ introVideoUrl });
+  try {
+    const [academy] = await db
+      .update(academiesTable)
+      .set({ introVideoUrl })
+      .where(eq(academiesTable.id, id))
+      .returning();
+    req.log.info({ academyFound: !!academy, id }, "intro upload: db update done");
+    if (!academy) { res.status(404).json({ error: "Academy not found" }); return; }
+    res.json({ introVideoUrl });
+  } catch (err) {
+    req.log.error({ err }, "intro upload: db update threw");
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 router.delete("/admin/academies/:id/intro", async (req, res): Promise<void> => {
