@@ -31,8 +31,17 @@ router.get("/fields/:id/videos", async (req, res): Promise<void> => {
     return;
   }
 
-  const searchTerm = encodeURIComponent(field.name);
-  const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos?search=${searchTerm}&page=1&itemsPerPage=100&orderBy=date`;
+  // Videos are titled cam{N}_..., never the field's human-readable name, so a
+  // text search against field.name (the previous approach here) matches
+  // nothing — or worse, matches an unrelated video that happens to share a
+  // word. field.bunnyGuid is the field's actual Bunny Collection, so query
+  // by exact collection membership instead, same as /bunny/collections/:guid/videos.
+  if (!field.bunnyGuid) {
+    res.json([]);
+    return;
+  }
+
+  const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos?collection=${encodeURIComponent(field.bunnyGuid)}&page=1&itemsPerPage=100&orderBy=date`;
 
   const bunnyRes = await fetch(url, {
     headers: {
