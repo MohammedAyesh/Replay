@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, count } from "drizzle-orm";
+import { eq, and, count, desc } from "drizzle-orm";
 import { z } from "zod";
 import multer from "multer";
 import { db, academiesTable, academyRecordingsTable, fieldsTable, recordingsTable, usersTable } from "@workspace/db";
@@ -124,6 +124,21 @@ router.get("/admin/academies", async (req, res): Promise<void> => {
   const academies = await db.select().from(academiesTable).orderBy(academiesTable.name);
   const summaries = await Promise.all(academies.map(buildSummary));
   res.json(summaries);
+});
+
+router.get("/admin/recordings", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const rows = await db
+    .select({ recording: recordingsTable, field: fieldsTable })
+    .from(recordingsTable)
+    .innerJoin(fieldsTable, eq(recordingsTable.fieldId, fieldsTable.id))
+    .orderBy(desc(recordingsTable.date), recordingsTable.timeSlot);
+  res.json(rows.map(({ recording: r, field: f }) => ({
+    id: r.id, fieldId: r.fieldId, court: r.court, date: r.date,
+    timeSlot: r.timeSlot, duration: r.duration, score: r.score ?? null,
+    videoUrl: r.videoUrl, fieldName: f.name,
+  })));
 });
 
 router.post("/admin/academies", async (req, res): Promise<void> => {

@@ -32,6 +32,13 @@ export interface FfmpegExportOptions {
   referer?: string;
 }
 
+export interface PrependIntroOptions {
+  introUrl: string;
+  clipPath: string;
+  referer?: string;
+  accessKey?: string;
+}
+
 
 /**
  * Build an FFmpeg crop filter string for the given keyframes.
@@ -317,5 +324,45 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
 export function cleanupTempFile(filePath: string): void {
   fs.unlink(filePath, (err) => {
     if (err) logger.warn({ err, filePath }, "Failed to delete temp clip file");
+  });
+}
+
+/**
+ * Normalize the selected intro and concatenate it before the already-rendered
+ * clip. The intro is scaled into the same 16:9 canvas so the resulting MP4 is
+ * compatible with the existing download/player pipeline.
+ */
+export async function prependIntro(options: PrependIntroOptions): Promise<string> {
+  const outputPath = path.join(os.tmpdir(), `soccerwatch-clip-intro-${randomUUID()}.mp4`);
+  const headerVal = [
+    options.referer ? `Referer: ${options.referer}` : null,
+    options.accessKey ? `AccessKey: ${options.accessKey}` : null,
+    "User-Agent: Mozilla/5.0",
+  ].filter(Boolean).join("\r\n") + "\r\n";
+  const args = [
+    "-headers", headerVal,
+    "-i", options.introUrl,
+    "-i", options.clipPath,
+    "-filter_complex",
+    "[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[introv];" +
+      "[1:v]scale=1920:1080:force_original_aspect_ratio=disable,setsar=1,fps=30[clipv];" +
+      "[0:a]aresample=async=1[introa];[1:a]aresample=async=1[clipa];" +
+      "[introv][introa][clipv][clipa]concat=n=2:v=1:a=1[v][a]",
+    "-map", "[v]", "-map", "[a]",
+    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart", "-y", outputPath,
+  ];
+  return new Promise((resolve, reject) => {
+    const proc = spawn("ffmpeg", args);
+    let stderr = "";
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        logger.error({ code, stderr: stderr.slice(-2000) }, "Intro prepend failed");
+        reject(new Error(`FFmpeg intro prepend exited with code ${code}`));
+      } else resolve(outputPath);
+    });
   });
 }

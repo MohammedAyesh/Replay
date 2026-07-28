@@ -120,3 +120,21 @@ export async function uploadBufferToBunnyStorage(
   const base = BUNNY_STORAGE_CDN_URL.replace(/\/$/, "");
   return `${base}/${remotePath}`;
 }
+
+/** Upload the single admin-selected clip intro video. */
+export async function uploadClipIntroToBunnyStorage(
+  buffer: Buffer,
+  contentType: string,
+): Promise<string> {
+  const remotePath = "clip-intro/intro.mp4";
+  const uploadUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${remotePath}`;
+  const response = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { AccessKey: BUNNY_STORAGE_API_KEY, "Content-Type": contentType },
+    body: buffer,
+  });
+  if (!response.ok) {
+    throw new Error(`Bunny Storage upload failed: ${response.status}`);
+  }
+  return `${BUNNY_STORAGE_CDN_URL.replace(/\/$/, "")}/${remotePath}`;
+}

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, count, and, desc, sql } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable } from "@workspace/db";
+import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable } from "@workspace/db";
 import {
   UpdateAdParams,
   UpdateAdBody,
@@ -12,7 +12,7 @@ import {
   GetAdStatsResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID } from "../lib/bunny";
+import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID, isBunnyStorageConfigured, uploadClipIntroToBunnyStorage } from "../lib/bunny";
 import { getStorageConfig as getBannerStorageConfig, type BannerJson } from "./banners";
 import multer from "multer";
 
@@ -535,6 +535,43 @@ router.patch("/admin/banners/:id", async (req, res): Promise<void> => {
 });
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const introUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 250 * 1024 * 1024 } });
+
+router.get("/admin/clip-intro", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const [settings] = await db.select().from(clipSettingsTable).limit(1);
+  res.json({ introVideoUrl: settings?.introVideoUrl ?? null });
+});
+
+router.post("/admin/clip-intro", introUpload.single("video"), async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  if (!isBunnyStorageConfigured()) { res.status(503).json({ error: "Storage not configured" }); return; }
+  const file = req.file;
+  if (!file || !file.mimetype.startsWith("video/")) {
+    res.status(400).json({ error: "Upload an MP4 video file" }); return;
+  }
+  try {
+    const introVideoUrl = await uploadClipIntroToBunnyStorage(file.buffer, file.mimetype);
+    const [existing] = await db.select().from(clipSettingsTable).limit(1);
+    if (existing) {
+      await db.update(clipSettingsTable).set({ introVideoUrl, updatedAt: new Date() }).where(eq(clipSettingsTable.id, existing.id));
+    } else {
+      await db.insert(clipSettingsTable).values({ introVideoUrl });
+    }
+    res.json({ introVideoUrl });
+  } catch {
+    res.status(502).json({ error: "Failed to upload intro video" });
+  }
+});
+
+router.delete("/admin/clip-intro", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  await db.update(clipSettingsTable).set({ introVideoUrl: null, updatedAt: new Date() });
+  res.status(204).send();
+});
 
 router.post("/admin/banners/:id/image", upload.single("image"), async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);

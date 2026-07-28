@@ -30,6 +30,8 @@ import {
   uploadToBunnyStorage,
   BUNNY_STORAGE_API_KEY,
 } from "../lib/bunny";
+import { clipSettingsTable } from "@workspace/db";
+import { prependIntro } from "../lib/ffmpegExport";
 import { renderClip, cleanupTempFile } from "../lib/ffmpegExport";
 import { logger } from "../lib/logger";
 
@@ -595,8 +597,19 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
       const referer = `https://${new URL(videoUrl).host}/`;
       logger.info({ clipId, videoUrl }, "Using HLS URL for FFmpeg input");
 
-      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer });
-      const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
+       tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer });
+       const [settings] = await db.select().from(clipSettingsTable).limit(1);
+       if (settings?.introVideoUrl) {
+         const clipWithIntro = await prependIntro({
+           introUrl: settings.introVideoUrl,
+           clipPath: tmpPath,
+           referer,
+           accessKey: BUNNY_STORAGE_API_KEY,
+         });
+         cleanupTempFile(tmpPath);
+         tmpPath = clipWithIntro;
+       }
+       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
       await db
         .update(userClipsTable)
         .set({ exportStatus: "done", exportedUrl })

@@ -9,3 +9,4 @@ export * from "./ads";
 export * from "./userClips";
 export * from "./academies";
 export * from "./liveSchedules";
+export * from "./clipSettings";

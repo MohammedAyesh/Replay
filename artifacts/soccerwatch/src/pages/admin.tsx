@@ -854,6 +854,9 @@ function BannersTab() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const [introUrl, setIntroUrl] = useState<string | null>(null);
+  const [introLoading, setIntroLoading] = useState(true);
+  const [introUploading, setIntroUploading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -865,6 +868,33 @@ function BannersTab() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    apiFetch("/admin/clip-intro")
+      .then((data) => setIntroUrl(data?.introVideoUrl ?? null))
+      .catch(() => {})
+      .finally(() => setIntroLoading(false));
+  }, []);
+
+  const uploadIntro = async (file: File) => {
+    setIntroUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("video", file);
+      const response = await fetch(`${basePath}/api/admin/clip-intro`, {
+        method: "POST", credentials: "include", body: formData,
+      });
+      if (!response.ok) throw new Error("Upload failed");
+      const data = await response.json();
+      setIntroUrl(data.introVideoUrl);
+    } catch { /* keep current intro */ }
+    setIntroUploading(false);
+  };
+
+  const removeIntro = async () => {
+    await apiFetch("/admin/clip-intro", { method: "DELETE" });
+    setIntroUrl(null);
+  };
 
   const startEdit = (banner: AdminBanner) => {
     setEditing(banner.id);
@@ -1035,6 +1065,41 @@ function BannersTab() {
 
   return (
     <div className="space-y-3">
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Video className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold text-white">Clip intro video</h3>
+        </div>
+        <p className="text-xs text-zinc-500 mb-3">
+          This video is added to the beginning of every newly exported player clip.
+        </p>
+        {introLoading ? (
+          <p className="text-xs text-zinc-500">Loading…</p>
+        ) : (
+          <div className="flex items-center gap-2">
+            <label className="cursor-pointer rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-black hover:bg-primary/90">
+              {introUploading ? "Uploading…" : introUrl ? "Replace intro" : "Choose intro video"}
+              <input
+                type="file"
+                accept="video/mp4,video/webm,video/quicktime"
+                className="hidden"
+                disabled={introUploading}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void uploadIntro(file);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            {introUrl && (
+              <button type="button" onClick={() => void removeIntro()} className="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-red-400 hover:bg-zinc-700">
+                Remove
+              </button>
+            )}
+            <span className="text-xs text-zinc-500">{introUrl ? "Active" : "No intro selected"}</span>
+          </div>
+        )}
+      </div>
       <div className="flex items-center justify-between">
         <span className="text-zinc-500 text-xs">{banners.length} banner{banners.length !== 1 ? "s" : ""}</span>
         <button
@@ -1125,7 +1190,7 @@ function AcademiesTab() {
 
   // Per-academy recording data
   const [recMap, setRecMap] = useState<Record<number, AdminRecording[]>>({});
-  const [fieldRecMap, setFieldRecMap] = useState<Record<number, AdminRecording[]>>({});
+  const [allRecordings, setAllRecordings] = useState<AdminRecording[]>([]);
   const [recLoading, setRecLoading] = useState<number | null>(null);
   const [addingRec, setAddingRec] = useState<number | null>(null);
   const [removingRec, setRemovingRec] = useState<string | null>(null);
@@ -1145,15 +1210,15 @@ function AcademiesTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  const loadRecordings = useCallback(async (academyId: number, fieldId: number) => {
+  const loadRecordings = useCallback(async (academyId: number) => {
     setRecLoading(academyId);
     try {
-      const [acRecs, fieldRecs] = await Promise.all([
+      const [acRecs, recordings] = await Promise.all([
         apiFetch(`/academies/${academyId}/recordings`),
-        apiFetch(`/fields/${fieldId}/recordings`),
+        apiFetch("/admin/recordings"),
       ]);
       setRecMap((p) => ({ ...p, [academyId]: acRecs ?? [] }));
-      setFieldRecMap((p) => ({ ...p, [fieldId]: fieldRecs ?? [] }));
+      setAllRecordings(recordings ?? []);
     } catch { /* silent */ }
     setRecLoading(null);
   }, []);
@@ -1163,7 +1228,7 @@ function AcademiesTab() {
       setExpandedId(null);
     } else {
       setExpandedId(academy.id);
-      if (!recMap[academy.id]) loadRecordings(academy.id, academy.fieldId);
+        if (!recMap[academy.id]) loadRecordings(academy.id);
     }
   };
 
@@ -1244,7 +1309,7 @@ function AcademiesTab() {
         method: "POST",
         body: JSON.stringify({ recordingId }),
       });
-      await loadRecordings(academy.id, academy.fieldId);
+      await loadRecordings(academy.id);
       setAcademies((p) => p.map((a) => a.id === academy.id ? { ...a, recordingCount: a.recordingCount + 1 } : a));
     } catch { /* silent */ }
     setAddingRec(null);
@@ -1303,8 +1368,7 @@ function AcademiesTab() {
             const isExpanded = expandedId === academy.id;
             const isEditing = editing === academy.id;
             const linked = linkedIds(academy.id);
-            const fieldRecs = fieldRecMap[academy.fieldId] ?? [];
-            const availableToAdd = fieldRecs.filter((r) => !linked.has(r.id));
+            const availableToAdd = allRecordings.filter((r) => !linked.has(r.id));
 
             return (
               <div key={academy.id} className="border border-zinc-800 rounded-xl overflow-hidden bg-zinc-900">
@@ -1426,14 +1490,14 @@ function AcademiesTab() {
                         {availableToAdd.length > 0 && (
                           <div>
                             <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                              Add from {academy.fieldName}
+                              Choose recordings from any field
                             </p>
                             <div className="space-y-1.5 max-h-48 overflow-y-auto">
                               {availableToAdd.map((rec) => (
                                 <div key={rec.id} className="flex items-center gap-2 p-2 rounded-lg bg-zinc-800/30 border border-zinc-800">
                                   <Video className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-zinc-300 text-xs font-medium truncate">{rec.date} · {rec.timeSlot}</p>
+                                    <p className="text-zinc-300 text-xs font-medium truncate">{rec.fieldName} · {rec.date} · {rec.timeSlot}</p>
                                     <p className="text-zinc-600 text-[11px] truncate">{rec.court} · {rec.duration}{rec.score ? ` · ${rec.score}` : ""}</p>
                                   </div>
                                   <button
@@ -1457,8 +1521,8 @@ function AcademiesTab() {
                           </div>
                         )}
 
-                        {fieldRecs.length === 0 && (
-                          <p className="text-zinc-600 text-xs py-2">No recordings for this field yet.</p>
+                        {allRecordings.length === 0 && (
+                          <p className="text-zinc-600 text-xs py-2">No recordings available in any field.</p>
                         )}
                       </>
                     )}
