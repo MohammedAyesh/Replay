@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, count, sql } from "drizzle-orm";
 import { db, userClipsTable, usersTable, likesTable, followsTable } from "@workspace/db";
 import {
   CreateUserClipBody,
@@ -293,19 +293,23 @@ router.post("/user-clips/:id/like", async (req, res): Promise<void> => {
     .where(and(eq(likesTable.userId, userId), eq(likesTable.userClipId, userClipId)));
 
   let liked: boolean;
-  let newCount: number;
 
   if (existing) {
     await db
       .delete(likesTable)
       .where(and(eq(likesTable.userId, userId), eq(likesTable.userClipId, userClipId)));
-    newCount = Math.max(0, clip.likeCount - 1);
     liked = false;
   } else {
     await db.insert(likesTable).values({ userId, userClipId });
-    newCount = clip.likeCount + 1;
     liked = true;
   }
+
+  // Recount from the likes table rather than adjusting a value read earlier:
+  // concurrent likes on the same clip would otherwise overwrite each other.
+  const [{ value: newCount }] = await db
+    .select({ value: count() })
+    .from(likesTable)
+    .where(eq(likesTable.userClipId, userClipId));
 
   await db.update(userClipsTable).set({ likeCount: newCount }).where(eq(userClipsTable.id, userClipId));
   await updateClipScore(userClipId);
@@ -337,8 +341,14 @@ router.post("/user-clips/:id/view", async (req, res): Promise<void> => {
   const { secondsWatched } = body.data;
   // Only count views with meaningful watch time (>2 seconds)
   if (secondsWatched > 2) {
-    const newViewCount = clip.viewCount + 1;
-    await db.update(userClipsTable).set({ viewCount: newViewCount }).where(eq(userClipsTable.id, userClipId));
+    // Atomic increment — computing viewCount + 1 in JS from an earlier read
+    // loses concurrent views.
+    const [updated] = await db
+      .update(userClipsTable)
+      .set({ viewCount: sql`${userClipsTable.viewCount} + 1` })
+      .where(eq(userClipsTable.id, userClipId))
+      .returning({ viewCount: userClipsTable.viewCount });
+    const newViewCount = updated?.viewCount ?? clip.viewCount + 1;
     const newScore = await updateClipScore(userClipId);
     res.json(
       RecordViewResponse.parse({
@@ -378,8 +388,13 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
     return;
   }
 
-  const newShareCount = clip.shareCount + 1;
-  await db.update(userClipsTable).set({ shareCount: newShareCount }).where(eq(userClipsTable.id, userClipId));
+  // Atomic increment — see the view handler above.
+  const [updatedShare] = await db
+    .update(userClipsTable)
+    .set({ shareCount: sql`${userClipsTable.shareCount} + 1` })
+    .where(eq(userClipsTable.id, userClipId))
+    .returning({ shareCount: userClipsTable.shareCount });
+  const newShareCount = updatedShare?.shareCount ?? clip.shareCount + 1;
   const newScore = await updateClipScore(userClipId);
 
   res.json(

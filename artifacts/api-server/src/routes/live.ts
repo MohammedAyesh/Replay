@@ -4,6 +4,8 @@ const router: IRouter = Router();
 
 const LIVE_PLAYBACK_BASE = "https://replayjo.b-cdn.net";
 const VALID_CAMERAS = ["camera1", "camera2"];
+/** A segment file name only: no slashes, no dot-segments, must end in .ts */
+const SEGMENT_NAME_RE = /^[A-Za-z0-9_-]+\.ts$/;
 
 /**
  * GET /api/live/:camera/index.m3u8
@@ -51,7 +53,10 @@ router.get("/live/:camera/:segment", async (req, res): Promise<void> => {
   const camera = req.params.camera as string;
   const segment = req.params.segment as string;
 
-  if (!VALID_CAMERAS.includes(camera) || !segment.endsWith(".ts")) {
+  // Express decodes %2e%2f etc. before we see it, so an endsWith(".ts") check
+  // alone still admits values like "../../other.ts" which fetch would resolve
+  // outside the camera directory. Match the segment shape exactly instead.
+  if (!VALID_CAMERAS.includes(camera) || !SEGMENT_NAME_RE.test(segment)) {
     res.status(400).send("Invalid request");
     return;
   }

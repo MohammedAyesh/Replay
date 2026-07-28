@@ -51,7 +51,19 @@ export default function Account() {
     queryClient.clear();
 
     if (isGuest) {
-      window.location.href = `${basePath}/`;
+      // The guest session lives in the guestId cookie, so redirecting without
+      // calling logout left it set — the "logged out" guest was silently
+      // signed straight back in on the next request. Wait for the server to
+      // clear it (with a short timeout so a slow network can't trap the user)
+      // before navigating.
+      const logoutPromise = fetch(`${basePath}/api/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      }).catch(() => {});
+      const guestTimeout = new Promise((resolve) => setTimeout(resolve, 2000));
+      Promise.race([logoutPromise, guestTimeout]).then(() => {
+        window.location.replace(`${basePath}/`);
+      });
       return;
     }
 
