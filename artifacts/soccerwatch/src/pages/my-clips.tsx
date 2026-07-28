@@ -1191,6 +1191,14 @@ function UserClipCard({
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
       <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
 
+      {/* Live clip overlay — no playback URL yet */}
+      {!clip.playbackUrl && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 z-10 pointer-events-none">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Live recording</span>
+          <span className="text-[9px] text-white/50 text-center px-3">Playback available once the recording uploads</span>
+        </div>
+      )}
+
       {/* Top-left badge: lock for private, scissors for public */}
       {isPrivate ? (
         <div className="absolute top-2 start-2 bg-black/60 text-amber-400 text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">

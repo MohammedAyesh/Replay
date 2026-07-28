@@ -736,7 +736,13 @@ function VideoPlayer({
         },
       });
       queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
-      toast({ title: t.clipping.saved, description: t.clipping.savedDesc, className: "bg-primary text-white border-none" });
+      toast({
+        title: t.clipping.saved,
+        description: isLive
+          ? "Live clip saved. It will be available to play once the recording is uploaded."
+          : t.clipping.savedDesc,
+        className: "bg-primary text-white border-none",
+      });
       setClipMode("idle");
       setClipTitle("");
       applyFrameChange(1, "16:9");

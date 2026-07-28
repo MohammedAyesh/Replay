@@ -38,6 +38,15 @@ const router: IRouter = Router();
 /** Clip IDs currently being rendered — prevents duplicate concurrent jobs. */
 const inFlight = new Set<number>();
 
+/**
+ * Live-stream clips are saved with a synthetic videoId like "live:camera2".
+ * These are not real Bunny Stream GUIDs, so URL generation and export must
+ * be skipped for them until the recording is uploaded to Bunny Stream.
+ */
+function isLiveVideoId(videoId: string): boolean {
+  return videoId.startsWith("live:");
+}
+
 /** Look up the branding intro for an academy id, if any. Null-safe on both ends. */
 async function resolveIntroVideoUrl(academyId: number | null): Promise<string | null> {
   if (!academyId) return null;
@@ -105,8 +114,9 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     .returning();
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
-  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
-  const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const isLive = isLiveVideoId(row.videoId);
+  const thumbnailUrl = !isLive && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
+  const playbackUrl = !isLive && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
   const introVideoUrl = await resolveIntroVideoUrl(row.academyId);
 
   res.status(201).json(
@@ -177,8 +187,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       shareCount: row.shareCount,
       score: row.score,
       thumbnailTime,
-      thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
-      playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+      thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
+      playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
       exportStatus: row.exportStatus ?? null,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
@@ -274,8 +284,9 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     .returning();
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
-  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
-  const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const isLiveUpdate = isLiveVideoId(row.videoId);
+  const thumbnailUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
+  const playbackUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
   const introVideoUrl = await resolveIntroVideoUrl(row.academyId);
 
   res.json(
@@ -543,8 +554,8 @@ router.get("/feed", async (req, res): Promise<void> => {
     score: row.score,
     isLiked: likedSet.has(row.id),
     visibility: row.visibility,
-    thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null,
-    playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+    thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null,
+    playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
     createdAt: row.createdAt.toISOString(),
     creatorId: row.creatorId,
     creatorName: row.creatorName,
@@ -575,6 +586,10 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  if (isLiveVideoId(clip.videoId)) {
+    res.status(400).json({ error: "Live stream clips cannot be exported. The recording must be uploaded to Bunny Stream first." });
+    return;
+  }
   if (!isBunnyConfigured()) { res.status(400).json({ error: "Video playback not configured" }); return; }
   if (!isBunnyStorageConfigured()) { res.status(400).json({ error: "Export storage not configured" }); return; }
 
