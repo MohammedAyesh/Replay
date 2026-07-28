@@ -1120,15 +1120,45 @@ function secondsToMinStr(secs: number): string {
   return m > 0 ? `${m}min` : `${secs}s`;
 }
 
-/** Parse cam{N}_{...title...}_{NN}_{YYYYMMDDhhmmss} filename format */
+/**
+ * Parse a Bunny video title into court/date/timeSlot for the recordings table.
+ * Mirrors parseVideoFilename in field-detail.tsx — keep the two in sync.
+ * Supports:
+ *   Format A: cam{N}_..._{DDMMYYYY}_{HHMMSS}     e.g. cam1_Field_01_19072026_150000
+ *   Format C: cam{N}_{YYYY-MM-DD}_{HH:MM}        e.g. cam1_2026-07-28_11:00 (on-demand recordings)
+ *   Format B: cam{N}_{YYYYMMDD}{HH}              e.g. cam1_2026072714
+ * Falls back to today's date only if none of these match, which should only
+ * happen for a title that was never machine-generated in the first place.
+ */
 function parseVideoTitle(title: string): { court: string; date: string; timeSlot: string; duration: string } {
-  const match = title.match(/^cam(\d+)_.*?_(\d{14})(?:\.\w+)?$/i);
-  if (match) {
-    const ts = match[2];
-    const date = `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}`;
-    const timeSlot = `${ts.slice(8, 10)}:${ts.slice(10, 12)}`;
-    return { court: `Camera ${match[1]}`, date, timeSlot, duration: "" };
+  const name = title.replace(/\.\w+$/, "");
+  const parts = name.split("_");
+  const camMatch = parts[0]?.match(/^cam(\d+)$/i);
+  const court = camMatch ? `Camera ${camMatch[1]}` : "Court 1";
+
+  if (parts.length >= 3) {
+    const datePart = parts[parts.length - 2];
+    const timePart = parts[parts.length - 1];
+
+    // Format A: DDMMYYYY + HHMMSS
+    if (/^\d{8}$/.test(datePart) && /^\d{6}$/.test(timePart)) {
+      const day = datePart.slice(0, 2), month = datePart.slice(2, 4), year = datePart.slice(4, 8);
+      return { court, date: `${year}-${month}-${day}`, timeSlot: `${timePart.slice(0, 2)}:${timePart.slice(2, 4)}`, duration: "" };
+    }
+
+    // Format C: YYYY-MM-DD + HH:MM
+    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart) && /^\d{1,2}:\d{2}$/.test(timePart)) {
+      return { court, date: datePart, timeSlot: timePart, duration: "" };
+    }
   }
+
+  // Format B: cam{N}_YYYYMMDDHH (10 digits, no separate time segment)
+  if (parts.length === 2 && /^\d{10}$/.test(parts[1])) {
+    const chunk = parts[1];
+    const year = chunk.slice(0, 4), month = chunk.slice(4, 6), day = chunk.slice(6, 8), hh = chunk.slice(8, 10);
+    return { court, date: `${year}-${month}-${day}`, timeSlot: `${hh}:00`, duration: "" };
+  }
+
   return { court: "Court 1", date: new Date().toISOString().slice(0, 10), timeSlot: "", duration: "" };
 }
 
