@@ -113,6 +113,14 @@ interface AdminRecording {
   fieldName: string | null;
 }
 
+interface FieldVideo {
+  guid: string;
+  title: string;
+  thumbnailUrl: string;
+  playbackUrl: string;
+  duration: number; // seconds
+}
+
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -1104,6 +1112,26 @@ function BannersTab() {
   );
 }
 
+// ─── Academies helpers ────────────────────────────────────────────────────────
+
+function secondsToMinStr(secs: number): string {
+  if (!secs) return "";
+  const m = Math.round(secs / 60);
+  return m > 0 ? `${m}min` : `${secs}s`;
+}
+
+/** Parse cam{N}_{...title...}_{NN}_{YYYYMMDDhhmmss} filename format */
+function parseVideoTitle(title: string): { court: string; date: string; timeSlot: string; duration: string } {
+  const match = title.match(/^cam(\d+)_.*?_(\d{14})(?:\.\w+)?$/i);
+  if (match) {
+    const ts = match[2];
+    const date = `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}`;
+    const timeSlot = `${ts.slice(8, 10)}:${ts.slice(10, 12)}`;
+    return { court: `Camera ${match[1]}`, date, timeSlot, duration: "" };
+  }
+  return { court: "Court 1", date: new Date().toISOString().slice(0, 10), timeSlot: "", duration: "" };
+}
+
 // ─── Academies Tab ────────────────────────────────────────────────────────────
 
 const ALL_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -1134,10 +1162,11 @@ function AcademiesTab() {
   const [introLoading, setIntroLoading] = useState(true);
   const [introUploading, setIntroUploading] = useState(false);
 
-  // Add-recording form
-  const [showAddRec, setShowAddRec] = useState(false);
-  const [recForm, setRecForm] = useState({ fieldId: 0, court: "", date: "", timeSlot: "", duration: "", score: "", videoUrl: "" });
-  const [creatingRec, setCreatingRec] = useState(false);
+  // Add-recording from field videos
+  const [fieldVideos, setFieldVideos] = useState<Record<number, FieldVideo[]>>({});
+  const [videosLoading, setVideosLoading] = useState<number | null>(null);
+  const [selectedVideoGuid, setSelectedVideoGuid] = useState<string | null>(null);
+  const [linkingRec, setLinkingRec] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1161,14 +1190,6 @@ function AcademiesTab() {
       .finally(() => setIntroLoading(false));
   }, []);
 
-  // Initialise fieldId once fields load
-  useEffect(() => {
-    if (fields.length > 0 && !recForm.fieldId) {
-      setRecForm((f) => ({ ...f, fieldId: fields[0].id }));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fields]);
-
   const uploadIntro = async (file: File) => {
     setIntroUploading(true);
     try {
@@ -1189,50 +1210,57 @@ function AcademiesTab() {
     setIntroUrl(null);
   };
 
-  const createRecording = async () => {
-    if (!recForm.fieldId || !recForm.court.trim() || !recForm.date || !recForm.timeSlot.trim() || !recForm.duration.trim()) return;
-    setCreatingRec(true);
+  const linkVideo = async (academy: AdminAcademy) => {
+    const videos = fieldVideos[academy.fieldId] ?? [];
+    const video = videos.find((v) => v.guid === selectedVideoGuid);
+    if (!video) return;
+    setLinkingRec(true);
     try {
+      const parsed = parseVideoTitle(video.title);
       const rec: AdminRecording = await apiFetch("/admin/recordings", {
         method: "POST",
         body: JSON.stringify({
-          fieldId: recForm.fieldId,
-          court: recForm.court.trim(),
-          date: recForm.date,
-          timeSlot: recForm.timeSlot.trim(),
-          duration: recForm.duration.trim(),
-          score: recForm.score.trim() || null,
-          videoUrl: recForm.videoUrl.trim(),
+          fieldId: academy.fieldId,
+          court: parsed.court,
+          date: parsed.date,
+          timeSlot: parsed.timeSlot,
+          duration: parsed.duration || secondsToMinStr(video.duration),
+          score: null,
+          videoUrl: video.playbackUrl,
         }),
       });
       setAllRecordings((p) => [...p, rec]);
-      setShowAddRec(false);
-      setRecForm({ fieldId: fields[0]?.id ?? 0, court: "", date: "", timeSlot: "", duration: "", score: "", videoUrl: "" });
+      setSelectedVideoGuid(null);
     } catch { /* silent */ }
-    setCreatingRec(false);
+    setLinkingRec(false);
   };
 
-  const loadRecordings = useCallback(async (academyId: number) => {
-    setRecLoading(academyId);
+  const loadRecordings = useCallback(async (academy: AdminAcademy) => {
+    setRecLoading(academy.id);
+    setVideosLoading(academy.fieldId);
     try {
-      const [acRecs, recordings] = await Promise.all([
-        apiFetch(`/academies/${academyId}/recordings`),
+      const [acRecs, recordings, videos] = await Promise.all([
+        apiFetch(`/academies/${academy.id}/recordings`),
         apiFetch("/admin/recordings"),
+        apiFetch(`/fields/${academy.fieldId}/videos`),
       ]);
-      setRecMap((p) => ({ ...p, [academyId]: acRecs ?? [] }));
+      setRecMap((p) => ({ ...p, [academy.id]: acRecs ?? [] }));
       setAllRecordings(recordings ?? []);
+      setFieldVideos((p) => ({ ...p, [academy.fieldId]: videos ?? [] }));
     } catch { /* silent */ }
     setRecLoading(null);
+    setVideosLoading(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleExpand = (academy: AdminAcademy) => {
     if (expandedId === academy.id) {
       setExpandedId(null);
-      setShowAddRec(false);
+      setSelectedVideoGuid(null);
     } else {
       setExpandedId(academy.id);
-      setShowAddRec(false);
-      if (!recMap[academy.id]) loadRecordings(academy.id);
+      setSelectedVideoGuid(null);
+      if (!recMap[academy.id]) loadRecordings(academy);
     }
   };
 
@@ -1313,7 +1341,7 @@ function AcademiesTab() {
         method: "POST",
         body: JSON.stringify({ recordingId }),
       });
-      await loadRecordings(academy.id);
+      await loadRecordings(academy);
       setAcademies((p) => p.map((a) => a.id === academy.id ? { ...a, recordingCount: a.recordingCount + 1 } : a));
     } catch { /* silent */ }
     setAddingRec(null);
@@ -1562,106 +1590,40 @@ function AcademiesTab() {
                           </div>
                         )}
 
-                        {allRecordings.length === 0 && !showAddRec && (
-                          <p className="text-zinc-600 text-xs py-2">No recordings available in any field.</p>
-                        )}
-
-                        {/* Add recording button / form */}
-                        {!showAddRec ? (
-                          <button
-                            onClick={() => { setShowAddRec(true); setRecForm((f) => ({ ...f, fieldId: fields[0]?.id ?? 0 })); }}
-                            className="flex items-center gap-1 mt-1 px-2 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-xs"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            Add recording
-                          </button>
-                        ) : (
-                          <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3 space-y-2 mt-1">
-                            <p className="text-xs font-semibold text-zinc-300">New recording</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="text-[11px] text-zinc-500 block mb-0.5">Field</label>
-                                <select
-                                  value={recForm.fieldId}
-                                  onChange={(e) => setRecForm((f) => ({ ...f, fieldId: parseInt(e.target.value) }))}
-                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white"
-                                >
-                                  {fields.map((fld) => <option key={fld.id} value={fld.id}>{fld.name}</option>)}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="text-[11px] text-zinc-500 block mb-0.5">Court</label>
-                                <input
-                                  value={recForm.court}
-                                  onChange={(e) => setRecForm((f) => ({ ...f, court: e.target.value }))}
-                                  placeholder="e.g. Court A"
-                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-[11px] text-zinc-500 block mb-0.5">Date</label>
-                                <input
-                                  type="date"
-                                  value={recForm.date}
-                                  onChange={(e) => setRecForm((f) => ({ ...f, date: e.target.value }))}
-                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-[11px] text-zinc-500 block mb-0.5">Time slot</label>
-                                <input
-                                  value={recForm.timeSlot}
-                                  onChange={(e) => setRecForm((f) => ({ ...f, timeSlot: e.target.value }))}
-                                  placeholder="e.g. 10:00–11:00"
-                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-[11px] text-zinc-500 block mb-0.5">Duration</label>
-                                <input
-                                  value={recForm.duration}
-                                  onChange={(e) => setRecForm((f) => ({ ...f, duration: e.target.value }))}
-                                  placeholder="e.g. 90min"
-                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-[11px] text-zinc-500 block mb-0.5">Score (optional)</label>
-                                <input
-                                  value={recForm.score}
-                                  onChange={(e) => setRecForm((f) => ({ ...f, score: e.target.value }))}
-                                  placeholder="e.g. 2–1"
-                                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-[11px] text-zinc-500 block mb-0.5">Video URL (optional)</label>
-                              <input
-                                value={recForm.videoUrl}
-                                onChange={(e) => setRecForm((f) => ({ ...f, videoUrl: e.target.value }))}
-                                placeholder="https://…"
-                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600"
-                              />
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => void createRecording()}
-                                disabled={creatingRec || !recForm.fieldId || !recForm.court.trim() || !recForm.date || !recForm.timeSlot.trim() || !recForm.duration.trim()}
-                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-black text-xs font-bold hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                        {/* Link a field video as a new recording */}
+                        <div className="pt-1">
+                          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                            Link a field video
+                          </p>
+                          {videosLoading === academy.fieldId ? (
+                            <p className="text-zinc-600 text-xs py-1">Loading videos…</p>
+                          ) : (fieldVideos[academy.fieldId] ?? []).length === 0 ? (
+                            <p className="text-zinc-600 text-xs py-1">No videos found for this field.</p>
+                          ) : (
+                            <div className="flex gap-2 items-center">
+                              <select
+                                value={selectedVideoGuid ?? ""}
+                                onChange={(e) => setSelectedVideoGuid(e.target.value || null)}
+                                className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white min-w-0"
                               >
-                                {creatingRec ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                                Create
-                              </button>
+                                <option value="">— choose a video —</option>
+                                {(fieldVideos[academy.fieldId] ?? [])
+                                  .filter((v) => !allRecordings.some((r) => r.videoUrl.includes(v.guid)))
+                                  .map((v) => (
+                                    <option key={v.guid} value={v.guid}>{v.title}</option>
+                                  ))}
+                              </select>
                               <button
-                                onClick={() => setShowAddRec(false)}
-                                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 text-xs transition-colors"
+                                onClick={() => void linkVideo(academy)}
+                                disabled={!selectedVideoGuid || linkingRec}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-black text-xs font-bold hover:bg-primary/90 disabled:opacity-50 transition-colors flex-shrink-0"
                               >
-                                Cancel
+                                {linkingRec ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                                Link
                               </button>
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </>
                     )}
                   </div>
