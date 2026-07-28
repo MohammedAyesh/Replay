@@ -96,6 +96,7 @@ interface AdminAcademy {
   daysOfWeek: string[];
   description: string | null;
   logoUrl: string | null;
+  introVideoUrl: string | null;
   liveAccess: boolean;
   cameraIds: string[];
   recordingCount: number;
@@ -1119,7 +1120,7 @@ function AcademiesTab() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | "new" | null>(null);
-  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "", cameraIds: [] as string[] });
+  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "", introVideoUrl: null as string | null, cameraIds: [] as string[] });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
 
@@ -1169,12 +1170,12 @@ function AcademiesTab() {
 
   const startNew = () => {
     setEditing("new");
-    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "", cameraIds: [] });
+    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "", introVideoUrl: null, cameraIds: [] });
   };
 
   const startEdit = (a: AdminAcademy) => {
     setEditing(a.id);
-    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "", cameraIds: a.cameraIds ?? [] });
+    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "", introVideoUrl: a.introVideoUrl ?? null, cameraIds: a.cameraIds ?? [] });
   };
 
   const cancelEdit = () => { setEditing(null); };
@@ -1484,7 +1485,7 @@ function AcademyForm({
   onCancel,
   title,
 }: {
-  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string; cameraIds: string[] };
+  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string; introVideoUrl: string | null; cameraIds: string[] };
   fields: AdminField[];
   saving: boolean;
   academyId?: number;
@@ -1496,6 +1497,43 @@ function AcademyForm({
 }) {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [uploadingIntro, setUploadingIntro] = useState(false);
+  const [removingIntro, setRemovingIntro] = useState(false);
+  const introFileRef = useRef<HTMLInputElement>(null);
+
+  const handleIntroUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !academyId) return;
+    setUploadingIntro(true);
+    try {
+      const fd = new FormData();
+      fd.append("intro", file);
+      const res = await fetch(`${basePath}/api/admin/academies/${academyId}/intro`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      if (res.ok) {
+        const data = await res.json() as { introVideoUrl: string };
+        onChange({ introVideoUrl: data.introVideoUrl });
+      }
+    } catch { /* silent */ }
+    setUploadingIntro(false);
+    e.target.value = "";
+  };
+
+  const handleIntroRemove = async () => {
+    if (!academyId) return;
+    setRemovingIntro(true);
+    try {
+      const res = await fetch(`${basePath}/api/admin/academies/${academyId}/intro`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (res.ok) onChange({ introVideoUrl: null });
+    } catch { /* silent */ }
+    setRemovingIntro(false);
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1564,6 +1602,49 @@ function AcademyForm({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Intro video — prepended to this academy's clip exports and playback */}
+      <div>
+        <label className="text-xs text-zinc-400 mb-1 block">Intro Video (optional)</label>
+        <p className="text-[11px] text-zinc-600 mb-1.5">Plays before every clip created under this academy, in both playback and exported files.</p>
+        {!academyId ? (
+          <p className="text-xs text-zinc-600">Save the academy first, then come back to add an intro video.</p>
+        ) : (
+          <div className="flex items-center gap-3">
+            <div className="w-14 h-14 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center flex-shrink-0">
+              <Video className="w-6 h-6 text-zinc-600" />
+            </div>
+            <div className="flex-1 space-y-1">
+              {form.introVideoUrl ? (
+                <p className="text-xs text-zinc-400 truncate">Intro video set</p>
+              ) : (
+                <p className="text-xs text-zinc-600">No intro video set</p>
+              )}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => introFileRef.current?.click()}
+                  disabled={uploadingIntro}
+                  className="text-xs text-primary hover:underline disabled:opacity-50"
+                >
+                  {uploadingIntro ? "Uploading…" : form.introVideoUrl ? "Replace video" : "Upload video"}
+                </button>
+                {form.introVideoUrl && (
+                  <button
+                    type="button"
+                    onClick={handleIntroRemove}
+                    disabled={removingIntro}
+                    className="text-xs text-zinc-500 hover:text-red-400 transition-colors disabled:opacity-50"
+                  >
+                    {removingIntro ? "Removing…" : "Remove"}
+                  </button>
+                )}
+              </div>
+              <input ref={introFileRef} type="file" accept="video/*" className="hidden" onChange={handleIntroUpload} />
+            </div>
+          </div>
+        )}
       </div>
 
       <div>

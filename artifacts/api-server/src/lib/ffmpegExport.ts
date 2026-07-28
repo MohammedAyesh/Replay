@@ -30,6 +30,10 @@ export interface FfmpegExportOptions {
    * (e.g. "https://vz-xxx.b-cdn.net/") so the CDN accepts server-side fetches.
    */
   referer?: string;
+  /** Academy branding intro to prepend, if the clip's academy has one set. */
+  introUrl?: string;
+  /** Referer for fetching introUrl, if it's also behind a CDN that checks one. */
+  introReferer?: string;
 }
 
 
@@ -51,6 +55,15 @@ export interface FfmpegExportOptions {
 const MAX_CROP_KEYFRAMES = 30;
 
 const SRC_ASPECT = SRC_W / SRC_H;
+
+/** Output pixel dimensions for a given aspect ratio — shared by the main
+ * render and by intro-video normalization so the two segments concatenate
+ * cleanly (concat demuxer requires matching dimensions/codec across parts). */
+function getOutputDims(is9to16: boolean): { w: number; h: number } {
+  return is9to16
+    ? { w: Math.round((SRC_H * 9) / 16), h: SRC_H }
+    : { w: 1920, h: SRC_H };
+}
 
 /**
  * Detect and rewrite cropPaths written before the frame model existed.
@@ -147,8 +160,7 @@ function downsampleKeyframes(kfs: KF[]): KF[] {
  * whole pan be expressed as a single x/y expression.
  */
 function buildVideoFilter(keyframes: KF[], clipDuration: number, is9to16: boolean): string {
-  const OUT_W = is9to16 ? Math.round(SRC_H * 9 / 16) : 1920;
-  const OUT_H = SRC_H;
+  const { w: OUT_W, h: OUT_H } = getOutputDims(is9to16);
 
   const kfs = downsampleKeyframes(normalizePath(keyframes, is9to16));
 
@@ -235,10 +247,153 @@ function buildVideoFilter(keyframes: KF[], clipDuration: number, is9to16: boolea
   return `${padFilter}crop=${frameW}:${frameH}:${xExpr}:${yExpr},${scaleFilter}`;
 }
 
+/** Run an ffmpeg/ffprobe-family binary, resolving on exit code 0 and rejecting otherwise. */
+function run(bin: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(bin, args);
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`${bin} exited with code ${code}: ${stderr.slice(-1000)}`));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+function buildHeaderVal(referer?: string): string {
+  return [
+    referer ? `Referer: ${referer}` : null,
+    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  ].filter(Boolean).join("\r\n") + "\r\n";
+}
+
 /**
- * Render a trimmed, cropped MP4 clip via FFmpeg.
- * Returns the path to a temporary file that the caller is responsible for deleting.
+ * Whether the given source has an audio stream.
+ * Used so intro normalization can guarantee an audio track exists (silent if
+ * necessary) — concatenating segments with an inconsistent stream layout
+ * causes audio to drop out or desync partway through playback.
+ * Defaults to false (adds silence) if probing fails, since mapping a
+ * nonexistent audio stream would otherwise abort the whole normalize step.
  */
+async function probeHasAudio(url: string, referer?: string): Promise<boolean> {
+  try {
+    const out = await run("ffprobe", [
+      "-headers", buildHeaderVal(referer),
+      "-v", "error",
+      "-select_streams", "a",
+      "-show_entries", "stream=codec_type",
+      "-of", "csv=p=0",
+      url,
+    ]);
+    return out.trim().length > 0;
+  } catch (err) {
+    logger.warn({ err, url }, "ffprobe audio check failed — assuming no audio track");
+    return false;
+  }
+}
+
+/**
+ * Re-encode an arbitrary video to match the main clip's output spec exactly
+ * (dimensions, fps, codec, pixel format) plus a guaranteed audio track, so it
+ * can be concatenated with the main clip via the concat demuxer (which needs
+ * matching parameters across segments — this is *not* the same as -c copy
+ * concatenation of already-matching files).
+ */
+async function normalizeSegment(
+  url: string,
+  dims: { w: number; h: number },
+  referer: string | undefined,
+  hasAudio: boolean,
+): Promise<string> {
+  const tmpPath = path.join(os.tmpdir(), `soccerwatch-intro-${randomUUID()}.mp4`);
+  const scalePad =
+    `scale=${dims.w}:${dims.h}:force_original_aspect_ratio=decrease,` +
+    `pad=${dims.w}:${dims.h}:(ow-iw)/2:(oh-ih)/2:black,fps=30,setsar=1`;
+
+  const args = hasAudio
+    ? [
+        "-headers", buildHeaderVal(referer),
+        "-i", url,
+        "-vf", scalePad,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+        "-movflags", "+faststart",
+        "-y", tmpPath,
+      ]
+    : [
+        // No source audio: synthesize silence so the segment still has an
+        // audio stream matching the main clip's layout (see probeHasAudio).
+        "-headers", buildHeaderVal(referer),
+        "-i", url,
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-vf", scalePad,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-shortest",
+        "-movflags", "+faststart",
+        "-y", tmpPath,
+      ];
+
+  await run("ffmpeg", args);
+  return tmpPath;
+}
+
+/** Concatenate already-matching MP4s (same codec/dims/fps) via the concat demuxer. */
+async function concatSegments(paths: string[]): Promise<string> {
+  const listPath = path.join(os.tmpdir(), `soccerwatch-concat-${randomUUID()}.txt`);
+  const outPath = path.join(os.tmpdir(), `soccerwatch-final-${randomUUID()}.mp4`);
+  // Paths are our own tmpdir names (UUID + fixed suffix, no spaces/quotes),
+  // so a bare `file '<path>'` line per entry is safe here.
+  const listContent = paths.map((p) => `file '${p}'`).join("\n") + "\n";
+  await fs.promises.writeFile(listPath, listContent, "utf8");
+  try {
+    await run("ffmpeg", ["-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", "-y", outPath]);
+  } finally {
+    fs.unlink(listPath, () => {});
+  }
+  return outPath;
+}
+
+/**
+ * Render the main clip, then — if an intro is given — normalize it to match
+ * the main clip's exact output spec and prepend it via concat.
+ *
+ * A broken/unreachable intro must never block the user's own clip: any
+ * failure in the intro or concat step is logged and swallowed, falling back
+ * to the main-only render.
+ */
+async function withIntro(
+  mainPath: string,
+  is9to16: boolean,
+  introUrl: string | undefined,
+  introReferer: string | undefined,
+): Promise<string> {
+  if (!introUrl) return mainPath;
+
+  let introNormPath: string | null = null;
+  try {
+    const dims = getOutputDims(is9to16);
+    const hasAudio = await probeHasAudio(introUrl, introReferer);
+    introNormPath = await normalizeSegment(introUrl, dims, introReferer, hasAudio);
+    const finalPath = await concatSegments([introNormPath, mainPath]);
+    cleanupTempFile(mainPath);
+    return finalPath;
+  } catch (err) {
+    logger.error({ err, introUrl }, "Intro concat failed — exporting clip without intro");
+    return mainPath;
+  } finally {
+    if (introNormPath) cleanupTempFile(introNormPath);
+  }
+}
+
+
 export async function renderClip(options: FfmpegExportOptions): Promise<string> {
   const { videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title, referer } = options;
 
@@ -258,10 +413,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   // Build HTTP headers string for CDN access.
   // Bunny CDN blocks server-side requests without browser-like headers;
   // adding a matching Referer + a browser User-Agent bypasses that restriction.
-  const headerVal = [
-    referer ? `Referer: ${referer}` : null,
-    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  ].filter(Boolean).join("\r\n") + "\r\n";
+  const headerVal = buildHeaderVal(referer);
 
   const args = [
     // HTTP headers must come before -i so they apply to the input request
@@ -308,7 +460,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
         return;
       }
       logger.info({ tmpPath }, "FFmpeg render complete");
-      resolve(tmpPath);
+      withIntro(tmpPath, is9to16, options.introUrl, options.introReferer).then(resolve, reject);
     });
   });
 }

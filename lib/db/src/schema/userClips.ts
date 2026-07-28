@@ -1,6 +1,7 @@
 import { pgTable, serial, integer, text, numeric, timestamp, jsonb, boolean } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { fieldsTable } from "./fields";
+import { academiesTable } from "./academies";
 
 export type CropKeyframe = {
   t: number;
@@ -19,6 +20,14 @@ export const userClipsTable = pgTable("user_clips", {
   endTime: numeric("end_time", { precision: 10, scale: 6 }).notNull(),
   cropPath: jsonb("crop_path").notNull().$type<CropKeyframe[]>().default([]),
   aspectRatio: text("aspect_ratio").notNull().default("16:9"),
+  /**
+   * Academy this clip was created under, if any (set client-side from the
+   * page context — field-detail or the academy's live view — at creation
+   * time). Drives which branding intro gets prepended on export/playback.
+   * Nullable and set-null-on-delete: losing the academy just stops the intro
+   * from playing, it never blocks or cascades into deleting the clip itself.
+   */
+  academyId: integer("academy_id").references(() => academiesTable.id, { onDelete: "set null" }),
   visibility: text("visibility").notNull().default("private"),
   thumbnailTime: numeric("thumbnail_time", { precision: 10, scale: 3 }),
   likeCount: integer("like_count").notNull().default(0),

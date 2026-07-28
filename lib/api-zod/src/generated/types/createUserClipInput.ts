@@ -17,4 +17,9 @@ export interface CreateUserClipInput {
   cropPath: CropKeyframe[];
   visibility?: CreateUserClipInputVisibility;
   aspectRatio?: CreateUserClipInputAspectRatio;
+  /**
+     * Academy context this clip was created under (from the page the user was viewing), if any.
+     * @nullable
+     */
+  academyId?: number | null;
 }

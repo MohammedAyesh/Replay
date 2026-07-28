@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { eq, and, desc, inArray } from "drizzle-orm";
-import { db, userClipsTable, usersTable, likesTable, followsTable } from "@workspace/db";
+import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable } from "@workspace/db";
 import {
   CreateUserClipBody,
   CreateUserClipResponse,
@@ -38,6 +38,16 @@ const router: IRouter = Router();
 /** Clip IDs currently being rendered — prevents duplicate concurrent jobs. */
 const inFlight = new Set<number>();
 
+/** Look up the branding intro for an academy id, if any. Null-safe on both ends. */
+async function resolveIntroVideoUrl(academyId: number | null): Promise<string | null> {
+  if (!academyId) return null;
+  const [academy] = await db
+    .select({ introVideoUrl: academiesTable.introVideoUrl })
+    .from(academiesTable)
+    .where(eq(academiesTable.id, academyId));
+  return academy?.introVideoUrl ?? null;
+}
+
 // Engagement scoring: weighted composite of likes, views, and recency
 function computeScore(likeCount: number, viewCount: number, shareCount: number, createdAt: Date): number {
   const hoursOld = Math.max(0, (Date.now() - createdAt.getTime()) / 36e5);
@@ -68,7 +78,16 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
-  const { videoId, title, startTime, endTime, cropPath, visibility, aspectRatio } = body.data;
+  const { videoId, title, startTime, endTime, cropPath, visibility, aspectRatio, academyId } = body.data;
+
+  // Validate rather than trust blindly: a nonexistent id would just silently
+  // resolve to no intro later, but storing it anyway would be confusing to
+  // debug. Cheap to check up front since we already touch this table below.
+  let validAcademyId: number | null = null;
+  if (academyId != null) {
+    const [academy] = await db.select({ id: academiesTable.id }).from(academiesTable).where(eq(academiesTable.id, academyId));
+    validAcademyId = academy?.id ?? null;
+  }
 
   const [row] = await db
     .insert(userClipsTable)
@@ -81,12 +100,14 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       cropPath,
       visibility: visibility ?? "private",
       aspectRatio: aspectRatio ?? "16:9",
+      academyId: validAcademyId,
     })
     .returning();
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
   const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
   const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const introVideoUrl = await resolveIntroVideoUrl(row.academyId);
 
   res.status(201).json(
     CreateUserClipResponse.parse({
@@ -109,6 +130,8 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       exportStatus: row.exportStatus ?? null,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
+      academyId: row.academyId ?? null,
+      introVideoUrl,
     })
   );
 });
@@ -125,6 +148,17 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     .from(userClipsTable)
     .where(eq(userClipsTable.userId, userId))
     .orderBy(desc(userClipsTable.createdAt));
+
+  // Resolve all distinct academies in one query instead of one per clip.
+  const academyIds = [...new Set(rows.map((r) => r.academyId).filter((id): id is number => id != null))];
+  const introByAcademy = new Map<number, string | null>();
+  if (academyIds.length > 0) {
+    const academies = await db
+      .select({ id: academiesTable.id, introVideoUrl: academiesTable.introVideoUrl })
+      .from(academiesTable)
+      .where(inArray(academiesTable.id, academyIds));
+    for (const a of academies) introByAcademy.set(a.id, a.introVideoUrl ?? null);
+  }
 
   const result = rows.map((row) => {
     const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
@@ -148,6 +182,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       exportStatus: row.exportStatus ?? null,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
+      academyId: row.academyId ?? null,
+      introVideoUrl: row.academyId != null ? (introByAcademy.get(row.academyId) ?? null) : null,
     };
   });
 
@@ -240,6 +276,7 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
   const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
   const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const introVideoUrl = await resolveIntroVideoUrl(row.academyId);
 
   res.json(
     UpdateUserClipResponse.parse({
@@ -262,6 +299,8 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
       exportStatus: row.exportStatus ?? null,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
+      academyId: row.academyId ?? null,
+      introVideoUrl,
     })
   );
 });
@@ -580,7 +619,11 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
       const referer = `https://${new URL(videoUrl).host}/`;
       logger.info({ clipId, videoUrl }, "Using HLS URL for FFmpeg input");
 
-      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer });
+      const introUrl = (await resolveIntroVideoUrl(clip.academyId)) ?? undefined;
+      const introReferer = introUrl ? `https://${new URL(introUrl).host}/` : undefined;
+      if (introUrl) logger.info({ clipId, introUrl }, "Prepending academy intro to export");
+
+      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer, introUrl, introReferer });
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
       await db
         .update(userClipsTable)

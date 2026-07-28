@@ -81,9 +81,7 @@ export const GetMeResponse = zod.object({
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
   "profileComplete": zod.boolean(),
-  "preferredLocale": zod.string().nullish(),
-  "academyId": zod.number().nullish(),
-  "liveAccess": zod.boolean().optional()
+  "preferredLocale": zod.string().nullish()
 })
 
 
@@ -133,7 +131,8 @@ export const GetBunnyCollectionsResponseItem = zod.object({
   "guid": zod.string(),
   "name": zod.string(),
   "videoCount": zod.number(),
-  "previewImageUrl": zod.string().nullish()
+  "previewImageUrl": zod.string().nullish(),
+  "id": zod.number().nullish().describe('The corresponding fields table row id, if this collection has been synced via \/admin\/fields\/sync. Null for collections Bunny has that haven\'t been synced into a field yet.')
 })
 export const GetBunnyCollectionsResponse = zod.array(GetBunnyCollectionsResponseItem)
 
@@ -231,7 +230,7 @@ export const ListAcademiesResponseItem = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
-  "cameraIds": zod.array(zod.string()),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
 export const ListAcademiesResponse = zod.array(ListAcademiesResponseItem)
@@ -253,7 +252,7 @@ export const GetAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
-  "cameraIds": zod.array(zod.string()),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
 
@@ -292,7 +291,7 @@ export const ListAdminAcademiesResponseItem = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
-  "cameraIds": zod.array(zod.string()),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
 export const ListAdminAcademiesResponse = zod.array(ListAdminAcademiesResponseItem)
@@ -318,7 +317,7 @@ export const CreateAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
-  "cameraIds": zod.array(zod.string()),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
 
@@ -347,7 +346,7 @@ export const UpdateAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
-  "cameraIds": zod.array(zod.string()),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
 
@@ -403,7 +402,8 @@ export const CreateUserClipBody = zod.object({
   "h": zod.number()
 })),
   "visibility": zod.enum(['public', 'followers', 'private']).optional(),
-  "aspectRatio": zod.enum(['16:9', '9:16']).optional()
+  "aspectRatio": zod.enum(['16:9', '9:16']).optional(),
+  "academyId": zod.number().nullish().describe('Academy context this clip was created under (from the page the user was viewing), if any.')
 })
 
 export const CreateUserClipResponse = zod.object({
@@ -428,7 +428,9 @@ export const CreateUserClipResponse = zod.object({
   "playbackUrl": zod.string().nullish(),
   "exportStatus": zod.string().nullish(),
   "exportedUrl": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "academyId": zod.number().nullish(),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 
 
@@ -457,7 +459,9 @@ export const ListUserClipsResponseItem = zod.object({
   "playbackUrl": zod.string().nullish(),
   "exportStatus": zod.string().nullish(),
   "exportedUrl": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "academyId": zod.number().nullish(),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 export const ListUserClipsResponse = zod.array(ListUserClipsResponseItem)
 
@@ -507,7 +511,9 @@ export const UpdateUserClipResponse = zod.object({
   "playbackUrl": zod.string().nullish(),
   "exportStatus": zod.string().nullish(),
   "exportedUrl": zod.string().nullish(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "academyId": zod.number().nullish(),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 
 
@@ -631,7 +637,9 @@ export const ListClipsResponseItem = zod.object({
   "date": zod.string().nullish(),
   "creatorId": zod.number().nullish(),
   "creatorName": zod.string().nullish(),
-  "creatorPosition": zod.string().nullish()
+  "creatorPosition": zod.string().nullish(),
+  "academyId": zod.number().nullish().describe('Academy whose field this recording belongs to, if any (matched by fieldId — best-effort, not stored on the clip itself).'),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 export const ListClipsResponse = zod.array(ListClipsResponseItem)
 
@@ -669,7 +677,9 @@ export const GetClipResponse = zod.object({
   "date": zod.string().nullish(),
   "creatorId": zod.number().nullish(),
   "creatorName": zod.string().nullish(),
-  "creatorPosition": zod.string().nullish()
+  "creatorPosition": zod.string().nullish(),
+  "academyId": zod.number().nullish().describe('Academy whose field this recording belongs to, if any (matched by fieldId — best-effort, not stored on the clip itself).'),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 
 
@@ -715,7 +725,9 @@ export const ListSavedClipsResponseItem = zod.object({
   "date": zod.string().nullish(),
   "creatorId": zod.number().nullish(),
   "creatorName": zod.string().nullish(),
-  "creatorPosition": zod.string().nullish()
+  "creatorPosition": zod.string().nullish(),
+  "academyId": zod.number().nullish().describe('Academy whose field this recording belongs to, if any (matched by fieldId — best-effort, not stored on the clip itself).'),
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 export const ListSavedClipsResponse = zod.array(ListSavedClipsResponseItem)
 

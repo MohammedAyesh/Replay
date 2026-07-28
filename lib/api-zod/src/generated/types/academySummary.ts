@@ -17,6 +17,10 @@ export interface AcademySummary {
   description?: string | null;
   /** @nullable */
   logoUrl?: string | null;
-  cameraIds: string[];
+  /**
+     * Branding intro clip prepended to this academy's clip exports and playback.
+     * @nullable
+     */
+  introVideoUrl?: string | null;
   recordingCount: number;
 }

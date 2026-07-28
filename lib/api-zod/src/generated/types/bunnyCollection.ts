@@ -12,4 +12,9 @@ export interface BunnyCollection {
   videoCount: number;
   /** @nullable */
   previewImageUrl?: string | null;
+  /**
+     * The corresponding fields table row id, if this collection has been synced via /admin/fields/sync. Null for collections Bunny has that haven't been synced into a field yet.
+     * @nullable
+     */
+  id?: number | null;
 }

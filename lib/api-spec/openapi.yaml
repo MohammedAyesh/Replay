@@ -1044,6 +1044,12 @@ components:
           type: integer
         previewImageUrl:
           type: ["string", "null"]
+        id:
+          type: ["integer", "null"]
+          description: >-
+            The corresponding fields table row id, if this collection has been
+            synced via /admin/fields/sync. Null for collections Bunny has that
+            haven't been synced into a field yet.
 
     BunnyVideo:
       type: object
@@ -1167,6 +1173,14 @@ components:
           type: ["string", "null"]
         creatorPosition:
           type: ["string", "null"]
+        academyId:
+          type: ["integer", "null"]
+          description: >-
+            Academy whose field this recording belongs to, if any (matched by
+            fieldId — best-effort, not stored on the clip itself).
+        introVideoUrl:
+          type: ["string", "null"]
+          description: Branding intro to play before this clip, if its academy has one set.
 
     CropKeyframe:
       type: object
@@ -1225,6 +1239,11 @@ components:
           type: ["string", "null"]
         createdAt:
           type: string
+        academyId:
+          type: ["integer", "null"]
+        introVideoUrl:
+          type: ["string", "null"]
+          description: Branding intro to play before this clip, if its academy has one set.
 
     SocialLikeUser:
       type: object
@@ -1309,6 +1328,9 @@ components:
         aspectRatio:
           type: string
           enum: ["16:9", "9:16"]
+        academyId:
+          type: ["integer", "null"]
+          description: Academy context this clip was created under (from the page the user was viewing), if any.
 
     UpdateUserClipInput:
       type: object
@@ -1429,6 +1451,9 @@ components:
           type: ["string", "null"]
         logoUrl:
           type: ["string", "null"]
+        introVideoUrl:
+          type: ["string", "null"]
+          description: Branding intro clip prepended to this academy's clip exports and playback.
         recordingCount:
           type: integer
 
