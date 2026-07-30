@@ -21,6 +21,7 @@ import {
   RecordShareResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { INTRO_ENABLED } from "../lib/features.js";
 import {
   getBunnyPlaybackUrl,
   getBunnyThumbnailUrl,
@@ -84,6 +85,7 @@ export function isLiveVideoId(videoId: string): boolean {
  * clips with no academy, or whose academy has not uploaded one.
  */
 async function resolveIntroVideoUrl(academyId: number | null): Promise<string | null> {
+  if (!INTRO_ENABLED) return null;
   if (academyId) {
     const [academy] = await db
       .select({ introVideoUrl: academiesTable.introVideoUrl })
@@ -204,21 +206,24 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     .where(eq(userClipsTable.userId, userId))
     .orderBy(desc(userClipsTable.createdAt));
 
-  // Resolve all distinct academies in one query instead of one per clip.
-  const academyIds = [...new Set(rows.map((r) => r.academyId).filter((id): id is number => id != null))];
+  // Resolve intro URLs for the list — skipped entirely when INTRO_ENABLED is off.
   const introByAcademy = new Map<number, string | null>();
-  if (academyIds.length > 0) {
-    const academies = await db
-      .select({ id: academiesTable.id, introVideoUrl: academiesTable.introVideoUrl })
-      .from(academiesTable)
-      .where(inArray(academiesTable.id, academyIds));
-    for (const a of academies) introByAcademy.set(a.id, a.introVideoUrl ?? null);
+  let globalIntro: string | null = null;
+  if (INTRO_ENABLED) {
+    const academyIds = [...new Set(rows.map((r) => r.academyId).filter((id): id is number => id != null))];
+    if (academyIds.length > 0) {
+      const academies = await db
+        .select({ id: academiesTable.id, introVideoUrl: academiesTable.introVideoUrl })
+        .from(academiesTable)
+        .where(inArray(academiesTable.id, academyIds));
+      for (const a of academies) introByAcademy.set(a.id, a.introVideoUrl ?? null);
+    }
+    // Same precedence the exporter uses (resolveIntroVideoUrl): academy intro
+    // first, global clip_settings intro as the fallback. Fetched once for the
+    // whole list rather than per row.
+    const [globalSettings] = await db.select().from(clipSettingsTable).limit(1);
+    globalIntro = globalSettings?.introVideoUrl ?? null;
   }
-  // Same precedence the exporter uses (resolveIntroVideoUrl): academy intro
-  // first, global clip_settings intro as the fallback. Fetched once for the
-  // whole list rather than per row.
-  const [globalSettings] = await db.select().from(clipSettingsTable).limit(1);
-  const globalIntro = globalSettings?.introVideoUrl ?? null;
 
   const result = rows.map((row) => {
     const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
