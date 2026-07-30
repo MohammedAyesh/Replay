@@ -6,3 +6,5 @@
 - [Clip export architecture](clip-export-arch.md) — background FFmpeg render → Bunny Storage upload; dedup via inFlight Set + exportStatus DB column; download proxied through /api/user-clips/:id/download to avoid CORS.
 - [Camera upload filename format](camera-filename-format.md) — `cam{N}_{title}_{NN}_{YYYYMMDDhhmmss}.mp4`; trailing 14 digits = capture timestamp; title may contain spaces.
 - [Live clip synthetic videoId](live-clip-videoId.md) — academy live clips store `live:<cameraId>` not a Bunny GUID; server must guard URL generation and export for these.
+- [Bunny CDN Referer requirement](bunny-cdn-referer.md) — Bunny CDN returns 403 to direct browser requests; all client-facing playbackUrl/thumbnailUrl must go through /api/hls-proxy; raw CDN URLs are only for server-side FFmpeg.
+- [Clip intro — playback vs export](clip-intro-playback-export.md) — intro is suppressed in all playback responses (hardcoded null); export path calls resolveIntroVideoUrl and prepends at correct dimensions.

@@ -24,6 +24,8 @@ import { getLocalUserId } from "../lib/clerkUserBridge";
 import {
   getBunnyPlaybackUrl,
   getBunnyThumbnailUrl,
+  getBunnyProxiedPlaybackUrl,
+  getBunnyProxiedThumbnailUrl,
   getBunnyDirectMp4Url,
   getBunnyVideoInfo,
   isBunnyConfigured,
@@ -153,8 +155,8 @@ router.post("/user-clips", async (req, res): Promise<void> => {
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
   const isLive = isLiveVideoId(row.videoId);
-  const thumbnailUrl = !isLive && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
-  const playbackUrl = !isLive && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const thumbnailUrl = !isLive && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime) : null;
+  const playbackUrl = !isLive && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null;
   // Intro is intentionally suppressed in playback responses — it appears only
   // in the downloaded export file (see the renderClip call below). The player
   // treats null as "start the clip immediately", so no buffering delay occurs.
@@ -220,8 +222,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       shareCount: row.shareCount,
       score: row.score,
       thumbnailTime,
-      thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
-      playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+      thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime) : null,
+      playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null,
       exportStatus: row.exportStatus ?? null,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
@@ -323,8 +325,8 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
   const isLiveUpdate = isLiveVideoId(row.videoId);
-  const thumbnailUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
-  const playbackUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const thumbnailUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime) : null;
+  const playbackUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null;
   // Intro is intentionally suppressed in playback responses — it appears only
   // in the downloaded export file (see the renderClip call below). The player
   // treats null as "start the clip immediately", so no buffering delay occurs.
@@ -610,8 +612,8 @@ router.get("/feed", async (req, res): Promise<void> => {
     score: row.score,
     isLiked: likedSet.has(row.id),
     visibility: row.visibility,
-    thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null,
-    playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+    thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId) : null,
+    playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null,
     createdAt: row.createdAt.toISOString(),
     creatorId: row.creatorId,
     creatorName: row.creatorName,

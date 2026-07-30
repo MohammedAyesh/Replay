@@ -9,7 +9,7 @@ import {
   ToggleLikeResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
+import { getBunnyPlaybackUrl, getBunnyProxiedPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
 import { introPlaybackPath } from "./clipIntro";
 
 const router: IRouter = Router();
