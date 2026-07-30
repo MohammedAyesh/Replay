@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { logger } from "./logger";
+import { BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_HOSTNAME } from "./bunny";
 
 const SRC_W = 3840;
 const SRC_H = 1080;
@@ -380,9 +381,29 @@ function run(bin: string, args: string[], timeoutMs = SUBPROCESS_TIMEOUT_MS): Pr
   });
 }
 
-function buildHeaderVal(referer?: string): string {
+/**
+ * Bunny Storage (storage.bunnycdn.com) is an authenticated origin — a plain GET
+ * returns 401 without an AccessKey. Intro videos are uploaded there and the URL
+ * that gets stored is built from BUNNY_STORAGE_CDN_URL, which on this
+ * deployment points at the storage host rather than a public pull zone. So the
+ * intro fetch has to carry the key.
+ *
+ * Only for that exact host: the key must never be attached to an arbitrary URL
+ * an admin could paste in.
+ */
+function isBunnyStorageUrl(url: string): boolean {
+  try {
+    return new URL(url).host.toLowerCase() === BUNNY_STORAGE_HOSTNAME.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function buildHeaderVal(referer?: string, url?: string): string {
+  const needsKey = !!url && !!BUNNY_STORAGE_API_KEY && isBunnyStorageUrl(url);
   return [
     referer ? `Referer: ${referer}` : null,
+    needsKey ? `AccessKey: ${BUNNY_STORAGE_API_KEY}` : null,
     "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   ].filter(Boolean).join("\r\n") + "\r\n";
 }
@@ -398,7 +419,7 @@ function buildHeaderVal(referer?: string): string {
 async function probeHasAudio(url: string, referer?: string): Promise<boolean> {
   try {
     const out = await run("ffprobe", [
-      "-headers", buildHeaderVal(referer),
+      "-headers", buildHeaderVal(referer, url),
       "-v", "error",
       "-select_streams", "a",
       "-show_entries", "stream=codec_type",
@@ -432,7 +453,7 @@ async function normalizeSegment(
 
   const args = hasAudio
     ? [
-        "-headers", buildHeaderVal(referer),
+        "-headers", buildHeaderVal(referer, url),
         "-i", url,
         // Branding, not content — see MAX_INTRO_SECONDS.
         "-t", String(MAX_INTRO_SECONDS),
@@ -445,7 +466,7 @@ async function normalizeSegment(
     : [
         // No source audio: synthesize silence so the segment still has an
         // audio stream matching the main clip's layout (see probeHasAudio).
-        "-headers", buildHeaderVal(referer),
+        "-headers", buildHeaderVal(referer, url),
         "-i", url,
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-t", String(MAX_INTRO_SECONDS),
@@ -544,7 +565,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   // Build HTTP headers string for CDN access.
   // Bunny CDN blocks server-side requests without browser-like headers;
   // adding a matching Referer + a browser User-Agent bypasses that restriction.
-  const headerVal = buildHeaderVal(referer);
+  const headerVal = buildHeaderVal(referer, videoUrl);
 
   // When an intro will be concatenated, the main clip has to match the spec
   // normalizeSegment pins the intro to — 30 fps, 44.1 kHz stereo AAC, and an
