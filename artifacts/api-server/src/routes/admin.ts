@@ -15,6 +15,7 @@ import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID, isBunnyStorageConfigured, uploadClipIntroToBunnyStorage } from "../lib/bunny";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
+import { isLiveVideoId } from "./userClips";
 import multer from "multer";
 
 const router: IRouter = Router();
@@ -213,8 +214,11 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       shareCount: row.shareCount,
       score: row.score,
       createdAt: row.createdAt.toISOString(),
-      thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
-      playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+      // Live-sourced clips carry a synthetic videoId ("live:camera2"), not a
+      // Bunny GUID — building CDN URLs from it gives the admin panel a broken
+      // thumbnail and a player that 404s. Same guard the user-facing routes use.
+      thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
+      playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
       userName: row.userName,
       userEmail: row.userEmail,
     };

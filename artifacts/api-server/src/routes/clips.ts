@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, desc, and, sql } from "drizzle-orm";
-import { db, clipsTable, recordingsTable, fieldsTable, savedClipsTable, likesTable, usersTable, academiesTable } from "@workspace/db";
+import { db, clipsTable, recordingsTable, fieldsTable, savedClipsTable, likesTable, usersTable, academiesTable, clipSettingsTable } from "@workspace/db";
 import {
   GetClipParams,
   GetClipResponse,
@@ -13,7 +13,33 @@ import { getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
 
 const router: IRouter = Router();
 
-async function buildClip(clipId: number, userId: number | null) {
+/**
+ * Per-request lookup tables, so the list endpoint does not repeat the same two
+ * queries once per clip. Built once by the caller; omitted for single-clip
+ * routes, where buildClip falls back to querying directly.
+ */
+interface ClipLookups {
+  academyByField: Map<number, { id: number; introVideoUrl: string | null }>;
+  globalIntro: string | null;
+}
+
+async function loadClipLookups(): Promise<ClipLookups> {
+  const [academies, settings] = await Promise.all([
+    db.select({ id: academiesTable.id, fieldId: academiesTable.fieldId, introVideoUrl: academiesTable.introVideoUrl }).from(academiesTable),
+    db.select().from(clipSettingsTable).limit(1),
+  ]);
+  const academyByField = new Map<number, { id: number; introVideoUrl: string | null }>();
+  // A field could in principle back more than one academy; the first match
+  // wins, matching the assumption the rest of the app makes.
+  for (const a of academies) {
+    if (!academyByField.has(a.fieldId)) {
+      academyByField.set(a.fieldId, { id: a.id, introVideoUrl: a.introVideoUrl ?? null });
+    }
+  }
+  return { academyByField, globalIntro: settings[0]?.introVideoUrl ?? null };
+}
+
+async function buildClip(clipId: number, userId: number | null, lookups?: ClipLookups) {
   const [clip] = await db.select().from(clipsTable).where(eq(clipsTable.id, clipId));
   if (!clip) return null;
 
@@ -63,18 +89,23 @@ async function buildClip(clipId: number, userId: number | null) {
   // A field could in principle back more than one academy; we take the first
   // match, which is fine for the common one-academy-per-field case this was
   // built for.
+  //
+  // The intro follows the same precedence as the exporter
+  // (resolveIntroVideoUrl in userClips.ts): the academy's own intro first, the
+  // global clip_settings intro as the fallback. Reporting academy-only here
+  // meant a globally-branded clip played without its intro while the exported
+  // MP4 had one.
+  const view = lookups ?? await loadClipLookups();
   let academyId: number | null = null;
   let introVideoUrl: string | null = null;
   if (field) {
-    const [academy] = await db
-      .select({ id: academiesTable.id, introVideoUrl: academiesTable.introVideoUrl })
-      .from(academiesTable)
-      .where(eq(academiesTable.fieldId, field.id));
+    const academy = view.academyByField.get(field.id);
     if (academy) {
       academyId = academy.id;
-      introVideoUrl = academy.introVideoUrl ?? null;
+      introVideoUrl = academy.introVideoUrl;
     }
   }
+  introVideoUrl = introVideoUrl ?? view.globalIntro;
 
   return {
     id: clip.id,
@@ -106,7 +137,8 @@ router.get("/clips", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   const clips = await db.select().from(clipsTable).orderBy(desc(clipsTable.likeCount), clipsTable.rank);
 
-  const result = await Promise.all(clips.map((c) => buildClip(c.id, userId)));
+  const lookups = await loadClipLookups();
+  const result = await Promise.all(clips.map((c) => buildClip(c.id, userId, lookups)));
   res.json(ListClipsResponse.parse(result.filter(Boolean)));
 });
 

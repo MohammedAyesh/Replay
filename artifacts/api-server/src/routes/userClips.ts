@@ -71,7 +71,7 @@ async function withRenderSlot<T>(job: () => Promise<T>): Promise<T> {
  * These are not real Bunny Stream GUIDs, so URL generation and export must
  * be skipped for them until the recording is uploaded to Bunny Stream.
  */
-function isLiveVideoId(videoId: string): boolean {
+export function isLiveVideoId(videoId: string): boolean {
   return videoId.startsWith("live:");
 }
 
@@ -710,9 +710,23 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
       // dimensions and falls back to exporting without one if the intro is
       // unusable. This replaces the old second-pass approach, which hardcoded
       // 1920x1080 and so stretched every 9:16 clip.
-      const introUrl = (await resolveIntroVideoUrl(clip.academyId)) ?? undefined;
-      const introReferer = introUrl ? `https://${new URL(introUrl).host}/` : undefined;
-      if (introUrl) logger.info({ clipId, academyId: clip.academyId, introUrl }, "Prepending intro to export");
+      // A broken intro must never fail the user's own clip — that is the whole
+      // contract withIntro is built around. new URL() throws on a stored value
+      // that is not absolute (BUNNY_STORAGE_CDN_URL is accepted as any non-empty
+      // string), and this line sits inside the export job's try, so an
+      // unguarded parse would mark the export "error" instead.
+      let introUrl: string | undefined;
+      let introReferer: string | undefined;
+      const resolvedIntro = await resolveIntroVideoUrl(clip.academyId);
+      if (resolvedIntro) {
+        try {
+          introReferer = `https://${new URL(resolvedIntro).host}/`;
+          introUrl = resolvedIntro;
+          logger.info({ clipId, academyId: clip.academyId, introUrl }, "Prepending intro to export");
+        } catch {
+          logger.warn({ clipId, resolvedIntro }, "Intro URL is not absolute — exporting without it");
+        }
+      }
 
       tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer, introUrl, introReferer });
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);

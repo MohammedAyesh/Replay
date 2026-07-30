@@ -25,6 +25,26 @@ const FFMPEG_TIMEOUT_MS = Math.max(
   parseInt(process.env.FFMPEG_TIMEOUT_MS ?? "1800000", 10) || 1_800_000,
 );
 
+/**
+ * Ceiling on the shorter helper subprocesses — ffprobe, intro normalize, concat.
+ * These operate on a short intro or on already-rendered local files, so they
+ * should never approach the main render's budget.
+ */
+const SUBPROCESS_TIMEOUT_MS = Math.max(
+  10_000,
+  parseInt(process.env.FFMPEG_SUBPROCESS_TIMEOUT_MS ?? "300000", 10) || 300_000,
+);
+
+/**
+ * Longest intro we will prepend. An intro is branding, not content, and it is
+ * re-encoded on every export that uses it, so an admin uploading a
+ * several-minute file must not multiply every render on the box.
+ */
+const MAX_INTRO_SECONDS = Math.max(
+  1,
+  parseInt(process.env.MAX_INTRO_SECONDS ?? "30", 10) || 30,
+);
+
 type KF = { t: number; x: number; y: number; w: number; h: number };
 
 export interface FfmpegExportOptions {
@@ -319,16 +339,38 @@ function buildVideoFilter(keyframes: KF[], clipDuration: number, is9to16: boolea
   return `${padFilter}crop=${frameW}:${frameH}:${xExpr}:${yExpr},${scaleFilter}`;
 }
 
-/** Run an ffmpeg/ffprobe-family binary, resolving on exit code 0 and rejecting otherwise. */
-function run(bin: string, args: string[]): Promise<string> {
+/**
+ * Run an ffmpeg/ffprobe-family binary, resolving on exit code 0 and rejecting
+ * otherwise.
+ *
+ * The timeout is not optional. Every call here reaches a CDN, and a host that
+ * accepts the connection then stalls leaves the process alive forever — which
+ * in the intro path meant the render slot and the clip's in-flight entry were
+ * never released, stranding that clip on "pending" and, after
+ * MAX_CONCURRENT_RENDERS such events, queueing every later export indefinitely.
+ */
+function run(bin: string, args: string[], timeoutMs = SUBPROCESS_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(bin, args);
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
     proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-    proc.on("error", reject);
+    proc.stderr?.on("data", (d: Buffer) => { stderr = (stderr + d.toString()).slice(-8000); });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      logger.error({ bin, timeoutMs }, "Subprocess timed out — killing");
+      proc.kill("SIGKILL");
+    }, timeoutMs);
+
+    proc.on("error", (err) => { clearTimeout(timer); reject(err); });
     proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`${bin} timed out after ${timeoutMs}ms`));
+        return;
+      }
       if (code !== 0) {
         reject(new Error(`${bin} exited with code ${code}: ${stderr.slice(-1000)}`));
         return;
@@ -392,6 +434,8 @@ async function normalizeSegment(
     ? [
         "-headers", buildHeaderVal(referer),
         "-i", url,
+        // Branding, not content — see MAX_INTRO_SECONDS.
+        "-t", String(MAX_INTRO_SECONDS),
         "-vf", scalePad,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
@@ -404,6 +448,7 @@ async function normalizeSegment(
         "-headers", buildHeaderVal(referer),
         "-i", url,
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-t", String(MAX_INTRO_SECONDS),
         "-vf", scalePad,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",
@@ -427,6 +472,12 @@ async function concatSegments(paths: string[]): Promise<string> {
   await fs.promises.writeFile(listPath, listContent, "utf8");
   try {
     await run("ffmpeg", ["-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", "-y", outPath]);
+  } catch (err) {
+    // ffmpeg -y has already created and partially written outPath. Nothing
+    // downstream holds a reference to it once we throw, so it would sit in
+    // tmpdir forever.
+    fs.unlink(outPath, () => {});
+    throw err;
   } finally {
     fs.unlink(listPath, () => {});
   }
@@ -495,12 +546,30 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   // adding a matching Referer + a browser User-Agent bypasses that restriction.
   const headerVal = buildHeaderVal(referer);
 
+  // When an intro will be concatenated, the main clip has to match the spec
+  // normalizeSegment pins the intro to — 30 fps, 44.1 kHz stereo AAC, and an
+  // audio stream that definitely exists. The concat demuxer runs with -c copy,
+  // so a source that is mono, 16 kHz, or silent (all normal for a Reolink feed)
+  // would otherwise either fail the concat — silently dropping the intro,
+  // because withIntro swallows the error — or emit a file whose main portion
+  // plays at the intro's declared sample rate.
+  //
+  // Only done when there is an intro: the plain export path keeps the source's
+  // own audio parameters and costs no extra probe.
+  const mainHasAudio = options.introUrl
+    ? await probeHasAudio(videoUrl, referer)
+    : true;
+  const needsSilentTrack = !!options.introUrl && !mainHasAudio;
+
   const args = [
     // HTTP headers must come before -i so they apply to the input request
     "-headers", headerVal,
     // Fast seek before input (segment-level for HLS)
     "-ss", String(startSec),
     "-i", videoUrl,
+    ...(needsSilentTrack
+      ? ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+      : []),
     // Clip duration
     "-t", String(clipDuration),
     // pad -> crop pan -> scale, all built together so black bars survive
@@ -513,6 +582,8 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     // AAC audio
     "-c:a", "aac",
     "-b:a", "128k",
+    ...(options.introUrl ? ["-r", "30", "-ar", "44100", "-ac", "2"] : []),
+    ...(needsSilentTrack ? ["-map", "0:v:0", "-map", "1:a:0", "-shortest"] : []),
     // Optimise for streaming/download
     "-movflags", "+faststart",
     // Overwrite output
@@ -541,6 +612,10 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     proc.on("error", (err) => {
       clearTimeout(timeout);
       logger.error({ err }, "FFmpeg process error");
+      // ffmpeg -y creates the output file up front, and the caller only learns
+      // the path from a successful resolve — so on failure nobody else can
+      // clean it up.
+      fs.unlink(tmpPath, () => {});
       reject(err);
     });
 
@@ -548,6 +623,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
       clearTimeout(timeout);
       if (code !== 0) {
         logger.error({ code, signal, stderr: stderr.slice(-2000) }, "FFmpeg exited with non-zero code");
+        fs.unlink(tmpPath, () => {});
         reject(new Error(`FFmpeg exited with code ${code}${signal ? ` (${signal})` : ""}`));
         return;
       }
