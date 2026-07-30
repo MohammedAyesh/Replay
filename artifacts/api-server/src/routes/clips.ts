@@ -11,7 +11,6 @@ import {
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
 import { introPlaybackPath } from "./clipIntro";
-import { INTRO_ENABLED } from "../lib/features.js";
 
 const router: IRouter = Router();
 
@@ -107,9 +106,9 @@ async function buildClip(clipId: number, userId: number | null, lookups?: ClipLo
       introVideoUrl = academy.introVideoUrl;
     }
   }
-  // Proxy path, not the storage URL — see routes/clipIntro.ts.
-  // Gated by INTRO_ENABLED (see lib/features.ts) — null when the feature is off.
-  const introPlayback = INTRO_ENABLED ? introPlaybackPath(academyId, !!(introVideoUrl ?? view.globalIntro)) : null;
+  // Intro is intentionally suppressed in all playback responses — it appears
+  // only in downloaded export files. The player treats null as "start immediately".
+  const introPlayback = null;
 
   return {
     id: clip.id,

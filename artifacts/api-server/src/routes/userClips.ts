@@ -21,7 +21,6 @@ import {
   RecordShareResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { INTRO_ENABLED } from "../lib/features.js";
 import {
   getBunnyPlaybackUrl,
   getBunnyThumbnailUrl,
@@ -85,7 +84,6 @@ export function isLiveVideoId(videoId: string): boolean {
  * clips with no academy, or whose academy has not uploaded one.
  */
 async function resolveIntroVideoUrl(academyId: number | null): Promise<string | null> {
-  if (!INTRO_ENABLED) return null;
   if (academyId) {
     const [academy] = await db
       .select({ introVideoUrl: academiesTable.introVideoUrl })
@@ -157,14 +155,10 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   const isLive = isLiveVideoId(row.videoId);
   const thumbnailUrl = !isLive && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
   const playbackUrl = !isLive && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
-  // Clients get the proxy path (routes/clipIntro.ts), not the storage URL:
-  // Bunny Storage needs an AccessKey a browser cannot send, so handing the raw
-  // URL to a <video> element is a guaranteed media error — and playback runs
-  // the intro first, so the viewer just sees black.
-  const introVideoUrl = introPlaybackPath(
-    row.academyId ?? null,
-    !!(await resolveIntroVideoUrl(row.academyId)),
-  );
+  // Intro is intentionally suppressed in playback responses — it appears only
+  // in the downloaded export file (see the renderClip call below). The player
+  // treats null as "start the clip immediately", so no buffering delay occurs.
+  const introVideoUrl = null;
 
   res.status(201).json(
     CreateUserClipResponse.parse({
@@ -206,24 +200,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     .where(eq(userClipsTable.userId, userId))
     .orderBy(desc(userClipsTable.createdAt));
 
-  // Resolve intro URLs for the list — skipped entirely when INTRO_ENABLED is off.
-  const introByAcademy = new Map<number, string | null>();
-  let globalIntro: string | null = null;
-  if (INTRO_ENABLED) {
-    const academyIds = [...new Set(rows.map((r) => r.academyId).filter((id): id is number => id != null))];
-    if (academyIds.length > 0) {
-      const academies = await db
-        .select({ id: academiesTable.id, introVideoUrl: academiesTable.introVideoUrl })
-        .from(academiesTable)
-        .where(inArray(academiesTable.id, academyIds));
-      for (const a of academies) introByAcademy.set(a.id, a.introVideoUrl ?? null);
-    }
-    // Same precedence the exporter uses (resolveIntroVideoUrl): academy intro
-    // first, global clip_settings intro as the fallback. Fetched once for the
-    // whole list rather than per row.
-    const [globalSettings] = await db.select().from(clipSettingsTable).limit(1);
-    globalIntro = globalSettings?.introVideoUrl ?? null;
-  }
+  // Intro is intentionally suppressed in all playback responses — it appears
+  // only in downloaded export files. Skip the intro DB queries entirely.
 
   const result = rows.map((row) => {
     const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
@@ -248,11 +226,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
-      // The proxy path, never the raw storage URL — see routes/clipIntro.ts.
-      introVideoUrl: introPlaybackPath(
-        row.academyId ?? null,
-        !!((row.academyId != null ? introByAcademy.get(row.academyId) : null) ?? globalIntro),
-      ),
+      // Intro suppressed in playback — appears only in downloaded exports.
+      introVideoUrl: null,
     };
   });
 
@@ -350,14 +325,10 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
   const isLiveUpdate = isLiveVideoId(row.videoId);
   const thumbnailUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
   const playbackUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
-  // Clients get the proxy path (routes/clipIntro.ts), not the storage URL:
-  // Bunny Storage needs an AccessKey a browser cannot send, so handing the raw
-  // URL to a <video> element is a guaranteed media error — and playback runs
-  // the intro first, so the viewer just sees black.
-  const introVideoUrl = introPlaybackPath(
-    row.academyId ?? null,
-    !!(await resolveIntroVideoUrl(row.academyId)),
-  );
+  // Intro is intentionally suppressed in playback responses — it appears only
+  // in the downloaded export file (see the renderClip call below). The player
+  // treats null as "start the clip immediately", so no buffering delay occurs.
+  const introVideoUrl = null;
 
   res.json(
     UpdateUserClipResponse.parse({
