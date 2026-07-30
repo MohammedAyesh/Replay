@@ -809,6 +809,46 @@ function VideoPlayer({
         </div>
       </div>
 
+      {/* Quality picker — always visible once manifest is parsed, not auto-hidden */}
+      {qualityLevels.length > 1 && (
+        <div className="absolute top-safe top-3 end-3 z-30 pointer-events-auto">
+          <div className="relative">
+            <button
+              onClick={() => setShowQualityPicker((p) => !p)}
+              className="px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-white text-xs font-bold border border-white/20"
+            >
+              {activeQuality === -1
+                ? "Auto"
+                : (() => { const l = qualityLevels.find((q) => q.index === activeQuality); return l ? (l.height >= 2160 ? "4K" : `${l.height}p`) : "Auto"; })()}
+            </button>
+            {showQualityPicker && (
+              <div className="absolute top-full end-0 mt-1 bg-black/85 backdrop-blur-md rounded-xl overflow-hidden shadow-xl border border-white/10 min-w-[5rem]">
+                {[{ height: 0, index: -1 }, ...qualityLevels].map(({ height, index }) => {
+                  const label = index === -1 ? "Auto" : height >= 2160 ? "4K" : `${height}p`;
+                  const isActive = activeQuality === index;
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => {
+                        if (hlsRef.current) hlsRef.current.currentLevel = index;
+                        setActiveQuality(index);
+                        setShowQualityPicker(false);
+                      }}
+                      className={cn(
+                        "block w-full px-4 py-2.5 text-xs font-semibold text-left transition-colors",
+                        isActive ? "text-primary" : "text-white hover:bg-white/10",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <AnimatePresence>
         {showControls && clipMode === "idle" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-20 flex flex-col pointer-events-none">
@@ -820,44 +860,6 @@ function VideoPlayer({
                 <button onClick={() => applyFrameChange(frameZoomRef.current, selectedRatio === "16:9" ? "9:16" : "16:9")} className="px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-bold">
                   {selectedRatio}
                 </button>
-
-                {/* Quality selector — shown once HLS.js has parsed the manifest */}
-                {qualityLevels.length > 1 && (
-                  <div className="relative">
-                    <button
-                      onClick={() => setShowQualityPicker((p) => !p)}
-                      className="px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-bold"
-                    >
-                      {activeQuality === -1
-                        ? "Auto"
-                        : (() => { const l = qualityLevels.find((q) => q.index === activeQuality); return l ? (l.height >= 2160 ? "4K" : `${l.height}p`) : "Auto"; })()}
-                    </button>
-                    {showQualityPicker && (
-                      <div className="absolute top-full right-0 mt-1 bg-black/80 backdrop-blur-md rounded-xl overflow-hidden shadow-xl border border-white/10 z-50 min-w-[5rem]">
-                        {[{ height: 0, index: -1 }, ...qualityLevels].map(({ height, index }) => {
-                          const label = index === -1 ? "Auto" : height >= 2160 ? "4K" : `${height}p`;
-                          const isActive = activeQuality === index;
-                          return (
-                            <button
-                              key={index}
-                              onClick={() => {
-                                if (hlsRef.current) hlsRef.current.currentLevel = index;
-                                setActiveQuality(index);
-                                setShowQualityPicker(false);
-                              }}
-                              className={cn(
-                                "block w-full px-4 py-2.5 text-xs font-semibold text-left transition-colors",
-                                isActive ? "text-primary" : "text-white hover:bg-white/10",
-                              )}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 <button onClick={toggleFullscreen} className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
                   {isFullscreen ? <Minimize className="w-4 h-4 text-white" /> : <Maximize className="w-4 h-4 text-white" />}
