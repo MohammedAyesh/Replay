@@ -37,7 +37,41 @@ app.use(
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
-app.use(cors({ origin: true, credentials: true }));
+/**
+ * `origin: true` reflects whatever Origin the caller sends, and combined with
+ * `credentials: true` that lets any site on the internet make credentialed calls
+ * to /api/* and read the response. The guest cookie is SameSite=Lax so it is not
+ * attached cross-site, but Clerk's __session cookie is SameSite=None on
+ * development and satellite-domain instances — in that configuration any page
+ * could drive /api/admin/* as a signed-in admin.
+ *
+ * Allowed origins come from CORS_ALLOWED_ORIGINS (comma-separated), and nothing
+ * else — deliberately no `*.replit.app` wildcard, because anyone can deploy on
+ * that domain in minutes and would inherit the same credentialed access.
+ *
+ * The app itself does not need any entry here: the frontend and this API are
+ * served under one origin (BASE_PATH "/" with the API mounted at /api), and the
+ * browser applies no CORS check to a same-origin request.
+ */
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((o) => o.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
+app.use(
+  cors({
+    credentials: true,
+    origin(origin, callback) {
+      // No Origin header: same-origin, curl, or a native app. Nothing to guard.
+      if (!origin) return callback(null, true);
+      const normalized = origin.replace(/\/$/, "");
+      if (allowedOrigins.includes(normalized)) return callback(null, true);
+      // Reject by simply not emitting the CORS headers — the browser blocks the
+      // read. Throwing here would turn a cross-origin probe into a 500.
+      return callback(null, false);
+    },
+  }),
+);
 
 app.use(
   clerkMiddleware((req) => ({

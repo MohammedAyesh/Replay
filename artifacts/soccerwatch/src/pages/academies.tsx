@@ -83,7 +83,7 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive }: {
     cameraIds?: string[] | null; recordingCount: number;
   };
   index: number; isExpanded: boolean; onToggle: () => void;
-  onOpenLive: (cameraId: string, title: string) => void;
+  onOpenLive: (cameraId: string, title: string, academyId: number) => void;
 }) {
   const { data: recordings, isLoading: recLoading } = useGetAcademyRecordings(
     academy.id,
@@ -144,7 +144,7 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive }: {
                       <LiveRow
                         key={cam}
                         cameraId={cam}
-                        onOpen={() => onOpenLive(cam, `${academy.name} · ${CAMERA_LABELS[cam] ?? cam}`)}
+                        onOpen={() => onOpenLive(cam, `${academy.name} · ${CAMERA_LABELS[cam] ?? cam}`, academy.id)}
                       />
                     ))}
                   </div>
@@ -193,7 +193,7 @@ export default function Academies() {
   });
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [liveFor, setLiveFor] = useState<{ cameraId: string; title: string } | null>(null);
+  const [liveFor, setLiveFor] = useState<{ cameraId: string; title: string; academyId: number } | null>(null);
 
   const filtered = (academies ?? []).filter(
     (a) => a.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -234,7 +234,7 @@ export default function Academies() {
               key={academy.id} academy={academy} index={i}
               isExpanded={expandedId === academy.id}
               onToggle={() => setExpandedId(expandedId === academy.id ? null : academy.id)}
-              onOpenLive={(cameraId, title) => setLiveFor({ cameraId, title })}
+              onOpenLive={(cameraId, title, academyId) => setLiveFor({ cameraId, title, academyId })}
             />
           ))
         )}
@@ -247,6 +247,7 @@ export default function Academies() {
             onClose={() => setLiveFor(null)}
             liveHlsUrl={`/api/live/${liveFor.cameraId}/index.m3u8`}
             liveCameraId={liveFor.cameraId}
+            academyId={liveFor.academyId}
             isLive
           />
         )}
@@ -328,10 +329,10 @@ function MiniMap({ frame, srcAspect }: { frame: { x: number; y: number; w: numbe
 }
 
 function VideoPlayer({
-  video, onClose, liveHlsUrl, liveCameraId, isLive = false,
+  video, onClose, liveHlsUrl, liveCameraId, isLive = false, academyId,
 }: {
   video: BunnyVideo; onClose: () => void;
-  liveHlsUrl?: string; liveCameraId?: string; isLive?: boolean;
+  liveHlsUrl?: string; liveCameraId?: string; isLive?: boolean; academyId?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -731,10 +732,17 @@ function VideoPlayer({
           cropPath: keyframes,
           visibility: "private",
           aspectRatio: selectedRatioRef.current,
+          academyId,
         },
       });
       queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
-      toast({ title: t.clipping.saved, description: t.clipping.savedDesc, className: "bg-primary text-white border-none" });
+      toast({
+        title: t.clipping.saved,
+        description: isLive
+          ? "Live clip saved. It will be available to play once the recording is uploaded."
+          : t.clipping.savedDesc,
+        className: "bg-primary text-white border-none",
+      });
       setClipMode("idle");
       setClipTitle("");
       applyFrameChange(1, "16:9");
@@ -895,7 +903,7 @@ function VideoPlayer({
           <DialogDescription className="text-zinc-400">{t.myClips.signInDesc}</DialogDescription>
           <div className="flex gap-2 mt-2">
             <button onClick={() => setShowAuthPrompt(false)} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm">{t.clipping.discard}</button>
-            <button onClick={() => { setShowAuthPrompt(false); setLocation("/login"); }} className="flex-1 py-2.5 rounded-xl bg-primary text-black text-sm font-bold">{t.clipping.signInCTA}</button>
+            <button onClick={() => { setShowAuthPrompt(false); setLocation("/sign-in"); }} className="flex-1 py-2.5 rounded-xl bg-primary text-black text-sm font-bold">{t.clipping.signInCTA}</button>
           </div>
         </DialogContent>
       </Dialog>

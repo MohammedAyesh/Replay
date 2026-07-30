@@ -68,6 +68,19 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const pollingRef = useRef(false);
   const [isLocal, setIsLocal] = useState(false);
   /**
+   * Two-phase playback: play the academy's branding intro (if this clip has
+   * one) before the real clip. Skipped entirely for local blobs — those are
+   * either the server-rendered export (which already has the intro baked in)
+   * or a client-exported fallback (a separate, smaller gap not handled here).
+   */
+  const [phase, setPhase] = useState<"intro" | "main">(clip.introVideoUrl ? "intro" : "main");
+  useEffect(() => {
+    setPhase(clip.introVideoUrl ? "intro" : "main");
+  }, [clip.id, clip.introVideoUrl]);
+  useEffect(() => {
+    if (isLocal) setPhase("main");
+  }, [isLocal]);
+  /**
    * Local blobs are already trimmed+cropped (they start at t=0 and run to clipDuration).
    * localTimingOverride tracks this: when set, use these fractions instead of clip.startTime/endTime
    * for seek and stop logic so we play from 0 → 1 of the blob, not some fraction of recording duration.
@@ -143,10 +156,39 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     };
   }, [clip.id]);
 
-  /* HLS init — only if no local copy */
+  /* Intro playback — the academy's branding intro, before the real clip. */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !clip.playbackUrl || isLocal) return;
+    if (!video || phase !== "intro" || !clip.introVideoUrl || isLocal) return;
+
+    let cancelled = false;
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    video.src = clip.introVideoUrl;
+
+    // A broken or unreachable intro must never trap the viewer — fall
+    // through to the real clip on any failure, same as a normal finish.
+    function advanceToMain() {
+      if (cancelled) return;
+      setPhase("main");
+    }
+
+    video.addEventListener("ended", advanceToMain);
+    video.addEventListener("error", advanceToMain);
+    video.play().then(() => setIsPlaying(true)).catch(() => {});
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener("ended", advanceToMain);
+      video.removeEventListener("error", advanceToMain);
+    };
+  }, [phase, clip.id, clip.introVideoUrl, isLocal]);
+
+  /* HLS init — only if no local copy and the intro (if any) has finished */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !clip.playbackUrl || isLocal || phase !== "main") return;
 
     let didSeek = false;
     function seekToStartAndPlay() {
@@ -176,7 +218,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       video.removeEventListener("durationchange", seekToStartAndPlay);
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     };
-  }, [clip.playbackUrl, clip.startTime]);
+  }, [clip.playbackUrl, clip.startTime, phase, isLocal]);
 
   /**
    * Pan loop. Writes the interpolated crop frame straight to the video element's
@@ -428,22 +470,10 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     if (!res.ok) throw new Error("Proxy download failed");
     const blob = await res.blob();
 
-    // Save to local IndexedDB so it appears in the Saved tab
-    await saveLocalClip({
-      clipId: clip.id,
-      userId: user?.id ?? 0,
-      title: clip.title,
-      blob,
-      mimeType: "video/mp4",
-      startTime: clip.startTime,
-      endTime: clip.endTime,
-      cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
-      aspectRatio: clip.aspectRatio ?? "16:9",
-      downloadedAt: new Date().toISOString(),
-      playbackUrl: clip.playbackUrl ?? null,
-    });
-    onDownloaded?.();
-
+    // Hand the file to the user FIRST. The local-cache write below can reject
+    // (QuotaExceededError on a nearly-full device is the common one), and doing
+    // it first meant a several-hundred-megabyte download that had already
+    // succeeded was thrown away with a bare "Export failed".
     const file = new File([blob], filename, { type: "video/mp4" });
     const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
     if (nav.canShare?.({ files: [file] })) {
@@ -452,15 +482,45 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     } else {
       triggerDownload(blob, filename);
     }
-    toast({ title: "Saved!", description: "Clip saved to your device." });
+
+    // Then cache it locally so it appears in the Saved tab. Best-effort.
+    try {
+      await saveLocalClip({
+        clipId: clip.id,
+        userId: user?.id ?? 0,
+        title: clip.title,
+        blob,
+        mimeType: "video/mp4",
+        startTime: clip.startTime,
+        endTime: clip.endTime,
+        cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
+        aspectRatio: clip.aspectRatio ?? "16:9",
+        downloadedAt: new Date().toISOString(),
+        playbackUrl: clip.playbackUrl ?? null,
+      });
+      onDownloaded?.();
+      toast({ title: "Saved!", description: "Clip saved to your device." });
+    } catch {
+      toast({
+        title: "Downloaded",
+        description: "Not enough space to keep a copy in the Saved tab.",
+      });
+    }
   }, [clip, user?.id, toast, onDownloaded]);
 
   const handleExport = useCallback(async () => {
     if (exportState === "polling") return;
 
-    // Already exported — re-deliver without re-rendering
+    // Already exported — re-deliver without re-rendering.
+    // This sits before the try/catch below, so an offline tap or an expired
+    // Bunny asset used to surface as an unhandled rejection: no toast, no
+    // spinner, nothing at all happened.
     if (exportState === "ready" && exportedUrl) {
-      await deliverViaProxy();
+      try {
+        await deliverViaProxy();
+      } catch {
+        toast({ title: t.export.error, description: t.export.errorDesc, variant: "destructive" });
+      }
       return;
     }
 
@@ -510,8 +570,14 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         return;
       }
 
-      // status === "pending" — poll until done (max 3 minutes)
-      const maxAttempts = 90;
+      // status === "pending" — poll until done.
+      //
+      // The server renders at most MAX_CONCURRENT_RENDERS clips at a time and
+      // queues the rest, and a single -preset slow -crf 16 pass on the shared
+      // VPS can take several minutes on its own. The old 3-minute budget meant
+      // a queued export reported "Export failed" to the user while it was still
+      // waiting its turn, and then completed anyway.
+      const maxAttempts = 600; // 20 minutes at 2 s
       for (let i = 0; i < maxAttempts; i++) {
         await new Promise<void>((r) => setTimeout(r, 2000));
         if (!pollingRef.current) return; // player closed
@@ -531,7 +597,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         // still pending — keep polling
       }
 
-      throw new Error("Export timed out after 3 minutes");
+      throw new Error("Export timed out");
     } catch {
       pollingRef.current = false;
       setExportState("error");
@@ -1148,6 +1214,14 @@ function UserClipCard({
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
       <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
+
+      {/* Live clip overlay — no playback URL yet */}
+      {!clip.playbackUrl && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 z-10 pointer-events-none">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Live recording</span>
+          <span className="text-[9px] text-white/50 text-center px-3">Playback available once the recording uploads</span>
+        </div>
+      )}
 
       {/* Top-left badge: lock for private, scissors for public */}
       {isPrivate ? (

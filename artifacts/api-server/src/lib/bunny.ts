@@ -1,4 +1,6 @@
 import fs from "fs";
+import crypto from "crypto";
+import { Readable } from "stream";
 
 export const BUNNY_CDN_HOSTNAME = process.env.BUNNY_CDN_HOSTNAME ?? "";
 export const BUNNY_API_KEY = process.env.BUNNY_API_KEY ?? "";
@@ -58,28 +60,63 @@ export function getBunnyDirectMp4Url(videoId: string, height = 1080): string {
   return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/play_${height}p.mp4`;
 }
 
+/**
+ * Storage path for a rendered clip export.
+ *
+ * The path carries an unguessable suffix derived from the clip id, because the
+ * export bucket is served by a public pull zone: a bare `clips/<id>.mp4` can be
+ * enumerated by counting upwards, which hands out every user's rendered clip
+ * regardless of the ownership check on the download route.
+ *
+ * The suffix is an HMAC of the clip id keyed on CLIP_EXPORT_URL_SECRET (falling
+ * back to the storage API key, which is always present wherever exports run) so
+ * it is deterministic — no extra column, and re-deriving the URL for an existing
+ * clip still works — but not derivable by a client.
+ */
+function exportPathToken(clipId: number): string {
+  const secret = process.env.CLIP_EXPORT_URL_SECRET || BUNNY_STORAGE_API_KEY;
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`clip-export:${clipId}`)
+    .digest("hex")
+    .slice(0, 24);
+}
+
+/** Storage-zone-relative path for a rendered clip export. */
+export function getBunnyExportPath(clipId: number): string {
+  return `clips/${clipId}-${exportPathToken(clipId)}.mp4`;
+}
+
 /** Returns the public CDN URL for a rendered clip export. */
 export function getBunnyExportUrl(clipId: number): string {
   const base = BUNNY_STORAGE_CDN_URL.replace(/\/$/, "");
-  return `${base}/clips/${clipId}.mp4`;
+  return `${base}/${getBunnyExportPath(clipId)}`;
 }
 
 /**
  * Upload a rendered MP4 to Bunny Storage and return its public CDN URL.
  * Requires BUNNY_STORAGE_ZONE, BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_CDN_URL.
+ *
+ * The file is streamed, never read into memory: a CRF-16 export of a long
+ * selection runs to hundreds of megabytes, and buffering two of those at once
+ * is enough to OOM the API process on the 6-vCPU VPS.
  */
 export async function uploadToBunnyStorage(filePath: string, clipId: number): Promise<string> {
-  const uploadUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/clips/${clipId}.mp4`;
-  const fileBuffer = await fs.promises.readFile(filePath);
+  const uploadUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${getBunnyExportPath(clipId)}`;
+  const { size } = await fs.promises.stat(filePath);
+  const fileStream = Readable.toWeb(fs.createReadStream(filePath)) as ReadableStream;
 
   const response = await fetch(uploadUrl, {
     method: "PUT",
     headers: {
       AccessKey: BUNNY_STORAGE_API_KEY,
       "Content-Type": "video/mp4",
+      "Content-Length": String(size),
     },
-    body: fileBuffer,
-  });
+    body: fileStream,
+    // Required by undici whenever the request body is a stream.
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -89,6 +126,25 @@ export async function uploadToBunnyStorage(filePath: string, clipId: number): Pr
   }
 
   return getBunnyExportUrl(clipId);
+}
+
+/**
+ * Delete a rendered clip export from Bunny Storage. Best-effort.
+ *
+ * Deletes the legacy `clips/<id>.mp4` path as well as the current
+ * HMAC-suffixed one: clips exported before the suffix existed still live at the
+ * old, enumerable location, and that is exactly the path worth removing.
+ */
+export async function deleteBunnyExport(clipId: number): Promise<void> {
+  const paths = [getBunnyExportPath(clipId), `clips/${clipId}.mp4`];
+  await Promise.allSettled(
+    paths.map((p) =>
+      fetch(`https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${p}`, {
+        method: "DELETE",
+        headers: { AccessKey: BUNNY_STORAGE_API_KEY },
+      }),
+    ),
+  );
 }
 
 /**

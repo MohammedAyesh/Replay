@@ -117,15 +117,21 @@ export default router;
 /** Keys we've already fired this minute — prevents double-trigger on the 30-s tick. */
 const fired = new Set<string>();
 
-/** Clear fired keys older than 2 minutes to avoid unbounded growth. */
+/** Drop fired keys that are no longer for the current minute, to avoid unbounded growth. */
 setInterval(() => {
   const now = getNow();
-  // Keep only keys matching the current minute
+  const current = `${now.date}:${now.hhmm}`;
   for (const key of fired) {
+    // key format: "camera:YYYY-MM-DD:HH:MM:action" — five colon-separated parts,
+    // so the minute is parts 1..3. The old `${parts[1]}:${parts[2]}` produced
+    // "2026-07-30:14" and never matched "2026-07-30:14:30", which emptied the
+    // whole set every tick — including the current minute's keys. With the
+    // dedupe gone, a cleanup landing between the scheduler's two 30 s ticks let
+    // the same schedule fire twice, and live.sh wipes Bunny on start, so
+    // viewers saw the stream reset mid-match.
     const parts = key.split(":");
-    // key format: "camera:YYYY-MM-DD:HH:MM:action"
-    const keyMinute = `${parts[1]}:${parts[2]}`;
-    if (keyMinute !== `${now.date}:${now.hhmm}`) fired.delete(key);
+    const keyMinute = parts.slice(1, 4).join(":");
+    if (keyMinute !== current) fired.delete(key);
   }
 }, 60_000);
 
@@ -176,23 +182,28 @@ async function runScheduler() {
     return;
   }
 
-  for (const s of schedules) {
+  const due = schedules.filter((s) => {
     const days = parseDays(s.daysOfWeek);
     // If daysOfWeek is empty, applies every day
-    if (days.length > 0 && !days.includes(now.weekday)) continue;
+    return days.length === 0 || days.includes(now.weekday);
+  });
 
-    for (const action of ["start", "stop"] as const) {
+  // Every stop across all schedules is issued before any start.
+  //
+  // The query has no ORDER BY, and the old loop evaluated start-then-stop per
+  // row. With back-to-back blocks on one camera (18:00-20:00 and 20:00-22:00),
+  // if Postgres happened to return the later row first the scheduler fired
+  // start then stop at 20:00 and left the camera dark for the whole second
+  // block, with nothing to re-fire until 22:00.
+  for (const action of ["stop", "start"] as const) {
+    for (const s of due) {
       const t = action === "start" ? s.startTime : s.endTime;
       if (t !== now.hhmm) continue;
       const key = `${s.camera}:${now.date}:${now.hhmm}:${action}`;
       if (fired.has(key)) continue;
       fired.add(key);
       logger.info({ camera: s.camera, action, time: now.hhmm }, "Scheduler: firing");
-      if (action === "start") {
-        await controlFetch(`/live/start/${s.camera}`, { method: "POST" });
-      } else {
-        await controlFetch(`/live/stop/${s.camera}`, { method: "POST" });
-      }
+      await controlFetch(`/live/${action}/${s.camera}`, { method: "POST" });
     }
   }
 }

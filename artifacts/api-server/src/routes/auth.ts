@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { db, usersTable, academiesTable } from "@workspace/db";
 import { GetMeResponse, LoginAsGuestResponse } from "@workspace/api-zod";
@@ -44,7 +45,10 @@ router.get("/auth/me", async (req, res): Promise<void> => {
 router.post("/auth/guest", async (req, res): Promise<void> => {
   const [guest] = await db
     .insert(usersTable)
-    .values({ name: "Guest", email: `guest_${Date.now()}@soccerwatch.local`, isGuest: true, profileComplete: true })
+    // users.email is unique, so a bare Date.now() collides whenever two guests
+    // are created in the same millisecond (a burst of first-time visitors, or a
+    // client retry) and the loser gets a 500 instead of a session.
+    .values({ name: "Guest", email: `guest_${Date.now()}_${crypto.randomBytes(6).toString("hex")}@soccerwatch.local`, isGuest: true, profileComplete: true })
     .returning();
 
   res.cookie("guestId", String(guest.id), GUEST_COOKIE_OPTIONS);

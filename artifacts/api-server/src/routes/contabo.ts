@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import crypto from "crypto";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getLocalUserId } from "../lib/clerkUserBridge";
@@ -35,28 +36,58 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
 }
 
 /** Middleware: must be DB admin AND supply the correct ADMIN_PASSWORD header */
-async function requireContaboAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
-): Promise<void> {
-  const adminId = await requireAdmin(req);
-  if (!adminId) {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
+/**
+ * Admin flag + the live-control password.
+ *
+ * `allowUnconfigured` exists for GET /config only: that route is how the
+ * console discovers the password has not been set up yet, so it must answer
+ * rather than 503. It still enforces the password whenever one IS configured —
+ * the unlock screen verifies the password purely by watching for a 401 from
+ * /config, so exempting it entirely would let any wrong password unlock the
+ * console and then fail on every subsequent button.
+ */
+function contaboAuth(opts: { allowUnconfigured?: boolean } = {}) {
+  return async function requireContaboAuth(
+    req: import("express").Request,
+    res: import("express").Response,
+    next: import("express").NextFunction,
+  ): Promise<void> {
+    const adminId = await requireAdmin(req);
+    if (!adminId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
 
-  const suppliedPw = (req.headers["x-admin-password"] as string | undefined) ?? "";
-  const expectedPw = ADMIN_PASSWORD();
+    const suppliedPw = (req.headers["x-admin-password"] as string | undefined) ?? "";
+    const expectedPw = ADMIN_PASSWORD();
 
-  if (!expectedPw) {
-    // No password set yet — allow (will show config warning in /config)
-  } else if (suppliedPw !== expectedPw) {
-    res.status(401).json({ error: "Bad admin password" });
-    return;
-  }
+    if (!expectedPw) {
+      if (opts.allowUnconfigured) {
+        next();
+        return;
+      }
+      // No password configured — the second factor is not usable, so refuse
+      // rather than silently downgrading to admin-flag-only.
+      res.status(503).json({ error: "Control server not configured", missing: missingSecrets() });
+      return;
+    }
+    if (!timingSafeEqualStr(suppliedPw, expectedPw)) {
+      res.status(401).json({ error: "Bad admin password" });
+      return;
+    }
 
-  next();
+    next();
+  };
+}
+
+const requireContaboAuth = contaboAuth();
+
+/** Constant-time string compare, so the password cannot be recovered byte-by-byte. */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 // ─── In-memory recording request log ─────────────────────────────────────────
@@ -84,6 +115,10 @@ async function controlFetch(
   const base = CONTROL_URL();
   const key  = CONTROL_KEY();
 
+  // Every other outbound call in this codebase is bounded; this one was not, so
+  // a control API that accepts the connection and never answers (hung ffmpeg,
+  // camera off WiFi) held the admin's request open until the platform edge
+  // timeout, and each retry added another.
   const res = await fetch(`${base}${path}`, {
     ...opts,
     headers: {
@@ -91,6 +126,7 @@ async function controlFetch(
       "X-Api-Key": key,
       ...(opts.headers as Record<string, string> ?? {}),
     },
+    signal: AbortSignal.timeout(15_000),
   });
 
   let body: unknown = null;
@@ -109,7 +145,7 @@ async function controlFetch(
  * Returns which required secrets are missing and whether the server is reachable.
  * Used by the frontend on mount to show a setup warning.
  */
-router.get("/admin/contabo/config", requireContaboAuth as import("express").RequestHandler, async (_req, res): Promise<void> => {
+router.get("/admin/contabo/config", contaboAuth({ allowUnconfigured: true }) as import("express").RequestHandler, async (_req, res): Promise<void> => {
   const missing = missingSecrets();
   res.json({ configured: missing.length === 0, missing });
 });

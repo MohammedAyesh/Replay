@@ -2,6 +2,7 @@ import { getAuth, createClerkClient } from "@clerk/express";
 import { and, eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import type { Request } from "express";
+import { logger } from "./logger";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -43,13 +44,19 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
     const needsEmailUpdate = freshEmail && (isSyntheticEmail(existing.email) || freshEmail !== existing.email);
 
     if (needsNameUpdate || needsEmailUpdate) {
-      await db
-        .update(usersTable)
-        .set({
-          ...(needsNameUpdate ? { name: freshName } : {}),
-          ...(needsEmailUpdate ? { email: freshEmail } : {}),
-        })
-        .where(eq(usersTable.id, existing.id));
+      try {
+        await db
+          .update(usersTable)
+          .set({
+            ...(needsNameUpdate ? { name: freshName } : {}),
+            ...(needsEmailUpdate ? { email: freshEmail } : {}),
+          })
+          .where(eq(usersTable.id, existing.id));
+      } catch (err) {
+        // users.email is unique: if the fresh address already belongs to another
+        // row, keeping the stale one is strictly better than failing the request.
+        logger.warn({ err, userId: existing.id }, "Could not sync user profile from Clerk");
+      }
     }
 
     return existing.id;
@@ -72,7 +79,49 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
     .onConflictDoNothing()
     .returning({ id: usersTable.id });
 
-  return created?.id ?? null;
+  if (created) return created.id;
+
+  // onConflictDoNothing returns no row on conflict, and returning null here
+  // makes every route treat a legitimately signed-in Clerk user as anonymous —
+  // silently and permanently. Two things can conflict:
+  //
+  //  - users.clerk_id, when two requests from a brand-new Clerk user race. The
+  //    row already exists, so re-select it.
+  const [byClerkId] = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.clerkId, clerkId));
+  if (byClerkId) return byClerkId.id;
+
+  //  - users.email, when the address is already attached to a different local
+  //    row. Do NOT adopt that row: Clerk emails are not necessarily verified
+  //    (extractClerkEmail falls back to any address on the account), every
+  //    pre-Clerk row has a null clerk_id, and some of those are admins — so
+  //    "claim the row whose email matches" is an account-takeover primitive.
+  //    Give this Clerk id its own row under a synthetic address instead. The
+  //    person gets in; an operator can merge the accounts deliberately.
+  logger.warn(
+    { clerkId },
+    "Clerk sign-in email already belongs to another local user — creating a separate row",
+  );
+  const [fallback] = await db
+    .insert(usersTable)
+    .values({
+      clerkId,
+      name,
+      email: `clerk_${clerkId}@soccerwatch.local`,
+      isGuest: false,
+      profileComplete: false,
+    })
+    .onConflictDoNothing()
+    .returning({ id: usersTable.id });
+  if (fallback) return fallback.id;
+
+  const [retry] = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.clerkId, clerkId));
+  return retry?.id ?? null;
 }
 
 /**
