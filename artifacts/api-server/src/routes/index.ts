@@ -18,6 +18,7 @@ import contaboRouter from "./contabo";
 import liveRouter from "./live";
 import hlsProxyRouter from "./hlsProxy";
 import liveSchedulesRouter from "./liveSchedules";
+import clipIntroRouter from "./clipIntro";
 
 const router: IRouter = Router();
 
@@ -40,5 +41,6 @@ router.use(contaboRouter);
 router.use(liveRouter);
 router.use(hlsProxyRouter);
 router.use(liveSchedulesRouter);
+router.use(clipIntroRouter);
 
 export default router;

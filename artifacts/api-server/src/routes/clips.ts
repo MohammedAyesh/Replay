@@ -10,6 +10,7 @@ import {
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
+import { introPlaybackPath } from "./clipIntro";
 
 const router: IRouter = Router();
 
@@ -105,7 +106,8 @@ async function buildClip(clipId: number, userId: number | null, lookups?: ClipLo
       introVideoUrl = academy.introVideoUrl;
     }
   }
-  introVideoUrl = introVideoUrl ?? view.globalIntro;
+  // Proxy path, not the storage URL — see routes/clipIntro.ts.
+  const introPlayback = introPlaybackPath(academyId, !!(introVideoUrl ?? view.globalIntro));
 
   return {
     id: clip.id,
@@ -129,7 +131,7 @@ async function buildClip(clipId: number, userId: number | null, lookups?: ClipLo
     endTime: parseFloat(clip.endTime ?? "1"),
     cropPath: (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[],
     academyId,
-    introVideoUrl,
+    introVideoUrl: introPlayback,
   };
 }
 

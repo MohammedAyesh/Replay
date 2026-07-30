@@ -18,6 +18,9 @@ import {
   normalizePath,
 } from "@/lib/cropFrame";
 
+/** How long to wait for the branding intro to actually start before skipping it. */
+const INTRO_START_TIMEOUT_MS = 4000;
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -115,16 +118,31 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
     video.addEventListener("ended", advanceToMain);
     video.addEventListener("error", advanceToMain);
+    video.addEventListener("stalled", advanceToMain);
+    video.addEventListener("abort", advanceToMain);
+
+    // Watchdog. The "error" event covers a source the browser rejects outright,
+    // but not every way an intro can fail to start — a 401, a hung origin or an
+    // autoplay block can leave the element sitting on a black first frame with
+    // no event at all, and the real clip is gated behind this phase. If nothing
+    // is actually playing shortly after we ask, move on.
+    const watchdog = setTimeout(() => {
+      if (!cancelled && (video.readyState < 2 || video.paused)) advanceToMain();
+    }, INTRO_START_TIMEOUT_MS);
+
     video.play().then(() => setIsPlaying(true)).catch(() => {
-      // Autoplay may be blocked; leave phase as "intro" so a manual tap on
-      // the play button (wired to videoRef.current) still plays the intro
-      // rather than silently jumping ahead.
+      // Autoplay refused, or the source is unplayable. Either way the clip
+      // itself must not be held back by the branding.
+      advanceToMain();
     });
 
     return () => {
       cancelled = true;
+      clearTimeout(watchdog);
       video.removeEventListener("ended", advanceToMain);
       video.removeEventListener("error", advanceToMain);
+      video.removeEventListener("stalled", advanceToMain);
+      video.removeEventListener("abort", advanceToMain);
     };
   }, [phase, clip.id, clip.introVideoUrl]);
 

@@ -35,6 +35,7 @@ import {
 import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile } from "../lib/ffmpegExport";
 import { logger } from "../lib/logger";
+import { introPlaybackPath } from "./clipIntro";
 
 const router: IRouter = Router();
 
@@ -154,7 +155,14 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   const isLive = isLiveVideoId(row.videoId);
   const thumbnailUrl = !isLive && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
   const playbackUrl = !isLive && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
-  const introVideoUrl = await resolveIntroVideoUrl(row.academyId);
+  // Clients get the proxy path (routes/clipIntro.ts), not the storage URL:
+  // Bunny Storage needs an AccessKey a browser cannot send, so handing the raw
+  // URL to a <video> element is a guaranteed media error — and playback runs
+  // the intro first, so the viewer just sees black.
+  const introVideoUrl = introPlaybackPath(
+    row.academyId ?? null,
+    !!(await resolveIntroVideoUrl(row.academyId)),
+  );
 
   res.status(201).json(
     CreateUserClipResponse.parse({
@@ -235,7 +243,11 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
-      introVideoUrl: (row.academyId != null ? introByAcademy.get(row.academyId) : null) ?? globalIntro,
+      // The proxy path, never the raw storage URL — see routes/clipIntro.ts.
+      introVideoUrl: introPlaybackPath(
+        row.academyId ?? null,
+        !!((row.academyId != null ? introByAcademy.get(row.academyId) : null) ?? globalIntro),
+      ),
     };
   });
 
@@ -333,7 +345,14 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
   const isLiveUpdate = isLiveVideoId(row.videoId);
   const thumbnailUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
   const playbackUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
-  const introVideoUrl = await resolveIntroVideoUrl(row.academyId);
+  // Clients get the proxy path (routes/clipIntro.ts), not the storage URL:
+  // Bunny Storage needs an AccessKey a browser cannot send, so handing the raw
+  // URL to a <video> element is a guaranteed media error — and playback runs
+  // the intro first, so the viewer just sees black.
+  const introVideoUrl = introPlaybackPath(
+    row.academyId ?? null,
+    !!(await resolveIntroVideoUrl(row.academyId)),
+  );
 
   res.json(
     UpdateUserClipResponse.parse({
