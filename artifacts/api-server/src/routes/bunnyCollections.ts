@@ -69,6 +69,55 @@ router.get("/bunny/collections", async (req, res): Promise<void> => {
   res.json(collections);
 });
 
+// All videos across every collection — used by admin Import from Bunny
+router.get("/bunny/all-videos", async (req, res): Promise<void> => {
+  if (!isBunnyConfigured()) {
+    res.json([]);
+    return;
+  }
+
+  const rawCollections = await bunnyGet(
+    "collections?page=1&itemsPerPage=100&orderBy=date",
+    req
+  );
+  if (!rawCollections) {
+    res.json([]);
+    return;
+  }
+
+  const collectionGuids = (rawCollections as BunnyApiCollection[])
+    .map((c) => c.guid)
+    .filter((g): g is string => typeof g === "string");
+
+  const dbFields = await db.select().from(fieldsTable);
+  const fieldNameByGuid = new Map(dbFields.map((f) => [f.bunnyGuid, f.name]));
+
+  const results = await Promise.all(
+    collectionGuids.map(async (guid) => {
+      const raw = await bunnyGet(
+        `videos?collection=${encodeURIComponent(guid)}&page=1&itemsPerPage=100&orderBy=date`,
+        req
+      );
+      if (!raw) return [];
+      const collectionName = fieldNameByGuid.get(guid) ?? guid.slice(0, 8);
+      return (raw as BunnyApiVideo[])
+        .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
+        .filter((v) => v.status === undefined || v.status === 4)
+        .map((v) => ({
+          guid: v.guid as string,
+          title: v.title as string,
+          collectionName,
+          thumbnailUrl: `https://${BUNNY_CDN_HOSTNAME}/${v.guid}/thumbnail.jpg`,
+          playbackUrl: `https://${BUNNY_CDN_HOSTNAME}/${v.guid}/playlist.m3u8`,
+          views: v.views ?? 0,
+          duration: v.length ?? 0,
+        }));
+    })
+  );
+
+  res.json(results.flat());
+});
+
 // Videos in a collection
 router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> => {
   const { guid } = req.params;

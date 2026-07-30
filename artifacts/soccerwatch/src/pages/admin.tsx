@@ -118,6 +118,7 @@ interface AdminRecording {
 interface FieldVideo {
   guid: string;
   title: string;
+  collectionName?: string;
   thumbnailUrl: string;
   playbackUrl: string;
   duration: number; // seconds
@@ -1247,7 +1248,7 @@ function AcademiesTab() {
   const [introUploading, setIntroUploading] = useState(false);
 
   // Add-recording from field videos
-  const [fieldVideos, setFieldVideos] = useState<Record<number, FieldVideo[]>>({});
+  const [allBunnyVideos, setAllBunnyVideos] = useState<FieldVideo[]>([]);
   const [videosLoading, setVideosLoading] = useState<number | null>(null);
   const [selectedVideoGuid, setSelectedVideoGuid] = useState<string | null>(null);
   const [linkingRec, setLinkingRec] = useState(false);
@@ -1295,8 +1296,7 @@ function AcademiesTab() {
   };
 
   const linkVideo = async (academy: AdminAcademy) => {
-    const videos = fieldVideos[academy.fieldId] ?? [];
-    const video = videos.find((v) => v.guid === selectedVideoGuid);
+    const video = allBunnyVideos.find((v) => v.guid === selectedVideoGuid);
     if (!video) return;
     setLinkingRec(true);
     try {
@@ -1326,11 +1326,11 @@ function AcademiesTab() {
       const [acRecs, recordings, videos] = await Promise.all([
         apiFetch(`/academies/${academy.id}/recordings`),
         apiFetch("/admin/recordings"),
-        apiFetch(`/fields/${academy.fieldId}/videos`),
+        apiFetch("/bunny/all-videos"),
       ]);
       setRecMap((p) => ({ ...p, [academy.id]: acRecs ?? [] }));
       setAllRecordings(recordings ?? []);
-      setFieldVideos((p) => ({ ...p, [academy.fieldId]: videos ?? [] }));
+      setAllBunnyVideos(videos ?? []);
     } catch { /* silent */ }
     setRecLoading(null);
     setVideosLoading(null);
@@ -1694,11 +1694,11 @@ function AcademiesTab() {
                           {videosLoading === academy.fieldId ? (
                             <p className="text-zinc-600 text-xs py-1">Loading videos…</p>
                           ) : (() => {
-                            const unregistered = (fieldVideos[academy.fieldId] ?? []).filter(
+                            const unregistered = allBunnyVideos.filter(
                               (v) => !allRecordings.some((r) => r.videoUrl.includes(v.guid))
                             );
                             if (unregistered.length === 0) {
-                              return <p className="text-zinc-600 text-xs py-1">No new videos found for this field.</p>;
+                              return <p className="text-zinc-600 text-xs py-1">No unregistered videos found in Bunny.</p>;
                             }
                             return (
                               <div className="flex gap-2 items-center">
@@ -1709,7 +1709,9 @@ function AcademiesTab() {
                                 >
                                   <option value="">— choose a video —</option>
                                   {unregistered.map((v) => (
-                                    <option key={v.guid} value={v.guid}>{v.title}</option>
+                                    <option key={v.guid} value={v.guid}>
+                                      {v.collectionName ? `[${v.collectionName}] ` : ""}{v.title}
+                                    </option>
                                   ))}
                                 </select>
                                 <button
