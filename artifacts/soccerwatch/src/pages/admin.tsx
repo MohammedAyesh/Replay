@@ -1686,15 +1686,21 @@ function AcademiesTab() {
                           })()}
                         </div>
 
-                        {/* Import from Bunny — secondary section for videos not yet registered */}
-                        {(fieldVideos[academy.fieldId] ?? []).filter((v) => !allRecordings.some((r) => r.videoUrl.includes(v.guid))).length > 0 && (
-                          <div className="pt-1 border-t border-zinc-800/60">
-                            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2">
-                              Import from Bunny
-                            </p>
-                            {videosLoading === academy.fieldId ? (
-                              <p className="text-zinc-600 text-xs py-1">Loading videos…</p>
-                            ) : (
+                        {/* Import from Bunny — always visible so the admin can register new videos */}
+                        <div className="pt-1 border-t border-zinc-800/60">
+                          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2">
+                            Import from Bunny
+                          </p>
+                          {videosLoading === academy.fieldId ? (
+                            <p className="text-zinc-600 text-xs py-1">Loading videos…</p>
+                          ) : (() => {
+                            const unregistered = (fieldVideos[academy.fieldId] ?? []).filter(
+                              (v) => !allRecordings.some((r) => r.videoUrl.includes(v.guid))
+                            );
+                            if (unregistered.length === 0) {
+                              return <p className="text-zinc-600 text-xs py-1">No new videos found for this field.</p>;
+                            }
+                            return (
                               <div className="flex gap-2 items-center">
                                 <select
                                   value={selectedVideoGuid ?? ""}
@@ -1702,11 +1708,9 @@ function AcademiesTab() {
                                   className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white min-w-0"
                                 >
                                   <option value="">— choose a video —</option>
-                                  {(fieldVideos[academy.fieldId] ?? [])
-                                    .filter((v) => !allRecordings.some((r) => r.videoUrl.includes(v.guid)))
-                                    .map((v) => (
-                                      <option key={v.guid} value={v.guid}>{v.title}</option>
-                                    ))}
+                                  {unregistered.map((v) => (
+                                    <option key={v.guid} value={v.guid}>{v.title}</option>
+                                  ))}
                                 </select>
                                 <button
                                   onClick={() => void linkVideo(academy)}
@@ -1717,9 +1721,9 @@ function AcademiesTab() {
                                   Import
                                 </button>
                               </div>
-                            )}
-                          </div>
-                        )}
+                            );
+                          })()}
+                        </div>
                       </>
                     )}
                   </div>
