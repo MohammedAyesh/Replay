@@ -14,6 +14,7 @@ import {
   useCreateUserClip,
   getListUserClipsQueryKey,
   type BunnyVideo,
+  type Recording,
 } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
@@ -76,7 +77,7 @@ function LiveRow({ cameraId, onOpen }: { cameraId: string; onOpen: () => void })
   );
 }
 
-function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive }: {
+function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenRecording }: {
   academy: {
     id: number; name: string; fieldId: number; fieldName: string; fieldLocation: string;
     daysOfWeek: string[]; description?: string | null; logoUrl?: string | null;
@@ -84,6 +85,7 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive }: {
   };
   index: number; isExpanded: boolean; onToggle: () => void;
   onOpenLive: (cameraId: string, title: string, academyId: number) => void;
+  onOpenRecording: (rec: Recording, academyId: number, academyName: string) => void;
 }) {
   const { data: recordings, isLoading: recLoading } = useGetAcademyRecordings(
     academy.id,
@@ -160,11 +162,13 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive }: {
               ) : (
                 <div className="divide-y divide-border">
                   {recordings.map((rec) => (
-                    <Link key={rec.id} href={`/my-clips?recording=${rec.id}`}
-                      className="flex items-center gap-3 py-2.5 hover:bg-muted/40 transition-colors"
+                    <button
+                      key={rec.id}
+                      onClick={() => onOpenRecording(rec, academy.id, academy.name)}
+                      className="w-full flex items-center gap-3 py-2.5 hover:bg-muted/40 transition-colors text-start"
                     >
                       <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <Video className="w-4 h-4 text-primary" />
+                        <Play className="w-4 h-4 text-primary" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{rec.date} · {rec.timeSlot}</p>
@@ -175,7 +179,7 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive }: {
                       </div>
                       <ChevronRight className="w-4 h-4 text-muted-foreground rtl:hidden flex-shrink-0" />
                       <ChevronRight className="w-4 h-4 text-muted-foreground ltr:hidden flex-shrink-0" />
-                    </Link>
+                    </button>
                   ))}
                 </div>
               )}
@@ -194,6 +198,7 @@ export default function Academies() {
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [liveFor, setLiveFor] = useState<{ cameraId: string; title: string; academyId: number } | null>(null);
+  const [recordingFor, setRecordingFor] = useState<{ rec: Recording; academyId: number; title: string } | null>(null);
 
   const filtered = (academies ?? []).filter(
     (a) => a.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -235,6 +240,9 @@ export default function Academies() {
               isExpanded={expandedId === academy.id}
               onToggle={() => setExpandedId(expandedId === academy.id ? null : academy.id)}
               onOpenLive={(cameraId, title, academyId) => setLiveFor({ cameraId, title, academyId })}
+              onOpenRecording={(rec, academyId, academyName) =>
+                setRecordingFor({ rec, academyId, title: `${academyName} · ${rec.date} · ${rec.timeSlot}` })
+              }
             />
           ))
         )}
@@ -249,6 +257,17 @@ export default function Academies() {
             liveCameraId={liveFor.cameraId}
             academyId={liveFor.academyId}
             isLive
+          />
+        )}
+        {recordingFor && recordingFor.rec.videoUrl && (
+          <VideoPlayer
+            video={{
+              guid: recordingFor.rec.videoUrl,
+              title: recordingFor.title,
+              playbackUrl: `/api/hls-proxy/manifest?url=${encodeURIComponent(recordingFor.rec.videoUrl)}`,
+            } as unknown as BunnyVideo}
+            onClose={() => setRecordingFor(null)}
+            academyId={recordingFor.academyId}
           />
         )}
       </AnimatePresence>
