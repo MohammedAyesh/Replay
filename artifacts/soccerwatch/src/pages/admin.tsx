@@ -1609,105 +1609,117 @@ function AcademiesTab() {
                       <div className="text-center py-4 text-zinc-500 text-sm">Loading recordings…</div>
                     ) : (
                       <>
-                        {/* Linked recordings */}
+                        {/* All recordings for this field — linked ones highlighted */}
                         <div>
                           <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                            Linked Recordings ({(recMap[academy.id] ?? []).length})
+                            Recordings — {academy.fieldName}
                           </p>
-                          {(recMap[academy.id] ?? []).length === 0 ? (
-                            <p className="text-zinc-600 text-xs py-2">No recordings linked yet.</p>
-                          ) : (
-                            <div className="space-y-1.5">
-                              {(recMap[academy.id] ?? []).map((rec) => (
-                                <div key={rec.id} className="flex items-center gap-2 p-2 rounded-lg bg-zinc-800/50">
-                                  <Video className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-white text-xs font-medium truncate">{rec.date} · {rec.timeSlot}</p>
-                                    <p className="text-zinc-500 text-[11px] truncate">{rec.court} · {rec.duration}{rec.score ? ` · ${rec.score}` : ""}</p>
-                                  </div>
-                                  <button
-                                    onClick={() => removeRecording(academy, rec.id)}
-                                    disabled={removingRec === `${academy.id}-${rec.id}`}
-                                    className="p-1.5 rounded-lg bg-zinc-700 text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-50 flex-shrink-0"
-                                    title="Remove recording"
-                                  >
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                          {(() => {
+                            const fieldRecs = [...allRecordings]
+                              .filter((r) => r.fieldId === academy.fieldId)
+                              .sort((a, b) => b.date.localeCompare(a.date) || b.timeSlot.localeCompare(a.timeSlot));
+                            const linked = new Set((recMap[academy.id] ?? []).map((r) => r.id));
+
+                            if (fieldRecs.length === 0) {
+                              return (
+                                <p className="text-zinc-600 text-xs py-2">
+                                  No recordings for this field yet. Use “Import from Bunny” below to register them.
+                                </p>
+                              );
+                            }
+
+                            return (
+                              <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                                {fieldRecs.map((rec) => {
+                                  const isLinked = linked.has(rec.id);
+                                  return (
+                                    <div
+                                      key={rec.id}
+                                      className={cn(
+                                        "flex items-center gap-2 p-2 rounded-lg border transition-colors",
+                                        isLinked
+                                          ? "bg-primary/5 border-primary/20"
+                                          : "bg-zinc-800/30 border-zinc-800",
+                                      )}
+                                    >
+                                      <Video className={cn("w-3.5 h-3.5 flex-shrink-0", isLinked ? "text-primary" : "text-zinc-500")} />
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-zinc-300 text-xs font-medium truncate">
+                                          {rec.date} · {rec.timeSlot}
+                                        </p>
+                                        <p className="text-zinc-600 text-[11px] truncate">
+                                          {rec.court}{rec.duration ? ` · ${rec.duration}` : ""}{rec.score ? ` · ${rec.score}` : ""}
+                                        </p>
+                                      </div>
+                                      {isLinked ? (
+                                        <button
+                                          onClick={() => removeRecording(academy, rec.id)}
+                                          disabled={removingRec === `${academy.id}-${rec.id}`}
+                                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-zinc-700 text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-50 flex-shrink-0 text-xs font-medium"
+                                          title="Remove from academy"
+                                        >
+                                          {removingRec === `${academy.id}-${rec.id}` ? (
+                                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <X className="w-3 h-3" />
+                                          )}
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={() => addRecording(academy, rec.id)}
+                                          disabled={addingRec === rec.id}
+                                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-50 flex-shrink-0 text-xs font-medium"
+                                          title="Link to academy"
+                                        >
+                                          {addingRec === rec.id ? (
+                                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <><Plus className="w-3 h-3" />Link</>
+                                          )}
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
                         </div>
 
-                        {/* Add from field recordings */}
-                        {availableToAdd.length > 0 && (
-                          <div>
-                            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                              Choose recordings from any field
+                        {/* Import from Bunny — secondary section for videos not yet registered */}
+                        {(fieldVideos[academy.fieldId] ?? []).filter((v) => !allRecordings.some((r) => r.videoUrl.includes(v.guid))).length > 0 && (
+                          <div className="pt-1 border-t border-zinc-800/60">
+                            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2">
+                              Import from Bunny
                             </p>
-                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                              {availableToAdd.map((rec) => (
-                                <div key={rec.id} className="flex items-center gap-2 p-2 rounded-lg bg-zinc-800/30 border border-zinc-800">
-                                  <Video className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-zinc-300 text-xs font-medium truncate">{rec.fieldName} · {rec.date} · {rec.timeSlot}</p>
-                                    <p className="text-zinc-600 text-[11px] truncate">{rec.court} · {rec.duration}{rec.score ? ` · ${rec.score}` : ""}</p>
-                                  </div>
-                                  <button
-                                    onClick={() => addRecording(academy, rec.id)}
-                                    disabled={addingRec === rec.id}
-                                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-50 flex-shrink-0 text-xs font-medium"
-                                    title="Add recording"
-                                  >
-                                    {addingRec === rec.id ? (
-                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                    ) : (
-                                      <>
-                                        <Plus className="w-3 h-3" />
-                                        Add
-                                      </>
-                                    )}
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
+                            {videosLoading === academy.fieldId ? (
+                              <p className="text-zinc-600 text-xs py-1">Loading videos…</p>
+                            ) : (
+                              <div className="flex gap-2 items-center">
+                                <select
+                                  value={selectedVideoGuid ?? ""}
+                                  onChange={(e) => setSelectedVideoGuid(e.target.value || null)}
+                                  className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white min-w-0"
+                                >
+                                  <option value="">— choose a video —</option>
+                                  {(fieldVideos[academy.fieldId] ?? [])
+                                    .filter((v) => !allRecordings.some((r) => r.videoUrl.includes(v.guid)))
+                                    .map((v) => (
+                                      <option key={v.guid} value={v.guid}>{v.title}</option>
+                                    ))}
+                                </select>
+                                <button
+                                  onClick={() => void linkVideo(academy)}
+                                  disabled={!selectedVideoGuid || linkingRec}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-black text-xs font-bold hover:bg-primary/90 disabled:opacity-50 transition-colors flex-shrink-0"
+                                >
+                                  {linkingRec ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                                  Import
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
-
-                        {/* Link a field video as a new recording */}
-                        <div className="pt-1">
-                          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                            Link a field video
-                          </p>
-                          {videosLoading === academy.fieldId ? (
-                            <p className="text-zinc-600 text-xs py-1">Loading videos…</p>
-                          ) : (fieldVideos[academy.fieldId] ?? []).length === 0 ? (
-                            <p className="text-zinc-600 text-xs py-1">No videos found for this field.</p>
-                          ) : (
-                            <div className="flex gap-2 items-center">
-                              <select
-                                value={selectedVideoGuid ?? ""}
-                                onChange={(e) => setSelectedVideoGuid(e.target.value || null)}
-                                className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white min-w-0"
-                              >
-                                <option value="">— choose a video —</option>
-                                {(fieldVideos[academy.fieldId] ?? [])
-                                  .filter((v) => !allRecordings.some((r) => r.videoUrl.includes(v.guid)))
-                                  .map((v) => (
-                                    <option key={v.guid} value={v.guid}>{v.title}</option>
-                                  ))}
-                              </select>
-                              <button
-                                onClick={() => void linkVideo(academy)}
-                                disabled={!selectedVideoGuid || linkingRec}
-                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-black text-xs font-bold hover:bg-primary/90 disabled:opacity-50 transition-colors flex-shrink-0"
-                              >
-                                {linkingRec ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                                Link
-                              </button>
-                            </div>
-                          )}
-                        </div>
                       </>
                     )}
                   </div>

@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, and, desc, inArray, count, sql } from "drizzle-orm";
-import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable } from "@workspace/db";
+import { eq, and, desc, inArray, count, sql, like } from "drizzle-orm";
+import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable, recordingsTable, academyRecordingsTable } from "@workspace/db";
 import {
   CreateUserClipBody,
   CreateUserClipResponse,
@@ -136,6 +136,19 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   if (academyId != null) {
     const [academy] = await db.select({ id: academiesTable.id }).from(academiesTable).where(eq(academiesTable.id, academyId));
     validAcademyId = academy?.id ?? null;
+  }
+
+  // Auto-detect academy from the recording this video belongs to, so the
+  // academy's intro video is prepended on export even when the client doesn't
+  // know the academy context (e.g. clips created via field-detail player).
+  if (validAcademyId === null && videoId && !videoId.startsWith("live:")) {
+    const [recAcademy] = await db
+      .select({ academyId: academyRecordingsTable.academyId })
+      .from(recordingsTable)
+      .innerJoin(academyRecordingsTable, eq(academyRecordingsTable.recordingId, recordingsTable.id))
+      .where(like(recordingsTable.videoUrl, `%${videoId}%`))
+      .limit(1);
+    if (recAcademy) validAcademyId = recAcademy.academyId;
   }
 
   const [row] = await db
