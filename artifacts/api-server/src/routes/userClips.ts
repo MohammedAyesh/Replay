@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { eq, and, desc, inArray, count, sql } from "drizzle-orm";
 import { db, userClipsTable, usersTable, likesTable, followsTable } from "@workspace/db";
 import {
@@ -28,6 +29,7 @@ import {
   isBunnyConfigured,
   isBunnyStorageConfigured,
   uploadToBunnyStorage,
+  deleteBunnyExport,
   BUNNY_STORAGE_API_KEY,
 } from "../lib/bunny";
 import { clipSettingsTable } from "@workspace/db";
@@ -39,6 +41,31 @@ const router: IRouter = Router();
 
 /** Clip IDs currently being rendered — prevents duplicate concurrent jobs. */
 const inFlight = new Set<number>();
+
+/**
+ * Renders are CPU-bound: a single 1080p `-preset slow -crf 16` pass already
+ * saturates several of the VPS's 6 shared vCPUs. `inFlight` only dedupes per
+ * clip id, so without a global cap one account can queue N clips and fire N
+ * exports at once, starving the live remux and the hourly archive encoder that
+ * share the box. Everything past the cap waits its turn instead; the clip row
+ * stays "pending" throughout, so the client's existing polling loop is unaffected.
+ */
+const MAX_CONCURRENT_RENDERS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_RENDERS ?? "2", 10) || 2);
+let activeRenders = 0;
+const renderQueue: (() => void)[] = [];
+
+async function withRenderSlot<T>(job: () => Promise<T>): Promise<T> {
+  if (activeRenders >= MAX_CONCURRENT_RENDERS) {
+    await new Promise<void>((resolve) => renderQueue.push(resolve));
+  }
+  activeRenders++;
+  try {
+    return await job();
+  } finally {
+    activeRenders--;
+    renderQueue.shift()?.();
+  }
+}
 
 // Engagement scoring: weighted composite of likes, views, and recency
 function computeScore(likeCount: number, viewCount: number, shareCount: number, createdAt: Date): number {
@@ -188,6 +215,10 @@ router.delete("/user-clips/:id", async (req, res): Promise<void> => {
   await db
     .delete(userClipsTable)
     .where(and(eq(userClipsTable.id, params.data.id), eq(userClipsTable.userId, userId)));
+
+  // Drop the rendered export too, otherwise it stays readable on the CDN (and
+  // billable) forever after the row is gone.
+  if (existing.exportedUrl) void deleteBunnyExport(params.data.id);
 
   res.json({ ok: true });
 });
@@ -562,10 +593,20 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     return;
   }
 
-  // Render already in progress (in this process or leftover from last restart)
-  if (inFlight.has(clipId) || clip.exportStatus === "pending") {
+  // Render already in progress *in this process*.
+  //
+  // Deliberately not `|| clip.exportStatus === "pending"`: that column is
+  // persisted but `inFlight` is not, so a process restart mid-render used to
+  // strand the row on "pending" forever — /export short-circuited,
+  // /export-status kept reporting pending, and there was no reset path even for
+  // an admin. A "pending" row this process isn't working on is stale by
+  // definition, so fall through and re-render it.
+  if (inFlight.has(clipId)) {
     res.json({ status: "pending" });
     return;
+  }
+  if (clip.exportStatus === "pending") {
+    logger.warn({ clipId }, "Re-running export for a clip left pending by a previous process");
   }
 
   // Mark pending and respond immediately so the client can start polling
@@ -582,7 +623,7 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
   const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
   const videoId = clip.videoId;
 
-  void (async () => {
+  void withRenderSlot(async () => {
     let tmpPath: string | null = null;
     try {
       logger.info({ clipId, startTime, endTime }, "Starting background clip export");
@@ -625,7 +666,7 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
       inFlight.delete(clipId);
       if (tmpPath) cleanupTempFile(tmpPath);
     }
-  })();
+  });
 });
 
 /**
@@ -672,9 +713,23 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   if (!clip || !clip.exportedUrl) { res.status(404).json({ error: "Export not ready" }); return; }
 
   const safeName = clip.title.replace(/[^a-z0-9_\-]/gi, "_") || "clip";
-  const upstream = await fetch(clip.exportedUrl, {
-    headers: { AccessKey: BUNNY_STORAGE_API_KEY },
-  });
+
+  // Abort the upstream fetch if the client goes away mid-download. Without this
+  // a viewer closing the tab leaves the Bunny response body draining into a
+  // detached stream for the length of the file.
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(clip.exportedUrl, {
+      headers: { AccessKey: BUNNY_STORAGE_API_KEY },
+      signal: abort.signal,
+    });
+  } catch (err) {
+    if (!res.headersSent) res.status(502).json({ error: "Could not fetch from storage" });
+    return;
+  }
   if (!upstream.ok || !upstream.body) { res.status(502).json({ error: "Could not fetch from storage" }); return; }
 
   res.setHeader("Content-Type", "video/mp4");
@@ -683,11 +738,13 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   if (contentLength) res.setHeader("Content-Length", contentLength);
 
   const nodeStream = Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>);
-  nodeStream.pipe(res);
-  nodeStream.on("error", (err) => {
-    logger.error({ err }, "Error proxying clip download");
+  try {
+    await pipeline(nodeStream, res);
+  } catch (err) {
+    // Client disconnects land here too; they are not worth an error log.
+    if (!abort.signal.aborted) logger.error({ err, clipId }, "Error proxying clip download");
     if (!res.headersSent) res.status(500).json({ error: "Download failed" });
-  });
+  }
 });
 
 export default router;

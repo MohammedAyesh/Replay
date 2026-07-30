@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import crypto from "crypto";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getLocalUserId } from "../lib/clerkUserBridge";
@@ -50,13 +51,26 @@ async function requireContaboAuth(
   const expectedPw = ADMIN_PASSWORD();
 
   if (!expectedPw) {
-    // No password set yet — allow (will show config warning in /config)
-  } else if (suppliedPw !== expectedPw) {
+    // No password configured — the live-control second factor is not usable, so
+    // refuse rather than silently downgrading to admin-flag-only. GET /config
+    // (below) is exempt so the frontend can still surface the setup warning.
+    res.status(503).json({ error: "Control server not configured", missing: missingSecrets() });
+    return;
+  }
+  if (!timingSafeEqualStr(suppliedPw, expectedPw)) {
     res.status(401).json({ error: "Bad admin password" });
     return;
   }
 
   next();
+}
+
+/** Constant-time string compare, so the password cannot be recovered byte-by-byte. */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 // ─── In-memory recording request log ─────────────────────────────────────────
@@ -84,6 +98,10 @@ async function controlFetch(
   const base = CONTROL_URL();
   const key  = CONTROL_KEY();
 
+  // Every other outbound call in this codebase is bounded; this one was not, so
+  // a control API that accepts the connection and never answers (hung ffmpeg,
+  // camera off WiFi) held the admin's request open until the platform edge
+  // timeout, and each retry added another.
   const res = await fetch(`${base}${path}`, {
     ...opts,
     headers: {
@@ -91,6 +109,7 @@ async function controlFetch(
       "X-Api-Key": key,
       ...(opts.headers as Record<string, string> ?? {}),
     },
+    signal: AbortSignal.timeout(15_000),
   });
 
   let body: unknown = null;
@@ -109,7 +128,14 @@ async function controlFetch(
  * Returns which required secrets are missing and whether the server is reachable.
  * Used by the frontend on mount to show a setup warning.
  */
-router.get("/admin/contabo/config", requireContaboAuth as import("express").RequestHandler, async (_req, res): Promise<void> => {
+router.get("/admin/contabo/config", async (req, res): Promise<void> => {
+  // Admin-gated but deliberately not behind requireContaboAuth: this is the
+  // endpoint that tells the console the password is not set up yet.
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
   const missing = missingSecrets();
   res.json({ configured: missing.length === 0, missing });
 });

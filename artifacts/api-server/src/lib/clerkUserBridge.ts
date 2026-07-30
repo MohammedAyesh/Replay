@@ -72,7 +72,34 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<number | 
     .onConflictDoNothing()
     .returning({ id: usersTable.id });
 
-  return created?.id ?? null;
+  if (created) return created.id;
+
+  // onConflictDoNothing returns no row on conflict, and returning null here
+  // makes every route treat a legitimately signed-in Clerk user as anonymous —
+  // silently and permanently. Two things conflict:
+  //
+  //  - users.clerk_id, when two requests from a brand-new Clerk user race. The
+  //    row now exists, so re-select it.
+  //  - users.email, when the address is already attached to a different local
+  //    row (an admin edited it, or the person previously signed up another way).
+  //    Claim that row for this Clerk id rather than locking the person out; it
+  //    is the same human, and the email is the only identity we can match on.
+  const [byClerkId] = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.clerkId, clerkId));
+  if (byClerkId) return byClerkId.id;
+
+  const [byEmail] = await db
+    .select({ id: usersTable.id, clerkId: usersTable.clerkId })
+    .from(usersTable)
+    .where(eq(usersTable.email, email));
+  if (byEmail && !byEmail.clerkId) {
+    await db.update(usersTable).set({ clerkId }).where(eq(usersTable.id, byEmail.id));
+    return byEmail.id;
+  }
+
+  return null;
 }
 
 /**

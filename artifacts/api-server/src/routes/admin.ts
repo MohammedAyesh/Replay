@@ -13,7 +13,8 @@ import {
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID, isBunnyStorageConfigured, uploadClipIntroToBunnyStorage } from "../lib/bunny";
-import { getStorageConfig as getBannerStorageConfig, type BannerJson } from "./banners";
+import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
+import { logger } from "../lib/logger";
 import multer from "multer";
 
 const router: IRouter = Router();
@@ -326,12 +327,29 @@ router.delete("/admin/users/:id", async (req, res): Promise<void> => {
 
   if (id === adminId) { res.status(409).json({ error: "Cannot delete yourself" }); return; }
 
-  await db.delete(savedClipsTable).where(eq(savedClipsTable.userId, id));
-  await db.delete(likesTable).where(eq(likesTable.userId, id));
-  await db.delete(followsTable).where(eq(followsTable.followerId, id));
-  await db.delete(followsTable).where(eq(followsTable.followeeId, id));
-  await db.delete(userClipsTable).where(eq(userClipsTable.userId, id));
-  await db.delete(usersTable).where(eq(usersTable.id, id));
+  // One transaction, so a failure part-way cannot leave the account alive with
+  // its clips already destroyed.
+  //
+  // ad_impressions.user_id / ad_clicks.user_id reference users.id with no
+  // ON DELETE action, so deleting a user who has ever been served an ad used to
+  // raise 23503 on the final statement — after the clips were gone. Both columns
+  // are nullable, so detach them first and keep the ad analytics rows.
+  try {
+    await db.transaction(async (tx) => {
+      await tx.update(adImpressionsTable).set({ userId: null }).where(eq(adImpressionsTable.userId, id));
+      await tx.update(adClicksTable).set({ userId: null }).where(eq(adClicksTable.userId, id));
+      await tx.delete(savedClipsTable).where(eq(savedClipsTable.userId, id));
+      await tx.delete(likesTable).where(eq(likesTable.userId, id));
+      await tx.delete(followsTable).where(eq(followsTable.followerId, id));
+      await tx.delete(followsTable).where(eq(followsTable.followeeId, id));
+      await tx.delete(userClipsTable).where(eq(userClipsTable.userId, id));
+      await tx.delete(usersTable).where(eq(usersTable.id, id));
+    });
+  } catch (err) {
+    logger.error({ err, userId: id }, "Failed to delete user");
+    res.status(500).json({ error: "Could not delete user — nothing was changed" });
+    return;
+  }
 
   res.json({ ok: true });
 });
@@ -507,6 +525,7 @@ router.patch("/admin/banners/:id", async (req, res): Promise<void> => {
   if (!cfg) { res.status(503).json({ error: "Storage not configured" }); return; }
 
   const folderId = req.params.id as string;
+  if (!isValidBannerId(folderId)) { res.status(400).json({ error: "Invalid banner id" }); return; }
   const { title, upperSubtext, lowerSubtext, hyperlink, imageUrl } = req.body as {
     title?: string; upperSubtext?: string; lowerSubtext?: string; hyperlink?: string | null; imageUrl?: string | null;
   };
@@ -581,11 +600,15 @@ router.post("/admin/banners/:id/image", upload.single("image"), async (req, res)
   if (!bannerCfg) { res.status(503).json({ error: "Storage not configured" }); return; }
 
   const folderId = req.params.id as string;
+  if (!isValidBannerId(folderId)) { res.status(400).json({ error: "Invalid banner id" }); return; }
   const file = req.file;
   if (!file) { res.status(400).json({ error: "No image file provided" }); return; }
 
   const ext = file.mimetype === "image/png" ? "png" : file.mimetype === "image/jpeg" ? "jpg" : "png";
-  const remotePath = `banners/${folderId}/image.${ext}`;
+  // Must be `<id>/banner.<ext>` — that is the only path GET /api/banners/:id/image
+  // and DELETE /admin/banners/:id look at. The previous `banners/<id>/image.<ext>`
+  // wrote to a path nothing read, so the image 404'd and was orphaned on delete.
+  const remotePath = `${folderId}/banner.${ext}`;
 
   try {
     // Upload to banner storage zone (not clip-export zone)
@@ -604,8 +627,10 @@ router.post("/admin/banners/:id/image", upload.single("image"), async (req, res)
       return;
     }
 
-    // Build CDN URL from banner config base (the storage base doubles as CDN base for banners)
-    const cdnUrl = `${bannerCfg.base}/${bannerCfg.zone}/${remotePath}`;
+    // Serve through our own proxy route rather than handing the browser a
+    // storage.bunnycdn.com URL: that origin needs the AccessKey header, so an
+    // <img src> pointing at it just 401s.
+    const cdnUrl = `/api/banners/${encodeURIComponent(folderId)}/image`;
 
     // Update banner.json with the new imageUrl
     const cfg = getBannerCfg();
@@ -634,11 +659,13 @@ router.delete("/admin/banners/:id", async (req, res): Promise<void> => {
   if (!cfg) { res.status(503).json({ error: "Storage not configured" }); return; }
 
   const folderId = req.params.id as string;
+  if (!isValidBannerId(folderId)) { res.status(400).json({ error: "Invalid banner id" }); return; }
 
-  // Delete banner.json and banner.png
+  // Delete banner.json and the image in either supported format
   await Promise.allSettled([
     fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.json?bust=${Date.now()}`, { method: "DELETE", headers: { AccessKey: cfg.key } }),
     fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.png?bust=${Date.now()}`, { method: "DELETE", headers: { AccessKey: cfg.key } }),
+    fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.jpg?bust=${Date.now()}`, { method: "DELETE", headers: { AccessKey: cfg.key } }),
   ]);
 
   res.json({ ok: true });

@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import { db, clipsTable, recordingsTable, fieldsTable, savedClipsTable, likesTable, usersTable } from "@workspace/db";
 import {
   GetClipParams,
@@ -135,19 +135,25 @@ router.post("/clips/:id/like", async (req, res): Promise<void> => {
     .where(and(eq(likesTable.userId, userId), eq(likesTable.clipId, clipId)));
 
   let liked: boolean;
-  let newCount: number;
 
   if (existing) {
     await db
       .delete(likesTable)
       .where(and(eq(likesTable.userId, userId), eq(likesTable.clipId, clipId)));
-    newCount = Math.max(0, clip.likeCount - 1);
     liked = false;
   } else {
     await db.insert(likesTable).values({ userId, clipId });
-    newCount = clip.likeCount + 1;
     liked = true;
   }
+
+  // Recount from the likes table rather than writing back
+  // `clip.likeCount ± 1` read earlier in this handler: two users liking the
+  // same clip at once both read N and both wrote N + 1, losing a like every
+  // time. Same fix already applied to user_clips.
+  const [{ count: newCount }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(likesTable)
+    .where(eq(likesTable.clipId, clipId));
 
   await db.update(clipsTable).set({ likeCount: newCount }).where(eq(clipsTable.id, clipId));
 

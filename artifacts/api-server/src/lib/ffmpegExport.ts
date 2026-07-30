@@ -8,6 +8,18 @@ import { logger } from "./logger";
 const SRC_W = 3840;
 const SRC_H = 1080;
 
+/** Longest selection we will render, in seconds of source footage. */
+const MAX_CLIP_SECONDS = Math.max(
+  5,
+  parseInt(process.env.MAX_CLIP_SECONDS ?? "900", 10) || 900,
+);
+
+/** Wall-clock ceiling on a single FFmpeg invocation. */
+const FFMPEG_TIMEOUT_MS = Math.max(
+  60_000,
+  parseInt(process.env.FFMPEG_TIMEOUT_MS ?? "1800000", 10) || 1_800_000,
+);
+
 type KF = { t: number; x: number; y: number; w: number; h: number };
 
 export interface FfmpegExportOptions {
@@ -73,6 +85,38 @@ const SRC_ASPECT = SRC_W / SRC_H;
  * Mirrors normalizeFrame in artifacts/soccerwatch/src/lib/cropFrame.ts —
  * keep the two in sync.
  */
+/**
+ * Hard bounds on the crop frame, in multiples of the source dimensions.
+ *
+ * cropPath keyframes arrive from the client validated only as bare numbers, and
+ * `w`/`h` size the pad canvas below (`frameW = w * 3840`). Unclamped, a single
+ * request carrying `{w: 50, h: 100}` makes FFmpeg allocate a 192000x108000
+ * canvas — about 31 GB a frame — and takes the box down. The editor never
+ * produces a frame larger than ~2.5x source (zoom floor 0.4), so 3x is generous
+ * headroom while keeping the worst case bounded.
+ */
+const MAX_FRAME_SCALE = 3;
+const MAX_CANVAS_SCALE = 4;
+
+/** Clamp client-supplied keyframes into a range FFmpeg can survive. */
+function sanitizeKeyframes(kfs: KF[]): KF[] {
+  if (!Array.isArray(kfs)) return [];
+  const num = (v: unknown, fallback: number) =>
+    typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  return kfs
+    .filter((kf) => kf && typeof kf === "object")
+    .map((kf) => ({
+      t: clamp(num(kf.t, 0), 0, 1),
+      // Position may legitimately sit outside the source — that is how a clip
+      // gets black bars — but only by the amount the frame itself can span.
+      x: clamp(num(kf.x, 0), -MAX_FRAME_SCALE, MAX_FRAME_SCALE),
+      y: clamp(num(kf.y, 0), -MAX_FRAME_SCALE, MAX_FRAME_SCALE),
+      w: clamp(num(kf.w, 0), 0, MAX_FRAME_SCALE),
+      h: clamp(num(kf.h, 1), 0, MAX_FRAME_SCALE),
+    }));
+}
+
 function normalizePath(kfs: KF[], is9to16: boolean): KF[] {
   if (!kfs || kfs.length === 0) return kfs;
   const outAspect = is9to16 ? 9 / 16 : 16 / 9;
@@ -157,7 +201,7 @@ function buildVideoFilter(keyframes: KF[], clipDuration: number, is9to16: boolea
   const OUT_W = is9to16 ? Math.round(SRC_H * 9 / 16) : 1920;
   const OUT_H = SRC_H;
 
-  const kfs = downsampleKeyframes(normalizePath(keyframes, is9to16));
+  const kfs = downsampleKeyframes(normalizePath(sanitizeKeyframes(keyframes), is9to16));
 
   const fallbackW = is9to16 ? (SRC_H * 9 / 16) / SRC_W : 0.5;
   const w0 = kfs[0]?.w && kfs[0].w > 0 ? kfs[0].w : fallbackW;
@@ -180,8 +224,10 @@ function buildVideoFilter(keyframes: KF[], clipDuration: number, is9to16: boolea
   const padRight = Math.max(0, Math.ceil(maxX + frameW - SRC_W));
   const padBottom = Math.max(0, Math.ceil(maxY + frameH - SRC_H));
 
-  const canvasW = SRC_W + padLeft + padRight;
-  const canvasH = SRC_H + padTop + padBottom;
+  // Belt and braces on top of sanitizeKeyframes: whatever the inputs, the
+  // canvas FFmpeg is asked to allocate stays bounded.
+  const canvasW = Math.min(SRC_W * MAX_CANVAS_SCALE, SRC_W + padLeft + padRight);
+  const canvasH = Math.min(SRC_H * MAX_CANVAS_SCALE, SRC_H + padTop + padBottom);
 
   const needsPad = padLeft > 0 || padTop > 0 || padRight > 0 || padBottom > 0;
   const padFilter = needsPad
@@ -251,9 +297,12 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
 
   logger.info({ title, startTime, endTime, totalDuration }, "Starting FFmpeg render");
 
-  const startSec = isFinite(startTime) ? startTime * totalDuration : 0;
-  const endSec = isFinite(endTime) ? endTime * totalDuration : totalDuration;
-  const clipDuration = Math.max(0.1, endSec - startSec);
+  const startSec = Math.max(0, Math.min(totalDuration, isFinite(startTime) ? startTime * totalDuration : 0));
+  const endSec = Math.max(0, Math.min(totalDuration, isFinite(endTime) ? endTime * totalDuration : totalDuration));
+  // startTime/endTime are unbounded numbers on the wire, and an hour-long
+  // selection at -preset slow -crf 16 occupies the encoder for far longer than
+  // it takes to request another one.
+  const clipDuration = Math.max(0.1, Math.min(MAX_CLIP_SECONDS, endSec - startSec));
   const is9to16 = aspectRatio === "9:16";
   // Includes pad (for out-of-source black bars), crop pan, and the output scale
   const cropFilter = buildVideoFilter(cropPath, clipDuration, is9to16);
@@ -298,20 +347,32 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   return new Promise((resolve, reject) => {
     const proc = spawn("ffmpeg", args);
 
+    // Keep only the tail of stderr. FFmpeg emits a progress line per second and
+    // the full log was retained for the life of the process; on a stalled input
+    // that grew without bound.
     let stderr = "";
     proc.stderr.on("data", (d: Buffer) => {
-      stderr += d.toString();
+      stderr = (stderr + d.toString()).slice(-8000);
     });
 
+    // An HLS input that stalls leaves FFmpeg alive forever, holding a render
+    // slot and its clip's in-flight entry with it.
+    const timeout = setTimeout(() => {
+      logger.error({ tmpPath, FFMPEG_TIMEOUT_MS }, "FFmpeg render timed out — killing");
+      proc.kill("SIGKILL");
+    }, FFMPEG_TIMEOUT_MS);
+
     proc.on("error", (err) => {
+      clearTimeout(timeout);
       logger.error({ err }, "FFmpeg process error");
       reject(err);
     });
 
-    proc.on("close", (code) => {
+    proc.on("close", (code, signal) => {
+      clearTimeout(timeout);
       if (code !== 0) {
-        logger.error({ code, stderr: stderr.slice(-2000) }, "FFmpeg exited with non-zero code");
-        reject(new Error(`FFmpeg exited with code ${code}`));
+        logger.error({ code, signal, stderr: stderr.slice(-2000) }, "FFmpeg exited with non-zero code");
+        reject(new Error(`FFmpeg exited with code ${code}${signal ? ` (${signal})` : ""}`));
         return;
       }
       logger.info({ tmpPath }, "FFmpeg render complete");

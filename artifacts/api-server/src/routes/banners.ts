@@ -30,6 +30,18 @@ export function getStorageConfig(): { base: string; zone: string; key: string } 
   return { base, zone, key };
 }
 
+/**
+ * Banner ids double as Bunny Storage folder names and are interpolated straight
+ * into the storage URL. Express decodes `%2F` into `/` before a handler sees the
+ * param and `fetch` then normalises dot-segments, so an unvalidated id escapes
+ * the banner zone entirely — `..%2F..%2Fgalaxyfield%2Fclips%2Fx.mp4%3F` reads an
+ * arbitrary object with the storage AccessKey attached. Every route that builds
+ * a storage path from a client-supplied id must run it through this first.
+ */
+export function isValidBannerId(id: unknown): id is string {
+  return typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+}
+
 interface BunnyStorageItem {
   Guid: string;
   StorageZoneName: string;
@@ -127,22 +139,28 @@ router.get("/banners/:folder/image", async (req, res): Promise<void> => {
   }
 
   const folder = req.params.folder;
+  if (!isValidBannerId(folder)) {
+    res.status(400).json({ error: "Invalid banner id" });
+    return;
+  }
+
   const bust = Date.now();
-  const url = `${cfg.base}/${cfg.zone}/${folder}/banner.png?_=${bust}`;
 
   try {
-    const bunnyRes = await fetch(url, {
-      headers: { AccessKey: cfg.key },
-    });
-    if (!bunnyRes.ok) {
-      res.status(bunnyRes.status).json({ error: "Image not found" });
+    // Uploads keep the source extension, so try both. `banner.png` first: that
+    // is what every banner created before this change is stored as.
+    for (const name of ["banner.png", "banner.jpg"]) {
+      const bunnyRes = await fetch(`${cfg.base}/${cfg.zone}/${folder}/${name}?_=${bust}`, {
+        headers: { AccessKey: cfg.key },
+      });
+      if (!bunnyRes.ok) continue;
+
+      res.setHeader("Content-Type", name.endsWith(".jpg") ? "image/jpeg" : "image/png");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(Buffer.from(await bunnyRes.arrayBuffer()));
       return;
     }
-
-    res.setHeader("Content-Type", "image/png");
-    res.setHeader("Cache-Control", "no-store");
-    const buffer = Buffer.from(await bunnyRes.arrayBuffer());
-    res.send(buffer);
+    res.status(404).json({ error: "Image not found" });
   } catch (err) {
     res.status(502).json({ error: "Failed to fetch image" });
   }

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and, sql } from "drizzle-orm";
-import { db, usersTable, followsTable, clipsTable } from "@workspace/db";
+import { db, usersTable, followsTable, userClipsTable } from "@workspace/db";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
@@ -19,10 +19,17 @@ async function buildPublicProfile(targetId: number, viewerId: number | null) {
     .from(followsTable)
     .where(eq(followsTable.followerId, targetId));
 
+  // User-created clips live in user_clips; clipsTable is the legacy editorial
+  // table and its creator_id is never set by the clip editor, so counting it
+  // showed "0 clips" on every creator's profile.
   const [clipResult] = await db
     .select({ count: sql<number>`count(*)` })
-    .from(clipsTable)
-    .where(eq(clipsTable.creatorId, targetId));
+    .from(userClipsTable)
+    .where(and(
+      eq(userClipsTable.userId, targetId),
+      eq(userClipsTable.visibility, "public"),
+      eq(userClipsTable.isHidden, false),
+    ));
 
   let isFollowing = false;
   if (viewerId && viewerId !== targetId) {

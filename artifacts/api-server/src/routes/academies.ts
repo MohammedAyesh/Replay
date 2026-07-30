@@ -126,65 +126,10 @@ router.get("/admin/academies", async (req, res): Promise<void> => {
   res.json(summaries);
 });
 
-router.get("/admin/recordings", async (req, res): Promise<void> => {
-  const adminId = await requireAdmin(req);
-  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
-  const rows = await db
-    .select({ recording: recordingsTable, field: fieldsTable })
-    .from(recordingsTable)
-    .innerJoin(fieldsTable, eq(recordingsTable.fieldId, fieldsTable.id))
-    .orderBy(desc(recordingsTable.date), recordingsTable.timeSlot);
-  res.json(rows.map(({ recording: r, field: f }) => ({
-    id: r.id, fieldId: r.fieldId, court: r.court, date: r.date,
-    timeSlot: r.timeSlot, duration: r.duration, score: r.score ?? null,
-    videoUrl: r.videoUrl, fieldName: f.name,
-  })));
-});
-
-router.post("/admin/recordings", async (req, res): Promise<void> => {
-  const adminId = await requireAdmin(req);
-  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
-
-  const Body = z.object({
-    fieldId: z.number().int().positive(),
-    court: z.string().min(1),
-    date: z.string().min(1),
-    timeSlot: z.string().min(1),
-    duration: z.string().min(1),
-    score: z.string().nullish(),
-    videoUrl: z.string().optional().default(""),
-  });
-
-  const body = Body.safeParse(req.body);
-  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
-
-  const [recording] = await db
-    .insert(recordingsTable)
-    .values({
-      fieldId: body.data.fieldId,
-      court: body.data.court,
-      date: body.data.date,
-      timeSlot: body.data.timeSlot,
-      duration: body.data.duration,
-      score: body.data.score ?? null,
-      videoUrl: body.data.videoUrl ?? "",
-    })
-    .returning();
-
-  const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, recording.fieldId));
-
-  res.status(201).json({
-    id: recording.id,
-    fieldId: recording.fieldId,
-    court: recording.court,
-    date: recording.date,
-    timeSlot: recording.timeSlot,
-    duration: recording.duration,
-    score: recording.score ?? null,
-    videoUrl: recording.videoUrl,
-    fieldName: field?.name ?? null,
-  });
-});
+// NOTE: GET/POST /admin/recordings used to be defined here as well. routes/index.ts
+// mounts recordingsRouter before this router, so those copies never ran — and the
+// two disagreed on validation, which meant the visible contract here was not the
+// one clients actually got. routes/recordings.ts is the single implementation.
 
 router.post("/admin/academies", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);

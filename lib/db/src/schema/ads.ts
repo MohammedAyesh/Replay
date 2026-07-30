@@ -26,8 +26,9 @@ export type Ad = typeof adsTable.$inferSelect;
 export const adImpressionsTable = pgTable("ad_impressions", {
   id: serial("id").primaryKey(),
   adId: integer("ad_id").notNull().references(() => adsTable.id),
-  userId: integer("user_id").references(() => usersTable.id),
-  clipId: integer("clip_id").references(() => clipsTable.id),
+  // Nullable + SET NULL: deleting a user must not fail on, or destroy, ad analytics.
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  clipId: integer("clip_id").references(() => clipsTable.id, { onDelete: "set null" }),
   shownAt: timestamp("shown_at", { withTimezone: true }).notNull().defaultNow(),
   completed: boolean("completed").notNull().default(false),
   skippedAtSecond: integer("skipped_at_second"),
@@ -40,7 +41,7 @@ export type AdImpression = typeof adImpressionsTable.$inferSelect;
 export const adClicksTable = pgTable("ad_clicks", {
   id: serial("id").primaryKey(),
   adId: integer("ad_id").notNull().references(() => adsTable.id),
-  userId: integer("user_id").references(() => usersTable.id),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   clickedAt: timestamp("clicked_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

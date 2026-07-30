@@ -10,6 +10,8 @@
  * are forwarded — arbitrary URL proxying is rejected with 400.
  */
 import { Router, type IRouter } from "express";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 
 const router: IRouter = Router();
 
@@ -94,14 +96,26 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
     return;
   }
 
+  // Abort upstream when the client goes away — a player that seeks aggressively
+  // otherwise leaves a Bunny response body draining into a detached stream for
+  // every segment it abandoned.
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+
   try {
     const { hostname } = new URL(raw);
     const upstream = await fetch(raw, {
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30_000)]),
       headers: { Referer: `https://${hostname}/` },
     });
-    if (!upstream.ok || !upstream.body) {
+    // `upstream.ok && !upstream.body` used to send 200 with the literal string
+    // "Segment unavailable" as the payload, which the player then tried to demux.
+    if (!upstream.ok) {
       res.status(upstream.status).send("Segment unavailable");
+      return;
+    }
+    if (!upstream.body) {
+      res.status(502).send("Segment unavailable");
       return;
     }
 
@@ -113,14 +127,10 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
     const cl = upstream.headers.get("content-length");
     if (cl) res.set("Content-Length", cl);
 
-    const { Readable } = await import("stream");
     const nodeStream = Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>);
-    nodeStream.pipe(res);
-    nodeStream.on("error", () => {
-      if (!res.headersSent) res.status(500).send("Stream error");
-    });
+    await pipeline(nodeStream, res);
   } catch {
-    res.status(503).send("Proxy error");
+    if (!res.headersSent) res.status(503).send("Proxy error");
   }
 });
 
