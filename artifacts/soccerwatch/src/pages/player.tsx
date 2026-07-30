@@ -85,9 +85,52 @@ function PlayerScreen({ clip }: { clip: Clip }) {
   const saveClipMutation = useSaveClip();
   const unsaveClipMutation = useUnsaveClip();
 
+  /**
+   * Two-phase playback: play the academy's branding intro (if this clip has
+   * one) to completion, then fall through to the clip itself. Reset whenever
+   * the clip identity changes — PlayerScreen isn't remounted on navigation
+   * between clips, so a plain useState initializer would only apply once.
+   */
+  const [phase, setPhase] = useState<"intro" | "main">(clip.introVideoUrl ? "intro" : "main");
+  useEffect(() => {
+    setPhase(clip.introVideoUrl ? "intro" : "main");
+  }, [clip.id, clip.introVideoUrl]);
+
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || phase !== "intro" || !clip.introVideoUrl) return;
+
+    let cancelled = false;
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    video.src = clip.introVideoUrl;
+
+    // A broken or unreachable intro must never trap the viewer — fall
+    // through to the real clip on any failure, same as a normal finish.
+    function advanceToMain() {
+      if (cancelled) return;
+      setPhase("main");
+    }
+
+    video.addEventListener("ended", advanceToMain);
+    video.addEventListener("error", advanceToMain);
+    video.play().then(() => setIsPlaying(true)).catch(() => {
+      // Autoplay may be blocked; leave phase as "intro" so a manual tap on
+      // the play button (wired to videoRef.current) still plays the intro
+      // rather than silently jumping ahead.
+    });
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener("ended", advanceToMain);
+      video.removeEventListener("error", advanceToMain);
+    };
+  }, [phase, clip.id, clip.introVideoUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || phase !== "main") return;
 
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     video.pause();
@@ -188,7 +231,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       video.removeEventListener("timeupdate", handleTimeUpdate);
       video.style.transform = "";
     };
-  }, [clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, clip.startTime, clip.endTime, framePath]);
+  }, [phase, clip.id, clip.bunnyPlaybackUrl, clip.videoUrl, clip.startTime, clip.endTime, framePath]);
 
   const { t } = useTranslation();
 

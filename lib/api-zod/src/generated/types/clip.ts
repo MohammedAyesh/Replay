@@ -36,4 +36,14 @@ export interface Clip {
   creatorName?: string | null;
   /** @nullable */
   creatorPosition?: string | null;
+  /**
+     * Academy whose field this recording belongs to, if any (matched by fieldId — best-effort, not stored on the clip itself).
+     * @nullable
+     */
+  academyId?: number | null;
+  /**
+     * Branding intro to play before this clip, if its academy has one set.
+     * @nullable
+     */
+  introVideoUrl?: string | null;
 }

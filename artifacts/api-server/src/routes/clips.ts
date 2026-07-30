@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, desc, and, sql } from "drizzle-orm";
-import { db, clipsTable, recordingsTable, fieldsTable, savedClipsTable, likesTable, usersTable } from "@workspace/db";
+import { db, clipsTable, recordingsTable, fieldsTable, savedClipsTable, likesTable, usersTable, academiesTable } from "@workspace/db";
 import {
   GetClipParams,
   GetClipResponse,
@@ -58,6 +58,24 @@ async function buildClip(clipId: number, userId: number | null) {
     }
   }
 
+  // This clip predates any direct academy association (that column only
+  // exists on user_clips), so it's derived here from the recording's field.
+  // A field could in principle back more than one academy; we take the first
+  // match, which is fine for the common one-academy-per-field case this was
+  // built for.
+  let academyId: number | null = null;
+  let introVideoUrl: string | null = null;
+  if (field) {
+    const [academy] = await db
+      .select({ id: academiesTable.id, introVideoUrl: academiesTable.introVideoUrl })
+      .from(academiesTable)
+      .where(eq(academiesTable.fieldId, field.id));
+    if (academy) {
+      academyId = academy.id;
+      introVideoUrl = academy.introVideoUrl ?? null;
+    }
+  }
+
   return {
     id: clip.id,
     recordingId: clip.recordingId,
@@ -79,6 +97,8 @@ async function buildClip(clipId: number, userId: number | null) {
     startTime: parseFloat(clip.startTime ?? "0"),
     endTime: parseFloat(clip.endTime ?? "1"),
     cropPath: (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[],
+    academyId,
+    introVideoUrl,
   };
 }
 

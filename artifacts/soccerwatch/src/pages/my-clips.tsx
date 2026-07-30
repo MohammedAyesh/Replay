@@ -68,6 +68,19 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const pollingRef = useRef(false);
   const [isLocal, setIsLocal] = useState(false);
   /**
+   * Two-phase playback: play the academy's branding intro (if this clip has
+   * one) before the real clip. Skipped entirely for local blobs — those are
+   * either the server-rendered export (which already has the intro baked in)
+   * or a client-exported fallback (a separate, smaller gap not handled here).
+   */
+  const [phase, setPhase] = useState<"intro" | "main">(clip.introVideoUrl ? "intro" : "main");
+  useEffect(() => {
+    setPhase(clip.introVideoUrl ? "intro" : "main");
+  }, [clip.id, clip.introVideoUrl]);
+  useEffect(() => {
+    if (isLocal) setPhase("main");
+  }, [isLocal]);
+  /**
    * Local blobs are already trimmed+cropped (they start at t=0 and run to clipDuration).
    * localTimingOverride tracks this: when set, use these fractions instead of clip.startTime/endTime
    * for seek and stop logic so we play from 0 → 1 of the blob, not some fraction of recording duration.
@@ -143,10 +156,39 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     };
   }, [clip.id]);
 
-  /* HLS init — only if no local copy */
+  /* Intro playback — the academy's branding intro, before the real clip. */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !clip.playbackUrl || isLocal) return;
+    if (!video || phase !== "intro" || !clip.introVideoUrl || isLocal) return;
+
+    let cancelled = false;
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    video.src = clip.introVideoUrl;
+
+    // A broken or unreachable intro must never trap the viewer — fall
+    // through to the real clip on any failure, same as a normal finish.
+    function advanceToMain() {
+      if (cancelled) return;
+      setPhase("main");
+    }
+
+    video.addEventListener("ended", advanceToMain);
+    video.addEventListener("error", advanceToMain);
+    video.play().then(() => setIsPlaying(true)).catch(() => {});
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener("ended", advanceToMain);
+      video.removeEventListener("error", advanceToMain);
+    };
+  }, [phase, clip.id, clip.introVideoUrl, isLocal]);
+
+  /* HLS init — only if no local copy and the intro (if any) has finished */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !clip.playbackUrl || isLocal || phase !== "main") return;
 
     let didSeek = false;
     function seekToStartAndPlay() {
@@ -176,7 +218,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       video.removeEventListener("durationchange", seekToStartAndPlay);
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     };
-  }, [clip.playbackUrl, clip.startTime]);
+  }, [clip.playbackUrl, clip.startTime, phase, isLocal]);
 
   /**
    * Pan loop. Writes the interpolated crop frame straight to the video element's
@@ -1172,6 +1214,14 @@ function UserClipCard({
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
       <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
+
+      {/* Live clip overlay — no playback URL yet */}
+      {!clip.playbackUrl && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 z-10 pointer-events-none">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Live recording</span>
+          <span className="text-[9px] text-white/50 text-center px-3">Playback available once the recording uploads</span>
+        </div>
+      )}
 
       {/* Top-left badge: lock for private, scissors for public */}
       {isPrivate ? (

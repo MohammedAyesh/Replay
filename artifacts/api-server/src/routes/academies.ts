@@ -4,8 +4,14 @@ import { z } from "zod";
 import multer from "multer";
 import { db, academiesTable, academyRecordingsTable, fieldsTable, recordingsTable, usersTable } from "@workspace/db";
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { isBunnyStorageConfigured, uploadBufferToBunnyStorage, BUNNY_STORAGE_HOSTNAME, BUNNY_STORAGE_ZONE, BUNNY_STORAGE_API_KEY } from "../lib/bunny";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+// Intro videos are much bigger than a logo image. Buffering the whole file in
+// memory (like the rest of this app's uploads) is fine at the size this admin
+// panel is meant for — a short branding clip, not a full recording — but this
+// bound exists to stop an oversized upload from taking down the process.
+const uploadVideo = multer({ storage: multer.memoryStorage(), limits: { fileSize: 300 * 1024 * 1024 } });
 
 const router: IRouter = Router();
 
@@ -40,6 +46,7 @@ async function buildSummary(academy: typeof academiesTable.$inferSelect) {
     daysOfWeek: parseDays(academy.daysOfWeek),
     description: academy.description ?? null,
     logoUrl: academy.logoUrl ?? null,
+    introVideoUrl: academy.introVideoUrl ?? null,
     liveAccess: academy.liveAccess,
     cameraIds: parseCameras(academy.cameraIds),
     recordingCount: Number(recCount?.value ?? 0),
@@ -216,6 +223,88 @@ router.post("/admin/academies/:id/logo", upload.single("logo"), async (req, res)
   if (!academy) { res.status(404).json({ error: "Academy not found" }); return; }
 
   res.json({ logoUrl: dataUrl });
+});
+
+router.post("/admin/academies/:id/intro", uploadVideo.single("intro"), async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const file = req.file;
+  req.log.info({ hasFile: !!file, mime: file?.mimetype, size: file?.size }, "intro upload: file check");
+  if (!file) { res.status(400).json({ error: "No file uploaded" }); return; }
+  if (!file.mimetype.startsWith("video/")) {
+    res.status(400).json({ error: "File must be a video" });
+    return;
+  }
+  const storageOk = isBunnyStorageConfigured();
+  req.log.info({ storageOk }, "intro upload: storage check");
+  if (!storageOk) {
+    res.status(503).json({ error: "Export storage not configured" });
+    return;
+  }
+
+  const ext = file.mimetype === "video/quicktime" ? "mov"
+    : file.mimetype === "video/webm" ? "webm"
+    : "mp4";
+  const remotePath = `academy-intros/${id}/intro.${ext}`;
+
+  let introVideoUrl: string;
+  try {
+    req.log.info({ remotePath }, "intro upload: starting bunny upload");
+    introVideoUrl = await uploadBufferToBunnyStorage(file.buffer, remotePath, file.mimetype);
+    req.log.info({ introVideoUrl }, "intro upload: bunny upload done");
+  } catch (err) {
+    req.log.error({ err }, "intro upload: bunny upload failed");
+    res.status(502).json({ error: err instanceof Error ? err.message : "Upload failed" });
+    return;
+  }
+
+  try {
+    const [academy] = await db
+      .update(academiesTable)
+      .set({ introVideoUrl })
+      .where(eq(academiesTable.id, id))
+      .returning();
+    req.log.info({ academyFound: !!academy, id }, "intro upload: db update done");
+    if (!academy) { res.status(404).json({ error: "Academy not found" }); return; }
+    res.json({ introVideoUrl });
+  } catch (err) {
+    req.log.error({ err }, "intro upload: db update threw");
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+router.delete("/admin/academies/:id/intro", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [academy] = await db
+    .update(academiesTable)
+    .set({ introVideoUrl: null })
+    .where(eq(academiesTable.id, id))
+    .returning();
+
+  if (!academy) { res.status(404).json({ error: "Academy not found" }); return; }
+
+  // Best-effort: clear the stored file too. Not fatal if this fails — an
+  // orphaned object in storage is harmless since introVideoUrl is already
+  // cleared and nothing references it anymore.
+  if (isBunnyStorageConfigured()) {
+    for (const ext of ["mp4", "mov", "webm"]) {
+      fetch(`https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/academy-intros/${id}/intro.${ext}`, {
+        method: "DELETE",
+        headers: { AccessKey: BUNNY_STORAGE_API_KEY },
+      }).catch(() => {});
+    }
+  }
+
+  res.json({ ok: true });
 });
 
 router.post("/admin/academies/:id/recordings", async (req, res): Promise<void> => {

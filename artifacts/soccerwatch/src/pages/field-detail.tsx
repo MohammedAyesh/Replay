@@ -6,6 +6,8 @@ import {
   useGetBunnyCollections,
   useGetBunnyCollectionVideos,
   useCreateUserClip,
+  useListAcademies,
+  getListAcademiesQueryKey,
   getListUserClipsQueryKey,
   getGetBunnyCollectionsQueryKey,
   BunnyVideo,
@@ -289,6 +291,13 @@ export default function FieldDetail() {
     },
   });
   const collection = collections?.find((c) => c.guid === guid);
+  // A field can belong to at most one academy in the common case this was
+  // built for; if more than one references the same fieldId, the first match
+  // wins (same assumption the server makes for the legacy Clip system).
+  const { data: academies } = useListAcademies({ query: { queryKey: getListAcademiesQueryKey(), staleTime: 5 * 60 * 1000 } });
+  const academyId = collection?.id != null
+    ? academies?.find((a) => a.fieldId === collection.id)?.id
+    : undefined;
   const { data: videos, isLoading: videosLoading } = useGetBunnyCollectionVideos(guid);
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
 
@@ -477,7 +486,7 @@ export default function FieldDetail() {
       </div>
 
       <AnimatePresence>
-        {activeVideo && <VideoPlayer video={activeVideo} onClose={() => setActiveVideo(null)} />}
+        {activeVideo && <VideoPlayer video={activeVideo} onClose={() => setActiveVideo(null)} academyId={academyId} />}
       </AnimatePresence>
     </div>
   );
@@ -608,7 +617,7 @@ function MiniMap({ frame, srcAspect }: { frame: { x: number; y: number; w: numbe
 
 // ── Video Player (unchanged) ──────────────────────────────────────────────────
 
-function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => void }) {
+function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose: () => void; academyId?: number }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const { setFullscreenVideo } = useFullscreenVideo();
@@ -1076,6 +1085,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
           cropPath: keyframes,
           visibility: "private",
           aspectRatio: selectedRatioRef.current,
+          academyId,
         },
       });
       queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });

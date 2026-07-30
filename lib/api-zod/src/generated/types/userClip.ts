@@ -30,4 +30,11 @@ export interface UserClip {
   /** @nullable */
   exportedUrl?: string | null;
   createdAt: string;
+  /** @nullable */
+  academyId?: number | null;
+  /**
+     * Branding intro to play before this clip, if its academy has one set.
+     * @nullable
+     */
+  introVideoUrl?: string | null;
 }

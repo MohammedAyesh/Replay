@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { eq, and, desc, inArray, count, sql } from "drizzle-orm";
-import { db, userClipsTable, usersTable, likesTable, followsTable } from "@workspace/db";
+import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable } from "@workspace/db";
 import {
   CreateUserClipBody,
   CreateUserClipResponse,
@@ -33,7 +33,6 @@ import {
   BUNNY_STORAGE_API_KEY,
 } from "../lib/bunny";
 import { clipSettingsTable } from "@workspace/db";
-import { prependIntro } from "../lib/ffmpegExport";
 import { renderClip, cleanupTempFile } from "../lib/ffmpegExport";
 import { logger } from "../lib/logger";
 
@@ -67,6 +66,34 @@ async function withRenderSlot<T>(job: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Live-stream clips are saved with a synthetic videoId like "live:camera2".
+ * These are not real Bunny Stream GUIDs, so URL generation and export must
+ * be skipped for them until the recording is uploaded to Bunny Stream.
+ */
+function isLiveVideoId(videoId: string): boolean {
+  return videoId.startsWith("live:");
+}
+
+/**
+ * The intro FFmpeg prepends to a clip's export.
+ *
+ * The academy's own intro wins, so each recording carries the branding of the
+ * academy it belongs to. The global clip_settings intro is the fallback for
+ * clips with no academy, or whose academy has not uploaded one.
+ */
+async function resolveIntroVideoUrl(academyId: number | null): Promise<string | null> {
+  if (academyId) {
+    const [academy] = await db
+      .select({ introVideoUrl: academiesTable.introVideoUrl })
+      .from(academiesTable)
+      .where(eq(academiesTable.id, academyId));
+    if (academy?.introVideoUrl) return academy.introVideoUrl;
+  }
+  const [settings] = await db.select().from(clipSettingsTable).limit(1);
+  return settings?.introVideoUrl ?? null;
+}
+
 // Engagement scoring: weighted composite of likes, views, and recency
 function computeScore(likeCount: number, viewCount: number, shareCount: number, createdAt: Date): number {
   const hoursOld = Math.max(0, (Date.now() - createdAt.getTime()) / 36e5);
@@ -97,7 +124,16 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
-  const { videoId, title, startTime, endTime, cropPath, visibility, aspectRatio } = body.data;
+  const { videoId, title, startTime, endTime, cropPath, visibility, aspectRatio, academyId } = body.data;
+
+  // Validate rather than trust blindly: a nonexistent id would just silently
+  // resolve to no intro later, but storing it anyway would be confusing to
+  // debug. Cheap to check up front since we already touch this table below.
+  let validAcademyId: number | null = null;
+  if (academyId != null) {
+    const [academy] = await db.select({ id: academiesTable.id }).from(academiesTable).where(eq(academiesTable.id, academyId));
+    validAcademyId = academy?.id ?? null;
+  }
 
   const [row] = await db
     .insert(userClipsTable)
@@ -110,12 +146,15 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       cropPath,
       visibility: visibility ?? "private",
       aspectRatio: aspectRatio ?? "16:9",
+      academyId: validAcademyId,
     })
     .returning();
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
-  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
-  const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const isLive = isLiveVideoId(row.videoId);
+  const thumbnailUrl = !isLive && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
+  const playbackUrl = !isLive && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const introVideoUrl = await resolveIntroVideoUrl(row.academyId);
 
   res.status(201).json(
     CreateUserClipResponse.parse({
@@ -138,6 +177,8 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       exportStatus: row.exportStatus ?? null,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
+      academyId: row.academyId ?? null,
+      introVideoUrl,
     })
   );
 });
@@ -154,6 +195,22 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     .from(userClipsTable)
     .where(eq(userClipsTable.userId, userId))
     .orderBy(desc(userClipsTable.createdAt));
+
+  // Resolve all distinct academies in one query instead of one per clip.
+  const academyIds = [...new Set(rows.map((r) => r.academyId).filter((id): id is number => id != null))];
+  const introByAcademy = new Map<number, string | null>();
+  if (academyIds.length > 0) {
+    const academies = await db
+      .select({ id: academiesTable.id, introVideoUrl: academiesTable.introVideoUrl })
+      .from(academiesTable)
+      .where(inArray(academiesTable.id, academyIds));
+    for (const a of academies) introByAcademy.set(a.id, a.introVideoUrl ?? null);
+  }
+  // Same precedence the exporter uses (resolveIntroVideoUrl): academy intro
+  // first, global clip_settings intro as the fallback. Fetched once for the
+  // whole list rather than per row.
+  const [globalSettings] = await db.select().from(clipSettingsTable).limit(1);
+  const globalIntro = globalSettings?.introVideoUrl ?? null;
 
   const result = rows.map((row) => {
     const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
@@ -172,11 +229,13 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       shareCount: row.shareCount,
       score: row.score,
       thumbnailTime,
-      thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
-      playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+      thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null,
+      playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
       exportStatus: row.exportStatus ?? null,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
+      academyId: row.academyId ?? null,
+      introVideoUrl: (row.academyId != null ? introByAcademy.get(row.academyId) : null) ?? globalIntro,
     };
   });
 
@@ -271,8 +330,10 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     .returning();
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
-  const thumbnailUrl = isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
-  const playbackUrl = isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const isLiveUpdate = isLiveVideoId(row.videoId);
+  const thumbnailUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId, thumbnailTime) : null;
+  const playbackUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null;
+  const introVideoUrl = await resolveIntroVideoUrl(row.academyId);
 
   res.json(
     UpdateUserClipResponse.parse({
@@ -295,6 +356,8 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
       exportStatus: row.exportStatus ?? null,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
+      academyId: row.academyId ?? null,
+      introVideoUrl,
     })
   );
 });
@@ -552,8 +615,8 @@ router.get("/feed", async (req, res): Promise<void> => {
     score: row.score,
     isLiked: likedSet.has(row.id),
     visibility: row.visibility,
-    thumbnailUrl: isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null,
-    playbackUrl: isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
+    thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyThumbnailUrl(row.videoId) : null,
+    playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyPlaybackUrl(row.videoId) : null,
     createdAt: row.createdAt.toISOString(),
     creatorId: row.creatorId,
     creatorName: row.creatorName,
@@ -584,6 +647,10 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  if (isLiveVideoId(clip.videoId)) {
+    res.status(400).json({ error: "Live stream clips cannot be exported. The recording must be uploaded to Bunny Stream first." });
+    return;
+  }
   if (!isBunnyConfigured()) { res.status(400).json({ error: "Video playback not configured" }); return; }
   if (!isBunnyStorageConfigured()) { res.status(400).json({ error: "Export storage not configured" }); return; }
 
@@ -638,19 +705,17 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
       const referer = `https://${new URL(videoUrl).host}/`;
       logger.info({ clipId, videoUrl }, "Using HLS URL for FFmpeg input");
 
-       tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer });
-       const [settings] = await db.select().from(clipSettingsTable).limit(1);
-       if (settings?.introVideoUrl) {
-         const clipWithIntro = await prependIntro({
-           introUrl: settings.introVideoUrl,
-           clipPath: tmpPath,
-           referer,
-           accessKey: BUNNY_STORAGE_API_KEY,
-         });
-         cleanupTempFile(tmpPath);
-         tmpPath = clipWithIntro;
-       }
-       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
+      // renderClip concatenates the intro itself (see withIntro in
+      // ffmpegExport): it normalises the intro to the clip's own output
+      // dimensions and falls back to exporting without one if the intro is
+      // unusable. This replaces the old second-pass approach, which hardcoded
+      // 1920x1080 and so stretched every 9:16 clip.
+      const introUrl = (await resolveIntroVideoUrl(clip.academyId)) ?? undefined;
+      const introReferer = introUrl ? `https://${new URL(introUrl).host}/` : undefined;
+      if (introUrl) logger.info({ clipId, academyId: clip.academyId, introUrl }, "Prepending intro to export");
+
+      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer, introUrl, introReferer });
+      const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
       await db
         .update(userClipsTable)
         .set({ exportStatus: "done", exportedUrl })

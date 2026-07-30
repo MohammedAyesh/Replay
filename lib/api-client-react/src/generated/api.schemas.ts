@@ -31,9 +31,6 @@ export interface User {
   profileComplete: boolean;
   /** @nullable */
   preferredLocale?: string | null;
-  /** @nullable */
-  academyId?: number | null;
-  liveAccess?: boolean;
 }
 
 export interface AuthResponse {
@@ -64,6 +61,11 @@ export interface BunnyCollection {
   videoCount: number;
   /** @nullable */
   previewImageUrl?: string | null;
+  /**
+     * The corresponding fields table row id, if this collection has been synced via /admin/fields/sync. Null for collections Bunny has that haven't been synced into a field yet.
+     * @nullable
+     */
+  id?: number | null;
 }
 
 export interface BunnyVideo {
@@ -150,6 +152,16 @@ export interface Clip {
   creatorName?: string | null;
   /** @nullable */
   creatorPosition?: string | null;
+  /**
+     * Academy whose field this recording belongs to, if any (matched by fieldId — best-effort, not stored on the clip itself).
+     * @nullable
+     */
+  academyId?: number | null;
+  /**
+     * Branding intro to play before this clip, if its academy has one set.
+     * @nullable
+     */
+  introVideoUrl?: string | null;
 }
 
 export type UserClipVisibility = typeof UserClipVisibility[keyof typeof UserClipVisibility];
@@ -183,6 +195,13 @@ export interface UserClip {
   /** @nullable */
   exportedUrl?: string | null;
   createdAt: string;
+  /** @nullable */
+  academyId?: number | null;
+  /**
+     * Branding intro to play before this clip, if its academy has one set.
+     * @nullable
+     */
+  introVideoUrl?: string | null;
 }
 
 export interface SocialLikeUser {
@@ -251,6 +270,11 @@ export interface CreateUserClipInput {
   cropPath: CropKeyframe[];
   visibility?: CreateUserClipInputVisibility;
   aspectRatio?: CreateUserClipInputAspectRatio;
+  /**
+     * Academy context this clip was created under (from the page the user was viewing), if any.
+     * @nullable
+     */
+  academyId?: number | null;
 }
 
 export type UpdateUserClipInputVisibility = typeof UpdateUserClipInputVisibility[keyof typeof UpdateUserClipInputVisibility];
@@ -348,6 +372,11 @@ export interface AcademySummary {
   description?: string | null;
   /** @nullable */
   logoUrl?: string | null;
+  /**
+     * Branding intro clip prepended to this academy's clip exports and playback.
+     * @nullable
+     */
+  introVideoUrl?: string | null;
   recordingCount: number;
 }
 
