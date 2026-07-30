@@ -2284,20 +2284,38 @@ interface RecordingJob {
 }
 
 function HlsPlayer({ url, className }: { url: string; className?: string }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef  = useRef<HTMLVideoElement>(null);
+  const hlsRef    = useRef<Hls | null>(null);
+
+  // quality levels discovered from the HLS manifest (height → original index)
+  const [levels,      setLevels]      = useState<Array<{ height: number; index: number }>>([]);
+  const [activeLevel, setActiveLevel] = useState<number>(-1); // -1 = Auto (ABR)
 
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return undefined;
 
+    setLevels([]);
+    setActiveLevel(-1);
+
     if (Hls.isSupported()) {
       const hls = new Hls({ liveSyncDurationCount: 3 });
+      hlsRef.current = hls;
       hls.loadSource(url);
       hls.attachMedia(el);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        // sort highest → lowest for the quality buttons
+        const lvls = hls.levels
+          .map((l, i) => ({ height: l.height, index: i }))
+          .sort((a, b) => b.height - a.height);
+        setLevels(lvls);
+        setActiveLevel(-1);
+      });
       el.muted = true;
       el.play().catch(() => { /* autoplay blocked */ });
-      return () => hls.destroy();
+      return () => { hls.destroy(); hlsRef.current = null; };
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
+      // Safari / iOS — native HLS, no JS quality switching
       el.src = url;
       el.muted = true;
       el.play().catch(() => { /* autoplay blocked */ });
@@ -2305,14 +2323,55 @@ function HlsPlayer({ url, className }: { url: string; className?: string }) {
     return undefined;
   }, [url]);
 
+  const setQuality = (level: number) => {
+    if (hlsRef.current) hlsRef.current.currentLevel = level;
+    setActiveLevel(level);
+  };
+
+  const labelFor = (h: number) => (h >= 2160 ? "4K" : `${h}p`);
+
   return (
-    <video
-      ref={videoRef}
-      className={cn("w-full rounded-xl bg-black", className)}
-      playsInline
-      muted
-      controls
-    />
+    <div className="space-y-1.5">
+      <video
+        ref={videoRef}
+        className={cn("w-full rounded-xl bg-black", className)}
+        playsInline
+        muted
+        controls
+      />
+      {levels.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-zinc-500 text-[10px]">Quality:</span>
+          <button
+            type="button"
+            onClick={() => setQuality(-1)}
+            className={cn(
+              "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+              activeLevel === -1
+                ? "border-primary text-primary bg-primary/10"
+                : "border-zinc-700 text-zinc-400 hover:border-zinc-500",
+            )}
+          >
+            Auto
+          </button>
+          {levels.map(({ height, index }) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => setQuality(index)}
+              className={cn(
+                "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+                activeLevel === index
+                  ? "border-primary text-primary bg-primary/10"
+                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500",
+              )}
+            >
+              {labelFor(height)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
