@@ -348,6 +348,9 @@ function VideoPlayer({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [qualityLevels, setQualityLevels] = useState<Array<{ height: number; index: number }>>([]);
+  const [activeQuality, setActiveQuality] = useState<number>(-1); // -1 = Auto (ABR)
+  const [showQualityPicker, setShowQualityPicker] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const seekDraggingRef = useRef(false);
@@ -575,12 +578,23 @@ function VideoPlayer({
     el.addEventListener("timeupdate", onTimeUpdate);
     el.addEventListener("ended", onEnded);
 
+    setQualityLevels([]);
+    setActiveQuality(-1);
+    setShowQualityPicker(false);
+
     if (Hls.isSupported()) {
       const hls = new Hls(isLive ? { enableWorker: false, liveSyncDurationCount: 3 } : { enableWorker: false });
       hlsRef.current = hls;
       hls.loadSource(playbackUrl);
       hls.attachMedia(el);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        el.play().catch(() => {});
+        const lvls = hls.levels
+          .map((l, i) => ({ height: l.height, index: i }))
+          .sort((a, b) => b.height - a.height);
+        setQualityLevels(lvls);
+        setActiveQuality(-1);
+      });
       hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) el.dispatchEvent(new Event("error")); });
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
       el.src = playbackUrl;
@@ -806,6 +820,45 @@ function VideoPlayer({
                 <button onClick={() => applyFrameChange(frameZoomRef.current, selectedRatio === "16:9" ? "9:16" : "16:9")} className="px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-bold">
                   {selectedRatio}
                 </button>
+
+                {/* Quality selector — shown once HLS.js has parsed the manifest */}
+                {qualityLevels.length > 1 && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowQualityPicker((p) => !p)}
+                      className="px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-bold"
+                    >
+                      {activeQuality === -1
+                        ? "Auto"
+                        : (() => { const l = qualityLevels.find((q) => q.index === activeQuality); return l ? (l.height >= 2160 ? "4K" : `${l.height}p`) : "Auto"; })()}
+                    </button>
+                    {showQualityPicker && (
+                      <div className="absolute top-full right-0 mt-1 bg-black/80 backdrop-blur-md rounded-xl overflow-hidden shadow-xl border border-white/10 z-50 min-w-[5rem]">
+                        {[{ height: 0, index: -1 }, ...qualityLevels].map(({ height, index }) => {
+                          const label = index === -1 ? "Auto" : height >= 2160 ? "4K" : `${height}p`;
+                          const isActive = activeQuality === index;
+                          return (
+                            <button
+                              key={index}
+                              onClick={() => {
+                                if (hlsRef.current) hlsRef.current.currentLevel = index;
+                                setActiveQuality(index);
+                                setShowQualityPicker(false);
+                              }}
+                              className={cn(
+                                "block w-full px-4 py-2.5 text-xs font-semibold text-left transition-colors",
+                                isActive ? "text-primary" : "text-white hover:bg-white/10",
+                              )}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <button onClick={toggleFullscreen} className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
                   {isFullscreen ? <Minimize className="w-4 h-4 text-white" /> : <Maximize className="w-4 h-4 text-white" />}
                 </button>
