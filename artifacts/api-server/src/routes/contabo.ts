@@ -111,6 +111,7 @@ const recordingJobs: RecordingJob[] = [];
 async function controlFetch(
   path: string,
   opts: RequestInit = {},
+  timeoutMs = 15_000,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
   const base = CONTROL_URL();
   const key  = CONTROL_KEY();
@@ -126,7 +127,7 @@ async function controlFetch(
       "X-Api-Key": key,
       ...(opts.headers as Record<string, string> ?? {}),
     },
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   let body: unknown = null;
@@ -341,6 +342,115 @@ router.get("/admin/contabo/recordings", requireContaboAuth as import("express").
   }
 
   res.json(recordingJobs);
+});
+
+// ─── SD-card 4K pull routes ───────────────────────────────────────────────────
+
+/**
+ * GET /admin/contabo/sd/:cam/available?date=YYYY-MM-DD
+ * Proxy: GET {CONTROL_URL}/sd/{cam}/available?date=...
+ * Returns which hours of footage actually exist on the SD card for that date.
+ * All times are Amman local (UTC+3). Response: { cam, date, totalSegments,
+ * hours: [{ hour, segments, bytes }] }
+ */
+router.get("/admin/contabo/sd/:cam/available", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const missing = missingSecrets();
+  if (missing.length > 0) { res.status(503).json({ error: "Control server not configured", missing }); return; }
+
+  const cam = req.params.cam as string;
+  if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
+
+  const date = req.query.date as string | undefined;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: "date query param must be YYYY-MM-DD" });
+    return;
+  }
+
+  try {
+    const result = await controlFetch(`/sd/${cam}/available?date=${date}`);
+    res.status(result.ok ? 200 : result.status).json(result.body);
+  } catch (err) {
+    logger.error({ err }, "Failed to reach control server (sd available)");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+/**
+ * POST /admin/contabo/hq/:cam?start=...&end=...&title=...
+ * Proxy: POST {CONTROL_URL}/record-hq/{cam}?start=...&end=...&title=...
+ * Queues an SD-card 4K pull. start/end are "YYYY-MM-DD HH:MM:SS" Amman local.
+ * Returns { status, cam, jobId, poll }
+ */
+router.post("/admin/contabo/hq/:cam", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const missing = missingSecrets();
+  if (missing.length > 0) { res.status(503).json({ error: "Control server not configured", missing }); return; }
+
+  const cam = req.params.cam as string;
+  if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
+
+  const start = req.query.start as string | undefined;
+  const end   = req.query.end   as string | undefined;
+  const title = req.query.title as string | undefined;
+
+  if (!start || !end || !title) {
+    res.status(400).json({ error: "start, end, and title query params are required" });
+    return;
+  }
+
+  try {
+    const qs = `start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title)}`;
+    const result = await controlFetch(`/record-hq/${cam}?${qs}`, { method: "POST" });
+    logger.info({ cam, start, end, title, ok: result.ok }, "SD 4K pull queued");
+    res.status(result.ok ? 200 : result.status).json(result.body);
+  } catch (err) {
+    logger.error({ err }, "Failed to reach control server (hq queue)");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+/**
+ * GET /admin/contabo/hq/:cam/:jobId
+ * Proxy: GET {CONTROL_URL}/record-hq/{cam}/{jobId}
+ * Job status. Status field: queued → searching → downloading → waiting_for_camera
+ * → assembling → uploading → done | failed.
+ * While downloading: segments, bytesExpected, bytesDownloaded, note.
+ * When done: videoId, playback (Bunny HLS URL). When failed: error string.
+ */
+router.get("/admin/contabo/hq/:cam/:jobId", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const missing = missingSecrets();
+  if (missing.length > 0) { res.status(503).json({ error: "Control server not configured", missing }); return; }
+
+  const cam   = req.params.cam   as string;
+  const jobId = req.params.jobId as string;
+
+  if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
+
+  try {
+    // 30 s — assembling/uploading stages can take a moment to respond.
+    const result = await controlFetch(`/record-hq/${cam}/${jobId}`, {}, 30_000);
+    res.status(result.ok ? 200 : result.status).json(result.body);
+  } catch (err) {
+    logger.error({ err, cam, jobId }, "Failed to reach control server (hq status)");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+/**
+ * GET /admin/contabo/hq
+ * Proxy: GET {CONTROL_URL}/record-hq
+ * All past SD-pull jobs, newest first. Response: { jobs: [...] }
+ */
+router.get("/admin/contabo/hq", requireContaboAuth as import("express").RequestHandler, async (_req, res): Promise<void> => {
+  const missing = missingSecrets();
+  if (missing.length > 0) { res.status(503).json({ error: "Control server not configured", missing }); return; }
+
+  try {
+    const result = await controlFetch("/record-hq");
+    res.status(result.ok ? 200 : result.status).json(result.body);
+  } catch (err) {
+    logger.error({ err }, "Failed to reach control server (hq list)");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
 });
 
 export default router;
