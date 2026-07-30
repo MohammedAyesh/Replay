@@ -4,6 +4,9 @@ import { Radio, RotateCcw } from "lucide-react";
 
 const LIVE_PLAYBACK_BASE = "/api/live";
 
+/** Non-recoverable: the only error that should survive a successful fragment. */
+const FATAL_ERROR = "This camera is currently unavailable.";
+
 const CAMERAS = [
   { id: "camera1", label: "Camera 1" },
   { id: "camera2", label: "Camera 2" },
@@ -32,7 +35,11 @@ function HlsPlayer({ url, label }: { url: string; label: string }) {
         liveMaxLatencyDurationCount: 10,
         maxBufferLength: 30,
         maxMaxBufferLength: 60,
-        backBufferLength: 1800,
+        // Was 1800. Both cameras autoplay on this page, so half a match at
+        // ~2 Mbps each held roughly 450 MB per SourceBuffer — enough for mobile
+        // to reclaim the tab or for hls.js to start thrashing on
+        // QuotaExceededError. A live viewer never scrubs back that far anyway.
+        backBufferLength: 90,
       });
       hls.loadSource(url);
       hls.attachMedia(el);
@@ -40,6 +47,13 @@ function HlsPlayer({ url, label }: { url: string; label: string }) {
         setReady(true);
         el.play().catch(() => {});
       });
+      // Recoverable errors set a banner that nothing ever cleared, so a single
+      // WiFi hiccup left "Reconnecting…" pinned over a healthy stream for the
+      // rest of the session. Clear it as soon as playback actually resumes.
+      const clearTransientError = () => setError((e) => (e === FATAL_ERROR ? e : null));
+      hls.on(Hls.Events.FRAG_BUFFERED, clearTransientError);
+      el.addEventListener("playing", clearTransientError);
+
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -49,11 +63,14 @@ function HlsPlayer({ url, label }: { url: string; label: string }) {
           setError("Recovering video…");
           hls.recoverMediaError();
         } else {
-          setError("This camera is currently unavailable.");
+          setError(FATAL_ERROR);
           hls.destroy();
         }
       });
-      return () => hls.destroy();
+      return () => {
+        el.removeEventListener("playing", clearTransientError);
+        hls.destroy();
+      };
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
       el.src = url;
       const onMetadata = () => {

@@ -315,8 +315,15 @@ export default function FieldDetail() {
   const [calMonth, setCalMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
-  // Auto-select the most recent recording date when videos load
+  // Auto-select the most recent recording date, but only once.
+  //
+  // This effect depends on `videos`, and react-query hands back a new array
+  // whenever a background refetch returns different bytes. Re-running it yanked
+  // anyone browsing an older date back to today the moment the hourly archive
+  // pipeline published a new video.
+  const didAutoSelectDate = useRef(false);
   useEffect(() => {
+    if (didAutoSelectDate.current) return;
     if (!videos?.length) return;
     const dates = [...videosByDate.keys()].sort();
     const mostRecent = dates[dates.length - 1];
@@ -325,6 +332,7 @@ export default function FieldDetail() {
       setCalYear(d.getFullYear());
       setCalMonth(d.getMonth());
       setSelectedDate(mostRecent);
+      didAutoSelectDate.current = true;
     }
   }, [videos, videosByDate]);
 
@@ -1342,7 +1350,7 @@ function VideoPlayer({ video, onClose }: { video: BunnyVideo; onClose: () => voi
               {t.clipping.discard}
             </button>
             <button
-              onClick={() => { setShowAuthPrompt(false); setLocation("/login"); }}
+              onClick={() => { setShowAuthPrompt(false); setLocation("/sign-in"); }}
               className="flex-1 py-2.5 rounded-xl bg-primary text-black text-sm font-bold"
             >
               {t.clipping.signInCTA}

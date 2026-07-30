@@ -428,22 +428,10 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     if (!res.ok) throw new Error("Proxy download failed");
     const blob = await res.blob();
 
-    // Save to local IndexedDB so it appears in the Saved tab
-    await saveLocalClip({
-      clipId: clip.id,
-      userId: user?.id ?? 0,
-      title: clip.title,
-      blob,
-      mimeType: "video/mp4",
-      startTime: clip.startTime,
-      endTime: clip.endTime,
-      cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
-      aspectRatio: clip.aspectRatio ?? "16:9",
-      downloadedAt: new Date().toISOString(),
-      playbackUrl: clip.playbackUrl ?? null,
-    });
-    onDownloaded?.();
-
+    // Hand the file to the user FIRST. The local-cache write below can reject
+    // (QuotaExceededError on a nearly-full device is the common one), and doing
+    // it first meant a several-hundred-megabyte download that had already
+    // succeeded was thrown away with a bare "Export failed".
     const file = new File([blob], filename, { type: "video/mp4" });
     const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
     if (nav.canShare?.({ files: [file] })) {
@@ -452,15 +440,45 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     } else {
       triggerDownload(blob, filename);
     }
-    toast({ title: "Saved!", description: "Clip saved to your device." });
+
+    // Then cache it locally so it appears in the Saved tab. Best-effort.
+    try {
+      await saveLocalClip({
+        clipId: clip.id,
+        userId: user?.id ?? 0,
+        title: clip.title,
+        blob,
+        mimeType: "video/mp4",
+        startTime: clip.startTime,
+        endTime: clip.endTime,
+        cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
+        aspectRatio: clip.aspectRatio ?? "16:9",
+        downloadedAt: new Date().toISOString(),
+        playbackUrl: clip.playbackUrl ?? null,
+      });
+      onDownloaded?.();
+      toast({ title: "Saved!", description: "Clip saved to your device." });
+    } catch {
+      toast({
+        title: "Downloaded",
+        description: "Not enough space to keep a copy in the Saved tab.",
+      });
+    }
   }, [clip, user?.id, toast, onDownloaded]);
 
   const handleExport = useCallback(async () => {
     if (exportState === "polling") return;
 
-    // Already exported — re-deliver without re-rendering
+    // Already exported — re-deliver without re-rendering.
+    // This sits before the try/catch below, so an offline tap or an expired
+    // Bunny asset used to surface as an unhandled rejection: no toast, no
+    // spinner, nothing at all happened.
     if (exportState === "ready" && exportedUrl) {
-      await deliverViaProxy();
+      try {
+        await deliverViaProxy();
+      } catch {
+        toast({ title: t.export.error, description: t.export.errorDesc, variant: "destructive" });
+      }
       return;
     }
 

@@ -939,7 +939,15 @@ function BannersTab() {
     setDeleting(null);
   };
 
-  const BannerForm = () => {
+  // A plain render helper, NOT a component.
+  //
+  // This used to be a `BannerForm` component defined here and rendered as JSX.
+  // Defining a component inside the parent's render body gives it a new
+  // identity on every render, so each keystroke made React unmount the whole
+  // form and mount a fresh one: the input lost focus and every character after
+  // the first was dropped. Calling it as a function inlines the elements into
+  // this component's tree instead, and the inputs keep their DOM nodes.
+  const renderBannerForm = () => {
     const effectiveImageUrl = form.imageUrl.trim() || (showNew ? "" : `/api/banners/${encodeURIComponent(editing ?? form.id)}/image`);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1053,7 +1061,7 @@ function BannersTab() {
         </button>
       </div>
 
-      {showNew && <BannerForm />}
+      {showNew && renderBannerForm()}
 
       {loading ? (
         <div className="text-center py-16 text-zinc-500">Loading…</div>
@@ -1100,7 +1108,7 @@ function BannersTab() {
                 </div>
                 {editing === banner.id && (
                   <div className="border-t border-zinc-800 p-3">
-                    <BannerForm />
+                    {renderBannerForm()}
                   </div>
                 )}
               </div>
@@ -2580,14 +2588,19 @@ function RecordingsList({
 }
 
 function LiveTab() {
-  const [unlocked, setUnlocked] = useState<boolean>(() => {
-    try { return sessionStorage.getItem("contabo_unlocked") === "1"; } catch { return false; }
-  });
+  // The live-control password is held in memory for the life of this component
+  // only.
+  //
+  // It used to be written to sessionStorage in plaintext and echoed on every
+  // request, so anything running in the page origin — Clerk, the Replit dev
+  // banner, an ad creative, any XSS — could read it and start or stop a camera,
+  // and it survived every navigation until someone remembered to click "Lock
+  // console". The cost of this change is re-entering it after a page reload,
+  // which is the right trade for a credential that controls a live broadcast.
+  const [unlocked, setUnlocked] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
   const [pwError, setPwError] = useState(false);
-  const [adminPassword, setAdminPassword] = useState<string>(() => {
-    try { return sessionStorage.getItem("contabo_pw") ?? ""; } catch { return ""; }
-  });
+  const [adminPassword, setAdminPassword] = useState("");
   const [configMissing, setConfigMissing] = useState<string[]>([]);
   const [recordRefresh, setRecordRefresh] = useState(0);
 
@@ -2605,9 +2618,11 @@ function LiveTab() {
       if (data.missing && data.missing.length > 0) setConfigMissing(data.missing);
       setAdminPassword(passwordInput);
       setUnlocked(true);
+      // Deliberately not persisted — see the note on the state above.
+      // Clear any value left behind by an older build.
       try {
-        sessionStorage.setItem("contabo_unlocked", "1");
-        sessionStorage.setItem("contabo_pw", passwordInput);
+        sessionStorage.removeItem("contabo_unlocked");
+        sessionStorage.removeItem("contabo_pw");
       } catch { /* no sessionStorage */ }
     } catch {
       setPwError(true);
@@ -2694,7 +2709,7 @@ function LiveTab() {
         onClick={() => {
           setUnlocked(false);
           setAdminPassword("");
-          try { sessionStorage.removeItem("contabo_unlocked"); sessionStorage.removeItem("contabo_pw"); } catch { /* ok */ }
+          setPasswordInput("");
         }}
         className="flex items-center gap-2 text-zinc-600 text-xs hover:text-zinc-400 transition-colors mx-auto"
       >

@@ -1,27 +1,13 @@
 import Hls from "hls.js";
+import {
+  DEFAULT_SRC_ASPECT,
+  OUT_ASPECT,
+  interpolateFrame,
+  normalizePath,
+  type AspectRatio,
+} from "./cropFrame";
 
 type KF = { t: number; x: number; y: number; w: number; h: number };
-
-function lerp(a: number, b: number, p: number) {
-  return a + (b - a) * p;
-}
-
-function interpolateX(keyframes: KF[], t: number): number {
-  if (keyframes.length === 0) return 0.5;
-  if (keyframes.length === 1) return keyframes[0].x;
-  if (t <= keyframes[0].t) return keyframes[0].x;
-  if (t >= keyframes[keyframes.length - 1].t)
-    return keyframes[keyframes.length - 1].x;
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const a = keyframes[i],
-      b = keyframes[i + 1];
-    if (t >= a.t && t <= b.t) {
-      const p = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t);
-      return lerp(a.x, b.x, p);
-    }
-  }
-  return keyframes[keyframes.length - 1].x;
-}
 
 export interface ExportClipOptions {
   playbackUrl: string;
@@ -110,6 +96,11 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
   const OUT_W = is9to16 ? Math.round(SRC_H * 9 / 16) : 1920;
   const OUT_H = SRC_H;
 
+  // Rewrite pre-frame-model keyframes exactly as the editor and the server-side
+  // renderer do, so all three agree on what a clip looks like.
+  const outAspect = OUT_ASPECT[(is9to16 ? "9:16" : "16:9") as AspectRatio];
+  const framePath = normalizePath(cropPath, DEFAULT_SRC_ASPECT, outAspect);
+
   if (!canExportVideo()) {
     await fallbackShare(playbackUrl, title);
     return;
@@ -143,19 +134,47 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
     let endSec = 0;
     let clipDuration = 1;
     let hlsInstance: Hls | null = null;
+    let captureStream: MediaStream | null = null;
     let durationInitialized = false;
     let recordingStarted = false;
     let finalMimeType = "";
 
-    const loadTimeoutId = setTimeout(() => {
+    // Bounds the *load* phase only. It used to be cleared solely inside
+    // cleanup(), which on the success path does not run until MediaRecorder
+    // stops — i.e. after real-time capture — so any clip longer than
+    // LOAD_TIMEOUT_MS aborted mid-recording. startRecording() clears it.
+    let loadTimeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      loadTimeoutId = null;
       cleanup();
       reject(new Error("Export timed out waiting for video"));
     }, LOAD_TIMEOUT_MS);
 
+    function clearLoadTimeout() {
+      if (loadTimeoutId !== null) {
+        clearTimeout(loadTimeoutId);
+        loadTimeoutId = null;
+      }
+    }
+
+    let cleanedUp = false;
     function cleanup() {
-      clearTimeout(loadTimeoutId);
+      if (cleanedUp) return;
+      cleanedUp = true;
+      clearLoadTimeout();
       cancelAnimationFrame(rafId);
       video.pause();
+      // Stop the recorder and release the capture stream's tracks. Without
+      // this an aborted export left MediaRecorder running and accumulating
+      // chunks for the lifetime of the page.
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.onstop = null;
+        mediaRecorder.onerror = null;
+        try { mediaRecorder.stop(); } catch { /* already stopping */ }
+      }
+      if (captureStream) {
+        for (const track of captureStream.getTracks()) track.stop();
+        captureStream = null;
+      }
       if (hlsInstance) {
         hlsInstance.destroy();
         hlsInstance = null;
@@ -168,15 +187,40 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
     function tick() {
       const now = video.currentTime;
       const t = Math.max(0, Math.min(1, (now - startSec) / clipDuration));
-      const x = interpolateX(cropPath, t);
 
-      // x is the left-edge fraction of the panoramic source.
-      // For 9:16 we center the crop window on the recorded crop center;
-      // for 16:9 the crop width ≈ OUT_W so left-edge positioning is equivalent.
-      const kfW = cropPath[0]?.w ?? (is9to16 ? 9 / 16 / (3840 / 1080) : 0.5);
-      const cropCenterSrc = (x + kfW / 2) * SRC_W;
-      const sourceX = Math.max(0, Math.min(SRC_W - OUT_W, cropCenterSrc - OUT_W / 2));
-      ctx.drawImage(video, sourceX, 0, OUT_W, SRC_H, 0, 0, OUT_W, OUT_H);
+      // Render the full recorded frame rect — x, y, w AND h.
+      //
+      // This used to sample a fixed OUT_W x SRC_H strip at y = 0 and derive the
+      // horizontal centre from cropPath[0].w alone, so a clip framed at 2x with
+      // a vertical offset and deliberate black bars exported as a tight zoom-1
+      // centre crop of a different part of the pitch — nothing like the preview.
+      // The frame may extend outside the source; those regions are black bars.
+      const f = interpolateFrame(framePath, t);
+      const sx = f.x * SRC_W;
+      const sy = f.y * SRC_H;
+      const sw = Math.max(1, f.w * SRC_W);
+      const sh = Math.max(1, f.h * SRC_H);
+
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, OUT_W, OUT_H);
+
+      // Intersect the frame with the source and map that sub-rect onto the
+      // canvas ourselves, rather than relying on drawImage's out-of-bounds
+      // clipping behaviour.
+      const ix0 = Math.max(sx, 0);
+      const iy0 = Math.max(sy, 0);
+      const ix1 = Math.min(sx + sw, SRC_W);
+      const iy1 = Math.min(sy + sh, SRC_H);
+      if (ix1 > ix0 && iy1 > iy0) {
+        const scaleX = OUT_W / sw;
+        const scaleY = OUT_H / sh;
+        ctx.drawImage(
+          video,
+          ix0, iy0, ix1 - ix0, iy1 - iy0,
+          (ix0 - sx) * scaleX, (iy0 - sy) * scaleY,
+          (ix1 - ix0) * scaleX, (iy1 - iy0) * scaleY,
+        );
+      }
 
       onProgress?.(t);
 
@@ -191,9 +235,13 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       if (recordingStarted) return;
       recordingStarted = true;
 
+      // The load phase is over — this timeout must not fire mid-capture.
+      clearLoadTimeout();
+
       let stream: MediaStream;
       try {
         stream = canvas.captureStream(30);
+        captureStream = stream;
       } catch (err) {
         // canvas.captureStream() throws SecurityError when the canvas is tainted
         // (CORS not configured on the CDN). Fail fast instead of hanging 45 s.

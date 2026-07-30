@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
-import { Link, useRoute } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import Hls from "hls.js";
 import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, getGetFeedQueryKey, getGetAccountStatsQueryKey, Clip, FeedClip } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -47,6 +47,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
   const queryClient = useQueryClient();
   const { isGuest } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
   const [isMuted, setIsMuted] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -68,6 +69,16 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
   const clipStartSec = useRef<number>(0);
   const clipEndSec = useRef<number>(Infinity);
+  /**
+   * The clip's window inside the source recording, mirrored into state so the
+   * seek bar can render against it.
+   *
+   * The bar used to be scaled to the whole source: a 12-second highlight cut
+   * from a one-hour archive showed "33:07 / 59:58" with a thumb that barely
+   * moved, and dragging left of the clip start played unrelated footage with no
+   * way back, because handleTimeUpdate only clamped the upper bound.
+   */
+  const [clipWindow, setClipWindow] = useState({ start: 0, end: 0 });
   const durationRef = useRef<number>(0);
 
   const toggleLikeMutation = useToggleLike();
@@ -98,6 +109,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       setDuration(dur);
       clipStartSec.current = isFinite(clip.startTime) ? clip.startTime * dur : 0;
       clipEndSec.current = isFinite(clip.endTime) ? clip.endTime * dur : dur;
+      setClipWindow({ start: clipStartSec.current, end: clipEndSec.current });
       video.currentTime = clipStartSec.current;
       video.play().then(() => setIsPlaying(true)).catch(() => {});
     }
@@ -108,13 +120,16 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       setDuration(durationRef.current);
       clipStartSec.current = isFinite(clip.startTime) ? clip.startTime * durationRef.current : 0;
       clipEndSec.current = isFinite(clip.endTime) ? clip.endTime * durationRef.current : durationRef.current;
+      setClipWindow({ start: clipStartSec.current, end: clipEndSec.current });
       if (framePath.length > 0) applyFrameToVideo(video, interpolateFrame(framePath, 0));
       seekToStartAndPlay();
     }
 
     function handleTimeUpdate() {
       if (!video || !durationRef.current) return;
-      if (video.currentTime >= clipEndSec.current) {
+      // Clamp BOTH ends: without the lower bound a drag before the clip start
+      // left the viewer watching earlier, unrelated footage indefinitely.
+      if (video.currentTime >= clipEndSec.current || video.currentTime < clipStartSec.current - 0.25) {
         video.currentTime = clipStartSec.current;
       }
       if (!seekDraggingRef.current) {
@@ -271,7 +286,10 @@ function PlayerScreen({ clip }: { clip: Clip }) {
     seekDraggingRef.current = false;
   }, []);
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  // Everything the seek bar shows is relative to the clip, not the source.
+  const clipLength = Math.max(0, clipWindow.end - clipWindow.start);
+  const clipElapsed = Math.max(0, Math.min(clipLength, currentTime - clipWindow.start));
+  const progress = clipLength > 0 ? (clipElapsed / clipLength) * 100 : 0;
 
   return (
     <div className="relative w-full h-[100dvh] bg-black overflow-hidden" onClick={isZoomed ? undefined : togglePlay}>
@@ -298,10 +316,25 @@ function PlayerScreen({ clip }: { clip: Clip }) {
 
       {/* Top Nav */}
       <div className="absolute top-safe pt-4 px-4 w-full flex justify-between items-start pointer-events-auto z-10">
-        <Link href="~" className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white backdrop-blur-md">
+        {/*
+          Was <Link href="~">: wouter resolves "~" to the empty string and
+          history.pushState(..., "") keeps the current URL, so the chevron did
+          nothing. The tab bar is hidden on /player/*, which strands installed
+          PWA users on the clip. Go back in history, falling back to the feed.
+        */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (window.history.length > 1) window.history.back();
+            else setLocation("/home");
+          }}
+          aria-label="Back"
+          className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white backdrop-blur-md"
+        >
           <ChevronLeft className="w-6 h-6 ms-[-2px] rtl:hidden" />
           <ChevronRight className="w-6 h-6 me-[-2px] ltr:hidden" />
-        </Link>
+        </button>
         <button
           onClick={toggleMute}
           className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center text-white backdrop-blur-md"
@@ -324,7 +357,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         <div className="mb-4 select-none" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-3">
             <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px]">
-              {formatTime(currentTime)}
+              {formatTime(clipElapsed)}
             </span>
             <div className="flex-1 relative h-8 flex items-center">
               {/* Track background */}
@@ -341,10 +374,10 @@ function PlayerScreen({ clip }: { clip: Clip }) {
               />
               <input
                 type="range"
-                min={0}
-                max={duration || 1}
-                step={0.1}
-                value={currentTime}
+                min={clipWindow.start}
+                max={clipWindow.end || clipWindow.start + 1}
+                step={0.05}
+                value={Math.min(Math.max(currentTime, clipWindow.start), clipWindow.end || clipWindow.start + 1)}
                 onMouseDown={handleSeekStart}
                 onTouchStart={handleSeekStart}
                 onChange={handleSeekMove}
@@ -354,7 +387,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
               />
             </div>
             <span className="text-xs text-white/80 font-semibold tabular-nums min-w-[38px] text-right">
-              {formatTime(duration)}
+              {formatTime(clipLength)}
             </span>
           </div>
         </div>

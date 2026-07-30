@@ -895,7 +895,7 @@ function VideoPlayer({
           <DialogDescription className="text-zinc-400">{t.myClips.signInDesc}</DialogDescription>
           <div className="flex gap-2 mt-2">
             <button onClick={() => setShowAuthPrompt(false)} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm">{t.clipping.discard}</button>
-            <button onClick={() => { setShowAuthPrompt(false); setLocation("/login"); }} className="flex-1 py-2.5 rounded-xl bg-primary text-black text-sm font-bold">{t.clipping.signInCTA}</button>
+            <button onClick={() => { setShowAuthPrompt(false); setLocation("/sign-in"); }} className="flex-1 py-2.5 rounded-xl bg-primary text-black text-sm font-bold">{t.clipping.signInCTA}</button>
           </div>
         </DialogContent>
       </Dialog>

@@ -511,7 +511,11 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     );
     observer.observe(video);
     return () => observer.disconnect();
-  }, [clip.id, clearAdTimers, queryClient, recordViewMutation]);
+    // recordViewMutation is deliberately not a dependency: react-query returns a
+    // new object every render, so listing it rebuilt the observer each render
+    // and re-firing the intersection callback looped the ad fetch forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clip.id, clearAdTimers, queryClient]);
 
   const { t } = useTranslation();
 
