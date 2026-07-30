@@ -344,6 +344,31 @@ router.get("/admin/contabo/recordings", requireContaboAuth as import("express").
   res.json(recordingJobs);
 });
 
+// ─── FTP instant-footage route ────────────────────────────────────────────────
+
+/**
+ * GET /admin/contabo/ftp/:cam/available
+ * Proxy: GET {CONTROL_URL}/ftp/{cam}/available
+ * Returns what is instantly servable from footage already pushed to the VPS.
+ * Response: { cam, clips: [{ start, end, seconds, bytes }], earliest, latest, note }
+ * start/end are "YYYY-MM-DD HH:MM:SS" Amman local time (UTC+3).
+ */
+router.get("/admin/contabo/ftp/:cam/available", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const missing = missingSecrets();
+  if (missing.length > 0) { res.status(503).json({ error: "Control server not configured", missing }); return; }
+
+  const cam = req.params.cam as string;
+  if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
+
+  try {
+    const result = await controlFetch(`/ftp/${cam}/available`);
+    res.status(result.ok ? 200 : result.status).json(result.body);
+  } catch (err) {
+    logger.error({ err }, "Failed to reach control server (ftp available)");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
 // ─── SD-card 4K pull routes ───────────────────────────────────────────────────
 
 /**
@@ -376,9 +401,11 @@ router.get("/admin/contabo/sd/:cam/available", requireContaboAuth as import("exp
 });
 
 /**
- * POST /admin/contabo/hq/:cam?start=...&end=...&title=...
- * Proxy: POST {CONTROL_URL}/record-hq/{cam}?start=...&end=...&title=...
- * Queues an SD-card 4K pull. start/end are "YYYY-MM-DD HH:MM:SS" Amman local.
+ * POST /admin/contabo/hq/:cam?source=ftp|sd&start=...&end=...&title=...
+ * Proxy: POST {CONTROL_URL}/record-hq/{cam}?source=...&start=...&end=...&title=...
+ * source defaults to "ftp" (fast — assembles from footage already on the VPS).
+ * source="sd" pulls from the camera's SD card (slow, especially on camera 1).
+ * start/end are "YYYY-MM-DD HH:MM:SS" Amman local time.
  * Returns { status, cam, jobId, poll }
  */
 router.post("/admin/contabo/hq/:cam", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
@@ -387,6 +414,12 @@ router.post("/admin/contabo/hq/:cam", requireContaboAuth as import("express").Re
 
   const cam = req.params.cam as string;
   if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
+
+  const source = (req.query.source as string | undefined) ?? "ftp";
+  if (!["ftp", "sd"].includes(source)) {
+    res.status(400).json({ error: "source must be 'ftp' or 'sd'" });
+    return;
+  }
 
   const start = req.query.start as string | undefined;
   const end   = req.query.end   as string | undefined;
@@ -398,9 +431,9 @@ router.post("/admin/contabo/hq/:cam", requireContaboAuth as import("express").Re
   }
 
   try {
-    const qs = `start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title)}`;
+    const qs = `source=${source}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title)}`;
     const result = await controlFetch(`/record-hq/${cam}?${qs}`, { method: "POST" });
-    logger.info({ cam, start, end, title, ok: result.ok }, "SD 4K pull queued");
+    logger.info({ cam, source, start, end, title, ok: result.ok }, "Footage request queued");
     res.status(result.ok ? 200 : result.status).json(result.body);
   } catch (err) {
     logger.error({ err }, "Failed to reach control server (hq queue)");

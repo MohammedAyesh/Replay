@@ -159,6 +159,14 @@ interface HqJob {
   createdAt?: string;
 }
 
+interface FtpAvailability {
+  cam: string;
+  clips: Array<{ start: string; end: string; seconds: number; bytes: number }>;
+  earliest?: string; // "YYYY-MM-DD HH:MM:SS" Amman local
+  latest?: string;
+  note?: string;
+}
+
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
 async function apiFetch(path: string, opts?: RequestInit) {
@@ -2708,23 +2716,42 @@ function RecordingsList({
 // ─── SD Pull Section ──────────────────────────────────────────────────────────
 
 function SdPullSection({ adminPassword }: { adminPassword: string }) {
-  const [camera, setCamera] = useState<Camera>("camera1");
-  const [date, setDate] = useState("");
-  const [availability, setAvailability] = useState<SdAvailability | null>(null);
-  const [availLoading, setAvailLoading] = useState(false);
-  const [availError, setAvailError] = useState<string | null>(null);
+  // Today's date in Amman local time (UTC+3) — used to match FTP window
+  const todayAmman = () => new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+  const [camera, setCamera]             = useState<Camera>("camera1");
+  const [date,   setDate]               = useState(todayAmman);
+
+  // FTP (instant) availability — fetched on camera change, no date required
+  const [ftpAvail,   setFtpAvail]       = useState<FtpAvailability | null>(null);
+  const [ftpLoading, setFtpLoading]     = useState(false);
+
+  // SD (historical) availability for the selected date
+  const [availability,  setAvailability]  = useState<SdAvailability | null>(null);
+  const [availLoading,  setAvailLoading]  = useState(false);
+  const [availError,    setAvailError]    = useState<string | null>(null);
+
+  // Hour-range selection
   const [startHour, setStartHour] = useState<number | null>(null);
-  const [endHour, setEndHour] = useState<number | null>(null);
-  const [title, setTitle] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [endHour,   setEndHour]   = useState<number | null>(null);
+
+  // SD path requires an explicit confirm before submitting
+  const [sdConfirmed, setSdConfirmed] = useState(false);
+
+  // Submission
+  const [title,       setTitle]       = useState("");
+  const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const [activeJob, setActiveJob] = useState<HqJob | null>(null);
-  const [jobs, setJobs] = useState<HqJob[]>([]);
-  const [jobsLoading, setJobsLoading] = useState(true);
+  // Active job polling + inline playback
+  const [activeJob,     setActiveJob]     = useState<HqJob | null>(null);
   const [showJobPlayer, setShowJobPlayer] = useState<string | null>(null);
 
+  // Jobs history list
+  const [jobs,        setJobs]        = useState<HqJob[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
+
+  // ─── auth-bearing fetch helper ─────────────────────────────────────────────
   const contaboFetch = useCallback(async (path: string, opts?: RequestInit) => {
     const res = await fetch(`${basePath}/api${path}`, {
       credentials: "include",
@@ -2744,13 +2771,26 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     return res.json();
   }, [adminPassword]);
 
-  // Fetch availability when camera or date changes
+  // ─── effects ───────────────────────────────────────────────────────────────
+
+  // FTP availability (re-fetches when camera changes)
+  useEffect(() => {
+    setFtpAvail(null);
+    setFtpLoading(true);
+    contaboFetch(`/admin/contabo/ftp/${camera}/available`)
+      .then((data) => setFtpAvail(data as FtpAvailability))
+      .catch(() => setFtpAvail(null))
+      .finally(() => setFtpLoading(false));
+  }, [camera, contaboFetch]);
+
+  // SD availability (re-fetches when camera or date changes)
   useEffect(() => {
     if (!date) { setAvailability(null); return; }
     setAvailability(null);
     setAvailError(null);
     setStartHour(null);
     setEndHour(null);
+    setSdConfirmed(false);
     setAvailLoading(true);
     contaboFetch(`/admin/contabo/sd/${camera}/available?date=${date}`)
       .then((data) => setAvailability(data as SdAvailability))
@@ -2758,14 +2798,12 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
       .finally(() => setAvailLoading(false));
   }, [camera, date, contaboFetch]);
 
-  // Fetch jobs list
+  // Jobs history — background refresh every 20 s
   const fetchJobs = useCallback(async () => {
     try {
       const data = await contaboFetch("/admin/contabo/hq");
       setJobs(((data as { jobs?: HqJob[] }).jobs) ?? []);
-    } catch { /* silent */ } finally {
-      setJobsLoading(false);
-    }
+    } catch { /* silent */ } finally { setJobsLoading(false); }
   }, [contaboFetch]);
 
   useEffect(() => {
@@ -2774,47 +2812,93 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     return () => clearInterval(id);
   }, [fetchJobs]);
 
-  // Poll active job every 4 s while in-flight
+  // Active job — poll every 4 s while in-flight
   useEffect(() => {
     if (!activeJob || activeJob.status === "done" || activeJob.status === "failed") return;
     const poll = async () => {
       try {
         const data = await contaboFetch(`/admin/contabo/hq/${activeJob.cam}/${activeJob.jobId}`);
         setActiveJob(data as HqJob);
-        if ((data as HqJob).status === "done" || (data as HqJob).status === "failed") {
-          fetchJobs();
-        }
+        if ((data as HqJob).status === "done" || (data as HqJob).status === "failed") fetchJobs();
       } catch { /* keep last known state */ }
     };
     const id = setInterval(poll, 4_000);
     return () => clearInterval(id);
   }, [activeJob, contaboFetch, fetchJobs]);
 
-  // Hour range selection: first click = start, second click extends range
-  const handleHourClick = (hour: number) => {
+  // ─── derived values ────────────────────────────────────────────────────────
+
+  // Parse FTP window from availability response
+  let ftpDate:      string | null = null;
+  let ftpHourStart: number | null = null;
+  let ftpHourEnd:   number | null = null;
+  let ftpTimeLabel: string | null = null;
+
+  if (ftpAvail?.earliest && ftpAvail?.latest) {
+    const [ed, et] = ftpAvail.earliest.split(" ");
+    const [,   lt] = ftpAvail.latest.split(" ");
+    ftpDate      = ed;
+    ftpHourStart = parseInt(et.split(":")[0]);
+    ftpHourEnd   = parseInt(lt.split(":")[0]);
+    const fmtTime  = (ts: string) => ts.split(" ")[1].slice(0, 5); // "HH:MM"
+    const isToday  = ed === todayAmman();
+    ftpTimeLabel   = `${fmtTime(ftpAvail.earliest)} – ${fmtTime(ftpAvail.latest)} ${isToday ? "today" : ed}`;
+  }
+
+  const isFtpHour = (h: number) =>
+    date === ftpDate && ftpHourStart !== null && ftpHourEnd !== null
+    && h >= ftpHourStart && h <= ftpHourEnd;
+
+  const sdHourInfoMap  = new Map(availability?.hours.map((h) => [h.hour, h]) ?? []);
+  const sdAvailableSet = new Set(availability?.hours.map((h) => h.hour) ?? []);
+  const isHourAvailable = (h: number) => isFtpHour(h) || sdAvailableSet.has(h);
+
+  // All selected hours must be FTP-covered for the fast path
+  const isFtpPath: boolean =
+    startHour !== null && endHour !== null &&
+    Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour! + i).every(isFtpHour);
+
+  // Rough SD duration estimate for camera 1 at 0.18 MB/s
+  const sdEstimate = (): string | null => {
+    if (startHour === null || endHour === null) return null;
+    let totalBytes = 0;
+    for (let h = startHour; h <= endHour; h++) {
+      const info = sdHourInfoMap.get(h);
+      totalBytes += info ? info.bytes : 3.6 * 1024 * 1024 * 1024; // 3.6 GB fallback
+    }
+    const secs = totalBytes / (0.18 * 1024 * 1024); // 0.18 MB/s
+    const hrs  = Math.floor(secs / 3600);
+    const mins = Math.round((secs % 3600) / 60);
+    if (hrs === 0) return `~${mins} min`;
+    return mins > 0 ? `~${hrs} hr ${mins} min` : `~${hrs} hr`;
+  };
+
+  // ─── interaction handlers ──────────────────────────────────────────────────
+
+  const handleHourClick = (h: number) => {
+    setSdConfirmed(false);
     if (startHour === null) {
-      setStartHour(hour); setEndHour(hour);
-    } else if (hour === startHour && hour === endHour) {
-      setStartHour(null); setEndHour(null); // deselect
-    } else if (hour < startHour) {
-      setStartHour(hour); setEndHour(startHour ?? hour);
+      setStartHour(h); setEndHour(h);
+    } else if (h === startHour && h === endHour) {
+      setStartHour(null); setEndHour(null);
+    } else if (h < startHour) {
+      setStartHour(h); setEndHour(startHour);
     } else {
-      setEndHour(hour);
+      setEndHour(h);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (source: "ftp" | "sd") => {
     if (startHour === null || endHour === null) { setSubmitError("Select at least one hour block"); return; }
     if (!title.trim()) { setSubmitError("Clip title is required"); return; }
     const start = `${date} ${String(startHour).padStart(2, "0")}:00:00`;
     const end   = `${date} ${String(endHour + 1).padStart(2, "0")}:00:00`;
     setSubmitting(true); setSubmitError(null);
     try {
-      const qs = `start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title.trim())}`;
+      const qs = `source=${source}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title.trim())}`;
       const data = await contaboFetch(`/admin/contabo/hq/${camera}?${qs}`, { method: "POST" });
       setActiveJob(data as HqJob);
-      setTitle(""); setStartHour(null); setEndHour(null);
+      setTitle(""); setStartHour(null); setEndHour(null); setSdConfirmed(false);
       fetchJobs();
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Request failed");
@@ -2822,6 +2906,8 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
       setSubmitting(false);
     }
   };
+
+  // ─── helpers ───────────────────────────────────────────────────────────────
 
   const formatBytes = (b: number) => {
     if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;
@@ -2831,15 +2917,15 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
 
   const stageLabel = (job: HqJob): string => {
     switch (job.status) {
-      case "queued":            return "Queued — waiting to start";
-      case "searching":         return "Locating footage on the SD card…";
-      case "downloading":       return job.note ? `Downloading — ${job.note}` : "Downloading segments from SD card…";
+      case "queued":             return "Queued — waiting to start";
+      case "searching":          return "Locating footage…";
+      case "downloading":        return job.note ? `Downloading — ${job.note}` : "Downloading segments…";
       case "waiting_for_camera": return "Camera busy — waiting for the current download to finish";
-      case "assembling":        return "Assembling segments into a single file…";
-      case "uploading":         return "Uploading to Bunny Stream…";
-      case "done":              return "Done — footage ready";
-      case "failed":            return `Failed: ${job.error ?? "Unknown error"}`;
-      default:                  return job.status;
+      case "assembling":         return "Assembling segments…";
+      case "uploading":          return "Uploading to Bunny Stream…";
+      case "done":               return "Done — footage ready";
+      case "failed":             return `Failed: ${job.error ?? "Unknown error"}`;
+      default:                   return job.status;
     }
   };
 
@@ -2850,146 +2936,235 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     return "text-blue-400";
   };
 
-  const availableSet  = new Set(availability?.hours.map((h) => h.hour) ?? []);
-  const hourInfoMap   = new Map(availability?.hours.map((h) => [h.hour, h]) ?? []);
+  const selectionLabel = startHour !== null && endHour !== null
+    ? `${String(startHour).padStart(2, "0")}:00 – ${String(endHour + 1).padStart(2, "0")}:00`
+    : null;
+
+  // ─── render ────────────────────────────────────────────────────────────────
 
   return (
     <section>
       <div className="flex items-center gap-2 mb-3">
         <Download className="w-4 h-4 text-primary" />
-        <h2 className="text-white font-bold text-base">Request 4K Footage</h2>
+        <h2 className="text-white font-bold text-base">Request Footage</h2>
       </div>
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 space-y-4">
-        {/* Context notice */}
-        <div className="text-xs text-zinc-500 bg-zinc-800/60 rounded-xl px-3 py-2.5 leading-relaxed">
-          Pulls full-quality 4K footage directly from a camera's SD card. One hour ≈ 12 segments × ~300 MB — allow several minutes per hour. Times shown are Amman local (UTC+3). A camera can only serve one download at a time.
-        </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Camera + Date */}
-          <div className="grid grid-cols-2 gap-3">
+        {/* ── FTP instant-availability banner ─────────────────────────────── */}
+        {ftpLoading && (
+          <div className="flex items-center gap-2 text-zinc-500 text-xs">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking instant availability…
+          </div>
+        )}
+        {!ftpLoading && ftpTimeLabel && (
+          <div className="flex items-center gap-2 text-xs text-green-300 bg-green-900/20 border border-green-700/40 rounded-xl px-3 py-2.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
             <div>
-              <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Camera</label>
-              <select
-                value={camera}
-                onChange={(e) => setCamera(e.target.value as Camera)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary appearance-none"
-              >
-                <option value="camera1">Camera 1</option>
-                <option value="camera2">Camera 2</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Date (Amman time)</label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary"
-              />
+              <span className="font-semibold">⚡ Instant: {ftpTimeLabel}</span>
+              <span className="text-green-500/80 ml-2">— assembles in under a minute</span>
             </div>
           </div>
+        )}
+        {!ftpLoading && !ftpAvail && (
+          <div className="flex items-center gap-2 text-xs text-zinc-500 bg-zinc-800/40 border border-zinc-700/40 rounded-xl px-3 py-2.5">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            No instant footage available right now — SD card pull only.
+          </div>
+        )}
 
-          {/* Hour availability grid */}
-          {date && (
-            <div>
-              <label className="text-xs text-zinc-400 mb-2 block font-medium">
-                Available Hours
-                {startHour !== null && endHour !== null && (
-                  <span className="text-primary ml-2">
-                    {String(startHour).padStart(2, "0")}:00 – {String(endHour + 1).padStart(2, "0")}:00
-                  </span>
-                )}
-              </label>
-
-              {availLoading && (
-                <div className="flex items-center gap-2 text-zinc-500 text-xs py-2">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking SD card…
-                </div>
-              )}
-              {availError && (
-                <div className="flex items-center gap-2 text-amber-400 text-xs bg-amber-900/20 border border-amber-700/40 rounded-xl px-3 py-2">
-                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> {availError}
-                </div>
-              )}
-              {availability && !availLoading && availability.hours.length === 0 && (
-                <p className="text-zinc-600 text-xs py-1">No footage found on the SD card for this date.</p>
-              )}
-              {availability && !availLoading && availability.hours.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {Array.from({ length: 24 }, (_, h) => {
-                    const info = hourInfoMap.get(h);
-                    const available = availableSet.has(h);
-                    const inRange = startHour !== null && endHour !== null && h >= startHour && h <= endHour;
-                    return (
-                      <button
-                        key={h}
-                        type="button"
-                        disabled={!available}
-                        onClick={() => handleHourClick(h)}
-                        title={info
-                          ? `${String(h).padStart(2, "0")}:00 — ${formatBytes(info.bytes)}, ${info.segments} segments`
-                          : `${String(h).padStart(2, "0")}:00 — not on SD card`}
-                        className={cn(
-                          "flex flex-col items-center px-2 py-1.5 rounded-lg border transition-all select-none",
-                          !available
-                            ? "border-zinc-800 bg-zinc-900/40 text-zinc-700 cursor-not-allowed"
-                            : inRange
-                              ? "border-primary bg-primary/20 text-primary font-bold ring-1 ring-primary/40"
-                              : "border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500 cursor-pointer",
-                        )}
-                      >
-                        <span className="text-[11px] font-mono">{String(h).padStart(2, "0")}</span>
-                        {info && (
-                          <span className="text-[8px] opacity-60 mt-0.5 font-sans">
-                            {formatBytes(info.bytes)}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Title */}
+        {/* ── Camera + Date ───────────────────────────────────────────────── */}
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Clip Title</label>
+            <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Camera</label>
+            <select
+              value={camera}
+              onChange={(e) => {
+                setCamera(e.target.value as Camera);
+                setStartHour(null); setEndHour(null); setSdConfirmed(false);
+              }}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary appearance-none"
+            >
+              <option value="camera1">Camera 1</option>
+              <option value="camera2">Camera 2</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Date (Amman time)</label>
             <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Galaxy Field – Morning Session"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary"
             />
           </div>
+        </div>
 
-          {submitError && (
-            <div className="flex items-center gap-2 text-red-400 text-xs bg-red-900/20 border border-red-700/40 rounded-xl px-3 py-2">
-              <XCircle className="w-3.5 h-3.5 flex-shrink-0" /> {submitError}
+        {/* ── Hour grid ───────────────────────────────────────────────────── */}
+        {date && (
+          <div>
+            <label className="text-xs text-zinc-400 mb-2 block font-medium">
+              Select Hours
+              {selectionLabel && (
+                <span className={cn("ml-2 font-semibold", isFtpPath ? "text-green-400" : "text-amber-400")}>
+                  {selectionLabel}
+                  {isFtpPath ? "  ⚡ Instant" : "  — SD card"}
+                </span>
+              )}
+            </label>
+
+            {availLoading && (
+              <div className="flex items-center gap-2 text-zinc-500 text-xs mb-1.5">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking SD card availability…
+              </div>
+            )}
+            {availError && (
+              <div className="flex items-center gap-2 text-amber-400 text-xs bg-amber-900/20 border border-amber-700/40 rounded-xl px-3 py-2 mb-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> {availError}
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-1.5">
+              {Array.from({ length: 24 }, (_, h) => {
+                const sdInfo    = sdHourInfoMap.get(h);
+                const hasFtp    = isFtpHour(h);
+                const available = isHourAvailable(h);
+                const inRange   = startHour !== null && endHour !== null && h >= startHour && h <= endHour;
+                const inFtpRange = inRange && isFtpPath;
+
+                return (
+                  <button
+                    key={h}
+                    type="button"
+                    disabled={!available}
+                    onClick={() => handleHourClick(h)}
+                    title={
+                      hasFtp
+                        ? `${String(h).padStart(2, "0")}:00 — instant (FTP)`
+                        : sdInfo
+                          ? `${String(h).padStart(2, "0")}:00 — SD card, ${formatBytes(sdInfo.bytes)}`
+                          : `${String(h).padStart(2, "0")}:00 — no footage`
+                    }
+                    className={cn(
+                      "flex flex-col items-center px-2 py-1.5 rounded-lg border transition-all select-none",
+                      !available
+                        ? "border-zinc-800 bg-zinc-900/40 text-zinc-700 cursor-not-allowed"
+                        : inFtpRange
+                          ? "border-green-500 bg-green-900/30 text-green-300 font-bold ring-1 ring-green-500/40"
+                          : inRange
+                            ? "border-amber-500 bg-amber-900/30 text-amber-300 font-bold ring-1 ring-amber-500/40"
+                            : hasFtp
+                              ? "border-green-700 bg-green-900/20 text-green-400 hover:border-green-500 cursor-pointer"
+                              : "border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500 cursor-pointer",
+                    )}
+                  >
+                    <span className="text-[11px] font-mono">{String(h).padStart(2, "0")}</span>
+                    <span className="text-[8px] mt-0.5 opacity-70">
+                      {hasFtp ? "⚡" : sdInfo ? formatBytes(sdInfo.bytes) : ""}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          )}
 
+            {!availLoading && !Array.from({ length: 24 }, (_, h) => isHourAvailable(h)).some(Boolean) && (
+              <p className="text-zinc-600 text-xs pt-2">No footage available on this date.</p>
+            )}
+          </div>
+        )}
+
+        {/* ── Title ───────────────────────────────────────────────────────── */}
+        <div>
+          <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Clip Title</label>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Galaxy Field – Morning Session"
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
+          />
+        </div>
+
+        {submitError && (
+          <div className="flex items-center gap-2 text-red-400 text-xs bg-red-900/20 border border-red-700/40 rounded-xl px-3 py-2">
+            <XCircle className="w-3.5 h-3.5 flex-shrink-0" /> {submitError}
+          </div>
+        )}
+
+        {/* ── FTP submit (fast path) ───────────────────────────────────────── */}
+        {isFtpPath && startHour !== null && (
           <button
-            type="submit"
-            disabled={submitting || startHour === null}
+            type="button"
+            disabled={submitting}
+            onClick={() => void handleSubmit("ftp")}
             className="w-full flex items-center justify-center gap-2 bg-primary text-black font-bold py-3 rounded-xl text-sm disabled:opacity-50 hover:opacity-90 transition-opacity"
           >
-            {submitting
-              ? <Loader2 className="w-4 h-4 animate-spin" />
-              : <Download className="w-4 h-4" />}
-            {submitting ? "Requesting…" : "Request 4K Footage"}
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            {submitting ? "Requesting…" : "⚡ Request Instant Footage"}
           </button>
-        </form>
+        )}
 
-        {/* Active job status panel */}
+        {/* ── SD warning + confirmation (slow path) ───────────────────────── */}
+        {!isFtpPath && startHour !== null && (
+          <div className="rounded-xl border border-amber-700/50 bg-amber-900/10 p-3.5 space-y-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="space-y-1.5">
+                <p className="text-amber-300 text-sm font-semibold">SD card pull required</p>
+                <p className="text-amber-200/70 text-xs leading-relaxed">
+                  This footage is no longer on the server — it must be read directly from the
+                  camera's SD card.
+                  {camera === "camera1"
+                    ? " Camera 1 is on a very weak WiFi signal (measured at 0.18 MB/s), so a single hour of footage takes roughly 5–6 hours to download."
+                    : " This can take a significant amount of time depending on the camera's connection."}
+                </p>
+                {camera === "camera1" && sdEstimate() && (
+                  <p className="text-amber-300 text-xs font-semibold">
+                    Estimated time for your selection: {sdEstimate()}
+                  </p>
+                )}
+                <p className="text-zinc-400 text-xs leading-relaxed">
+                  💡 Completed past hours are automatically archived to Bunny Stream.
+                  Check the Recordings tab first — the footage you need may already be there.
+                </p>
+              </div>
+            </div>
+
+            {!sdConfirmed ? (
+              <button
+                type="button"
+                onClick={() => setSdConfirmed(true)}
+                className="w-full flex items-center justify-center gap-1.5 border border-amber-600/70 text-amber-300 font-medium py-2.5 rounded-xl text-sm hover:bg-amber-900/30 transition-colors"
+              >
+                I understand — show me the SD pull button
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void handleSubmit("sd")}
+                className="w-full flex items-center justify-center gap-2 bg-amber-600 text-black font-bold py-3 rounded-xl text-sm disabled:opacity-50 hover:opacity-90 transition-opacity"
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {submitting ? "Requesting…" : "Pull from SD card (slow)"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── No selection hint ───────────────────────────────────────────── */}
+        {startHour === null && date && (
+          <p className="text-zinc-600 text-xs text-center">
+            Select one or more hour blocks above to request footage
+          </p>
+        )}
+
+        {/* ── Active job status panel ─────────────────────────────────────── */}
         {activeJob && (
           <div className={cn(
             "rounded-xl border p-3 space-y-2.5",
-            activeJob.status === "done"              ? "border-green-700/40 bg-green-900/10"
-              : activeJob.status === "failed"        ? "border-red-700/40 bg-red-900/10"
+            activeJob.status === "done"               ? "border-green-700/40 bg-green-900/10"
+              : activeJob.status === "failed"         ? "border-red-700/40 bg-red-900/10"
               : activeJob.status === "waiting_for_camera" ? "border-amber-700/40 bg-amber-900/10"
               : "border-blue-700/40 bg-blue-900/10",
           )}>
@@ -3006,7 +3181,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                       )} />
                 }
                 <span className="text-white text-sm font-medium truncate">
-                  {activeJob.title || "SD Pull"}
+                  {activeJob.title || "Footage request"}
                 </span>
               </div>
               <button
@@ -3022,7 +3197,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
               {stageLabel(activeJob)}
             </p>
 
-            {/* Progress bar during download */}
+            {/* Progress bar during downloading */}
             {activeJob.status === "downloading"
               && activeJob.bytesExpected != null
               && activeJob.bytesExpected > 0 && (
@@ -3065,56 +3240,55 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
         )}
       </div>
 
-      {/* Previous SD pulls list */}
+      {/* ── Previous requests list ───────────────────────────────────────────── */}
       <div className="mt-4">
-        <h3 className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">Previous SD Pulls</h3>
-        {jobsLoading
-          ? <div className="text-zinc-600 text-xs py-4 text-center">Loading…</div>
-          : jobs.length === 0
-            ? <div className="text-zinc-700 text-xs py-4 text-center">No SD pulls yet</div>
-            : (
-              <div className="space-y-2">
-                {jobs.map((job) => (
-                  <div key={job.jobId} className="flex items-start gap-3 p-3 rounded-xl border border-zinc-800 bg-zinc-900">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-white text-sm font-medium truncate">{job.title || job.jobId}</span>
-                        <span className={cn(
-                          "text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 font-medium flex-shrink-0",
-                          job.status === "done"   ? "text-green-400 bg-green-900/20 border-green-700/40"
-                            : job.status === "failed" ? "text-red-400 bg-red-900/20 border-red-700/40"
-                            : job.status === "waiting_for_camera" ? "text-amber-400 bg-amber-900/20 border-amber-700/40"
-                            : "text-blue-400 bg-blue-900/20 border-blue-700/40",
-                        )}>
-                          {job.status === "done"   ? <CheckCircle2 className="w-3 h-3" />
-                            : job.status === "failed" ? <XCircle className="w-3 h-3" />
-                            : <Loader2 className="w-3 h-3 animate-spin" />}
-                          {job.status}
-                        </span>
-                      </div>
-                      <p className="text-zinc-500 text-xs mt-0.5">
-                        {job.cam} · {job.start ?? "—"} → {job.end ?? "—"}
-                      </p>
-                      {job.createdAt && (
-                        <p className="text-zinc-600 text-[10px] mt-0.5">
-                          {new Date(job.createdAt).toLocaleString()}
-                        </p>
-                      )}
-                    </div>
-                    {job.status === "done" && job.playback && (
-                      <button
-                        type="button"
-                        onClick={() => { setActiveJob(job); setShowJobPlayer(job.jobId); }}
-                        className="flex-shrink-0 flex items-center gap-1 text-xs text-green-400 hover:text-green-300 transition-colors py-1"
-                      >
-                        <Play className="w-3 h-3" /> Play
-                      </button>
-                    )}
+        <h3 className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">Previous Requests</h3>
+        {jobsLoading ? (
+          <div className="text-zinc-600 text-xs py-4 text-center">Loading…</div>
+        ) : jobs.length === 0 ? (
+          <div className="text-zinc-700 text-xs py-4 text-center">No requests yet</div>
+        ) : (
+          <div className="space-y-2">
+            {jobs.map((job) => (
+              <div key={job.jobId} className="flex items-start gap-3 p-3 rounded-xl border border-zinc-800 bg-zinc-900">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-white text-sm font-medium truncate">{job.title || job.jobId}</span>
+                    <span className={cn(
+                      "text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 font-medium flex-shrink-0",
+                      job.status === "done"                ? "text-green-400 bg-green-900/20 border-green-700/40"
+                        : job.status === "failed"          ? "text-red-400 bg-red-900/20 border-red-700/40"
+                        : job.status === "waiting_for_camera" ? "text-amber-400 bg-amber-900/20 border-amber-700/40"
+                        : "text-blue-400 bg-blue-900/20 border-blue-700/40",
+                    )}>
+                      {job.status === "done"   ? <CheckCircle2 className="w-3 h-3" />
+                        : job.status === "failed" ? <XCircle className="w-3 h-3" />
+                        : <Loader2 className="w-3 h-3 animate-spin" />}
+                      {job.status}
+                    </span>
                   </div>
-                ))}
+                  <p className="text-zinc-500 text-xs mt-0.5">
+                    {job.cam} · {job.start ?? "—"} → {job.end ?? "—"}
+                  </p>
+                  {job.createdAt && (
+                    <p className="text-zinc-600 text-[10px] mt-0.5">
+                      {new Date(job.createdAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                {job.status === "done" && job.playback && (
+                  <button
+                    type="button"
+                    onClick={() => { setActiveJob(job); setShowJobPlayer(job.jobId); }}
+                    className="flex-shrink-0 flex items-center gap-1 text-xs text-green-400 hover:text-green-300 transition-colors py-1"
+                  >
+                    <Play className="w-3 h-3" /> Play
+                  </button>
+                )}
               </div>
-            )
-        }
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );
