@@ -45,8 +45,13 @@ app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
  * development and satellite-domain instances — in that configuration any page
  * could drive /api/admin/* as a signed-in admin.
  *
- * Allowed origins come from CORS_ALLOWED_ORIGINS (comma-separated). Same-origin
- * requests send no Origin header and are unaffected either way.
+ * Allowed origins come from CORS_ALLOWED_ORIGINS (comma-separated), and nothing
+ * else — deliberately no `*.replit.app` wildcard, because anyone can deploy on
+ * that domain in minutes and would inherit the same credentialed access.
+ *
+ * The app itself does not need any entry here: the frontend and this API are
+ * served under one origin (BASE_PATH "/" with the API mounted at /api), and the
+ * browser applies no CORS check to a same-origin request.
  */
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -61,11 +66,6 @@ app.use(
       if (!origin) return callback(null, true);
       const normalized = origin.replace(/\/$/, "");
       if (allowedOrigins.includes(normalized)) return callback(null, true);
-      // Replit preview/deploy hosts, so the dev loop keeps working without
-      // having to re-list a new random subdomain on every fork.
-      if (/^https:\/\/[a-z0-9-]+\.(replit\.dev|repl\.co|replit\.app)$/i.test(normalized)) {
-        return callback(null, true);
-      }
       // Reject by simply not emitting the CORS headers — the browser blocks the
       // read. Throwing here would turn a cross-origin probe into a 500.
       return callback(null, false);

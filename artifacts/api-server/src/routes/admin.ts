@@ -627,6 +627,15 @@ router.post("/admin/banners/:id/image", upload.single("image"), async (req, res)
       return;
     }
 
+    // Remove the other supported extension, or a PNG->JPEG replacement would
+    // leave the old banner.png in place and the read route (which probes .png
+    // first) would keep serving the stale image forever.
+    const staleExt = ext === "png" ? "jpg" : "png";
+    await fetch(`${bannerCfg.base}/${bannerCfg.zone}/${folderId}/banner.${staleExt}?bust=${Date.now()}`, {
+      method: "DELETE",
+      headers: { AccessKey: bannerCfg.key },
+    }).catch(() => undefined);
+
     // Serve through our own proxy route rather than handing the browser a
     // storage.bunnycdn.com URL: that origin needs the AccessKey header, so an
     // <img src> pointing at it just 401s.

@@ -36,34 +36,51 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
 }
 
 /** Middleware: must be DB admin AND supply the correct ADMIN_PASSWORD header */
-async function requireContaboAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
-): Promise<void> {
-  const adminId = await requireAdmin(req);
-  if (!adminId) {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
+/**
+ * Admin flag + the live-control password.
+ *
+ * `allowUnconfigured` exists for GET /config only: that route is how the
+ * console discovers the password has not been set up yet, so it must answer
+ * rather than 503. It still enforces the password whenever one IS configured —
+ * the unlock screen verifies the password purely by watching for a 401 from
+ * /config, so exempting it entirely would let any wrong password unlock the
+ * console and then fail on every subsequent button.
+ */
+function contaboAuth(opts: { allowUnconfigured?: boolean } = {}) {
+  return async function requireContaboAuth(
+    req: import("express").Request,
+    res: import("express").Response,
+    next: import("express").NextFunction,
+  ): Promise<void> {
+    const adminId = await requireAdmin(req);
+    if (!adminId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
 
-  const suppliedPw = (req.headers["x-admin-password"] as string | undefined) ?? "";
-  const expectedPw = ADMIN_PASSWORD();
+    const suppliedPw = (req.headers["x-admin-password"] as string | undefined) ?? "";
+    const expectedPw = ADMIN_PASSWORD();
 
-  if (!expectedPw) {
-    // No password configured — the live-control second factor is not usable, so
-    // refuse rather than silently downgrading to admin-flag-only. GET /config
-    // (below) is exempt so the frontend can still surface the setup warning.
-    res.status(503).json({ error: "Control server not configured", missing: missingSecrets() });
-    return;
-  }
-  if (!timingSafeEqualStr(suppliedPw, expectedPw)) {
-    res.status(401).json({ error: "Bad admin password" });
-    return;
-  }
+    if (!expectedPw) {
+      if (opts.allowUnconfigured) {
+        next();
+        return;
+      }
+      // No password configured — the second factor is not usable, so refuse
+      // rather than silently downgrading to admin-flag-only.
+      res.status(503).json({ error: "Control server not configured", missing: missingSecrets() });
+      return;
+    }
+    if (!timingSafeEqualStr(suppliedPw, expectedPw)) {
+      res.status(401).json({ error: "Bad admin password" });
+      return;
+    }
 
-  next();
+    next();
+  };
 }
+
+const requireContaboAuth = contaboAuth();
 
 /** Constant-time string compare, so the password cannot be recovered byte-by-byte. */
 function timingSafeEqualStr(a: string, b: string): boolean {
@@ -128,14 +145,7 @@ async function controlFetch(
  * Returns which required secrets are missing and whether the server is reachable.
  * Used by the frontend on mount to show a setup warning.
  */
-router.get("/admin/contabo/config", async (req, res): Promise<void> => {
-  // Admin-gated but deliberately not behind requireContaboAuth: this is the
-  // endpoint that tells the console the password is not set up yet.
-  const adminId = await requireAdmin(req);
-  if (!adminId) {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
+router.get("/admin/contabo/config", contaboAuth({ allowUnconfigured: true }) as import("express").RequestHandler, async (_req, res): Promise<void> => {
   const missing = missingSecrets();
   res.json({ configured: missing.length === 0, missing });
 });

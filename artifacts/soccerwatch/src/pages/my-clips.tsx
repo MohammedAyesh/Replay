@@ -528,8 +528,14 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         return;
       }
 
-      // status === "pending" — poll until done (max 3 minutes)
-      const maxAttempts = 90;
+      // status === "pending" — poll until done.
+      //
+      // The server renders at most MAX_CONCURRENT_RENDERS clips at a time and
+      // queues the rest, and a single -preset slow -crf 16 pass on the shared
+      // VPS can take several minutes on its own. The old 3-minute budget meant
+      // a queued export reported "Export failed" to the user while it was still
+      // waiting its turn, and then completed anyway.
+      const maxAttempts = 600; // 20 minutes at 2 s
       for (let i = 0; i < maxAttempts; i++) {
         await new Promise<void>((r) => setTimeout(r, 2000));
         if (!pollingRef.current) return; // player closed
@@ -549,7 +555,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         // still pending — keep polling
       }
 
-      throw new Error("Export timed out after 3 minutes");
+      throw new Error("Export timed out");
     } catch {
       pollingRef.current = false;
       setExportState("error");

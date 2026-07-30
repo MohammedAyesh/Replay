@@ -128,11 +128,23 @@ export async function uploadToBunnyStorage(filePath: string, clipId: number): Pr
   return getBunnyExportUrl(clipId);
 }
 
-/** Delete a rendered clip export from Bunny Storage. Best-effort. */
+/**
+ * Delete a rendered clip export from Bunny Storage. Best-effort.
+ *
+ * Deletes the legacy `clips/<id>.mp4` path as well as the current
+ * HMAC-suffixed one: clips exported before the suffix existed still live at the
+ * old, enumerable location, and that is exactly the path worth removing.
+ */
 export async function deleteBunnyExport(clipId: number): Promise<void> {
-  const url = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${getBunnyExportPath(clipId)}`;
-  await fetch(url, { method: "DELETE", headers: { AccessKey: BUNNY_STORAGE_API_KEY } })
-    .catch(() => undefined);
+  const paths = [getBunnyExportPath(clipId), `clips/${clipId}.mp4`];
+  await Promise.allSettled(
+    paths.map((p) =>
+      fetch(`https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${p}`, {
+        method: "DELETE",
+        headers: { AccessKey: BUNNY_STORAGE_API_KEY },
+      }),
+    ),
+  );
 }
 
 /**

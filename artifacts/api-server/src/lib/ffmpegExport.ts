@@ -8,10 +8,15 @@ import { logger } from "./logger";
 const SRC_W = 3840;
 const SRC_H = 1080;
 
-/** Longest selection we will render, in seconds of source footage. */
+/**
+ * Longest selection we will render, in seconds of source footage.
+ *
+ * Exceeding it is an error, not a silent trim: quietly returning 15 minutes of
+ * a 25-minute clip marked "done" is worse than refusing it.
+ */
 const MAX_CLIP_SECONDS = Math.max(
   5,
-  parseInt(process.env.MAX_CLIP_SECONDS ?? "900", 10) || 900,
+  parseInt(process.env.MAX_CLIP_SECONDS ?? "1800", 10) || 1800,
 );
 
 /** Wall-clock ceiling on a single FFmpeg invocation. */
@@ -91,12 +96,27 @@ const SRC_ASPECT = SRC_W / SRC_H;
  * cropPath keyframes arrive from the client validated only as bare numbers, and
  * `w`/`h` size the pad canvas below (`frameW = w * 3840`). Unclamped, a single
  * request carrying `{w: 50, h: 100}` makes FFmpeg allocate a 192000x108000
- * canvas — about 31 GB a frame — and takes the box down. The editor never
- * produces a frame larger than ~2.5x source (zoom floor 0.4), so 3x is generous
- * headroom while keeping the worst case bounded.
+ * canvas — about 31 GB a frame — and takes the box down.
+ *
+ * The ceiling must sit ABOVE anything the editor can produce, or normalizePath
+ * below sees the clamped frame, decides `h !== w * srcAspect / outAspect`,
+ * classifies a perfectly good frame as pre-frame-model legacy data and rewrites
+ * it to a zoom-1 centre crop. field-detail.tsx caps 9:16 at MAX_FRAME_ZOOM = 4,
+ * where `h === zoom === 4`, so 4.5 leaves headroom while keeping the worst-case
+ * canvas at 19200x5400 instead of unbounded.
  */
-const MAX_FRAME_SCALE = 3;
-const MAX_CANVAS_SCALE = 4;
+const MAX_FRAME_SCALE = 4.5;
+/**
+ * Canvas ceilings, per dimension.
+ *
+ * A 9:16 clip at the editor's maximum zoom has h = 4, and a full vertical pan
+ * across it needs 1080 + 3240 + 3240 = 7560 rows of canvas — so the height
+ * ceiling has to clear that or a legitimate pan gets cut. Width never needs
+ * padding in practice (16:9 tops out at w = 0.5, 9:16 at w ≈ 0.63), so 2x is
+ * already slack. Worst case is now 7680x8640 rather than unbounded.
+ */
+const MAX_CANVAS_W_SCALE = 2;
+const MAX_CANVAS_H_SCALE = 8;
 
 /** Clamp client-supplied keyframes into a range FFmpeg can survive. */
 function sanitizeKeyframes(kfs: KF[]): KF[] {
@@ -208,8 +228,8 @@ function buildVideoFilter(keyframes: KF[], clipDuration: number, is9to16: boolea
   const h0 = kfs[0]?.h && kfs[0].h > 0 ? kfs[0].h : 1;
 
   // Frame size in source pixels (may exceed SRC_W / SRC_H — that's the black space)
-  const frameW = Math.max(2, Math.round(w0 * SRC_W));
-  const frameH = Math.max(2, Math.round(h0 * SRC_H));
+  const rawFrameW = Math.max(2, Math.round(w0 * SRC_W));
+  const rawFrameH = Math.max(2, Math.round(h0 * SRC_H));
 
   const xsSrc = kfs.map((kf) => (kf.x ?? 0) * SRC_W);
   const ysSrc = kfs.map((kf) => (kf.y ?? 0) * SRC_H);
@@ -221,13 +241,19 @@ function buildVideoFilter(keyframes: KF[], clipDuration: number, is9to16: boolea
   // Padding needed on each side so every visited frame position is in-canvas
   const padLeft = Math.max(0, Math.ceil(-minX));
   const padTop = Math.max(0, Math.ceil(-minY));
-  const padRight = Math.max(0, Math.ceil(maxX + frameW - SRC_W));
-  const padBottom = Math.max(0, Math.ceil(maxY + frameH - SRC_H));
+  const padRight = Math.max(0, Math.ceil(maxX + rawFrameW - SRC_W));
+  const padBottom = Math.max(0, Math.ceil(maxY + rawFrameH - SRC_H));
 
   // Belt and braces on top of sanitizeKeyframes: whatever the inputs, the
   // canvas FFmpeg is asked to allocate stays bounded.
-  const canvasW = Math.min(SRC_W * MAX_CANVAS_SCALE, SRC_W + padLeft + padRight);
-  const canvasH = Math.min(SRC_H * MAX_CANVAS_SCALE, SRC_H + padTop + padBottom);
+  const canvasW = Math.min(SRC_W * MAX_CANVAS_W_SCALE, SRC_W + padLeft + padRight);
+  const canvasH = Math.min(SRC_H * MAX_CANVAS_H_SCALE, SRC_H + padTop + padBottom);
+
+  // A frame larger than the (clamped) canvas would make crop= fail outright.
+  // Only reachable from inputs sanitizeKeyframes already rejected as nonsense;
+  // render a valid, if oddly framed, clip rather than erroring the job.
+  const frameW = Math.min(rawFrameW, canvasW);
+  const frameH = Math.min(rawFrameH, canvasH);
 
   const needsPad = padLeft > 0 || padTop > 0 || padRight > 0 || padBottom > 0;
   const padFilter = needsPad
@@ -302,7 +328,12 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   // startTime/endTime are unbounded numbers on the wire, and an hour-long
   // selection at -preset slow -crf 16 occupies the encoder for far longer than
   // it takes to request another one.
-  const clipDuration = Math.max(0.1, Math.min(MAX_CLIP_SECONDS, endSec - startSec));
+  const clipDuration = Math.max(0.1, endSec - startSec);
+  if (clipDuration > MAX_CLIP_SECONDS) {
+    throw new Error(
+      `Clip is ${Math.round(clipDuration)}s, longer than the ${MAX_CLIP_SECONDS}s export limit`,
+    );
+  }
   const is9to16 = aspectRatio === "9:16";
   // Includes pad (for out-of-source black bars), crop pan, and the output scale
   const cropFilter = buildVideoFilter(cropPath, clipDuration, is9to16);
