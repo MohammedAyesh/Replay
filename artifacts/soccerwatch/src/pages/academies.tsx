@@ -36,6 +36,17 @@ import {
 
 type ClipMode = "idle" | "recording" | "review";
 
+/** Pull the bare Bunny GUID out of a full CDN URL like
+ *  https://cdn.example.net/abc-123/playlist.m3u8  →  "abc-123"
+ *  Falls back to the raw string so nothing silently breaks if the format changes. */
+function extractBunnyGuid(videoUrl: string): string {
+  try {
+    return new URL(videoUrl).pathname.split("/").filter(Boolean)[0] ?? videoUrl;
+  } catch {
+    return videoUrl;
+  }
+}
+
 const DAYS_SHORT: Record<string, string> = {
   monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu", friday: "Fri", saturday: "Sat", sunday: "Sun",
 };
@@ -262,7 +273,7 @@ export default function Academies() {
         {recordingFor && recordingFor.rec.videoUrl && (
           <VideoPlayer
             video={{
-              guid: recordingFor.rec.videoUrl,
+              guid: extractBunnyGuid(recordingFor.rec.videoUrl),
               title: recordingFor.title,
               playbackUrl: `/api/hls-proxy/manifest?url=${encodeURIComponent(recordingFor.rec.videoUrl)}`,
             } as unknown as BunnyVideo}
