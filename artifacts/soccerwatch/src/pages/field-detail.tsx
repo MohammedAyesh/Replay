@@ -776,7 +776,6 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
       originX: frameOriginRef.current.x,
       originY: frameOriginRef.current.y,
     };
-    resetControlsTimerRef.current();
   }, []);
 
   const handleFramePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
