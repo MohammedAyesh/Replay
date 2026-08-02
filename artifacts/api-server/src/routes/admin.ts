@@ -12,7 +12,7 @@ import {
   GetAdStatsResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID, isBunnyStorageConfigured, uploadClipIntroToBunnyStorage } from "../lib/bunny";
+import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID, BUNNY_CDN_HOSTNAME, isBunnyStorageConfigured, uploadClipIntroToBunnyStorage } from "../lib/bunny";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import { isLiveVideoId } from "./userClips";
@@ -685,6 +685,129 @@ router.delete("/admin/banners/:id", async (req, res): Promise<void> => {
   ]);
 
   res.json({ ok: true });
+});
+
+// ─── Admin: Recordings ────────────────────────────────────────────────────────
+
+router.get("/admin/recordings", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const rows = await db
+    .select({
+      id: recordingsTable.id,
+      fieldId: recordingsTable.fieldId,
+      fieldName: fieldsTable.name,
+      court: recordingsTable.court,
+      date: recordingsTable.date,
+      timeSlot: recordingsTable.timeSlot,
+      duration: recordingsTable.duration,
+      score: recordingsTable.score,
+      videoUrl: recordingsTable.videoUrl,
+      isVisible: recordingsTable.isVisible,
+    })
+    .from(recordingsTable)
+    .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .orderBy(fieldsTable.name, recordingsTable.date);
+
+  res.json(rows.map((r) => ({ ...r, score: r.score ?? null })));
+});
+
+router.patch("/admin/recordings/:id", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const { isVisible } = req.body as { isVisible?: boolean };
+  if (typeof isVisible !== "boolean") { res.status(400).json({ error: "isVisible must be boolean" }); return; }
+
+  const [row] = await db.update(recordingsTable).set({ isVisible }).where(eq(recordingsTable.id, id)).returning();
+  if (!row) { res.status(404).json({ error: "Recording not found" }); return; }
+
+  res.json({ id: row.id, isVisible: row.isVisible });
+});
+
+/**
+ * POST /admin/recordings/import
+ * Pulls all videos from every synced Bunny collection and registers any that
+ * are not yet in the recordings table. New entries default to isVisible=false
+ * so nothing appears publicly until the admin explicitly enables it.
+ */
+router.post("/admin/recordings/import", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  if (!BUNNY_API_KEY || !BUNNY_LIBRARY_ID || !BUNNY_CDN_HOSTNAME) {
+    res.status(503).json({ error: "Bunny not configured" }); return;
+  }
+
+  // Fetch all collections from Bunny
+  const collectionsRes = await fetch(
+    `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/collections?page=1&itemsPerPage=100&orderBy=date`,
+    { headers: { AccessKey: BUNNY_API_KEY, accept: "application/json" } }
+  );
+  if (!collectionsRes.ok) { res.status(502).json({ error: "Bunny API error" }); return; }
+
+  const collectionsData = (await collectionsRes.json()) as { items?: Array<{ guid?: string }> };
+  const collectionGuids = (collectionsData.items ?? []).map((c) => c.guid).filter((g): g is string => typeof g === "string");
+
+  // Map Bunny collection GUID → DB field
+  const dbFields = await db.select().from(fieldsTable);
+  const fieldByGuid = new Map(dbFields.filter((f) => f.bunnyGuid).map((f) => [f.bunnyGuid!, f]));
+
+  // Fetch existing recordings to avoid duplicates
+  const existingRecordings = await db.select({ videoUrl: recordingsTable.videoUrl }).from(recordingsTable);
+  const existingUrls = new Set(existingRecordings.map((r) => r.videoUrl));
+
+  let imported = 0;
+  for (const collectionGuid of collectionGuids) {
+    const field = fieldByGuid.get(collectionGuid);
+    if (!field) continue; // not synced to a DB field
+
+    const videosRes = await fetch(
+      `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos?collection=${encodeURIComponent(collectionGuid)}&page=1&itemsPerPage=100&orderBy=date`,
+      { headers: { AccessKey: BUNNY_API_KEY, accept: "application/json" } }
+    );
+    if (!videosRes.ok) continue;
+
+    const videosData = (await videosRes.json()) as { items?: Array<{ guid?: string; title?: string; length?: number; status?: number }> };
+    const videos = (videosData.items ?? []).filter((v) => typeof v.guid === "string" && (v.status === undefined || v.status === 4));
+
+    for (const video of videos) {
+      const videoUrl = `https://${BUNNY_CDN_HOSTNAME}/${video.guid}/playlist.m3u8`;
+      if (existingUrls.has(videoUrl)) continue;
+
+      // Parse date/time/court from the filename (cam{N}_{...}_{YYYYMMDDHHmmss})
+      const title = video.title ?? "";
+      const tsMatch = title.match(/(\d{8})(\d{6})/);
+      const date = tsMatch
+        ? `${tsMatch[1].slice(0, 4)}-${tsMatch[1].slice(4, 6)}-${tsMatch[1].slice(6, 8)}`
+        : new Date().toISOString().slice(0, 10);
+      const timeSlot = tsMatch ? `${tsMatch[2].slice(0, 2)}:${tsMatch[2].slice(2, 4)}` : "";
+      const camMatch = title.match(/^(cam\d+)/i);
+      const court = camMatch?.[1] ?? "";
+      const durationSecs = video.length ?? 0;
+      const mins = Math.floor(durationSecs / 60);
+      const secs = durationSecs % 60;
+      const duration = `${mins}:${String(secs).padStart(2, "0")}`;
+
+      await db.insert(recordingsTable).values({
+        fieldId: field.id,
+        court,
+        date,
+        timeSlot,
+        duration,
+        videoUrl,
+        isVisible: false,
+      });
+      existingUrls.add(videoUrl);
+      imported++;
+    }
+  }
+
+  res.json({ imported });
 });
 
 export default router;

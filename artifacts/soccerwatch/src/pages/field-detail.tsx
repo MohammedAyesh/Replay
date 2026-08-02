@@ -486,7 +486,7 @@ export default function FieldDetail() {
       </div>
 
       <AnimatePresence>
-        {activeVideo && <VideoPlayer video={activeVideo} onClose={() => setActiveVideo(null)} academyId={academyId} clipsEnabled={collection?.clipsVisible ?? false} />}
+        {activeVideo && <VideoPlayer video={activeVideo} onClose={() => setActiveVideo(null)} academyId={academyId} />}
       </AnimatePresence>
     </div>
   );
@@ -617,7 +617,7 @@ function MiniMap({ frame, srcAspect }: { frame: { x: number; y: number; w: numbe
 
 // ── Video Player (unchanged) ──────────────────────────────────────────────────
 
-function VideoPlayer({ video, onClose, academyId, clipsEnabled = true }: { video: BunnyVideo; onClose: () => void; academyId?: number; clipsEnabled?: boolean }) {
+function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose: () => void; academyId?: number }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const { setFullscreenVideo } = useFullscreenVideo();
@@ -1247,18 +1247,16 @@ function VideoPlayer({ video, onClose, academyId, clipsEnabled = true }: { video
                 />
               </div>
 
-              {/* Clip button — only shown when admin has enabled clipping for this field */}
-              {clipsEnabled && (
-                <div className="flex justify-center">
-                  <button
-                    onClick={startRecording}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-black font-bold text-sm"
-                  >
-                    <Circle className="w-4 h-4 fill-black" />
-                    {t.clipping.record}
-                  </button>
-                </div>
-              )}
+              {/* Clip button */}
+              <div className="flex justify-center">
+                <button
+                  onClick={startRecording}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-black font-bold text-sm"
+                >
+                  <Circle className="w-4 h-4 fill-black" />
+                  {t.clipping.record}
+                </button>
+              </div>
             </div>
           </motion.div>
         )}

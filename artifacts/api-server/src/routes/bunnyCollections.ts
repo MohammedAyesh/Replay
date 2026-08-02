@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, isBunnyConfigured } from "../lib/bunny.js";
-import { db, fieldsTable } from "@workspace/db";
+import { db, fieldsTable, recordingsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -141,9 +142,42 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     return;
   }
 
+  // Only return recordings that an admin has explicitly marked visible.
+  // Look up the DB field for this collection so we can query its recordings.
+  const [dbField] = await db
+    .select({ id: fieldsTable.id })
+    .from(fieldsTable)
+    .where(eq(fieldsTable.bunnyGuid, guid));
+
+  if (!dbField) {
+    // Field not synced into DB yet — hide everything by default.
+    res.json([]);
+    return;
+  }
+
+  const visibleRecordings = await db
+    .select({ videoUrl: recordingsTable.videoUrl })
+    .from(recordingsTable)
+    .where(and(eq(recordingsTable.fieldId, dbField.id), eq(recordingsTable.isVisible, true)));
+
+  // Extract the Bunny video GUID from each stored URL
+  // (format: https://{hostname}/{guid}/playlist.m3u8)
+  const visibleGuids = new Set(
+    visibleRecordings.map((r) => {
+      try { return new URL(r.videoUrl).pathname.split("/").filter(Boolean)[0]; }
+      catch { return null; }
+    }).filter((g): g is string => g != null)
+  );
+
+  if (visibleGuids.size === 0) {
+    res.json([]);
+    return;
+  }
+
   const videos = (raw as BunnyApiVideo[])
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
     .filter((v) => v.status === undefined || v.status === 4)
+    .filter((v) => visibleGuids.has(v.guid as string))
     .map((v) => ({
       guid: v.guid as string,
       title: v.title as string,

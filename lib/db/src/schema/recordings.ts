@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, date, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, date, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { fieldsTable } from "./fields";
@@ -13,6 +13,7 @@ export const recordingsTable = pgTable("recordings", {
   score: text("score"),
   videoUrl: text("video_url").notNull().default(""),
   highlightMoment: text("highlight_moment"),
+  isVisible: boolean("is_visible").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

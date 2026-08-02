@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
@@ -7,7 +7,7 @@ import {
   ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp,
   GraduationCap, Video, Check, Radio, Square, AlertTriangle, Lock,
   Play, Clock, CheckCircle2, XCircle, Loader2, ExternalLink as LinkIcon,
-  Download, Scissors,
+  Download,
 } from "lucide-react";
 import Hls from "hls.js";
 import { cn } from "@/lib/utils";
@@ -28,7 +28,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,9 +75,21 @@ interface AdminField {
   weight: number;
   thumbnailUrl: string | null;
   isHidden: boolean;
-  clipsVisible: boolean;
   lastRecordedAt: string | null;
   bunnyGuid: string | null;
+}
+
+interface AdminRecording {
+  id: number;
+  fieldId: number;
+  fieldName: string | null;
+  court: string;
+  date: string;
+  timeSlot: string;
+  duration: string;
+  score: string | null;
+  videoUrl: string;
+  isVisible: boolean;
 }
 
 interface AdminBanner {
@@ -774,22 +786,6 @@ function FieldsTab() {
     setToggling(null);
   };
 
-  const toggleClipsVisible = async (field: AdminField) => {
-    setToggling(field.id);
-    try {
-      await apiFetch(`/admin/fields/${field.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ clipsVisible: !field.clipsVisible }),
-      });
-      setFields((prev) => prev.map((f) =>
-        f.id === field.id ? { ...f, clipsVisible: !f.clipsVisible } : f
-      ));
-      queryClient.invalidateQueries({ queryKey: getGetBunnyCollectionsQueryKey() });
-      queryClient.invalidateQueries({ queryKey: getGetFieldQueryKey(field.id) });
-    } catch { /* silent */ }
-    setToggling(null);
-  };
-
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -836,19 +832,6 @@ function FieldsTab() {
                 <p className="text-zinc-600 text-xs">Weight: {field.weight} · {field.courts} court{field.courts !== 1 ? "s" : ""}</p>
               </div>
               <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => toggleClipsVisible(field)}
-                  disabled={toggling === field.id}
-                  title={field.clipsVisible ? "Disable clipping" : "Enable clipping"}
-                  className={cn(
-                    "p-2 rounded-lg transition-colors disabled:opacity-50",
-                    field.clipsVisible
-                      ? "bg-primary/10 text-primary hover:bg-primary/20"
-                      : "bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
-                  )}
-                >
-                  <Scissors className="w-4 h-4" />
-                </button>
                 <button
                   onClick={() => toggleHidden(field)}
                   disabled={toggling === field.id}
@@ -3535,6 +3518,159 @@ function LiveTab() {
   );
 }
 
+// ─── Recordings Tab ──────────────────────────────────────────────────────────
+
+function RecordingsTab() {
+  const [recordings, setRecordings] = useState<AdminRecording[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [toggling, setToggling] = useState<number | null>(null);
+  const [importResult, setImportResult] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch("/admin/recordings");
+      setRecordings(data as AdminRecording[]);
+    } catch { /* silent */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggleVisible = async (rec: AdminRecording) => {
+    setToggling(rec.id);
+    try {
+      await apiFetch(`/admin/recordings/${rec.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isVisible: !rec.isVisible }),
+      });
+      setRecordings((prev) =>
+        prev.map((r) => r.id === rec.id ? { ...r, isVisible: !r.isVisible } : r)
+      );
+    } catch { /* silent */ }
+    setToggling(null);
+  };
+
+  const importFromBunny = async () => {
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const data = await apiFetch("/admin/recordings/import", { method: "POST" }) as { imported: number };
+      setImportResult(`Imported ${data.imported} new recording${data.imported !== 1 ? "s" : ""}`);
+      await load();
+    } catch {
+      setImportResult("Import failed");
+    }
+    setImporting(false);
+  };
+
+  // Group by field
+  const grouped = useMemo(() => {
+    const map = new Map<string, AdminRecording[]>();
+    for (const r of recordings) {
+      const key = r.fieldName ?? `Field ${r.fieldId}`;
+      const arr = map.get(key) ?? [];
+      arr.push(r);
+      map.set(key, arr);
+    }
+    return map;
+  }, [recordings]);
+
+  const visibleCount = recordings.filter((r) => r.isVisible).length;
+
+  return (
+    <div className="space-y-4">
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-white text-sm font-semibold">
+            {recordings.length} recording{recordings.length !== 1 ? "s" : ""}
+            {recordings.length > 0 && (
+              <span className="text-zinc-500 font-normal ml-1.5">
+                · {visibleCount} visible
+              </span>
+            )}
+          </p>
+          <p className="text-zinc-500 text-xs mt-0.5">Toggle the eye to make a recording visible on the field page</p>
+        </div>
+        <button
+          onClick={importFromBunny}
+          disabled={importing}
+          className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 rounded-xl text-sm hover:bg-zinc-700 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
+        >
+          <RefreshCw className={cn("w-4 h-4", importing && "animate-spin")} />
+          {importing ? "Importing…" : "Import from Bunny"}
+        </button>
+      </div>
+
+      {importResult && (
+        <div className={cn(
+          "px-3 py-2 rounded-xl text-sm",
+          importResult.includes("failed") ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"
+        )}>
+          {importResult}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-16 text-zinc-500">Loading…</div>
+      ) : recordings.length === 0 ? (
+        <div className="text-center py-16 space-y-2">
+          <p className="text-zinc-400 font-medium">No recordings yet</p>
+          <p className="text-zinc-600 text-sm">Tap "Import from Bunny" to pull in recordings from your fields</p>
+        </div>
+      ) : (
+        Array.from(grouped.entries()).map(([fieldName, recs]) => (
+          <div key={fieldName} className="space-y-2">
+            <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider px-1">{fieldName}</p>
+            {recs.map((rec) => (
+              <div
+                key={rec.id}
+                className={cn(
+                  "flex items-center gap-3 p-3 rounded-xl border transition-colors",
+                  rec.isVisible
+                    ? "bg-zinc-900 border-zinc-700"
+                    : "bg-zinc-900/40 border-zinc-800/50 opacity-70"
+                )}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-white text-sm font-medium">{rec.date}</span>
+                    {rec.timeSlot && (
+                      <span className="text-zinc-400 text-xs">{rec.timeSlot}</span>
+                    )}
+                    {rec.court && (
+                      <span className="text-zinc-500 text-xs bg-zinc-800 px-1.5 py-0.5 rounded-full">{rec.court}</span>
+                    )}
+                    {rec.score && (
+                      <span className="text-primary text-xs font-bold">{rec.score}</span>
+                    )}
+                  </div>
+                  <p className="text-zinc-600 text-xs mt-0.5">{rec.duration}</p>
+                </div>
+                <button
+                  onClick={() => toggleVisible(rec)}
+                  disabled={toggling === rec.id}
+                  title={rec.isVisible ? "Hide recording" : "Show recording"}
+                  className={cn(
+                    "p-2.5 rounded-xl transition-colors disabled:opacity-50 flex-shrink-0",
+                    rec.isVisible
+                      ? "bg-primary/10 text-primary hover:bg-primary/20"
+                      : "bg-zinc-800 text-zinc-500 hover:text-white hover:bg-zinc-700"
+                  )}
+                >
+                  {rec.isVisible ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
+                </button>
+              </div>
+            ))}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 // ─── Main Admin Console ───────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
@@ -3543,6 +3679,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "fields", label: "Fields" },
   { id: "banners", label: "Banners" },
   { id: "academies", label: "Academies" },
+  { id: "recordings", label: "Recordings" },
   { id: "live", label: "Live Control" },
 ];
 
@@ -3595,6 +3732,7 @@ export default function Admin() {
         {tab === "fields" && <FieldsTab />}
         {tab === "banners" && <BannersTab />}
         {tab === "academies" && <AcademiesTab />}
+        {tab === "recordings" && <RecordingsTab />}
         {tab === "live" && <LiveTab />}
       </div>
     </div>
