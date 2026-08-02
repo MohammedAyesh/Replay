@@ -13,6 +13,7 @@ export const fieldsTable = pgTable("fields", {
   longitude: real("longitude"),
   thumbnailUrl: text("thumbnail_url"),
   isHidden: boolean("is_hidden").notNull().default(false),
+  clipsVisible: boolean("clips_visible").notNull().default(false),
   lastRecordedAt: timestamp("last_recorded_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

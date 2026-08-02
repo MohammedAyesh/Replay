@@ -98,7 +98,8 @@ export const ListFieldsResponseItem = zod.object({
   "thumbnailUrl": zod.string().nullish(),
   "latitude": zod.number().nullish(),
   "longitude": zod.number().nullish(),
-  "lastRecordedAt": zod.string().nullish()
+  "lastRecordedAt": zod.string().nullish(),
+  "clipsVisible": zod.boolean().optional().describe('Whether users can create clips from recordings in this field')
 })
 export const ListFieldsResponse = zod.array(ListFieldsResponseItem)
 
@@ -120,7 +121,8 @@ export const GetFieldResponse = zod.object({
   "thumbnailUrl": zod.string().nullish(),
   "latitude": zod.number().nullish(),
   "longitude": zod.number().nullish(),
-  "lastRecordedAt": zod.string().nullish()
+  "lastRecordedAt": zod.string().nullish(),
+  "clipsVisible": zod.boolean().optional().describe('Whether users can create clips from recordings in this field')
 })
 
 
@@ -132,7 +134,8 @@ export const GetBunnyCollectionsResponseItem = zod.object({
   "name": zod.string(),
   "videoCount": zod.number(),
   "previewImageUrl": zod.string().nullish(),
-  "id": zod.number().nullish().describe('The corresponding fields table row id, if this collection has been synced via \/admin\/fields\/sync. Null for collections Bunny has that haven\'t been synced into a field yet.')
+  "id": zod.number().nullish().describe('The corresponding fields table row id, if this collection has been synced via \/admin\/fields\/sync. Null for collections Bunny has that haven\'t been synced into a field yet.'),
+  "clipsVisible": zod.boolean().optional().describe('Whether users can create clips from recordings in this field')
 })
 export const GetBunnyCollectionsResponse = zod.array(GetBunnyCollectionsResponseItem)
 

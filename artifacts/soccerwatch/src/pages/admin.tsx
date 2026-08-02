@@ -7,7 +7,7 @@ import {
   ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp,
   GraduationCap, Video, Check, Radio, Square, AlertTriangle, Lock,
   Play, Clock, CheckCircle2, XCircle, Loader2, ExternalLink as LinkIcon,
-  Download,
+  Download, Scissors,
 } from "lucide-react";
 import Hls from "hls.js";
 import { cn } from "@/lib/utils";
@@ -75,6 +75,7 @@ interface AdminField {
   weight: number;
   thumbnailUrl: string | null;
   isHidden: boolean;
+  clipsVisible: boolean;
   lastRecordedAt: string | null;
   bunnyGuid: string | null;
 }
@@ -773,6 +774,22 @@ function FieldsTab() {
     setToggling(null);
   };
 
+  const toggleClipsVisible = async (field: AdminField) => {
+    setToggling(field.id);
+    try {
+      await apiFetch(`/admin/fields/${field.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ clipsVisible: !field.clipsVisible }),
+      });
+      setFields((prev) => prev.map((f) =>
+        f.id === field.id ? { ...f, clipsVisible: !f.clipsVisible } : f
+      ));
+      queryClient.invalidateQueries({ queryKey: getGetBunnyCollectionsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetFieldQueryKey(field.id) });
+    } catch { /* silent */ }
+    setToggling(null);
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -819,6 +836,19 @@ function FieldsTab() {
                 <p className="text-zinc-600 text-xs">Weight: {field.weight} · {field.courts} court{field.courts !== 1 ? "s" : ""}</p>
               </div>
               <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => toggleClipsVisible(field)}
+                  disabled={toggling === field.id}
+                  title={field.clipsVisible ? "Disable clipping" : "Enable clipping"}
+                  className={cn(
+                    "p-2 rounded-lg transition-colors disabled:opacity-50",
+                    field.clipsVisible
+                      ? "bg-primary/10 text-primary hover:bg-primary/20"
+                      : "bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
+                  )}
+                >
+                  <Scissors className="w-4 h-4" />
+                </button>
                 <button
                   onClick={() => toggleHidden(field)}
                   disabled={toggling === field.id}

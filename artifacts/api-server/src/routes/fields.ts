@@ -34,6 +34,7 @@ router.get("/fields", async (req, res): Promise<void> => {
         longitude: f.longitude ?? null,
         clipCount,
         lastRecordedAt: f.lastRecordedAt ? f.lastRecordedAt.toISOString() : null,
+        clipsVisible: f.clipsVisible,
       };
     })
   );
@@ -73,6 +74,7 @@ router.get("/fields/:id", async (req, res): Promise<void> => {
       longitude: field.longitude ?? null,
       clipCount: Number(clips[0]?.count ?? 0),
       lastRecordedAt: field.lastRecordedAt ? field.lastRecordedAt.toISOString() : null,
+      clipsVisible: field.clipsVisible,
     })
   );
 });

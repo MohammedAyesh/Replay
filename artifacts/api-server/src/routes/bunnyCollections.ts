@@ -62,6 +62,7 @@ router.get("/bunny/collections", async (req, res): Promise<void> => {
         // include DB id so detail pages can link by integer id
         id: dbField?.id ?? null,
         isHidden: dbField?.isHidden ?? false,
+        clipsVisible: dbField?.clipsVisible ?? false,
       };
     })
     .filter((c) => !c.isHidden);
