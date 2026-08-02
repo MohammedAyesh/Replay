@@ -10,3 +10,4 @@ export * from "./userClips";
 export * from "./academies";
 export * from "./liveSchedules";
 export * from "./clipSettings";
+export * from "./recordingSchedules";

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, count, and, desc, sql } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable } from "@workspace/db";
+import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable } from "@workspace/db";
 import {
   UpdateAdParams,
   UpdateAdBody,
@@ -684,6 +684,66 @@ router.delete("/admin/banners/:id", async (req, res): Promise<void> => {
     fetch(`${cfg.base}/${cfg.zone}/${folderId}/banner.jpg?bust=${Date.now()}`, { method: "DELETE", headers: { AccessKey: cfg.key } }),
   ]);
 
+  res.json({ ok: true });
+});
+
+// ─── Admin: Recording Schedules ───────────────────────────────────────────────
+
+/** All schedules across all fields (for the admin Recordings tab overview). */
+router.get("/admin/schedules", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const rows = await db.select().from(recordingSchedulesTable);
+  res.json(rows);
+});
+
+/** Schedules for a single field. */
+router.get("/admin/fields/:id/schedules", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const fieldId = parseInt(req.params.id as string, 10);
+  if (isNaN(fieldId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const rows = await db.select().from(recordingSchedulesTable).where(eq(recordingSchedulesTable.fieldId, fieldId));
+  res.json(rows);
+});
+
+/** Create a new time window for a field. */
+router.post("/admin/fields/:id/schedules", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const fieldId = parseInt(req.params.id as string, 10);
+  if (isNaN(fieldId)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const { dayOfWeek, startTime, endTime, label } = req.body as {
+    dayOfWeek?: number | null;
+    startTime?: string;
+    endTime?: string;
+    label?: string | null;
+  };
+  if (typeof startTime !== "string" || typeof endTime !== "string") {
+    res.status(400).json({ error: "startTime and endTime are required" }); return;
+  }
+
+  const [created] = await db
+    .insert(recordingSchedulesTable)
+    .values({
+      fieldId,
+      dayOfWeek: dayOfWeek == null ? null : Number(dayOfWeek),
+      startTime,
+      endTime,
+      label: label ?? null,
+    })
+    .returning();
+  res.json(created);
+});
+
+/** Delete a time window by its own id. */
+router.delete("/admin/schedules/:id", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.delete(recordingSchedulesTable).where(eq(recordingSchedulesTable.id, id));
   res.json({ ok: true });
 });
 

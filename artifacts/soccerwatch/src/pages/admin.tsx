@@ -116,16 +116,13 @@ interface AdminAcademy {
   recordingCount: number;
 }
 
-interface AdminRecording {
+interface AdminSchedule {
   id: number;
   fieldId: number;
-  court: string;
-  date: string;
-  timeSlot: string;
-  duration: string;
-  score: string | null;
-  videoUrl: string;
-  fieldName: string | null;
+  dayOfWeek: number | null;
+  startTime: string;
+  endTime: string;
+  label: string | null;
 }
 
 interface FieldVideo {
@@ -3520,37 +3517,278 @@ function LiveTab() {
 
 // ─── Recordings Tab ──────────────────────────────────────────────────────────
 
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_OPTIONS = [
+  { value: "", label: "Every day" },
+  { value: "0", label: "Sunday" },
+  { value: "1", label: "Monday" },
+  { value: "2", label: "Tuesday" },
+  { value: "3", label: "Wednesday" },
+  { value: "4", label: "Thursday" },
+  { value: "5", label: "Friday" },
+  { value: "6", label: "Saturday" },
+];
+
+function recMatchesSchedules(rec: AdminRecording, schedules: AdminSchedule[]): boolean {
+  if (schedules.length === 0 || !rec.date || !rec.timeSlot) return false;
+  const dow = new Date(`${rec.date}T12:00:00`).getDay();
+  const parts = rec.timeSlot.split(":");
+  const th = Number(parts[0] ?? 0);
+  const tm = Number(parts[1] ?? 0);
+  if (isNaN(th) || isNaN(tm)) return false;
+  const recMins = th * 60 + tm;
+  return schedules.some((s) => {
+    const dayMatch = s.dayOfWeek == null || s.dayOfWeek === dow;
+    const sp = s.startTime.split(":");
+    const ep = s.endTime.split(":");
+    const startMins = Number(sp[0] ?? 0) * 60 + Number(sp[1] ?? 0);
+    const endMins = Number(ep[0] ?? 0) * 60 + Number(ep[1] ?? 0);
+    return dayMatch && recMins >= startMins && recMins < endMins;
+  });
+}
+
+function FieldScheduleSection({
+  fieldId, fieldName, recordings, schedules, onSchedulesChange,
+}: {
+  fieldId: number;
+  fieldName: string;
+  recordings: AdminRecording[];
+  schedules: AdminSchedule[];
+  onSchedulesChange: (updated: AdminSchedule[]) => void;
+}) {
+  const [addingWindow, setAddingWindow] = useState(false);
+  const [newDay, setNewDay] = useState("");
+  const [newStart, setNewStart] = useState("18:00");
+  const [newEnd, setNewEnd] = useState("22:00");
+  const [newLabel, setNewLabel] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<number | null>(null);
+
+  const matchedCount = recordings.filter((r) => recMatchesSchedules(r, schedules)).length;
+
+  const addSchedule = async () => {
+    if (!newStart || !newEnd) return;
+    setSaving(true);
+    try {
+      const created = await apiFetch(`/admin/fields/${fieldId}/schedules`, {
+        method: "POST",
+        body: JSON.stringify({
+          dayOfWeek: newDay === "" ? null : Number(newDay),
+          startTime: newStart,
+          endTime: newEnd,
+          label: newLabel || null,
+        }),
+      }) as AdminSchedule;
+      onSchedulesChange([...schedules, created]);
+      setAddingWindow(false);
+      setNewLabel("");
+      setNewDay("");
+      setNewStart("18:00");
+      setNewEnd("22:00");
+    } catch { /* silent */ }
+    setSaving(false);
+  };
+
+  const deleteSchedule = async (id: number) => {
+    setDeleting(id);
+    try {
+      await apiFetch(`/admin/schedules/${id}`, { method: "DELETE" });
+      onSchedulesChange(schedules.filter((s) => s.id !== id));
+    } catch { /* silent */ }
+    setDeleting(null);
+  };
+
+  return (
+    <div className="rounded-xl border border-zinc-800 overflow-hidden">
+      {/* Field header */}
+      <div className="px-3 py-2.5 bg-zinc-900/80 border-b border-zinc-800/60 flex items-center justify-between gap-2">
+        <div>
+          <span className="text-white text-sm font-semibold">{fieldName}</span>
+          <span className="text-zinc-500 text-xs ml-2">
+            {recordings.length} recording{recordings.length !== 1 ? "s" : ""}
+            {schedules.length > 0 && (
+              <> · <span className="text-primary">{matchedCount} visible</span></>
+            )}
+          </span>
+        </div>
+        <button
+          onClick={() => setAddingWindow((v) => !v)}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-800 text-zinc-300 text-xs hover:bg-zinc-700 transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add window
+        </button>
+      </div>
+
+      <div className="divide-y divide-zinc-800/50">
+        {/* Schedules section */}
+        {(schedules.length > 0 || addingWindow) && (
+          <div className="p-3 space-y-2 bg-zinc-950/40">
+            <p className="text-zinc-500 text-[11px] uppercase tracking-wider font-semibold">
+              Availability Windows
+            </p>
+
+            {schedules.map((s) => (
+              <div key={s.id} className="flex items-center gap-2 bg-zinc-800/60 rounded-lg px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <span className="text-white text-sm font-medium">
+                    {s.dayOfWeek == null ? "Every day" : DAY_NAMES[s.dayOfWeek]}
+                  </span>
+                  <span className="text-zinc-400 text-sm ml-2">
+                    {s.startTime} – {s.endTime}
+                  </span>
+                  {s.label && (
+                    <span className="text-zinc-500 text-xs ml-2">{s.label}</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => deleteSchedule(s.id)}
+                  disabled={deleting === s.id}
+                  className="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-50"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+
+            {addingWindow && (
+              <div className="bg-zinc-800/40 rounded-xl p-3 space-y-3 border border-zinc-700/60">
+                <p className="text-zinc-300 text-xs font-semibold">New availability window</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="col-span-2">
+                    <label className="text-zinc-500 text-xs mb-1 block">Day of week</label>
+                    <select
+                      value={newDay}
+                      onChange={(e) => setNewDay(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-3 py-2"
+                    >
+                      {DAY_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-zinc-500 text-xs mb-1 block">Start time</label>
+                    <input
+                      type="time"
+                      value={newStart}
+                      onChange={(e) => setNewStart(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-zinc-500 text-xs mb-1 block">End time</label>
+                    <input
+                      type="time"
+                      value={newEnd}
+                      onChange={(e) => setNewEnd(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-zinc-500 text-xs mb-1 block">Label (optional)</label>
+                    <input
+                      type="text"
+                      value={newLabel}
+                      onChange={(e) => setNewLabel(e.target.value)}
+                      placeholder="e.g. Training, Match Day"
+                      className="w-full bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-3 py-2 placeholder:text-zinc-600"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setAddingWindow(false)}
+                    className="px-3 py-1.5 text-sm text-zinc-400 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={addSchedule}
+                    disabled={saving || !newStart || !newEnd}
+                    className="px-4 py-1.5 bg-primary text-black text-sm font-semibold rounded-lg disabled:opacity-50"
+                  >
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Recordings list */}
+        {recordings.length > 0 && (
+          <div className="p-3 space-y-1">
+            {schedules.length === 0 && !addingWindow && (
+              <p className="text-zinc-600 text-xs text-center py-2 pb-3">
+                No windows defined — all recordings hidden. Tap "Add window" to set availability times.
+              </p>
+            )}
+            {recordings.map((rec) => {
+              const matched = recMatchesSchedules(rec, schedules);
+              return (
+                <div
+                  key={rec.id}
+                  className={cn(
+                    "flex items-center gap-2.5 px-3 py-2 rounded-lg",
+                    matched ? "bg-zinc-800/50" : "opacity-40"
+                  )}
+                >
+                  <div className={cn(
+                    "w-1.5 h-1.5 rounded-full flex-shrink-0",
+                    matched ? "bg-primary" : "bg-zinc-600"
+                  )} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white text-xs font-medium">{rec.date}</span>
+                      {rec.timeSlot && (
+                        <span className="text-zinc-400 text-xs">{rec.timeSlot}</span>
+                      )}
+                      {rec.court && (
+                        <span className="text-zinc-600 text-xs">{rec.court}</span>
+                      )}
+                      {rec.score && (
+                        <span className="text-primary text-xs font-bold">{rec.score}</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className={cn(
+                    "text-[10px] font-semibold uppercase tracking-wide flex-shrink-0",
+                    matched ? "text-primary" : "text-zinc-600"
+                  )}>
+                    {matched ? "Visible" : "Hidden"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RecordingsTab() {
   const [recordings, setRecordings] = useState<AdminRecording[]>([]);
+  const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
-  const [toggling, setToggling] = useState<number | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiFetch("/admin/recordings");
-      setRecordings(data as AdminRecording[]);
+      const [recs, scheds] = await Promise.all([
+        apiFetch("/admin/recordings") as Promise<AdminRecording[]>,
+        apiFetch("/admin/schedules") as Promise<AdminSchedule[]>,
+      ]);
+      setRecordings(recs);
+      setSchedules(scheds);
     } catch { /* silent */ }
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  const toggleVisible = async (rec: AdminRecording) => {
-    setToggling(rec.id);
-    try {
-      await apiFetch(`/admin/recordings/${rec.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ isVisible: !rec.isVisible }),
-      });
-      setRecordings((prev) =>
-        prev.map((r) => r.id === rec.id ? { ...r, isVisible: !r.isVisible } : r)
-      );
-    } catch { /* silent */ }
-    setToggling(null);
-  };
 
   const importFromBunny = async () => {
     setImporting(true);
@@ -3565,34 +3803,48 @@ function RecordingsTab() {
     setImporting(false);
   };
 
-  // Group by field
-  const grouped = useMemo(() => {
-    const map = new Map<string, AdminRecording[]>();
+  const fieldGroups = useMemo(() => {
+    const map = new Map<number, { fieldId: number; fieldName: string; recordings: AdminRecording[] }>();
     for (const r of recordings) {
-      const key = r.fieldName ?? `Field ${r.fieldId}`;
-      const arr = map.get(key) ?? [];
-      arr.push(r);
-      map.set(key, arr);
+      if (!map.has(r.fieldId)) {
+        map.set(r.fieldId, { fieldId: r.fieldId, fieldName: r.fieldName ?? `Field ${r.fieldId}`, recordings: [] });
+      }
+      map.get(r.fieldId)!.recordings.push(r);
     }
-    return map;
+    return Array.from(map.values()).sort((a, b) => a.fieldName.localeCompare(b.fieldName));
   }, [recordings]);
 
-  const visibleCount = recordings.filter((r) => r.isVisible).length;
+  const schedulesByField = useMemo(() => {
+    const map = new Map<number, AdminSchedule[]>();
+    for (const s of schedules) {
+      const arr = map.get(s.fieldId) ?? [];
+      arr.push(s);
+      map.set(s.fieldId, arr);
+    }
+    return map;
+  }, [schedules]);
+
+  const visibleCount = useMemo(() =>
+    recordings.filter((r) => recMatchesSchedules(r, schedulesByField.get(r.fieldId) ?? [])).length,
+    [recordings, schedulesByField]
+  );
 
   return (
-    <div className="space-y-4">
-      {/* Header row */}
+    <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-white text-sm font-semibold">
             {recordings.length} recording{recordings.length !== 1 ? "s" : ""}
             {recordings.length > 0 && (
               <span className="text-zinc-500 font-normal ml-1.5">
-                · {visibleCount} visible
+                · {visibleCount} currently visible
               </span>
             )}
           </p>
-          <p className="text-zinc-500 text-xs mt-0.5">Toggle the eye to make a recording visible on the field page</p>
+          <p className="text-zinc-500 text-xs mt-0.5">
+            Recordings are shown to users only when they fall within a configured time window
+          </p>
         </div>
         <button
           onClick={importFromBunny}
@@ -3615,56 +3867,26 @@ function RecordingsTab() {
 
       {loading ? (
         <div className="text-center py-16 text-zinc-500">Loading…</div>
-      ) : recordings.length === 0 ? (
+      ) : fieldGroups.length === 0 ? (
         <div className="text-center py-16 space-y-2">
           <p className="text-zinc-400 font-medium">No recordings yet</p>
-          <p className="text-zinc-600 text-sm">Tap "Import from Bunny" to pull in recordings from your fields</p>
+          <p className="text-zinc-600 text-sm">Tap "Import from Bunny" to pull recordings from your fields</p>
         </div>
       ) : (
-        Array.from(grouped.entries()).map(([fieldName, recs]) => (
-          <div key={fieldName} className="space-y-2">
-            <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider px-1">{fieldName}</p>
-            {recs.map((rec) => (
-              <div
-                key={rec.id}
-                className={cn(
-                  "flex items-center gap-3 p-3 rounded-xl border transition-colors",
-                  rec.isVisible
-                    ? "bg-zinc-900 border-zinc-700"
-                    : "bg-zinc-900/40 border-zinc-800/50 opacity-70"
-                )}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-white text-sm font-medium">{rec.date}</span>
-                    {rec.timeSlot && (
-                      <span className="text-zinc-400 text-xs">{rec.timeSlot}</span>
-                    )}
-                    {rec.court && (
-                      <span className="text-zinc-500 text-xs bg-zinc-800 px-1.5 py-0.5 rounded-full">{rec.court}</span>
-                    )}
-                    {rec.score && (
-                      <span className="text-primary text-xs font-bold">{rec.score}</span>
-                    )}
-                  </div>
-                  <p className="text-zinc-600 text-xs mt-0.5">{rec.duration}</p>
-                </div>
-                <button
-                  onClick={() => toggleVisible(rec)}
-                  disabled={toggling === rec.id}
-                  title={rec.isVisible ? "Hide recording" : "Show recording"}
-                  className={cn(
-                    "p-2.5 rounded-xl transition-colors disabled:opacity-50 flex-shrink-0",
-                    rec.isVisible
-                      ? "bg-primary/10 text-primary hover:bg-primary/20"
-                      : "bg-zinc-800 text-zinc-500 hover:text-white hover:bg-zinc-700"
-                  )}
-                >
-                  {rec.isVisible ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
-                </button>
-              </div>
-            ))}
-          </div>
+        fieldGroups.map(({ fieldId, fieldName, recordings: fieldRecs }) => (
+          <FieldScheduleSection
+            key={fieldId}
+            fieldId={fieldId}
+            fieldName={fieldName}
+            recordings={fieldRecs}
+            schedules={schedulesByField.get(fieldId) ?? []}
+            onSchedulesChange={(updated) =>
+              setSchedules((prev) => [
+                ...prev.filter((s) => s.fieldId !== fieldId),
+                ...updated,
+              ])
+            }
+          />
         ))
       )}
     </div>

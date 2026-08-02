@@ -1,7 +1,29 @@
 import { Router, type IRouter } from "express";
 import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, isBunnyConfigured } from "../lib/bunny.js";
-import { db, fieldsTable, recordingsTable } from "@workspace/db";
+import { db, fieldsTable, recordingsTable, recordingSchedulesTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+
+/** Returns true if the recording's date+timeSlot falls within any of the provided schedules. */
+function matchesSchedule(
+  date: string,     // ISO date "YYYY-MM-DD"
+  timeSlot: string, // "HH:MM"
+  schedules: { dayOfWeek: number | null; startTime: string; endTime: string }[]
+): boolean {
+  if (schedules.length === 0) return false;
+  // Derive day-of-week (0=Sun…6=Sat) from the ISO date string.
+  // Appending T12:00:00 avoids timezone-midnight ambiguity.
+  const dow = new Date(`${date}T12:00:00`).getDay();
+  const [th, tm] = timeSlot.split(":").map(Number);
+  if (isNaN(th) || isNaN(tm)) return false;
+  const recMins = th * 60 + tm;
+
+  return schedules.some((s) => {
+    const dayMatch = s.dayOfWeek == null || s.dayOfWeek === dow;
+    const [sh, sm] = s.startTime.split(":").map(Number);
+    const [eh, em] = s.endTime.split(":").map(Number);
+    return dayMatch && recMins >= sh * 60 + sm && recMins < eh * 60 + em;
+  });
+}
 
 const router: IRouter = Router();
 
@@ -142,8 +164,8 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     return;
   }
 
-  // Only return recordings that an admin has explicitly marked visible.
-  // Look up the DB field for this collection so we can query its recordings.
+  // Only return recordings that fall within an admin-configured time window.
+  // Look up the DB field for this collection.
   const [dbField] = await db
     .select({ id: fieldsTable.id })
     .from(fieldsTable)
@@ -155,19 +177,34 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     return;
   }
 
-  const visibleRecordings = await db
-    .select({ videoUrl: recordingsTable.videoUrl })
-    .from(recordingsTable)
-    .where(and(eq(recordingsTable.fieldId, dbField.id), eq(recordingsTable.isVisible, true)));
+  // Fetch schedules and registered recordings for this field in parallel.
+  const [schedules, dbRecordings] = await Promise.all([
+    db
+      .select()
+      .from(recordingSchedulesTable)
+      .where(eq(recordingSchedulesTable.fieldId, dbField.id)),
+    db
+      .select({ videoUrl: recordingsTable.videoUrl, date: recordingsTable.date, timeSlot: recordingsTable.timeSlot })
+      .from(recordingsTable)
+      .where(eq(recordingsTable.fieldId, dbField.id)),
+  ]);
 
-  // Extract the Bunny video GUID from each stored URL
-  // (format: https://{hostname}/{guid}/playlist.m3u8)
-  const visibleGuids = new Set(
-    visibleRecordings.map((r) => {
-      try { return new URL(r.videoUrl).pathname.split("/").filter(Boolean)[0]; }
-      catch { return null; }
-    }).filter((g): g is string => g != null)
-  );
+  if (schedules.length === 0) {
+    // No windows defined yet — show nothing.
+    res.json([]);
+    return;
+  }
+
+  // Build a set of Bunny GUIDs whose recording date+time falls within a window.
+  const visibleGuids = new Set<string>();
+  for (const r of dbRecordings) {
+    if (!r.date || !r.timeSlot) continue;
+    if (!matchesSchedule(r.date, r.timeSlot, schedules)) continue;
+    try {
+      const g = new URL(r.videoUrl).pathname.split("/").filter(Boolean)[0];
+      if (g) visibleGuids.add(g);
+    } catch { /* ignore malformed URLs */ }
+  }
 
   if (visibleGuids.size === 0) {
     res.json([]);
