@@ -817,11 +817,32 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
   const dbFields = await db.select().from(fieldsTable);
   const fieldByGuid = new Map(dbFields.filter((f) => f.bunnyGuid).map((f) => [f.bunnyGuid!, f]));
 
-  // Fetch existing recordings to avoid duplicates
-  const existingRecordings = await db.select({ videoUrl: recordingsTable.videoUrl }).from(recordingsTable);
-  const existingUrls = new Set(existingRecordings.map((r) => r.videoUrl));
+  // Fetch existing recordings; track which ones have empty timeSlots so we can repair them
+  const existingRecordings = await db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl, timeSlot: recordingsTable.timeSlot }).from(recordingsTable);
+  const existingByUrl = new Map(existingRecordings.map((r) => [r.videoUrl, r]));
+
+  /**
+   * Parse date and timeSlot from a Bunny video title.
+   * Supports two formats:
+   *   cam{N}_{YYYY-MM-DD}_{HH:MM}[.mp4]   (current format)
+   *   cam{N}_{...}_{YYYYMMDDHHmmss}         (legacy compact format)
+   */
+  function parseTitleTimestamp(title: string): { date: string; timeSlot: string } {
+    // Format 1: cam1_2026-08-02_20:19  or  cam1_2026-08-02_20:19.mp4
+    const isoMatch = title.match(/(\d{4}-\d{2}-\d{2})_(\d{2}:\d{2})/);
+    if (isoMatch) return { date: isoMatch[1], timeSlot: isoMatch[2] };
+    // Format 2: any 8 digits immediately followed by 6 digits
+    const compactMatch = title.match(/(\d{8})(\d{6})/);
+    if (compactMatch) {
+      const date = `${compactMatch[1].slice(0, 4)}-${compactMatch[1].slice(4, 6)}-${compactMatch[1].slice(6, 8)}`;
+      const timeSlot = `${compactMatch[2].slice(0, 2)}:${compactMatch[2].slice(2, 4)}`;
+      return { date, timeSlot };
+    }
+    return { date: new Date().toISOString().slice(0, 10), timeSlot: "" };
+  }
 
   let imported = 0;
+  let updated = 0;
   for (const collectionGuid of collectionGuids) {
     const field = fieldByGuid.get(collectionGuid);
     if (!field) continue; // not synced to a DB field
@@ -837,21 +858,26 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
 
     for (const video of videos) {
       const videoUrl = `https://${BUNNY_CDN_HOSTNAME}/${video.guid}/playlist.m3u8`;
-      if (existingUrls.has(videoUrl)) continue;
-
-      // Parse date/time/court from the filename (cam{N}_{...}_{YYYYMMDDHHmmss})
       const title = video.title ?? "";
-      const tsMatch = title.match(/(\d{8})(\d{6})/);
-      const date = tsMatch
-        ? `${tsMatch[1].slice(0, 4)}-${tsMatch[1].slice(4, 6)}-${tsMatch[1].slice(6, 8)}`
-        : new Date().toISOString().slice(0, 10);
-      const timeSlot = tsMatch ? `${tsMatch[2].slice(0, 2)}:${tsMatch[2].slice(2, 4)}` : "";
+      const { date, timeSlot } = parseTitleTimestamp(title);
       const camMatch = title.match(/^(cam\d+)/i);
       const court = camMatch?.[1] ?? "";
       const durationSecs = video.length ?? 0;
       const mins = Math.floor(durationSecs / 60);
       const secs = durationSecs % 60;
       const duration = `${mins}:${String(secs).padStart(2, "0")}`;
+
+      const existing = existingByUrl.get(videoUrl);
+      if (existing) {
+        // Repair existing records that were imported before the parser was fixed
+        if (!existing.timeSlot && timeSlot) {
+          await db.update(recordingsTable)
+            .set({ date, timeSlot, court, duration })
+            .where(eq(recordingsTable.id, existing.id));
+          updated++;
+        }
+        continue;
+      }
 
       await db.insert(recordingsTable).values({
         fieldId: field.id,
@@ -862,12 +888,12 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
         videoUrl,
         isVisible: false,
       });
-      existingUrls.add(videoUrl);
+      existingByUrl.set(videoUrl, { id: 0, videoUrl, timeSlot });
       imported++;
     }
   }
 
-  res.json({ imported });
+  res.json({ imported, updated });
 });
 
 export default router;
