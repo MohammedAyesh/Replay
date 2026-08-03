@@ -8,3 +8,4 @@
 - [Live clip synthetic videoId](live-clip-videoId.md) — academy live clips store `live:<cameraId>` not a Bunny GUID; server must guard URL generation and export for these.
 - [Bunny CDN Referer requirement](bunny-cdn-referer.md) — Bunny CDN returns 403 to direct browser requests; all client-facing playbackUrl/thumbnailUrl must go through /api/hls-proxy; raw CDN URLs are only for server-side FFmpeg.
 - [Clip intro — playback vs export](clip-intro-playback-export.md) — intro is suppressed in all playback responses (hardcoded null); export path calls resolveIntroVideoUrl and prepends at correct dimensions.
+- [Recording visibility dates](recording-visibility-dates.md) — recording visibility uses exact per-field whitelisted dates plus time windows; recurring weekday rules are no longer active.

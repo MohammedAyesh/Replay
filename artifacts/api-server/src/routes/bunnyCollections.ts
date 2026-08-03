@@ -7,21 +7,17 @@ import { eq, and } from "drizzle-orm";
 function matchesSchedule(
   date: string,     // ISO date "YYYY-MM-DD"
   timeSlot: string, // "HH:MM"
-  schedules: { dayOfWeek: number | null; startTime: string; endTime: string }[]
+  schedules: { allowedDate: string | null; startTime: string; endTime: string }[]
 ): boolean {
   if (schedules.length === 0) return false;
-  // Derive day-of-week (0=Sun…6=Sat) from the ISO date string.
-  // Appending T12:00:00 avoids timezone-midnight ambiguity.
-  const dow = new Date(`${date}T12:00:00`).getDay();
   const [th, tm] = timeSlot.split(":").map(Number);
   if (isNaN(th) || isNaN(tm)) return false;
   const recMins = th * 60 + tm;
 
   return schedules.some((s) => {
-    const dayMatch = s.dayOfWeek == null || s.dayOfWeek === dow;
     const [sh, sm] = s.startTime.split(":").map(Number);
     const [eh, em] = s.endTime.split(":").map(Number);
-    return dayMatch && recMins >= sh * 60 + sm && recMins < eh * 60 + em;
+    return s.allowedDate === date && recMins >= sh * 60 + sm && recMins < eh * 60 + em;
   });
 }
 

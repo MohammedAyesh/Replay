@@ -707,28 +707,33 @@ router.get("/admin/fields/:id/schedules", async (req, res): Promise<void> => {
   res.json(rows);
 });
 
-/** Create a new time window for a field. */
+/** Create a new exact-date visibility window for a field. */
 router.post("/admin/fields/:id/schedules", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
   const fieldId = parseInt(req.params.id as string, 10);
   if (isNaN(fieldId)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const { dayOfWeek, startTime, endTime, label } = req.body as {
-    dayOfWeek?: number | null;
+  const { allowedDate, startTime, endTime, label } = req.body as {
+    allowedDate?: string;
     startTime?: string;
     endTime?: string;
     label?: string | null;
   };
-  if (typeof startTime !== "string" || typeof endTime !== "string") {
-    res.status(400).json({ error: "startTime and endTime are required" }); return;
+  if (
+    typeof allowedDate !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(allowedDate) ||
+    typeof startTime !== "string" ||
+    typeof endTime !== "string"
+  ) {
+    res.status(400).json({ error: "allowedDate, startTime and endTime are required" }); return;
   }
 
   const [created] = await db
     .insert(recordingSchedulesTable)
     .values({
       fieldId,
-      dayOfWeek: dayOfWeek == null ? null : Number(dayOfWeek),
+      allowedDate,
       startTime,
       endTime,
       label: label ?? null,
