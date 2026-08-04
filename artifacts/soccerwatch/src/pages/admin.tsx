@@ -47,6 +47,8 @@ interface AdminClip {
   createdAt: string;
   thumbnailUrl: string | null;
   playbackUrl: string | null;
+  startTime: number;
+  endTime: number;
   userName: string;
   userEmail: string;
 }
@@ -136,6 +138,102 @@ interface FieldVideo {
   duration: number; // seconds
 }
 
+function AdminClipPlayer({
+  clip,
+  onClose,
+}: {
+  clip: AdminClip;
+  onClose: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const startRef = useRef(0);
+  const endRef = useRef(Infinity);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !clip.playbackUrl) return;
+
+    const proxiedUrl = `${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(clip.playbackUrl)}`;
+    let didSeek = false;
+
+    const seekToClipStart = () => {
+      if (didSeek || !video.duration || !isFinite(video.duration)) return;
+      didSeek = true;
+      startRef.current = Math.max(0, Math.min(1, clip.startTime)) * video.duration;
+      endRef.current = Math.max(startRef.current, Math.min(1, clip.endTime)) * video.duration;
+      video.currentTime = startRef.current;
+    };
+
+    const handleTimeUpdate = () => {
+      if (video.currentTime >= endRef.current && endRef.current > startRef.current) {
+        video.pause();
+        video.currentTime = startRef.current;
+      }
+    };
+
+    video.addEventListener("loadedmetadata", seekToClipStart);
+    video.addEventListener("durationchange", seekToClipStart);
+    video.addEventListener("timeupdate", handleTimeUpdate);
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: false });
+      hlsRef.current = hls;
+      hls.loadSource(proxiedUrl);
+      hls.attachMedia(video);
+      return () => {
+        hls.destroy();
+        hlsRef.current = null;
+        video.removeEventListener("loadedmetadata", seekToClipStart);
+        video.removeEventListener("durationchange", seekToClipStart);
+        video.removeEventListener("timeupdate", handleTimeUpdate);
+      };
+    }
+
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = proxiedUrl;
+    }
+
+    return () => {
+      video.removeEventListener("loadedmetadata", seekToClipStart);
+      video.removeEventListener("durationchange", seekToClipStart);
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [clip.playbackUrl, clip.startTime, clip.endTime]);
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4">
+      <div className="w-full max-w-3xl rounded-2xl overflow-hidden border border-zinc-700 bg-zinc-950 shadow-2xl">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-800">
+          <div className="min-w-0">
+            <p className="text-white font-semibold truncate">{clip.title}</p>
+            <p className="text-zinc-500 text-xs truncate">{clip.userName} · {clip.userEmail}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+            aria-label="Close recording"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="aspect-video bg-black">
+          <video
+            ref={videoRef}
+            controls
+            playsInline
+            className="w-full h-full"
+            preload="metadata"
+            onError={() => hlsRef.current?.recoverMediaError()}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── SD-pull types ────────────────────────────────────────────────────────────
 
 interface SdHourInfo {
@@ -202,6 +300,7 @@ function ClipsTab() {
   const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
   const [bulkWorking, setBulkWorking] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [playingClip, setPlayingClip] = useState<AdminClip | null>(null);
   const queryClient = useQueryClient();
 
   const load = useCallback(async () => {
@@ -366,6 +465,14 @@ function ClipsTab() {
                   </span>
                 )}
                 <button
+                  onClick={() => setPlayingClip(clip)}
+                  disabled={!clip.playbackUrl}
+                  className="p-2 rounded-lg bg-primary/15 text-primary hover:bg-primary/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={clip.playbackUrl ? "Watch clip" : "Playback unavailable"}
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                </button>
+                <button
                   onClick={() => toggleHidden(clip)}
                   className={cn(
                     "p-2 rounded-lg transition-colors",
@@ -389,6 +496,12 @@ function ClipsTab() {
             </div>
           ))}
         </div>
+      )}
+      {playingClip && (
+        <AdminClipPlayer
+          clip={playingClip}
+          onClose={() => setPlayingClip(null)}
+        />
       )}
     </div>
   );

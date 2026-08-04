@@ -193,6 +193,8 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       score: userClipsTable.score,
       createdAt: userClipsTable.createdAt,
       thumbnailTime: userClipsTable.thumbnailTime,
+       startTime: userClipsTable.startTime,
+       endTime: userClipsTable.endTime,
       userName: usersTable.name,
       userEmail: usersTable.email,
     })
@@ -214,6 +216,8 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       shareCount: row.shareCount,
       score: row.score,
       createdAt: row.createdAt.toISOString(),
+       startTime: parseFloat(row.startTime),
+       endTime: parseFloat(row.endTime),
       // Live-sourced clips carry a synthetic videoId ("live:camera2"), not a
       // Bunny GUID — building CDN URLs from it gives the admin panel a broken
       // thumbnail and a player that 404s. Same guard the user-facing routes use.
