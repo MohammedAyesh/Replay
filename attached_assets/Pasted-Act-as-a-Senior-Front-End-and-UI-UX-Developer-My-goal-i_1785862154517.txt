@@ -1,0 +1,43 @@
+Act as a Senior Front-End and UI/UX Developer. My goal is to permanently resolve a critical video downloading bug inside the "My Clips" page of our application (Replay). The video recording and rendering process up until the video reaches the "My Clips" page works perfectly. Do not investigate anything outside of the "My Clips" page functionality.
+
+Our strict goal is to make the final download process seamless, fail-proof, and transparent to the user, with a specific mandate to guarantee functionality on mobile devices (iOS/Android).
+
+The Current State & Bug Description
+Inside the "My Clips" page, clips are displayed correctly. The user flow is as follows:
+
+The user clicks a grey "Export" button (which polls the server while rendering).
+
+Once complete, a green "Download" button appears.
+
+The Bug: Clicking "Download" does not consistently download the file to the user's device. Instead, it triggers native OS share sheets (navigator.canShare). If the user dismisses this share sheet without taking action, the app falsely reports a "Saved!" success toast and swallows the error. On top of this, users stare at a frozen button during the "Export" phase with zero visual feedback.
+
+Architectural Note: The "My Clips" page has a "Created" tab (Server/CDN files) and a "Saved" tab (IndexedDB local blobs). The download logic must account for both file sources.
+
+Phase 1: The Mobile Download Guarantee (Answer Before Coding)
+Mobile web downloads (especially iOS Safari and PWAs) restrict direct file downloads. Before writing any code, outline your exact strategy for the following:
+
+The iOS Problem: iOS often blocks automated background downloads. How exactly will your code guarantee that an .mp4 file is saved to an iOS device's local files or camera roll if the standard <a download> tag fails?
+
+The Share Sheet Trap: How will you specifically rewrite the catch block or promise resolution for the Web Share API so that dismissing the share sheet on mobile does not trigger the "Saved!" toast?
+
+Blob URLs on Mobile: For the locally stored IndexedDB clips (the "Saved" tab), how will you convert these blobs into universally downloadable formats on mobile browsers without crashing due to memory limits?
+
+Fallback Hierarchy: If navigator.canShare fails or is unsupported, what is your exact, step-by-step fallback mechanism to force a direct download on a mobile device?
+
+Phase 2: UI & Architecture Fixes (Answer Before Coding)
+
+Export UI Feedback: How will you implement a visual progress indicator (elapsed time or loading bar) during the server's long FFmpeg rendering window?
+
+Stale State Resolution: What is the safest way to clear stale React Query exportState data on component mount so previous sessions don't re-trigger the polling UI?
+
+Cross-Tab Compatibility: How will you differentiate the final download execution between the IndexedDB local blobs ("Saved" tab) and the CDN-hosted files ("Created" tab)?
+
+Execution Requirements & Constraints:
+
+Mobile-First Guarantee: Your solution must work on iOS Safari, Android Chrome, and Desktop. Do not provide a desktop-only fix.
+
+Do not break existing functionality: Ensure native sharing remains intact but is strictly validated before showing a success message.
+
+Direct Fixes Only: Do not rewrite the entire component; surgically fix the polling UI feedback and the download/share fallback logic.
+
+Provide Code: Once you have answered the 7 questions above with your strategic plan, provide the exact code required to implement this fix.
