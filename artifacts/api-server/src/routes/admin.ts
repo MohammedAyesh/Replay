@@ -1,4 +1,6 @@
 import { Router, type IRouter } from "express";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { eq, count, and, desc, sql } from "drizzle-orm";
 import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable } from "@workspace/db";
 import {
@@ -12,7 +14,7 @@ import {
   GetAdStatsResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID, BUNNY_CDN_HOSTNAME, isBunnyStorageConfigured, uploadClipIntroToBunnyStorage } from "../lib/bunny";
+import { getBunnyThumbnailUrl, getBunnyPlaybackUrl, isBunnyConfigured, BUNNY_API_KEY, BUNNY_LIBRARY_ID, BUNNY_CDN_HOSTNAME, BUNNY_STORAGE_API_KEY, isBunnyStorageConfigured, uploadClipIntroToBunnyStorage } from "../lib/bunny";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import { isLiveVideoId } from "./userClips";
@@ -195,6 +197,8 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       thumbnailTime: userClipsTable.thumbnailTime,
        startTime: userClipsTable.startTime,
        endTime: userClipsTable.endTime,
+       exportStatus: userClipsTable.exportStatus,
+       exportedUrl: userClipsTable.exportedUrl,
       userName: usersTable.name,
       userEmail: usersTable.email,
     })
@@ -218,6 +222,8 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       createdAt: row.createdAt.toISOString(),
        startTime: parseFloat(row.startTime),
        endTime: parseFloat(row.endTime),
+       exportStatus: row.exportStatus ?? null,
+       exportedUrl: row.exportedUrl ?? null,
       // Live-sourced clips carry a synthetic videoId ("live:camera2"), not a
       // Bunny GUID — building CDN URLs from it gives the admin panel a broken
       // thumbnail and a player that 404s. Same guard the user-facing routes use.
@@ -229,6 +235,62 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
   });
 
   res.json(result);
+});
+
+/**
+ * Stream a rendered clip to an admin without exposing Bunny Storage
+ * credentials or depending on the storage URL being public. Range requests
+ * are forwarded so the browser's video controls can seek normally.
+ */
+router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const clipId = parseInt(rawId, 10);
+  if (!Number.isFinite(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
+
+  const [clip] = await db
+    .select({ exportedUrl: userClipsTable.exportedUrl })
+    .from(userClipsTable)
+    .where(eq(userClipsTable.id, clipId));
+  if (!clip?.exportedUrl) { res.status(404).json({ error: "Rendered clip not ready" }); return; }
+
+  const headers: Record<string, string> = {
+    AccessKey: BUNNY_STORAGE_API_KEY,
+  };
+  const range = req.headers.range;
+  if (range) headers.Range = range;
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(clip.exportedUrl, { headers });
+  } catch {
+    res.status(502).json({ error: "Could not fetch rendered clip" });
+    return;
+  }
+  if (!upstream.ok || !upstream.body) {
+    res.status(upstream.status === 404 ? 404 : 502).json({ error: "Could not fetch rendered clip" });
+    return;
+  }
+
+  res.status(upstream.status);
+  res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "video/mp4");
+  res.setHeader("Accept-Ranges", upstream.headers.get("accept-ranges") ?? "bytes");
+  for (const name of ["content-length", "content-range"]) {
+    const value = upstream.headers.get(name);
+    if (value) res.setHeader(name, value);
+  }
+
+  try {
+    await pipeline(
+      Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>),
+      res,
+    );
+  } catch {
+    // The browser closing or seeking a video can abort an in-flight range
+    // request; there is nothing useful to report in that case.
+  }
 });
 
 router.patch("/admin/clips/:id", async (req, res): Promise<void> => {

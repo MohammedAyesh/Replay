@@ -70,6 +70,29 @@ async function withRenderSlot<T>(job: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Clip exports are normally owner-only, but admins need to preview any clip
+ * from the admin Clips tab. Keep the ownership check for regular users while
+ * allowing an authenticated admin to start/poll an export.
+ */
+async function getExportAccessibleClip(req: Parameters<typeof getLocalUserId>[0], clipId: number) {
+  const userId = await getLocalUserId(req);
+  if (!userId) return false as const;
+
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(eq(userClipsTable.id, clipId));
+  if (!clip) return null;
+  if (clip.userId === userId) return clip;
+
+  const [user] = await db
+    .select({ isAdmin: usersTable.isAdmin })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+  return user?.isAdmin ? clip : null;
+}
+
+/**
  * Live-stream clips are saved with a synthetic videoId like "live:camera2".
  * These are not real Bunny Stream GUIDs, so URL generation and export must
  * be skipped for them until the recording is uploaded to Bunny Stream.
@@ -644,17 +667,13 @@ router.get("/feed", async (req, res): Promise<void> => {
  * If already exported, returns the cached URL without re-rendering.
  */
 router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
-  const userId = await getLocalUserId(req);
-  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
-
   const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const clipId = parseInt(rawId, 10);
   if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
 
-  const [clip] = await db
-    .select()
-    .from(userClipsTable)
-    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
+  const accessibleClip = await getExportAccessibleClip(req, clipId);
+  if (accessibleClip === false) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  const clip = accessibleClip;
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
   if (isLiveVideoId(clip.videoId)) {
@@ -764,17 +783,13 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
  * Returns { status: "idle"|"pending"|"done"|"error", url: string|null }.
  */
 router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
-  const userId = await getLocalUserId(req);
-  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
-
   const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const clipId = parseInt(rawId, 10);
   if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
 
-  const [clip] = await db
-    .select()
-    .from(userClipsTable)
-    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
+  const accessibleClip = await getExportAccessibleClip(req, clipId);
+  if (accessibleClip === false) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  const clip = accessibleClip;
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
 

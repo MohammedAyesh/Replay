@@ -49,6 +49,8 @@ interface AdminClip {
   playbackUrl: string | null;
   startTime: number;
   endTime: number;
+  exportStatus: string | null;
+  exportedUrl: string | null;
   userName: string;
   userEmail: string;
 }
@@ -146,62 +148,49 @@ function AdminClipPlayer({
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const startRef = useRef(0);
-  const endRef = useRef(Infinity);
+  const [renderStatus, setRenderStatus] = useState(clip.exportStatus ?? "idle");
+  const playbackUrl = `${basePath}/api/admin/clips/${clip.id}/playback`;
+  const [renderedUrl, setRenderedUrl] = useState<string | null>(
+    clip.exportedUrl ? playbackUrl : null,
+  );
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !clip.playbackUrl) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const proxiedUrl = `${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(clip.playbackUrl)}`;
-    let didSeek = false;
-
-    const seekToClipStart = () => {
-      if (didSeek || !video.duration || !isFinite(video.duration)) return;
-      didSeek = true;
-      startRef.current = Math.max(0, Math.min(1, clip.startTime)) * video.duration;
-      endRef.current = Math.max(startRef.current, Math.min(1, clip.endTime)) * video.duration;
-      video.currentTime = startRef.current;
-    };
-
-    const handleTimeUpdate = () => {
-      if (video.currentTime >= endRef.current && endRef.current > startRef.current) {
-        video.pause();
-        video.currentTime = startRef.current;
+    const poll = async () => {
+      try {
+        if (!clip.exportedUrl) {
+          setRenderStatus("pending");
+          await apiFetch(`/user-clips/${clip.id}/export`, { method: "POST" });
+        }
+        const status = await apiFetch(`/user-clips/${clip.id}/export-status`) as {
+          status: string;
+          url?: string | null;
+        };
+        if (cancelled) return;
+        setRenderStatus(status.status);
+        if (status.status === "done" && status.url) {
+          setRenderedUrl(playbackUrl);
+          return;
+        }
+        if (status.status === "error") {
+          setRenderError("Could not render this clip.");
+          return;
+        }
+        timer = setTimeout(poll, 2000);
+      } catch {
+        if (!cancelled) setRenderError("Could not prepare this clip for playback.");
       }
     };
 
-    video.addEventListener("loadedmetadata", seekToClipStart);
-    video.addEventListener("durationchange", seekToClipStart);
-    video.addEventListener("timeupdate", handleTimeUpdate);
-
-    if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: false });
-      hlsRef.current = hls;
-      hls.loadSource(proxiedUrl);
-      hls.attachMedia(video);
-      return () => {
-        hls.destroy();
-        hlsRef.current = null;
-        video.removeEventListener("loadedmetadata", seekToClipStart);
-        video.removeEventListener("durationchange", seekToClipStart);
-        video.removeEventListener("timeupdate", handleTimeUpdate);
-      };
-    }
-
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = proxiedUrl;
-    }
-
+    if (!clip.exportedUrl) void poll();
     return () => {
-      video.removeEventListener("loadedmetadata", seekToClipStart);
-      video.removeEventListener("durationchange", seekToClipStart);
-      video.removeEventListener("timeupdate", handleTimeUpdate);
-      video.removeAttribute("src");
-      video.load();
+      cancelled = true;
+      if (timer) clearTimeout(timer);
     };
-  }, [clip.playbackUrl, clip.startTime, clip.endTime]);
+  }, [clip.id, clip.exportedUrl, playbackUrl]);
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4">
@@ -219,15 +208,33 @@ function AdminClipPlayer({
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="aspect-video bg-black">
-          <video
-            ref={videoRef}
-            controls
-            playsInline
-            className="w-full h-full"
-            preload="metadata"
-            onError={() => hlsRef.current?.recoverMediaError()}
-          />
+        <div className="aspect-video bg-black flex items-center justify-center">
+          {renderedUrl ? (
+            <video
+              ref={videoRef}
+              src={renderedUrl}
+              controls
+              playsInline
+              className="w-full h-full"
+              preload="metadata"
+            />
+          ) : (
+            <div className="px-6 text-center">
+              {renderError ? (
+                <p className="text-red-400 text-sm">{renderError}</p>
+              ) : (
+                <>
+                  <p className="text-white text-sm font-medium">Preparing clip…</p>
+                  <p className="text-zinc-500 text-xs mt-1">
+                    The selected segment is being rendered for playback.
+                  </p>
+                  {renderStatus === "pending" && (
+                    <div className="mt-3 mx-auto w-5 h-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
