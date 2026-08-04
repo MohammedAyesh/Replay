@@ -38,6 +38,37 @@ interface BunnyApiVideo {
   status?: number;
 }
 
+/** Parse the date/time encoded in the Bunny recording title. */
+function parseBunnyTitleTimestamp(title: string): { date: string; timeSlot: string } | null {
+  // Current format: cam1_2026-08-03_18:00[.mp4]
+  const isoMatch = title.match(/(\d{4}-\d{2}-\d{2})_(\d{1,2}:\d{2})/);
+  if (isoMatch) {
+    const hour = Number(isoMatch[2].split(":")[0]);
+    if (hour >= 0 && hour <= 23) {
+      return {
+        date: isoMatch[1],
+        timeSlot: `${String(hour).padStart(2, "0")}:${isoMatch[2].split(":")[1]}`,
+      };
+    }
+  }
+
+  // Legacy format: ..._YYYYMMDDHHMMSS
+  const compactMatch = title.match(/(\d{8})(\d{6})/);
+  if (compactMatch) {
+    const [, datePart, timePart] = compactMatch;
+    const hour = Number(timePart.slice(0, 2));
+    const minute = Number(timePart.slice(2, 4));
+    if (hour <= 23 && minute <= 59) {
+      return {
+        date: `${datePart.slice(0, 4)}-${datePart.slice(4, 6)}-${datePart.slice(6, 8)}`,
+        timeSlot: `${timePart.slice(0, 2)}:${timePart.slice(2, 4)}`,
+      };
+    }
+  }
+
+  return null;
+}
+
 async function bunnyGet(path: string, req: { log: { warn: (...args: unknown[]) => void } }): Promise<unknown[] | null> {
   const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/${path}`;
   const res = await fetch(url, {
@@ -173,7 +204,9 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     return;
   }
 
-  // Fetch schedules and registered recordings for this field in parallel.
+  // Fetch schedules and registered recordings in parallel. Registered rows are
+  // kept for compatibility with older imported titles, but visibility must not
+  // depend on the admin having manually run "Import from Bunny" first.
   const [schedules, dbRecordings] = await Promise.all([
     db
       .select()
@@ -191,7 +224,9 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     return;
   }
 
-  // Build a set of Bunny GUIDs whose recording date+time falls within a window.
+  // Build a set of imported Bunny GUIDs whose recording date+time falls within
+  // a window. This preserves support for older records whose title cannot be
+  // parsed from Bunny's current naming convention.
   const visibleGuids = new Set<string>();
   for (const r of dbRecordings) {
     if (!r.date || !r.timeSlot) continue;
@@ -202,15 +237,14 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     } catch { /* ignore malformed URLs */ }
   }
 
-  if (visibleGuids.size === 0) {
-    res.json([]);
-    return;
-  }
-
   const videos = (raw as BunnyApiVideo[])
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
     .filter((v) => v.status === undefined || v.status === 4)
-    .filter((v) => visibleGuids.has(v.guid as string))
+    .filter((v) => {
+      if (visibleGuids.has(v.guid as string)) return true;
+      const timestamp = parseBunnyTitleTimestamp(v.title as string);
+      return Boolean(timestamp && matchesSchedule(timestamp.date, timestamp.timeSlot, schedules));
+    })
     .map((v) => ({
       guid: v.guid as string,
       title: v.title as string,
