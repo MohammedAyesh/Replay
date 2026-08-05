@@ -15,11 +15,10 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db, academiesTable, clipSettingsTable } from "@workspace/db";
 import {
   BUNNY_STORAGE_API_KEY,
-  BUNNY_STORAGE_HOSTNAME,
 } from "../lib/bunny";
 import { logger } from "../lib/logger";
 
@@ -41,7 +40,7 @@ async function resolveIntroUrl(scope: string): Promise<string | null> {
       .where(eq(academiesTable.id, academyId));
     if (academy?.introVideoUrl) return academy.introVideoUrl;
   }
-  const [settings] = await db.select().from(clipSettingsTable).limit(1);
+  const [settings] = await db.select().from(clipSettingsTable).orderBy(desc(clipSettingsTable.id)).limit(1);
   return settings?.introVideoUrl ?? null;
 }
 
@@ -73,10 +72,13 @@ router.get("/clip-intro/:scope", async (req, res): Promise<void> => {
 
   // The AccessKey goes only to the storage host, never to whatever else an
   // admin might have put in the field.
+  // Read BUNNY_STORAGE_HOSTNAME at request time (not module level) so that
+  // integration tests can override it via process.env before the route runs.
+  const bunnyStorageHostname = process.env.BUNNY_STORAGE_HOSTNAME ?? "storage.bunnycdn.com";
   const headers: Record<string, string> = {};
   if (
     BUNNY_STORAGE_API_KEY &&
-    target.host.toLowerCase() === BUNNY_STORAGE_HOSTNAME.toLowerCase()
+    target.host.toLowerCase() === bunnyStorageHostname.toLowerCase()
   ) {
     headers.AccessKey = BUNNY_STORAGE_API_KEY;
   }

@@ -632,7 +632,7 @@ const introUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize
 router.get("/admin/clip-intro", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
-  const [settings] = await db.select().from(clipSettingsTable).limit(1);
+  const [settings] = await db.select().from(clipSettingsTable).orderBy(desc(clipSettingsTable.id)).limit(1);
   res.json({ introVideoUrl: settings?.introVideoUrl ?? null });
 });
 
@@ -646,7 +646,7 @@ router.post("/admin/clip-intro", introUpload.single("video"), async (req, res): 
   }
   try {
     const introVideoUrl = await uploadClipIntroToBunnyStorage(file.buffer, file.mimetype);
-    const [existing] = await db.select().from(clipSettingsTable).limit(1);
+    const [existing] = await db.select().from(clipSettingsTable).orderBy(desc(clipSettingsTable.id)).limit(1);
     if (existing) {
       await db.update(clipSettingsTable).set({ introVideoUrl, updatedAt: new Date() }).where(eq(clipSettingsTable.id, existing.id));
     } else {

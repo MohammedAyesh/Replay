@@ -27,7 +27,7 @@ interface ClipLookups {
 async function loadClipLookups(): Promise<ClipLookups> {
   const [academies, settings] = await Promise.all([
     db.select({ id: academiesTable.id, fieldId: academiesTable.fieldId, introVideoUrl: academiesTable.introVideoUrl }).from(academiesTable),
-    db.select().from(clipSettingsTable).limit(1),
+    db.select().from(clipSettingsTable).orderBy(desc(clipSettingsTable.id)).limit(1),
   ]);
   const academyByField = new Map<number, { id: number; introVideoUrl: string | null }>();
   // A field could in principle back more than one academy; the first match

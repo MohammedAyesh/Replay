@@ -9,8 +9,16 @@ A mobile-first web app where amateur soccer players browse pre-recorded footage 
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+
+## DB schema-change policy
+
+**No automated DB pushes.** The post-merge hook only installs dependencies; it never mutates the database.
+
+- Schema changes are **manual-only** until a journaled migration pipeline is in place.
+- To apply pending changes, run `pnpm --filter db run push` **in an interactive Shell tab**. The script prints the target DB host and requires you to type `yes` before proceeding.
+- `pnpm --filter db run push-force` is the same but passes `--force` to skip drizzle-kit's destructive-change prompts. Use with extra care.
+- Both push scripts are **deprecated** — they are unaware of the hand-written `lib/db/migrations/` files and will be replaced by a proper `drizzle-kit generate` + `migrate` journal workflow.
 
 ## Stack
 

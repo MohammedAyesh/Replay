@@ -116,7 +116,7 @@ async function resolveIntroVideoUrl(academyId: number | null): Promise<string | 
       .where(eq(academiesTable.id, academyId));
     if (academy?.introVideoUrl) return academy.introVideoUrl;
   }
-  const [settings] = await db.select().from(clipSettingsTable).limit(1);
+  const [settings] = await db.select().from(clipSettingsTable).orderBy(desc(clipSettingsTable.id)).limit(1);
   return settings?.introVideoUrl ?? null;
 }
 
