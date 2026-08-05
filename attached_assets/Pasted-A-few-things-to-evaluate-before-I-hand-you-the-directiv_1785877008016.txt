@@ -1,0 +1,74 @@
+A few things to evaluate before I hand you the directive — and one honesty caveat that still applies.
+
+## On Replit's findings
+
+I can't independently verify this pasted response any more than I could last turn — I still have no working shell tool and no connected GitHub integration, so this is Replit's self-report, not something I confirmed myself. That said, it's internally consistent with what I predicted last turn (10 vs. 14 files, workspace ahead of `main`), and it directly answers the questions asked without hedging or dodging, which is a good sign. Treat it as credible but still unverified by a second party — worth having Replit paste the raw `git log --oneline -10` and `ls lib/db/migrations/` output directly into chat once, rather than a summary, before you act on it at scale.
+
+Substantively, the finding in item 4(d) is the important one: **`DATABASE_URL` is confirmed to be the single live Replit-managed Postgres instance — the same one internal testing is running against — with zero backup mechanism of any kind.** That's not a hypothetical anymore. That risk exists *right now*, independent of whether #84 or #85 ever ship. It deserves equal priority to #84, not a status that waits behind it.
+
+## On Task #84 and #85 as written
+
+**#84** is sound — no DB mutation, matches everything already agreed (drift check exits 0, push/push-force gated and marked deprecated, policy documented). Approve it to actually execute — but note Replit's own wording: *"Task #84 has been surfaced for execution"* is not the same as *"Task #84 is complete."* It sounds like Replit runs a Planner/Executor split (it explicitly said it can't push from the Planner role), so don't assume the fix is live yet — confirm completion explicitly.
+
+**#85** is sound as scoped, correctly blocked, and correctly identifies `0010_academy_intro.sql` as the concrete evidence for why the fix is needed. No changes needed to it. Keep it blocked exactly as it already is.
+
+**One gap:** there's no task number yet for the backup/restore work — it's currently just a paragraph in a findings report, not a tracked task with steps and a done-state. Fix that in the directive below.
+
+## One sequencing correction to your assumption
+
+Backup engineering and the git push don't depend on each other — they can run in parallel, since pushing code touches GitHub, not the database. But the git push *should* happen only after #84's code changes are actually committed in the workspace, so you push one clean, complete sync (four migration files + other pending commits + the #84 fix) instead of two partial pushes. I've built that into the directive.
+
+---
+
+## Directive to send to Replit
+
+```
+Status check and next-phase directive — Bug #27 sequence.
+
+1. CONFIRM TASK #84 COMPLETION.
+Before anything else, state explicitly: has Task #84 actually been executed and
+committed in the workspace, or is it still queued for an executor? If it has run,
+paste the resulting commit hash and confirm scripts/post-merge.sh, lib/db/package.json,
+and replit.md now reflect the changes. If it has not run, execute it now and report
+back with that confirmation before proceeding to item 2.
+
+2. SYNCHRONIZE WITH GITHUB — AFTER #84 IS CONFIRMED COMPLETE, NOT BEFORE.
+Once #84 is confirmed committed, push the full current state of the workspace
+`main` branch to GitHub — this should carry the #84 fix, migration files 0011-0014,
+and any other pending local-only commits in one push. After pushing, paste the
+resulting commit hash from `git log -1` and confirm it matches on both the
+workspace and GitHub side. Do not push before #84 is committed — one clean sync,
+not two partial ones.
+
+3. DRAFT A NEW TRACKED TASK FOR BACKUP/RESTORE — TREAT AS EQUAL PRIORITY TO #84,
+NOT AS A FOOTNOTE.
+You've confirmed DATABASE_URL is the live, single Postgres instance backing
+internal testing right now, with zero backup mechanism. That risk is live today,
+independent of #84 or #85. Draft a task (structured the same way as #84/#85, with
+a "done looks like" section) covering:
+   a. A backup mechanism appropriate for this environment — likely a scheduled
+      pg_dump to durable storage (not the same disk/volume as the DB itself).
+   b. A restore test performed against a SEPARATE test/scratch database, never
+      against the live instance — confirming the dump can actually be restored
+      and the data matches, not just that the dump file was produced.
+   c. Documentation of the restore procedure in replit.md so it isn't tribal
+      knowledge.
+This task's dump/restore work involves real command execution, not pure read-only
+investigation — that's expected and fine. What's still forbidden: any operation
+that writes to, restores into, or overwrites the live database during this task.
+The restore test target must be a disposable/scratch database, explicitly
+confirmed as such before any restore command runs against it.
+
+4. TASK #85 REMAINS HARD BLOCKED.
+Unchanged from before. Do not begin baseline generation, do not run
+`drizzle-kit generate`, do not touch lib/db/migrations/, until BOTH of the
+following are true and confirmed in writing:
+   - Item 2 above is complete: workspace and GitHub are confirmed identical.
+   - Item 3 above is complete: a backup exists AND a restore has been tested
+     successfully against a scratch database, not merely designed.
+Approval of items 1-3 is not approval of #85. #85 requires separate, explicit
+sign-off after both gates are met.
+
+Report back on items 1, 2, and 3 in that order. Do not proceed to #85 scoping
+or execution under any circumstance until directed.
+```

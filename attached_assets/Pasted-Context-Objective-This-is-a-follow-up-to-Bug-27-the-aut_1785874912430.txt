@@ -1,0 +1,18 @@
+Context & Objective:
+This is a follow-up to Bug #27 (the automated `drizzle-kit push` in `scripts/post-merge.sh`/`.replit`). Your prior response proposed a "guarded manual push command" (Step 3 of Task #84) as part of the fix. Independent analysis of this repository has surfaced a structural problem with that step that needs to be verified and addressed before we proceed.
+
+Rules of Engagement:
+- READ-ONLY EXPLORATION. Do not execute `drizzle-kit push`, `drizzle-kit push --force`, `drizzle-kit generate`, `drizzle-kit migrate`, or any equivalent ORM/DB command. Do not modify any files yet.
+- Verify everything below yourself against the actual repository state — do not simply take this prompt's claims on faith. Report what you actually find, including if you find something that contradicts what's written here.
+
+Your Task:
+
+1. **Verify the migration/push split.** Confirm that `lib/db/migrations/` exists and contains numbered hand-written SQL files (currently `0001` through `0010`). Then check for the presence or absence of a Drizzle journal file (`meta/_journal.json` or equivalent) anywhere under `lib/db/`. State plainly whether one exists.
+
+2. **Analyze whether `push` and these migration files are structurally connected.** Specifically determine: does `drizzle-kit push` read, respect, or have any awareness of the `lib/db/migrations/` folder in any way? Or does it operate purely by diffing `schema/index.ts` against live DB introspection, independent of those files? If you find a file like `0010_academy_intro.sql` (or similar) that contains defensive logic working around `push`'s constraint-naming behavior, explain what that tells us about how fragile the current reconciliation between the two systems is.
+
+3. **Acknowledge the implication for Task #84, Step 3.** Your previous plan proposed gating `push` behind a human-confirmation step as the fix. Confirm or refute: does adding a confirmation gate to `push` change anything about its blindness to the migrations folder? Or does a guarded manual push still carry the same data-loss/divergence risk as the automated one — just triggered by a person instead of a merge?
+
+4. **Propose an architectural path to retire `push` in favor of a journaled migration pipeline.** Specifically address: what would it take to move this repo from `drizzle-kit push` to `drizzle-kit generate` + `drizzle-kit migrate`, using the existing `lib/db/migrations/` files as a starting point? Cover: how to reconcile the current live DB schema state with a fresh journal without data loss, what happens to the 10 existing hand-written migration files (adopted into the new journal vs. superseded), and whether this can be done incrementally alongside Task #84 or needs to be sequenced after it.
+
+Present your findings and a revised plan. Do not apply anything yet. Wait for explicit approval before writing or executing any part of this.

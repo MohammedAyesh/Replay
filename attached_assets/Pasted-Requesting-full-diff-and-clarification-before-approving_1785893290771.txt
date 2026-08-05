@@ -1,0 +1,19 @@
+Requesting full diff and clarification before approving Task #84 — the ORDER BY changes are out of scope and need justification before this ships.
+
+Rules of Engagement:
+- Do not apply, revert, or modify anything yet. This is a read-only request for information.
+- Do not run any DB commands, tests, or further code changes while answering this.
+
+Your Task — answer all four items explicitly, in writing:
+
+1. **Full diff on the four out-of-scope files.** `clips.ts`, `admin.ts`, `userClips.ts`, and `clipIntro.ts` were not in Task #84's declared file list, but the `ORDER BY id DESC` fix touched all four. Paste the actual diff for each — not a summary — so I can see exactly what changed in each file.
+
+2. **Is `clip_settings` meant to be a strict singleton table?** You said the test failure was caused by a "stale row (id=1) from a previous test run" being picked up instead of the freshly inserted row. Answer plainly: in production, is this table supposed to ever hold more than one row? Yes or no, and why.
+
+3. **Root cause of the stale row — not the symptom.** If the answer to #2 is that this table should hold exactly one row, then a second row existing at all means something isn't cleaning up between test runs — not that the app picked the wrong one. Explain specifically: why did that stale row survive from a previous test run? Is the test suite failing to truncate/rollback `clip_settings` between runs? Answer directly whether `ORDER BY id DESC` fixes the actual defect (test isolation) or just changes which orphan row wins when the leak happens.
+
+4. **Blast radius check — does this leak affect other tables?** If test runs are leaving orphan rows in `clip_settings`, that's evidence of a test-isolation problem in the suite generally, not something specific to this one table. Check whether other tables show the same pattern (orphan rows surviving across test runs) even if they haven't caused a visible test failure yet. List what you checked and what you found, even if the answer is "nothing else affected."
+
+5. **Confirm the corrected drift-check table list.** This was one of the two things that failed validation earlier. State explicitly which tables the drift check now covers, and confirm it's the complete current schema — not a subset that happened to fix the failing test.
+
+Answer all five items in writing. Do not mark anything complete or request approval again until I've reviewed the answers.

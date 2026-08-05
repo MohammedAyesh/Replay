@@ -1,0 +1,21 @@
+Approval & Directive — Bug #27 Remediation Sequence
+
+This is the authorized execution order. Follow it exactly, in this sequence, with no steps skipped or reordered.
+
+1. TASK #84 — APPROVED FOR EXECUTION.
+Proceed now with Task #84 as last revised: de-fang `scripts/post-merge.sh` to installation only, add the non-mutating drift check that warns but always exits 0, gate `push`/`push-force` as a deprecated manual-only escape hatch, and document the manual-only policy in `replit.md`. Execute this task in full.
+
+2. TASK #85 — HARD BLOCKED. DO NOT BEGIN.
+Task #85 (journaled migration adoption, baseline generation, or any related work) is explicitly blocked pending the requirements in items 3 and 4 below. Do not generate a baseline, do not run `drizzle-kit generate`, do not touch `lib/db/migrations/`, and do not mark anything as applied. This block stays in effect until you receive separate, explicit written approval to proceed — approval of #84 is not approval of #85.
+
+3. GIT SYNCHRONIZATION — MANDATORY BEFORE ANYTHING ELSE IN #85.
+Before Task #85 can even be scoped, resolve the discrepancy between your workspace and GitHub: you previously reported migration files 0011–0014 in `lib/db/migrations/`, but GitHub's `main` branch currently shows only 0001–0010. Confirm explicitly whether your workspace is ahead of GitHub. If it is, commit and push the full current state of the workspace to `main` now, so that everything you can see locally — including those four files — is reflected in git history. Report back the resulting commit hash and confirm GitHub and your workspace are identical before Task #85 is discussed further.
+
+4. BACKUP/RESTORE PROTOCOL — REQUIRED WRITTEN CONFIRMATION.
+You have not yet answered this despite being asked directly. Answer it now, explicitly, in writing, before any baseline generation or schema mutation of any kind is authorized:
+   a. Does a tested backup procedure currently exist for the database at the `DATABASE_URL` this workspace is pointed at?
+   b. If yes: describe the mechanism (what takes the backup, how often, where it's stored), and confirm a restore from it has actually been tested — not merely assumed to work.
+   c. If no: state that plainly. Do not describe a theoretical or partial mechanism as if it were a verified one.
+   d. Confirm what database (dev, staging, or the actual instance intended to hold real internal-testing data) `DATABASE_URL` currently resolves to in this workspace, right now.
+
+No baseline generation, no schema-altering command of any kind, and no further work on Task #85 is authorized until items 3 and 4 above are both completed and confirmed in writing. Execute item 1 now. Report back on items 3 and 4 before proceeding further.
