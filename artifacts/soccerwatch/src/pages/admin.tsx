@@ -29,7 +29,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -82,6 +82,22 @@ interface AdminField {
   isHidden: boolean;
   lastRecordedAt: string | null;
   bunnyGuid: string | null;
+  cameraId: string | null;
+}
+
+interface AdminMatch {
+  id: number;
+  fieldId: number;
+  fieldName: string;
+  fieldCameraId: string | null;
+  title: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  status: string;
+  autoStartLive: boolean;
+  liveStartedAt: string | null;
+  liveStoppedAt: string | null;
+  createdAt: string;
 }
 
 interface AdminRecording {
@@ -4036,6 +4052,241 @@ function RecordingsTab() {
   );
 }
 
+// ─── Matches Tab ──────────────────────────────────────────────────────────────
+
+function MatchesTab() {
+  const [matches, setMatches] = useState<AdminMatch[]>([]);
+  const [fields, setFields] = useState<AdminField[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  // Form state
+  const [formFieldId, setFormFieldId] = useState<number | "">("");
+  const [formTitle, setFormTitle] = useState("");
+  const [formStart, setFormStart] = useState("");
+  const [formEnd, setFormEnd] = useState("");
+  const [formAutoStart, setFormAutoStart] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [matchRows, fieldRows] = await Promise.all([
+        apiFetch("/admin/matches") as Promise<AdminMatch[]>,
+        apiFetch("/admin/fields") as Promise<AdminField[]>,
+      ]);
+      setMatches(matchRows);
+      // Only camera1 fields can host a match
+      setFields(fieldRows.filter((f) => f.cameraId === "camera1"));
+    } catch {
+      /* silent */
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const cancelMatch = async (match: AdminMatch) => {
+    if (!confirm(`Cancel "${match.title}"?`)) return;
+    try {
+      await apiFetch(`/admin/matches/${match.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "cancel" }),
+      });
+      setMatches((prev) =>
+        prev.map((m) => (m.id === match.id ? { ...m, status: "cancelled" } : m)),
+      );
+    } catch {
+      setError("Failed to cancel match.");
+    }
+  };
+
+  const createMatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formFieldId || !formTitle || !formStart || !formEnd) {
+      setError("All fields are required.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const row = await apiFetch("/admin/matches", {
+        method: "POST",
+        body: JSON.stringify({
+          fieldId: Number(formFieldId),
+          title: formTitle,
+          scheduledStart: new Date(formStart).toISOString(),
+          scheduledEnd: new Date(formEnd).toISOString(),
+          autoStartLive: formAutoStart,
+        }),
+      }) as AdminMatch;
+      // Reload to get fieldName populated
+      await load();
+      setSuccess(`Match "${row.title}" created.`);
+      setFormFieldId("");
+      setFormTitle("");
+      setFormStart("");
+      setFormEnd("");
+      setFormAutoStart(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg === "400" ? "VAR is only available on camera1 fields." : "Failed to create match.");
+    }
+    setSubmitting(false);
+  };
+
+  function statusBadge(status: string) {
+    const map: Record<string, string> = {
+      scheduled: "bg-zinc-800 text-zinc-300",
+      live: "bg-red-900/40 text-red-400 border border-red-800/50",
+      ended: "bg-zinc-900 text-zinc-500",
+      cancelled: "bg-zinc-900/40 text-zinc-600",
+    };
+    return (
+      <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-semibold", map[status] ?? map["scheduled"])}>
+        {status}
+      </span>
+    );
+  }
+
+  function fmtDt(iso: string) {
+    return new Date(iso).toLocaleString("en-GB", {
+      day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <p className="text-white text-sm font-semibold">Matches</p>
+        <p className="text-zinc-500 text-xs mt-0.5">
+          Schedule matches for camera1 fields. The live stream auto-starts at kickoff and auto-stops at full time.
+        </p>
+      </div>
+
+      {/* Create form */}
+      <form
+        onSubmit={createMatch}
+        className="bg-zinc-900 border border-zinc-700 rounded-2xl p-4 space-y-3"
+      >
+        <p className="text-zinc-300 text-sm font-semibold">New Match</p>
+
+        {error && (
+          <div className="px-3 py-2 rounded-xl bg-red-500/10 text-red-400 text-sm">{error}</div>
+        )}
+        {success && (
+          <div className="px-3 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 text-sm">{success}</div>
+        )}
+
+        <div className="space-y-2">
+          <select
+            value={formFieldId}
+            onChange={(e) => setFormFieldId(e.target.value === "" ? "" : Number(e.target.value))}
+            required
+            className="w-full bg-zinc-800 border border-zinc-600 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary appearance-none"
+          >
+            <option value="">Select field (camera1 only)…</option>
+            {fields.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+
+          <input
+            type="text"
+            value={formTitle}
+            onChange={(e) => setFormTitle(e.target.value)}
+            placeholder="Match title…"
+            required
+            className="w-full bg-zinc-800 border border-zinc-600 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-primary"
+          />
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-zinc-500 uppercase tracking-wide font-semibold block mb-1">Kickoff</label>
+              <input
+                type="datetime-local"
+                value={formStart}
+                onChange={(e) => setFormStart(e.target.value)}
+                required
+                className="w-full bg-zinc-800 border border-zinc-600 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-primary"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-zinc-500 uppercase tracking-wide font-semibold block mb-1">Full time</label>
+              <input
+                type="datetime-local"
+                value={formEnd}
+                onChange={(e) => setFormEnd(e.target.value)}
+                required
+                className="w-full bg-zinc-800 border border-zinc-600 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-primary"
+              />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={formAutoStart}
+              onChange={(e) => setFormAutoStart(e.target.checked)}
+              className="w-4 h-4 accent-primary rounded"
+            />
+            <span className="text-sm text-zinc-300">Auto-start live stream at kickoff</span>
+          </label>
+        </div>
+
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full py-2.5 rounded-xl bg-primary text-black text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          {submitting ? "Creating…" : "Create Match"}
+        </button>
+      </form>
+
+      {/* Match list */}
+      {loading ? (
+        <div className="text-center py-8 text-zinc-500">Loading…</div>
+      ) : matches.length === 0 ? (
+        <div className="text-center py-8 text-zinc-500 text-sm">No matches yet.</div>
+      ) : (
+        <div className="space-y-2">
+          {matches.map((match) => (
+            <div
+              key={match.id}
+              className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 flex items-start gap-3"
+            >
+              <div className="flex-1 min-w-0 space-y-0.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-white text-sm font-semibold truncate">{match.title}</p>
+                  {statusBadge(match.status)}
+                </div>
+                <p className="text-zinc-400 text-xs">{match.fieldName}</p>
+                <p className="text-zinc-500 text-xs tabular-nums">
+                  {fmtDt(match.scheduledStart)} → {fmtDt(match.scheduledEnd)}
+                </p>
+                {match.autoStartLive && (
+                  <p className="text-zinc-600 text-[10px]">Auto-start live ✓</p>
+                )}
+              </div>
+              {match.status !== "cancelled" && match.status !== "ended" && (
+                <button
+                  onClick={() => cancelMatch(match)}
+                  className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:bg-red-900/30 hover:text-red-400 transition-colors flex-shrink-0"
+                  title="Cancel match"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Admin Console ───────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
@@ -4046,6 +4297,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "academies", label: "Academies" },
   { id: "recordings", label: "Recordings" },
   { id: "live", label: "Live Control" },
+  { id: "matches", label: "Matches" },
 ];
 
 export default function Admin() {
@@ -4099,6 +4351,7 @@ export default function Admin() {
         {tab === "academies" && <AcademiesTab />}
         {tab === "recordings" && <RecordingsTab />}
         {tab === "live" && <LiveTab />}
+        {tab === "matches" && <MatchesTab />}
       </div>
     </div>
   );

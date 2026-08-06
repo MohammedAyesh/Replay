@@ -81,6 +81,10 @@ const strings = {
       videoComingSoon: "Video coming soon",
       court: "court",
       courts: "courts",
+      tabs: {
+        recordings: "Recordings",
+        var: "VAR",
+      },
     },
     player: {
       loading: "Loading clip...",
@@ -283,6 +287,10 @@ const strings = {
       videoComingSoon: "الفيديو قريبًا",
       court: "ملعب",
       courts: "ملاعب",
+      tabs: {
+        recordings: "التسجيلات",
+        var: "حكم الفيديو",
+      },
     },
     player: {
       loading: "جارٍ تحميل المقطع...",

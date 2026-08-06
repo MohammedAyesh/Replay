@@ -12,8 +12,9 @@ import {
   getGetBunnyCollectionsQueryKey,
   BunnyVideo,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Maximize, Minimize, Video, Clock } from "lucide-react";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Maximize, Minimize, Video, Clock, RotateCcw } from "lucide-react";
+import { HlsPlayer } from "@/components/HlsPlayer";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -278,6 +279,25 @@ function RecordingRow({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+interface MatchInfo {
+  id: number;
+  fieldId: number;
+  title: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  status: string;
+  autoStartLive: boolean;
+  liveStartedAt: string | null;
+  liveStoppedAt: string | null;
+  createdAt: string;
+}
+
+interface CurrentMatchResponse {
+  match: MatchInfo | null;
+  cameraId: string | null;
+  varEnabled: boolean;
+}
+
 export default function FieldDetail() {
   const [, params] = useRoute("/fields/:id");
   const guid = params?.id ?? "";
@@ -300,6 +320,53 @@ export default function FieldDetail() {
     : undefined;
   const { data: videos, isLoading: videosLoading } = useGetBunnyCollectionVideos(guid);
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
+
+  // ── VAR / match state ──────────────────────────────────────────────────────
+  const [currentTab, setCurrentTab] = useState<"recordings" | "var">("recordings");
+  const varVideoRef = useRef<HTMLVideoElement>(null);
+
+  // Poll the current-match endpoint every 30 s so the VAR tab appears at
+  // kickoff without requiring a page reload.
+  const { data: matchData } = useQuery<CurrentMatchResponse>({
+    queryKey: ["matches-current", guid],
+    queryFn: async () => {
+      const res = await fetch(
+        `${basePath}/api/matches/current?collectionGuid=${encodeURIComponent(guid)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+    enabled: !!guid,
+  });
+
+  const varEnabled = matchData?.varEnabled ?? false;
+
+  // Reset to recordings tab when the match ends (varEnabled → false)
+  useEffect(() => {
+    if (!varEnabled) setCurrentTab("recordings");
+  }, [varEnabled]);
+
+  // ── Review-control helpers ─────────────────────────────────────────────────
+  const seekBy = (delta: number) => {
+    const el = varVideoRef.current;
+    if (!el) return;
+    el.currentTime = Math.max(0, el.currentTime + delta);
+  };
+  const setRate = (rate: number) => {
+    const el = varVideoRef.current;
+    if (!el) return;
+    el.playbackRate = rate;
+  };
+  const goLiveVar = () => {
+    const el = varVideoRef.current;
+    if (!el || !el.seekable.length) return;
+    el.currentTime = el.seekable.end(el.seekable.length - 1) - 1;
+    el.playbackRate = 1;
+    el.play().catch(() => {});
+  };
 
   // Group videos by ISO date
   const videosByDate = useMemo(() => {
@@ -396,94 +463,195 @@ export default function FieldDetail() {
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/30 to-black/70" />
       </motion.div>
 
-      <div className="flex-1 overflow-y-auto pb-24">
-        {videosLoading ? (
-          <div className="p-4 space-y-3">
-            <div className="h-52 bg-muted rounded-2xl animate-pulse" />
-            <div className="h-16 bg-muted rounded-xl animate-pulse" />
-            <div className="h-16 bg-muted rounded-xl animate-pulse" />
-          </div>
-        ) : !videos || videos.length === 0 || markedDates.size === 0 ? (
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0, transition: { delay: 0.1 } }}
-            className="flex flex-col items-center justify-center py-20 px-6 text-center">
-            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-              <Play className="w-6 h-6 text-primary" />
-            </div>
-            <h3 className="font-semibold text-foreground mb-1">{t.fieldDetail.noRecordingsTitle}</h3>
-            <p className="text-sm text-muted-foreground">{t.fieldDetail.noRecordingsDesc}</p>
-          </motion.div>
-        ) : (
-          <>
-            {/* Calendar */}
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0, transition: { duration: 0.3 } }}
-              className="bg-card border-b border-border"
-            >
-              <MiniCalendar
-                year={calYear}
-                month={calMonth}
-                markedDates={markedDates}
-                selectedDate={selectedDate}
-                onSelect={setSelectedDate}
-                onPrev={prevMonth}
-                onNext={nextMonth}
-              />
-            </motion.div>
-
-            {/* Date label + recordings */}
-            <AnimatePresence mode="wait">
-              {selectedDate && selectedVideos.length > 0 ? (
-                <motion.div
-                  key={selectedDate}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0, transition: { duration: 0.25 } }}
-                  exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                >
-                  <div className="px-4 pt-4 pb-2">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      {formatShortDate(selectedDate)}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {selectedVideos.length} {selectedVideos.length === 1 ? "recording" : "recordings"}
-                    </p>
-                  </div>
-
-                  <div className="divide-y divide-border">
-                    {selectedVideos.map(({ video, meta }, i) => (
-                      <RecordingRow
-                        key={video.guid}
-                        video={video}
-                        meta={meta}
-                        index={i}
-                        onPlay={() => setActiveVideo(video)}
-                      />
-                    ))}
-                  </div>
-                </motion.div>
-              ) : selectedDate ? (
-                <motion.div
-                  key="empty"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-center py-10 text-muted-foreground text-sm"
-                >
-                  No recordings on this date.
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="pick"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-center py-10 text-muted-foreground text-sm"
-                >
-                  Tap a highlighted date to see recordings.
-                </motion.div>
+      {/* Tab strip — only rendered when a live match is active on camera1 */}
+      {varEnabled && (
+        <div className="flex border-b border-border bg-card shrink-0">
+          {(["recordings", "var"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setCurrentTab(tab)}
+              className={cn(
+                "flex-1 py-3 text-sm font-semibold transition-colors relative",
+                currentTab === tab
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-foreground",
               )}
-            </AnimatePresence>
-          </>
-        )}
-      </div>
+            >
+              {tab === "recordings" ? t.fieldDetail.tabs.recordings : t.fieldDetail.tabs.var}
+              {currentTab === tab && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Recordings tab (default / always shown when no live match) ──────── */}
+      {(!varEnabled || currentTab === "recordings") && (
+        <div className="flex-1 overflow-y-auto pb-24">
+          {videosLoading ? (
+            <div className="p-4 space-y-3">
+              <div className="h-52 bg-muted rounded-2xl animate-pulse" />
+              <div className="h-16 bg-muted rounded-xl animate-pulse" />
+              <div className="h-16 bg-muted rounded-xl animate-pulse" />
+            </div>
+          ) : !videos || videos.length === 0 || markedDates.size === 0 ? (
+            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0, transition: { delay: 0.1 } }}
+              className="flex flex-col items-center justify-center py-20 px-6 text-center">
+              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                <Play className="w-6 h-6 text-primary" />
+              </div>
+              <h3 className="font-semibold text-foreground mb-1">{t.fieldDetail.noRecordingsTitle}</h3>
+              <p className="text-sm text-muted-foreground">{t.fieldDetail.noRecordingsDesc}</p>
+            </motion.div>
+          ) : (
+            <>
+              {/* Calendar */}
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: 0.3 } }}
+                className="bg-card border-b border-border"
+              >
+                <MiniCalendar
+                  year={calYear}
+                  month={calMonth}
+                  markedDates={markedDates}
+                  selectedDate={selectedDate}
+                  onSelect={setSelectedDate}
+                  onPrev={prevMonth}
+                  onNext={nextMonth}
+                />
+              </motion.div>
+
+              {/* Date label + recordings */}
+              <AnimatePresence mode="wait">
+                {selectedDate && selectedVideos.length > 0 ? (
+                  <motion.div
+                    key={selectedDate}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0, transition: { duration: 0.25 } }}
+                    exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                  >
+                    <div className="px-4 pt-4 pb-2">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        {formatShortDate(selectedDate)}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {selectedVideos.length} {selectedVideos.length === 1 ? "recording" : "recordings"}
+                      </p>
+                    </div>
+
+                    <div className="divide-y divide-border">
+                      {selectedVideos.map(({ video, meta }, i) => (
+                        <RecordingRow
+                          key={video.guid}
+                          video={video}
+                          meta={meta}
+                          index={i}
+                          onPlay={() => setActiveVideo(video)}
+                        />
+                      ))}
+                    </div>
+                  </motion.div>
+                ) : selectedDate ? (
+                  <motion.div
+                    key="empty"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="text-center py-10 text-muted-foreground text-sm"
+                  >
+                    No recordings on this date.
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="pick"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="text-center py-10 text-muted-foreground text-sm"
+                  >
+                    Tap a highlighted date to see recordings.
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── VAR tab ──────────────────────────────────────────────────────────── */}
+      {varEnabled && currentTab === "var" && (
+        <div className="flex-1 overflow-y-auto pb-24 px-4 py-4 space-y-4">
+          {/* Match title + LIVE badge */}
+          {matchData?.match && (
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-foreground text-base truncate flex-1">
+                {matchData.match.title}
+              </h2>
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 text-xs font-bold border border-red-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                LIVE
+              </span>
+            </div>
+          )}
+
+          {/* DVR player — 5-minute window, retries automatically when stream is down */}
+          <HlsPlayer
+            ref={varVideoRef}
+            url={`${basePath}/api/live/camera1/index.m3u8`}
+            label="VAR"
+            windowSeconds={300}
+            retryOnNetworkError
+          />
+
+          {/* Review controls */}
+          <div className="bg-card border border-border rounded-2xl px-4 py-3 space-y-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Review Controls</p>
+
+            {/* Jump + frame step */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => seekBy(-30)}
+                className="flex-1 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-muted/70 transition-colors"
+              >
+                −30s
+              </button>
+              <button
+                onClick={() => seekBy(-10)}
+                className="flex-1 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-muted/70 transition-colors"
+              >
+                −10s
+              </button>
+              <button
+                onClick={() => seekBy(-0.05)}
+                title="Step back one frame (20 fps)"
+                className="flex-1 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-muted/70 transition-colors"
+              >
+                −1f
+              </button>
+            </div>
+
+            {/* Playback rate + Go live */}
+            <div className="flex items-center gap-2">
+              {([0.25, 0.5, 1] as const).map((rate) => (
+                <button
+                  key={rate}
+                  onClick={() => setRate(rate)}
+                  className="flex-1 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-muted/70 transition-colors"
+                >
+                  {rate === 1 ? "1×" : `${rate}×`}
+                </button>
+              ))}
+              <button
+                onClick={goLiveVar}
+                className="flex-1 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-semibold hover:bg-red-500/20 transition-colors flex items-center justify-center gap-1"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Live
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {activeVideo && <VideoPlayer video={activeVideo} onClose={() => setActiveVideo(null)} academyId={academyId} />}

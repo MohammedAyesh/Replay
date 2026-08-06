@@ -441,6 +441,7 @@ router.get("/admin/fields", async (req, res): Promise<void> => {
     isHidden: f.isHidden,
     clipsVisible: f.clipsVisible,
     lastRecordedAt: f.lastRecordedAt?.toISOString() ?? null,
+    cameraId: f.cameraId ?? null,
   })));
 });
 

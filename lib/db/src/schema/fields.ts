@@ -16,6 +16,7 @@ export const fieldsTable = pgTable("fields", {
   clipsVisible: boolean("clips_visible").notNull().default(false),
   lastRecordedAt: timestamp("last_recorded_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  cameraId: text("camera_id"),
 });
 
 export const insertFieldSchema = createInsertSchema(fieldsTable).omit({ id: true, createdAt: true });
