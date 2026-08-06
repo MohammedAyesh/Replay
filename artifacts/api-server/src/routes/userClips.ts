@@ -137,6 +137,70 @@ async function updateClipScore(clipId: number): Promise<number> {
   return newScore;
 }
 
+/**
+ * Kick off a background FFmpeg render → Bunny Storage upload for the given
+ * clip row.  Used both by the explicit POST /user-clips/:id/export endpoint
+ * and by the clip-creation handler to pre-render immediately so the file is
+ * ready (or close to it) by the time the user taps Download.
+ *
+ * Callers must:
+ *   1. Guard on !isLiveVideoId and isBunnyStorageConfigured() before calling.
+ *   2. Add clipId to inFlight and mark exportStatus "pending" in the DB *before*
+ *      calling, so polls and duplicate requests see the correct state.
+ *   3. Not await this — it is intentionally fire-and-forget via withRenderSlot.
+ */
+function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTable.$inferSelect) {
+  const clipId = clip.id;
+  const startTime = parseFloat(clip.startTime);
+  const endTime = parseFloat(clip.endTime);
+  const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
+  const videoId = clip.videoId;
+
+  void withRenderSlot(async () => {
+    let tmpPath: string | null = null;
+    try {
+      logger.info({ clipId, startTime, endTime }, "Starting background clip export");
+
+      const { duration: totalDuration } = await getBunnyVideoInfo(videoId);
+      logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
+
+      const videoUrl = getBunnyPlaybackUrl(videoId);
+      const referer = `https://${new URL(videoUrl).host}/`;
+      logger.info({ clipId, videoUrl }, "Using HLS URL for FFmpeg input");
+
+      let introUrl: string | undefined;
+      let introReferer: string | undefined;
+      const resolvedIntro = await resolveIntroVideoUrl(clip.academyId);
+      if (resolvedIntro) {
+        try {
+          introReferer = `https://${new URL(resolvedIntro).host}/`;
+          introUrl = resolvedIntro;
+          logger.info({ clipId, academyId: clip.academyId, introUrl }, "Prepending intro to export");
+        } catch {
+          logger.warn({ clipId, resolvedIntro }, "Intro URL is not absolute — exporting without it");
+        }
+      }
+
+      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer, introUrl, introReferer });
+      const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
+      await db
+        .update(userClipsTable)
+        .set({ exportStatus: "done", exportedUrl })
+        .where(eq(userClipsTable.id, clipId));
+      logger.info({ clipId, exportedUrl }, "Clip export complete");
+    } catch (err) {
+      logger.error({ err, clipId }, "Background clip export failed");
+      await db
+        .update(userClipsTable)
+        .set({ exportStatus: "error" })
+        .where(eq(userClipsTable.id, clipId));
+    } finally {
+      inFlight.delete(clipId);
+      if (tmpPath) cleanupTempFile(tmpPath);
+    }
+  });
+}
+
 router.post("/user-clips", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) {
@@ -198,6 +262,20 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   // treats null as "start the clip immediately", so no buffering delay occurs.
   const introVideoUrl = null;
 
+  // Pre-render the clip immediately so it's ready (or nearly ready) by the
+  // time the user navigates to My Clips and taps Download.
+  let initialExportStatus: string | null = row.exportStatus ?? null;
+  if (!isLive && isBunnyStorageConfigured() && !inFlight.has(row.id)) {
+    inFlight.add(row.id);
+    await db
+      .update(userClipsTable)
+      .set({ exportStatus: "pending", exportedUrl: null })
+      .where(eq(userClipsTable.id, row.id));
+    initialExportStatus = "pending";
+    startBackgroundExport(row);
+    logger.info({ clipId: row.id }, "Auto-triggered clip export on creation");
+  }
+
   res.status(201).json(
     CreateUserClipResponse.parse({
       id: row.id,
@@ -216,7 +294,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       thumbnailTime,
       thumbnailUrl,
       playbackUrl,
-      exportStatus: row.exportStatus ?? null,
+      exportStatus: initialExportStatus,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
@@ -713,68 +791,7 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     .where(eq(userClipsTable.id, clipId));
   res.json({ status: "pending" });
 
-  // Fire-and-forget: render → upload → update DB
-  const startTime = parseFloat(clip.startTime);
-  const endTime = parseFloat(clip.endTime);
-  const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
-  const videoId = clip.videoId;
-
-  void withRenderSlot(async () => {
-    let tmpPath: string | null = null;
-    try {
-      logger.info({ clipId, startTime, endTime }, "Starting background clip export");
-
-      // Get duration from Bunny Stream API — avoids ffprobe needing CDN access
-      const { duration: totalDuration } = await getBunnyVideoInfo(videoId);
-      logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
-
-      // Use HLS URL for FFmpeg — pass CDN origin as Referer so Bunny CDN
-      // accepts the server-side request (CDN blocks requests without it).
-      const videoUrl = getBunnyPlaybackUrl(videoId);
-      const referer = `https://${new URL(videoUrl).host}/`;
-      logger.info({ clipId, videoUrl }, "Using HLS URL for FFmpeg input");
-
-      // renderClip concatenates the intro itself (see withIntro in
-      // ffmpegExport): it normalises the intro to the clip's own output
-      // dimensions and falls back to exporting without one if the intro is
-      // unusable. This replaces the old second-pass approach, which hardcoded
-      // 1920x1080 and so stretched every 9:16 clip.
-      // A broken intro must never fail the user's own clip — that is the whole
-      // contract withIntro is built around. new URL() throws on a stored value
-      // that is not absolute (BUNNY_STORAGE_CDN_URL is accepted as any non-empty
-      // string), and this line sits inside the export job's try, so an
-      // unguarded parse would mark the export "error" instead.
-      let introUrl: string | undefined;
-      let introReferer: string | undefined;
-      const resolvedIntro = await resolveIntroVideoUrl(clip.academyId);
-      if (resolvedIntro) {
-        try {
-          introReferer = `https://${new URL(resolvedIntro).host}/`;
-          introUrl = resolvedIntro;
-          logger.info({ clipId, academyId: clip.academyId, introUrl }, "Prepending intro to export");
-        } catch {
-          logger.warn({ clipId, resolvedIntro }, "Intro URL is not absolute — exporting without it");
-        }
-      }
-
-      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer, introUrl, introReferer });
-      const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
-      await db
-        .update(userClipsTable)
-        .set({ exportStatus: "done", exportedUrl })
-        .where(eq(userClipsTable.id, clipId));
-      logger.info({ clipId, exportedUrl }, "Clip export complete");
-    } catch (err) {
-      logger.error({ err, clipId }, "Background clip export failed");
-      await db
-        .update(userClipsTable)
-        .set({ exportStatus: "error" })
-        .where(eq(userClipsTable.id, clipId));
-    } finally {
-      inFlight.delete(clipId);
-      if (tmpPath) cleanupTempFile(tmpPath);
-    }
-  });
+  startBackgroundExport(clip);
 });
 
 /**
