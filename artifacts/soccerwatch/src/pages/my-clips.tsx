@@ -483,52 +483,30 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   }, [clip, user?.id, onDownloaded]);
 
   /**
-   * Fetch the server-rendered MP4 through our proxy and deliver to the device.
-   * The proxy avoids CORS issues and sets proper Content-Disposition headers.
+   * Deliver the server-rendered MP4 to the device via a native anchor download.
+   *
+   * The old approach fetched the entire file as a JS Blob before handing it to
+   * the browser. A rendered clip is easily 200–600 MB; buffering that in the JS
+   * heap OOM-killed the tab on mobile and silently failed on slower connections.
+   *
+   * A hidden <a download> lets the browser stream the bytes straight to disk
+   * through its own download manager — no JS memory involved, no timeout risk.
+   * The server already sets Content-Disposition: attachment so the browser saves
+   * rather than plays the file. Cookies are sent automatically by navigation, so
+   * session auth still works without credentials: "include".
    */
-  const deliverViaProxy = useCallback(async () => {
+  const deliverViaProxy = useCallback(() => {
     const filename = `${clip.title || "clip"}.mp4`;
-    const res = await fetch(`/api/user-clips/${clip.id}/download`, { credentials: "include" });
-    if (!res.ok) throw new Error("Proxy download failed");
-    const blob = await res.blob();
-
-    // Hand the file to the user FIRST. The local-cache write below can reject
-    // (QuotaExceededError on a nearly-full device is the common one), and doing
-    // it first meant a several-hundred-megabyte download that had already
-    // succeeded was thrown away with a bare "Export failed".
-    const file = new File([blob], filename, { type: "video/mp4" });
-    const nav = navigator as Navigator & { canShare?: (data: { files: File[] }) => boolean };
-    if (nav.canShare?.({ files: [file] })) {
-      try { await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file], title: clip.title }); }
-      catch { /* dismissed */ }
-    } else {
-      triggerDownload(blob, filename);
-    }
-
-    // Then cache it locally so it appears in the Saved tab. Best-effort.
-    try {
-      await saveLocalClip({
-        clipId: clip.id,
-        userId: user?.id ?? 0,
-        title: clip.title,
-        blob,
-        mimeType: "video/mp4",
-        startTime: clip.startTime,
-        endTime: clip.endTime,
-        cropPath: (clip.cropPath ?? []).map((k) => ({ t: k.t, x: k.x, y: k.y, w: k.w, h: k.h })),
-        aspectRatio: clip.aspectRatio ?? "16:9",
-        downloadedAt: new Date().toISOString(),
-        playbackUrl: clip.playbackUrl ?? null,
-      });
-      onDownloaded?.();
-      toast({ title: "Saved!", description: "Clip saved to your device." });
-    } catch {
-      toast({
-        title: "Downloaded",
-        description: "Not enough space to keep a copy in the Saved tab.",
-      });
-    }
-  }, [clip, user?.id, toast, onDownloaded]);
+    const a = document.createElement("a");
+    a.href = `/api/user-clips/${clip.id}/download`;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast({ title: t.export.done, description: "Your download has started." });
+    onDownloaded?.();
+  }, [clip, toast, t, onDownloaded]);
 
   const handleExport = useCallback(async () => {
     if (exportState === "polling") return;
