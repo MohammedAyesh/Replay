@@ -1,0 +1,77 @@
+Unified requirements update for #83 — mobile download/share fallback.
+
+This consolidates the iOS presentation requirement with the cross-platform
+gaps identified in review. All of the following must be addressed together,
+not as separate patches — they interact with each other in the same code path.
+
+BACKGROUND: Two reference screenshots were provided showing the exact target
+iOS behavior — native video preview (Safari's inline QuickLook-style player)
+leading to the native OS share sheet, which shows "Save Video" (Camera Roll)
+and "Save to Files" as default entries. These are NOT custom UI to build —
+they're what iOS provides automatically for correctly-typed video content
+via the right native mechanism. The fix should invoke native behavior
+correctly, not recreate it.
+
+REQUIRED, all four together:
+
+1. SHARE OUTCOME MAPPING — no false success toasts.
+   navigator.share() rejects with AbortError on user cancellation/dismissal.
+   This must be distinguished from every other rejection type. Only a
+   fulfilled share promise, or a confirmed fallback download actually
+   firing, may trigger a "Saved!" toast. AbortError = silent or neutral
+   message, no success toast, no error toast either — it's not a failure,
+   it's a cancellation. Apply identically across the CDN ("Created" tab)
+   and IndexedDB ("Saved" tab) paths.
+
+2. IN-APP WEBVIEW DETECTION — explicit "Open in Browser" routing.
+   Detect when the page is running inside a webview (Instagram, TikTok,
+   Facebook, and similar in-app browsers) before attempting any share or
+   download logic. These environments commonly block both popups and file
+   downloads outright, with no catchable error — the fallback chain below
+   will silently do nothing there. When detected, skip the fallback chain
+   entirely and show an explicit "Open in Safari/Chrome to download" message
+   instead of attempting a flow that cannot succeed.
+
+3. POPUP-BLOCKER-SAFE FALLBACK ORDERING.
+   Any window.open()/new-tab fallback must fire synchronously within the
+   original tap handler — not after an awaited navigator.share() rejection.
+   iOS Safari and most mobile browsers block a new-tab call that happens
+   after an intervening await, even one triggered by the same user gesture.
+   If share is attempted first, either (a) pre-open a blank tab synchronously
+   on tap and navigate it once the outcome is known, or (b) confirm through
+   actual device testing that the deferred window.open() still succeeds on
+   current iOS Safari and Android Chrome — don't assume it does.
+
+   For the iOS-specific target behavior: confirm which server response
+   actually produces the native inline preview shown in the screenshots.
+   Content-Disposition: attachment likely produces a different, more
+   limited iOS download banner, not the QuickLook preview + share sheet
+   pictured. Content-Type: video/mp4 without a forced attachment header is
+   more likely to match — verify this against a real device before
+   implementing, don't assume the two produce the same outcome.
+
+   For anchor-download (<a download>) as a fallback step: this doesn't throw
+   a catchable error on iOS when it silently fails or opens inline instead
+   of downloading. Don't rely on detecting its failure to cascade to the
+   next step — branch upfront by detected environment (iOS Safari standalone
+   PWA vs. regular tab vs. Android vs. desktop) rather than reactively
+   trying each step and hoping to observe failure.
+
+4. ANDROID CHROME — verify, don't assume it inherits the iOS fix.
+   Android Chrome's native download behavior differs from iOS — it
+   generally handles direct downloads and Web Share API more permissively,
+   but this must be confirmed on a real device, not assumed from the iOS
+   fix working. Explicitly test and report: does share-with-files work,
+   does the anchor-download fallback work if share is unavailable, and does
+   AbortError cancellation behave the same way (some Android WebView/Chrome
+   versions differ in what they throw on dismissal).
+
+Also carry over from the original scope: both the CDN and IndexedDB blob
+paths need short-lived, promptly-revoked object URLs to avoid memory
+pressure — this applies to both, not just the IndexedDB path as originally
+scoped.
+
+Before marking ready for review, report back explicitly: which of the four
+requirements above were verified on a real device (not just reasoned about),
+and which server response header strategy was confirmed to produce the
+screenshotted iOS behavior.
