@@ -170,7 +170,15 @@ function NewsCard({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const text = post[locale];
+  const text = {
+    tag: post.tag[locale],
+    date: post.date[locale],
+    readTime: post.readTime[locale],
+    title: post.title[locale],
+    excerpt: post.excerpt[locale],
+    body: post.body[locale],
+    facts: post.facts[locale],
+  };
 
   return (
     <motion.article
