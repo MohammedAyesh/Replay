@@ -1,0 +1,42 @@
+SCOPE: READ-ONLY INVESTIGATION. Do not edit, create, or delete any file.
+Do not fix anything. Report findings only.
+
+I have two problems with the Fields cards and I need the cause before deciding
+on a fix.
+
+PROBLEM A — Fields cards take several seconds to appear. The Academies list,
+which uses a different data source, appears immediately.
+
+PROBLEM B — Fields cards show no images. The field-pattern placeholder renders
+instead, even for collections that have many videos (cam1 has 128, cam2 has 97).
+
+Please investigate and report:
+
+1. Trace the Fields data path end to end: which frontend hook fetches the
+   collections, which API route serves it, and what that route does. Does it
+   call the Bunny API on every request, or is anything cached? Is there a
+   staleTime or any client-side caching on the query? Roughly how long does
+   that request take?
+
+2. For previewImageUrl specifically: print the ACTUAL value of
+   previewImageUrl for each collection currently returned by that route — the
+   real strings, not a description. If any are null, say which and why.
+
+3. If previewImageUrl values exist, what hostname do they point at? I need to
+   know whether they point at storage.bunnycdn.com (the storage origin, which
+   requires an AccessKey header that a browser cannot send) or at a public pull
+   zone hostname. Report the exact hostname.
+
+4. Check whether the app has any image-proxy route on the server that serves
+   Bunny images through the API. If one exists, give me its path and tell me
+   which pages currently use it.
+
+5. Compare against a working case: the My Clips "Created" tab reportedly shows
+   thumbnails correctly while "Saved" does not. Where does each of those get
+   its thumbnail URL, and how do the two differ?
+
+6. Tell me whether previewImageUrl is even being requested — confirm whether
+   the Bunny collections call includes includeThumbnails=true.
+
+Report what you find. Do not propose or apply a fix, and do not change any
+file. If something is unclear, say so rather than guessing.
