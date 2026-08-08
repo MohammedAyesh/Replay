@@ -330,9 +330,9 @@ function EditProfileDialog({
   const rtl = locale === "ar";
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-4 bg-zinc-950">
+      <div className="flex items-center justify-between px-4 py-4 bg-background">
         <button
           onClick={onClose}
           className="flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
@@ -349,19 +349,19 @@ function EditProfileDialog({
         <p className="text-muted-foreground text-sm">{t.editProfileDesc}</p>
 
         <div className="space-y-1.5">
-          <Label htmlFor="edit-name" className="text-sm font-medium">{t.fullName}</Label>
+          <Label htmlFor="edit-name" className="text-sm font-medium text-foreground">{t.fullName}</Label>
           <Input
             id="edit-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t.fullName}
             autoComplete="name"
-            className="h-12"
+            className="h-12 border-border bg-card text-foreground"
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="edit-phone" className="text-sm font-medium">{t.phoneNumber}</Label>
+          <Label htmlFor="edit-phone" className="text-sm font-medium text-foreground">{t.phoneNumber}</Label>
           <Input
             id="edit-phone"
             type="tel"
@@ -369,17 +369,17 @@ function EditProfileDialog({
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+1 555 000 0000"
             autoComplete="tel"
-            className="h-12"
+            className="h-12 border-border bg-card text-foreground"
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="edit-position" className="text-sm font-medium">{t.preferredPosition}</Label>
+          <Label htmlFor="edit-position" className="text-sm font-medium text-foreground">{t.preferredPosition}</Label>
           <select
             id="edit-position"
             value={position}
             onChange={(e) => setPosition(e.target.value)}
-            className="w-full h-12 rounded-md border border-input bg-transparent px-3 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring text-base appearance-none"
+            className="w-full h-12 rounded-md border border-border bg-card px-3 text-base text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring appearance-none"
           >
             <option value="" disabled>{t.selectPosition}</option>
             {POSITIONS.map((p) => (
@@ -389,7 +389,7 @@ function EditProfileDialog({
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="edit-age" className="text-sm font-medium">{t.age}</Label>
+          <Label htmlFor="edit-age" className="text-sm font-medium text-foreground">{t.age}</Label>
           <Input
             id="edit-age"
             type="number"
@@ -398,17 +398,17 @@ function EditProfileDialog({
             value={age}
             onChange={(e) => setAge(e.target.value)}
             placeholder="25"
-            className="h-12"
+            className="h-12 border-border bg-card text-foreground"
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="edit-gender" className="text-sm font-medium">{t.gender}</Label>
+          <Label htmlFor="edit-gender" className="text-sm font-medium text-foreground">{t.gender}</Label>
           <select
             id="edit-gender"
             value={gender}
             onChange={(e) => setGender(e.target.value)}
-            className="w-full h-12 rounded-md border border-input bg-transparent px-3 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring text-base appearance-none"
+            className="w-full h-12 rounded-md border border-border bg-card px-3 text-base text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring appearance-none"
           >
             <option value="" disabled>{t.selectGender}</option>
             {GENDERS.map((g) => (
@@ -421,7 +421,7 @@ function EditProfileDialog({
           <Button
             type="submit"
             disabled={!allFilled || isSaving}
-            className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-6 rounded-xl text-base disabled:opacity-50"
+            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold py-6 rounded-xl text-base disabled:opacity-50"
           >
             {isSaving ? t.saving : t.saveChanges}
           </Button>
