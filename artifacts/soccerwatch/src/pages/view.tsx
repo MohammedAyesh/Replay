@@ -24,7 +24,7 @@ export default function View() {
                 : "text-muted-foreground"
             }`}
           >
-            {t.academies.title}
+            {t.nav.academies}
           </button>
           <button
             onClick={() => setSection("fields")}
@@ -34,7 +34,7 @@ export default function View() {
                 : "text-muted-foreground"
             }`}
           >
-            {t.fields.title}
+            {t.nav.fields}
           </button>
         </div>
       </div>
