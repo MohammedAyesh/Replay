@@ -1,0 +1,160 @@
+SCOPE: artifacts/soccerwatch/src/pages/home.tsx ONLY.
+
+Do not modify layout.tsx, index.css, App.tsx, view.tsx, the i18n file, or any
+other file. Do not touch the admin panel.
+
+Attached: two screenshots of the target design — a news card collapsed and a
+news card expanded. Match these closely.
+
+IGNORE the navigation bar in the screenshots. Ignore the "Live now" strip and
+any live cards — those are NOT part of this task.
+
+--- A. REPLACE THE PAGE CONTENT ---
+
+Home currently has a rotating banner carousel and a "fields near me"
+geolocation section with a field card grid. REMOVE BOTH. Home becomes a news
+feed and nothing else.
+
+Delete any queries, state, effects and geolocation code that existed ONLY to
+serve those two sections. Do not delete anything shared with another page. Do
+not remove any API endpoint or any admin functionality — only this page's use
+of them.
+
+--- B. THE NEWS FEED ---
+
+Section heading: "News & updates" in a small semibold line with a thin
+horizontal rule extending from it, as in the screenshot.
+
+Store the posts as a plain TypeScript array constant at the top of the file.
+No database, no API call, no new file. Each post object has:
+  id, tag, date, readTime, title, excerpt, body (array of strings),
+  facts (array of short strings), image (string or null)
+
+Create exactly FOUR posts promoting the app. Use this content verbatim:
+
+POST 1
+  tag: "FEATURE"
+  date: "28 JUL"   readTime: "3 MIN READ"
+  title: "Every match you play, recorded and ready"
+  excerpt: "Cameras run all evening at partner pitches. Your game is waiting
+    for you before you reach the car park."
+  body: [
+    "Replay records continuously at every partner pitch. There is nothing to
+     set up, nothing to press, and nobody to ask — you play, and the footage
+     is there.",
+    "Open the app, pick your pitch and pick the date. Every recorded hour is
+     listed and ready to watch from any phone."
+  ]
+  facts: ["No setup", "Full match", "Watch anywhere"]
+
+POST 2
+  tag: "CLIPS"
+  date: "24 JUL"   readTime: "2 MIN READ"
+  title: "Cut your own highlights in seconds"
+  excerpt: "Found the goal? Trim it, frame it, and send it to the group chat
+    before anyone has stopped arguing about it."
+  body: [
+    "Scrub to the moment, drag the handles, and save. Your clip lives in My
+     Clips and downloads as a normal video file.",
+    "Pan and zoom while you cut, so the ball stays in frame instead of lost
+     somewhere in a wide shot of the pitch."
+  ]
+  facts: ["Trim and save", "Pan and zoom", "Share instantly"]
+
+POST 3
+  tag: "ACADEMIES"
+  date: "21 JUL"   readTime: "2 MIN READ"
+  title: "Parents can watch from anywhere"
+  excerpt: "Training sessions and academy matches stream live, and stay
+    available afterwards for the ones you miss."
+  body: [
+    "Partner academies stream their sessions straight to the app. Family who
+     cannot make it to the pitch can watch from home, or from another country.",
+    "Every session is kept afterwards, so a missed evening is only a tap away."
+  ]
+  facts: ["Live streams", "Kept afterwards", "Any device"]
+
+POST 4
+  tag: "FIELDS"
+  date: "18 JUL"   readTime: "2 MIN READ"
+  title: "More pitches joining across Amman"
+  excerpt: "New fields are coming online each month, each with cameras covering
+    the full pitch."
+  body: [
+    "Every new partner pitch arrives already wired — cameras mounted, angle
+     covering the whole surface, recording from the first booking.",
+    "If you play somewhere that is not listed yet, tell the field owner. Getting
+     set up takes one visit."
+  ]
+  facts: ["Growing weekly", "Full pitch view", "Amman and beyond"]
+
+Set image: null on all four for now, so they render the placeholder described
+below. I will add real image URLs to this array later.
+
+--- C. CARD STYLING ---
+
+Each post is one card: border-radius 22px, card background, 1px border,
+contents clipped, gap between cards.
+
+Top of card — image area, aspect-ratio 16/9:
+  - If post.image is a non-empty string, render an <img> covering the area with
+    an onError handler that hides the image on failure.
+  - If post.image is null, render a placeholder: a soft diagonal gradient using
+    the app's card and muted tokens, with the existing "field-pattern" utility
+    class layered over it.
+  - Overlay a dark gradient from the top edge fading out by 55%.
+  - Tag chip, top on the leading side: padding 4px 9px, border-radius 7px,
+    background rgba(7,8,10,0.72), 1px border rgba(255,255,255,0.12), text
+    9.5px, weight 800, uppercase, letter-spacing 0.12em, in the PRIMARY colour.
+
+Below the image, padding roughly 14px 16px 15px, a vertical stack:
+  - Date line: "{date} · {readTime}", 11px, weight 700, uppercase,
+    letter-spacing 0.07em, muted at about 40% opacity
+  - Title: 18.5px, weight 700, line-height 1.22, letter-spacing -0.02em,
+    display font
+  - Excerpt: 13.5px, line-height 1.55, muted at about 66% opacity
+  - A row: "Read full story" when collapsed / "Show less" when expanded,
+    12px, weight 800, in the PRIMARY colour, with a chevron that rotates
+    180 degrees when expanded
+
+EXPANDED state, animating open over about 0.32s:
+  - A hairline divider
+  - Each body paragraph: 13.5px, line-height 1.68, muted at about 78% opacity,
+    with spacing between paragraphs
+  - Then the fact chips in a wrapping row: padding 7px 11px, border-radius 9px,
+    faint fill, 1px faint border, 11.5px, weight 700, muted
+
+--- D. BEHAVIOUR ---
+
+Tapping anywhere on the card's text block toggles it open or closed. Only ONE
+card can be open at a time — opening a second closes the first. Hold this in
+local useState. Use the framer-motion pattern already used elsewhere in this
+project for the height animation.
+
+--- E. RULES ---
+
+Use existing theme tokens for background, card, border, foreground,
+muted-foreground and primary. The only literal values allowed are the rgba
+values specified for the tag chip and the image overlay gradients.
+
+All post text above is hardcoded English strings in the array. Do NOT add any
+translation key and do NOT translate them.
+
+RTL: use logical properties (start/end, ms/me, ps/pe) throughout. Never pair a
+logical inset with a physical transform.
+
+SCROLLING: the outer wrapper must carry "flex flex-col flex-1 min-h-0
+overflow-hidden", and the scrolling element must be "flex-1 min-h-0
+overflow-y-auto" with enough bottom padding that the last card clears the
+floating nav. Verify scrolling works before finishing.
+
+--- CONSTRAINTS ---
+
+Do not modify any API call, database schema, query, or route. Do not add,
+rename, or drop any database column. Do not install any package. Do not create
+any new file. Do not touch the admin panel or any banner-management code.
+
+If any change would require editing a second file, STOP and tell me instead.
+
+Show me the complete diff of home.tsx and nothing else. Do not start any
+follow-up task.

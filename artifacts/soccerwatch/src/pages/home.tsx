@@ -1,282 +1,203 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { Link } from "wouter";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronRight, MapPin } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useTranslation } from "@/i18n";
-import {
-  useListBanners,
-  useGetBunnyCollections,
-  getListBannersQueryKey,
-} from "@workspace/api-client-react";
+import { ChevronDown } from "lucide-react";
 
-const BANNER_INTERVAL = 5000;
+type NewsPost = {
+  id: number;
+  tag: string;
+  date: string;
+  readTime: string;
+  title: string;
+  excerpt: string;
+  body: string[];
+  facts: string[];
+  image: string | null;
+};
 
-const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-
-type DiscoverItem = { kind: "field"; id: string; name: string; videoCount: number; previewImageUrl: string | null };
+const newsPosts: NewsPost[] = [
+  {
+    id: 1,
+    tag: "FEATURE",
+    date: "28 JUL",
+    readTime: "3 MIN READ",
+    title: "Every match you play, recorded and ready",
+    excerpt:
+      "Cameras run all evening at partner pitches. Your game is waiting for you before you reach the car park.",
+    body: [
+      "Replay records continuously at every partner pitch. There is nothing to set up, nothing to press, and nobody to ask — you play, and the footage is there.",
+      "Open the app, pick your pitch and pick the date. Every recorded hour is listed and ready to watch from any phone.",
+    ],
+    facts: ["No setup", "Full match", "Watch anywhere"],
+    image: null,
+  },
+  {
+    id: 2,
+    tag: "CLIPS",
+    date: "24 JUL",
+    readTime: "2 MIN READ",
+    title: "Cut your own highlights in seconds",
+    excerpt:
+      "Found the goal? Trim it, frame it, and send it to the group chat before anyone has stopped arguing about it.",
+    body: [
+      "Scrub to the moment, drag the handles, and save. Your clip lives in My Clips and downloads as a normal video file.",
+      "Pan and zoom while you cut, so the ball stays in frame instead of lost somewhere in a wide shot of the pitch.",
+    ],
+    facts: ["Trim and save", "Pan and zoom", "Share instantly"],
+    image: null,
+  },
+  {
+    id: 3,
+    tag: "ACADEMIES",
+    date: "21 JUL",
+    readTime: "2 MIN READ",
+    title: "Parents can watch from anywhere",
+    excerpt:
+      "Training sessions and academy matches stream live, and stay available afterwards for the ones you miss.",
+    body: [
+      "Partner academies stream their sessions straight to the app. Family who cannot make it to the pitch can watch from home, or from another country.",
+      "Every session is kept afterwards, so a missed evening is only a tap away.",
+    ],
+    facts: ["Live streams", "Kept afterwards", "Any device"],
+    image: null,
+  },
+  {
+    id: 4,
+    tag: "FIELDS",
+    date: "18 JUL",
+    readTime: "2 MIN READ",
+    title: "More pitches joining across Amman",
+    excerpt:
+      "New fields are coming online each month, each with cameras covering the full pitch.",
+    body: [
+      "Every new partner pitch arrives already wired — cameras mounted, angle covering the whole surface, recording from the first booking.",
+      "If you play somewhere that is not listed yet, tell the field owner. Getting set up takes one visit.",
+    ],
+    facts: ["Growing weekly", "Full pitch view", "Amman and beyond"],
+    image: null,
+  },
+];
 
 export default function Home() {
-  const { t } = useTranslation();
-  const [slide, setSlide] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [locationState, setLocationState] = useState<"idle" | "granted" | "denied">("idle");
-
-  const requestLocation = useCallback(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setLocationState("granted");
-      },
-      () => setLocationState("denied"),
-      { timeout: 8000, maximumAge: 5 * 60 * 1000 }
-    );
-  }, []);
-
-  useEffect(() => {
-    requestLocation();
-  }, [requestLocation]);
-
-  const { data: bannersData } = useListBanners({
-    query: {
-      queryKey: getListBannersQueryKey(),
-      staleTime: 0,
-      gcTime: 5 * 60 * 1000,
-    },
-  });
-  const banners = bannersData ?? [];
-
-  const { data: collectionsData } = useGetBunnyCollections();
-  const collections = collectionsData ?? [];
-
-  const discoverItems = useMemo<DiscoverItem[]>(() => {
-    return collections.slice(0, 6).map((c) => ({
-      kind: "field" as const,
-      id: c.guid,
-      name: c.name,
-      videoCount: c.videoCount,
-      previewImageUrl: c.previewImageUrl ?? null,
-    }));
-  }, [collections]);
-
-  const bannerSlides = banners.map((b) => ({
-    id: b.id,
-    image: b.imageUrl,
-    upperSubtext: b.upperSubtext ?? "",
-    title: b.title ?? "",
-    lowerSubtext: b.lowerSubtext ?? "",
-    hyperlink: b.hyperlink ?? null,
-  }));
-
-  const fallbackSlides = [
-    {
-      id: "trending",
-      image: null,
-      upperSubtext: t.home.trendingNow ?? "Trending",
-      title: t.home.bannerSlide1Title,
-      lowerSubtext: t.home.bannerSlide1Desc,
-    },
-    {
-      id: "local",
-      image: null,
-      upperSubtext: "",
-      title: t.home.bannerSlide2Title,
-      lowerSubtext: t.home.bannerSlide2Desc,
-    },
-  ];
-
-  const slides = bannerSlides.length > 0 ? bannerSlides : fallbackSlides;
-
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  useEffect(() => {
-    if (slides.length <= 1) return;
-    intervalRef.current = setInterval(() => {
-      setSlide((s) => (s + 1) % slides.length);
-    }, BANNER_INTERVAL);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [slides.length]);
-
-  const goToSlide = useCallback(
-    (i: number) => {
-      setSlide(i);
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(() => {
-        setSlide((s) => (s + 1) % slides.length);
-      }, BANNER_INTERVAL);
-    },
-    [slides.length]
-  );
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   return (
-    <div className="flex-1 flex flex-col overflow-y-auto bg-background pb-20">
-      {/* Banner carousel */}
-      <div className="relative w-full h-[50vh] overflow-hidden">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={slide}
-            initial={{ opacity: 0, x: 40 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -40 }}
-            transition={{ duration: 0.35, ease: "easeInOut" }}
-            className="absolute inset-0"
-          >
-            {slides[slide].image ? (
-              <img
-                src={slides[slide].image ?? undefined}
-                alt={slides[slide].title}
-                className="absolute inset-0 w-full h-full object-cover"
-                loading="eager"
-              />
-            ) : (
-              <>
-                <img
-                  src={`${basePath}/brand-hero.jpg`}
-                  alt=""
-                  className="absolute inset-0 w-full h-full object-cover object-center"
-                  aria-hidden="true"
-                />
-                <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/40 to-black/80" />
-              </>
-            )}
-
-            {(() => {
-              const hl = (slides[slide] as { hyperlink?: string | null }).hyperlink;
-              const content = (
-                <div className="absolute inset-0 flex flex-col justify-end p-5">
-                  <div className="relative z-10">
-                    {slides[slide].upperSubtext && (
-                      <p className="text-primary text-[10px] font-bold uppercase tracking-widest mb-1">
-                        {slides[slide].upperSubtext}
-                      </p>
-                    )}
-                    <h2 className="font-display font-black text-white text-3xl leading-none uppercase mb-1">
-                      {slides[slide].title}
-                    </h2>
-                    <p className="text-white/70 text-sm">{slides[slide].lowerSubtext}</p>
-                  </div>
-                </div>
-              );
-              return hl ? (
-                <a href={hl} target="_blank" rel="noopener noreferrer" className="block absolute inset-0">
-                  {content}
-                </a>
-              ) : content;
-            })()}
-          </motion.div>
-        </AnimatePresence>
-
-        {slides.length > 1 && (
-          <div className="absolute bottom-3 start-0 end-0 flex justify-center gap-1.5 z-10">
-            {slides.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => goToSlide(i)}
-                className={cn(
-                  "rounded-full transition-all duration-300",
-                  i === slide ? "w-5 h-1.5 bg-primary" : "w-1.5 h-1.5 bg-white/30"
-                )}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Discover section */}
-      <div className="px-4 pt-5 pb-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-foreground font-bold text-lg">
-            {t.home.discover ?? "For You"}
-          </h2>
-          <div className="flex items-center gap-3">
-            {locationState === "idle" && (
-              <button
-                onClick={requestLocation}
-                className="flex items-center gap-1 text-xs text-muted-foreground active:opacity-70"
-              >
-                <MapPin className="w-3.5 h-3.5" />
-                {t.home.enableLocation ?? "Enable location"}
-              </button>
-            )}
-            {locationState === "granted" && (
-              <span className="flex items-center gap-1 text-xs text-primary">
-                <MapPin className="w-3.5 h-3.5" />
-                {t.home.usingLocation ?? "Near you"}
-              </span>
-            )}
-            <Link
-              href="/fields"
-              className="flex items-center gap-0.5 text-sm text-primary font-medium active:opacity-70"
-            >
-              {t.home.seeAll ?? "See all"} <ChevronRight className="w-4 h-4" />
-            </Link>
-          </div>
+    <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-28 pt-4">
+        <div className="mb-4 flex items-center gap-3 px-1">
+          <h1 className="text-sm font-semibold text-foreground">News &amp; updates</h1>
+          <div className="h-px flex-1 bg-border" />
         </div>
-      </div>
 
-      {discoverItems.length > 0 ? (
-        <div className="flex gap-3 overflow-x-auto px-4 pb-4 snap-x snap-mandatory no-scrollbar">
-          {discoverItems.map((item, idx) => (
-            <FieldCard key={`field-${item.id}`} item={item} t={t} idx={idx} />
+        <div className="flex flex-col gap-3">
+          {newsPosts.map((post, index) => (
+            <NewsCard
+              key={post.id}
+              post={post}
+              index={index}
+              isExpanded={expandedId === post.id}
+              onToggle={() => setExpandedId(expandedId === post.id ? null : post.id)}
+            />
           ))}
         </div>
-      ) : (
-        <div className="px-4 pb-4 text-center py-8">
-          <p className="text-muted-foreground text-sm">{t.home.noFields ?? "No content yet"}</p>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
 
-function FieldCard({
-  item,
-  t,
-  idx,
+
+function NewsCard({
+  post,
+  index,
+  isExpanded,
+  onToggle,
 }: {
-  item: Extract<DiscoverItem, { kind: "field" }>;
-  t: ReturnType<typeof useTranslation>["t"];
-  idx: number;
+  post: NewsPost;
+  index: number;
+  isExpanded: boolean;
+  onToggle: () => void;
 }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: idx * 0.04, duration: 0.3 }}
+    <motion.article
+      initial={{ opacity: 0, y: 18 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { delay: index * 0.06, duration: 0.35, ease: "easeOut" as const },
+      }}
+      className="overflow-hidden rounded-[22px] border border-border bg-card"
     >
-      <Link
-        href={`/fields/${item.id}`}
-        className="relative shrink-0 snap-start w-44 aspect-[4/5] rounded-2xl overflow-hidden block group"
-      >
-        {item.previewImageUrl ? (
+      <div className="relative aspect-video overflow-hidden">
+        {post.image ? (
           <img
-            src={item.previewImageUrl}
-            alt={item.name}
-            className="absolute inset-0 w-full h-full object-cover"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            src={post.image}
+            alt={post.title}
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
           />
         ) : (
-          <div className="absolute inset-0 field-pattern" />
+          <div className="absolute inset-0 field-pattern bg-gradient-to-br from-card via-muted to-card" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
-        <div className="absolute top-2.5 start-2.5">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-primary/90 bg-black/40 rounded-full px-2 py-0.5">
-            Field
-          </span>
+        <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/10 to-transparent" />
+        <span className="absolute start-3 top-3 rounded-[7px] border border-[rgba(255,255,255,0.12)] bg-[rgba(7,8,10,0.72)] px-[9px] py-1 text-[9.5px] font-extrabold uppercase tracking-[0.12em] text-primary">
+          {post.tag}
+        </span>
+      </div>
+
+      <button type="button" onClick={onToggle} className="w-full text-start">
+        <div className="px-4 pb-[15px] pt-3.5">
+          <p className="text-[11px] font-bold uppercase tracking-[0.07em] text-muted-foreground/40">
+            {post.date} · {post.readTime}
+          </p>
+          <h2 className="mt-1.5 font-display text-[18.5px] font-bold leading-[1.22] tracking-[-0.02em] text-foreground">
+            {post.title}
+          </h2>
+          <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-foreground/[0.66]">
+            {post.excerpt}
+          </p>
+          <div className="mt-3 flex items-center gap-1.5 text-xs font-extrabold text-primary">
+            <span>{isExpanded ? "Show less" : "Read full story"}</span>
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform duration-300 ${
+                isExpanded ? "rotate-180" : ""
+              }`}
+            />
+          </div>
         </div>
-        <div className="absolute inset-0 flex flex-col justify-end p-3">
-          <p className="text-white font-display font-bold text-sm uppercase leading-tight">{item.name}</p>
-          {item.videoCount > 0 && (
-            <p className="text-white/50 text-xs">
-              {t.home.clips(item.videoCount)}
-            </p>
+
+        <AnimatePresence initial={false}>
+          {isExpanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.32, ease: "easeInOut" }}
+              className="overflow-hidden"
+            >
+              <div className="border-t border-border px-4 pb-4 pt-3">
+                <div className="flex flex-col gap-3">
+                  {post.body.map((paragraph) => (
+                    <p key={paragraph} className="text-[13.5px] leading-[1.68] text-muted-foreground/[0.78]">
+                      {paragraph}
+                    </p>
+                  ))}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {post.facts.map((fact) => (
+                    <span
+                      key={fact}
+                      className="rounded-[9px] border border-border bg-muted/50 px-[11px] py-[7px] text-[11.5px] font-bold text-muted-foreground"
+                    >
+                      {fact}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
           )}
-        </div>
-      </Link>
-    </motion.div>
+        </AnimatePresence>
+      </button>
+    </motion.article>
   );
 }
