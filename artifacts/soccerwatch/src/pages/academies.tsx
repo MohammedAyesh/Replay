@@ -126,10 +126,10 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenR
         </div>
         {/* Content block */}
         <div className="px-3 py-2.5">
-          <div className="flex items-start justify-between gap-2">
-            <p className="truncate font-display text-sm font-semibold leading-[1.25] text-foreground">{academy.name}</p>
-            <div className="shrink-0 text-end">
-              <p className="text-sm font-bold tabular-nums text-foreground">{academy.recordingCount}</p>
+          <div className="flex items-center gap-2">
+            <p className="min-w-0 flex-1 truncate font-display text-sm font-semibold leading-[1.25] text-foreground">{academy.name}</p>
+            <div className="flex shrink-0 items-baseline gap-1">
+              <p className="text-base font-bold tabular-nums text-foreground">{academy.recordingCount}</p>
               <p className="text-[10px] uppercase text-muted-foreground">videos</p>
             </div>
           </div>
