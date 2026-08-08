@@ -25,6 +25,7 @@ import AdminSetup from "@/pages/admin-setup";
 import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import Academies from "@/pages/academies";
+import View from "@/pages/view";
 import Live from "@/pages/live";
 import { useAuth } from "@/lib/auth";
 
@@ -157,6 +158,7 @@ function AppRouter() {
         <Route path="/onboarding" component={Onboarding} />
         <Route path="/home" component={Home} />
         {/* <Route path="/watch" component={Watch} /> */}
+        <Route path="/view" component={View} />
         <Route path="/fields" component={Fields} />
         <Route path="/fields/:id" component={FieldDetail} />
         <Route path="/academies" component={Academies} />

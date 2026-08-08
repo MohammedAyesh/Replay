@@ -1,0 +1,112 @@
+SCOPE: exactly FOUR files:
+  1. artifacts/soccerwatch/src/pages/view.tsx        (CREATE — new file)
+  2. artifacts/soccerwatch/src/pages/fields.tsx      (add one optional prop)
+  3. artifacts/soccerwatch/src/pages/academies.tsx   (add one optional prop)
+  4. artifacts/soccerwatch/src/App.tsx               (add ONE route)
+
+Do NOT modify layout.tsx, index.css, or any other file. The NAVIGATION is
+deliberately NOT part of this turn — do not change any nav item.
+
+GOAL: a new container page showing the existing Fields and Academies pages as
+two sections behind a toggle. Nothing is moved, merged or deleted.
+/fields, /fields/:id and /academies must keep working exactly as today.
+
+--- ATTACHMENTS ---
+
+The two screenshots are a STYLE reference for the "Browse" title and the pill
+toggle ONLY.
+
+IGNORE their navigation bar — it shows four tabs; the real app has five and the
+nav is out of scope this turn.
+
+IGNORE their cards completely. The cards on both pages are ALREADY FINAL and
+must not be restyled, resized or altered in any way.
+
+DO NOT ADD any of these — they appear in the screenshots and do NOT exist in
+this app's data: price ("25 JOD / hr"), star rating ("4.8"), distance
+("1.8 km"), area labels, age-group badges ("U8-U18"), LIVE badges on cards, or
+amenity chips ("7-a-side", "Floodlights", "Auto-record", "UEFA staff",
+"2 cameras"). Never invent a placeholder value. Never add a database field.
+
+Do not add any new translation key.
+
+=========================================================
+PART 1 — add an "embedded" prop to both existing pages
+=========================================================
+
+In fields.tsx and academies.tsx, change each default-exported component to
+accept an optional prop:
+
+    { embedded = false }: { embedded?: boolean }
+
+When embedded is TRUE:
+  - The page does NOT render its own <h1> title or subtitle.
+  - The wrapper around the search bar must NOT be sticky. Remove
+    "sticky top-0 z-10" from that block when embedded is true (keep shrink-0,
+    the background and the padding). This matters because the container page
+    has its own header, and two elements pinned to top-0 will overlap on
+    scroll.
+
+When embedded is FALSE or omitted, the page renders EXACTLY as it does today,
+including its sticky header. /fields and /academies must be completely
+unaffected.
+
+Change nothing else in these two files. Do not touch the cards, the search
+behaviour, the accordion, expandedId, LiveRow, useGetAcademyRecordings,
+VideoPlayer, follow logic, or any query.
+
+=========================================================
+PART 2 — create view.tsx
+=========================================================
+
+Structure, top to bottom:
+
+  1. A header block (NOT sticky) containing:
+     - An <h1> reading "Browse". If no suitable existing translation string
+       exists, use the plain English word and do NOT add a translation key.
+     - Below it, a segmented pill toggle: one container, border-radius 99px,
+       card background, 1px border, holding two equal-width buttons using the
+       EXISTING Academies and Fields strings from the translations.
+       Active button: solid primary fill, primary-foreground (dark) text,
+       border-radius 99px. Inactive: transparent, muted-foreground text.
+     - Default selected section: Academies.
+
+  2. Below it, render <Academies embedded /> or <Fields embedded /> depending
+     on the toggle. Import and render the components as they are — do NOT copy
+     any code out of those files.
+
+Hold the selection in local useState. No route parameter, no URL query string,
+no global state.
+
+LAYOUT: view.tsx must not break the embedded pages' scrolling. Its outer
+wrapper needs "flex flex-col flex-1 min-h-0 overflow-hidden", and the embedded
+child must be able to fill the remaining height. Verify BOTH sections scroll to
+the bottom and the last card clears the floating nav before finishing — this
+mistake has broken pages in this project twice.
+
+End the file with a trailing newline.
+
+=========================================================
+PART 3 — register the route in App.tsx
+=========================================================
+
+Import View from "@/pages/view" and add ONE route:
+
+    <Route path="/view" component={View} />
+
+Place it near the existing /fields and /academies routes.
+
+DO NOT remove, rename, or reorder any existing route. Add one line; change
+nothing else in this file.
+
+--- CONSTRAINTS ---
+
+Use existing theme tokens; do not hardcode hex colours. Use logical properties
+for RTL. Do not modify any API call, database schema, query, or any route other
+than adding /view. Do not add, rename, or drop any database column. Do not
+install any package. Do not delete any file. Do not change the navigation.
+
+If any change would require editing a fifth file, STOP and tell me instead.
+
+Show me the complete diff of all four files and nothing else. Do not start any
+follow-up task.
