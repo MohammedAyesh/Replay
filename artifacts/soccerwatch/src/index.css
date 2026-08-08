@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;900&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&family=Cairo:wght@800;900&family=Tajawal:wght@400;500;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
@@ -63,40 +63,41 @@
 }
 
 :root {
-  /* Near-black backgrounds */
-  --background: 0 0% 4%;
-  --foreground: 0 0% 96%;
-  --card: 0 0% 7%;
-  --card-foreground: 0 0% 96%;
-  --popover: 0 0% 7%;
-  --popover-foreground: 0 0% 96%;
+  /* Navy-dark backgrounds */
+  --background: 224 41% 7%;
+  --foreground: 214 41% 97%;
+  --card: 222 38% 13%;
+  --card-foreground: 214 41% 97%;
+  --popover: 222 38% 13%;
+  --popover-foreground: 214 41% 97%;
 
-  /* Neon green primary — #39FF14 ≈ hsl(106 100% 54%) */
-  --primary: 106 100% 54%;
-  --primary-foreground: 0 0% 0%;
+  /* Floodlight yellow-green primary */
+  --primary: 75 100% 65%;
+  --primary-foreground: 224 41% 7%;
 
-  --secondary: 0 0% 12%;
-  --secondary-foreground: 0 0% 90%;
+  --secondary: 221 35% 16%;
+  --secondary-foreground: 214 41% 97%;
 
-  --muted: 0 0% 12%;
-  --muted-foreground: 0 0% 55%;
+  --muted: 221 35% 16%;
+  --muted-foreground: 221 14% 60%;
 
-  --accent: 106 100% 54%;
-  --accent-foreground: 0 0% 0%;
+  /* Stoppage Violet accent */
+  --accent: 251 100% 68%;
+  --accent-foreground: 214 41% 97%;
 
-  --destructive: 348 100% 58%;
-  --destructive-foreground: 0 0% 100%;
+  --destructive: 9 100% 62%;
+  --destructive-foreground: 214 41% 97%;
 
-  --border: 0 0% 16%;
-  --input: 0 0% 14%;
-  --ring: 106 100% 54%;
-  --radius: 0.75rem;
+  --border: 223 31% 20%;
+  --input: 223 31% 20%;
+  --ring: 75 100% 65%;
+  --radius: 1rem;
 
-  --app-font-sans: 'Space Grotesk', sans-serif;
+  --app-font-sans: 'Inter', system-ui, sans-serif;
   --app-font-serif: 'Space Grotesk', serif;
   --app-font-mono: 'Space Grotesk', monospace;
-  --app-font-display: 'Barlow Condensed', 'Space Grotesk', sans-serif;
-  --app-font-arabic: 'IBM Plex Sans Arabic', 'Space Grotesk', sans-serif;
+  --app-font-display: 'Rajdhani', 'Inter', sans-serif;
+  --app-font-arabic: 'Tajawal', 'Cairo', sans-serif;
 
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(255,255,255, .03);
@@ -104,25 +105,25 @@
 }
 
 .dark {
-  --background: 0 0% 4%;
-  --foreground: 0 0% 96%;
-  --card: 0 0% 7%;
-  --card-foreground: 0 0% 96%;
-  --popover: 0 0% 7%;
-  --popover-foreground: 0 0% 96%;
-  --primary: 106 100% 54%;
-  --primary-foreground: 0 0% 0%;
-  --secondary: 0 0% 12%;
-  --secondary-foreground: 0 0% 90%;
-  --muted: 0 0% 12%;
-  --muted-foreground: 0 0% 55%;
-  --accent: 106 100% 54%;
-  --accent-foreground: 0 0% 0%;
-  --destructive: 348 100% 58%;
-  --destructive-foreground: 0 0% 100%;
-  --border: 0 0% 16%;
-  --input: 0 0% 14%;
-  --ring: 106 100% 54%;
+  --background: 224 41% 7%;
+  --foreground: 214 41% 97%;
+  --card: 222 38% 13%;
+  --card-foreground: 214 41% 97%;
+  --popover: 222 38% 13%;
+  --popover-foreground: 214 41% 97%;
+  --primary: 75 100% 65%;
+  --primary-foreground: 224 41% 7%;
+  --secondary: 221 35% 16%;
+  --secondary-foreground: 214 41% 97%;
+  --muted: 221 35% 16%;
+  --muted-foreground: 221 14% 60%;
+  --accent: 251 100% 68%;
+  --accent-foreground: 214 41% 97%;
+  --destructive: 9 100% 62%;
+  --destructive-foreground: 214 41% 97%;
+  --border: 223 31% 20%;
+  --input: 223 31% 20%;
+  --ring: 75 100% 65%;
 }
 
 @layer base {
@@ -135,8 +136,9 @@
 }
 
 [dir="rtl"] {
-  --app-font-sans: 'IBM Plex Sans Arabic', 'Space Grotesk', sans-serif;
+  --app-font-sans: 'Tajawal', 'Inter', sans-serif;
   --app-font-serif: 'IBM Plex Sans Arabic', 'Space Grotesk', serif;
+  --app-font-display: 'Cairo', 'Tajawal', sans-serif;
 }
 
 .font-display {
@@ -146,8 +148,8 @@
 .field-pattern {
   background-color: #0a0a0a;
   background-image:
-    linear-gradient(rgba(57, 255, 20, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(57, 255, 20, 0.06) 1px, transparent 1px);
+    linear-gradient(hsl(var(--primary) / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--primary) / 0.06) 1px, transparent 1px);
   background-size: 60px 60px;
   background-position: center center;
 }
@@ -178,4 +180,10 @@
 }
 @utility bottom-safe {
   bottom: env(safe-area-inset-bottom);
+}
+
+.rp-glow {
+  background:
+    radial-gradient(120% 46% at 18% -10%, rgba(47,216,196,.11), rgba(47,216,196,0) 58%),
+    radial-gradient(110% 50% at 88% -8%, rgba(123,92,255,.09), rgba(123,92,255,0) 60%);
 }

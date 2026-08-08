@@ -1,0 +1,86 @@
+SCOPE: This task changes ONE file only — artifacts/soccerwatch/src/index.css.
+Do not open, read, or modify any other file.
+
+I have attached replay-brand-kit.jsx. It is a design-system reference only.
+DO NOT add it to the project, import it, or copy components from it.
+Read its TOKENS object and FONT constants, then close it.
+
+The app uses Tailwind v4 configured entirely in index.css via @theme inline —
+there is no tailwind.config file. Make all four changes below inside that stylesheet.
+
+--- 1. FONTS ---
+
+Add this Google Fonts import at the top of index.css:
+
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&family=Cairo:wght@800;900&family=Tajawal:wght@400;500;700&display=swap');
+
+Then repoint the existing font variables. Keep the existing variable names and
+keep the existing [dir="rtl"] rule structure — only change which fonts they
+resolve to:
+
+  Body (LTR):     'Inter', system-ui, sans-serif       (was Space Grotesk)
+  Display (LTR):  'Rajdhani', 'Inter', sans-serif      (was Barlow Condensed)
+  Body (RTL):     'Tajawal', 'Inter', sans-serif       (was IBM Plex Sans Arabic)
+  Display (RTL):  'Cairo', 'Tajawal', sans-serif
+
+The .font-display utility class must keep its exact current name.
+
+--- 2. COLOUR TOKENS ---
+
+Change the VALUES of the existing colour variables. Do NOT rename any variable,
+do NOT remove any variable, and do NOT add new ones.
+
+IMPORTANT: keep whatever colour format the file already uses. If the existing
+values are HSL triplets like "0 0% 4%", use the HSL column. If they are hex,
+use the hex column. Do not mix formats and do not change how the variables are
+consumed downstream.
+
+  Variable role          Hex        HSL triplet
+  background             #0B0F1A    224 41% 7%
+  card / popover         #141B2C    222 38% 13%
+  muted / secondary      #1B2438    221 35% 16%
+  border / input         #232C42    223 31% 20%
+  muted-foreground       #8A93A6    221 14% 60%
+  foreground             #F3F6FA    214 41% 97%
+  primary                #D4FF4F    75 100% 65%
+  primary-foreground     #0B0F1A    224 41% 7%
+  accent                 #7B5CFF    251 100% 68%
+  accent-foreground      #F3F6FA    214 41% 97%
+  destructive            #FF5A3C    9 100% 62%
+  destructive-foreground #F3F6FA    214 41% 97%
+  ring                   same as primary
+
+The .dark block currently duplicates :root — keep them identical after the change.
+
+Note: primary-foreground is intentionally the dark background colour. Text and
+icons sitting ON the lime primary must be dark, never white.
+
+If the .field-pattern utility hardcodes the old green (#39FF14 or hsl(106 ...)),
+change it to reference the primary variable instead of a literal.
+
+--- 3. BORDER RADIUS ---
+
+Change the base --radius from 0.75rem to 1rem. Leave the sm/md/lg/xl step
+formulas exactly as they are.
+
+--- 4. ADD ONE UNUSED UTILITY ---
+
+Add this class definition to index.css. Do NOT apply it to any element —
+I will use it in a later task.
+
+.rp-glow {
+  background:
+    radial-gradient(120% 46% at 18% -10%, rgba(47,216,196,.11), rgba(47,216,196,0) 58%),
+    radial-gradient(110% 50% at 88% -8%, rgba(123,92,255,.09), rgba(123,92,255,0) 60%);
+}
+
+--- CONSTRAINTS ---
+
+This is a visual-only change to a single stylesheet. Do not modify any API call,
+database schema, query, route, component, or state logic. Do not add, rename, or
+drop any database column. Do not touch any .tsx file. Do not install any package.
+Do not rename or delete any existing CSS variable or utility class. Preserve every
+existing button, link, and section. If you cannot make a change without touching
+something outside index.css, stop and tell me instead of proceeding.
+
+When done, show me the complete diff of index.css and nothing else.
