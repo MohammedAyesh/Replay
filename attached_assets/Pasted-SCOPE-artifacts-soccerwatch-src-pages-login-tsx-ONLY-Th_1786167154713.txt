@@ -1,0 +1,122 @@
+SCOPE: artifacts/soccerwatch/src/pages/login.tsx ONLY.
+(This is the landing/splash page. If the landing page lives in a different
+file, edit that one file instead and tell me which.)
+
+Do not modify layout.tsx, index.css, App.tsx, the i18n strings file, Clerk
+config, or any other file.
+
+--- WHAT MUST NOT CHANGE ---
+
+  - The three existing buttons: Sign In, Create Account, Browse as Guest —
+    same handlers, same routes, same order, same guest-login behaviour
+  - The Clerk redirect that sends authenticated users to /home
+  - The existing language switcher
+  - Every query, handler and route
+
+--- STRUCTURE ---
+
+The page becomes SCROLLABLE with five sections. The outer wrapper must be
+"flex flex-col flex-1 min-h-0 overflow-hidden" and the scrolling element
+"flex-1 min-h-0 overflow-y-auto no-scrollbar".
+
+1. HERO — fills the first screen
+   - Keep the existing background image and its dark overlay. Layer the
+     existing "rp-glow" utility class over it.
+   - Logo mark + "REPLAY" wordmark at the top. The wordmark uses the display
+     font, weight 700, filled with linear-gradient(90deg, #2FD8C4, #7B5CFF)
+     via background-clip: text. Keep the logo SVG identical to the one in
+     layout.tsx — copy its geometry, do not redraw it. REPLAY stays in Latin
+     in both languages.
+   - Headline in the display font: "EVERY GAME." on line one, "EVERY ANGLE."
+     on line two in the primary colour.
+   - Existing subtitle line below it.
+   - The three buttons, restyled with theme tokens. The primary button uses
+     primary background with primary-foreground (DARK) text — never white.
+   - A small animated scroll cue at the bottom (a chevron with a gentle
+     repeating bounce).
+
+2. FEATURES — heading, then four cards in a single column.
+   Each card: border-radius 22px, card background, 1px border, containing a
+   32px rounded-square icon holder with a faint primary tint, a lucide icon in
+   the primary colour, a title and one line of text.
+     Video    — "Every match recorded"  / "Cameras run all evening. Nothing to set up."
+     Scissors — "Cut your own clips"     / "Trim, pan, zoom, download and share."
+     Radio    — "Watch live"             / "Family watch from anywhere, kept afterwards."
+     MapPin   — "Growing across Amman"   / "New partner pitches every month."
+
+3. REVIEWS — heading, then three cards.
+   Add a code comment above this array: // TODO: placeholder testimonials —
+   replace with real quotes before public launch
+   Each card: same shell as the features cards, containing a short quote, then
+   a first name and a one-word role beneath it. No photos, no avatars.
+     "I found my goal before I got to the car." — Omar, player
+     "My parents watched the match from another city." — Rami, player
+     "The clips end up in the group chat every week." — Yousef, player
+
+4. ABOUT — heading "About us" and two short paragraphs:
+   "Replay is the first platform in Jordan to record every match at partner
+    pitches and put the footage straight into players' hands."
+   "We started with one field in Amman. Cameras cover the full pitch, recording
+    runs all evening, and every hour is ready to watch minutes after the final
+    whistle."
+
+5. CONTACT — heading "Contact us", one line of text, and a single button
+   reading "Get in touch". The button is NON-FUNCTIONAL: no href, no onClick,
+   no handler. Style it as a secondary/outline button.
+
+--- LANGUAGE ---
+
+Every string above must render in Arabic when the locale is Arabic. Use the
+same inline pattern already used in home.tsx — read the locale from the
+existing useTranslation() hook and pick between two inline strings. Do NOT add
+any key to the i18n strings file and do not edit that file.
+
+Arabic strings:
+  Headline:  "كل مباراة." / "كل زاوية."
+  Features heading: "لماذا ريبلاي"
+    "كل مباراة مسجّلة" / "الكاميرات تعمل طوال المساء. لا شيء تجهّزه."
+    "اقتطع مقاطعك" / "اقتطع، حرّك، قرّب، حمّل وشارك."
+    "شاهد مباشرة" / "الأهل يشاهدون من أي مكان، ويبقى محفوظاً."
+    "ننتشر في عمّان" / "ملاعب شريكة جديدة كل شهر."
+  Reviews heading: "آراء اللاعبين"
+    "وجدت هدفي قبل أن أصل إلى السيارة." — عمر، لاعب
+    "أهلي شاهدوا المباراة من مدينة أخرى." — رامي، لاعب
+    "المقاطع تصل إلى مجموعة الأصدقاء كل أسبوع." — يوسف، لاعب
+  About heading: "من نحن"
+    "ريبلاي أول منصة في الأردن تسجّل كل مباراة في الملاعب الشريكة وتضع
+     التسجيل مباشرة بين يدي اللاعبين."
+    "بدأنا بملعب واحد في عمّان. الكاميرات تغطي الملعب بالكامل، والتسجيل يعمل
+     طوال المساء، وكل ساعة جاهزة للمشاهدة بعد دقائق من صافرة النهاية."
+  Contact heading: "تواصل معنا"
+  Contact button: "تواصل معنا"
+
+--- ANIMATION ---
+
+Use framer-motion, already used throughout this project. Sections fade and rise
+into place as they scroll into view, with a small stagger between cards in a
+group. Keep it subtle — short durations, small distances. Respect
+prefers-reduced-motion so animations are disabled when the user asks for that.
+
+--- RULES ---
+
+Use existing theme tokens for background, card, border, foreground,
+muted-foreground and primary. The only literal hex values allowed are the two
+in the wordmark gradient.
+
+RTL: use logical properties (start/end, ms/me, ps/pe) throughout. Never pair a
+logical inset with a physical transform.
+
+--- CONSTRAINTS ---
+
+Do not modify any API call, database schema, query, or route. Do not add,
+rename, or drop any database column. Do not install any package. Do not create
+any new file. Do not add a contact form, an email link, a phone link, or any
+submission handler — the contact button does nothing by design.
+
+If any change would require editing a second file, STOP and tell me instead.
+
+After the edit, open the landing page in the preview and confirm it renders and
+scrolls in BOTH English and Arabic. A passing build is NOT sufficient — this
+project has already shipped a crash that passed the build.
+
+Show me the complete diff and nothing else.
