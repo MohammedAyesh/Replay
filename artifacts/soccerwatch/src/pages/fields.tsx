@@ -15,7 +15,7 @@ const cardVariants = {
   }),
 };
 
-export default function Fields({ embedded = false }: { embedded?: boolean }) {
+export default function Fields() {
   const { data: collections, isLoading } = useGetBunnyCollections({
     query: {
       queryKey: getGetBunnyCollectionsQueryKey(),
@@ -37,12 +37,8 @@ export default function Fields({ embedded = false }: { embedded?: boolean }) {
         animate={{ opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } }}
         className="sticky top-0 z-10 shrink-0 bg-background px-4 pb-3 pt-4"
       >
-        {!embedded && (
-          <>
-            <h1 className="text-2xl font-bold text-foreground">{t.fields.title}</h1>
-            <p className="mb-4 text-sm text-muted-foreground">{t.fields.subtitle}</p>
-          </>
-        )}
+        <h1 className="text-2xl font-bold text-foreground">{t.fields.title}</h1>
+        <p className="mb-4 text-sm text-muted-foreground">{t.fields.subtitle}</p>
         <div className="relative">
           <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input

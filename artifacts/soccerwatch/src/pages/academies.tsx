@@ -126,10 +126,10 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenR
         </div>
         {/* Content block */}
         <div className="px-3 py-2.5">
-          <div className="flex items-center gap-2">
-            <p className="min-w-0 flex-1 truncate font-display text-sm font-semibold leading-[1.25] text-foreground">{academy.name}</p>
-            <div className="flex shrink-0 items-baseline gap-1">
-              <p className="text-base font-bold tabular-nums text-foreground">{academy.recordingCount}</p>
+          <div className="flex items-start justify-between gap-2">
+            <p className="truncate font-display text-sm font-semibold leading-[1.25] text-foreground">{academy.name}</p>
+            <div className="shrink-0 text-end">
+              <p className="text-sm font-bold tabular-nums text-foreground">{academy.recordingCount}</p>
               <p className="text-[10px] uppercase text-muted-foreground">videos</p>
             </div>
           </div>
@@ -216,7 +216,7 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenR
   );
 }
 
-export default function Academies({ embedded = false }: { embedded?: boolean }) {
+export default function Academies() {
   const { data: academies, isLoading } = useListAcademies({
     query: { queryKey: getListAcademiesQueryKey(), staleTime: 5 * 60 * 1000 },
   });
@@ -237,12 +237,8 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
         animate={{ opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } }}
         className="sticky top-0 z-10 shrink-0 bg-background px-4 pb-3 pt-4"
       >
-        {!embedded && (
-          <>
-            <h1 className="text-2xl font-bold text-foreground">Academies</h1>
-            <p className="text-muted-foreground text-sm mb-4">Live streams and recordings from partner academies</p>
-          </>
-        )}
+        <h1 className="text-2xl font-bold text-foreground">Academies</h1>
+        <p className="text-muted-foreground text-sm mb-4">Live streams and recordings from partner academies</p>
         <div className="relative">
           <Search className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
