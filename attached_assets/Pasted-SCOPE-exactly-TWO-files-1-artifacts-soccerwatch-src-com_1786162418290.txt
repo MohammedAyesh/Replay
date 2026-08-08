@@ -1,0 +1,65 @@
+SCOPE: exactly TWO files:
+  1. artifacts/soccerwatch/src/components/layout.tsx
+  2. the i18n strings file (src/i18n/strings.ts) — ONE key pair only
+
+Do not modify view.tsx, fields.tsx, academies.tsx, App.tsx, index.css, or any
+other file. Do NOT remove any route.
+
+GOAL: replace the two separate Fields and Academies nav items with a single
+"View" item pointing at /view. The bottom navigation goes from five items to
+four.
+
+--- PART 1: add one translation key pair ---
+
+In the i18n strings file, add ONE key to the existing nav object, in BOTH the
+English and Arabic objects:
+    English:  view: "View"
+    Arabic:   view: "شاهد"
+
+Add nothing else. Do not rename, remove or reorder any existing key. Do not
+touch t.nav.fields or t.nav.academies — other parts of the app still use them.
+
+--- PART 2: change the nav in layout.tsx ---
+
+The bottom nav currently has five NavItem entries in this order:
+    Home, Fields, Academies, My Clips, Account
+
+Change it to four, in this order:
+    Home, View, My Clips, Account
+
+The new View item:
+    - href: "/view"
+    - label: t.nav.view
+    - icon: LayoutGrid from lucide-react (the four-squares grid icon), matching
+      the size and stroke of the other nav icons. Add it to the existing
+      lucide-react import.
+    - active state: highlighted when the current location is /view, using the
+      exact same active styling the other items already use (the
+      rgba(212,255,79,0.10) tint with primary icon and label).
+
+REMOVE the Fields and Academies NavItem entries. Do NOT remove their routes,
+their pages, or their icons from anywhere else in the app — only these two
+navigation entries go away.
+
+Keep the Home, My Clips and Account items exactly as they are — same order
+relative to each other, same icons, same labels, same routes.
+
+Keep every existing conditional that hides or restyles the tab bar: the login
+page, /player/*, auth pages, the fullscreen-video state, and the translucent
+variant on /home. These must behave identically afterwards.
+
+Keep the nav's current shell classes unchanged (the floating pill: bottom-3
+start-3 end-3, h-[70px], rounded-[26px], mx-auto max-w-[408px]). With four
+items instead of five each one gets more room — that is expected. Do not
+change the pill's width, height or radius.
+
+--- CONSTRAINTS ---
+
+Do not modify any API call, database schema, query, or route. Do not add,
+rename, or drop any database column. Do not install any package. Do not delete
+any file. Do not restyle any card or page body.
+
+If any change would require editing a third file, STOP and tell me instead.
+
+Show me the complete diff of both files and nothing else. Do not start any
+follow-up task.

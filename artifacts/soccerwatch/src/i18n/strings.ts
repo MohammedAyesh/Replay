@@ -10,6 +10,7 @@ const strings = {
       account: "Account",
       academies: "Academies",
       live: "Live",
+      view: "View",
     },
     home: {
       greeting: (name: string) => `Hey, ${name} 👋`,
@@ -217,6 +218,7 @@ const strings = {
       account: "الحساب",
       academies: "الأكاديميات",
       live: "مباشر",
+      view: "شاهد",
     },
     home: {
       greeting: (name: string) => `أهلاً، ${name} 👋`,

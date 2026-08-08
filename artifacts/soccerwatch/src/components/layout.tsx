@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, MapPin, Bookmark, User as UserIcon, GraduationCap } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -71,17 +71,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isTranslucent={useTranslucentBar}
           />
           <NavItem
-            href="/fields"
-            icon={<MapPin className="w-6 h-6" />}
-            label={t.nav.fields}
-            isActive={location.startsWith("/fields")}
-            isTranslucent={useTranslucentBar}
-          />
-          <NavItem
-            href="/academies"
-            icon={<GraduationCap className="w-6 h-6" />}
-            label={t.nav.academies}
-            isActive={location === "/academies"}
+            href="/view"
+            icon={<LayoutGrid className="w-6 h-6" />}
+            label={t.nav.view}
+            isActive={location === "/view"}
             isTranslucent={useTranslucentBar}
           />
           <NavItem
