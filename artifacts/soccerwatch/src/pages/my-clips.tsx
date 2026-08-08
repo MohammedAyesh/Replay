@@ -825,44 +825,48 @@ export default function MyClips() {
   const createdCount = userClips?.length ?? 0;
 
   return (
-    <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
+    <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } }}
-        className="pt-safe px-4 pt-6 pb-0 bg-background sticky top-0 z-10"
+        className="sticky top-0 z-10 shrink-0 bg-background px-4 pb-3 pt-4"
       >
-        <h1 className="text-2xl font-bold text-foreground px-0 mb-3">{t.myClips.title}</h1>
+        <h1 className="mb-4 px-0 font-display text-2xl font-bold text-foreground">{t.myClips.title}</h1>
 
         {/* Tabs */}
-        <div className="flex gap-0 -mx-4">
+        <div className="-mx-1 flex rounded-full border border-border bg-card p-1">
           <button
             onClick={() => setTab("saved")}
-            className={`flex-1 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-sm font-semibold transition-colors ${
               tab === "saved"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground"
+                ? "bg-primary text-primary-foreground shadow-[0_0_18px_hsl(var(--primary)/0.18)]"
+                : "text-muted-foreground"
             }`}
           >
             {t.myClips.tabSaved}
             {savedCount > 0 && (
-              <span className="ml-1.5 text-[10px] bg-muted text-muted-foreground rounded-full px-1.5 py-0.5">
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                tab === "saved" ? "bg-black/10 text-primary-foreground" : "bg-muted text-muted-foreground"
+              }`}>
                 {savedCount}
               </span>
             )}
           </button>
           <button
             onClick={() => setTab("created")}
-            className={`flex-1 py-2.5 text-sm font-semibold border-b-2 transition-colors flex items-center justify-center gap-1.5 ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-sm font-semibold transition-colors ${
               tab === "created"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground"
+                ? "bg-primary text-primary-foreground shadow-[0_0_18px_hsl(var(--primary)/0.18)]"
+                : "text-muted-foreground"
             }`}
           >
             <Scissors className="w-3.5 h-3.5" />
             {t.myClips.tabCreated}
             {createdCount > 0 && (
-              <span className="text-[10px] bg-muted text-muted-foreground rounded-full px-1.5 py-0.5">
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                tab === "created" ? "bg-black/10 text-primary-foreground" : "bg-muted text-muted-foreground"
+              }`}>
                 {createdCount}
               </span>
             )}
@@ -870,7 +874,7 @@ export default function MyClips() {
         </div>
       </motion.div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-6 pb-24">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-28">
         <AnimatePresence mode="wait">
           {tab === "saved" ? (
             <motion.div
@@ -956,13 +960,13 @@ function SavedTab({
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 gap-4">
+      <div className="flex flex-col gap-3">
         {[1, 2, 3, 4].map((i) => (
           <motion.div
             key={i}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1, transition: { delay: i * 0.08 } }}
-            className="aspect-[3/4] bg-muted rounded-xl animate-pulse"
+            className="h-[86px] animate-pulse rounded-[18px] border border-border bg-card"
           />
         ))}
       </div>
@@ -974,12 +978,12 @@ function SavedTab({
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" as const } }}
-        className="text-center py-20"
+        className="py-20 text-center"
       >
         <motion.div
           initial={{ scale: 0.7, opacity: 0 }}
           animate={{ scale: 1, opacity: 1, transition: { type: "spring", stiffness: 260, damping: 18, delay: 0.1 } }}
-          className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4"
+          className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted"
         >
           <Download className="w-8 h-8 text-muted-foreground" />
         </motion.div>
@@ -993,7 +997,7 @@ function SavedTab({
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="flex flex-col gap-3">
       {clips.map((record, i) => (
         <LocalClipCard key={record.clipId} record={record} index={i} onPlay={onPlay} onDelete={onDelete} />
       ))}
@@ -1023,48 +1027,52 @@ function LocalClipCard({
         transition: { delay: index * 0.07, duration: 0.4, ease: "easeOut" as const },
       }}
       whileTap={{ scale: 0.97 }}
-      className="relative"
+      className="relative overflow-hidden rounded-[18px] border border-border bg-card"
     >
       <button
         onClick={() => onPlay(record)}
-        className="w-full text-left"
+        className="flex w-full items-center gap-3 p-2 text-start"
       >
-        <div className="relative aspect-[3/4] rounded-xl overflow-hidden group cursor-pointer">
-          <div className="absolute inset-0 field-pattern bg-[#0d1f0d]" />
+        <div className="group relative h-[70px] w-[112px] shrink-0 overflow-hidden rounded-xl">
+          <div className="absolute inset-0 field-pattern bg-card" />
 
           {thumbnailUrl && (
             <img
               src={thumbnailUrl}
               alt={record.title}
-              className="absolute inset-0 w-full h-full object-cover"
+              className="absolute inset-0 h-full w-full object-cover"
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
             />
           )}
 
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
           <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/45 text-white">
+              <Play className="ms-0.5 h-3.5 w-3.5 fill-current" />
+            </span>
+          </div>
 
-          <div className="absolute top-2 start-2 bg-primary/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
-            <Download className="w-2.5 h-2.5" />
+          <div className="absolute bottom-1 end-1 rounded bg-black/70 px-1 text-[10px] font-semibold text-white">
+            {new Date(record.downloadedAt).toLocaleDateString()}
+          </div>
+        </div>
+        <div className="min-w-0 flex-1 pe-7">
+          <h3 className="line-clamp-2 text-sm font-bold leading-tight text-foreground">{record.title}</h3>
+          <p className="mt-1 text-[10px] text-muted-foreground">{new Date(record.downloadedAt).toLocaleDateString()}</p>
+          <span className="mt-1 inline-flex rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
             Saved
-          </div>
-
-          <div className="absolute bottom-2 start-2 end-8">
-            <h3 className="text-white font-bold text-sm leading-tight line-clamp-2">{record.title}</h3>
-            <p className="text-white/50 text-[10px] mt-0.5">
-              {new Date(record.downloadedAt).toLocaleDateString()}
-            </p>
-          </div>
+          </span>
         </div>
       </button>
 
       {/* Delete button */}
       <button
         onClick={() => setShowDelete(true)}
-        className="absolute bottom-3 end-2 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center active:opacity-70 transition-opacity z-10"
+        className="absolute start-2 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-muted/80 transition-opacity active:opacity-70"
         title="Remove from saved"
       >
-        <Trash2 className="w-3 h-3 text-white/80" />
+        <Trash2 className="h-3 w-3 text-muted-foreground" />
       </button>
 
       {/* Delete confirmation */}
@@ -1074,7 +1082,7 @@ function LocalClipCard({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 rounded-xl bg-black/80 flex flex-col items-center justify-center gap-2 z-20"
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/80"
           >
             <p className="text-white text-xs font-semibold text-center px-2">Remove from saved?</p>
             <div className="flex gap-2">
@@ -1111,13 +1119,13 @@ function CreatedTab({
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 gap-4">
+      <div className="flex flex-col gap-3">
         {[1, 2, 3, 4].map((i) => (
           <motion.div
             key={i}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1, transition: { delay: i * 0.08 } }}
-            className="aspect-[3/4] bg-muted rounded-xl animate-pulse"
+            className="h-[86px] animate-pulse rounded-[18px] border border-border bg-card"
           />
         ))}
       </div>
@@ -1129,12 +1137,12 @@ function CreatedTab({
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" as const } }}
-        className="text-center py-20"
+        className="py-20 text-center"
       >
         <motion.div
           initial={{ scale: 0.7, opacity: 0 }}
           animate={{ scale: 1, opacity: 1, transition: { type: "spring", stiffness: 260, damping: 18, delay: 0.1 } }}
-          className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4"
+          className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted"
         >
           <Scissors className="w-8 h-8 text-muted-foreground" />
         </motion.div>
@@ -1148,7 +1156,7 @@ function CreatedTab({
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="flex flex-col gap-3">
       {clips.map((clip, i) => (
         <UserClipCard key={clip.id} clip={clip} index={i} onPlay={onPlay} />
       ))}
@@ -1197,52 +1205,63 @@ function UserClipCard({
       }}
       whileTap={{ scale: 0.95 }}
       onClick={() => onPlay(clip)}
-      className="relative aspect-[3/4] rounded-xl overflow-hidden shadow-sm group cursor-pointer"
+      className="group relative flex min-h-[86px] items-center gap-3 overflow-hidden rounded-[18px] border border-border bg-card p-2 shadow-sm"
     >
-      {clip.thumbnailUrl ? (
-        <img
-          src={clip.thumbnailUrl}
-          alt={clip.title}
-          className="absolute inset-0 w-full h-full object-cover"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
-        />
-      ) : (
-        <div className="absolute inset-0 field-pattern bg-[#0d1f0d]" />
-      )}
+      <div className="relative h-[70px] w-[112px] shrink-0 overflow-hidden rounded-xl">
+        {clip.thumbnailUrl ? (
+          <img
+            src={clip.thumbnailUrl}
+            alt={clip.title}
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+        ) : (
+          <div className="absolute inset-0 field-pattern bg-card" />
+        )}
 
-      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-      <div className="absolute inset-0 group-hover:bg-white/5 transition-colors duration-200" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+        <div className="absolute inset-0 transition-colors duration-200 group-hover:bg-white/5" />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/45 text-white">
+            <Play className="ms-0.5 h-3.5 w-3.5 fill-current" />
+          </span>
+        </div>
+        {/* Live clip overlay — no playback URL yet */}
+        {!clip.playbackUrl && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-black/70">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Live recording</span>
+            <span className="px-3 text-center text-[9px] text-white/50">Playback available once the recording uploads</span>
+          </div>
+        )}
+      </div>
 
-      {/* Live clip overlay — no playback URL yet */}
-      {!clip.playbackUrl && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 z-10 pointer-events-none">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Live recording</span>
-          <span className="text-[9px] text-white/50 text-center px-3">Playback available once the recording uploads</span>
-        </div>
-      )}
-
-      {/* Top-left badge: lock for private, scissors for public */}
-      {isPrivate ? (
-        <div className="absolute top-2 start-2 bg-black/60 text-amber-400 text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
-          <Lock className="w-2.5 h-2.5" />
-          Private
-        </div>
-      ) : (
-        <div className="absolute top-2 start-2 bg-black/60 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-1">
-          <Scissors className="w-2.5 h-2.5" />
-          {durationHint}
-        </div>
-      )}
+      <div className="min-w-0 flex-1 pe-7 text-start">
+        <h3 className="line-clamp-2 text-sm font-bold leading-tight text-foreground">{clip.title}</h3>
+        <p className="mt-1 text-[10px] font-medium text-primary">
+          {new Date(clip.createdAt).toLocaleDateString()}
+        </p>
+        {isPrivate ? (
+          <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            <Lock className="h-2.5 w-2.5" />
+            Private
+          </span>
+        ) : (
+          <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            <Scissors className="h-2.5 w-2.5" />
+            {durationHint}
+          </span>
+        )}
+      </div>
 
       {/* Delete button */}
       <button
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDelete(true); }}
-        className="absolute bottom-3 end-2 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center active:opacity-70 transition-opacity z-10"
+        className="absolute start-2 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-muted/80 transition-opacity active:opacity-70"
         aria-label="Delete clip"
       >
-        <Trash2 className="w-3 h-3 text-white/80" />
+        <Trash2 className="h-3 w-3 text-muted-foreground" />
       </button>
 
       {/* Delete confirmation overlay */}
@@ -1252,7 +1271,7 @@ function UserClipCard({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 rounded-xl bg-black/80 flex flex-col items-center justify-center gap-2 z-20"
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/80"
           >
             <p className="text-white text-xs font-semibold text-center px-2">Delete clip?</p>
             <div className="flex gap-2">
@@ -1269,14 +1288,6 @@ function UserClipCard({
         )}
       </AnimatePresence>
 
-      <div className="absolute bottom-2 start-2 end-2">
-        <h3 className="text-white font-bold text-sm leading-tight mb-1 line-clamp-1">
-          {clip.title}
-        </h3>
-        <p className="text-primary text-[10px] font-medium">
-          {new Date(clip.createdAt).toLocaleDateString()}
-        </p>
-      </div>
     </motion.div>
   );
 }
