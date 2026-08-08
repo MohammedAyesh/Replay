@@ -30,6 +30,10 @@ interface BunnyApiCollection {
   previewImageUrls?: string[];
 }
 
+const COLLECTIONS_CACHE_TTL_MS = 60 * 1000;
+let collectionsCache: unknown[] | null = null;
+let collectionsCacheTimestamp = 0;
+
 interface BunnyApiVideo {
   guid?: string;
   title?: string;
@@ -89,10 +93,18 @@ router.get("/bunny/collections", async (req, res): Promise<void> => {
     return;
   }
 
-  const raw = await bunnyGet("collections?page=1&itemsPerPage=100&orderBy=date&includeThumbnails=true", req);
-  if (!raw) {
-    res.json([]);
-    return;
+  const now = Date.now();
+  let raw: unknown[] | null;
+  if (collectionsCache !== null && now - collectionsCacheTimestamp < COLLECTIONS_CACHE_TTL_MS) {
+    raw = collectionsCache;
+  } else {
+    raw = await bunnyGet("collections?page=1&itemsPerPage=100&orderBy=date&includeThumbnails=true", req);
+    if (!raw) {
+      res.json([]);
+      return;
+    }
+    collectionsCache = raw;
+    collectionsCacheTimestamp = Date.now();
   }
 
   // Pull DB overrides

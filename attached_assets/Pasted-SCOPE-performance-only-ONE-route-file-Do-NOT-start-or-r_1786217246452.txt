@@ -1,0 +1,45 @@
+SCOPE: performance only. ONE route file.
+
+Do NOT start or run Task #100 or Task #101. Ignore both.
+Do NOT change any image URL or add any proxy in this task — images are a
+separate task I will send next.
+
+PROBLEM: GET /api/bunny/collections consistently takes 0.99–1.12 seconds,
+measured in your own investigation. It calls the Bunny Stream API live on every
+single request, then queries the database for field overrides, for a response
+of only four collections. The Fields list is visibly slow to appear as a
+result; the Academies list, which reads local data, appears immediately.
+
+FIX: add a short-lived server-side cache to that route.
+
+Requirements:
+  - Cache the Bunny API response in memory in the API server process.
+  - TTL of 60 seconds. On a cache hit, skip the upstream Bunny call entirely.
+  - The database lookup for field overrides (name, thumbnailUrl, isHidden,
+    clipsVisible, id) must still run on EVERY request, not be cached. Admin
+    edits to a field must appear immediately without waiting for a TTL to
+    expire. Only the upstream Bunny call is cached.
+  - If the Bunny call fails, do not cache the failure and do not serve a stale
+    error. Behave exactly as the route does today on failure.
+  - The response shape must be byte-for-byte identical to today: same field
+    names, same types, same ordering, same filtering of hidden collections.
+
+Use a simple in-memory variable holding the value and a timestamp. Do not add
+Redis, do not install any package, and do not add a new dependency of any kind.
+
+Also add a client-side staleTime to the Fields collections query so repeated
+navigation to the Fields page does not refetch immediately. Match the pattern
+already used by the Academies query, which sets staleTime: 5 * 60 * 1000.
+If that requires editing a second file, tell me which file and how many lines
+before doing it.
+
+--- MUST NOT CHANGE ---
+
+Do not change previewImageUrl values or how they are built. Do not add an image
+proxy. Do not change the Academies route, the user-clips route, or any playback
+code. Do not modify any database schema, migration, or column. Do not create
+any new file.
+
+VERIFY: after the change, request the endpoint several times in a row and
+report the timings. The first call should be roughly as slow as today; the
+following calls within 60
