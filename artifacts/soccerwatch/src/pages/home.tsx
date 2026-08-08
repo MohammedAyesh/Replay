@@ -131,7 +131,7 @@ export default function Home() {
 
   return (
     <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-28 pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-4">
         <div className="mb-4 flex items-center gap-3 px-1">
           <h1 className="text-sm font-semibold text-foreground">
             {locale === "ar" ? "الأخبار والتحديثات" : "News & updates"}
@@ -227,7 +227,15 @@ function NewsCard({
             {text.excerpt}
           </p>
           <div className="mt-3 flex items-center gap-1.5 text-xs font-extrabold text-primary">
-            <span>{isExpanded ? "Show less" : "Read full story"}</span>
+            <span>
+              {isExpanded
+                ? locale === "ar"
+                  ? "عرض أقل"
+                  : "Show less"
+                : locale === "ar"
+                  ? "اقرأ القصة كاملة"
+                  : "Read full story"}
+            </span>
             <ChevronDown
               className={`h-3.5 w-3.5 transition-transform duration-300 ${
                 isExpanded ? "rotate-180" : ""
