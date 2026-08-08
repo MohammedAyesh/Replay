@@ -57,7 +57,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {!hideTabBar && (
         <nav
           className={cn(
-            "absolute bottom-3 start-3 end-3 z-50 flex h-[82px] mx-auto max-w-[408px] items-center justify-around gap-1 rounded-[26px] border border-white/[0.08] px-2 pb-safe pt-2 backdrop-blur-md",
+            "absolute bottom-3 start-3 end-3 z-50 flex h-[70px] mx-auto max-w-[408px] items-center justify-around gap-1 rounded-[26px] border border-white/[0.08] px-2 pb-safe pt-2 backdrop-blur-md",
             useTranslucentBar
               ? "bg-black/75 text-white"
               : "bg-[rgba(10,11,13,0.9)] text-muted-foreground"
@@ -121,7 +121,7 @@ function NavItem({
     <Link
       href={href}
       className={cn(
-        "flex h-[62px] w-16 flex-col items-center justify-center gap-0.5 rounded-[14px] border-0 py-1 transition-colors",
+        "flex h-[54px] w-16 flex-col items-center justify-center gap-0.5 rounded-[14px] border-0 py-1 transition-colors",
         isActive ? "bg-[rgba(212,255,79,0.10)]" : "bg-transparent"
       )}
     >

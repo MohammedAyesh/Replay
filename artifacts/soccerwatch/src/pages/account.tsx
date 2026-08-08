@@ -108,7 +108,7 @@ export default function Account() {
   const email = rawEmail.endsWith("@soccerwatch.local") ? "" : rawEmail;
 
   return (
-    <div className="flex-1 h-full min-h-0 overflow-hidden bg-background">
+    <div className="flex flex-col flex-1 h-full min-h-0 overflow-hidden bg-background">
       <div className="shrink-0 bg-background px-4 pb-3 pt-4">
         <h1 className="font-display text-2xl font-bold text-foreground">{t.account.title}</h1>
         <p className="text-sm text-muted-foreground">{isGuest ? t.account.guestSubtitle : t.account.subtitle}</p>
