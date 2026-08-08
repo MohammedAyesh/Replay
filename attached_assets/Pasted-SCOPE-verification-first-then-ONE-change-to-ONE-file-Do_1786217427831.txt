@@ -1,0 +1,54 @@
+SCOPE: verification first, then ONE change to ONE file.
+
+Do NOT start or run Task #100 or Task #101. Ignore both.
+
+--- STEP 1: VERIFY THE PROXY (no code changes) ---
+
+Your investigation found that /api/hls-proxy/segment returns 404 on the running
+local API, even though the route exists in source and in the built bundle, and
+deployment logs show it previously serving 200s.
+
+Resolve that before anything else. Take an existing WORKING proxied thumbnail
+URL — one from a Created user clip, which currently displays correctly — and
+confirm whether that URL actually returns an image right now, both from the
+server and in the browser preview.
+
+Tell me plainly: is the image proxy operational or not?
+
+If it is NOT operational, STOP. Do not make any code change. Report what you
+found and what is causing the 404, and wait for my instruction. Created clip
+thumbnails currently work, so if the proxy were truly down they should be
+broken too — resolve that contradiction before proceeding.
+
+--- STEP 2: ONLY IF THE PROXY IS CONFIRMED WORKING ---
+
+Fix Fields preview images by routing them through the same proxy that Created
+clips already use.
+
+Make the change SERVER-SIDE, in the route that builds the collections response
+(the one that already calls the Bunny collections API with
+includeThumbnails=true). Where previewImageUrl is currently returned as a raw
+Bunny URL, return it wrapped through the existing image proxy helper instead —
+the same mechanism getBunnyProxiedThumbnailUrl() uses for user clips.
+
+Requirements:
+  - If previewImageUrl is null, it must STAY null. Do not fabricate a URL.
+    "Jordan Galaxy Lower" has no thumbnail and must keep showing the
+    field-pattern placeholder.
+  - Do not change the shape of the response object — same field names, same
+    types. previewImageUrl stays a string or null.
+  - Do not change fields.tsx or any frontend file. The frontend already renders
+    whatever URL it is given, with an onError fallback.
+  - Do not touch the database, the schema, or any override logic.
+  - Do not add a cache in this task. The ~1s latency is a separate problem.
+  - Reuse the existing proxy helper. Do not write a new proxy route.
+
+--- CONSTRAINTS ---
+
+Do not modify any database schema, migration, or column. Do not install any
+package. Do not create any new file. Do not change the Academies path, the
+user-clips path, or any playback code.
+
+If the fix would require editing a second file, STOP and tell me instead.
+
+Report your Step 1 finding first. Then show me the diff, if any.

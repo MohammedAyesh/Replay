@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, isBunnyConfigured } from "../lib/bunny.js";
+import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny.js";
 import { db, fieldsTable, recordingsTable, recordingSchedulesTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 
@@ -86,6 +86,21 @@ async function bunnyGet(path: string, req: { log: { warn: (...args: unknown[]) =
   return Array.isArray(data) ? data : (data.items ?? []);
 }
 
+function getProxiedPreviewImageUrl(previewImageUrl: string | null): string | null {
+  if (!previewImageUrl) return null;
+
+  const url = new URL(previewImageUrl);
+  const videoId = url.pathname.split("/").filter(Boolean)[0];
+  if (!videoId) return null;
+
+  const generatedProxyUrl = getBunnyProxiedThumbnailUrl(videoId);
+  const generatedRawUrl = `https://${BUNNY_CDN_HOSTNAME}/${videoId}/thumbnail.jpg`;
+  return generatedProxyUrl.replace(
+    encodeURIComponent(generatedRawUrl),
+    encodeURIComponent(previewImageUrl),
+  );
+}
+
 // List all collections — merged with DB overrides so admin controls apply
 router.get("/bunny/collections", async (req, res): Promise<void> => {
   if (!isBunnyConfigured()) {
@@ -120,7 +135,7 @@ router.get("/bunny/collections", async (req, res): Promise<void> => {
         guid,
         name: dbField?.name ?? (c.name as string),
         videoCount: c.videoCount ?? 0,
-        previewImageUrl: dbField?.thumbnailUrl ?? c.previewImageUrls?.[0] ?? null,
+        previewImageUrl: getProxiedPreviewImageUrl(dbField?.thumbnailUrl ?? c.previewImageUrls?.[0] ?? null),
         // include DB id so detail pages can link by integer id
         id: dbField?.id ?? null,
         isHidden: dbField?.isHidden ?? false,
