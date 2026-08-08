@@ -1,0 +1,99 @@
+SCOPE: TWO files and no others:
+  1. artifacts/soccerwatch/src/pages/account.tsx
+  2. artifacts/soccerwatch/src/components/layout.tsx  (ONE class change, part E)
+
+Do not open or modify any other page, any component in src/components/ui/,
+index.css, any route, or any API/data file.
+
+Attached: one screenshot of the target Profile design. It is a STYLE reference
+only, not a content reference. The names, numbers, labels and rows in the
+screenshot are fake sample data. Your job is to restyle the page that exists,
+NOT to make it match the screenshot's content.
+
+--- A. WHAT MUST NOT CHANGE ---
+
+Read this first. Every one of these already exists on the page and must still
+be there, wired to the same data, when you finish:
+
+  - The avatar (initial or uploaded image)
+  - Name and email
+  - The chips showing position, age and gender
+  - The three stat counters, with their CURRENT labels and CURRENT values.
+    The app's three stats are Saved Clips, Likes Given, and Fields. The
+    screenshot shows Matches / Clips / Hours — those are fake. Do not rename
+    a stat, do not swap a data source, do not add a fourth stat.
+  - Edit Profile row
+  - Language row with its EN / عربي toggle
+  - Admin Panel row
+  - Log out control
+
+Do not add a Light mode toggle. Do not add a Help & Support row. Do not add an
+About / version row. Those appear in the screenshot and are NOT wanted.
+
+Every existing onClick, link, query and handler stays exactly as it is.
+
+--- B. STYLING TO APPLY ---
+
+Avatar: circular, 76px, wrapped in a ring made from
+  conic-gradient(from 0deg, #22C7B5 0deg 60deg, #BFFF5C 60deg 120deg,
+  #3FE0C9 120deg 180deg, #1FA79B 180deg 240deg, #186E7E 240deg 300deg,
+  #6C4FE0 300deg 360deg)
+with the inner avatar circle 56px sitting on top of it.
+
+Header block: avatar on one side, name and meta beside it (not centred above).
+Name uses the display font. The position/age/gender chips sit under the meta
+line, each with border-radius 8px, a subtle border, and a faint surface fill.
+
+Stats: three equal cards in a row, each with border-radius 18px, card
+background, 1px border. The number is large and uses the display font. The
+label below it is small, uppercase, muted.
+
+Sections: add a small uppercase muted section heading above each group —
+one for the information chips area, one for the settings rows. Use existing
+translation strings if suitable ones exist; if not, leave the group without a
+heading rather than adding a new translation key.
+
+Rows (Edit Profile, Language, Admin Panel): group them inside ONE rounded
+container, border-radius 22px, card background, 1px border, with hairline
+dividers between rows. Each row: a 32px rounded-square icon holder on the
+leading side with a faint fill, then the label, then the value or chevron on
+the trailing side.
+
+Log out: full-width button below the container, border-radius 16px, with
+border rgba(255,90,60,0.28) and background rgba(255,90,60,0.09), text in the
+destructive colour.
+
+--- C. RULES ---
+
+Use the app's existing theme tokens for background, card, border, foreground,
+muted-foreground, primary and destructive. Do not hardcode a hex for any of
+those. The only literal hex values allowed in this task are the six colours in
+the avatar conic-gradient and the two rgba values on the log out button.
+
+The page must work in RTL. Use logical properties (start/end, ms/me, ps/pe),
+never left/right. Never pair a logical inset with a physical transform.
+
+--- D. LAYOUT SAFETY ---
+
+The page sits inside a shell that now has a sticky header above it. Make sure
+the top of the page content is not hidden behind that header, and that the
+bottom is not hidden behind the floating nav — keep or add enough bottom
+padding that the Log out button can be scrolled fully into view.
+
+--- E. ONE CLASS CHANGE IN layout.tsx ---
+
+On the <nav> element only, change "start-0 end-0" to "start-3 end-3" so the
+floating nav keeps a gutter on screens narrower than 408px. Change nothing
+else in that file.
+
+--- CONSTRAINTS ---
+
+Visual-only change to two named files. Do not modify any API call, database
+schema, query, or route. Do not add, rename, or drop any database column. Do
+not install any package. Do not create any new file. Do not add any new
+translation key. Do not remove any existing element, row, link or handler.
+
+If any change would require editing a third file, STOP and tell me instead.
+
+Show me the complete diff of both files and nothing else. Do not start any
+follow-up task.

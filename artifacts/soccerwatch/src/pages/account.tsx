@@ -108,45 +108,57 @@ export default function Account() {
   const email = rawEmail.endsWith("@soccerwatch.local") ? "" : rawEmail;
 
   return (
-    <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
-      <div className="pt-safe px-4 py-6 bg-background">
-        <h1 className="text-2xl font-bold text-foreground">{t.account.title}</h1>
-        <p className="text-muted-foreground text-sm">{isGuest ? t.account.guestSubtitle : t.account.subtitle}</p>
+    <div className="flex-1 h-full min-h-0 overflow-hidden bg-background">
+      <div className="shrink-0 bg-background px-4 pb-3 pt-4">
+        <h1 className="font-display text-2xl font-bold text-foreground">{t.account.title}</h1>
+        <p className="text-sm text-muted-foreground">{isGuest ? t.account.guestSubtitle : t.account.subtitle}</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-24">
+      <div className="flex-1 overflow-y-auto pb-28">
         {/* Profile Card */}
-        <div className="p-6 flex flex-col items-center bg-background">
-          <div className="w-24 h-24 rounded-full bg-zinc-800 text-primary flex items-center justify-center text-4xl font-bold mb-4 shadow-inner">
-            {initial}
-          </div>
-          <h2 className="text-xl font-bold text-foreground">{name}</h2>
-          <p className="text-muted-foreground text-sm">{email}</p>
-          {!isGuest && (
-            <div className="flex flex-wrap justify-center gap-2 mt-3">
-              {displayUser?.position && (
-                <span className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold capitalize">
-                  {displayUser.position}
-                </span>
-              )}
-              {displayUser?.age != null && (
-                <span className="px-2.5 py-1 rounded-full bg-muted text-muted-foreground text-xs font-semibold">
-                  {displayUser.age} yrs
-                </span>
-              )}
-              {displayUser?.gender && (
-                <span className="px-2.5 py-1 rounded-full bg-muted text-muted-foreground text-xs font-semibold capitalize">
-                  {displayUser.gender.replace(/_/g, " ")}
-                </span>
+        <div className="bg-background px-4 pb-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-full"
+              style={{
+                background:
+                  "conic-gradient(from 0deg, #22C7B5 0deg 60deg, #BFFF5C 60deg 120deg, #3FE0C9 120deg 180deg, #1FA79B 180deg 240deg, #186E7E 240deg 300deg, #6C4FE0 300deg 360deg)",
+              }}
+            >
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-card text-2xl font-bold text-primary">
+                {initial}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <h2 className="truncate font-display text-xl font-bold text-foreground">{name}</h2>
+              <p className="truncate text-sm text-muted-foreground">{email}</p>
+              {!isGuest && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {displayUser?.position && (
+                    <span className="rounded-lg border border-border bg-muted/40 px-2 py-1 text-[11px] font-semibold capitalize text-muted-foreground">
+                      {displayUser.position}
+                    </span>
+                  )}
+                  {displayUser?.age != null && (
+                    <span className="rounded-lg border border-border bg-muted/40 px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+                      {displayUser.age} yrs
+                    </span>
+                  )}
+                  {displayUser?.gender && (
+                    <span className="rounded-lg border border-border bg-muted/40 px-2 py-1 text-[11px] font-semibold capitalize text-muted-foreground">
+                      {displayUser.gender.replace(/_/g, " ")}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Stats */}
         {!isGuest && (
-          <div className="px-4 pb-4 bg-background">
-            <div className="grid grid-cols-3 gap-4">
+          <div className="bg-background px-4 pb-4">
+            <div className="grid grid-cols-3 gap-2">
               <StatCard label={t.account.savedClips} value={stats?.savedClips ?? 0} />
               <StatCard label={t.account.likesGiven} value={stats?.likesGiven ?? 0} />
               <StatCard label={t.account.fields} value={stats?.fieldsVisited ?? 0} />
@@ -155,18 +167,20 @@ export default function Account() {
         )}
 
         {/* Settings List */}
-        <div className="mt-2 bg-background">
+        <div className="mx-4 mt-1 overflow-hidden rounded-[22px] border border-border bg-card divide-y divide-border">
           {!isGuest && user && (
             <button
               onClick={() => setIsEditOpen(true)}
-              className="w-full flex items-center justify-between p-4 bg-background hover:bg-muted/30 transition-colors"
+              className="flex w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
             >
               <div className="flex items-center gap-3">
-                <Pencil className="w-5 h-5 text-muted-foreground" />
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
+                  <Pencil className="h-4 w-4 text-muted-foreground" />
+                </span>
                 <span className="font-medium text-foreground">{t.account.editProfile}</span>
               </div>
-              <ChevronRight className="w-5 h-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="w-5 h-5 text-muted-foreground ltr:hidden" />
+              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
             </button>
           )}
           {/* Language toggle */}
@@ -175,27 +189,29 @@ export default function Account() {
           {isAdmin && (
             <Link
               href="/admin"
-              className="w-full flex items-center justify-between p-4 bg-background hover:bg-muted/30 transition-colors"
+              className="flex w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
             >
               <div className="flex items-center gap-3">
-                <Shield className="w-5 h-5 text-primary" />
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
+                  <Shield className="h-4 w-4 text-primary" />
+                </span>
                 <span className="font-medium text-foreground">Admin Panel</span>
               </div>
-              <ChevronRight className="w-5 h-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="w-5 h-5 text-muted-foreground ltr:hidden" />
+              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
             </Link>
           )}
         </div>
 
-        <div className="p-6 mt-4">
+        <div className="mx-4 mt-4 pb-safe">
           <Button
             type="button"
             variant="outline"
             disabled={isLoggingOut}
-            className="w-full text-destructive hover:bg-destructive/5 hover:text-destructive py-6 rounded-xl font-semibold disabled:opacity-50 border-0"
+            className="w-full rounded-2xl border-[rgba(255,90,60,0.28)] bg-[rgba(255,90,60,0.09)] py-6 font-semibold text-destructive hover:bg-destructive/5 hover:text-destructive disabled:opacity-50"
             onClick={handleLogout}
           >
-            <LogOut className="w-5 h-5 me-2" />
+            <LogOut className="me-2 h-5 w-5" />
             {isLoggingOut
               ? (isGuest ? "Redirecting..." : "Signing out...")
               : (isGuest ? t.account.signInRegister : t.account.signOut)}
@@ -220,9 +236,9 @@ export default function Account() {
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="p-3 text-center">
-      <div className="text-2xl font-bold text-foreground mb-0.5">{value}</div>
-      <div className="text-[10px] uppercase font-medium text-muted-foreground tracking-wider">{label}</div>
+    <div className="rounded-[18px] border border-border bg-card px-2 py-3 text-center">
+      <div className="mb-0.5 font-display text-2xl font-bold text-primary">{value}</div>
+      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
     </div>
   );
 }
@@ -243,15 +259,17 @@ function SettingRow({ icon, label }: { icon: React.ReactNode; label: string; bor
 function LanguageToggle() {
   const { t, locale, setLocale } = useTranslation();
   return (
-    <div className="w-full flex items-center justify-between p-4 bg-background">
+    <div className="flex w-full items-center justify-between bg-card p-4">
       <div className="flex items-center gap-3">
-        <Globe className="w-5 h-5 text-muted-foreground" />
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
+          <Globe className="h-4 w-4 text-muted-foreground" />
+        </span>
         <span className="font-medium text-foreground">{t.account.language}</span>
       </div>
-      <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+      <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
         <button
           onClick={() => setLocale("en")}
-          className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
+          className={`rounded-md px-3 py-1 text-sm font-semibold transition-colors ${
             locale === "en"
               ? "bg-zinc-700 text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
@@ -261,7 +279,7 @@ function LanguageToggle() {
         </button>
         <button
           onClick={() => setLocale("ar")}
-          className={`px-3 py-1 rounded-md text-sm font-semibold transition-colors ${
+          className={`rounded-md px-3 py-1 text-sm font-semibold transition-colors ${
             locale === "ar"
               ? "bg-zinc-700 text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
