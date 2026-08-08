@@ -57,7 +57,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {!hideTabBar && (
         <nav
           className={cn(
-            "absolute bottom-3 start-1/2 z-50 flex h-[82px] w-[calc(100%-24px)] max-w-[408px] -translate-x-1/2 items-center justify-around gap-1 rounded-[26px] border border-white/[0.08] px-2 pb-safe pt-2 backdrop-blur-md",
+            "absolute bottom-3 start-0 end-0 z-50 flex h-[82px] mx-auto max-w-[408px] items-center justify-around gap-1 rounded-[26px] border border-white/[0.08] px-2 pb-safe pt-2 backdrop-blur-md",
             useTranslucentBar
               ? "bg-black/75 text-white"
               : "bg-[rgba(10,11,13,0.9)] text-muted-foreground"
