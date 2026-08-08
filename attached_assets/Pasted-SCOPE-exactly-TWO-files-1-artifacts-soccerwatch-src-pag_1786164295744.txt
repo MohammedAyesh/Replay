@@ -1,0 +1,138 @@
+SCOPE: exactly TWO files:
+  1. artifacts/soccerwatch/src/pages/home.tsx
+  2. artifacts/soccerwatch/src/pages/view.tsx
+
+Do not modify layout.tsx, index.css, App.tsx, the i18n strings file, or any
+other file. Do NOT change the REPLAY logo or wordmark in the header — it stays
+in English in both languages, by design.
+
+=========================================================
+PART 1 — view.tsx: translate the "Browse" heading
+=========================================================
+
+The <h1> currently renders the hardcoded English word "Browse". Make it show
+Arabic when the locale is Arabic.
+
+Do NOT add a key to the i18n strings file. Instead, inside view.tsx, read the
+current locale from the existing useTranslation() hook and pick between two
+inline strings:
+    English: "Browse"
+    Arabic:  "استعراض"
+
+Change nothing else in view.tsx.
+
+=========================================================
+PART 2 — home.tsx: translate "News & updates"
+=========================================================
+
+The section heading renders the hardcoded English "News & updates". Same
+approach — inline, no new i18n key:
+    English: "News & updates"
+    Arabic:  "الأخبار والتحديثات"
+
+=========================================================
+PART 3 — home.tsx: translate the four mock posts
+=========================================================
+
+Restructure the posts array so every user-visible text field holds BOTH
+languages, then select by locale at render time. Keep the array in this file.
+Do not add any i18n key. Do not move the posts to another file.
+
+Change each text field from a plain string to an object with en and ar, e.g.
+    title: { en: "...", ar: "..." }
+and for the arrays:
+    body: { en: ["...", "..."], ar: ["...", "..."] }
+    facts: { en: ["...","...","..."], ar: ["...","...","..."] }
+
+Fields that hold both languages: tag, date, readTime, title, excerpt, body,
+facts. The id and image fields stay as they are.
+
+Use exactly this Arabic content:
+
+POST 1
+  tag: "ميزة"
+  date: "٢٨ تموز"   readTime: "قراءة ٣ دقائق"
+  title: "كل مباراة تلعبها، مسجّلة وجاهزة"
+  excerpt: "الكاميرات تعمل طوال المساء في الملاعب الشريكة. مباراتك بانتظارك قبل
+    أن تصل إلى السيارة."
+  body: [
+    "ريبلاي يسجّل باستمرار في كل ملعب شريك. لا شيء تجهّزه، ولا زر تضغطه، ولا
+     أحد تسأله — أنت تلعب، والتسجيل موجود.",
+    "افتح التطبيق، اختر الملعب ثم التاريخ. كل ساعة مسجّلة معروضة وجاهزة
+     للمشاهدة من أي هاتف."
+  ]
+  facts: ["بلا إعداد", "المباراة كاملة", "شاهد أينما كنت"]
+
+POST 2
+  tag: "مقاطع"
+  date: "٢٤ تموز"   readTime: "قراءة دقيقتين"
+  title: "اقتطع لقطاتك المميزة في ثوانٍ"
+  excerpt: "وجدت الهدف؟ اقتطعه، أطّره، وأرسله إلى مجموعة الأصدقاء قبل أن ينتهي
+    الجدال حوله."
+  body: [
+    "مرّر إلى اللحظة، اسحب المقابض، ثم احفظ. مقطعك يظهر في مقاطعي ويُحمَّل
+     كملف فيديو عادي.",
+    "حرّك الصورة وقرّبها أثناء الاقتطاع، لتبقى الكرة في الإطار بدل أن تضيع في
+     لقطة واسعة للملعب."
+  ]
+  facts: ["اقتطع واحفظ", "تحريك وتقريب", "شارك فوراً"]
+
+POST 3
+  tag: "أكاديميات"
+  date: "٢١ تموز"   readTime: "قراءة دقيقتين"
+  title: "الأهل يشاهدون من أي مكان"
+  excerpt: "التدريبات ومباريات الأكاديميات تُبَث مباشرة، وتبقى متاحة لاحقاً لمن
+    فاتته."
+  body: [
+    "الأكاديميات الشريكة تبثّ حصصها مباشرة إلى التطبيق. من لا يستطيع الحضور إلى
+     الملعب يشاهد من البيت، أو من بلد آخر.",
+    "كل حصة تُحفظ بعد انتهائها، فالمساء الذي فاتك يبعد نقرة واحدة."
+  ]
+  facts: ["بث مباشر", "محفوظ لاحقاً", "أي جهاز"]
+
+POST 4
+  tag: "ملاعب"
+  date: "١٨ تموز"   readTime: "قراءة دقيقتين"
+  title: "ملاعب جديدة تنضم في عمّان"
+  excerpt: "ملاعب جديدة تدخل الخدمة كل شهر، وكل واحد منها مغطّى بكاميرات ترى
+    الملعب بالكامل."
+  body: [
+    "كل ملعب شريك جديد يصل مجهّزاً — الكاميرات مركّبة، والزاوية تغطي كامل
+     المساحة، والتسجيل يبدأ من أول حجز.",
+    "إذا كنت تلعب في مكان غير مدرج بعد، أخبر صاحب الملعب. التجهيز يحتاج زيارة
+     واحدة."
+  ]
+  facts: ["ينمو أسبوعياً", "الملعب بالكامل", "عمّان وما بعدها"]
+
+Keep all existing English content exactly as it is. Keep every card style,
+expand behaviour, one-open-at-a-time logic and animation unchanged.
+
+=========================================================
+PART 4 — home.tsx: fix Arabic date reordering
+=========================================================
+
+BUG: in Arabic the date line renders as "JUL · 3 MIN READ 28" — the number
+jumps to the end. This is bidirectional text reordering: a Latin/numeric run
+inside an RTL paragraph gets reordered by the browser.
+
+FIX: wrap the date line's content in an element carrying the CSS property
+    unicode-bidi: isolate
+together with an explicit direction matching the current locale (ltr in
+English, rtl in Arabic), so the run is isolated and renders in its intended
+order.
+
+Apply this to the "{date} · {readTime}" line only. Verify in BOTH languages
+that the date reads in the correct order before finishing.
+
+--- CONSTRAINTS ---
+
+Do not add any translation key to the i18n strings file. Do not modify the
+i18n file at all. Do not modify any API call, database schema, query, or route.
+Do not add, rename, or drop any database column. Do not install any package.
+Do not create any new file. Do not change the header logo or wordmark. Do not
+restyle any card.
+
+If any change would require editing a third file, STOP and tell me instead.
+
+Show me the complete diff of both files and nothing else. Do not start any
+follow-up task.
