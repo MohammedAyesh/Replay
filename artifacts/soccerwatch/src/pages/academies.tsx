@@ -217,6 +217,7 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenR
 }
 
 export default function Academies({ embedded = false }: { embedded?: boolean }) {
+  const { locale } = useTranslation();
   const { data: academies, isLoading } = useListAcademies({
     query: { queryKey: getListAcademiesQueryKey(), staleTime: 5 * 60 * 1000 },
   });
@@ -246,7 +247,7 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
         <div className="relative">
           <Search className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search academies…" className="ps-9 bg-muted border-transparent focus-visible:ring-primary rounded-xl h-12"
+            placeholder={locale === "ar" ? "ابحث عن أكاديمية" : "Search academies…"} className="ps-9 bg-muted border-transparent focus-visible:ring-primary rounded-xl h-12"
           />
         </div>
       </motion.div>
