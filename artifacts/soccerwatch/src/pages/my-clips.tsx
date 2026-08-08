@@ -1053,9 +1053,6 @@ function LocalClipCard({
             </span>
           </div>
 
-          <div className="absolute bottom-1 end-1 rounded bg-black/70 px-1 text-[10px] font-semibold text-white">
-            {new Date(record.downloadedAt).toLocaleDateString()}
-          </div>
         </div>
         <div className="min-w-0 flex-1 pe-7">
           <h3 className="line-clamp-2 text-sm font-bold leading-tight text-foreground">{record.title}</h3>
@@ -1069,7 +1066,7 @@ function LocalClipCard({
       {/* Delete button */}
       <button
         onClick={() => setShowDelete(true)}
-        className="absolute start-2 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-muted/80 transition-opacity active:opacity-70"
+        className="absolute end-2 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-muted/80 transition-opacity active:opacity-70"
         title="Remove from saved"
       >
         <Trash2 className="h-3 w-3 text-muted-foreground" />
@@ -1258,7 +1255,7 @@ function UserClipCard({
       {/* Delete button */}
       <button
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDelete(true); }}
-        className="absolute start-2 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-muted/80 transition-opacity active:opacity-70"
+        className="absolute end-2 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-muted/80 transition-opacity active:opacity-70"
         aria-label="Delete clip"
       >
         <Trash2 className="h-3 w-3 text-muted-foreground" />
