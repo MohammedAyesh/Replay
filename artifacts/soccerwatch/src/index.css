@@ -146,7 +146,7 @@
 }
 
 .field-pattern {
-  background-color: #0a0a0a;
+  background-color: hsl(var(--card));
   background-image:
     linear-gradient(hsl(var(--primary) / 0.06) 1px, transparent 1px),
     linear-gradient(90deg, hsl(var(--primary) / 0.06) 1px, transparent 1px);

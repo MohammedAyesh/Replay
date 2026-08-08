@@ -1,0 +1,90 @@
+SCOPE: This task changes TWO files and no others:
+  1. artifacts/soccerwatch/src/components/layout.tsx
+  2. artifacts/soccerwatch/src/index.css  (ONE line only — see part D)
+
+Do not open or modify any page file, any component in src/components/ui/,
+any route, or any API/data file.
+
+Attached: one .jsx design-system reference and two screenshots of the target
+design. The .jsx is reference ONLY — do not add it to the project or import
+from it. Copy the LogoMark SVG geometry out of it; that is all it is for.
+
+--- A. SHELL ---
+
+The Layout currently wraps pages in a max-w-[420px] centred column.
+Change that to max-w-[440px]. Nothing else about the column changes.
+
+Apply the existing .rp-glow utility class (already defined in index.css) to
+that same column element, so the two radial washes sit behind page content.
+Do not modify the .rp-glow definition.
+
+--- B. TOP HEADER ---
+
+Add a sticky top header inside the shell, above page content:
+
+  - Rounded container, border-radius 20px, inset slightly from the column edges
+  - Background rgba(10,11,13,0.82) with a backdrop blur
+  - Left: the logo mark, 31px tall
+  - Next to it: the word REPLAY, using var(--app-font-display), weight 700,
+    font-size 21px, letter-spacing -0.015em, filled with
+    linear-gradient(90deg, #2FD8C4, #7B5CFF) via background-clip: text
+    (color: transparent). This gradient is intentional and must not be
+    replaced with a solid colour.
+  - Right: a pill-shaped language button, border-radius 99px, no border,
+    background rgba(255,255,255,0.07), showing a globe icon and the current
+    language code.
+
+IMPORTANT — the language button must REUSE the app's existing language-toggle
+function or hook. Do not write a new one, do not add state, do not touch any
+i18n or translation file. If you cannot wire it up by reusing what already
+exists without editing a second file, OMIT the language button entirely,
+leave the rest of the header, and tell me why in your report.
+
+Do not remove, move, or restyle any page-level heading. The header sits above
+them; per-page titles stay exactly where they are.
+
+The header must respect RTL (use logical properties, not left/right) and must
+hide on exactly the same routes where the bottom tab bar already hides.
+
+--- C. BOTTOM NAV ---
+
+Restyle the existing bottom tab bar into a floating pill:
+
+  - max-width 408px, centred, floating with a visible gap from the screen
+    bottom (keep the existing safe-area padding utility)
+  - border-radius 26px, background rgba(10,11,13,0.9), backdrop blur
+  - Each item: vertical stack, icon above a small uppercase label,
+    border-radius 14px, no border
+  - ACTIVE item: background rgba(212,255,79,0.10) as a TINT — not a solid
+    fill — with the icon and label in the primary colour
+  - INACTIVE item: transparent background, muted-foreground colour
+
+CRITICAL: keep all FIVE existing nav items exactly as they are — same order,
+same icons, same labels, same routes, same links. Do not merge, remove,
+rename, or reorder any of them. Do not change to four items.
+
+Keep every existing conditional that hides or restyles the tab bar (login page,
+/player/*, auth pages, fullscreen video, and the translucent variant on /home).
+Those conditions must behave identically after your change.
+
+--- D. ONE LINE IN index.css ---
+
+In the .field-pattern rule ONLY, change:
+    background-color: #0a0a0a;
+to:
+    background-color: hsl(var(--card));
+Change nothing else in index.css.
+
+--- CONSTRAINTS ---
+
+Visual-only change to two named files. Do not modify any API call, database
+schema, query, or route. Do not add, rename, or drop any database column. Do
+not install any package. Do not create any new file. Do not remove any existing
+element, link, or conditional. install-banner, orientation-lock and skip-flash
+must keep rendering exactly as they do now.
+
+If any change would require editing a third file, STOP and tell me instead of
+proceeding.
+
+When done, show me the complete diff of both files and nothing else. Do not
+start any follow-up task.
