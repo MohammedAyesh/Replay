@@ -1,0 +1,79 @@
+SCOPE: artifacts/soccerwatch/src/pages/fields.tsx ONLY.
+
+Do not open or modify layout.tsx, index.css, academies.tsx, any other page,
+any component in src/components/ui/, any route, or any API/data file.
+
+Attached: one screenshot of the target design. It is a STYLE reference for the
+CARD LAYOUT ONLY.
+
+IGNORE these things in the screenshot completely:
+  - The navigation bar (it shows four tabs; the real app has five and they are
+    correct — the nav is in layout.tsx which is OUT OF SCOPE)
+  - The "Browse" title and the Academies/Fields pill toggle at the top. This
+    page is still the standalone Fields page. Keep its EXISTING title, subtitle
+    and search bar. Do not add a toggle. Do not merge anything.
+  - All content in the screenshot — names, prices, ratings, distances and
+    chips are fake sample data.
+
+--- A. WHAT MUST NOT CHANGE ---
+
+  - The page title and subtitle
+  - The search bar and its filtering behaviour
+  - Each field's real name and real video count
+  - The link from each card to /fields/:id
+  - The thumbnail image source and its fallback (the field-pattern placeholder)
+  - Loading and empty states
+  - Every query, onClick and route
+
+DO NOT ADD any of these — they appear in the screenshot but do NOT exist in
+this app's data: price, star rating, distance, area label, amenity chips.
+If the data is not already on the page, omit that element entirely. Do not
+invent placeholder values and do not add a database field.
+
+Only show a LIVE badge if this page ALREADY has a live indicator. If it does
+not, do not add one.
+
+Do not add any new translation key. Reuse existing strings only.
+
+--- B. STYLING TO APPLY ---
+
+SEARCH BAR: rounded, border-radius 99px, card background, 1px border, with the
+search icon on the leading side. Keep its existing placeholder and behaviour.
+
+CARDS: change from a two-column grid to a SINGLE-COLUMN vertical list.
+Each card: border-radius 22px, card background, 1px border, clipped contents,
+with a gap between cards.
+
+Inside each card, top to bottom:
+  1. Photo area, height 130px, full card width, image covering it. Keep the
+     existing field-pattern fallback for when no image loads. Overlay a subtle
+     dark gradient from the top and bottom edges so text stays readable.
+  2. Below the photo, a content block with padding: the field name on top
+     (display font, medium-bold, line-height 1.25, truncated to one line),
+     then the existing video count in small muted text underneath.
+
+--- C. RULES ---
+
+Use the app's existing theme tokens for background, card, border, foreground,
+muted-foreground and primary. Do not hardcode hex colours.
+
+RTL: use logical properties (start/end, ms/me, ps/pe) throughout. Never pair a
+logical inset with a physical transform.
+
+SCROLLING: the page must scroll. If the outer wrapper has h-full and
+overflow-hidden, that wrapper MUST also carry "flex flex-col", and the inner
+scrolling element must be "flex-1 min-h-0 overflow-y-auto" with enough bottom
+padding that the last card clears the floating nav. Verify scrolling actually
+works before finishing — this mistake has already broken two pages.
+
+--- CONSTRAINTS ---
+
+Visual-only change to one file. Do not modify any API call, database schema,
+query, or route. Do not add, rename, or drop any database column. Do not
+install any package. Do not create any new file. Do not remove any existing
+element, handler or state.
+
+If any change would require editing a second file, STOP and tell me instead.
+
+Show me the complete diff of fields.tsx and nothing else. Do not start any
+follow-up task.
