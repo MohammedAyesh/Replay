@@ -107,39 +107,53 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenR
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0, transition: { delay: index * 0.07, duration: 0.35, ease: "easeOut" } }}
-      className="bg-card border border-border rounded-2xl overflow-hidden"
+      className="overflow-hidden rounded-[22px] border border-border bg-card"
     >
-      <button onClick={onToggle} className="w-full flex items-center gap-4 p-4 text-start hover:bg-muted/40 transition-colors">
-        {academy.logoUrl ? (
-          <img src={academy.logoUrl} alt={academy.name} className="w-12 h-12 rounded-xl object-cover flex-shrink-0" />
-        ) : (
-          <div className="w-12 h-12 rounded-xl bg-primary/15 flex items-center justify-center flex-shrink-0">
-            <GraduationCap className="w-6 h-6 text-primary" />
+      <button onClick={onToggle} className="w-full text-start">
+        {/* Banner */}
+        <div className="relative h-24 w-full overflow-hidden">
+          {academy.logoUrl ? (
+            <img
+              src={academy.logoUrl}
+              alt={academy.name}
+              className="absolute inset-0 h-full w-full object-cover"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : (
+            <div className="absolute inset-0 field-pattern bg-card" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/40" />
+        </div>
+        {/* Content block */}
+        <div className="px-3 py-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <p className="truncate font-display text-sm font-semibold leading-[1.25] text-foreground">{academy.name}</p>
+            <div className="shrink-0 text-end">
+              <p className="text-sm font-bold tabular-nums text-foreground">{academy.recordingCount}</p>
+              <p className="text-[10px] uppercase text-muted-foreground">videos</p>
+            </div>
           </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-foreground truncate">{academy.name}</p>
-          <div className="flex items-center gap-1 mt-0.5 text-muted-foreground text-xs">
-            <MapPin className="w-3 h-3" />
+          <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <MapPin className="h-3 w-3 shrink-0" />
             <span className="truncate">{academy.fieldName} · {academy.fieldLocation}</span>
           </div>
-          <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-            {academy.daysOfWeek.slice(0, 4).map((d) => <DayBadge key={d} day={d} />)}
+          <div className="mt-2 flex items-center justify-between">
+            <div className="flex flex-wrap gap-1">
+              {academy.daysOfWeek.slice(0, 4).map((d) => <DayBadge key={d} day={d} />)}
+            </div>
+            <div className="flex shrink-0 items-center">
+              <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }}
+                className="rtl:hidden inline-block"
+              >
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              </motion.div>
+              <motion.div animate={{ rotate: isExpanded ? -90 : 0 }} transition={{ duration: 0.2 }}
+                className="ltr:hidden inline-block"
+              >
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              </motion.div>
+            </div>
           </div>
-        </div>
-        <div className="text-end flex-shrink-0">
-          <p className="text-lg font-bold text-foreground tabular-nums">{academy.recordingCount}</p>
-          <p className="text-[10px] text-muted-foreground uppercase">videos</p>
-          <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }}
-            className="rtl:hidden inline-block mt-1"
-          >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </motion.div>
-          <motion.div animate={{ rotate: isExpanded ? -90 : 0 }} transition={{ duration: 0.2 }}
-            className="ltr:hidden inline-block mt-1"
-          >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </motion.div>
         </div>
       </button>
 
@@ -218,10 +232,10 @@ export default function Academies() {
   );
 
   return (
-    <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
+    <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
       <motion.div initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } }}
-        className="pt-safe px-4 py-6 bg-background sticky top-0 z-10"
+        className="sticky top-0 z-10 shrink-0 bg-background px-4 pb-3 pt-4"
       >
         <h1 className="text-2xl font-bold text-foreground">Academies</h1>
         <p className="text-muted-foreground text-sm mb-4">Live streams and recordings from partner academies</p>
@@ -233,9 +247,9 @@ export default function Academies() {
         </div>
       </motion.div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-24 space-y-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-28 space-y-3">
         {isLoading ? (
-          <>{[1, 2, 3].map((i) => <div key={i} className="h-32 bg-muted rounded-2xl animate-pulse" />)}</>
+          <>{[1, 2, 3].map((i) => <div key={i} className="h-[150px] animate-pulse rounded-[22px] border border-border bg-card" />)}</>
         ) : filtered.length === 0 ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
             className="text-center py-16 text-muted-foreground"

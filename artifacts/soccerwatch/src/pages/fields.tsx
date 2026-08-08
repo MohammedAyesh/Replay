@@ -51,7 +51,7 @@ export default function Fields() {
       </motion.div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-28">
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
           {isLoading ? (
             <>
               {[1, 2, 3, 4].map((i) => (
@@ -59,7 +59,7 @@ export default function Fields() {
                   key={i}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1, transition: { delay: i * 0.08 } }}
-                  className="h-[194px] animate-pulse rounded-[22px] border border-border bg-card"
+                  className="h-[150px] animate-pulse rounded-[22px] border border-border bg-card"
                 />
               ))}
             </>
@@ -94,7 +94,7 @@ function CollectionCard({ collection, index }: { collection: BunnyCollection; in
     >
       <Link href={`/fields/${collection.guid}`} className="block">
         {/* Photo area */}
-        <div className="relative h-[130px] w-full overflow-hidden">
+        <div className="relative h-24 w-full overflow-hidden">
           {collection.previewImageUrl ? (
             <img
               src={collection.previewImageUrl}
@@ -112,11 +112,11 @@ function CollectionCard({ collection, index }: { collection: BunnyCollection; in
         </div>
 
         {/* Content block */}
-        <div className="px-4 py-3">
-          <p className="truncate font-display text-base font-semibold leading-[1.25] text-foreground">
+        <div className="px-3 py-2.5">
+          <p className="truncate font-display text-sm font-semibold leading-[1.25] text-foreground">
             {collection.name}
           </p>
-          <p className="mt-1 text-[12px] text-muted-foreground">
+          <p className="mt-1 text-[11px] text-muted-foreground">
             {collection.videoCount} {collection.videoCount === 1 ? "video" : "videos"}
           </p>
         </div>

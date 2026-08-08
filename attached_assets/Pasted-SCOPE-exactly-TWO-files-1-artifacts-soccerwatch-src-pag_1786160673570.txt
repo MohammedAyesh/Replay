@@ -1,0 +1,128 @@
+SCOPE: exactly TWO files:
+  1. artifacts/soccerwatch/src/pages/fields.tsx
+  2. artifacts/soccerwatch/src/pages/academies.tsx
+
+Do not open or modify layout.tsx, index.css, App.tsx, any other page, any
+component in src/components/ui/, any route, or any API/data file.
+
+FALLBACK RULE: finish fields.tsx first and verify it builds. Only then start
+academies.tsx. If academies.tsx cannot be restyled without touching its
+accordion, expand state, live-camera rows, recordings query or follow logic —
+STOP, keep the finished fields.tsx, and tell me why.
+
+--- ATTACHMENTS ---
+
+Screenshot 1 = target design. STYLE reference for CARD SHAPE ONLY.
+Screenshots 2 and 3 = the app's CURRENT academy card, collapsed and expanded.
+These show the real data and real behaviour that must survive.
+
+IGNORE in the design screenshot: the navigation bar (four tabs shown; the real
+app has five and is correct — nav is in layout.tsx, OUT OF SCOPE), the "Browse"
+title, the Academies/Fields toggle, and all content. These remain TWO SEPARATE
+PAGES — do not merge them, do not add a toggle.
+
+DO NOT ADD to either page: price, star rating, distance, or generic amenity
+chips. They appear in the design and do NOT exist in this app's data. Never
+invent a placeholder value. Never add a database field.
+
+Do not add any new translation key. Reuse existing strings only.
+
+=========================================================
+PART 1 — fields.tsx  (make the existing card smaller)
+=========================================================
+
+Keep the current single-column card layout. Only tighten it:
+  - Photo area height: 130px  ->  96px
+  - Content block padding: reduce to roughly px-3 py-2.5
+  - Field name: reduce to text-sm, keep display font, keep one-line truncation
+  - Video count line: reduce to text-[11px], keep muted
+  - Gap between cards: reduce to gap-3
+  - Loading skeleton height: adjust to match the new card height
+
+Everything else on this page stays as it is: title, subtitle, search bar and
+its filtering, the link to /fields/:id, previewImageUrl and its field-pattern
+fallback, loading and empty states.
+
+=========================================================
+PART 2 — academies.tsx  (row card -> banner card)
+=========================================================
+
+Change the COLLAPSED card from a horizontal row into a vertical card matching
+the shape you just built on fields.tsx.
+
+New collapsed card structure, top to bottom:
+
+  1. BANNER — full card width, height 96px, image covering it, clipped.
+     Source: the academy's EXISTING logoUrl field.
+     - If logoUrl is set, render it as the banner with object-cover.
+     - If logoUrl is null, render the same "field-pattern" placeholder that
+       fields.tsx uses for missing images.
+     - Include the same onError handler pattern fields.tsx uses so a broken
+       image URL falls back gracefully instead of showing a broken icon.
+     - Overlay a subtle dark gradient from the top and bottom edges.
+
+     IMPORTANT: the 48x48 leading icon that currently displays logoUrl is being
+     RELOCATED into this banner, not deleted. logoUrl must still be read and
+     displayed. If logoUrl is null, the GraduationCap fallback may be dropped
+     in favour of the field-pattern placeholder.
+
+  2. CONTENT BLOCK below the banner, padding roughly px-3 py-2.5, containing
+     ALL of the following existing data — none may be removed:
+       - academy.name (text-sm, display font, one line, truncated)
+       - the MapPin icon + fieldName / fieldLocation line (text-[11px], muted)
+       - the recordingCount with its "videos" label (keep it visible; place it
+         on the trailing side of the name row or beneath the location line —
+         your choice, but it must remain)
+       - the DayBadge pills from daysOfWeek (keep all of them, keep their
+         current values, keep them primary-tinted)
+       - the expand chevron, keeping its existing LTR/RTL rotation animation
+
+  Card shell: border-radius 22px, card background, 1px border, contents
+  clipped, gap-3 between cards.
+
+--- WHAT MUST NOT CHANGE IN academies.tsx ---
+
+Restyle the collapsed card shell ONLY. All of the following stay exactly as
+they are, untouched:
+  - The expandedId state and the one-card-open-at-a-time behaviour
+  - The expand/collapse animation and its trigger
+  - The entire EXPANDED region: the LIVE section, LiveRow components, camera
+    labels, the pulsing live dot, onOpenLive and its VideoPlayer
+  - The RECORDINGS section: useGetAcademyRecordings, its enabled-on-expand
+    behaviour, loading skeletons, empty state, recording rows, and the
+    VideoPlayer they open
+  - Follow / unfollow and its state
+  - The search bar and its filtering
+  - Loading and empty states for the list
+  - Every query, mutation, onClick and route
+
+Do NOT restyle anything inside the expanded region in this task.
+
+=========================================================
+RULES FOR BOTH FILES
+=========================================================
+
+Use existing theme tokens for background, card, border, foreground,
+muted-foreground and primary. Do not hardcode hex colours.
+
+RTL: use logical properties (start/end, ms/me, ps/pe) throughout. Never pair a
+logical inset with a physical transform — that bug has already appeared twice
+in this project.
+
+SCROLLING: both pages must scroll. Any outer wrapper with h-full and
+overflow-hidden MUST also carry "flex flex-col", and the inner scrolling
+element must be "flex-1 min-h-0 overflow-y-auto" with enough bottom padding
+that the last card clears the floating nav. Verify scrolling actually works on
+BOTH pages before finishing.
+
+--- CONSTRAINTS ---
+
+Visual-only change to two named files. Do not modify any API call, database
+schema, query, or route. Do not add, rename, or drop any database column. Do
+not install any package. Do not create any new file. Do not remove any existing
+element, action, handler or state.
+
+If any change would require editing a third file, STOP and tell me instead.
+
+Show me the complete diff of both files and nothing else. Do not start any
+follow-up task.
