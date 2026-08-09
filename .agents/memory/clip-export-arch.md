@@ -21,3 +21,10 @@ Background export: FFmpeg render → Bunny Storage upload → DB stores exported
 
 ## Dedup / in-flight guard
 `inFlight: Set<number>` in route module prevents concurrent renders for same clip. DB `exportStatus` column: `null` → `pending` → `done` / `error`.
+
+## Diagnostic caution
+Current workspace secret-presence checks may not describe the environment that produced an older workflow or deployment log. Treat historical successful uploads as evidence of that runtime only, and verify the active process environment before attributing a failure to missing Bunny credentials.
+
+**Why:** A development inspection reported only the CDN URL present even though retained workflow logs showed successful Bunny uploads; the observations came from different runtime contexts.
+
+**How to apply:** When investigating export reliability, compare the active workflow/deployment process environment with the log timestamps instead of using the current workspace view as a retroactive explanation.
