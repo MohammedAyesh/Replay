@@ -1,0 +1,73 @@
+SCOPE: connect admin banner images to the Home news posts. IMAGES ONLY.
+
+Attached screenshots: the admin Banners form, the admin Banners list, and the
+Home news feed.
+
+Do NOT create a database table, do NOT write a migration, do NOT add or rename
+any column, and do NOT change the admin panel. The post text stays hardcoded in
+home.tsx exactly as it is.
+
+--- STEP 1: VERIFY BANNER IMAGES ACTUALLY LOAD. Report before continuing. ---
+
+In the attached admin screenshot, the existing banners show BROKEN image icons.
+Before wiring anything, determine whether banner images are actually servable
+to a browser.
+
+Report:
+  a) The API route that returns banners, and whether it requires authentication.
+  b) The exact previewable image URL stored for the existing "GalaxyField"
+     banner — the real string.
+  c) What hostname it points at, and what HTTP status that URL returns when
+     requested plainly, with no auth header.
+  d) Whether banner images go through the same image proxy that
+     getBunnyProxiedThumbnailUrl() uses for user clips and field previews.
+
+If banner image URLs return 403 or 404 to a plain browser request, STOP.
+Do not make any code change. Report the cause and wait for my instruction —
+wiring broken images into Home would make things worse, not better.
+
+--- STEP 2: ONLY IF BANNER IMAGES ARE CONFIRMED SERVABLE ---
+
+In artifacts/soccerwatch/src/pages/home.tsx only:
+
+1. Add a `bannerId` string to each of the four posts in the newsPosts array:
+       post 1 -> "news-1"
+       post 2 -> "news-2"
+       post 3 -> "news-3"
+       post 4 -> "news-4"
+   Keep every existing field on those posts unchanged, including the bilingual
+   en/ar objects and the existing `image` field.
+
+2. Fetch the banners list using the EXISTING generated hook and endpoint. Do
+   not write a new endpoint and do not modify the API. Set a staleTime of
+   5 * 60 * 1000, matching the pattern used elsewhere in this project.
+
+3. For each post, resolve its image in this order:
+       a. the image of the banner whose banner ID/slug equals the post's
+          bannerId, if such a banner exists and has an image
+       b. otherwise the post's existing hardcoded `image` value
+       c. otherwise null, which renders the existing field-pattern placeholder
+
+4. If the banners request is loading or fails, the feed must still render
+   normally using (b) and (c). A banner fetch failure must NEVER blank the
+   page or throw. Wrap the lookup defensively.
+
+5. Keep the existing <img> onError handler so a broken URL still falls back to
+   the placeholder rather than showing a broken-image icon.
+
+--- MUST NOT CHANGE ---
+
+The card layout, sizing, radius, or the 16/9 image area. The tag chip, date
+line and its unicode-bidi isolation, title, excerpt, or expand link. The
+expand/collapse behaviour or one-open-at-a-time logic. The bilingual text or
+any Arabic string. The admin panel, any admin route, or any banner mutation.
+The database, schema, or any migration. Any other page.
+
+--- VERIFY ---
+
+Open /home in the preview and confirm it renders in BOTH English and Arabic
+with no runtime error. A passing build is NOT sufficient — this page has
+already shipped a crash that passed the build. Confirm the feed still renders
+correctly when no matching banner exists.
+
+Report your Step 1 findings first. Then show me the diff, if any.
