@@ -1,0 +1,89 @@
+SCOPE: artifacts/soccerwatch/src/pages/academies.tsx ONLY.
+The collapsed academy card. UI only.
+
+Do not modify layout.tsx, index.css, view.tsx, fields.tsx, or any other file.
+
+--- READ THIS FIRST: TWO DIFFERENT SCREENSHOTS ---
+
+Screenshot 1 is a DESIGN MOCKUP — a target for proportions and styling only.
+Screenshot 2 is OUR ACTUAL APP as it stands today.
+
+The mockup shows data that DOES NOT EXIST in our database. You must NOT add any
+of it:
+  - star ratings ("4.9", "4.7")
+  - distances ("2.4 km", "5.1 km")
+  - age-group badges ("U8-U18", "U10-U21")
+  - LIVE badges on the card
+  - amenity chips ("4 pitches", "UEFA staff", "6 cameras", "Goalkeeper lab")
+  - photo credit captions
+
+Do not invent placeholder values for any of these. Do not add a database
+column. Do not add an API field. If it is not already rendered on this card
+today, it does not go on this card.
+
+The ONLY data this card has, and the only data it may show:
+  academy.logoUrl, academy.name, academy.fieldName, academy.fieldLocation,
+  academy.daysOfWeek, academy.recordingCount, and the expand chevron.
+All of these must remain visible.
+
+--- THE PROBLEM ---
+
+The banner is too short. At 96px it occupies about half the card and looks
+cramped and unbalanced against the content block. In the mockup the image
+dominates the card.
+
+--- CHANGES TO MAKE ---
+
+1. BANNER — replace the fixed h-24 height with aspect-ratio 16/9 so the image
+   scales with the card width and becomes the dominant element. Keep
+   object-cover, keep the overflow clipping, keep the existing gradient
+   overlay, and keep the existing onError fallback behaviour.
+
+2. CONTENT BLOCK — increase padding from px-3 py-2.5 to roughly px-4 py-3.5 so
+   the text has room to breathe under the larger image.
+
+3. NAME ROW — the academy name goes up to text-base, keeping the display font,
+   semibold weight, one-line truncation, and flex-1 min-w-0.
+   The videos counter stays on the same row beside it: the number at text-base
+   font-bold tabular-nums, and the "videos" label at text-[10px] uppercase
+   muted. Keep them close together, not pushed to opposite edges.
+
+4. LOCATION LINE — keep the MapPin icon and the fieldName / fieldLocation text,
+   bump to text-xs, keep it muted and truncated, with a small top margin.
+
+5. DAY BADGES — move them onto their own row below the location line, with a
+   slightly larger top margin. They keep their current pill styling, their
+   current primary tint, and their current values.
+
+6. CHEVRON — move it out of the day-badge row. Place it at the trailing end of
+   the NAME row instead, after the videos counter, keeping its existing
+   LTR/RTL rotation animation intact.
+
+7. CARD GAP — increase the vertical gap between cards from gap-3 to gap-4 now
+   that the cards are taller.
+
+--- MUST NOT CHANGE ---
+
+The expandedId state and one-card-open-at-a-time behaviour. The expand/collapse
+animation and its trigger. The entire expanded region: the LIVE section,
+LiveRow, camera labels, the pulsing dot, onOpenLive and its VideoPlayer. The
+RECORDINGS section: useGetAcademyRecordings, its enabled-on-expand behaviour,
+loading skeletons, empty state, recording rows and their VideoPlayer. Follow
+logic. The search bar and its filtering. Loading and empty states. Every query,
+mutation, onClick and route.
+
+Do not restyle anything inside the expanded region.
+
+--- RULES ---
+
+Use existing theme tokens only. Do not hardcode hex colours. Use logical
+properties for RTL (start/end, ms/me, ps/pe); never pair a logical inset with a
+physical transform.
+
+--- VERIFY ---
+
+Open the View page, Academies section, in the preview. Confirm the GUVA card
+shows a taller 16:9 image, all existing data is still present, the card still
+expands, and its live and recordings rows still open. Check English and Arabic.
+
+Show me the diff of this one file and nothing else.

@@ -111,7 +111,7 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenR
     >
       <button onClick={onToggle} className="w-full text-start">
         {/* Banner */}
-        <div className="relative h-24 w-full overflow-hidden">
+        <div className="relative aspect-video w-full overflow-hidden">
           {academy.logoUrl ? (
             <img
               src={academy.logoUrl}
@@ -125,21 +125,12 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenR
           <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/40" />
         </div>
         {/* Content block */}
-        <div className="px-3 py-2.5">
-          <div className="flex items-start justify-between gap-2">
-            <p className="truncate font-display text-sm font-semibold leading-[1.25] text-foreground">{academy.name}</p>
-            <div className="shrink-0 text-end">
-              <p className="text-sm font-bold tabular-nums text-foreground">{academy.recordingCount}</p>
+        <div className="px-4 py-3.5">
+          <div className="flex items-center gap-2">
+            <p className="min-w-0 flex-1 truncate font-display text-base font-semibold leading-[1.25] text-foreground">{academy.name}</p>
+            <div className="flex shrink-0 items-baseline gap-1 text-end">
+              <p className="text-base font-bold tabular-nums text-foreground">{academy.recordingCount}</p>
               <p className="text-[10px] uppercase text-muted-foreground">videos</p>
-            </div>
-          </div>
-          <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-            <MapPin className="h-3 w-3 shrink-0" />
-            <span className="truncate">{academy.fieldName} · {academy.fieldLocation}</span>
-          </div>
-          <div className="mt-2 flex items-center justify-between">
-            <div className="flex flex-wrap gap-1">
-              {academy.daysOfWeek.slice(0, 4).map((d) => <DayBadge key={d} day={d} />)}
             </div>
             <div className="flex shrink-0 items-center">
               <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }}
@@ -153,6 +144,13 @@ function AcademyCard({ academy, index, isExpanded, onToggle, onOpenLive, onOpenR
                 <ChevronRight className="w-4 h-4 text-muted-foreground" />
               </motion.div>
             </div>
+          </div>
+          <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
+            <MapPin className="h-3 w-3 shrink-0" />
+            <span className="truncate">{academy.fieldName} · {academy.fieldLocation}</span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1">
+            {academy.daysOfWeek.slice(0, 4).map((d) => <DayBadge key={d} day={d} />)}
           </div>
         </div>
       </button>
@@ -252,7 +250,7 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
         </div>
       </motion.div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-28 space-y-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-28 space-y-4">
         {isLoading ? (
           <>{[1, 2, 3].map((i) => <div key={i} className="h-[150px] animate-pulse rounded-[22px] border border-border bg-card" />)}</>
         ) : filtered.length === 0 ? (
