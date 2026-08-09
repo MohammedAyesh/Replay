@@ -330,9 +330,9 @@ function EditProfileDialog({
   const rtl = locale === "ar";
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+    <div className="fixed inset-0 z-[60] flex flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-4 bg-background">
+      <div className="flex shrink-0 items-center justify-between px-4 py-4 bg-background">
         <button
           onClick={onClose}
           className="flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
@@ -345,7 +345,7 @@ function EditProfileDialog({
       </div>
 
       {/* Form */}
-      <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 pt-6 pb-8 space-y-5">
+      <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-6 pt-6 pb-32 space-y-5">
         <p className="text-muted-foreground text-sm">{t.editProfileDesc}</p>
 
         <div className="space-y-1.5">

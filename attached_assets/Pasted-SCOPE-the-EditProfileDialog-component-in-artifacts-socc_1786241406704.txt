@@ -1,0 +1,61 @@
+SCOPE: the EditProfileDialog component in
+artifacts/soccerwatch/src/pages/account.tsx ONLY.
+
+Do not modify layout.tsx, index.css, or any other file.
+
+Attached: desktop view (works) and mobile view (broken).
+
+--- THE BUGS ---
+
+1. On mobile the form cannot scroll. The Save Changes button is unreachable.
+   The dialog root is "fixed inset-0 z-50 flex flex-col bg-background" but
+   nothing inside it is a scroll container, so content taller than the viewport
+   is simply cut off. This exact bug has already occurred twice in this project
+   on other pages.
+
+2. The bottom navigation bar renders ON TOP of the dialog, covering the Save
+   button area. The dialog and the nav are both z-50, so the nav wins.
+
+--- FIX 1: MAKE THE FORM SCROLL ---
+
+Inside the dialog, split the content into a fixed header and a scrolling body:
+
+  - The header row (Back button and "Edit Profile" title) stays pinned at the
+    top and does not scroll. Give it shrink-0.
+  - Everything below it — the description line, all five fields, and the Save
+    Changes button — goes inside a single scrolling element with
+    "flex-1 min-h-0 overflow-y-auto".
+  - Add generous bottom padding to that scrolling element so the Save button
+    can be scrolled fully clear of the bottom of the screen.
+  - The dialog root keeps "flex flex-col". Do not remove those classes — their
+    absence is what caused this bug on the other pages.
+
+Add the project's existing "no-scrollbar" utility class to the scrolling
+element to match the rest of the app. Do not write new scrollbar CSS.
+
+--- FIX 2: PUT THE DIALOG ABOVE THE NAV ---
+
+Raise the dialog root's z-index so it sits above the bottom navigation, which
+is z-50. Change the dialog root from z-50 to z-[60].
+
+Do this in account.tsx only. Do NOT change the navigation's z-index and do NOT
+edit layout.tsx — the nav must be unchanged for every other screen.
+
+--- MUST NOT CHANGE ---
+
+The five fields, their order, their labels, their current values, or their
+input types. The save handler, validation, or the allFilled / isSaving logic.
+The Back button and its close behaviour. Any colour, token, radius, or font —
+those were fixed in an earlier task and are correct. Any query, mutation or
+route.
+
+--- VERIFY ---
+
+Open Edit Profile in a NARROW mobile-width viewport, not desktop. Confirm:
+  - the form scrolls
+  - the Save Changes button is fully reachable and not covered by the nav
+  - the header stays pinned while the body scrolls
+  - saving still works
+Then check desktop width is still correct, and check Arabic.
+
+Show me the diff of this one file and nothing else.
