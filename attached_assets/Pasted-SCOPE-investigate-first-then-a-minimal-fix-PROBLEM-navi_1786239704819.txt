@@ -1,0 +1,56 @@
+SCOPE: investigate first, then a minimal fix.
+
+PROBLEM: navigating from the View page into the Fields section and then
+pressing back does not return the user to the View page. It lands them on the
+standalone /fields page instead — Fields only, with no Academies toggle and no
+Browse header. The attached screenshot shows that standalone page.
+
+Context: /view is the merged page holding both sections behind a toggle.
+/fields and /academies still exist as standalone routes and were kept
+deliberately, but users should no longer reach them by navigating.
+
+--- STEP 1: FIND THE CAUSE. Report before fixing. ---
+
+Search the whole frontend for anything that navigates to "/fields" or
+"/academies" — Link components, setLocation calls, router.push, history calls,
+and any hardcoded back-button destination.
+
+Pay particular attention to:
+  - the back button on the field detail page (/fields/:id)
+  - any "see all" or "view all" link
+  - anything in home.tsx, view.tsx, fields.tsx, academies.tsx or layout.tsx
+
+Tell me exactly which file and which line is sending the user to /fields.
+
+--- STEP 2: FIX ---
+
+Repoint whatever you found so the user returns to /view instead.
+
+If the culprit is the field detail back button, prefer making it go BACK in
+history rather than hardcoding any destination — that way it returns wherever
+the user actually came from. If history navigation is not practical here, then
+hardcode /view rather than /fields.
+
+MUST NOT CHANGE:
+  - Do not delete or unregister the /fields or /academies routes. They stay
+    registered.
+  - Do not change /fields/:id — the field detail route itself is correct and
+    must keep working.
+  - Do not change the bottom navigation.
+  - Do not change the View page's toggle, its default section, or any card.
+  - Do not change any query, handler, or data.
+
+Fix only the navigation target. Change as few lines as possible.
+
+If the fix would require editing more than two files, STOP and tell me which
+files and why before proceeding.
+
+--- VERIFY ---
+
+After the change, walk this path in the preview and confirm each step:
+  1. Open View, switch to the Fields section
+  2. Tap a field card — the field detail page opens
+  3. Press back — you land on /view with the Fields section still selected,
+     not on the standalone /fields page
+
+Report the file and line you changed, and show me the diff.

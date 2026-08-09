@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { SkipFlash } from "@/components/skip-flash";
-import { Link, useRoute, useLocation } from "wouter";
+import { useRoute, useLocation } from "wouter";
 import {
   useGetBunnyCollections,
   useGetBunnyCollectionVideos,
@@ -430,10 +430,10 @@ export default function FieldDetail() {
         animate={{ opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } }}
         className="pt-safe px-4 py-4 bg-background sticky top-0 z-10 flex items-center gap-3"
       >
-        <Link href="/fields" className="w-10 h-10 flex items-center justify-center -ms-2 rounded-full hover:bg-muted text-foreground">
+        <button onClick={() => window.history.back()} className="w-10 h-10 flex items-center justify-center -ms-2 rounded-full hover:bg-muted text-foreground">
           <ChevronLeft className="w-6 h-6 rtl:hidden" />
           <ChevronRight className="w-6 h-6 ltr:hidden" />
-        </Link>
+        </button>
         <div className="flex-1 min-w-0">
           <h1 className="font-bold text-foreground text-base leading-tight truncate">
             {collection?.name ?? "Field"}
