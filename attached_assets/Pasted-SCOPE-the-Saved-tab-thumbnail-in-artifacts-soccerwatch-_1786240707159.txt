@@ -1,0 +1,67 @@
+SCOPE: the Saved tab thumbnail in artifacts/soccerwatch/src/pages/my-clips.tsx.
+
+Do not change the Created tab. Do not change any server file, the schema, or
+any other page.
+
+Attached screenshots: the Saved tab (thumbnails blank) and the Created tab
+(thumbnails working correctly).
+
+--- THE BUG (already diagnosed, do not re-investigate) ---
+
+LocalClipCard derives its thumbnail with:
+    record.playbackUrl.replace("/playlist.m3u8", "/thumbnail.jpg")
+
+Created clips store a PROXIED playback URL shaped like
+    /api/hls-proxy/manifest?url=https%3A%2F%2F...%2Fplaylist.m3u8
+The playlist path is URL-encoded as %2Fplaylist.m3u8, so the literal
+replacement never matches. The <img> src therefore points at an HLS manifest,
+which cannot render as an image. Legacy raw URLs fail differently — they hit
+Bunny directly and get a 403 because of Bunny's Referer restriction.
+
+--- STEP 1: CHECK WHAT THE SAVED RECORD ACTUALLY HOLDS ---
+
+Saved clips are stored in IndexedDB. Report the full shape of a saved record.
+I specifically need to know:
+  - Is the downloaded video file itself stored as a Blob? Under what key?
+  - Does the record store a videoId, or only playbackUrl and title?
+
+Report this before applying a fix.
+
+--- STEP 2: FIX ---
+
+PREFERRED — if the record stores the video Blob:
+Generate the thumbnail from the local file instead of from a URL. Create an
+object URL from the stored Blob and render the first frame as the card
+thumbnail. Do not fetch anything over the network for this. Revoke the object
+URL on unmount so nothing leaks.
+
+This is preferred because saved clips are an offline feature — the thumbnail
+should not depend on Bunny, the proxy, or any network call.
+
+FALLBACK — only if no Blob is stored:
+Fix the URL derivation so it handles the proxied form. Parse the playback URL,
+extract and decode its "url" query parameter, replace /playlist.m3u8 with
+/thumbnail.jpg on the DECODED value, then re-wrap it through the same proxy
+route so the server can add Bunny's required Referer header. Never point an
+<img> at a raw Bunny URL — that returns 403.
+
+--- IN EITHER CASE ---
+
+Keep the existing field-pattern placeholder as the fallback when no thumbnail
+can be produced. Keep the play button overlay. Keep the existing onError
+handling.
+
+--- MUST NOT CHANGE ---
+
+The card layout, size, radius, or spacing. The title, date, or "Saved" tag.
+The delete button, its confirmation, or its handler. Tapping the card to play.
+The offline playback path itself. The tabs, their counts, or their order.
+The Created tab in any way. Any query, mutation or route.
+
+--- VERIFY ---
+
+Open My Clips > Saved in the preview and confirm the thumbnail renders. Confirm
+the clip still plays when tapped and still deletes. Confirm the Created tab is
+unchanged.
+
+Report the record shape you found, which fix

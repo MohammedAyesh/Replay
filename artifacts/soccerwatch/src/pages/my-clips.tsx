@@ -1016,8 +1016,58 @@ function LocalClipCard({
   onPlay: (r: LocalClipRecord) => void;
   onDelete: (clipId: number) => void;
 }) {
-  const thumbnailUrl = localThumbnailUrl(record);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [showDelete, setShowDelete] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let thumbnailObjectUrl: string | null = null;
+    const sourceObjectUrl = createLocalBlobUrl(record);
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+
+    const cleanup = () => {
+      video.removeEventListener("loadeddata", renderFrame);
+      video.removeEventListener("error", handleError);
+      video.removeAttribute("src");
+      video.load();
+      revokeLocalBlobUrl(sourceObjectUrl);
+      if (thumbnailObjectUrl) URL.revokeObjectURL(thumbnailObjectUrl);
+    };
+
+    const handleError = () => {
+      if (!cancelled) setThumbnailUrl(null);
+    };
+
+    const renderFrame = () => {
+      if (cancelled || video.videoWidth <= 0 || video.videoHeight <= 0) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const nextThumbnailUrl = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(nextThumbnailUrl);
+          return;
+        }
+        thumbnailObjectUrl = nextThumbnailUrl;
+        setThumbnailUrl(nextThumbnailUrl);
+      }, "image/jpeg", 0.82);
+    };
+
+    video.addEventListener("loadeddata", renderFrame);
+    video.addEventListener("error", handleError);
+    video.src = sourceObjectUrl;
+    video.load();
+
+    return cleanup;
+  }, [record]);
 
   return (
     <motion.div
