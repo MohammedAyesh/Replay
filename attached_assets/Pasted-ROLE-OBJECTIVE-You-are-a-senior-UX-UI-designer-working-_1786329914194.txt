@@ -1,0 +1,113 @@
+ROLE & OBJECTIVE
+
+You are a senior UX/UI designer working on Replay's clip viewer page 
+(My Clips). This task covers five specific, targeted UI polish issues. 
+This is UI-only work — no functionality, data handling, export-pipeline 
+logic, or backend behavior may change under any circumstance, for any 
+of the five items below.
+
+Before editing anything: for each item, briefly state the current 
+file/component and relevant lines, and your proposed change, before 
+touching code. You do not need separate approval rounds for the 
+straightforward items (1, 2, 5) — just state your plan and proceed. For 
+items 3 and 4 specifically, follow the extra instructions noted in 
+those sections below.
+
+ITEM 1 — "Saved privately" toast
+
+The green "Saved privately" toast shown after saving a clip stays on 
+screen too long, its close (X) button has poor contrast against the 
+green background, and its padding/placement feels awkward, sometimes 
+covering the clip preview underneath.
+
+Fix, styling/timing only:
+1. State the current auto-dismiss duration, then reduce it to roughly 
+   2.5-3 seconds.
+2. Increase the close button's contrast (darker icon and/or a subtle 
+   circular background) so it's clearly visible and tappable.
+3. Adjust padding/placement so it doesn't crowd or overlap the video 
+   preview beneath it.
+
+Do not change the toast's trigger logic, text content, or any 
+save/publish behavior.
+
+ITEM 2 — Video player bottom section spacing
+
+The bottom control cluster in the clip player (scrub bar, title/date/
+resolution info, quality tip, Download button) sits too close to the 
+bottom edge of the screen, especially on mobile — feels cramped and 
+risks accidental mis-taps.
+
+Fix: add more bottom margin/padding to raise this cluster slightly, 
+while confirming tap targets (especially the Download button) remain 
+comfortably sized and don't feel more cramped as a result.
+
+Do not change any playback logic, button behavior, or scrub bar 
+functionality — spacing/layout only.
+
+ITEM 3 — Live video exit button overlap (investigate first)
+
+On LIVE video views specifically (not recorded/exported clips), there 
+appears to be an overlapping UI issue near the exit/close button.
+
+Before fixing: inspect the live player's header/overlay area and 
+report what elements are actually present there — is there a close 
+button from the live player itself AND a separate close button from a 
+wrapping modal/container? Are two elements stacked in the same 
+position? Describe plainly what you find.
+
+Once diagnosed: if the fix is simple and obviously safe (repositioning, 
+spacing, or removing an obviously redundant duplicate control — do not 
+remove functionality, only resolve the visual/positional conflict), 
+implement it in this same pass. If it's ambiguous or you're not fully 
+confident in the diagnosis, stop after reporting your findings and wait 
+for confirmation before editing this item.
+
+Do not change any live-stream connection handling or playback behavior 
+— positioning/layering only.
+
+ITEM 4 — General mobile UX review (list only, do not implement)
+
+Review the video player/viewer section specifically at mobile widths 
+for padding, margins, and tap-target sizing that feels too tight or 
+not optimized for touch (e.g. edge-to-edge video with no breathing 
+room, controls sized/spaced in a way that risks mis-taps).
+
+Do not implement any changes for this item. Instead, report a short, 
+specific list of concrete issues found, each as its own line item, so 
+they can be prioritized and addressed separately afterward. This item 
+is inventory only.
+
+ITEM 5 — Quality tip placement and styling
+
+The "💡 Tip: Download for the best quality" note currently sits as a 
+bare, unstyled line stacked directly below the clip's title/date 
+metadata, reading like a third metadata line rather than a distinct 
+note, and crowding the Download button.
+
+Fix:
+1. Remove it from inside the metadata block.
+2. Re-render it as a standalone chip below the button row (Export, 
+   fullscreen, play/pause), in both portrait and landscape layouts.
+3. Style as a quiet translucent pill: inline-flex items-center gap-1 
+   px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 
+   text-[10px] text-white/50 drop-shadow — use text-white/50 
+   specifically, matching its current text opacity, not dimmer, since 
+   this is viewed outdoors on bright fields and needs to stay readable 
+   even though the container styling is doing the work of making it 
+   feel "quiet."
+4. Before implementing: state how much vertical space is currently 
+   free in the landscape side rail (fixed ~220px) with just the 
+   title/date and button row present, so we know whether adding this 
+   as a third stacked element risks clipping or has comfortable margin.
+
+Do not change the tip's wording — keep it exactly as-is ("Download for 
+the best quality"). Do not change when/where it's triggered to appear 
+— styling and positioning only.
+
+VERIFICATION (applies to all items)
+
+After implementing, report the actual diff for each item (not a 
+paraphrased summary), and confirm you previewed the changes at both 
+desktop width and a narrow (~390px) mobile width. For item 4, provide 
+the list only — no diff needed since no changes were made.
