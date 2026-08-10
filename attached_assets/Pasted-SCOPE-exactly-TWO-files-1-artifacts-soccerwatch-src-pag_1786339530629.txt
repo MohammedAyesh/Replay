@@ -1,0 +1,96 @@
+SCOPE: exactly TWO files:
+  1. artifacts/soccerwatch/src/pages/login.tsx   (the landing page)
+  2. the Clerk appearance config — artifacts/soccerwatch/src/lib/clerkAppearance.ts
+     (if it lives elsewhere, edit that one file and tell me where)
+
+Do not modify layout.tsx, index.css, App.tsx, any other page, or any API file.
+
+Attached: the landing page, the Clerk sign-in modal, and the Clerk email
+verification modal as they look today, plus the app's brand-kit reference.
+
+THIS IS A COLOUR, TYPE AND LOGO PASS ONLY. Do not add sections, do not add
+animations, do not restructure any layout, do not change any copy.
+
+--- THE PROBLEM ---
+
+These three screens still use the app's OLD theme — pure neon green (#00FF00
+or similar) and near-black. The rest of the app has moved to a navy-and-lime
+palette driven by CSS tokens. These screens look like a different product.
+
+--- PART 1: landing page (login.tsx) ---
+
+1. LOGO — add the Replay logo mark and the "REPLAY" wordmark near the top of
+   the page. Copy the LogoMark SVG geometry EXACTLY from the header in
+   layout.tsx — do not redraw it. The wordmark uses the display font, weight
+   700, filled with linear-gradient(90deg, #2FD8C4, #7B5CFF) via
+   background-clip: text with color transparent. REPLAY stays in Latin in both
+   languages. If a plain text "REPLAY" already exists there, replace it with
+   this treatment.
+
+2. COLOURS — replace every hardcoded colour with the app's theme tokens:
+   background, foreground, muted-foreground, card, border, primary. The only
+   literal hex values permitted in this file are the two in the wordmark
+   gradient.
+
+3. BUTTONS — the primary button ("Sign In") uses bg-primary with
+   text-primary-foreground, which is DARK. It must never be white text on
+   lime. The secondary button ("Create Account") uses a card background with a
+   border and foreground text. "Browse as Guest" stays a plain muted text link.
+
+4. TYPE — the headline uses the display font. Body and subtitle text use the
+   app's sans token. Do not change any wording in either language.
+
+Keep the existing background image and its dark overlay. Keep all three
+buttons, their handlers, their routes, their order, and the guest-login
+behaviour exactly as they are. Keep the language switcher.
+
+--- PART 2: Clerk modals ---
+
+Update the Clerk appearance config so the sign-in, sign-up and verification
+modals match the app. Use the same values the app's tokens resolve to:
+
+  Background / modal surface   #141B2C
+  Page background behind modal #0B0F1A
+  Primary button background    #D4FF4F
+  Primary button TEXT          #0B0F1A   (dark on lime — never white)
+  Body text                    #F3F6FA
+  Muted / secondary text       #8A93A6
+  Borders and input borders    #232C42
+  Input background             #0B0F1A
+  Links and accents            #D4FF4F
+  Danger / error               #FF5A3C
+
+Also:
+  - Set the font family to match the app: Inter for Latin, Tajawal for Arabic.
+    Follow the same pattern index.css uses for the RTL font switch.
+  - Round the modal and its buttons to match the app — roughly 22px on the
+    modal card, 99px on primary buttons, 12px on inputs.
+  - The green crown icon at the top of the sign-in modal: replace it with the
+    Replay logo mark if Clerk's appearance API supports a custom logo image.
+    If it does not, hide it rather than leaving a green crown.
+
+Do NOT change any Clerk behaviour: no change to providers, flows, redirect
+URLs, allowed methods, or session handling. Appearance only.
+
+The orange "Development mode" badge is injected by Clerk in dev builds. Do not
+try to remove or restyle it.
+
+--- CONSTRAINTS ---
+
+Do not modify any API call, database schema, query, or route. Do not add,
+rename, or drop any database column. Do not install any package. Do not create
+any new file. Do not change any Clerk key, environment variable, or auth
+configuration. Do not add any new translation key.
+
+If any change would require editing a third file, STOP and tell me instead.
+
+--- VERIFY ---
+
+Open the landing page and confirm it renders in BOTH English and Arabic, with
+the logo visible and the primary button showing DARK text on lime. Then open
+the sign-in modal and confirm it uses the navy surface and lime buttons with
+dark text, not the old neon green. Confirm sign-in still works.
+
+A passing build is NOT sufficient — open the pages.
+
+Show me the complete diff of both files.
