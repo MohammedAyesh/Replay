@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import footballPitchImage from "@/assets/football-pitch.png";
+import clipsEditingImage from "@/assets/clips-editing.png";
 
 type LocalizedText = { en: string; ar: string };
 type LocalizedList = { en: string[]; ar: string[] };
@@ -70,7 +71,7 @@ const newsPosts: NewsPost[] = [
       en: ["Trim and save", "Pan and zoom", "Share instantly"],
       ar: ["اقتطع واحفظ", "تحريك وتقريب", "شارك فوراً"],
     },
-    image: null,
+    image: clipsEditingImage,
   },
   {
     id: 3,

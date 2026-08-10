@@ -1,0 +1,80 @@
+This is a COMPOSITING task, not an illustration task.
+
+You are given one screenshot. Your ONLY job is to place that exact screenshot
+onto a phone screen and generate a photographic scene around it.
+
+=====================================================
+RULE 1 — THE SCREENSHOT IS FIXED INPUT. DO NOT GENERATE IT.
+=====================================================
+
+The attached screenshot must be reproduced on the phone's screen EXACTLY as
+supplied. Treat it as a locked, immutable image layer that you paste in. You
+are compositing it, not drawing it.
+
+You MUST NOT:
+  - redraw, regenerate, recreate, or re-render any part of it
+  - substitute a different photo, a different pitch, or different players
+  - change, translate, or reinvent any text or Arabic lettering on it
+  - move, resize, restyle, recolour, add or remove any button, slider,
+    timeline, timestamp or control
+  - alter its colours, crop it, or change its aspect ratio
+  - "improve", "clean up", or stylise it in any way
+
+The football pitch visible inside the screenshot is part of the screenshot.
+Do NOT replace it with a different pitch image. Do NOT generate a new scene
+inside the phone. Every pixel inside the phone's screen comes from the
+supplied file.
+
+The ONLY permitted modifications to the screenshot layer are:
+  - a mild perspective transform so it sits correctly on the angled phone
+  - a subtle realistic screen glare or reflection over the top of it
+  - realistic screen luminance
+
+If you cannot preserve the screenshot exactly, show the phone at a shallower
+angle so the screen is flatter and easier to reproduce faithfully. Fidelity to
+the screenshot matters more than the dramatic angle.
+
+=====================================================
+RULE 2 — WHAT YOU DO GENERATE
+=====================================================
+
+Everything OUTSIDE the phone screen, and only that:
+
+PHONE AND HANDS
+A modern smartphone held in PORTRAIT orientation by a pair of hands, viewed
+from slightly behind and just off-axis. Keep the phone close to face-on —
+no more than a slight tilt — so the screen is fully visible and undistorted.
+The phone fills a large portion of the frame. One thumb rests near the lower
+edge of the screen. Show hands and forearms only.
+
+BACKGROUND
+A dark, heavily out-of-focus floodlit football pitch at night, reduced to soft
+bokeh and atmosphere. No readable detail, no recognisable people, no faces.
+
+LIGHTING AND COLOUR
+The phone screen is the key light. Its lime-green accents spill a chartreuse
+(#D4FF4F) glow onto the fingers and palms. Background is deep navy-black
+(#0B0F1A). A subtle teal (#2FD8C4) rim-light along the edges of the hands and
+phone from behind. Faint violet (#7B5CFF) in the darkest corners. Deep
+shadows, high contrast, dark and moody.
+
+COMPOSITION
+Keep the upper-left corner dark and uncluttered — a UI badge is overlaid there.
+Position the phone centre to lower-centre, with simple dark background above.
+
+=====================================================
+RULE 3 — PROHIBITED
+=====================================================
+
+- No text, letters, numbers or signage anywhere outside the screenshot itself
+- No logos, brand marks or watermarks added to the scene
+- No watermark, sparkle, star or AI marker anywhere, including corners
+- No recognisable faces
+- Photorealistic only — not illustrated, not 3D-rendered
+
+OUTPUT: 1920x1080, 16:9 landscape, high detail.
+
+FINAL CHECK BEFORE YOU OUTPUT: look at the phone screen in your image and
+compare it to the supplied screenshot. If the pitch, the players, the lime
+buttons, the timeline, or the Arabic text differ in any way, you have made a
+mistake — the screen must be the supplied screenshot and nothing else.
