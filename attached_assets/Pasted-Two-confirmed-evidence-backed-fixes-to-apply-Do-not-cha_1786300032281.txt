@@ -1,0 +1,64 @@
+Two confirmed, evidence-backed fixes to apply. Do not change anything 
+else — Fixes 2, 3, and 5 are confirmed correct as-is, and Fix 4's 
+buffering approach should not be touched.
+
+FIX A — Replace the hardcoded direct-MP4 source URL with a real 
+selection chain
+
+Currently startBackgroundExport unconditionally does:
+    const remoteUrl = getBunnyDirectMp4Url(videoId, 2160);
+
+This must become a real, verified selection, checked in this order:
+
+1. Update getBunnyVideoInfo to also return hasMP4Fallback: boolean and 
+   availableResolutions: string, both already present in the Bunny API 
+   response (currently only "length" is extracted).
+
+2. Parse availableResolutions (comma-separated, e.g. "1080p,2160p") and 
+   determine the highest numeric height listed.
+
+3. If hasMP4Fallback is true: construct getBunnyDirectMp4Url(videoId, 
+   maxHeight) and send a HEAD request (with the same Referer header used 
+   elsewhere) to confirm it returns 200/206 before trusting it as 
+   remoteUrl.
+
+4. If hasMP4Fallback is false, OR the HEAD check in step 3 fails: 
+   construct the direct HLS variant playlist URL for that same 
+   resolution — pattern confirmed by direct testing: 
+   https://<cdn-host>/<videoId>/<maxHeight>p/video.m3u8 (e.g. 
+   ".../2160p/video.m3u8"). This is a single already-resolved rendition 
+   playlist, not the ambiguous master. Verify with a GET or HEAD that it 
+   resolves and is non-empty before trusting it.
+
+5. If step 4 also fails: fall back to the existing getBunnyPlaybackUrl 
+   (the master playlist, playlist.m3u8) as a last resort, and log a 
+   warning that explicit selection failed and default FFmpeg stream 
+   selection is being relied on.
+
+Log which of these three paths was actually used for each export, so 
+future failures are diagnosable from logs alone without needing another 
+investigation like this one.
+
+FIX B — Correct the availableDuration cap
+
+Current line in bufferRemoteClip:
+    const availableDuration = Math.max(clipDuration, totalDuration - startSec);
+
+Change to:
+    const availableDuration = Math.max(0, totalDuration - startSec);
+
+Leave the following line (requestedWindow = Math.min(clipDuration + 5, 
+availableDuration)) unchanged — this correction alone restores its 
+intended behavior of capping the request at whatever source content 
+actually remains.
+
+Before touching code: confirm the exact field names and value formats 
+you'll be parsing (re-verify against a live API call, don't assume), 
+state your full plan for Fix A's selection chain, and list the exact 
+files you'll modify. Wait for confirmation before applying.
+
+Once approved: implement both fixes, then run one real end-to-end test 
+export against the same videoId used in the failed run 
+(748325d3-aef5-438d-a89d-4fa2a87d7a47) and report back: which selection 
+path was used, the real FFmpeg command that ran, and whether the export 
+completed successfully through to a downloadable file.

@@ -11,6 +11,8 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { getBufferedWindow } from "../lib/ffmpegExport";
+import { normalizeExportWindow, selectExportSource } from "./userClips";
 
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
@@ -117,6 +119,126 @@ describe("POST /api/user-clips", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.userId).toBe(userAId);
+  });
+});
+
+describe("clip export window and source selection", () => {
+  it("clamps out-of-range stored fractions before calculating the buffer window", () => {
+    expect(normalizeExportWindow(0.25, 99.999999, 100)).toEqual({
+      startSec: 25,
+      endSec: 100,
+      clipDuration: 75,
+    });
+  });
+
+  it("keeps a near-end selection ordered and within the recording", () => {
+    expect(normalizeExportWindow(0.99, 1.2, 100)).toEqual({
+      startSec: 99,
+      endSec: 100,
+      clipDuration: 1,
+    });
+  });
+
+  it("rejects a selection whose start is already past the recording", () => {
+    expect(normalizeExportWindow(1.2, 2, 100)).toEqual({
+      startSec: 100,
+      endSec: 100,
+      clipDuration: 0,
+    });
+  });
+
+  it("rejects a zero-length selection", () => {
+    expect(normalizeExportWindow(0.5, 0.5, 100)).toEqual({
+      startSec: 50,
+      endSec: 50,
+      clipDuration: 0,
+    });
+  });
+
+  it("caps the buffered request at the remaining source duration", () => {
+    expect(getBufferedWindow({
+      startSec: 95,
+      clipDuration: 10,
+      totalDuration: 100,
+    })).toEqual({
+      availableDuration: 5,
+      requestedWindow: 5,
+    });
+    expect(getBufferedWindow({
+      startSec: 10,
+      clipDuration: 10,
+      totalDuration: 100,
+    })).toEqual({
+      availableDuration: 90,
+      requestedWindow: 15,
+    });
+  });
+
+  it("prefers a HEAD-verified direct MP4 when the fallback exists", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(null, { status: 206 }),
+    );
+    try {
+      const source = await selectExportSource({
+        videoId: "video-id",
+        hasMP4Fallback: true,
+        availableResolutions: "1080p,2160p",
+        referer: "https://cdn.example/",
+      });
+      expect(source).toEqual({
+        url: expect.stringContaining("/video-id/play_2160p.mp4"),
+        path: "HEAD-verified direct MP4",
+        maxHeight: 2160,
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining("/video-id/play_2160p.mp4"),
+        expect.objectContaining({ method: "HEAD" }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("uses the highest verified HLS variant when direct MP4 is unavailable", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("#EXTM3U\n#EXT-X-TARGETDURATION:4\n", { status: 200 }),
+    );
+    try {
+      const source = await selectExportSource({
+        videoId: "video-id",
+        hasMP4Fallback: false,
+        availableResolutions: "1080p,2160p",
+        referer: "https://cdn.example/",
+      });
+      expect(source).toEqual({
+        url: expect.stringContaining("/video-id/2160p/video.m3u8"),
+        path: "verified HLS variant playlist",
+        maxHeight: 2160,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("falls back to the master playlist when the explicit variant fails", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("not found", { status: 404 }),
+    );
+    try {
+      const source = await selectExportSource({
+        videoId: "video-id",
+        hasMP4Fallback: false,
+        availableResolutions: "1080p,2160p",
+        referer: "https://cdn.example/",
+      });
+      expect(source).toEqual({
+        url: expect.stringContaining("/video-id/playlist.m3u8"),
+        path: "master-playlist fallback",
+        maxHeight: 2160,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

@@ -1,0 +1,42 @@
+The export failure is now diagnosed. Root cause: the export requests 
+play_2160p.mp4 from Bunny, but that file returns HTTP 404. The "2160p" 
+label in this library is a naming convention based on the long edge of 
+an ultra-wide source, not the actual encoded pixel height — the real top 
+rendition is 3840x1080. Bunny's direct-download filenames are keyed to 
+actual encoded height, so a file literally named play_2160p.mp4 likely 
+does not exist for any video in this library.
+
+Do not simply swap the hardcoded height to 1080 and assume that's 
+correct — we've guessed wrong once already. Instead:
+
+1. Bunny's video info API (already called on every export via 
+   getBunnyVideoInfo, hitting 
+   https://video.bunnycdn.com/library/{id}/videos/{videoId}) returns a 
+   field describing which resolutions are actually encoded for that 
+   video (commonly named availableResolutions or similar in Bunny's 
+   response — check the real response body for a real video in this 
+   library to find the exact field name and format, don't assume it).
+
+2. Update the export path to read the actual highest available 
+   resolution from that response, and build the direct MP4 URL from 
+   that real value instead of a hardcoded 2160. If for some reason no 
+   such field exists in the response, fall back to fetching the video 
+   info and trying the direct MP4 URL with a HEAD request before 
+   committing to it in the export flow, and fail with a clear error 
+   if none resolve — do not let the export proceed on faith that a 
+   guessed filename exists.
+
+3. Separately: bufferRemoteClip's availableDuration line currently 
+   reads:
+       const availableDuration = Math.max(clipDuration, totalDuration - startSec);
+   This should be Math.min, not Math.max — the intent (per the 
+   surrounding comment) is to cap the requested window so FFmpeg never 
+   asks for more footage than actually remains after startSec. As 
+   written it can never shrink below clipDuration even when less 
+   footage is available, defeating the check. Fix this in the same 
+   change.
+
+Before touching code: report back what the real Bunny video-info 
+response actually contains for resolution/availability data, and state 
+your exact plan for both fixes. Wait for confirmation before applying 
+either change.

@@ -37,6 +37,18 @@ const SUBPROCESS_TIMEOUT_MS = Math.max(
 );
 
 /**
+ * Ceiling on the remote-clip buffering step (download + ultrafast re-encode).
+ * Must be less than FFMPEG_TIMEOUT_MS so a stalled CDN fetch does not hold a
+ * render slot for the full 30-minute render budget.  10 minutes is generous
+ * for any clip within MAX_CLIP_SECONDS at ultrafast; increase via env if
+ * extremely long clips on slow connections require more headroom.
+ */
+const BUFFER_TIMEOUT_MS = Math.max(
+  60_000,
+  parseInt(process.env.FFMPEG_BUFFER_TIMEOUT_MS ?? "600000", 10) || 600_000,
+);
+
+/**
  * Longest intro we will prepend. An intro is branding, not content, and it is
  * re-encoded on every export that uses it, so an admin uploading a
  * several-minute file must not multiply every render on the box.
@@ -582,9 +594,15 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     : true;
   const needsSilentTrack = !!options.introUrl && !mainHasAudio;
 
+  // Only attach -headers for remote HTTP(S) sources.  For local file paths
+  // (e.g. the temp buffer file produced by bufferRemoteClip), FFmpeg's file
+  // demuxer does not accept -headers and will error with "Option headers not
+  // found" when it is present.
+  const isRemoteUrl = /^https?:\/\//i.test(videoUrl);
+
   const args = [
-    // HTTP headers must come before -i so they apply to the input request
-    "-headers", headerVal,
+    // HTTP headers only for remote inputs; omit entirely for local files.
+    ...(isRemoteUrl ? ["-headers", headerVal] : []),
     // Fast seek before input (segment-level for HLS)
     "-ss", String(startSec),
     "-i", videoUrl,
@@ -597,13 +615,23 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     "-vf", cropFilter,
     // H.264 video, fast encode, web-compatible
     "-c:v", "libx264",
-    "-preset", "slow",
-    "-crf", "16",
+    "-preset", "veryfast",
+    "-crf", "23",
     "-pix_fmt", "yuv420p",
-    // AAC audio
+    // Force constant 30 fps on output. 30 fps is the platform contract: the
+    // normalizeSegment() intro pass (above) already pins the intro to 30 fps via
+    // the fps=30 filter, and the concat demuxer used by withIntro() requires
+    // matching frame rates across segments. Sources recorded at 25 fps are
+    // intentionally normalized to that platform rate. -fps_mode cfr enforces
+    // constant frame timing rather than just stamping a target rate onto a
+    // variable-rate stream.
+    "-r", "30",
+    "-fps_mode", "cfr",
+    // AAC audio — always pin to stereo 44.1 kHz so intro concat works cleanly
     "-c:a", "aac",
     "-b:a", "128k",
-    ...(options.introUrl ? ["-r", "30", "-ar", "44100", "-ac", "2"] : []),
+    "-ar", "44100",
+    "-ac", "2",
     ...(needsSilentTrack ? ["-map", "0:v:0", "-map", "1:a:0", "-shortest"] : []),
     // Optimise for streaming/download
     "-movflags", "+faststart",
@@ -661,3 +689,132 @@ export function cleanupTempFile(filePath: string): void {
   });
 }
 
+/**
+ * Download and trim the needed clip window from a remote video to a local temp
+ * file so FFmpeg can encode from disk rather than over a live network connection.
+ *
+ * --- Why re-encode for the buffer step, not stream-copy ---
+ *
+ * Stream-copy (`-c copy`) with any form of seek — input-side or output-side —
+ * produces a buffer file whose timestamps depend on keyframe alignment in ways
+ * that vary with the source container, edit lists, and FFmpeg version.  Probing
+ * the resulting timestamps to derive a correct seek offset for the subsequent
+ * encode pass is therefore fragile and container-dependent.
+ *
+ * Re-encoding with `setpts=PTS-STARTPTS` gives a single, unconditional guarantee:
+ *
+ *   • Input-side `-ss startSec` with re-encode: the decoder decodes from the
+ *     preceding keyframe internally but only passes frames to the encoder from
+ *     startSec onward, so the encoder (and its output) starts exactly at the
+ *     requested presentation time — regardless of GOP size or keyframe alignment.
+ *   • `setpts=PTS-STARTPTS` resets presentation timestamps to 0 in the output,
+ *     so the buffer always has a well-defined 0-based local timeline.
+ *
+ * The consequence: `adjustedOffsetSec` is always 0.  The buffer starts at
+ * startSec; `renderClip` starts from position 0 within the buffer without any
+ * timestamp probe or offset arithmetic.
+ *
+ * Trade-off — two encode passes instead of one:
+ *   The buffer uses ultrafast/CRF18 (very fast, near-lossless quality).
+ *   A 30 s clip at 3840×1080 buffers in < 5 s on the VPS.
+ *   The subsequent CRF23/veryfast main encode reads from a fully local file,
+ *   eliminating the live-network stalls that caused freeze/stutter in exports.
+ */
+export async function bufferRemoteClip(options: {
+  remoteUrl: string;
+  referer: string;
+  startSec: number;
+  clipDuration: number;
+  /** Total duration of the source recording, used to cap the buffer request. */
+  totalDuration: number;
+}): Promise<{ bufferPath: string; bufferedDuration: number; adjustedOffsetSec: number }> {
+  const { remoteUrl, referer, startSec, clipDuration, totalDuration } = options;
+  const bufferPath = path.join(os.tmpdir(), `soccerwatch-buffer-${randomUUID()}.mp4`);
+  const headerVal = buildHeaderVal(referer, remoteUrl);
+
+  const { requestedWindow } = getBufferedWindow({ startSec, clipDuration, totalDuration });
+  if (requestedWindow <= 0) {
+    throw new Error("Cannot buffer a clip with no source content remaining");
+  }
+
+  // All failures inside this try block clean up any partial buffer file.
+  // ffmpeg -y creates the output file before writing begins, so even a timeout
+  // or network error may leave a partial file on disk that must be removed.
+  try {
+    await run(
+      "ffmpeg",
+      [
+        "-headers", headerVal,
+        // Input-side seek: fast, and for a re-encode the decoder silently drops
+        // frames before startSec — they never reach the encoder.
+        "-ss", String(startSec),
+        "-i", remoteUrl,
+        "-t", String(requestedWindow),
+        // Reset timestamps to 0 in the output.  Combined with the input-side seek
+        // behaviour above, this gives a buffer whose timeline is:
+        //   PTS=0 → startSec in source,  PTS=requestedWindow → end of window.
+        // adjustedOffsetSec is therefore always 0 — no probing required.
+        "-vf", "setpts=PTS-STARTPTS",
+        "-af", "asetpts=PTS-STARTPTS",
+        // Fast, high-quality intermediate — not the final export quality.
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        "-y", bufferPath,
+      ],
+      // Use a dedicated buffer timeout, shorter than the full render timeout, so
+      // a stalled CDN fetch does not hold a render slot for 30 minutes.
+      BUFFER_TIMEOUT_MS,
+    );
+
+    // Because setpts=PTS-STARTPTS normalises timestamps to 0, the buffer's
+    // playback timeline is 0-based and corresponds directly to source time
+    // relative to startSec.  adjustedOffsetSec is therefore always 0.
+    const adjustedOffsetSec = 0;
+
+    // Probe the actual playback duration of the buffer.  This is reliable since
+    // the timestamps start at 0 — format=duration is not mixed with any
+    // source-relative PTS offset.
+    const durationOut = await run("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "csv=p=0",
+      bufferPath,
+    ]);
+    const bufferedDuration = parseFloat(durationOut.trim());
+    if (!isFinite(bufferedDuration) || bufferedDuration <= 0) {
+      throw new Error(`Invalid buffered duration from ffprobe: "${durationOut.trim()}"`);
+    }
+
+    // Allow up to 0.5 s short of clipDuration: container/encoder rounding at
+    // the source end can shave a few frames off the last GOP, and the
+    // subsequent renderClip pass will simply reach the end of the buffer file
+    // and stop — producing a clip that is at most 0.5 s shorter than requested,
+    // which is acceptable.  A larger shortfall indicates a real failure.
+    if (bufferedDuration < clipDuration - 0.5) {
+      throw new Error(
+        `Buffered file (${bufferedDuration.toFixed(2)}s) is more than 0.5 s shorter than ` +
+        `clip duration (${clipDuration.toFixed(2)}s) — aborting export`,
+      );
+    }
+
+    logger.info({ bufferPath, bufferedDuration, requestedWindow, startSec }, "bufferRemoteClip complete");
+    return { bufferPath, bufferedDuration, adjustedOffsetSec };
+  } catch (err) {
+    cleanupTempFile(bufferPath);
+    throw err;
+  }
+}
+
+export function getBufferedWindow(options: {
+  startSec: number;
+  clipDuration: number;
+  totalDuration: number;
+}): { availableDuration: number; requestedWindow: number } {
+  const { startSec, clipDuration, totalDuration } = options;
+  // Never request more than the source content remaining after startSec.
+  const availableDuration = Math.max(0, totalDuration - startSec);
+  // +5 s safety margin for GOP alignment, but never beyond what the source has.
+  const requestedWindow = Math.min(clipDuration + 5, availableDuration);
+  return { availableDuration, requestedWindow };
+}

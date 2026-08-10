@@ -67,6 +67,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     clip.exportStatus === "done" ? "ready" : "idle"
   );
   const [exportedUrl, setExportedUrl] = useState<string | null>(clip.exportedUrl ?? null);
+  /** Human-readable stage label shown inside the export button while polling. */
+  const [exportStageLabel, setExportStageLabel] = useState("Processing…");
   /** Set to false on unmount to abort the polling loop. */
   const pollingRef = useRef(false);
   const [isLocal, setIsLocal] = useState(false);
@@ -584,7 +586,17 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 
         const statusRes = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
         if (!statusRes.ok) throw new Error("Status check failed");
-        const status = await statusRes.json() as { status: string; url?: string };
+        const status = await statusRes.json() as { status: string; url?: string; progress?: string | null };
+
+        // Update the stage label so the user sees meaningful feedback
+        if (status.progress) {
+          const stageLabels: Record<string, string> = {
+            fetching: "Fetching…",
+            encoding: "Encoding…",
+            uploading: "Uploading…",
+          };
+          setExportStageLabel(stageLabels[status.progress] ?? "Processing…");
+        }
 
         if (status.status === "done" && status.url) {
           setExportedUrl(status.url);
@@ -733,7 +745,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
                 : <Download className="w-4 h-4 shrink-0" />}
               <span>
                 {exportState === "polling"
-                  ? "Processing…"
+                  ? exportStageLabel
                   : exportState === "ready"
                   ? "Download"
                   : exportState === "error"

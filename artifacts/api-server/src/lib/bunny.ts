@@ -58,7 +58,11 @@ export function isBunnyStorageConfigured(): boolean {
  * Returns duration in seconds (from the `length` field).
  * This is reliable from server-to-server and doesn't depend on CDN access.
  */
-export async function getBunnyVideoInfo(videoId: string): Promise<{ duration: number }> {
+export async function getBunnyVideoInfo(videoId: string): Promise<{
+  duration: number;
+  hasMP4Fallback: boolean;
+  availableResolutions: string;
+}> {
   const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`;
   const response = await fetch(url, {
     headers: { AccessKey: BUNNY_API_KEY },
@@ -66,12 +70,22 @@ export async function getBunnyVideoInfo(videoId: string): Promise<{ duration: nu
   if (!response.ok) {
     throw new Error(`Bunny API error ${response.status} fetching video info for ${videoId}`);
   }
-  const data = await response.json() as { length?: number };
+  const data = await response.json() as {
+    length?: number;
+    hasMP4Fallback?: boolean;
+    availableResolutions?: string;
+  };
   const duration = typeof data.length === "number" ? data.length : 0;
   if (!isFinite(duration) || duration <= 0) {
     throw new Error(`Could not determine duration for video ${videoId}: length=${data.length}`);
   }
-  return { duration };
+  return {
+    duration,
+    hasMP4Fallback: data.hasMP4Fallback === true,
+    availableResolutions: typeof data.availableResolutions === "string"
+      ? data.availableResolutions
+      : "",
+  };
 }
 
 /**

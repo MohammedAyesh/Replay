@@ -1,0 +1,42 @@
+The My Clips export just failed for a real test. The UI showed: 
+"Processing…" → "Fetching…" → "Export failed."
+
+Since progress reached "fetching" before failing, this points at 
+bufferRemoteClip (ffmpegExport.ts) or its call site in 
+startBackgroundExport (userClips.ts) — but confirm this from evidence, 
+don't assume it.
+
+Do NOT attempt any fix. This is an investigation only. Report back:
+
+1. Pull the actual server logs (not a summary) covering this failed 
+export attempt — the most recent one. Quote the real log lines verbatim, 
+including timestamps, so we know we're looking at the right run.
+
+2. Find the exact error that caused exportStatus to be set to "error" — 
+the literal error message and stack trace from the catch block in 
+startBackgroundExport, not a paraphrase of what you think it probably 
+was.
+
+3. If the failure came from bufferRemoteClip specifically, report:
+   - The exact FFmpeg command that was run (full argument list, with 
+     real values substituted — not the template)
+   - FFmpeg's actual stderr output for that run, as much of it as the 
+     logs retained
+   - Whether it failed inside the FFmpeg buffer step itself, the 
+     ffprobe duration check, or the post-buffer duration assertion 
+     (bufferedDuration < clipDuration - 0.5)
+   - If it was the assertion: the actual clipDuration and bufferedDuration 
+     values it compared
+
+4. Report the real values involved in this specific export request: 
+   videoId, totalDuration, startTime, endTime, startSec, clipDuration, 
+   and the computed requestedWindow value passed as -t to the buffer 
+   step.
+
+5. Separately, and regardless of what you find in the logs: read the 
+current definition of availableDuration in bufferRemoteClip and tell me 
+whether it uses Math.min or Math.max against (totalDuration - startSec). 
+Quote the exact line as it exists in the file right now.
+
+Report all of this back as raw findings — logs, exact error text, and 
+real numbers. Do not propose or apply a fix yet.

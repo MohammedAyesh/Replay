@@ -1,0 +1,67 @@
+Stop. Do not write or edit any code. This is a full systematic audit only.
+
+Context: task #103 has gone through multiple review-rejected cycles. Before 
+any further changes, I need a complete, evidence-based map of the current 
+actual state of this pipeline — not a summary of what was intended, what 
+the current real behavior is.
+
+Produce a report with these sections:
+
+1. CURRENT STATE OF EACH FIX, AS IT ACTUALLY EXISTS IN CODE RIGHT NOW
+For each of the 5 original fixes, state exactly what the code currently 
+does, quoting the real current lines — not what an earlier plan said it 
+would do, since several of these have been rewritten multiple times and 
+may not match the last plan you reported.
+
+2. THE TWO KNOWN UNRESOLVED BUGS
+   a. play_2160p.mp4 returns 404 — confirmed hasMP4Fallback: false for this 
+      library, so no direct MP4 exists at any resolution. State the current 
+      code's exact behavior when it hits this today (does it still request 
+      a direct MP4 URL? does it fall back to anything? to what?).
+   b. availableDuration uses Math.max instead of Math.min against 
+      (totalDuration - startSec), defeating its own cap. Confirm current 
+      state of this line as it exists right now.
+
+3. THE CRITICAL OPEN QUESTION — DOES ANY PATH EXPLICITLY SELECT VIDEO 
+QUALITY?
+This is the one that matters most. Since hasMP4Fallback is false for this 
+library, every export must ultimately read from the HLS master playlist 
+(playlist.m3u8) rather than a direct MP4. Investigate and report, with 
+real evidence:
+   - Fetch the actual master playlist content for a real video in this 
+     library (the same videoId already used in your prior investigation is 
+     fine). Show its real contents — the variant stream entries, their 
+     BANDWIDTH/RESOLUTION tags, and the order they appear in.
+   - Does the current code (anywhere in this pipeline, buffer step or main 
+     render) explicitly select a specific variant stream from that 
+     playlist, or does it hand FFmpeg the top-level master URL with no 
+     selection?
+   - If no explicit selection exists: research and report, with evidence 
+     (not assumption), what FFmpeg's HLS demuxer actually does by default 
+     when given a master playlist with multiple variants and no explicit 
+     selection — does it pick highest bandwidth, first-listed, something 
+     else? Cite what you find.
+   - State plainly: as the code exists right now, is there any guarantee 
+     that an export reads from the highest-quality variant, or is this 
+     still ambiguous? This question is the original root cause this whole 
+     task was created to fix — confirm explicitly whether it is actually 
+     resolved or not.
+
+4. FULL FLOW MAP
+Trace the complete real path for both possible cases (hasMP4Fallback true 
+and false) from "user clicks Export" to "file downloads," annotating at 
+each step: what SHOULD happen, what the code ACTUALLY does right now, and 
+whether those match. Include the buffer step, the main render, and how 
+totalDuration/startTime/endTime/startSec/clipDuration are threaded through 
+each.
+
+5. GAPS, UNCERTAINTIES, AND EDGE CASES
+List anything you're not fully certain about, anything you didn't verify 
+with real evidence (vs. inferred), and any other case (very short clips, 
+clips near the recording's start or end, clips with an intro) you think 
+could break given what you now know about this pipeline.
+
+Do not propose fixes. Do not touch code. Report only what you find, with 
+real evidence for every claim — quoted log lines, quoted file contents, 
+quoted actual API responses. If you can't verify something with real 
+evidence, say so explicitly rather than filling the gap with an assumption.

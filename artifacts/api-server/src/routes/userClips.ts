@@ -33,9 +33,10 @@ import {
   uploadToBunnyStorage,
   deleteBunnyExport,
   BUNNY_STORAGE_API_KEY,
+  BUNNY_CDN_HOSTNAME,
 } from "../lib/bunny";
 import { clipSettingsTable } from "@workspace/db";
-import { renderClip, cleanupTempFile } from "../lib/ffmpegExport";
+import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
 import { logger } from "../lib/logger";
 import { introPlaybackPath } from "./clipIntro";
 
@@ -43,6 +44,15 @@ const router: IRouter = Router();
 
 /** Clip IDs currently being rendered — prevents duplicate concurrent jobs. */
 const inFlight = new Set<number>();
+
+/**
+ * In-memory progress stage for each clip currently being exported.
+ * Keys are clip IDs; values are one of "fetching" | "encoding" | "uploading".
+ * The key is absent (not set to null) when the clip is idle, queued, or done.
+ * Returned as an additive `progress` field in the export-status response so the
+ * frontend can show a human-readable stage label instead of a static spinner.
+ */
+const exportProgress = new Map<number, string>();
 
 /**
  * Renders are CPU-bound: a single 1080p `-preset slow -crf 16` pass already
@@ -67,6 +77,24 @@ async function withRenderSlot<T>(job: () => Promise<T>): Promise<T> {
     activeRenders--;
     renderQueue.shift()?.();
   }
+}
+
+export function normalizeExportWindow(
+  startTime: number,
+  endTime: number,
+  totalDuration: number,
+): { startSec: number; endSec: number; clipDuration: number } {
+  const duration = Math.max(0, Number.isFinite(totalDuration) ? totalDuration : 0);
+  const rawStartSec = Number.isFinite(startTime) ? startTime * duration : 0;
+  const rawEndSec = Number.isFinite(endTime) ? endTime * duration : duration;
+  const startSec = Math.min(duration, Math.max(0, rawStartSec));
+  const endSec = Math.min(duration, Math.max(startSec, Math.max(0, rawEndSec)));
+  const actualDuration = endSec - startSec;
+  return {
+    startSec,
+    endSec,
+    clipDuration: actualDuration > 0 ? Math.max(0.1, actualDuration) : 0,
+  };
 }
 
 /**
@@ -158,15 +186,50 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
 
   void withRenderSlot(async () => {
     let tmpPath: string | null = null;
+    let bufferTmpFile: string | null = null;
     try {
       logger.info({ clipId, startTime, endTime }, "Starting background clip export");
 
-      const { duration: totalDuration } = await getBunnyVideoInfo(videoId);
+      const {
+        duration: totalDuration,
+        hasMP4Fallback,
+        availableResolutions,
+      } = await getBunnyVideoInfo(videoId);
       logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
 
-      const videoUrl = getBunnyPlaybackUrl(videoId);
-      const referer = `https://${new URL(videoUrl).host}/`;
-      logger.info({ clipId, videoUrl }, "Using HLS URL for FFmpeg input");
+      const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
+      const source = await selectExportSource({
+        videoId,
+        hasMP4Fallback,
+        availableResolutions,
+        referer,
+      });
+      const remoteUrl = source.url;
+      logger.info(
+        {
+          clipId,
+          videoId,
+          sourcePath: source.path,
+          remoteUrl,
+          maxHeight: source.maxHeight ?? null,
+        },
+        `Selected export source: ${source.path}`,
+      );
+
+      // Compute a bounded, ordered source window before buffering. Persisted clip
+      // fractions can be outside [0, 1], but renderClip has always clamped them
+      // to the recording duration; keep the buffer path consistent with that
+      // behavior so it does not reject a window the main render would accept.
+      const { startSec, endSec, clipDuration } = normalizeExportWindow(
+        startTime,
+        endTime,
+        totalDuration,
+      );
+      if (clipDuration <= 0) {
+        throw new Error(
+          `Clip selection has no content after clamping to the ${totalDuration}s recording`,
+        );
+      }
 
       let introUrl: string | undefined;
       let introReferer: string | undefined;
@@ -181,7 +244,42 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
         }
       }
 
-      tmpPath = await renderClip({ videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio: clip.aspectRatio, title: clip.title, referer, introUrl, introReferer });
+      // ── Fix 4: buffer the required time window to disk before encoding ──
+      // Downloading the clip window locally first avoids live-network stalls
+      // during the encode pass, which was the main source of the freeze/stutter.
+      exportProgress.set(clipId, "fetching");
+      logger.info({ clipId, remoteUrl, startSec, clipDuration }, "Buffering remote clip window locally");
+      const { bufferPath, bufferedDuration, adjustedOffsetSec } = await bufferRemoteClip({
+        remoteUrl,
+        referer,
+        startSec,
+        clipDuration,
+        totalDuration,
+      });
+      bufferTmpFile = bufferPath;
+      logger.info({ clipId, bufferPath, bufferedDuration, adjustedOffsetSec }, "Buffer complete — starting encode");
+
+      // Recompute fractions relative to the buffered file so renderClip's
+      // startTime * totalDuration / endTime * totalDuration arithmetic is correct.
+      const bufStartFraction = Math.max(0, adjustedOffsetSec / bufferedDuration);
+      const bufEndFraction = Math.min(1, (adjustedOffsetSec + clipDuration) / bufferedDuration);
+
+      exportProgress.set(clipId, "encoding");
+      tmpPath = await renderClip({
+        // Encode from the local buffer — no remote URL, no referer needed
+        videoUrl: bufferPath,
+        totalDuration: bufferedDuration,
+        startTime: bufStartFraction,
+        endTime: bufEndFraction,
+        cropPath,
+        aspectRatio: clip.aspectRatio,
+        title: clip.title,
+        // referer omitted — local file
+        introUrl,
+        introReferer,
+      });
+
+      exportProgress.set(clipId, "uploading");
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
       await db
         .update(userClipsTable)
@@ -196,9 +294,94 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
         .where(eq(userClipsTable.id, clipId));
     } finally {
       inFlight.delete(clipId);
+      exportProgress.delete(clipId);
+      if (bufferTmpFile) cleanupTempFile(bufferTmpFile);
       if (tmpPath) cleanupTempFile(tmpPath);
     }
   });
+}
+
+type ExportSourcePath =
+  | "HEAD-verified direct MP4"
+  | "verified HLS variant playlist"
+  | "master-playlist fallback";
+
+export async function selectExportSource(options: {
+  videoId: string;
+  hasMP4Fallback: boolean;
+  availableResolutions: string;
+  referer: string;
+}): Promise<{ url: string; path: ExportSourcePath; maxHeight: number | null }> {
+  const { videoId, hasMP4Fallback, availableResolutions, referer } = options;
+  const heights = availableResolutions
+    .split(",")
+    .map((resolution) => Number.parseInt(resolution.trim().replace(/p$/i, ""), 10))
+    .filter((height) => Number.isFinite(height) && height > 0)
+    .sort((a, b) => b - a);
+  const maxHeight = heights[0] ?? null;
+
+  if (hasMP4Fallback && maxHeight !== null) {
+    const directUrl = getBunnyDirectMp4Url(videoId, maxHeight);
+    try {
+      const response = await fetch(directUrl, {
+        method: "HEAD",
+        headers: { Referer: referer },
+      });
+      if (response.status === 200 || response.status === 206) {
+        return {
+          url: directUrl,
+          path: "HEAD-verified direct MP4",
+          maxHeight,
+        };
+      }
+      logger.warn(
+        { videoId, directUrl, status: response.status, maxHeight },
+        "Direct MP4 source check failed; trying explicit HLS variant",
+      );
+    } catch (err) {
+      logger.warn(
+        { err, videoId, directUrl, maxHeight },
+        "Direct MP4 source check errored; trying explicit HLS variant",
+      );
+    }
+  }
+
+  if (maxHeight !== null) {
+    const variantUrl = `https://${BUNNY_CDN_HOSTNAME}/${videoId}/${maxHeight}p/video.m3u8`;
+    try {
+      const response = await fetch(variantUrl, {
+        headers: { Referer: referer },
+      });
+      const playlist = await response.text();
+      if (response.ok && playlist.trim().length > 0) {
+        return {
+          url: variantUrl,
+          path: "verified HLS variant playlist",
+          maxHeight,
+        };
+      }
+      logger.warn(
+        { videoId, variantUrl, status: response.status, maxHeight },
+        "Explicit HLS variant check failed; falling back to master playlist",
+      );
+    } catch (err) {
+      logger.warn(
+        { err, videoId, variantUrl, maxHeight },
+        "Explicit HLS variant check errored; falling back to master playlist",
+      );
+    }
+  }
+
+  const masterUrl = getBunnyPlaybackUrl(videoId);
+  logger.warn(
+    { videoId, masterUrl, maxHeight },
+    "Explicit export source selection failed; relying on FFmpeg default stream selection",
+  );
+  return {
+    url: masterUrl,
+    path: "master-playlist fallback",
+    maxHeight,
+  };
 }
 
 router.post("/user-clips", async (req, res): Promise<void> => {
@@ -810,7 +993,8 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
 
-  res.json({ status: clip.exportStatus ?? "idle", url: clip.exportedUrl ?? null });
+  const progress = exportProgress.get(clip.id) ?? null;
+  res.json({ status: clip.exportStatus ?? "idle", url: clip.exportedUrl ?? null, progress });
 });
 
 /**
