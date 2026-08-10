@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useTranslation } from "@/i18n";
+import footballPitchImage from "@/assets/football-pitch.png";
 
 type LocalizedText = { en: string; ar: string };
 type LocalizedList = { en: string[]; ar: string[] };
@@ -43,7 +44,7 @@ const newsPosts: NewsPost[] = [
       en: ["No setup", "Full match", "Watch anywhere"],
       ar: ["بلا إعداد", "المباراة كاملة", "شاهد أينما كنت"],
     },
-    image: null,
+    image: footballPitchImage,
   },
   {
     id: 2,
@@ -192,14 +193,17 @@ function NewsCard({
     >
       <div className="relative aspect-video overflow-hidden">
         {post.image ? (
-          <img
-            src={post.image}
-            alt={text.title}
-            className="absolute inset-0 h-full w-full object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
-          />
+          <>
+            <div className="absolute inset-0 field-pattern bg-gradient-to-br from-card via-muted to-card" />
+            <img
+              src={post.image}
+              alt={text.title}
+              className="absolute inset-0 h-full w-full object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          </>
         ) : (
           <div className="absolute inset-0 field-pattern bg-gradient-to-br from-card via-muted to-card" />
         )}

@@ -1,0 +1,55 @@
+SCOPE: artifacts/soccerwatch/src/pages/home.tsx ONLY, plus adding one image
+file to the project's static assets.
+
+Do not modify any other page, the admin panel, any API route, the database, or
+any schema.
+
+Attached: a 1024x574 night-time floodlit football pitch image. This is the
+banner for the FIRST news post — the one titled "Every match you play, recorded
+and ready" / "كل مباراة تلعبها، مسجّلة وجاهزة", tagged FEATURE / ميزة.
+
+--- STEP 1: ADD THE IMAGE ---
+
+Add the attached image to the frontend's static assets, wherever this project
+already keeps images that components import. Tell me the exact path you used.
+
+--- STEP 2: USE IT ON POST 1 ---
+
+In home.tsx there is a `newsPosts` array. Each post has an `image` field,
+currently null on all four.
+
+Import the image at the top of the file and set it as the `image` value for the
+FIRST post only — the one with the FEATURE / ميزة tag. Leave posts 2, 3 and 4
+with image: null.
+
+Do not change the `image` field's type — it stays `string | null` and the
+imported asset resolves to a string.
+
+--- STEP 3: CHECK THE IMAGE AREA RENDERS IT CORRECTLY ---
+
+The card's image area is aspect-ratio 16/9. The supplied image is 1024x574,
+which is very close to 16:9 but not exact.
+
+Confirm the <img> uses object-cover and fills the area completely with no
+letterboxing, no stretching, and no distortion. If the current implementation
+would letterbox or distort it, fix only that — do not change the aspect ratio,
+the card height, the radius, or any spacing.
+
+Keep the existing dark gradient overlay across the top of the image. Keep the
+tag chip positioned over the top-leading corner. Keep the existing onError
+handler so a load failure still falls back to the field-pattern placeholder.
+
+--- MUST NOT CHANGE ---
+
+Any post text in either language. The bilingual en/ar structure. The tag chip,
+date line and its unicode-bidi isolation, title, excerpt, or expand link. The
+expand/collapse behaviour or the one-open-at-a-time logic. The card layout,
+sizing, radius or spacing. The field-pattern placeholder used by the other
+three posts. Any query, handler or route.
+
+--- VERIFY ---
+
+Open /home in the preview and confirm:
+  - post 1 shows the photo, filling its area with no distortion
+  - the FEATURE tag chip is still readable over the top-left of the photo
+  - posts 2, 3
