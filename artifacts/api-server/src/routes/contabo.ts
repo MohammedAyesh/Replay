@@ -415,9 +415,9 @@ router.post("/admin/contabo/hq/:cam", requireContaboAuth as import("express").Re
   const cam = req.params.cam as string;
   if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
 
-  const source = (req.query.source as string | undefined) ?? "ftp";
-  if (!["ftp", "sd"].includes(source)) {
-    res.status(400).json({ error: "source must be 'ftp' or 'sd'" });
+  const source = (req.query.source as string | undefined) ?? "playback";
+  if (!["ftp", "sd", "playback"].includes(source)) {
+    res.status(400).json({ error: "source must be 'ftp', 'sd', or 'playback'" });
     return;
   }
 

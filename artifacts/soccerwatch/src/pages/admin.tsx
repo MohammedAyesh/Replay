@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Eye, EyeOff, UserCheck, UserX, Shield, ShieldOff, Trash2, Plus, Save, X,
   ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp,
@@ -272,25 +272,50 @@ interface SdAvailability {
   hours: SdHourInfo[];
 }
 
-type HqJobStatus =
-  | "queued" | "searching" | "downloading" | "waiting_for_camera"
-  | "assembling" | "uploading" | "done" | "failed";
+type JobPhase = "search" | "download" | "assemble" | "upload" | "encode" | "done" | "failed";
 
-interface HqJob {
+/** Unified type covering both the new rich playback-engine shape and older HQ job shapes. */
+interface PlaybackJob {
   jobId: string;
-  cam: string;
+  // camera id — may be "cam" (old) or "cameraId" (new); normalise at read time
+  cam?: string;
+  cameraId?: string;
+  source?: string;
   title?: string;
+  // status: new engine uses "running"/"done"/"failed"; old engine had more values
+  status: "running" | "done" | "failed" | "queued" | "searching" | "downloading" | "waiting_for_camera" | "assembling" | "uploading";
+  phase?: JobPhase;
+  percent?: number;
+  // requested window — new engine wraps in {start,end}; old engine has top-level start/end
+  requested?: { start: string; end: string };
   start?: string;
   end?: string;
-  status: HqJobStatus;
-  segments?: number;
+  // segments — new engine: {total,done,failed}; old engine: plain number
+  segments?: { total: number; done: number; failed: number } | number;
+  // bytes — new engine: {downloaded,total}; old engine: bytesExpected/bytesDownloaded
+  bytes?: { downloaded: number; total: number };
   bytesExpected?: number;
   bytesDownloaded?: number;
-  note?: string;
-  videoId?: string;
-  playback?: string;
-  error?: string;
+  rate?: number;      // MB/s
+  eta?: number | null; // seconds; null during encode
+  message?: string;
+  startedAt?: string;
+  updatedAt?: string;
   createdAt?: string;
+  videoId?: string | null;
+  playbackUrl?: string | null; // new field name
+  playback?: string | null;    // old field name
+  error?: string | null;
+  note?: string; // old downloading note
+  engine?: string; // which pull method actually ran: "playback" | "download" | "ftp"
+}
+
+interface LiveJobRef {
+  cam: string;
+  jobId: string;
+  initialJob: PlaybackJob;
+  /** Saved so the retry button can re-submit the identical request. */
+  savedRequest?: { date: string; startHour: number; endHour: number; title: string; camera: Camera; source: "playback" | "sd" | "ftp" };
 }
 
 interface FtpAvailability {
@@ -2938,43 +2963,279 @@ function RecordingsList({
   );
 }
 
+// ─── Live Job Card helpers ────────────────────────────────────────────────────
+
+function phaseLabel(phase: JobPhase | undefined): string {
+  switch (phase) {
+    case "search":   return "Searching the SD card";
+    case "download": return "Pulling from camera";
+    case "assemble": return "Assembling";
+    case "upload":   return "Uploading to Bunny";
+    case "encode":   return "Bunny is encoding";
+    case "done":     return "Ready";
+    case "failed":   return "Failed";
+    default:         return phase ?? "Working…";
+  }
+}
+
+function formatEtaSecs(secs: number): string {
+  if (secs < 60) return "under a minute left";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `about ${mins} min left`;
+  const hrs  = Math.floor(mins / 60);
+  const rem  = mins % 60;
+  return rem > 0 ? `about ${hrs} hr ${rem} min left` : `about ${hrs} hr left`;
+}
+
+// ─── Live Job Card ────────────────────────────────────────────────────────────
+
+function LiveJobCard({
+  cam,
+  jobId,
+  adminPassword,
+  initialJob,
+  savedRequest,
+  onRetry,
+  onRemove,
+}: {
+  cam: string;
+  jobId: string;
+  adminPassword: string;
+  initialJob?: PlaybackJob;
+  savedRequest?: LiveJobRef["savedRequest"];
+  onRetry?: (req: NonNullable<LiveJobRef["savedRequest"]>) => void;
+  onRemove?: () => void;
+}) {
+  const [showPlayer, setShowPlayer] = useState(false);
+
+  const { data: job } = useQuery<PlaybackJob>({
+    queryKey: ["hq-job", cam, jobId],
+    queryFn: async () => {
+      const res = await fetch(`${basePath}/api/admin/contabo/hq/${cam}/${jobId}`, {
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "X-Admin-Password": adminPassword },
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error((d as { error?: string }).error ?? `Error ${res.status}`);
+      }
+      return res.json() as Promise<PlaybackJob>;
+    },
+    initialData: initialJob,
+    refetchInterval: (query) => {
+      const s = (query.state.data as PlaybackJob | undefined)?.status;
+      return s === "done" || s === "failed" ? false : 2_000;
+    },
+    staleTime: 1_000,
+  });
+
+  if (!job) return null;
+
+  const isDone   = job.status === "done";
+  const isFailed = job.status === "failed";
+  const isEncode = job.phase === "encode";
+  const percent  = job.percent ?? 0;
+
+  // Normalise segments to the new shape (old shape was a plain number)
+  const segments = (job.segments && typeof job.segments === "object" && !Array.isArray(job.segments))
+    ? (job.segments as { total: number; done: number; failed: number })
+    : null;
+
+  // Normalise bytes (old shape had bytesExpected/bytesDownloaded at top level)
+  const bytesTotal = job.bytes?.total ?? job.bytesExpected ?? 0;
+  const bytesDone  = job.bytes?.downloaded ?? job.bytesDownloaded ?? 0;
+
+  const playbackUrl = job.playbackUrl ?? job.playback ?? null;
+
+  // Requested time window display
+  const reqStart = job.requested?.start ?? job.start ?? null;
+  const reqEnd   = job.requested?.end   ?? job.end   ?? null;
+  const timeWindow = reqStart && reqEnd
+    ? `${reqStart.slice(11, 16)} – ${reqEnd.slice(11, 16)}  ·  ${reqStart.slice(0, 10)}`
+    : null;
+
+  return (
+    <div className={cn(
+      "rounded-xl border p-3.5 space-y-3",
+      isDone   ? "border-green-700/40 bg-green-900/10"
+      : isFailed ? "border-red-700/40 bg-red-900/10"
+      : "border-blue-700/40 bg-blue-900/10",
+    )}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {isDone
+            ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+            : isFailed
+              ? <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+              : <Loader2 className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 animate-spin" />}
+          <div className="min-w-0">
+            <p className="text-white text-sm font-medium truncate">{job.title || "Footage request"}</p>
+            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+              {timeWindow && (
+                <p className="text-zinc-500 text-[10px] font-mono">{timeWindow}</p>
+              )}
+              {job.engine && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-zinc-700 text-zinc-500 font-medium">
+                  {job.engine === "playback" ? "Playback engine"
+                    : job.engine === "download" ? "Direct download"
+                    : job.engine}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        {onRemove && (
+          <button type="button" onClick={onRemove} className="text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* In-progress */}
+      {!isDone && !isFailed && (
+        <div className="space-y-2">
+          {/* Phase + percent */}
+          <div className="flex items-center justify-between text-xs">
+            <span className={cn("font-medium", isEncode ? "text-violet-400" : "text-blue-400")}>
+              {phaseLabel(job.phase)}
+            </span>
+            <span className="text-zinc-500 tabular-nums">{percent}%</span>
+          </div>
+
+          {/* Progress bar — driven by percent, never computed from bytes */}
+          <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
+            <div
+              className={cn(
+                "h-2 rounded-full transition-all duration-700",
+                isEncode ? "bg-violet-500" : "bg-primary",
+              )}
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+
+          {/* Detail row */}
+          <div className="text-[10px] text-zinc-500 flex flex-wrap gap-x-3 gap-y-0.5">
+            {segments && (
+              <span>
+                {segments.done}/{segments.total} segs
+                {segments.failed > 0 && <span className="text-red-400"> · {segments.failed} failed</span>}
+              </span>
+            )}
+            {bytesTotal > 0 && (
+              <span>{(bytesDone / 1e6).toFixed(0)} / {(bytesTotal / 1e6).toFixed(0)} MB</span>
+            )}
+            {job.rate != null && job.rate > 0 && (
+              <span>{job.rate.toFixed(1)} MB/s</span>
+            )}
+            {job.phase === "download" && job.eta != null && (
+              <span className="text-zinc-400">{formatEtaSecs(job.eta)}</span>
+            )}
+          </div>
+
+          {/* Encode-specific note — eta is null here; Bunny encodes at ~real time */}
+          {isEncode && (
+            <p className="text-violet-300/80 text-[10px] leading-relaxed">
+              Bunny is encoding — this takes about as long as the footage itself.
+              An hour of footage takes roughly an hour here.
+            </p>
+          )}
+
+          {/* Message from engine */}
+          {job.message && (
+            <p className="text-zinc-400 text-[10px] leading-relaxed">{job.message}</p>
+          )}
+        </div>
+      )}
+
+      {/* Done state */}
+      {isDone && (
+        <div className="space-y-2">
+          <p className="text-green-400 text-xs font-semibold">✓ Footage ready</p>
+          {job.message && <p className="text-zinc-400 text-[10px]">{job.message}</p>}
+          {playbackUrl && (
+            <div className="space-y-1.5">
+              <a
+                href={`${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(playbackUrl)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-green-400 hover:text-green-300 transition-colors font-medium"
+              >
+                <Play className="w-3 h-3" /> Watch footage
+              </a>
+              <button
+                type="button"
+                onClick={() => setShowPlayer((p) => !p)}
+                className="block text-[10px] text-zinc-500 hover:text-zinc-400 transition-colors"
+              >
+                {showPlayer ? "Hide inline player" : "Play inline"}
+              </button>
+              {showPlayer && (
+                <HlsPlayer
+                  url={`${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(playbackUrl)}`}
+                  className="max-h-64 mt-1"
+                />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Failed state */}
+      {isFailed && (
+        <div className="space-y-2">
+          <p className="text-red-400 text-xs leading-relaxed font-medium">
+            {job.error ?? "Unknown error"}
+          </p>
+          {savedRequest && onRetry && (
+            <button
+              type="button"
+              onClick={() => onRetry(savedRequest)}
+              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" /> Retry request
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SD Pull Section ──────────────────────────────────────────────────────────
 
 function SdPullSection({ adminPassword }: { adminPassword: string }) {
   // Today's date in Amman local time (UTC+3) — used to match FTP window
   const todayAmman = () => new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const [camera, setCamera]             = useState<Camera>("camera1");
-  const [date,   setDate]               = useState(todayAmman);
+  const [camera, setCamera]         = useState<Camera>("camera1");
+  const [date,   setDate]           = useState(todayAmman);
 
   // FTP (instant) availability — fetched on camera change, no date required
-  const [ftpAvail,   setFtpAvail]       = useState<FtpAvailability | null>(null);
-  const [ftpLoading, setFtpLoading]     = useState(false);
+  const [ftpAvail,   setFtpAvail]   = useState<FtpAvailability | null>(null);
+  const [ftpLoading, setFtpLoading] = useState(false);
 
   // SD (historical) availability for the selected date
-  const [availability,  setAvailability]  = useState<SdAvailability | null>(null);
-  const [availLoading,  setAvailLoading]  = useState(false);
-  const [availError,    setAvailError]    = useState<string | null>(null);
+  const [availability, setAvailability] = useState<SdAvailability | null>(null);
+  const [availLoading, setAvailLoading] = useState(false);
+  const [availError,   setAvailError]   = useState<string | null>(null);
 
   // Hour-range selection
   const [startHour, setStartHour] = useState<number | null>(null);
   const [endHour,   setEndHour]   = useState<number | null>(null);
 
-  // SD path requires an explicit confirm before submitting
-  const [sdConfirmed, setSdConfirmed] = useState(false);
+  // Pull method — user picks; "playback" is the default
+  const [pullMethod, setPullMethod] = useState<"playback" | "sd" | "ftp">("playback");
+  // Slow-path confirm (reset whenever method or hour selection changes)
+  const [confirmed, setConfirmed] = useState(false);
 
   // Submission
   const [title,       setTitle]       = useState("");
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Active job polling + inline playback
-  const [activeJob,     setActiveJob]     = useState<HqJob | null>(null);
-  const [showJobPlayer, setShowJobPlayer] = useState<string | null>(null);
-
-  // Jobs history list
-  const [jobs,        setJobs]        = useState<HqJob[]>([]);
-  const [jobsLoading, setJobsLoading] = useState(true);
+  // Live job cards — each renders its own TanStack Query poll
+  const [liveJobRefs, setLiveJobRefs] = useState<LiveJobRef[]>([]);
 
   // ─── auth-bearing fetch helper ─────────────────────────────────────────────
   const contaboFetch = useCallback(async (path: string, opts?: RequestInit) => {
@@ -3023,37 +3284,44 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
       .finally(() => setAvailLoading(false));
   }, [camera, date, contaboFetch]);
 
-  // Jobs history — background refresh every 20 s
-  const fetchJobs = useCallback(async () => {
-    try {
+  // ─── Job history via TanStack Query (30 s background refresh) ──────────────
+  const jobsQuery = useQuery({
+    queryKey: ["hq-jobs", adminPassword],
+    queryFn: async () => {
       const data = await contaboFetch("/admin/contabo/hq");
-      setJobs(((data as { jobs?: HqJob[] }).jobs) ?? []);
-    } catch { /* silent */ } finally { setJobsLoading(false); }
-  }, [contaboFetch]);
+      return ((data as { jobs?: PlaybackJob[] }).jobs) ?? ([] as PlaybackJob[]);
+    },
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
 
-  useEffect(() => {
-    fetchJobs();
-    const id = setInterval(fetchJobs, 20_000);
-    return () => clearInterval(id);
-  }, [fetchJobs]);
+  const jobs = jobsQuery.data ?? [];
 
-  // Active job — poll every 4 s while in-flight
+  // ─── Hydrate live cards from job list on mount / first load ────────────────
+  // This lets a page-refresh mid-job re-attach to any in-flight work.
+  const hydratedRef = useRef(false);
   useEffect(() => {
-    if (!activeJob || activeJob.status === "done" || activeJob.status === "failed") return;
-    const poll = async () => {
-      try {
-        const data = await contaboFetch(`/admin/contabo/hq/${activeJob.cam}/${activeJob.jobId}`);
-        setActiveJob(data as HqJob);
-        if ((data as HqJob).status === "done" || (data as HqJob).status === "failed") fetchJobs();
-      } catch { /* keep last known state */ }
-    };
-    const id = setInterval(poll, 4_000);
-    return () => clearInterval(id);
-  }, [activeJob, contaboFetch, fetchJobs]);
+    if (hydratedRef.current || !jobs.length) return;
+    hydratedRef.current = true;
+    const running = jobs.filter(
+      (j) => j.status !== "done" && j.status !== "failed",
+    );
+    if (!running.length) return;
+    setLiveJobRefs((prev) => {
+      const existingIds = new Set(prev.map((r) => r.jobId));
+      const fresh = running
+        .filter((j) => !existingIds.has(j.jobId))
+        .map((j) => ({
+          cam: j.cam ?? j.cameraId ?? "camera1",
+          jobId: j.jobId,
+          initialJob: j,
+        }));
+      return fresh.length ? [...fresh, ...prev] : prev;
+    });
+  }, [jobs]);
 
   // ─── derived values ────────────────────────────────────────────────────────
 
-  // Parse FTP window from availability response
   let ftpDate:      string | null = null;
   let ftpHourStart: number | null = null;
   let ftpHourEnd:   number | null = null;
@@ -3065,9 +3333,9 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     ftpDate      = ed;
     ftpHourStart = parseInt(et.split(":")[0]);
     ftpHourEnd   = parseInt(lt.split(":")[0]);
-    const fmtTime  = (ts: string) => ts.split(" ")[1].slice(0, 5); // "HH:MM"
-    const isToday  = ed === todayAmman();
-    ftpTimeLabel   = `${fmtTime(ftpAvail.earliest)} – ${fmtTime(ftpAvail.latest)} ${isToday ? "today" : ed}`;
+    const fmtTime = (ts: string) => ts.split(" ")[1].slice(0, 5);
+    const isToday = ed === todayAmman();
+    ftpTimeLabel  = `${fmtTime(ftpAvail.earliest)} – ${fmtTime(ftpAvail.latest)} ${isToday ? "today" : ed}`;
   }
 
   const isFtpHour = (h: number) =>
@@ -3078,30 +3346,45 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
   const sdAvailableSet = new Set(availability?.hours.map((h) => h.hour) ?? []);
   const isHourAvailable = (h: number) => isFtpHour(h) || sdAvailableSet.has(h);
 
-  // All selected hours must be FTP-covered for the fast path
+  // All selected hours must be FTP-covered for the instant path (informs the hour-grid colour)
   const isFtpPath: boolean =
     startHour !== null && endHour !== null &&
     Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour! + i).every(isFtpHour);
 
-  // Rough SD duration estimate for camera 1 at 0.18 MB/s
-  const sdEstimate = (): string | null => {
-    if (startHour === null || endHour === null) return null;
-    let totalBytes = 0;
-    for (let h = startHour; h <= endHour; h++) {
-      const info = sdHourInfoMap.get(h);
-      totalBytes += info ? info.bytes : 3.6 * 1024 * 1024 * 1024; // 3.6 GB fallback
-    }
-    const secs = totalBytes / (0.18 * 1024 * 1024); // 0.18 MB/s
-    const hrs  = Math.floor(secs / 3600);
-    const mins = Math.round((secs % 3600) / 60);
-    if (hrs === 0) return `~${mins} min`;
-    return mins > 0 ? `~${hrs} hr ${mins} min` : `~${hrs} hr`;
+  const selectionLabel = startHour !== null && endHour !== null
+    ? `${String(startHour).padStart(2, "0")}:00 – ${String(endHour + 1).padStart(2, "0")}:00`
+    : null;
+
+  // Selected window duration in hours (whole hour blocks)
+  const windowHours = startHour !== null && endHour !== null ? endHour - startHour + 1 : 0;
+
+  // Method-aware live duration estimate
+  const methodEstimate = (method: "playback" | "sd" | "ftp"): string | null => {
+    if (!windowHours) return null;
+    if (method === "ftp") return "Instant";
+    const fmtHrs = (h: number) => {
+      if (h < 1) return `~${Math.round(h * 60)} min`;
+      const hh = Math.floor(h);
+      const mm = Math.round((h - hh) * 60);
+      return mm > 0 ? `~${hh} hr ${mm} min` : `~${hh} hr`;
+    };
+    if (method === "playback") return fmtHrs(windowHours * 0.4);
+    /* sd */ return fmtHrs(windowHours * 12);
   };
+
+  const formatBytes = (b: number) => {
+    if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;
+    if (b >= 1e6) return `${(b / 1e6).toFixed(0)} MB`;
+    return `${b} B`;
+  };
+
+  // Direct-download is painfully slow past ~15 min of footage (~3 hrs pull)
+  const showSdWarning = pullMethod === "sd" && windowHours > 0;
 
   // ─── interaction handlers ──────────────────────────────────────────────────
 
   const handleHourClick = (h: number) => {
-    setSdConfirmed(false);
+    setConfirmed(false);
     if (startHour === null) {
       setStartHour(h); setEndHour(h);
     } else if (h === startHour && h === endHour) {
@@ -3113,18 +3396,23 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     }
   };
 
-  const handleSubmit = async (source: "ftp" | "sd") => {
+  const handleSubmit = async () => {
     if (startHour === null || endHour === null) { setSubmitError("Select at least one hour block"); return; }
     if (!title.trim()) { setSubmitError("Clip title is required"); return; }
     const start = `${date} ${String(startHour).padStart(2, "0")}:00:00`;
     const end   = `${date} ${String(endHour + 1).padStart(2, "0")}:00:00`;
     setSubmitting(true); setSubmitError(null);
     try {
-      const qs = `source=${source}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title.trim())}`;
+      const qs = `source=${pullMethod}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title.trim())}`;
       const data = await contaboFetch(`/admin/contabo/hq/${camera}?${qs}`, { method: "POST" });
-      setActiveJob(data as HqJob);
-      setTitle(""); setStartHour(null); setEndHour(null); setSdConfirmed(false);
-      fetchJobs();
+      const newJob = data as PlaybackJob;
+      const savedRequest = { date, startHour, endHour, title: title.trim(), camera, source: pullMethod };
+      setLiveJobRefs((prev) => {
+        if (prev.some((r) => r.jobId === newJob.jobId)) return prev;
+        return [{ cam: camera, jobId: newJob.jobId, initialJob: newJob, savedRequest }, ...prev];
+      });
+      setTitle(""); setStartHour(null); setEndHour(null); setConfirmed(false);
+      void jobsQuery.refetch();
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Request failed");
     } finally {
@@ -3132,38 +3420,21 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     }
   };
 
-  // ─── helpers ───────────────────────────────────────────────────────────────
-
-  const formatBytes = (b: number) => {
-    if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;
-    if (b >= 1e6) return `${(b / 1e6).toFixed(0)} MB`;
-    return `${b} B`;
+  // Retry: re-submits a failed job's saved request using its original source method
+  const handleRetry = async (req: NonNullable<LiveJobRef["savedRequest"]>) => {
+    const start = `${req.date} ${String(req.startHour).padStart(2, "0")}:00:00`;
+    const end   = `${req.date} ${String(req.endHour + 1).padStart(2, "0")}:00:00`;
+    try {
+      const qs = `source=${req.source}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(req.title)}`;
+      const data = await contaboFetch(`/admin/contabo/hq/${req.camera}?${qs}`, { method: "POST" });
+      const newJob = data as PlaybackJob;
+      setLiveJobRefs((prev) => {
+        if (prev.some((r) => r.jobId === newJob.jobId)) return prev;
+        return [{ cam: req.camera, jobId: newJob.jobId, initialJob: newJob, savedRequest: req }, ...prev];
+      });
+      void jobsQuery.refetch();
+    } catch { /* surface nothing — the card stays visible */ }
   };
-
-  const stageLabel = (job: HqJob): string => {
-    switch (job.status) {
-      case "queued":             return "Queued — waiting to start";
-      case "searching":          return "Locating footage…";
-      case "downloading":        return job.note ? `Downloading — ${job.note}` : "Downloading segments…";
-      case "waiting_for_camera": return "Camera busy — waiting for the current download to finish";
-      case "assembling":         return "Assembling segments…";
-      case "uploading":          return "Uploading to Bunny Stream…";
-      case "done":               return "Done — footage ready";
-      case "failed":             return `Failed: ${job.error ?? "Unknown error"}`;
-      default:                   return job.status;
-    }
-  };
-
-  const stageColor = (status: HqJobStatus) => {
-    if (status === "done")              return "text-green-400";
-    if (status === "failed")            return "text-red-400";
-    if (status === "waiting_for_camera") return "text-amber-400";
-    return "text-blue-400";
-  };
-
-  const selectionLabel = startHour !== null && endHour !== null
-    ? `${String(startHour).padStart(2, "0")}:00 – ${String(endHour + 1).padStart(2, "0")}:00`
-    : null;
 
   // ─── render ────────────────────────────────────────────────────────────────
 
@@ -3194,7 +3465,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
         {!ftpLoading && !ftpAvail && (
           <div className="flex items-center gap-2 text-xs text-zinc-500 bg-zinc-800/40 border border-zinc-700/40 rounded-xl px-3 py-2.5">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-            No instant footage available right now — SD card pull only.
+            No instant footage on server — will pull via playback engine.
           </div>
         )}
 
@@ -3231,9 +3502,8 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
             <label className="text-xs text-zinc-400 mb-2 block font-medium">
               Select Hours
               {selectionLabel && (
-                <span className={cn("ml-2 font-semibold", isFtpPath ? "text-green-400" : "text-amber-400")}>
+                <span className="ml-2 font-semibold text-zinc-300">
                   {selectionLabel}
-                  {isFtpPath ? "  ⚡ Instant" : "  — SD card"}
                 </span>
               )}
             </label>
@@ -3265,9 +3535,9 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                     onClick={() => handleHourClick(h)}
                     title={
                       hasFtp
-                        ? `${String(h).padStart(2, "0")}:00 — instant (FTP)`
+                        ? `${String(h).padStart(2, "0")}:00 — instant (on server)`
                         : sdInfo
-                          ? `${String(h).padStart(2, "0")}:00 — SD card, ${formatBytes(sdInfo.bytes)}`
+                          ? `${String(h).padStart(2, "0")}:00 — playback engine, ${formatBytes(sdInfo.bytes)}`
                           : `${String(h).padStart(2, "0")}:00 — no footage`
                     }
                     className={cn(
@@ -3277,7 +3547,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                         : inFtpRange
                           ? "border-green-500 bg-green-900/30 text-green-300 font-bold ring-1 ring-green-500/40"
                           : inRange
-                            ? "border-amber-500 bg-amber-900/30 text-amber-300 font-bold ring-1 ring-amber-500/40"
+                            ? "border-blue-500 bg-blue-900/30 text-blue-300 font-bold ring-1 ring-blue-500/40"
                             : hasFtp
                               ? "border-green-700 bg-green-900/20 text-green-400 hover:border-green-500 cursor-pointer"
                               : "border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500 cursor-pointer",
@@ -3316,65 +3586,135 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
           </div>
         )}
 
-        {/* ── FTP submit (fast path) ───────────────────────────────────────── */}
-        {isFtpPath && startHour !== null && (
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => void handleSubmit("ftp")}
-            className="w-full flex items-center justify-center gap-2 bg-primary text-black font-bold py-3 rounded-xl text-sm disabled:opacity-50 hover:opacity-90 transition-opacity"
-          >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            {submitting ? "Requesting…" : "⚡ Request Instant Footage"}
-          </button>
+        {/* ── Pull method picker ───────────────────────────────────────────── */}
+        {date && (
+          <div>
+            <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Pull Method</label>
+            <div className="space-y-2">
+
+              {/* Playback (recommended) */}
+              {([ 
+                {
+                  value: "playback" as const,
+                  label: "Playback",
+                  badge: "recommended",
+                  badgeColor: "text-primary border-primary/50",
+                  body: "Fastest — streams 3 parallel tracks at ~1 MB/s each. Bit-identical picture quality to direct download, verified frame-by-frame.",
+                },
+                {
+                  value: "sd" as const,
+                  label: "Direct download",
+                  badge: undefined,
+                  badgeColor: "",
+                  body: "~9× slower, fetches one segment at a time. Same quality. Use as a fallback if Playback misbehaves on a particular window.",
+                },
+                {
+                  value: "ftp" as const,
+                  label: "Already on server",
+                  badge: undefined,
+                  badgeColor: "",
+                  body: "Instant — clips are already on the server. Only covers very recent footage; older windows will find nothing.",
+                },
+              ] as const).map(({ value, label, badge, badgeColor, body }) => {
+                const est = methodEstimate(value);
+                const isSelected = pullMethod === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => { setPullMethod(value); setConfirmed(false); }}
+                    className={cn(
+                      "w-full text-left rounded-xl border px-3 py-2.5 transition-all",
+                      isSelected
+                        ? "border-primary/60 bg-primary/5 ring-1 ring-primary/30"
+                        : "border-zinc-700 bg-zinc-800/50 hover:border-zinc-600",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {/* Radio dot */}
+                        <span className={cn(
+                          "w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 flex items-center justify-center",
+                          isSelected ? "border-primary" : "border-zinc-600",
+                        )}>
+                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
+                        </span>
+                        <span className={cn("text-sm font-semibold", isSelected ? "text-white" : "text-zinc-300")}>
+                          {label}
+                        </span>
+                        {badge && (
+                          <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full border font-medium", badgeColor)}>
+                            {badge}
+                          </span>
+                        )}
+                      </div>
+                      {/* Live estimate — only when hours are selected */}
+                      {est && (
+                        <span className={cn(
+                          "text-[11px] font-semibold tabular-nums flex-shrink-0",
+                          value === "ftp" ? "text-green-400"
+                            : value === "sd" ? "text-amber-400"
+                            : "text-blue-400",
+                        )}>
+                          {est}
+                          {value !== "ftp" && windowHours > 0 && <span className="font-normal text-zinc-500"> est.</span>}
+                        </span>
+                      )}
+                    </div>
+                    <p className={cn("text-[11px] leading-relaxed mt-1 pl-5", isSelected ? "text-zinc-400" : "text-zinc-600")}>
+                      {body}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
 
-        {/* ── SD warning + confirmation (slow path) ───────────────────────── */}
-        {!isFtpPath && startHour !== null && (
-          <div className="rounded-xl border border-amber-700/50 bg-amber-900/10 p-3.5 space-y-3">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-              <div className="space-y-1.5">
-                <p className="text-amber-300 text-sm font-semibold">SD card pull required</p>
-                <p className="text-amber-200/70 text-xs leading-relaxed">
-                  This footage is no longer on the server — it must be read directly from the
-                  camera's SD card.
-                  {camera === "camera1"
-                    ? " Camera 1 is on a very weak WiFi signal (measured at 0.18 MB/s), so a single hour of footage takes roughly 5–6 hours to download."
-                    : " This can take a significant amount of time depending on the camera's connection."}
-                </p>
-                {camera === "camera1" && sdEstimate() && (
-                  <p className="text-amber-300 text-xs font-semibold">
-                    Estimated time for your selection: {sdEstimate()}
-                  </p>
-                )}
-                <p className="text-zinc-400 text-xs leading-relaxed">
-                  💡 Completed past hours are automatically archived to Bunny Stream.
-                  Check the Recordings tab first — the footage you need may already be there.
-                </p>
-              </div>
-            </div>
+        {/* ── Direct-download slow-path warning ───────────────────────────── */}
+        {showSdWarning && startHour !== null && (
+          <div className="flex items-start gap-2 text-amber-300 text-xs bg-amber-900/20 border border-amber-700/40 rounded-xl px-3 py-2.5">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-400" />
+            <span>
+              <strong>Direct download is very slow</strong> — your selection will take roughly{" "}
+              {methodEstimate("sd")} to pull, then Bunny encodes on top of that.{" "}
+              Consider switching to <button type="button" onClick={() => { setPullMethod("playback"); setConfirmed(false); }} className="underline hover:text-amber-200 transition-colors">Playback</button> instead ({methodEstimate("playback")} for the same window).
+            </span>
+          </div>
+        )}
 
-            {!sdConfirmed ? (
+        {/* ── Submit ──────────────────────────────────────────────────────── */}
+        {startHour !== null && (
+          <>
+            {/* Slow-path confirm step for sd method */}
+            {pullMethod === "sd" && !confirmed ? (
               <button
                 type="button"
-                onClick={() => setSdConfirmed(true)}
-                className="w-full flex items-center justify-center gap-1.5 border border-amber-600/70 text-amber-300 font-medium py-2.5 rounded-xl text-sm hover:bg-amber-900/30 transition-colors"
+                onClick={() => setConfirmed(true)}
+                className="w-full flex items-center justify-center gap-1.5 border border-amber-600/70 text-amber-300 font-medium py-2.5 rounded-xl text-sm hover:bg-amber-900/20 transition-colors"
               >
-                I understand — show me the SD pull button
+                I understand it will be slow — show me the submit button
               </button>
             ) : (
               <button
                 type="button"
                 disabled={submitting}
-                onClick={() => void handleSubmit("sd")}
-                className="w-full flex items-center justify-center gap-2 bg-amber-600 text-black font-bold py-3 rounded-xl text-sm disabled:opacity-50 hover:opacity-90 transition-opacity"
+                onClick={() => void handleSubmit()}
+                className={cn(
+                  "w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl text-sm disabled:opacity-50 hover:opacity-90 transition-opacity",
+                  pullMethod === "ftp"  ? "bg-primary text-black"
+                  : pullMethod === "sd" ? "bg-amber-600 text-white"
+                  : "bg-blue-600 text-white",
+                )}
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                {submitting ? "Requesting…" : "Pull from SD card (slow)"}
+                {submitting ? "Requesting…"
+                  : pullMethod === "ftp"  ? "⚡ Request Instant Footage"
+                  : pullMethod === "sd"   ? "Pull footage (direct download)"
+                  : "Pull footage (playback engine)"}
               </button>
             )}
-          </div>
+          </>
         )}
 
         {/* ── No selection hint ───────────────────────────────────────────── */}
@@ -3384,83 +3724,24 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
           </p>
         )}
 
-        {/* ── Active job status panel ─────────────────────────────────────── */}
-        {activeJob && (
-          <div className={cn(
-            "rounded-xl border p-3 space-y-2.5",
-            activeJob.status === "done"               ? "border-green-700/40 bg-green-900/10"
-              : activeJob.status === "failed"         ? "border-red-700/40 bg-red-900/10"
-              : activeJob.status === "waiting_for_camera" ? "border-amber-700/40 bg-amber-900/10"
-              : "border-blue-700/40 bg-blue-900/10",
-          )}>
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                {activeJob.status === "done"
-                  ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
-                  : activeJob.status === "failed"
-                    ? <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-                    : <Loader2 className={cn(
-                        "w-3.5 h-3.5 flex-shrink-0",
-                        stageColor(activeJob.status),
-                        activeJob.status !== "waiting_for_camera" && "animate-spin",
-                      )} />
+        {/* ── Live job cards ──────────────────────────────────────────────── */}
+        {liveJobRefs.length > 0 && (
+          <div className="space-y-2.5 pt-1">
+            <p className="text-zinc-500 text-[10px] font-semibold uppercase tracking-wider">Active pulls</p>
+            {liveJobRefs.map((ref) => (
+              <LiveJobCard
+                key={ref.jobId}
+                cam={ref.cam}
+                jobId={ref.jobId}
+                adminPassword={adminPassword}
+                initialJob={ref.initialJob}
+                savedRequest={ref.savedRequest}
+                onRetry={handleRetry}
+                onRemove={() =>
+                  setLiveJobRefs((prev) => prev.filter((r) => r.jobId !== ref.jobId))
                 }
-                <span className="text-white text-sm font-medium truncate">
-                  {activeJob.title || "Footage request"}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveJob(null)}
-                className="text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <p className={cn("text-xs leading-relaxed", stageColor(activeJob.status))}>
-              {stageLabel(activeJob)}
-            </p>
-
-            {/* Progress bar during downloading */}
-            {activeJob.status === "downloading"
-              && activeJob.bytesExpected != null
-              && activeJob.bytesExpected > 0 && (
-              <div className="space-y-1">
-                <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className="bg-primary h-1.5 rounded-full transition-all duration-500"
-                    style={{
-                      width: `${Math.min(100, ((activeJob.bytesDownloaded ?? 0) / activeJob.bytesExpected) * 100)}%`,
-                    }}
-                  />
-                </div>
-                <p className="text-[10px] text-zinc-500">
-                  {formatBytes(activeJob.bytesDownloaded ?? 0)} / {formatBytes(activeJob.bytesExpected)}
-                  {activeJob.segments != null && ` · ${activeJob.segments} segments total`}
-                </p>
-              </div>
-            )}
-
-            {/* Inline player when done */}
-            {activeJob.status === "done" && activeJob.playback && (
-              <div className="space-y-2 pt-0.5">
-                <button
-                  type="button"
-                  onClick={() => setShowJobPlayer((p) => p === activeJob.jobId ? null : activeJob.jobId)}
-                  className="flex items-center gap-1.5 text-xs text-green-400 hover:text-green-300 transition-colors"
-                >
-                  <Play className="w-3 h-3" />
-                  {showJobPlayer === activeJob.jobId ? "Hide player" : "Play footage"}
-                </button>
-                {showJobPlayer === activeJob.jobId && (
-                  <HlsPlayer
-                    url={`/api/hls-proxy/manifest?url=${encodeURIComponent(activeJob.playback)}`}
-                    className="max-h-64"
-                  />
-                )}
-              </div>
-            )}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -3468,50 +3749,79 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
       {/* ── Previous requests list ───────────────────────────────────────────── */}
       <div className="mt-4">
         <h3 className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">Previous Requests</h3>
-        {jobsLoading ? (
+        {jobsQuery.isLoading ? (
           <div className="text-zinc-600 text-xs py-4 text-center">Loading…</div>
         ) : jobs.length === 0 ? (
           <div className="text-zinc-700 text-xs py-4 text-center">No requests yet</div>
         ) : (
           <div className="space-y-2">
-            {jobs.map((job) => (
-              <div key={job.jobId} className="flex items-start gap-3 p-3 rounded-xl border border-zinc-800 bg-zinc-900">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-white text-sm font-medium truncate">{job.title || job.jobId}</span>
-                    <span className={cn(
-                      "text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 font-medium flex-shrink-0",
-                      job.status === "done"                ? "text-green-400 bg-green-900/20 border-green-700/40"
-                        : job.status === "failed"          ? "text-red-400 bg-red-900/20 border-red-700/40"
-                        : job.status === "waiting_for_camera" ? "text-amber-400 bg-amber-900/20 border-amber-700/40"
+            {jobs.map((job) => {
+              const isDone   = job.status === "done";
+              const isFailed = job.status === "failed";
+              const isRunning = !isDone && !isFailed;
+              const playbackUrl = job.playbackUrl ?? job.playback ?? null;
+              const jobCam = job.cam ?? job.cameraId ?? "—";
+              const reqStart = job.requested?.start ?? job.start ?? null;
+              const reqEnd   = job.requested?.end   ?? job.end   ?? null;
+              const createdAt = job.startedAt ?? job.createdAt ?? null;
+
+              return (
+                <div key={job.jobId} className="flex items-start gap-3 p-3 rounded-xl border border-zinc-800 bg-zinc-900">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white text-sm font-medium truncate">{job.title || job.jobId}</span>
+                      <span className={cn(
+                        "text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 font-medium flex-shrink-0",
+                        isDone    ? "text-green-400 bg-green-900/20 border-green-700/40"
+                        : isFailed  ? "text-red-400 bg-red-900/20 border-red-700/40"
                         : "text-blue-400 bg-blue-900/20 border-blue-700/40",
-                    )}>
-                      {job.status === "done"   ? <CheckCircle2 className="w-3 h-3" />
-                        : job.status === "failed" ? <XCircle className="w-3 h-3" />
+                      )}>
+                        {isDone   ? <CheckCircle2 className="w-3 h-3" />
+                        : isFailed ? <XCircle className="w-3 h-3" />
                         : <Loader2 className="w-3 h-3 animate-spin" />}
-                      {job.status}
-                    </span>
-                  </div>
-                  <p className="text-zinc-500 text-xs mt-0.5">
-                    {job.cam} · {job.start ?? "—"} → {job.end ?? "—"}
-                  </p>
-                  {job.createdAt && (
-                    <p className="text-zinc-600 text-[10px] mt-0.5">
-                      {new Date(job.createdAt).toLocaleString()}
+                        {isRunning && job.phase ? phaseLabel(job.phase) : job.status}
+                      </span>
+                      {isRunning && job.percent != null && (
+                        <span className="text-[10px] text-zinc-500 tabular-nums">{job.percent}%</span>
+                      )}
+                    </div>
+                    <p className="text-zinc-500 text-xs mt-0.5">
+                      {jobCam} · {reqStart ?? "—"} → {reqEnd ?? "—"}
+                      {job.source && <span className="text-zinc-600 ml-1">({job.source})</span>}
                     </p>
+                    {createdAt && (
+                      <p className="text-zinc-600 text-[10px] mt-0.5">
+                        {new Date(createdAt).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                  {isDone && playbackUrl && (
+                    <a
+                      href={`${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(playbackUrl)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-shrink-0 flex items-center gap-1 text-xs text-green-400 hover:text-green-300 transition-colors py-1"
+                    >
+                      <Play className="w-3 h-3" /> Watch
+                    </a>
+                  )}
+                  {isRunning && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLiveJobRefs((prev) => {
+                          if (prev.some((r) => r.jobId === job.jobId)) return prev;
+                          return [{ cam: jobCam, jobId: job.jobId, initialJob: job }, ...prev];
+                        });
+                      }}
+                      className="flex-shrink-0 flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors py-1"
+                    >
+                      <Loader2 className="w-3 h-3 animate-spin" /> Track
+                    </button>
                   )}
                 </div>
-                {job.status === "done" && job.playback && (
-                  <button
-                    type="button"
-                    onClick={() => { setActiveJob(job); setShowJobPlayer(job.jobId); }}
-                    className="flex-shrink-0 flex items-center gap-1 text-xs text-green-400 hover:text-green-300 transition-colors py-1"
-                  >
-                    <Play className="w-3 h-3" /> Play
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
