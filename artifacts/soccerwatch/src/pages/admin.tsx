@@ -3276,7 +3276,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     setAvailError(null);
     setStartHour(null);
     setEndHour(null);
-    setSdConfirmed(false);
+    setConfirmed(false);
     setAvailLoading(true);
     contaboFetch(`/admin/contabo/sd/${camera}/available?date=${date}`)
       .then((data) => setAvailability(data as SdAvailability))
@@ -3477,7 +3477,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
               value={camera}
               onChange={(e) => {
                 setCamera(e.target.value as Camera);
-                setStartHour(null); setEndHour(null); setSdConfirmed(false);
+                setStartHour(null); setEndHour(null); setConfirmed(false);
               }}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary appearance-none"
             >
