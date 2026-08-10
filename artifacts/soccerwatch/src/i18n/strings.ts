@@ -117,6 +117,7 @@ const strings = {
       noCreatedDesc: "Open a match video and tap the scissors icon to cut your first clip.",
       goToFields: "Browse Fields",
       createdCount: (n: number) => `${n} created`,
+      qualityTip: "💡 Tip: Download for the best quality",
     },
     clipping: {
       record: "Record Clip",
@@ -324,6 +325,7 @@ const strings = {
       noCreatedDesc: "افتح فيديو مباراة واضغط أيقونة المقص لإنشاء أول مقطع.",
       goToFields: "تصفّح الملاعب",
       createdCount: (n: number) => `${n} منشأة`,
+      qualityTip: "💡 نصيحة: نزّل المقطع بأفضل جودة",
     },
     clipping: {
       record: "تسجيل مقطع",

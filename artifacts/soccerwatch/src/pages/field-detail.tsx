@@ -1256,7 +1256,7 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
         },
       });
       queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
-      toast({ title: t.clipping.saved, description: t.clipping.savedDesc, className: "bg-primary text-white border-none" });
+      toast({ title: t.clipping.saved, description: t.clipping.savedDesc, className: "bg-primary text-white border-none", duration: 2500 });
       setClipMode("idle");
       setClipTitle("");
       applyFrameChange(1, "16:9");
@@ -1379,7 +1379,10 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
             </div>
 
             {/* Bottom bar */}
-            <div className="px-4 pb-safe pb-6 pointer-events-auto space-y-3">
+            <div
+              className="px-4 pointer-events-auto space-y-3"
+              style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
+            >
               {/* Seek bar */}
               {duration > 0 && (
                 <div className="flex items-center gap-2">
@@ -1458,7 +1461,10 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
             </div>
 
             <div className="flex-1" />
-            <div className="px-4 pb-safe pb-6 pointer-events-auto flex flex-col items-center gap-3">
+            <div
+              className="px-4 pointer-events-auto flex flex-col items-center gap-3"
+              style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
+            >
               {/* Resizing mid-recording is captured like any other frame change */}
               <FrameSizeSlider
                 zoom={frameZoom}
@@ -1486,7 +1492,8 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
-            className="absolute bottom-0 left-0 right-0 z-20 bg-black/80 backdrop-blur-md px-4 pb-safe pb-6 pt-4 space-y-3"
+            className="absolute bottom-0 left-0 right-0 z-20 bg-black/80 backdrop-blur-md px-4 pt-4 space-y-3"
+            style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
           >
             <p className="text-white text-sm font-semibold text-center">
               {t.clipping.reviewTitle} · {formatDuration(clipSeconds)}

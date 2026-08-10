@@ -858,7 +858,10 @@ function VideoPlayer({
 
       {/* Quality picker — always visible once manifest is parsed, not auto-hidden */}
       {qualityLevels.length > 1 && (
-        <div className="absolute top-safe top-3 end-3 z-30 pointer-events-auto">
+        <div
+          className="absolute end-3 z-30 pointer-events-auto"
+          style={{ top: "calc(env(safe-area-inset-top) + 4rem)" }}
+        >
           <div className="relative">
             <button
               onClick={() => setShowQualityPicker((p) => !p)}
@@ -904,10 +907,6 @@ function VideoPlayer({
                 <X className="w-5 h-5 text-white" />
               </button>
               <div className="flex items-center gap-2">
-                <button onClick={() => applyFrameChange(frameZoomRef.current, selectedRatio === "16:9" ? "9:16" : "16:9")} className="px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-bold">
-                  {selectedRatio}
-                </button>
-
                 <button onClick={toggleFullscreen} className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
                   {isFullscreen ? <Minimize className="w-4 h-4 text-white" /> : <Maximize className="w-4 h-4 text-white" />}
                 </button>
@@ -926,7 +925,10 @@ function VideoPlayer({
               </button>
             </div>
 
-            <div className="px-4 pb-safe pb-6 pointer-events-auto space-y-3">
+            <div
+              className="px-4 pointer-events-auto space-y-3"
+              style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
+            >
               {!isLive && duration > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-white text-xs tabular-nums w-10 text-end">{formatDurationPlayer(currentTime)}</span>
@@ -946,7 +948,13 @@ function VideoPlayer({
                 <FrameSizeSlider zoom={frameZoom} frame={frame} maxZoom={maxZoomFor(selectedRatio)} onChange={(z) => applyFrameChange(z, selectedRatioRef.current)} />
               </div>
 
-              <div className="flex justify-center">
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  onClick={() => applyFrameChange(frameZoomRef.current, selectedRatio === "16:9" ? "9:16" : "16:9")}
+                  className="h-10 px-4 rounded-full bg-black/60 backdrop-blur-sm border border-white/20 text-white text-sm font-semibold"
+                >
+                  {selectedRatio}
+                </button>
                 <button onClick={startRecording} className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-black font-bold text-sm">
                   <Circle className="w-4 h-4 fill-black" />
                   {t.clipping.record}

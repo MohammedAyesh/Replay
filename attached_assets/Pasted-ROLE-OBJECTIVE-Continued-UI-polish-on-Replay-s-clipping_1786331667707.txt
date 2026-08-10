@@ -1,0 +1,83 @@
+ROLE & OBJECTIVE
+
+Continued UI polish on Replay's clipping experience. Two screenshots are 
+attached, showing two DIFFERENT screens — confirm this before editing 
+anything:
+- Screenshot 1: the clip creation/pan-crop editor (scrubbing a long 
+  recording, frame-size slider, record button) — a different component 
+  from what task #108 touched.
+- Screenshot 2: the My Clips viewer (UserClipPlayer in my-clips.tsx) — 
+  the component task #108 already modified.
+
+Before making any changes, identify and state the exact file/component 
+for each screenshot. Do not assume both screenshots are the same 
+component — verify by finding the actual rendered source for each.
+
+This is UI/styling-only work. No functionality, playback, recording, 
+export-pipeline, or data-handling logic may change for any item below.
+
+ITEM 1 — Fullscreen button hidden behind the "Auto" badge (Screenshot 1)
+
+In the clip creation/editor screen, a fullscreen toggle button is 
+positioned so it sits behind/overlapped by the "Auto" aspect-ratio 
+badge in the top-left corner — effectively invisible and likely 
+untappable in that state.
+
+Identify the exact overlapping elements (z-index conflict, same 
+absolute position, or a wrapping container issue) and reposition so 
+both the fullscreen button and the Auto/aspect-ratio badges are fully 
+visible and independently tappable, with reasonable spacing between 
+them. Do not remove either control.
+
+ITEM 2 — Bottom control section still sits too low
+
+Check BOTH screens for this — state which one(s) actually need a 
+change:
+
+a) In the clip creation/editor screen (Screenshot 1): the bottom 
+   section (scrub bar, frame size slider, record button) sits close to 
+   the device edge. If this component was never previously adjusted, 
+   apply the same kind of fix as task #108 Item 2 — increase bottom 
+   padding/clearance so there's comfortable breathing room and reliable 
+   tap targets, respecting safe-area insets on notched devices.
+
+b) In the My Clips viewer (Screenshot 2, my-clips.tsx): task #108 
+   already increased bottom padding here (paddingBottom: "max(1.25rem, 
+   env(safe-area-inset-bottom))"). Re-inspect the current rendered 
+   state — if it's still visually low despite that change, identify why 
+   (e.g. is the padding being overridden elsewhere, or was the fix 
+   insufficient) and correct it. If it looks correctly raised already, 
+   say so explicitly rather than making an unnecessary change.
+
+ITEM 3 — Remove the clip title/name from the video UI (Screenshot 2)
+
+In the My Clips viewer, the metadata block currently displays the 
+clip's title/name as a line of text overlaid on the video. Remove only 
+that title line. Do NOT remove the date/timestamp or aspect-ratio 
+info shown alongside it — only the clip's name/title text itself.
+
+ITEM 4 — Arabic version of the quality tip (Screenshot 2)
+
+The tip currently reads "💡 Tip: Download for the best quality" in all 
+cases. This app already has an established bilingual translation 
+system (translation keys are already used elsewhere, e.g. in the export 
+flow). Find and reuse that existing system rather than hardcoding a new 
+locale check:
+1. Add a proper Arabic translation for this string as a new key in the 
+   existing translation structure (state the key name and both 
+   language values before implementing).
+2. Render the tip using that translation key so it automatically shows 
+   Arabic when the user's locale is set to Arabic, and English 
+   otherwise — following the same pattern already used for other 
+   bilingual strings in this app.
+3. After implementing, confirm the tip pill still looks correct in RTL 
+   (Arabic) layout — text direction, emoji placement, and spacing 
+   should still read cleanly, not mirrored oddly.
+
+VERIFICATION
+
+For each item, report the actual diff and the file it applies to. 
+Confirm you previewed the results at both desktop and ~390px mobile 
+width, and specifically confirm you checked the Arabic tip in an 
+Arabic-locale preview, not just assumed the translation key resolves 
+correctly.

@@ -675,9 +675,9 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         <div
           className={landscape
             ? "w-[220px] h-full flex flex-col justify-end gap-3 px-4 py-4 bg-black/90 backdrop-blur-md z-20 pointer-events-auto shrink-0"
-            : "w-full px-4 pb-safe pt-3 flex flex-col gap-2 pointer-events-auto shrink-0"
+            : "w-full px-4 pt-3 flex flex-col gap-2 pointer-events-auto shrink-0"
           }
-          style={landscape ? undefined : { background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem" }}
+          style={landscape ? undefined : { background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem", paddingBottom: "max(1.25rem, env(safe-area-inset-bottom))" }}
         >
           {/* Timeline — scoped to the clip's own duration, not the source recording's */}
           <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
@@ -719,12 +719,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 
           <div className={`flex items-end gap-3 ${landscape ? "flex-col w-full" : ""}`}>
           <div className={`${landscape ? "mb-auto" : "flex-1 min-w-0 pb-1"}`}>
-            <p className="text-white font-bold text-sm truncate drop-shadow">{clip.title}</p>
             <p className="text-white/70 text-xs drop-shadow">
               {clip.aspectRatio ?? "16:9"} · {new Date(clip.createdAt).toLocaleDateString()}
-            </p>
-            <p className="mt-1 text-[10px] text-white/50 drop-shadow">
-              💡 Tip: Download for the best quality
             </p>
           </div>
 
@@ -775,6 +771,11 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
               {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
             </button>
           </div>
+          </div>
+
+          {/* Quality tip chip — sits below the button row in both orientations */}
+          <div className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] text-white/50 drop-shadow ${landscape ? "w-full" : ""}`}>
+            {t.myClips.qualityTip}
           </div>
         </div>
       </div>

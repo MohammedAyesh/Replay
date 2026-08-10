@@ -1,0 +1,56 @@
+Quick scope-check before I write this: the aspect-ratio pill (16:9/9:16) sits in the same top-left cluster that just got restructured last round to fix the RTL overlap — the "Auto" quality picker was moved into its own row specifically to stop colliding with the fullscreen button. So the screenshot we've been working from is now stale; the live layout has already shifted since that image was taken. I've built the prompt to have it check the *current* real state first rather than trust the old picture, and to explicitly confirm this move doesn't reopen the collision it just closed.
+
+One more thing worth flagging, not blocking: moving this next to Record Clip puts two controls in the same row at the bottom — Record Clip is your primary action and is likely sized generously for confident thumb taps. I've asked it to protect that button's size and reachability as a hard constraint, rather than let the new neighbor visually or spatially compress it.
+
+```
+ROLE & OBJECTIVE
+
+One more UI placement change on the clip creation/editor screen 
+(AcademyVideoPlayer in academies.tsx — same component fixed in the 
+previous round). Styling/positioning only — no functionality changes.
+
+IMPORTANT CONTEXT: The top-left control cluster in this component was 
+just restructured last round to fix an RTL overlap — the quality/"Auto" 
+picker was moved into its own dedicated row below the top controls, 
+separate from the fullscreen/ratio group. Any reference screenshot 
+showing "Auto" and "9:16" together at the top-left is from BEFORE that 
+fix and does not reflect the current layout. Before making any changes, 
+inspect the actual current rendered state of this screen — do not 
+assume the old screenshot still matches reality.
+
+THE CHANGE
+
+Move the aspect-ratio / "screen size" toggle button (currently showing 
+values like "Auto" or "9:16", used to switch the crop output between 
+16:9 and 9:16) out of its current position and place it next to the 
+"Record Clip" button at the bottom of the screen.
+
+Requirements:
+1. First, locate and confirm the exact current position and current 
+   JSX/classes of both the aspect-ratio button and the Record Clip 
+   button. Report what you find before editing.
+2. Style the aspect-ratio button to visually match the Record Clip 
+   button's treatment — similar shape/pill style, sizing language, and 
+   general visual weight — so the two feel like an intentional pair, 
+   not two unrelated controls placed side by side. Use your judgment on 
+   exact colors (the aspect-ratio button doesn't need to be the same 
+   bright accent color as the primary Record action, since Record 
+   Clip should remain visually primary) but the shape/style family 
+   should match.
+3. Record Clip is the primary action on this screen — do not let this 
+   change shrink its tap target, crowd it, or make it harder to reach 
+   with a thumb. If needed, give the aspect-ratio button a secondary/
+   smaller visual weight while still sitting cleanly beside it.
+4. Confirm this placement does not reintroduce any overlap with the 
+   quality/"Auto" picker's current position (the one relocated last 
+   round) — check this specifically since both controls are being 
+   repositioned in the same general area of the screen.
+
+VERIFICATION
+
+After implementing, report the actual diff. Confirm you checked the 
+result at both desktop and ~390px mobile width, and in BOTH English/LTR 
+and Arabic/RTL layouts — this screen has bilingual support and the 
+previous round's bug was specifically an RTL-only issue, so RTL must be 
+checked explicitly, not assumed fine because LTR looks right.
+```

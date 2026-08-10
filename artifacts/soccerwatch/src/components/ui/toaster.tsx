@@ -1,3 +1,4 @@
+import { X } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import {
   Toast,
@@ -14,6 +15,7 @@ export function Toaster() {
   return (
     <ToastProvider>
       {toasts.map(function ({ id, title, description, action, ...props }) {
+        const isGreen = props.className?.includes("bg-primary")
         return (
           <Toast key={id} {...props}>
             <div className="grid gap-1">
@@ -23,7 +25,15 @@ export function Toaster() {
               )}
             </div>
             {action}
-            <ToastClose />
+            {isGreen ? (
+              <ToastClose className="opacity-100 text-white hover:text-white">
+                <span className="flex items-center justify-center bg-black/30 rounded-full p-0.5">
+                  <X className="h-4 w-4" />
+                </span>
+              </ToastClose>
+            ) : (
+              <ToastClose />
+            )}
           </Toast>
         )
       })}
