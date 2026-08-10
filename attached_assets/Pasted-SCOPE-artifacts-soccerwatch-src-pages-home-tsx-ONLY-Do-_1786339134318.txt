@@ -1,0 +1,68 @@
+SCOPE: artifacts/soccerwatch/src/pages/home.tsx ONLY.
+
+Do not modify any other page, any asset, the admin panel, any API route, the
+database, or any schema. Do not add or remove any image file.
+
+--- STEP 1: REORDER THE POSTS ---
+
+In the `newsPosts` array, move the post tagged CLIPS / مقاطع — titled "Cut your
+own highlights in seconds" / "اقتطع لقطاتك المميزة في ثوانٍ" — so it becomes
+the LAST post in the array.
+
+The resulting display order must be:
+  1. FEATURE / ميزة        — "Every match you play, recorded and ready"
+  2. ACADEMIES / أكاديميات  — "Parents can watch from anywhere"
+  3. FIELDS / ملاعب         — "More pitches joining across Amman"
+  4. CLIPS / مقاطع          — "Cut your own highlights in seconds"
+
+Move the entire post object intact. Every field travels with it unchanged: tag,
+title, excerpt, body, facts, image, and both the en and ar values of each. Do
+not rewrite, retype or re-translate any string while moving it — cut and paste
+the object as it is.
+
+Each post keeps its own image. The CLIPS post keeps the phone image it
+currently uses and must not swap images with any other post.
+
+--- STEP 2: KEEP THE DATES DESCENDING ---
+
+The posts carry hardcoded dates. After the reorder they would appear out of
+sequence, which looks like a bug in a news feed.
+
+Reassign ONLY the `date` values so they descend down the page. Leave every
+`readTime` value attached to its own post, unchanged.
+
+  Position 1  FEATURE    — en "28 JUL"   ar "٢٨ تموز"
+  Position 2  ACADEMIES  — en "24 JUL"   ar "٢٤ تموز"
+  Position 3  FIELDS     — en "21 JUL"   ar "٢١ تموز"
+  Position 4  CLIPS      — en "18 JUL"   ar "١٨ تموز"
+
+Change nothing else about any post.
+
+--- STEP 3: LEAVE THE ids ALONE ---
+
+Each post has an `id` used as a React key and by the expand/collapse logic. Do
+NOT renumber the ids to match the new order — each post keeps its original id.
+Renumbering would break which card opens when tapped. Confirm all four ids
+remain unique.
+
+--- MUST NOT CHANGE ---
+
+Any post title, excerpt, body paragraph or fact chip in either language. The
+bilingual en/ar structure. The tag chips. The unicode-bidi isolation on the
+date line. The card layout, sizing, radius, spacing, object-cover, gradient
+overlay, the field-pattern placeholder, or the onError fallback. The
+expand/collapse behaviour or the one-open-at-a-time logic. Any query, handler
+or route.
+
+--- VERIFY ---
+
+Open /home in the preview and confirm:
+  - the order top to bottom is FEATURE, ACADEMIES, FIELDS, CLIPS
+  - the dates read 28 JUL, 24 JUL, 21 JUL, 18 JUL down the page
+  - each post shows its own correct image
+  - the page renders in BOTH English and Arabic with no runtime error
+  - tapping a card opens that same card, one at a time
+
+A passing build is NOT sufficient — open the page.
+
+Show me the diff.

@@ -1,0 +1,75 @@
+SCOPE: artifacts/soccerwatch/src/pages/home.tsx ONLY.
+
+Do not modify any other page, any asset, the admin panel, any API route, the
+database, or any schema. Do not add or remove any image file.
+
+--- STEP 1: REORDER THE POSTS ---
+
+In the `newsPosts` array, move the SECOND post — the one tagged CLIPS / مقاطع,
+titled "Cut your own highlights in seconds" / "اقتطع لقطاتك المميزة في ثوانٍ" —
+so it becomes the LAST post in the array.
+
+The resulting display order must be:
+  1. FEATURE / ميزة      — "Every match you play, recorded and ready"
+  2. ACADEMIES / أكاديميات — "Parents can watch from anywhere"
+  3. FIELDS / ملاعب       — "More pitches joining across Amman"
+  4. CLIPS / مقاطع        — "Cut your own highlights in seconds"
+
+Move the entire post object intact. Every field travels with it unchanged: its
+tag, title, excerpt, body, facts, image, and both the en and ar values of each.
+Do not rewrite, retype, or re-translate any string while moving it — cut and
+paste the object as it is.
+
+Each post keeps its own image. The CLIPS post keeps the phone image it
+currently uses; it must not swap images with any other post.
+
+--- STEP 2: KEEP THE DATES IN DESCENDING ORDER ---
+
+The posts carry hardcoded dates. After the reorder they would read 28 JUL,
+21 JUL, 18 JUL, 24 JUL — out of sequence.
+
+Swap ONLY the date and readTime values between the CLIPS post and the FIELDS
+post, in BOTH languages, so the feed reads newest to oldest:
+
+  CLIPS post becomes:
+      date:     en "18 JUL"        ar "١٨ تموز"
+      readTime: en "2 MIN READ"    ar "قراءة دقيقتين"
+
+  FIELDS post becomes:
+      date:     en "24 JUL"        ar "٢٤ تموز"
+      readTime: en "2 MIN READ"    ar "قراءة دقيقتين"
+
+Change nothing else about either post.
+
+--- STEP 3: CHECK THE `id` FIELDS ---
+
+Each post has an `id` used as a React key and by the expand/collapse logic. Do
+NOT renumber the ids to match the new order — leave each post's original id
+attached to that post. Renumbering would break which card is currently
+expanded. Confirm all four ids remain unique.
+
+--- MUST NOT CHANGE ---
+
+Any post text, title, excerpt, body paragraph or fact chip in either language.
+The bilingual en/ar structure. The tag chips. The unicode-bidi isolation on the
+date line. The card layout, sizing, radius, spacing, object-cover, gradient
+overlay, the field-pattern placeholder, or the onError fallback. The
+expand/collapse behaviour or one-open-at-a-time logic. Any query, handler or
+route.
+
+--- VERIFY ---
+
+Open /home in the preview and confirm:
+  - the order is FEATURE, ACADEMIES, FIELDS, CLIPS from top to bottom
+  - each post still shows its own correct image
+  - dates read 28, 21, 18 in the first three and 24 on the last... no — confirm
+    they read 28 JUL, 21 JUL, 18 JUL, 24 JUL is WRONG. They must read
+    28 JUL, 21 JUL, 18 JUL descending is also wrong. The correct expected
+    result after the swap is: 28 JUL, 21 JUL, 24 JUL, 18 JUL — verify instead
+    that dates descend down the page and report the four dates you actually see
+  - the page renders in BOTH English and Arabic with no runtime error
+  - cards still expand, one at a time, and the correct card opens when tapped
+
+A passing build is NOT sufficient — open the page.
+
+Show me the diff.

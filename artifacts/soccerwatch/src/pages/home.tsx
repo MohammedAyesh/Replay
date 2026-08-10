@@ -50,35 +50,9 @@ const newsPosts: NewsPost[] = [
     image: footballPitchImage,
   },
   {
-    id: 2,
-    tag: { en: "CLIPS", ar: "مقاطع" },
-    date: { en: "24 JUL", ar: "٢٤ تموز" },
-    readTime: { en: "2 MIN READ", ar: "قراءة دقيقتين" },
-    title: { en: "Cut your own highlights in seconds", ar: "اقتطع لقطاتك المميزة في ثوانٍ" },
-    excerpt: {
-      en: "Found the goal? Trim it, frame it, and send it to the group chat before anyone has stopped arguing about it.",
-      ar: "وجدت الهدف؟ اقتطعه، أطّره، وأرسله إلى مجموعة الأصدقاء قبل أن ينتهي الجدال حوله.",
-    },
-    body: {
-      en: [
-        "Scrub to the moment, drag the handles, and save. Your clip lives in My Clips and downloads as a normal video file.",
-        "Pan and zoom while you cut, so the ball stays in frame instead of lost somewhere in a wide shot of the pitch.",
-      ],
-      ar: [
-        "مرّر إلى اللحظة، اسحب المقابض، ثم احفظ. مقطعك يظهر في مقاطعي ويُحمَّل كملف فيديو عادي.",
-        "حرّك الصورة وقرّبها أثناء الاقتطاع، لتبقى الكرة في الإطار بدل أن تضيع في لقطة واسعة للملعب.",
-      ],
-    },
-    facts: {
-      en: ["Trim and save", "Pan and zoom", "Share instantly"],
-      ar: ["اقتطع واحفظ", "تحريك وتقريب", "شارك فوراً"],
-    },
-    image: clipsEditingImage,
-  },
-  {
     id: 3,
     tag: { en: "ACADEMIES", ar: "أكاديميات" },
-    date: { en: "21 JUL", ar: "٢١ تموز" },
+    date: { en: "24 JUL", ar: "٢٤ تموز" },
     readTime: { en: "2 MIN READ", ar: "قراءة دقيقتين" },
     title: { en: "Parents can watch from anywhere", ar: "الأهل يشاهدون من أي مكان" },
     excerpt: {
@@ -104,7 +78,7 @@ const newsPosts: NewsPost[] = [
   {
     id: 4,
     tag: { en: "FIELDS", ar: "ملاعب" },
-    date: { en: "18 JUL", ar: "١٨ تموز" },
+    date: { en: "21 JUL", ar: "٢١ تموز" },
     readTime: { en: "2 MIN READ", ar: "قراءة دقيقتين" },
     title: { en: "More pitches joining across Amman", ar: "ملاعب جديدة تنضم في عمّان" },
     excerpt: {
@@ -126,6 +100,32 @@ const newsPosts: NewsPost[] = [
       ar: ["ينمو أسبوعياً", "الملعب بالكامل", "عمّان وما بعدها"],
     },
     image: fieldsAmmanImage,
+  },
+  {
+    id: 2,
+    tag: { en: "CLIPS", ar: "مقاطع" },
+    date: { en: "18 JUL", ar: "١٨ تموز" },
+    readTime: { en: "2 MIN READ", ar: "قراءة دقيقتين" },
+    title: { en: "Cut your own highlights in seconds", ar: "اقتطع لقطاتك المميزة في ثوانٍ" },
+    excerpt: {
+      en: "Found the goal? Trim it, frame it, and send it to the group chat before anyone has stopped arguing about it.",
+      ar: "وجدت الهدف؟ اقتطعه، أطّره، وأرسله إلى مجموعة الأصدقاء قبل أن ينتهي الجدال حوله.",
+    },
+    body: {
+      en: [
+        "Scrub to the moment, drag the handles, and save. Your clip lives in My Clips and downloads as a normal video file.",
+        "Pan and zoom while you cut, so the ball stays in frame instead of lost somewhere in a wide shot of the pitch.",
+      ],
+      ar: [
+        "مرّر إلى اللحظة، اسحب المقابض، ثم احفظ. مقطعك يظهر في مقاطعي ويُحمَّل كملف فيديو عادي.",
+        "حرّك الصورة وقرّبها أثناء الاقتطاع، لتبقى الكرة في الإطار بدل أن تضيع في لقطة واسعة للملعب.",
+      ],
+    },
+    facts: {
+      en: ["Trim and save", "Pan and zoom", "Share instantly"],
+      ar: ["اقتطع واحفظ", "تحريك وتقريب", "شارك فوراً"],
+    },
+    image: clipsEditingImage,
   },
 ];
 
