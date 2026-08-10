@@ -298,6 +298,8 @@ interface PlaybackJob {
   bytesDownloaded?: number;
   rate?: number;      // MB/s
   eta?: number | null; // seconds; null during encode
+  workers?: number; // active parallel streams
+  workerCeiling?: number; // maximum streams this job will use
   message?: string;
   startedAt?: string;
   updatedAt?: string;
@@ -3128,6 +3130,9 @@ function LiveJobCard({
             {job.rate != null && job.rate > 0 && (
               <span>{job.rate.toFixed(1)} MB/s</span>
             )}
+            {job.workers != null && job.workerCeiling != null && (
+              <span>{job.workers} of {job.workerCeiling} streams</span>
+            )}
             {job.phase === "download" && job.eta != null && (
               <span className="text-zinc-400">{formatEtaSecs(job.eta)}</span>
             )}
@@ -3225,7 +3230,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
   const [endHour,   setEndHour]   = useState<number | null>(null);
 
   // Pull method — user picks; "playback" is the default
-  const [pullMethod, setPullMethod] = useState<"playback" | "sd" | "ftp">("playback");
+  const [pullMethod, setPullMethod] = useState<"playback" | "sd">("playback");
   // Slow-path confirm (reset whenever method or hour selection changes)
   const [confirmed, setConfirmed] = useState(false);
 
@@ -3359,17 +3364,16 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
   const windowHours = startHour !== null && endHour !== null ? endHour - startHour + 1 : 0;
 
   // Method-aware live duration estimate
-  const methodEstimate = (method: "playback" | "sd" | "ftp"): string | null => {
+  const methodEstimate = (method: "playback" | "sd"): string | null => {
     if (!windowHours) return null;
-    if (method === "ftp") return "Instant";
     const fmtHrs = (h: number) => {
       if (h < 1) return `~${Math.round(h * 60)} min`;
       const hh = Math.floor(h);
       const mm = Math.round((h - hh) * 60);
       return mm > 0 ? `~${hh} hr ${mm} min` : `~${hh} hr`;
     };
-    if (method === "playback") return fmtHrs(windowHours * 0.4);
-    /* sd */ return fmtHrs(windowHours * 12);
+    if (method === "playback") return fmtHrs(windowHours / 4);
+    /* sd */ return fmtHrs(windowHours * 1.5);
   };
 
   const formatBytes = (b: number) => {
@@ -3379,7 +3383,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
   };
 
   // Direct-download is painfully slow past ~15 min of footage (~3 hrs pull)
-  const showSdWarning = pullMethod === "sd" && windowHours > 0;
+  const showSdWarning = pullMethod === "sd" && windowHours * 60 > 15;
 
   // ─── interaction handlers ──────────────────────────────────────────────────
 
@@ -3599,21 +3603,14 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                   label: "Playback",
                   badge: "recommended",
                   badgeColor: "text-primary border-primary/50",
-                  body: "Fastest — streams 3 parallel tracks at ~1 MB/s each. Bit-identical picture quality to direct download, verified frame-by-frame.",
+                  body: "Fastest — starts with 3 parallel streams and can scale to 5 at up to ~4.6 MB/s. Bit-identical picture quality to direct download, verified frame-by-frame.",
                 },
                 {
                   value: "sd" as const,
                   label: "Direct download",
                   badge: undefined,
                   badgeColor: "",
-                  body: "~9× slower, fetches one segment at a time. Same quality. Use as a fallback if Playback misbehaves on a particular window.",
-                },
-                {
-                  value: "ftp" as const,
-                  label: "Already on server",
-                  badge: undefined,
-                  badgeColor: "",
-                  body: "Instant — clips are already on the server. Only covers very recent footage; older windows will find nothing.",
+                  body: "Fallback — uses up to 4 parallel streams at up to ~0.65 MB/s. Same quality. Use only if Playback misbehaves on a particular window.",
                 },
               ] as const).map(({ value, label, badge, badgeColor, body }) => {
                 const est = methodEstimate(value);
@@ -3652,12 +3649,11 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                       {est && (
                         <span className={cn(
                           "text-[11px] font-semibold tabular-nums flex-shrink-0",
-                          value === "ftp" ? "text-green-400"
-                            : value === "sd" ? "text-amber-400"
+                          value === "sd" ? "text-amber-400"
                             : "text-blue-400",
                         )}>
                           {est}
-                          {value !== "ftp" && windowHours > 0 && <span className="font-normal text-zinc-500"> est.</span>}
+                          {windowHours > 0 && <span className="font-normal text-zinc-500"> est.</span>}
                         </span>
                       )}
                     </div>
@@ -3702,15 +3698,13 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                 onClick={() => void handleSubmit()}
                 className={cn(
                   "w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl text-sm disabled:opacity-50 hover:opacity-90 transition-opacity",
-                  pullMethod === "ftp"  ? "bg-primary text-black"
-                  : pullMethod === "sd" ? "bg-amber-600 text-white"
+                  pullMethod === "sd" ? "bg-amber-600 text-white"
                   : "bg-blue-600 text-white",
                 )}
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 {submitting ? "Requesting…"
-                  : pullMethod === "ftp"  ? "⚡ Request Instant Footage"
-                  : pullMethod === "sd"   ? "Pull footage (direct download)"
+                  : pullMethod === "sd" ? "Pull footage (direct download)"
                   : "Pull footage (playback engine)"}
               </button>
             )}
