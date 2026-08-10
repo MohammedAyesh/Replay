@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import footballPitchImage from "@/assets/football-pitch.png";
 import clipsEditingImage from "@/assets/clips-editing.png";
+import academiesWatchingImage from "@/assets/academies-watching.png";
 
 type LocalizedText = { en: string; ar: string };
 type LocalizedList = { en: string[]; ar: string[] };
@@ -97,7 +98,7 @@ const newsPosts: NewsPost[] = [
       en: ["Live streams", "Kept afterwards", "Any device"],
       ar: ["بث مباشر", "محفوظ لاحقاً", "أي جهاز"],
     },
-    image: null,
+    image: academiesWatchingImage,
   },
   {
     id: 4,
