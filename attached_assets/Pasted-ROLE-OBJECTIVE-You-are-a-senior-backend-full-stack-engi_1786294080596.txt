@@ -1,0 +1,46 @@
+ROLE & OBJECTIVE
+
+You are a senior backend/full-stack engineer working on Replay, a soccer video platform. Your task is to optimize the video export pipeline on the "My Clips" page — the flow that runs from the user clicking "Export" to the file being ready for download. The export currently works, but it is too slow (20+ seconds for short clips) and produces downloads with poor quality and mid-playback freezing/stuttering.
+
+The export logic lives primarily in the api-server's clip rendering code (ffmpegExport.ts) and the user-clips export route (routes/userClips.ts), with the trigger and polling UI in the My Clips page (my-clips.tsx). Read the actual current code in these files before making any changes — do not assume implementation details.
+
+Apply the following five fixes, in this exact order, testing after each one before moving to the next.
+
+FIX 1 — Correct source quality (do this first, it's the root cause of the "poor quality" complaint)
+
+The export currently builds its FFmpeg input from the Bunny Stream master HLS playlist (playlist.m3u8) without explicitly specifying which quality tier to use, so FFmpeg's HLS demuxer is left to pick a variant on its own — it may be silently selecting the low-resolution tier as the source, which would explain the quality complaints regardless of how the encoder is configured downstream.
+
+There is already a helper function in this codebase for building a direct URL to a named quality tier (used for a specific resolution, e.g. the 2160p rendition) — it exists but is currently unused by the export path. Update the export/render logic to use that helper to explicitly request the highest available quality tier as the FFmpeg input, instead of the ambiguous master playlist. Confirm the correct tier name/height to request by checking what's actually available for a real video in this library.
+
+FIX 2 — Fast encoding settings
+
+The main render currently uses "-preset slow -crf 16" — this is a near-lossless, maximum-quality-and-maximum-time configuration appropriate for archival masters, not for a short user-facing download. Replace it with a fast, lightweight preset (e.g. "veryfast" or "fast") and a standard web-delivery CRF (roughly 20-23) tuned for quick turnaround on short social-style clips. Apply this to the main clip render. Leave the separate intro-normalization FFmpeg pass's settings alone unless it's clearly part of the same bottleneck — the priority here is the main clip render.
+
+FIX 3 — Stabilize output frame rate
+
+The main render currently does not force a constant output frame rate (no -vsync/-fps_mode equivalent), and only sets an explicit frame rate at all when a branding intro is present. This lets any timing irregularity in the source carry straight through into the downloaded file, which is a well-documented cause of exactly the freeze-then-resume playback pattern being reported. Update the main render so it always forces a steady, constant output frame rate, matching the source's actual frame rate, regardless of whether an intro is attached.
+
+FIX 4 — Buffer the source locally before encoding
+
+The export currently passes FFmpeg a live network URL as its input, so FFmpeg is reading the video over the network in real time while it encodes — any network hiccup during that read shows up directly as a stall/freeze in the output, since nothing decouples the encode from live network timing. Change this so the relevant portion of the source video (just the needed time window, not the full video) is downloaded to a local temporary file on the server first, and the crop/encode FFmpeg pass then runs against that local file instead of the remote URL. Make sure temporary files are still cleaned up afterward, following the existing cleanup pattern already used elsewhere in this pipeline.
+
+FIX 5 — Basic progress visibility
+
+Right now, once an export starts, the frontend just shows a static disabled button with a spinner — no percentage, no indication of what's actually happening. Add a simple in-memory progress value (0-100, or reasonable named stages like "fetching," "encoding," "uploading") that the backend tracks per in-flight export job and returns as part of the existing export-status response. Track this in memory only, alongside the existing in-flight job tracking — do not add a new database column or persist it. Update the frontend to show this value to the user while polling instead of a static spinner.
+
+SAFETY INSTRUCTIONS — READ BEFORE MAKING ANY CHANGES
+
+Before writing or changing a single line of code:
+1. Outline your full plan for all five fixes.
+2. List the exact files you intend to modify.
+3. Wait for confirmation before applying any changes.
+
+Once approved, implement and verify the fixes one at a time, in the order above — do not batch all five into one change. After each fix, report back with the actual diff of what changed (not a paraphrased summary), and confirm you opened the My Clips page in preview and tested a real export end-to-end for that fix specifically.
+
+Boundaries — do not exceed this scope without asking first:
+- No database schema changes.
+- No new API endpoints or breaking changes to the existing export/export-status/download routes — additive fields (like the progress value) are fine, removing or renaming existing fields is not.
+- No changes to the live-streaming pipeline, the hourly archive pipeline, or auto-pan — this task is scoped entirely to the My Clips export/download flow.
+- No new translation keys unless strictly required for the progress-status text, and if so, list them explicitly before adding them.
+
+If at any point a fix appears to require something outside these boundaries, stop and report back rather than proceeding.
