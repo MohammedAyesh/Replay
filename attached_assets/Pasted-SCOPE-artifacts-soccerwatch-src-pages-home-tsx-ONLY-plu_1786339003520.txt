@@ -1,0 +1,51 @@
+SCOPE: artifacts/soccerwatch/src/pages/home.tsx ONLY, plus adding one image
+file to the project's static assets.
+
+Do not modify any other page, the admin panel, any API route, the database, or
+any schema.
+
+Attached: an image for the FOURTH news post — the one titled "More pitches
+joining across Amman" / "ملاعب جديدة تنضم في عمّان", tagged FIELDS / ملاعب.
+
+--- STEP 1: ADD THE IMAGE ---
+
+Add the attached image to artifacts/soccerwatch/src/assets/ — the same folder
+already holding football-pitch.png. Name it fields-amman.png. Confirm the
+copied file's checksum matches the upload.
+
+--- STEP 2: USE IT ON POST 4 ---
+
+Import it at the top of home.tsx alongside the existing image imports, and set
+it as the `image` value for the FOURTH post only — the one tagged
+FIELDS / ملاعب.
+
+Posts 1, 2 and 3 keep their current images. After this change all four posts
+have an image and none remain null.
+
+--- STEP 3: CONFIRM THE FALLBACK STILL EXISTS ---
+
+Since no post will have image: null any more, confirm the field-pattern
+placeholder behind the image and the onError handler are BOTH still present and
+functional, so a failed image load still degrades gracefully. Do not remove
+that fallback just because no post currently needs it.
+
+--- MUST NOT CHANGE ---
+
+Any post text in either language. The bilingual en/ar structure. The tag chip,
+date line and its unicode-bidi isolation, title, excerpt, or expand link. The
+expand/collapse behaviour or one-open-at-a-time logic. The card layout,
+sizing, radius, spacing, object-cover or gradient overlay. Any query, handler
+or route.
+
+--- VERIFY ---
+
+Open /home in the preview and confirm:
+  - all four posts show their images, filling their areas with no distortion
+  - every tag chip is still readable over the top-left of its image
+  - the page renders in BOTH English and Arabic with no runtime error
+  - cards still expand, one at a time
+  - scrolling still reaches the bottom and the last card clears the nav
+
+A passing build is NOT sufficient — open the page.
+
+Tell me the asset path and checksum, and show me the diff.

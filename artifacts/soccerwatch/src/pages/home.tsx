@@ -5,6 +5,7 @@ import { useTranslation } from "@/i18n";
 import footballPitchImage from "@/assets/football-pitch.png";
 import clipsEditingImage from "@/assets/clips-editing.png";
 import academiesWatchingImage from "@/assets/academies-watching.png";
+import fieldsAmmanImage from "@/assets/fields-amman.png";
 
 type LocalizedText = { en: string; ar: string };
 type LocalizedList = { en: string[]; ar: string[] };
@@ -124,7 +125,7 @@ const newsPosts: NewsPost[] = [
       en: ["Growing weekly", "Full pitch view", "Amman and beyond"],
       ar: ["ينمو أسبوعياً", "الملعب بالكامل", "عمّان وما بعدها"],
     },
-    image: null,
+    image: fieldsAmmanImage,
   },
 ];
 
