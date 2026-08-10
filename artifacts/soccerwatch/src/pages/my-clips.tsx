@@ -67,8 +67,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     clip.exportStatus === "done" ? "ready" : "idle"
   );
   const [exportedUrl, setExportedUrl] = useState<string | null>(clip.exportedUrl ?? null);
-  /** Human-readable stage label shown inside the export button while polling. */
-  const [exportStageLabel, setExportStageLabel] = useState("Processing…");
+  /** User-friendly step label shown inside the export button while polling. */
+  const [exportStepLabel, setExportStepLabel] = useState("Step 1/3");
   /** Set to false on unmount to abort the polling loop. */
   const pollingRef = useRef(false);
   const [isLocal, setIsLocal] = useState(false);
@@ -532,6 +532,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     }
 
     setExportState("polling");
+    setExportStepLabel("Step 1/3");
     pollingRef.current = true;
 
     try {
@@ -588,14 +589,14 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         if (!statusRes.ok) throw new Error("Status check failed");
         const status = await statusRes.json() as { status: string; url?: string; progress?: string | null };
 
-        // Update the stage label so the user sees meaningful feedback
+        // Map the backend's fixed three-stage progress to a simple user-facing step.
         if (status.progress) {
-          const stageLabels: Record<string, string> = {
-            fetching: "Fetching…",
-            encoding: "Encoding…",
-            uploading: "Uploading…",
+          const stepLabels: Record<string, string> = {
+            fetching: "Step 1/3",
+            encoding: "Step 2/3",
+            uploading: "Step 3/3",
           };
-          setExportStageLabel(stageLabels[status.progress] ?? "Processing…");
+          setExportStepLabel(stepLabels[status.progress] ?? "Step 1/3");
         }
 
         if (status.status === "done" && status.url) {
@@ -722,6 +723,9 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
             <p className="text-white/70 text-xs drop-shadow">
               {clip.aspectRatio ?? "16:9"} · {new Date(clip.createdAt).toLocaleDateString()}
             </p>
+            <p className="mt-1 text-[10px] text-white/50 drop-shadow">
+              💡 Tip: Download for the best quality
+            </p>
           </div>
 
           <div className={`flex items-center gap-3 ${landscape ? "flex-col w-full" : ""}`}>
@@ -745,7 +749,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
                 : <Download className="w-4 h-4 shrink-0" />}
               <span>
                 {exportState === "polling"
-                  ? exportStageLabel
+                  ? exportStepLabel
                   : exportState === "ready"
                   ? "Download"
                   : exportState === "error"
