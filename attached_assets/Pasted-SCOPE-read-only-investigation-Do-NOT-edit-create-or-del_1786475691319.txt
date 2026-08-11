@@ -1,0 +1,62 @@
+SCOPE: read-only investigation. Do NOT edit, create, or delete any file, and
+do not write any code in this task.
+
+CONTEXT: a prior task on this same goal was rolled back due to scope creep —
+it modified components/layout.tsx and added unrequested "route adapter" code
+to App.tsx, neither of which were authorized. This investigation exists to
+answer the ONE open question that caused that: whether the auth screens
+actually share a component with the rest of the app, before any code is
+written again.
+
+Known from the prior attempt — confirm these rather than rediscover from
+scratch, but VERIFY each one against the current (post-rollback) state of the
+code, since rollback may have changed things:
+
+  - Sign In and Sign Up are rendered via Clerk's <SignIn /> and <SignUp />
+    components.
+  - The post-signup "Complete your profile" screen (full name, phone number,
+    preferred position, age, gender, Continue button) is
+    artifacts/soccerwatch/src/pages/onboarding.tsx.
+  - Clerk's theme is controlled by artifacts/soccerwatch/src/lib/clerkAppearance.ts.
+  - The landing page ("/") in artifacts/soccerwatch/src/pages/login.tsx is
+    confirmed STANDALONE — it does not render through the shared Layout
+    component and has its own header/chrome.
+
+Attached: 4 screenshots and the .dc.html design file. These are our own
+design — same project that built this app's whole visual system. The design
+correctly shows TWO logo marks: a small ~26px ball-only mark fixed at the very
+top of the page (above/outside any card), and a second, larger ~52px ball-only
+mark inside the card, above the title. Neither includes the wordmark — the
+word "Replay" appears once, inline, inside the subtitle sentence, coloured.
+This is the intended design, not something to flag as wrong.
+
+--- QUESTIONS TO ANSWER ---
+
+1. THE CRITICAL QUESTION: trace how "/sign-in", "/sign-up", and the onboarding
+   route are registered in App.tsx. Are they rendered INSIDE the shared
+   <Layout> component (the same wrapper used by Home, View, My Clips,
+   Profile — fixed height, floating bottom nav, safe-area padding), or are
+   they standalone, the same way "/" (login.tsx) is? Report the exact JSX
+   from App.tsx showing how each route is wired.
+
+2. Confirm components/layout.tsx and App.tsx are currently in their
+   pre-task state — no leftover route adapters, no auth-page exceptions. If
+   anything looks like a leftover from the rolled-back attempt, report it.
+
+3. Confirm whether artifacts/soccerwatch/public/replay-mark.svg (a static
+   logo asset created in the rolled-back attempt) still exists on disk. If it
+   does, report its exact contents/dimensions — we may reuse it rather than
+   recreate it.
+
+4. Report exactly what clerkAppearance.ts currently contains — its full
+   current content, so any values can be added precisely rather than guessed.
+
+5. Confirm whether Clerk's appearance config in this project's Clerk SDK
+   version supports a logoImageUrl (or equivalent) property for placing an
+   image inside the card, and what property name/shape it expects.
+
+6. Take a screenshot of the CURRENT (post-rollback) Sign In screen, in
+   English, so we have a clean "before" baseline.
+
+Do not propose a fix or write any code. Report your findings on all six
+points for my review.
