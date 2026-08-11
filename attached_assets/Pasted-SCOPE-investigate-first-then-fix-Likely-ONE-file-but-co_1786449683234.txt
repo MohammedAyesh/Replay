@@ -1,0 +1,58 @@
+SCOPE: investigate first, then fix. Likely ONE file, but confirm before editing.
+
+PROBLEM: the landing page hero renders correctly, but nothing below it is
+visible, and the page does not scroll — including with mouse wheel, touch
+swipe, or the on-page arrow cue. Screenshot attached showing the hero filling
+the entire viewport with everything cut off below it.
+
+--- STEP 1: FIND THE ACTUAL SCROLL BLOCKER. Report before fixing. ---
+
+Trace how the "/" route actually renders login.tsx. Check:
+  a) Does App.tsx render this route through Layout (the shared app shell), or
+     does it render login.tsx standalone with no wrapper?
+  b) If there IS a wrapper, does that wrapper — or ANY ancestor of login.tsx's
+     root element — have a fixed height (h-full, h-screen, h-[100dvh]) combined
+     with overflow-hidden? That combination is what caps scrolling regardless
+     of what login.tsx itself does.
+  c) Inside login.tsx itself, is there any element with h-full, h-screen, or
+     overflow-hidden on it, even if the outermost div does not have one?
+  d) Confirm whether the browser's own scrollbar is present at all right now —
+     if the html/body or a wrapper is overflow-hidden, no scrollbar will show
+     even though the content is taller than the viewport.
+
+Report exactly which element, in which file, is capping the height. Do not
+guess — trace it and confirm.
+
+--- STEP 2: FIX ONLY THAT ELEMENT ---
+
+Remove the height cap / overflow-hidden combination that is actually causing
+this, wherever it lives. If the culprit is inside login.tsx, fix it there. If
+the culprit is a wrapper OUTSIDE login.tsx, tell me which file and which line
+BEFORE changing it — do not silently edit layout.tsx or App.tsx without
+telling me first, since those affect every other page.
+
+The page must scroll normally by mouse wheel and touch swipe on its own, with
+NO dependency on the arrow/chevron button. The chevron is decorative only —
+remove any logic that makes scrolling depend on it, if any exists. If the
+chevron currently has a click handler that scrolls, that's fine to keep as a
+convenience, but scrolling must already work without ever touching it.
+
+--- MUST NOT CHANGE ---
+
+Every other page's scroll behaviour must remain exactly as it is today —
+Home, View, My Clips, Profile, Field Detail. If the fix touches a shared file,
+confirm those pages still scroll correctly afterward.
+
+Do not modify any API call, database schema, query, or route. Do not restyle
+any section, change any copy, or touch the Clerk config.
+
+--- VERIFY ---
+
+After the fix, in the running preview:
+  - scroll the landing page by mouse wheel from the top all the way to the
+    footer, with no clicks
+  - confirm all 7 sections are reachable: header, hero, how it works, about,
+    contact, FAQ, footer
+  - confirm every OTHER page in the app still scrolls exactly as before
+
+Report the root cause you found, then show me the diff.

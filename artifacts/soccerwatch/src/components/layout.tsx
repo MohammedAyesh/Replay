@@ -22,7 +22,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const useTranslucentBar = isWatchFeed;
 
   return (
-    <div className="mx-auto w-full max-w-[440px] h-[100dvh] bg-background relative overflow-hidden flex flex-col shadow-2xl rp-glow">
+    <div
+      className={cn(
+        "mx-auto w-full max-w-[440px] bg-background relative flex flex-col shadow-2xl rp-glow",
+        isLogin ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
+      )}
+    >
       {!hideTabBar && (
         <header className="sticky top-3 z-40 mx-3 mt-3 mb-2 shrink-0 rounded-[20px] border border-white/[0.08] bg-[rgba(10,11,13,0.82)] px-4 py-2.5 backdrop-blur-md">
           <div className="flex items-center justify-between gap-3">
@@ -47,7 +52,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </header>
       )}
 
-      <main className="flex-1 min-h-0 w-full flex flex-col overflow-hidden relative">
+      <main
+        className={cn(
+          "w-full flex flex-col relative",
+          isLogin ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden",
+        )}
+      >
         {children}
       </main>
 
