@@ -5,19 +5,19 @@ export const clerkAppearance = {
   options: {
     logoPlacement: "inside" as const,
     logoLinkUrl: basePath || "/",
-    logoImageUrl: `${window.location.origin}${basePath}/replay-mark.svg`,
+    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
   },
   variables: {
     // Surfaces
     colorBackground: "#0B0F1A",
-    colorInput: "rgba(255,255,255,.035)",
+    colorInput: "#0B0F1A",
     colorInputForeground: "#F3F6FA",
-    colorNeutral: "#141B2C",
+    colorNeutral: "#232C42",
 
     // Primary action — lime with dark text
     colorPrimary: "#D4FF4F",
     colorForeground: "#F3F6FA",
-    colorMutedForeground: "rgba(243,246,250,.5)",
+    colorMutedForeground: "#8A93A6",
 
     // Functional
     colorDanger: "#FF5A3C",
@@ -25,23 +25,18 @@ export const clerkAppearance = {
     // Typography — Inter for Latin, Tajawal covers Arabic glyphs
     fontFamily: "'Inter', 'Tajawal', sans-serif",
 
-    borderRadius: "13px",
+    // Radii — inputs at 12px; buttons overridden via elements below
+    borderRadius: "0.75rem",
   },
   elements: {
     // Modal shell
     rootBox: "w-full flex justify-center",
-    cardBox:
-      "!rounded-[26px] w-[440px] max-w-full overflow-hidden !border !border-white/[0.09] !bg-[#141B2C] !shadow-[0_30px_70px_rgba(0,0,0,.45)]",
-    card: "!bg-transparent !shadow-none !border-0 !rounded-none" as string,
-    footer: "!bg-[#141B2C] !shadow-none !border-0 !rounded-none" as string,
+    cardBox: "!rounded-[22px] w-[440px] max-w-full overflow-hidden shadow-2xl",
+    card: "!shadow-none !border-0 !rounded-none" as string,
+    footer: "!shadow-none !border-0 !rounded-none" as string,
 
-    // Modal surface — navy gradient (#141B2C)
-    "cardBox > div": {
-      background: "linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,.015)), #141B2C",
-      border: "1px solid rgba(255,255,255,.09)",
-      borderRadius: "26px",
-      boxShadow: "0 30px 70px rgba(0,0,0,.45)",
-    } as object,
+    // Modal surface — navy (#141B2C)
+    "cardBox > div": { backgroundColor: "#141B2C" } as object,
 
     // Header
     headerTitle: "font-bold",
@@ -49,26 +44,25 @@ export const clerkAppearance = {
 
     // Primary button — lime bg, dark text, fully rounded
     formButtonPrimary:
-      "!bg-[#D4FF4F] hover:!bg-[#c8f240] !text-[#0B0F1A] font-semibold !rounded-[14px]",
+      "!bg-[#D4FF4F] hover:!bg-[#c8f240] !text-[#0B0F1A] font-semibold !rounded-[99px]",
 
     // Social / secondary buttons
-    socialButtonsBlockButton:
-      "!bg-white/[0.05] !border-white/[0.12] hover:!bg-white/[0.08] !text-[#F3F6FA] !rounded-[13px]",
+    socialButtonsBlockButton: "!border-[#232C42] hover:!bg-[#1B2438]",
     socialButtonsBlockButtonText: "font-medium",
 
     // Form fields
     formFieldLabel: "font-medium",
     formFieldInput:
-      "!border-white/[0.1] focus:!border-[#D4FF4F] !bg-white/[0.035] !text-[#F3F6FA] !rounded-[13px]",
+      "!border-[#232C42] focus:!border-[#D4FF4F] !bg-[#0B0F1A] !rounded-[12px]",
 
     // Footer & links
     footerAction: "!bg-transparent",
     footerActionText: "",
-    footerActionLink: "!text-[#2FD8C4] font-semibold",
+    footerActionLink: "!text-[#D4FF4F] font-semibold",
 
     // Dividers
     dividerText: "",
-    dividerLine: "!bg-white/[0.1]",
+    dividerLine: "!bg-[#232C42]",
 
     // Inline indicators
     identityPreviewEditButton: "!text-[#D4FF4F]",
@@ -79,7 +73,7 @@ export const clerkAppearance = {
     alertText: "",
 
     // OTP inputs
-    otpCodeFieldInput: "!border-white/[0.1] focus:!border-[#D4FF4F] !bg-white/[0.035] !text-[#F3F6FA] !rounded-[13px]",
+    otpCodeFieldInput: "!border-[#232C42] focus:!border-[#D4FF4F]",
 
     // Logo
     logoBox: "mb-2",

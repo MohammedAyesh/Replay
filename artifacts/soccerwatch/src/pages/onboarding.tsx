@@ -5,13 +5,12 @@ import { useUpdateProfile, useGetMe, getGetMeQueryKey, type ProfileInputPosition
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import replayLogo from "@/assets/replay-logo.png";
 import { motion } from "framer-motion";
 import { useUser } from "@clerk/react";
 import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
-import { ChevronLeft, ChevronRight, Globe } from "lucide-react";
-import { LogoMark } from "@/components/layout";
 
 const POSITIONS = [
   { value: "goalkeeper", label: "Goalkeeper" },
@@ -34,7 +33,7 @@ const fadeUp = (delay = 0) => ({
 
 export default function Onboarding() {
   const [, setLocation] = useLocation();
-  const { locale, setLocale } = useTranslation();
+  const { t } = useTranslation();
   const { toast } = useToast();
   const { user: authUser, isLoading: authLoading, isGuest } = useAuth();
   const { isSignedIn } = useUser();
@@ -49,16 +48,6 @@ export default function Onboarding() {
 
   const queryClient = useQueryClient();
   const updateProfile = useUpdateProfile();
-
-  const isArabic = locale === "ar";
-
-  const handleBack = () => {
-    if (window.history.length > 1) {
-      window.history.back();
-    } else {
-      setLocation("/");
-    }
-  };
 
   // Guard: only kick truly unauthenticated users to login. If Clerk says
   // the user IS signed in, wait for the local user record to arrive instead
@@ -110,7 +99,7 @@ export default function Onboarding() {
 
   if (authLoading || !user || isGuest || user.profileComplete) {
     return (
-      <div className="flex min-h-[100dvh] items-center justify-center bg-[#0B0F1A] text-white">
+      <div className="flex-1 flex items-center justify-center bg-black text-white">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
@@ -121,42 +110,20 @@ export default function Onboarding() {
   }
 
   return (
-    <div
-      dir={isArabic ? "rtl" : "ltr"}
-      className="relative min-h-[100dvh] w-full overflow-visible bg-[#0B0F1A] text-[#F3F6FA]"
-      style={{
-        background:
-          "radial-gradient(90% 55% at 0% 0%, rgba(47,216,196,.18), transparent 62%), radial-gradient(85% 60% at 100% 0%, rgba(123,92,255,.18), transparent 64%), radial-gradient(70% 45% at 50% 100%, rgba(212,255,79,.07), transparent 70%), #0B0F1A",
-        fontFamily: isArabic ? "'Tajawal','Inter',sans-serif" : "'Inter','Tajawal',sans-serif",
-      }}
-    >
-      <button
-        type="button"
-        aria-label={isArabic ? "رجوع" : "Back"}
-        onClick={handleBack}
-        className="fixed left-4 top-4 z-50 flex h-[34px] w-[34px] items-center justify-center rounded-[11px] border border-white/[0.1] bg-white/[0.04] text-[#F3F6FA] transition-colors hover:bg-white/[0.08]"
-      >
-        {isArabic ? <ChevronRight className="h-4 w-4" aria-hidden="true" /> : <ChevronLeft className="h-4 w-4" aria-hidden="true" />}
-      </button>
-      <button
-        type="button"
-        aria-label={isArabic ? "تغيير اللغة" : "Change language"}
-        onClick={() => setLocale(isArabic ? "en" : "ar")}
-        className="fixed right-4 top-4 z-50 flex items-center gap-1.5 rounded-full border-0 bg-white/[0.07] px-3.5 py-2 text-xs font-semibold tracking-[0.03em] text-[#F3F6FA] transition-colors hover:bg-white/[0.11]"
-      >
-        <Globe className="h-3.5 w-3.5" aria-hidden="true" />
-        {locale.toUpperCase()}
-      </button>
+    <div className="flex-1 flex flex-col field-pattern relative text-white">
+      <div className="absolute inset-0 bg-black/60" />
 
-      <div className="relative z-10 mx-auto flex w-full max-w-[440px] flex-col px-5 pb-12 pt-20">
-        <motion.div {...fadeUp(0)} className="flex justify-center">
-          <LogoMark size={52} />
+      <div className="relative z-10 flex-1 flex flex-col px-6 pt-safe pt-8 pb-safe overflow-y-auto">
+        {/* Header */}
+        <motion.div {...fadeUp(0)} className="flex items-center gap-2 mb-8">
+          <img src={replayLogo} alt="Replay" className="w-10 h-10 object-contain" />
+          <span className="font-bold text-xl tracking-tight">REPLAY</span>
         </motion.div>
 
-        <motion.h1 {...fadeUp(0.1)} className="mt-7 text-3xl font-bold leading-tight">
+        <motion.h1 {...fadeUp(0.1)} className="text-3xl font-bold leading-tight mb-2">
           Complete your profile
         </motion.h1>
-        <motion.p {...fadeUp(0.15)} className="mb-8 mt-2 text-[#2FD8C4]">
+        <motion.p {...fadeUp(0.15)} className="text-white/70 mb-8">
           Help us personalize your Replay experience.
         </motion.p>
 
@@ -164,40 +131,40 @@ export default function Onboarding() {
         <motion.form
           {...fadeUp(0.2)}
           onSubmit={handleSubmit}
-          className="flex flex-col gap-5 pb-safe"
+          className="flex-1 flex flex-col gap-4 overflow-y-auto pb-safe"
         >
           <div className="space-y-1.5">
-            <Label htmlFor="onboarding-name" className="text-sm font-semibold text-white/70">Full name</Label>
+            <Label htmlFor="onboarding-name" className="text-white/80 text-sm font-medium">Full name</Label>
             <Input
               id="onboarding-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Your full name"
-              className="h-12 rounded-[13px] border-white/10 bg-white/[0.035] text-[#F3F6FA] placeholder:text-white/35 focus-visible:border-[#D4FF4F] focus-visible:ring-[#D4FF4F]"
+              className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
               autoComplete="name"
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="onboarding-phone" className="text-sm font-semibold text-white/70">Phone number</Label>
+            <Label htmlFor="onboarding-phone" className="text-white/80 text-sm font-medium">Phone number</Label>
             <Input
               id="onboarding-phone"
               type="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="+1 555 000 0000"
-              className="h-12 rounded-[13px] border-white/10 bg-white/[0.035] text-[#F3F6FA] placeholder:text-white/35 focus-visible:border-[#D4FF4F] focus-visible:ring-[#D4FF4F]"
+              className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
               autoComplete="tel"
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="onboarding-position" className="text-sm font-semibold text-white/70">Preferred position</Label>
+            <Label htmlFor="onboarding-position" className="text-white/80 text-sm font-medium">Preferred position</Label>
             <select
               id="onboarding-position"
               value={position}
               onChange={(e) => setPosition(e.target.value)}
-              className="h-12 w-full appearance-none rounded-[13px] border border-white/10 bg-white/[0.035] px-3 text-[#F3F6FA] focus:outline-none focus:ring-2 focus:ring-[#D4FF4F]"
+              className="w-full h-12 rounded-md bg-white/10 border border-white/20 text-white px-3 focus:outline-none focus:ring-2 focus:ring-primary appearance-none"
               style={{ backgroundImage: "none" }}
             >
               <option value="" disabled className="text-black">Select position</option>
@@ -208,7 +175,7 @@ export default function Onboarding() {
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="onboarding-age" className="text-sm font-semibold text-white/70">Age</Label>
+            <Label htmlFor="onboarding-age" className="text-white/80 text-sm font-medium">Age</Label>
             <Input
               id="onboarding-age"
               type="number"
@@ -217,17 +184,17 @@ export default function Onboarding() {
               value={age}
               onChange={(e) => setAge(e.target.value)}
               placeholder="25"
-              className="h-12 rounded-[13px] border-white/10 bg-white/[0.035] text-[#F3F6FA] placeholder:text-white/35 focus-visible:border-[#D4FF4F] focus-visible:ring-[#D4FF4F]"
+              className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="onboarding-gender" className="text-sm font-semibold text-white/70">Gender</Label>
+            <Label htmlFor="onboarding-gender" className="text-white/80 text-sm font-medium">Gender</Label>
             <select
               id="onboarding-gender"
               value={gender}
               onChange={(e) => setGender(e.target.value)}
-              className="h-12 w-full appearance-none rounded-[13px] border border-white/10 bg-white/[0.035] px-3 text-[#F3F6FA] focus:outline-none focus:ring-2 focus:ring-[#D4FF4F]"
+              className="w-full h-12 rounded-md bg-white/10 border border-white/20 text-white px-3 focus:outline-none focus:ring-2 focus:ring-primary appearance-none"
               style={{ backgroundImage: "none" }}
             >
               <option value="" disabled className="text-black">Select gender</option>
@@ -237,11 +204,11 @@ export default function Onboarding() {
             </select>
           </div>
 
-          <div className="pt-4">
+          <div className="mt-auto pt-4">
             <Button
               type="submit"
               disabled={!allFilled || updateProfile.isPending}
-              className="h-14 w-full rounded-[14px] bg-[#D4FF4F] py-6 text-base font-semibold text-[#0B0F1A] hover:bg-[#c8f240] disabled:opacity-50"
+              className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-6 rounded-xl text-base disabled:opacity-50"
             >
               {updateProfile.isPending ? "Saving..." : "Continue"}
             </Button>

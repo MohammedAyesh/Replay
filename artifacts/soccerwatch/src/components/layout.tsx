@@ -18,7 +18,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/onboarding";
-  const isScrollablePage = isLogin || isAuthPage;
   const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo;
   const useTranslucentBar = isWatchFeed;
 
@@ -26,7 +25,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <div
       className={cn(
         "mx-auto w-full max-w-[440px] bg-background relative flex flex-col shadow-2xl rp-glow",
-        isScrollablePage ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
+        isLogin ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
       )}
     >
       {!hideTabBar && (
@@ -43,7 +42,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => setLocale(locale === "ar" ? "en" : "ar")}
-              aria-label={locale === "ar" ? "تغيير اللغة" : "Change language"}
+              aria-label={t.language}
               className="flex shrink-0 items-center gap-1.5 rounded-[99px] border-0 bg-white/[0.07] px-3.5 py-2 text-sm font-semibold text-foreground"
             >
               <Globe className="h-4 w-4" aria-hidden="true" />
@@ -56,7 +55,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <main
         className={cn(
           "w-full flex flex-col relative",
-          isScrollablePage ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden",
+          isLogin ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden",
         )}
       >
         {children}
@@ -160,7 +159,7 @@ function NavItem({
   );
 }
 
-export function LogoMark({ size = 34 }: { size?: number }) {
+function LogoMark({ size = 34 }: { size?: number }) {
   const facets = [
     { cx: 95, cy: 96, color: "#22C7B5" },
     { cx: 126.2, cy: 42, color: "#BFFF5C" },
