@@ -1,0 +1,189 @@
+SCOPE: exactly TWO things:
+  1. artifacts/soccerwatch/src/pages/login.tsx — full content replacement
+  2. adding ONE image file to the project's static assets
+
+Do not modify layout.tsx, index.css, App.tsx, the i18n strings file, the Clerk
+appearance config, or any other page. This page is a standalone unauthenticated
+route with its own header and its own language switcher — it does not share
+the app shell used by other pages, so nothing outside this route can be
+affected by this change.
+
+--- WHAT EACH ATTACHMENT IS FOR ---
+
+The photo of a floodlit pitch at night is the REQUIRED hero background image.
+
+"Landing_page_UI.png", "Landing_page_UI.pdf", and "Replay_Landing_dc.html" are
+THE SAME TARGET DESIGN in three different formats — a screenshot, a PDF, and
+the original design-tool markup — provided together so you have multiple
+references to cross-check against. Match their layout, spacing, colours and
+section order closely.
+
+The .html file is reference-only for exact values (colours, spacing, copy).
+Its markup — tags like <sc-if>, {{ }} placeholders, "class Component extends
+DCLogic" — is a different templating format from a separate design tool, NOT
+React or valid code. Do not copy any of its syntax into the project; read it
+only for the values it contains.
+
+A screenshot showing an Arabic hero with just three buttons is OUR CURRENT,
+OLD landing page, shown for contrast only. It is NOT a target — we do not have
+an Arabic mockup of the new design. Build the Arabic version using the exact
+copy block below and correct RTL mirroring of the English layout.
+
+Every colour, font, spacing value and word of copy actually needed is written
+out explicitly below. The attachments corroborate it; they are not the only
+source of it.
+
+--- STEP 1: ADD THE HERO IMAGE ---
+
+Add the attached photo to artifacts/soccerwatch/src/assets/, the same folder
+already used for other imported images in this project. Name it
+hero-floodlit-pitch.png. Confirm the copied file's checksum matches the upload.
+
+--- STEP 2: REPLACE login.tsx CONTENT ---
+
+Preserve from the CURRENT file:
+  - The existing Sign In, Create Account and Browse as Guest handlers, exactly
+    as wired today — same functions, same routes, same guest-login behaviour.
+  - The existing redirect for an already-authenticated user to /home.
+  - The existing language-switching mechanism (the same hook/pattern already
+    used elsewhere in this file).
+  - The existing LogoMark component/SVG — reuse it exactly as it exists in
+    layout.tsx or in this file. Do not redraw the logo.
+
+Build the page with these sections, in this order:
+
+1) STICKY HEADER
+   Logo mark + "REPLAY" wordmark in the display font, weight 700, filled with
+   linear-gradient(90deg, #2FD8C4, #7B5CFF) via background-clip: text, colour
+   transparent. On the trailing side, a pill language button
+   (rgba(255,255,255,.09) background, no border, globe icon + current
+   language code) wired to the existing language switcher.
+
+2) HERO — fills the first screen
+   hero-floodlit-pitch.png as a full-bleed background, object-cover, with a
+   top-to-bottom dark gradient overlay
+   (rgba(11,15,26,.55) → rgba(11,15,26,.25) → rgba(11,15,26,.55) → rgba(11,15,26,.97))
+   plus a soft radial teal glow at the bottom
+   (radial-gradient(90% 50% at 50% 100%, rgba(47,216,196,.14), transparent 60%)).
+   Two-line display headline, line one white, line two in primary (#D4FF4F).
+   One subtitle line. The three existing buttons: primary lime with DARK
+   (#0B0F1A) text, secondary bordered/translucent with light text, and a plain
+   muted text link, separated by an "or" divider. A small bouncing
+   chevron-down scroll cue beneath them that fades out once the user scrolls.
+
+3) HOW IT WORKS
+   Small uppercase lime eyebrow pill, then a heading. Three cards in a column,
+   each with: a large ghosted number (118px, ~7-8% opacity in the section's
+   accent colour) bleeding behind the top-right of the card; a small icon tile
+   (38px, rounded, tinted background) plus a bold step title; a "STEP 0N" pill
+   above them; three checkmarked bullet lines below. A different accent per
+   step — lime, teal, violet — for the tile, pill and checkmarks. Reveal each
+   card with a fade-up on scroll using this project's EXISTING framer-motion
+   whileInView pattern, already used elsewhere in this codebase — do not write
+   a manual IntersectionObserver.
+
+4) ABOUT US
+   Violet eyebrow pill, heading, then a small lime "First in Jordan" badge
+   with a flag icon and a soft glow, then two short paragraphs.
+
+5) CONTACT
+   Teal eyebrow pill, heading, then a single card (soft teal-to-violet
+   gradient background, bordered, centred) containing an icon, one line of
+   supporting text, and a full-width primary button reading "Get in touch".
+   This button remains INTENTIONALLY NON-FUNCTIONAL — no href, no onClick, no
+   handler.
+
+6) FAQ
+   Heading, then an accordion of 5 items, each a bordered card with a
+   plus/minus toggle. Only one open at a time; the first item open by default.
+
+7) FOOTER
+   Small logo + gradient wordmark, one muted description line, the Sign In /
+   Create Account actions repeated as plain text links, and "Amman, Jordan".
+
+Use this EXACT bilingual copy — do not rewrite, retranslate, or paraphrase any
+of it:
+
+ENGLISH
+  heroLine1: "Every match you play,"   heroLine2: "already recorded."
+  heroSub: "Minutes after the final whistle, it's in the app — ready to watch, clip and share."
+  eyebrowHow: "How it works"   howTitle: "From kickoff to highlight reel"   stepLabel: "Step"
+  Step 1 — "Play": "Book a partner pitch and play your match." / "Cameras are already mounted and recording." / "Nothing to set up, nothing to press."
+  Step 2 — "Watch": "Open the app and pick your pitch and date." / "Every recorded hour is ready minutes after the final whistle." / "Academy sessions also stream live for family watching from anywhere."
+  Step 3 — "Clip & Share": "Scrub to the moment that matters." / "Trim, pan and zoom right on your phone." / "Download the clip or share it instantly."
+  eyebrowAbout: "About us"   aboutTitle: "The first of its kind in Jordan"   firstBadge: "First in Jordan"
+  aboutP1: "Replay is the first platform in Jordan to bring automatic full-match recording to the pitch — every session captured start to finish, with the footage placed directly in players' hands."
+  aboutP2: "It started with a single field in Amman. New pitches and academies are joining the network every month."
+  eyebrowContact: "Talk to us"   contactTitle: "Got a pitch or academy in mind?"
+  contactSub: "We're always looking for new partner pitches and academies across Amman."   getInTouch: "Get in touch"
+  faqTitle: "FAQ"
+  FAQ 1: "Do I need to set anything up?" — "No — cameras are already installed and always recording at partner pitches."
+  FAQ 2: "How soon can I watch after the match?" — "Minutes after the final whistle."
+  FAQ 3: "Can I download my clips?" — "Yes — trim the moment you want and download it as a normal video file."
+  FAQ 4: "Can my family watch live?" — "Academy sessions stream live right in the app."
+  FAQ 5: "Which pitches are covered?" — "Partner pitches across Amman, with new ones joining every month."
+  footerDesc: "Automatic match recording for football pitches and academies across Amman."   footer: "Amman, Jordan"
+
+ARABIC
+  heroLine1: "كل مباراة تلعبها،"   heroLine2: "مسجّلة أصلاً."
+  heroSub: "دقائق بعد صافرة النهاية، تكون في التطبيق — جاهزة للمشاهدة والقص والمشاركة."
+  eyebrowHow: "كيف تعمل"   howTitle: "من الانطلاقة حتى أفضل اللقطات"   stepLabel: "الخطوة"
+  الخطوة ١ "العب": "احجز ملعبًا شريكًا واستمتع بمباراتك." / "الكاميرات مثبّتة ومسجّلة مسبقًا." / "بلا إعداد وبلا أي ضغط على زر."
+  الخطوة ٢ "شاهد": "افتح التطبيق واختر ملعبك وتاريخك." / "كل ساعة مسجّلة تكون جاهزة دقائق بعد صافرة النهاية." / "جلسات الأكاديميات تُبث مباشرة أيضًا لمتابعة العائلة من أي مكان."
+  الخطوة ٣ "قص وشارك": "انتقل مباشرة إلى اللحظة المهمة." / "قصّ وحرّك وقرّب المشهد من هاتفك." / "نزّل المقطع أو شاركه فورًا."
+  eyebrowAbout: "من نحن"   aboutTitle: "الأول من نوعه في الأردن"   firstBadge: "الأول في الأردن"
+  aboutP1: "Replay هو أول منصة في الأردن تُدخل التسجيل التلقائي الكامل للمباريات إلى الملعب — كل جلسة تُسجَّل من البداية للنهاية، واللقطات تصل مباشرة إلى اللاعبين."
+  aboutP2: "بدأت الرحلة بملعب واحد في عمّان، وتنضم ملاعب وأكاديميات جديدة إلى الشبكة كل شهر."
+  eyebrowContact: "تواصل معنا"   contactTitle: "هل لديك ملعب أو أكاديمية؟"
+  contactSub: "نبحث دائمًا عن ملاعب وأكاديميات شريكة جديدة في عمّان."   getInTouch: "تواصل معنا"
+  faqTitle: "الأسئلة الشائعة"
+  FAQ 1: "هل أحتاج لإعداد أي شيء؟" — "لا — الكاميرات مثبّتة ومسجّلة دائمًا في الملاعب الشريكة."
+  FAQ 2: "بعد كم تصبح المباراة جاهزة للمشاهدة؟" — "بعد دقائق من صافرة النهاية."
+  FAQ 3: "هل يمكنني تنزيل مقاطعي؟" — "نعم — قصّ اللحظة التي تريدها ونزّلها كملف فيديو عادي."
+  FAQ 4: "هل تستطيع عائلتي المتابعة مباشرة؟" — "جلسات الأكاديميات تُبث مباشرة داخل التطبيق."
+  FAQ 5: "أي الملاعب مغطاة؟" — "الملاعب الشريكة في عمّان، وينضم إليها ملاعب جديدة كل شهر."
+  footerDesc: "تسجيل تلقائي للمباريات في ملاعب وأكاديميات عمّان."   footer: "عمّان، الأردن"
+
+Store this as a local bilingual object inside login.tsx and select by the
+existing locale variable — the same inline pattern already used in home.tsx.
+Do NOT add any key to the i18n strings file and do not edit that file.
+
+--- CRITICAL: RECURRING BUGS IN THIS PROJECT — CHECK EACH ONE ---
+
+1. SCROLL: this page must scroll normally as a full page (it is not inside the
+   app's fixed-height shell). Do not apply flex-1/min-h-0/overflow-hidden
+   patterns meant for the authenticated shell — this route needs ordinary
+   document scrolling.
+2. DARK TEXT ON LIME: every button with a lime/primary background must use
+   dark (#0B0F1A) text, never white. This has been the single most common
+   mistake in this project.
+3. RTL: use logical properties (start/end, ms/me, ps/pe) throughout. Never
+   pair a logical inset with a physical transform — this has broken centring
+   twice before in this project.
+4. The hero image must use object-cover with no distortion or letterboxing.
+5. Bidirectional text: if any digits appear inside Arabic text (step numbers),
+   isolate them the same way the existing date line in home.tsx already does,
+   so numbers don't reorder.
+
+--- CONSTRAINTS ---
+
+Do not modify any API call, database schema, query, or route. Do not add,
+rename, or drop any database column. Do not install any package. Do not touch
+the Clerk appearance config. Do not add any translation key to the shared
+i18n file.
+
+--- VERIFY ---
+
+Open the landing page in the preview and confirm:
+  - it renders and scrolls correctly in BOTH English and Arabic, no runtime error
+  - all three buttons work — Sign In, Create Account, Browse as Guest
+  - the hero photo displays with no distortion
+  - every primary button shows dark text, never white
+  - the FAQ accordion opens and closes correctly, one at a time
+  - the "Get in touch" button does nothing when tapped, by design
+  - already-authenticated users still redirect to /home
+
+A passing build is NOT sufficient — this project has already shipped a crash
+that passed the build. Open the page in both languages before reporting done.
+
+Show me the complete diff of login.tsx.

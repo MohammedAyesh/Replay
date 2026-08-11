@@ -1,0 +1,44 @@
+Context & Objective: We are executing a comprehensive UI redesign of our platform's landing page. I have attached all the necessary assets and reference materials required for this update. Your task is to completely overhaul the current landing page UI to match the new design in a single, comprehensive execution and to write the replit prompt for us to do so.
+
+
+
+Attached Reference Materials: To guide this update, I have provided 5 attachments:
+
+
+
+1.	Claude Design .zip file: Contains the raw code/design structure generated for the new landing page. Please compare this with our current codebase and verify the structural changes needed.
+
+
+
+2.	Target Design Screenshot: A full-length screenshot showcasing the exact final result and sections we want to achieve.
+
+
+
+3.	Current App State Screenshot: An image of our current "greenish" landing page so you can easily identify the exact components and layout that need to be replaced.
+
+
+
+4.	Screenshot for the desired design (Same as the code and the PDF) (Please verify).
+
+
+
+
+
+5.	Hero Background Image: The specific high-resolution image asset that must be implemented as the background in the new hero section.
+
+Strict Rules of Engagement:
+
+
+
+•	Pixel-Perfect Accuracy: We are looking for an almost perfect replication of the target design screenshot provided. Pay close attention to layout, spacing, typography, and color gradients.
+
+•	UI Modifications ONLY: This is strictly a frontend visual update. You are expressly forbidden from altering any backend logic, database schemas, API routes, or existing core functionality. Do not add any unnecessary features or components that are not visible in the target design.
+
+
+
+•	Single-Pass Execution: Please process all the attached files, analyze the difference between the current state and the target state, and implement the complete Guide and prompt for replit for it to be able to execute it.
+
+Note: Replit will have all the attached files attached to the prompt that we'll send.
+
+Task: Analyze the attachments and update the landing page code to match the new design safely and accurately. Please share your thoughts and give me the replit prompt.
+
