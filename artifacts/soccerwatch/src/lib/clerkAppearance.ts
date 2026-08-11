@@ -5,7 +5,7 @@ export const clerkAppearance = {
   options: {
     logoPlacement: "inside" as const,
     logoLinkUrl: basePath || "/",
-    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+    logoImageUrl: `${window.location.origin}${basePath}/replay-mark.svg`,
   },
   variables: {
     // Surfaces
@@ -77,7 +77,7 @@ export const clerkAppearance = {
 
     // Logo
     logoBox: "mb-2",
-    logoImage: "h-10 w-10",
+    logoImage: "h-12 w-12",
 
     formFieldRow: "",
     main: "",

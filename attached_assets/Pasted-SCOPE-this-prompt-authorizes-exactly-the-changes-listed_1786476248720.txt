@@ -1,0 +1,192 @@
+SCOPE: this prompt authorizes exactly the changes listed below, in exactly
+these files. No other file may be touched. No attachments are needed — every
+value, every string, and every piece of markup required is written directly
+in this prompt.
+
+CONTEXT FOR YOU: a prior attempt at this same goal was rolled back because it
+made unauthorized changes to layout.tsx and App.tsx, improvising workarounds
+instead of asking. This prompt closes that gap by explicitly pre-authorizing
+the two small, precise changes to those files that are actually necessary —
+spelled out exactly below, with exact before/after text. Do not deviate from
+the exact wording given. If you believe an additional change outside this
+list is needed, STOP and report why instead of making it.
+
+=========================================================
+PART 1 — READ FIRST, REPORT BRIEFLY, THEN PROCEED
+=========================================================
+
+Open and report the current full contents of:
+  a) The AuthHeroLayout component (confirmed to exist, wrapping SignIn and
+     SignUp — find its exact file path).
+  b) artifacts/soccerwatch/src/pages/onboarding.tsx
+
+Report what AuthHeroLayout currently contains — specifically confirm whether
+it already renders a background glow, since if it does, do not duplicate it
+in Part 3 below.
+
+=========================================================
+PART 2 — NEW LOGO ASSET (static file, for Clerk's own logo slot)
+=========================================================
+
+Create artifacts/soccerwatch/public/replay-mark.svg with EXACTLY this content
+— do not redraw, regenerate, or modify this geometry in any way:
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 0 225 200">
+<defs><clipPath id="replayMarkClip"><circle cx="95" cy="96" r="88"/></clipPath></defs>
+<g clip-path="url(#replayMarkClip)">
+<polygon points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#22C7B5"/>
+<polygon points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#BFFF5C"/>
+<polygon points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#3FE0C9"/>
+<polygon points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#1FA79B"/>
+<polygon points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#186E7E"/>
+<polygon points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#1C8AA0"/>
+<polygon points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#6C4FE0"/>
+</g>
+<polygon points="170,62 170,134 210,98" fill="#0B0F1A"/>
+<polygon points="172,68 172,128 206,98" fill="#D4FF4F"/>
+<circle cx="178" cy="46" r="7.5" fill="#0B0F1A"/>
+<circle cx="178" cy="46" r="5.5" fill="#FF5A3C"/>
+</svg>
+
+This is the app's real logo mark, ball only, no wordmark. It replaces
+public/logo.svg (a green crown, unrelated to this brand) as Clerk's logo.
+
+=========================================================
+PART 3 — clerkAppearance.ts — TWO VALUE CHANGES ONLY
+=========================================================
+
+In the options block, change:
+    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+to:
+    logoImageUrl: `${window.location.origin}${basePath}/replay-mark.svg`,
+
+In the elements block, change:
+    logoImage: "h-10 w-10",
+to:
+    logoImage: "h-12 w-12",
+
+Change NOTHING else in this file. Every other value already matches spec —
+preserve the full file exactly as it currently is otherwise.
+
+=========================================================
+PART 4 — AuthHeroLayout — add outer chrome
+=========================================================
+
+Based on what Part 1 found already exists, ADD only what is missing:
+
+  - A background ambient glow (soft radial washes in teal/violet/lime over
+    deep navy), IF NOT already present. If already present, leave it as is.
+  - A tiny logo mark, ~26px, centred at the very top of the page, ABOVE
+    where the Clerk card renders. Reuse the existing React LogoMark component
+    if it is exported and available (check layout.tsx); otherwise inline the
+    same SVG geometry from Part 2 sized to 26px. This is DELIBERATELY a
+    second, smaller instance of the mark — not a duplicate to remove. Ball
+    mark only, no wordmark.
+  - A single circular Back button, 34px, rounded, bordered
+    (rgba(255,255,255,.1) border, rgba(255,255,255,.04) background), FIXED at
+    the physical top-left of the screen in BOTH languages — do not use
+    logical start/end for this one element's position. Navigates to the
+    previous screen (browser history back, or "/" if none).
+  - A language toggle pill, FIXED at the physical top-right of the screen in
+    BOTH languages — also not using logical positioning. Same visual pattern
+    as the globe pill already used in login.tsx and layout.tsx. Wire it to
+    the SAME existing locale hook used throughout this project.
+
+Do NOT add any page-level title or subtitle text — Clerk's own internal
+header (already styled via clerkAppearance.ts) covers that; adding a second
+one would duplicate it.
+
+Do NOT touch any Clerk component, prop, or provider inside this file.
+
+=========================================================
+PART 5 — onboarding.tsx — restyle only
+=========================================================
+
+Apply the SAME chrome as Part 4 to this screen: background glow, tiny logo,
+fixed back button (top-left), fixed language toggle (top-right) — reusing
+whatever component/pattern Part 4 established rather than rewriting it from
+scratch.
+
+Restyle its existing content to match this pattern:
+  - Heading and subtitle, subtitle in teal (#2FD8C4).
+  - Each field: label above, rounded input below (13px radius, subtle border,
+    dark fill: rgba(255,255,255,.04) background, rgba(255,255,255,.1) border).
+  - The existing Continue button: full width, primary lime background,
+    DARK (#0B0F1A) text, radius 14px.
+
+REUSE this screen's existing title, subtitle, field labels, placeholders and
+button text EXACTLY as they are today. Do not rewrite, retranslate, or touch
+any field's validation, state, mutation, submit handler, or destination route.
+Restyle only.
+
+=========================================================
+PART 6 — App.tsx — ONE AUTHORIZED CHANGE ONLY
+=========================================================
+
+Change the onboarding route from:
+    <Route path="/onboarding" component={Onboarding} />
+to:
+    <Route path="/onboarding">
+      <AuthHeroLayout>
+        <Onboarding />
+      </AuthHeroLayout>
+    </Route>
+
+This is the ONLY change authorized in this file. Do not add any adapter, do
+not reorder any route, do not touch any other route's registration.
+
+=========================================================
+PART 7 — layout.tsx — ONE AUTHORIZED CHANGE ONLY
+=========================================================
+
+There are exactly two places where a ternary currently branches on `isLogin`
+alone. In BOTH of them, and only these two, change `isLogin` to
+`(isLogin || isAuthPage)`:
+
+  Location A — the outer wrapper:
+    BEFORE: isLogin ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden"
+    AFTER:  (isLogin || isAuthPage) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden"
+
+  Location B — the main content element:
+    BEFORE: isLogin ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden"
+    AFTER:  (isLogin || isAuthPage) ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden"
+
+Do not change the `hideTabBar` line — it is already correct. Do not touch
+anything else in this file.
+
+=========================================================
+DO NOT TOUCH — explicitly out of scope
+=========================================================
+
+The "Development mode" badge Clerk renders at the bottom of its own card.
+This is intentional Clerk behaviour tied to test/development API keys, added
+to prevent accidentally shipping dev credentials to production. It will
+disappear on its own once this project switches to production Clerk keys
+before public launch. Do not hide it, restyle it, or use
+unsafe_disableDevelopmentModeWarnings.
+
+Any Clerk field, validation, handler, query, mutation, provider prop, or
+route other than the single wrap in Part 6.
+
+=========================================================
+VERIFY
+=========================================================
+
+Open Sign In, Sign Up, and Onboarding in the preview, in both languages.
+Confirm:
+  - exactly two logos per screen — one tiny at the very top, one inside the
+    Clerk card — both the correct multicoloured mark, not the green crown
+  - no unexpected dark/empty space at the bottom of any screen
+  - onboarding's form is fully visible and reachable, nothing clipped
+  - Back button stays physically top-left, language toggle stays physically
+    top-right, in BOTH languages
+  - sign-in and sign-up still work completely with a real test session
+  - the profile-completion form still saves correctly when submitted
+  - Home, View, My Clips, and Profile still render and scroll exactly as
+    before — confirm the layout.tsx change had no effect on them
+
+A passing build is NOT sufficient — this project has already shipped a crash
+that passed the build. Open every screen in both languages before reporting
+done.
+
+Show me the complete diff of every file changed.

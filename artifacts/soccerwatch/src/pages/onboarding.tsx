@@ -5,7 +5,6 @@ import { useUpdateProfile, useGetMe, getGetMeQueryKey, type ProfileInputPosition
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import replayLogo from "@/assets/replay-logo.png";
 import { motion } from "framer-motion";
 import { useUser } from "@clerk/react";
 import { useAuth } from "@/lib/auth";
@@ -99,7 +98,7 @@ export default function Onboarding() {
 
   if (authLoading || !user || isGuest || user.profileComplete) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-black text-white">
+      <div className="flex w-full items-center justify-center py-20">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
@@ -110,111 +109,100 @@ export default function Onboarding() {
   }
 
   return (
-    <div className="flex-1 flex flex-col field-pattern relative text-white">
-      <div className="absolute inset-0 bg-black/60" />
+    <div className="w-full flex flex-col text-white">
+      <motion.h1 {...fadeUp(0.1)} className="text-3xl font-bold leading-tight mb-2">
+        Complete your profile
+      </motion.h1>
+      <motion.p {...fadeUp(0.15)} className="text-[#2FD8C4] text-sm mb-8">
+        Help us personalize your Replay experience.
+      </motion.p>
 
-      <div className="relative z-10 flex-1 flex flex-col px-6 pt-safe pt-8 pb-safe overflow-y-auto">
-        {/* Header */}
-        <motion.div {...fadeUp(0)} className="flex items-center gap-2 mb-8">
-          <img src={replayLogo} alt="Replay" className="w-10 h-10 object-contain" />
-          <span className="font-bold text-xl tracking-tight">REPLAY</span>
-        </motion.div>
+      <motion.form
+        {...fadeUp(0.2)}
+        onSubmit={handleSubmit}
+        className="flex flex-col gap-4"
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="onboarding-name" className="text-white/80 text-sm font-medium">Full name</Label>
+          <Input
+            id="onboarding-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Your full name"
+            className="rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
+            autoComplete="name"
+          />
+        </div>
 
-        <motion.h1 {...fadeUp(0.1)} className="text-3xl font-bold leading-tight mb-2">
-          Complete your profile
-        </motion.h1>
-        <motion.p {...fadeUp(0.15)} className="text-white/70 mb-8">
-          Help us personalize your Replay experience.
-        </motion.p>
+        <div className="space-y-1.5">
+          <Label htmlFor="onboarding-phone" className="text-white/80 text-sm font-medium">Phone number</Label>
+          <Input
+            id="onboarding-phone"
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+1 555 000 0000"
+            className="rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
+            autoComplete="tel"
+          />
+        </div>
 
-        {/* Form */}
-        <motion.form
-          {...fadeUp(0.2)}
-          onSubmit={handleSubmit}
-          className="flex-1 flex flex-col gap-4 overflow-y-auto pb-safe"
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="onboarding-name" className="text-white/80 text-sm font-medium">Full name</Label>
-            <Input
-              id="onboarding-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your full name"
-              className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
-              autoComplete="name"
-            />
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="onboarding-position" className="text-white/80 text-sm font-medium">Preferred position</Label>
+          <select
+            id="onboarding-position"
+            value={position}
+            onChange={(e) => setPosition(e.target.value)}
+            className="w-full h-12 rounded-[13px] bg-white/[0.04] border border-white/10 text-white px-3 focus:outline-none focus:ring-2 focus:ring-primary appearance-none"
+            style={{ backgroundImage: "none" }}
+          >
+            <option value="" disabled className="text-black">Select position</option>
+            {POSITIONS.map((p) => (
+              <option key={p.value} value={p.value} className="text-black">{p.label}</option>
+            ))}
+          </select>
+        </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="onboarding-phone" className="text-white/80 text-sm font-medium">Phone number</Label>
-            <Input
-              id="onboarding-phone"
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+1 555 000 0000"
-              className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
-              autoComplete="tel"
-            />
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="onboarding-age" className="text-white/80 text-sm font-medium">Age</Label>
+          <Input
+            id="onboarding-age"
+            type="number"
+            min={10}
+            max={99}
+            value={age}
+            onChange={(e) => setAge(e.target.value)}
+            placeholder="25"
+            className="rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
+          />
+        </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="onboarding-position" className="text-white/80 text-sm font-medium">Preferred position</Label>
-            <select
-              id="onboarding-position"
-              value={position}
-              onChange={(e) => setPosition(e.target.value)}
-              className="w-full h-12 rounded-md bg-white/10 border border-white/20 text-white px-3 focus:outline-none focus:ring-2 focus:ring-primary appearance-none"
-              style={{ backgroundImage: "none" }}
-            >
-              <option value="" disabled className="text-black">Select position</option>
-              {POSITIONS.map((p) => (
-                <option key={p.value} value={p.value} className="text-black">{p.label}</option>
-              ))}
-            </select>
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="onboarding-gender" className="text-white/80 text-sm font-medium">Gender</Label>
+          <select
+            id="onboarding-gender"
+            value={gender}
+            onChange={(e) => setGender(e.target.value)}
+            className="w-full h-12 rounded-[13px] bg-white/[0.04] border border-white/10 text-white px-3 focus:outline-none focus:ring-2 focus:ring-primary appearance-none"
+            style={{ backgroundImage: "none" }}
+          >
+            <option value="" disabled className="text-black">Select gender</option>
+            {GENDERS.map((g) => (
+              <option key={g.value} value={g.value} className="text-black">{g.label}</option>
+            ))}
+          </select>
+        </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="onboarding-age" className="text-white/80 text-sm font-medium">Age</Label>
-            <Input
-              id="onboarding-age"
-              type="number"
-              min={10}
-              max={99}
-              value={age}
-              onChange={(e) => setAge(e.target.value)}
-              placeholder="25"
-              className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="onboarding-gender" className="text-white/80 text-sm font-medium">Gender</Label>
-            <select
-              id="onboarding-gender"
-              value={gender}
-              onChange={(e) => setGender(e.target.value)}
-              className="w-full h-12 rounded-md bg-white/10 border border-white/20 text-white px-3 focus:outline-none focus:ring-2 focus:ring-primary appearance-none"
-              style={{ backgroundImage: "none" }}
-            >
-              <option value="" disabled className="text-black">Select gender</option>
-              {GENDERS.map((g) => (
-                <option key={g.value} value={g.value} className="text-black">{g.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="mt-auto pt-4">
-            <Button
-              type="submit"
-              disabled={!allFilled || updateProfile.isPending}
-              className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-6 rounded-xl text-base disabled:opacity-50"
-            >
-              {updateProfile.isPending ? "Saving..." : "Continue"}
-            </Button>
-          </div>
-        </motion.form>
-      </div>
+        <div className="mt-4">
+          <Button
+            type="submit"
+            disabled={!allFilled || updateProfile.isPending}
+            className="w-full bg-primary hover:bg-primary/90 text-[#0B0F1A] font-semibold py-4 rounded-[14px] text-base disabled:opacity-50"
+          >
+            {updateProfile.isPending ? "Saving..." : "Continue"}
+          </Button>
+        </div>
+      </motion.form>
     </div>
   );
 }
