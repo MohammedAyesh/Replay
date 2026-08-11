@@ -10,3 +10,4 @@
 - [Collection preview thumbnail paths](collection-preview-thumbnail-paths.md) — collection GUIDs can differ from preview video IDs and custom thumbnail filenames; proxy the selected raw preview URL, not a fabricated collection-GUID path.
 - [Clip intro — playback vs export](clip-intro-playback-export.md) — intro is suppressed in all playback responses (hardcoded null); export path calls resolveIntroVideoUrl and prepends at correct dimensions.
 - [Recording visibility dates](recording-visibility-dates.md) — recording visibility uses exact per-field whitelisted dates plus time windows; recurring weekday rules are no longer active.
+- [Auth-page shell scrolling](auth-page-shell-scrolling.md) — auth and onboarding routes need the shared shell's scrollable exception; keep the fixed clipped shell for app/feed pages.

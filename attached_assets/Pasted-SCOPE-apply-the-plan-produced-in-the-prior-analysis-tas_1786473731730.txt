@@ -1,0 +1,138 @@
+SCOPE: apply the plan produced in the prior analysis task. This is a
+VISUAL-ONLY change. Do not touch any Clerk provider, flow, redirect URL,
+field, validation, handler, query, mutation, or route, at any point in this
+task. If anything below seems to require changing behaviour rather than
+appearance, STOP and tell me instead of proceeding.
+
+Attached: the same 4 screenshots and .dc.html from the analysis task. These
+are OUR OWN design — same project that built this app's whole visual system.
+Match them closely. The .dc.html's internal "next" click-cycling logic is a
+design-tool preview mechanism only — ignore it, do not replicate it.
+
+Our app already has all four screens (Sign In, Sign Up, Verify Email,
+Complete Profile) fully functional with the exact fields and buttons shown in
+the design. Restyle what exists — nothing is being added or removed
+functionally.
+
+=========================================================
+PART 1 — Clerk appearance config (Sign In, Sign Up, Verify)
+=========================================================
+
+In the Clerk appearance configuration file:
+
+  Card background         linear-gradient(160deg, rgba(255,255,255,.05),
+                           rgba(255,255,255,.015)), #141B2C
+  Card border              1px solid rgba(255,255,255,.09)
+  Card radius               26px
+  Card shadow                0 30px 70px rgba(0,0,0,.45)
+  Input background          rgba(255,255,255,.035)
+  Input border               1px solid rgba(255,255,255,.1)
+  Input radius                13px
+  Input text                    #F3F6FA
+  Label text                    rgba(243,246,250,.7)
+  Primary button background      #D4FF4F
+  Primary button TEXT             #0B0F1A   (dark on lime — never white)
+  Primary button radius            14px
+  Secondary/Google button          rgba(255,255,255,.05) background,
+                                    1px solid rgba(255,255,255,.12) border,
+                                    #F3F6FA text
+  Divider line ("or")               rgba(255,255,255,.1)
+  Link / accent colour                #2FD8C4
+  Muted text                           rgba(243,246,250,.5)
+  Font: Inter for Latin, Tajawal for Arabic — same pattern index.css already
+  uses for the RTL font switch.
+
+Colours, radii, borders, shadows and fonts only. Do not change layout, field
+order, or which fields are shown.
+
+=========================================================
+PART 2 — page chrome around Sign In, Sign Up, Verify
+=========================================================
+
+Add this chrome to the page(s) wrapping the Clerk components (NOT inside
+Clerk's own rendered markup — this sits in our own page around it, same
+pattern login.tsx already uses):
+
+  - The existing LogoMark, centred above the card, ~52px. Reuse it exactly as
+    it exists elsewhere in this project — do not redraw it.
+  - Background: this app's existing ambient glow treatment (soft radial washes
+    in teal/violet/lime over deep navy), consistent with other pages.
+  - A single circular Back button, 34px, rounded, bordered
+    (rgba(255,255,255,.1) border, rgba(255,255,255,.04) background), fixed at
+    the PHYSICAL top-LEFT of the screen in BOTH languages — a deliberate
+    exception to this app's usual logical start/end RTL mirroring. It
+    navigates to the previous screen (browser history back, or "/" if there
+    is none). Do NOT add any second forward/next icon button anywhere.
+  - A language toggle pill, fixed at the physical top-RIGHT of the screen in
+    BOTH languages — also a deliberate exception to logical RTL mirroring.
+    Same visual DNA as the globe pill already used in login.tsx and
+    layout.tsx (globe icon + current language code, rounded, translucent
+    background). Wire it to the SAME existing locale hook used throughout
+    this project. Do not create a new i18n mechanism.
+
+Use this bilingual page-level copy, stored as a local object selected by the
+existing locale variable — same inline pattern already used in home.tsx and
+login.tsx. Do NOT add any key to the shared i18n strings file.
+
+  Sign In:   title "Sign In" / "تسجيل الدخول"
+             subtitlePrefix "Continue to" / "للمتابعة إلى"
+  Sign Up:   title "Create Account" / "إنشاء حساب جديد"
+             subtitlePrefix "Continue to" / "للمتابعة إلى"
+  Verify:    title "Verify your email" / "تحقق من بريدك الإلكتروني"
+             subtitlePrefix "Continue to" / "للمتابعة إلى"
+
+=========================================================
+PART 3 — Complete Profile screen
+=========================================================
+
+Restyle this existing screen to match the reference:
+  - Same header treatment as Part 2: Back button fixed top-left, language
+    toggle fixed top-right, logo centred above the content.
+  - Subtitle in teal (#2FD8C4).
+  - Each field: label above, rounded input below (13px radius, subtle border,
+    dark fill), spaced as in the reference.
+  - The existing Continue button, full width, primary lime with DARK text,
+    radius 14px. This is the screen's real forward action — restyle it only,
+    do not touch its handler or destination.
+
+REUSE this screen's existing title, subtitle, field labels, placeholders and
+button text EXACTLY as they are today. Do not rewrite or retranslate any of
+them.
+
+=========================================================
+RULES FOR ALL THREE PARTS
+=========================================================
+
+RTL: logical properties (start/end, ms/me, ps/pe) everywhere EXCEPT the Back
+button and the language toggle, whose fixed top-left / top-right positions are
+the two deliberate exceptions noted above. Never pair a logical inset with a
+physical transform anywhere else on these pages.
+
+Every lime/primary button shows DARK (#0B0F1A) text, never white — the single
+most common mistake in this project.
+
+Each page must scroll normally if its content exceeds the viewport — this
+exact bug has broken multiple pages in this project before. Check it
+explicitly.
+
+If any digits appear inside Arabic text, isolate them so they don't reorder —
+same fix already applied to the date line in home.tsx.
+
+--- VERIFY ---
+
+In the running preview, confirm — as a basic regression check, not an
+investigation:
+  - Sign in and sign up both still work completely, start to finish, with a
+    real test session
+  - The Complete Profile screen still saves correctly when filled in
+  - Back button returns to the correct previous screen from every step
+  - Language toggle switches all new page-level text
+  - Back button stays LEFT and language toggle stays RIGHT in both English
+    and Arabic — confirm neither one flips sides
+  - No runtime error, in either language
+
+A passing build is NOT sufficient — this project has already shipped a crash
+that passed the build. Open every screen in both languages before reporting
+done.
+
+Show me the complete diff.
