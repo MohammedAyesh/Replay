@@ -1,0 +1,81 @@
+SCOPE: artifacts/soccerwatch/src/pages/login.tsx ONLY. The hero background
+region specifically — the section behind the header, containing the photo,
+headline, subtitle, and the three auth buttons. Do not touch the header, the
+How It Works / About / Contact / FAQ / footer sections, index.css, layout.tsx,
+or any other file.
+
+CRITICAL: this is a pure visual change to this one section. Do not touch any
+button handler, any route, any auth logic, the language toggle's function, or
+any existing scroll/animation behaviour elsewhere on the page. Nothing about
+what any element DOES may change — only how this one section looks.
+
+--- STEP 0: READ FIRST ---
+
+Open the hero section as it currently exists and report back: the current
+background image treatment, the current overlay/gradient (if any), and
+whether any entrance animation currently exists on this section. Confirm this
+before making changes so the edit below is based on what's actually there,
+not assumed.
+
+--- PART 1: ENTRANCE ANIMATION ---
+
+Add a smooth entrance animation to this hero section when the page first
+loads. It should feel modern, cinematic, and deliberately unhurried — noticeably
+slower than a typical UI transition, roughly 1.2-1.5 seconds, easing out
+gently with no bounce or spring. The background image can start very slightly
+zoomed in and settle to its normal size as it fades in. The headline, subtitle,
+and buttons should feel like they arrive a beat after the background, not all
+at once — a small stagger, not a big one.
+
+Use this project's existing framer-motion patterns (already used elsewhere in
+this codebase) rather than introducing a new animation library.
+
+--- PART 2: NEW HEADLINE COPY ---
+
+Replace the current two-line headline and its translations with:
+
+  Arabic:
+    Line 1 (white):   مش لازم تحكي عنها —
+    Line 2 (accent):  إحنا صورناها.
+
+  English:
+    Line 1 (white):   No need to tell the story.
+    Line 2 (accent):  We already filmed it.
+
+Keep the exact same styling treatment currently applied to each line — same
+font, same size, same weight, same colour roles (line 1 white/foreground, line
+2 in the primary/accent colour) — only the words change. Do not touch the
+subtitle line beneath the headline; leave its current wording as is.
+
+--- PART 3: SOFT NAVY VIGNETTE ---
+
+Replace or adjust the current overlay so the image reads clearly and cleanly
+in its center, with only a soft, subtle darkening toward the edges — a
+vignette effect, not a flat tinted rectangle laid over the whole photo. It
+should not look "filled" or block-like anywhere.
+
+Use this app's navy void colour (#0B0F1A) for the tint — never pure black, and
+never any other colour. Keep the effect gentle enough that the photograph is
+still clearly the dominant, legible element; the tint should feel like it
+belongs to the image rather than sitting on top of it. Ensure the text and
+buttons remain fully legible against it, adjusting the tint's strength only as
+much as needed for that legibility — not more.
+
+--- MUST NOT CHANGE ---
+
+Any button, its handler, its destination, or its wording. The language toggle
+and its function. The header. Every section below the hero. Any translation
+key outside the two headline lines specified above. Any query, route, or auth
+logic.
+
+--- VERIFY ---
+
+Open the landing page fresh (hard reload) in both English and Arabic. Confirm:
+the entrance animation plays smoothly on load, feels deliberately slow rather
+than snappy, and doesn't feel janky or delayed; the new headline reads
+correctly in both languages with correct colour roles per line; the vignette
+is soft and edge-focused, not a flat overlay, and the navy tint colour matches
+#0B0F1A exactly; all three buttons still work; nothing else on the page
+changed.
+
+Show me the diff.

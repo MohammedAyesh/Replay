@@ -24,8 +24,8 @@ const COPY = {
     createAccount: "Create Account",
     browseGuest: "Browse as Guest",
     or: "or",
-    heroLine1: "Every match you play,",
-    heroLine2: "already recorded.",
+    heroLine1: "No need to tell the story.",
+    heroLine2: "We already filmed it.",
     heroSub:
       "Minutes after the final whistle, it's in the app — ready to watch, clip and share.",
     eyebrowHow: "HOW IT WORKS",
@@ -106,8 +106,8 @@ const COPY = {
     createAccount: "إنشاء حساب",
     browseGuest: "تصفح كزائر",
     or: "أو",
-    heroLine1: "كل مباراة تلعبها،",
-    heroLine2: "مسجّلة أصلاً.",
+    heroLine1: "مش لازم تحكي عنها —",
+    heroLine2: "إحنا صورناها.",
     heroSub:
       "دقائق بعد صافرة النهاية، تكون في التطبيق — جاهزة للمشاهدة والقص والمشاركة.",
     eyebrowHow: "كيف تعمل",
@@ -401,7 +401,10 @@ export default function Login() {
           }}
         >
           {/* Background image */}
-          <img
+          <motion.img
+            initial={{ opacity: 0, scale: 1.04 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1.35, ease: [0.22, 1, 0.36, 1] }}
             src={heroImage}
             alt=""
             aria-hidden="true"
@@ -414,35 +417,23 @@ export default function Login() {
               objectPosition: "center 38%",
             }}
           />
-          {/* Dark gradient overlay */}
+          {/* Soft navy vignette */}
           <span
             aria-hidden="true"
             style={{
               position: "absolute",
               inset: 0,
               background:
-                "linear-gradient(180deg,rgba(11,15,26,.55) 0%,rgba(11,15,26,.25) 32%,rgba(11,15,26,.55) 62%,rgba(11,15,26,.97) 100%)",
-            }}
-          />
-          {/* Radial teal glow at bottom */}
-          <span
-            aria-hidden="true"
-            style={{
-              position: "absolute",
-              inset: 0,
-              background:
-                "radial-gradient(90% 50% at 50% 100%,rgba(47,216,196,.14),transparent 60%)",
+                "radial-gradient(ellipse 95% 82% at 50% 42%,rgba(11,15,26,0) 0%,rgba(11,15,26,.08) 52%,rgba(11,15,26,.68) 100%),linear-gradient(180deg,rgba(11,15,26,.18) 0%,rgba(11,15,26,0) 42%,rgba(11,15,26,.78) 100%)",
             }}
           />
 
           {/* Hero content */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, ease: "easeOut" }}
-            style={{ position: "relative", padding: "0 22px 30px" }}
-          >
-            <h1
+          <div style={{ position: "relative", padding: "0 22px 30px" }}>
+            <motion.h1
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1.1, delay: 0.18, ease: [0.22, 1, 0.36, 1] }}
               style={{
                 margin: 0,
                 fontFamily: headFont,
@@ -454,8 +445,11 @@ export default function Login() {
             >
               <span style={{ display: "block", color: "#F3F6FA" }}>{tc.heroLine1}</span>
               <span style={{ display: "block", color: "#D4FF4F" }}>{tc.heroLine2}</span>
-            </h1>
-            <p
+            </motion.h1>
+            <motion.p
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1.05, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
               style={{
                 margin: "14px 0 0",
                 fontSize: 15,
@@ -467,10 +461,15 @@ export default function Login() {
               }}
             >
               {tc.heroSub}
-            </p>
+            </motion.p>
 
             {/* Buttons */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24 }}>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1, delay: 0.42, ease: [0.22, 1, 0.36, 1] }}
+              style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24 }}
+            >
               {/* Sign In — lime bg, DARK text */}
               <Link
                 href="/sign-in"
@@ -555,7 +554,7 @@ export default function Login() {
               >
                 {guestMutation.isPending ? t.login.startingGuest : tc.browseGuest}
               </button>
-            </div>
+            </motion.div>
 
             {/* Scroll cue — bouncing chevron */}
             <div
@@ -581,7 +580,7 @@ export default function Login() {
                 <path d="m6 9 6 6 6-6" />
               </svg>
             </div>
-          </motion.div>
+          </div>
         </section>
 
         {/* Bounce keyframes injected once */}
