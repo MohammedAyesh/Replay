@@ -1,0 +1,55 @@
+SCOPE: exactly one file — artifacts/soccerwatch/src/pages/account.tsx.
+Do not touch window.location.replace(), the 700ms timeout, the React Query
+cache clearing, the backend logout call, or any other file.
+
+GOAL: the moment Sign Out is pressed, a full-screen branded loading overlay
+must appear INSTANTLY — before any async work runs, before the network
+request, before anything else. The user should never see the normal page
+content again after clicking Sign Out; the last thing they see before
+navigating away is this overlay.
+
+--- IMPLEMENTATION ---
+
+1. Add local state to this component, e.g. isSigningOut boolean (or reuse the
+   existing isLoggingOut state if it already exists here — check first and
+   reuse it rather than adding a duplicate).
+
+2. In the sign-out handler, set that state to true as the ABSOLUTE FIRST line
+   — before the cache clear, before the fetch call, before signOut() is even
+   invoked. Nothing should run before this.
+
+3. Render a full-screen overlay (position: fixed, inset-0, background:
+   #0B0F1A, highest z-index in the app) conditionally when that state is
+   true, on top of everything else on the page.
+
+4. Inside the overlay, reuse the SAME branded loader animation already built
+   in index.html for the sign-out/reload gap — the Replay logo mark with its
+   facets fading in sequence. Do not redraw the geometry or invent a new
+   animation; recreate the same visual using React/CSS so it's visually
+   IDENTICAL to the index.html version. When the hard reload eventually
+   happens and index.html's own loader takes over, the transition between
+   the two should be seamless — same mark, same animation, same background
+   colour, no visible jump or flicker between "this loader" and "that loader."
+
+5. Everything else in the existing handler — cache clearing, the backend
+   logout call, the signOut()/700ms timeout race, window.location.replace()
+   — stays exactly as it is, just now running underneath this overlay instead
+   of underneath the visible profile page.
+
+--- MUST NOT CHANGE ---
+
+The 700ms timeout value. The hard reload itself. The cache-clearing logic.
+The guest sign-out path — apply this same instant overlay to that path too,
+since it should also never show the old page content after being clicked.
+Any other page, route, or handler.
+
+--- VERIFY ---
+
+Click Sign Out and confirm: the overlay appears with ZERO visible delay — no
+frame where the old page is still showing after the click. Confirm the
+overlay's visuals match the index.html loader closely enough that the eventual
+handoff between them (when the real navigation happens) is not jarring or
+visibly different. Confirm sign-out still fully completes and lands on the
+correct page. Test the guest sign-out path too.
+
+Show me the diff.

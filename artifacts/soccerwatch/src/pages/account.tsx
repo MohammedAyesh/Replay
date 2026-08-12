@@ -44,8 +44,8 @@ export default function Account() {
   const updateProfile = useUpdateProfile();
 
   const handleLogout = () => {
-    if (isLoggingOut) return;
     setIsLoggingOut(true);
+    if (isLoggingOut) return;
 
     // Wipe all cached queries so the next user doesn't see stale data
     queryClient.clear();
@@ -109,6 +109,8 @@ export default function Account() {
 
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 overflow-hidden bg-background">
+      {isLoggingOut && <ReplaySignOutOverlay />}
+
       <div className="shrink-0 bg-background px-4 pb-3 pt-4">
         <h1 className="font-display text-2xl font-bold text-foreground">{t.account.title}</h1>
         <p className="text-sm text-muted-foreground">{isGuest ? t.account.guestSubtitle : t.account.subtitle}</p>
@@ -230,6 +232,74 @@ export default function Account() {
           t={t.account}
         />
       )}
+    </div>
+  );
+}
+
+function ReplaySignOutOverlay() {
+  return (
+    <div
+      className="fixed inset-0 z-[9999] grid place-items-center bg-[#0B0F1A]"
+      role="status"
+      aria-label="Signing out"
+    >
+      <style>{`
+        .replay-sign-out-loader {
+          width: 48px;
+          height: 43px;
+          overflow: visible;
+        }
+
+        .replay-sign-out-facet {
+          opacity: 0.25;
+          transform-box: fill-box;
+          transform-origin: center;
+          animation: replay-sign-out-facet-breathe 1.8s ease-in-out infinite;
+        }
+
+        .replay-sign-out-facet:nth-child(1) { animation-delay: -1.35s; }
+        .replay-sign-out-facet:nth-child(2) { animation-delay: -1.08s; }
+        .replay-sign-out-facet:nth-child(3) { animation-delay: -0.81s; }
+        .replay-sign-out-facet:nth-child(4) { animation-delay: -0.54s; }
+        .replay-sign-out-facet:nth-child(5) { animation-delay: -0.27s; }
+        .replay-sign-out-facet:nth-child(6) { animation-delay: 0s; }
+        .replay-sign-out-facet:nth-child(7) { animation-delay: -1.62s; }
+
+        @keyframes replay-sign-out-facet-breathe {
+          0%, 100% {
+            opacity: 0.25;
+            transform: translateY(1px) scale(0.96);
+          }
+          35% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          70% {
+            opacity: 0.4;
+            transform: translateY(-1px) scale(0.98);
+          }
+        }
+      `}</style>
+      <svg className="replay-sign-out-loader" viewBox="-5 0 225 200" aria-hidden="true">
+        <defs>
+          <clipPath id="replaySignOutClip">
+            <circle cx="95" cy="96" r="88" />
+          </clipPath>
+        </defs>
+        <g clipPath="url(#replaySignOutClip)">
+          <polygon className="replay-sign-out-facet" points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#22C7B5" />
+          <polygon className="replay-sign-out-facet" points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#BFFF5C" />
+          <polygon className="replay-sign-out-facet" points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#3FE0C9" />
+          <polygon className="replay-sign-out-facet" points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#1FA79B" />
+          <polygon className="replay-sign-out-facet" points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#186E7E" />
+          <polygon className="replay-sign-out-facet" points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#1C8AA0" />
+          <polygon className="replay-sign-out-facet" points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#6C4FE0" />
+        </g>
+        <polygon points="170,62 170,134 210,98" fill="#0B0F1A" />
+        <polygon points="172,68 172,128 206,98" fill="#D4FF4F" />
+        <circle cx="178" cy="46" r="7.5" fill="#0B0F1A" />
+        <circle cx="178" cy="46" r="5.5" fill="#FF5A3C" />
+      </svg>
     </div>
   );
 }
