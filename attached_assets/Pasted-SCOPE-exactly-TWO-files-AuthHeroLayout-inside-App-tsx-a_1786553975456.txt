@@ -1,0 +1,139 @@
+SCOPE: exactly TWO files. AuthHeroLayout (inside App.tsx) and
+artifacts/soccerwatch/src/lib/clerkAppearance.ts. Do not touch onboarding.tsx,
+layout.tsx, or any other file — Onboarding and Sign Up will inherit these
+fixes automatically since they already share these two pieces of code.
+
+Do not touch the back button or the language toggle — both are already
+correct and verified working in both languages. Do not touch any Clerk field,
+handler, validation, provider prop, or route.
+
+Every value below is copied exactly from the approved design reference. Do
+not approximate, round, or substitute a similar-looking value.
+
+=========================================================
+PART 1 — AuthHeroLayout background: replace entirely
+=========================================================
+
+REMOVE the current football pitch photo background and its overlay entirely.
+The approved design has NO photo — it is a pure dark background built from
+two layered elements.
+
+ADD, as the two bottom-most layers (behind all content):
+
+Layer 1 — the glow wash. A div covering the full area with:
+  position: absolute; inset: -10%; z-index: 0;
+  background:
+    radial-gradient(60% 45% at 15% 10%, rgba(47,216,196,.22), transparent 60%),
+    radial-gradient(55% 50% at 90% 20%, rgba(123,92,255,.2), transparent 60%),
+    radial-gradient(65% 55% at 25% 95%, rgba(212,255,79,.09), transparent 60%),
+    radial-gradient(70% 60% at 100% 100%, rgba(47,216,196,.12), transparent 60%),
+    linear-gradient(160deg, #0B0F1A, #0D1220 45%, #0B0F1A);
+  animation: rpDrift 18s ease-in-out infinite;
+
+  Add this keyframe if it doesn't already exist in the project's CSS:
+    @keyframes rpDrift {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(-3%, 3%); }
+    }
+
+Layer 2 — the dot-grid texture, directly above layer 1:
+  position: absolute; inset: 0; z-index: 0; opacity: .5;
+  background-image: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: radial-gradient(60% 60% at 50% 30%, #000, transparent);
+  -webkit-mask-image: radial-gradient(60% 60% at 50% 30%, #000, transparent);
+
+=========================================================
+PART 2 — AuthHeroLayout structure: separate the logo from the card
+=========================================================
+
+PROBLEM: the tiny logo currently sits inside the same flex column as the
+card, directly above it. It must instead sit in its OWN row, pinned near the
+true top of the screen, with the card centred independently in the remaining
+space below — these are two separate layout regions, not one stack.
+
+RESTRUCTURE into exactly this order, as siblings, both above the two
+background layers (z-index 10 or higher):
+
+  1. A row containing ONLY the tiny 26px logo mark:
+       display: flex; justify-content: center; padding: 20px 14px 0;
+     Keep the existing 26px inline SVG mark exactly as it is. Do not resize
+     it, do not add anything else to this row.
+
+  2. Below it, a SEPARATE container that vertically centres its children
+     (the Clerk card, or Onboarding's content) within the remaining height:
+       position: relative; z-index: 5;
+       min-height: calc(100vh - 46px);
+       display: flex; flex-direction: column; justify-content: center;
+       padding: 24px;
+
+The card must NOT be a flex sibling stacked directly under the logo in one
+column — it must be centred inside its own container as described in (2).
+
+=========================================================
+PART 3 — clerkAppearance.ts: the card surface
+=========================================================
+
+In the elements block:
+
+  Change cardBox's radius from 22px to 26px:
+    BEFORE: cardBox: "!rounded-[22px] w-[440px] max-w-full overflow-hidden shadow-2xl"
+    AFTER:  cardBox: "!rounded-[26px] w-[440px] max-w-full overflow-hidden"
+    (remove "shadow-2xl" — replaced by the explicit shadow below)
+
+  Change the card's background from a flat colour to the two-layer gradient:
+    BEFORE: "cardBox > div": { backgroundColor: "#141B2C" }
+    AFTER:  "cardBox > div": {
+      backgroundImage: "linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,.015))",
+      backgroundColor: "#141B2C",
+      border: "1px solid rgba(255,255,255,.09)",
+      boxShadow: "0 30px 70px rgba(0,0,0,.45)",
+    }
+
+Change nothing else in this file's elements, variables, or options blocks.
+
+=========================================================
+PART 4 — "Development mode" badge (optional, explicit ask)
+=========================================================
+
+I want this badge hidden for now, understanding it is intentional Clerk
+behaviour tied to test/development API keys and will need to be revisited
+before public launch when this project moves to production Clerk keys.
+
+If this appearance object is passed directly to <ClerkProvider appearance={...}>,
+add a sibling key to the existing top-level object:
+
+  layout: {
+    unsafe_disableDevelopmentModeWarnings: true, // TEMP: hides dev-mode badge.
+    // Clerk names this "unsafe" deliberately — remove before switching to
+    // production keys, so the badge can do its job of warning us if we
+    // forget to swap credentials.
+  }
+
+If the appearance object is NOT passed directly to ClerkProvider — if it goes
+through some other prop or wrapper — report that instead of guessing where
+to add this, and do not apply it.
+
+=========================================================
+VERIFY
+=========================================================
+
+Open Sign In, Sign Up, and Onboarding in the preview, in both languages.
+Confirm:
+  - no photo background anywhere — pure navy with the four-glow wash and
+    visible dot-grid texture, slowly drifting
+  - the tiny logo sits near the true top of the screen, with clear space
+    between it and the card below — not touching or crowding the card
+  - the card shows a subtle lighter-navy gradient surface, 26px corners, and
+    a visible soft shadow beneath it
+  - "Development mode" badge no longer visible, if Part 4 was applied
+  - back button and language toggle are UNCHANGED — still physical top-left
+    and top-right, still working, in both languages
+  - sign-in and sign-up still work completely with a real test session
+  - Home, View, My Clips, Profile still render exactly as before — this task
+    should not have touched anything that affects them
+
+A passing build is NOT sufficient. Open every screen in both languages before
+reporting done.
+
+Show me the complete diff of both files.

@@ -2,6 +2,9 @@ const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export const clerkAppearance = {
   cssLayerName: "clerk",
+  layout: {
+    unsafe_disableDevelopmentModeWarnings: true,
+  },
   options: {
     logoPlacement: "inside" as const,
     logoLinkUrl: basePath || "/",
@@ -31,12 +34,17 @@ export const clerkAppearance = {
   elements: {
     // Modal shell
     rootBox: "w-full flex justify-center",
-    cardBox: "!rounded-[22px] w-[440px] max-w-full overflow-hidden shadow-2xl",
+    cardBox: "!rounded-[26px] w-[440px] max-w-full overflow-hidden",
     card: "!shadow-none !border-0 !rounded-none" as string,
     footer: "!shadow-none !border-0 !rounded-none" as string,
 
     // Modal surface — navy (#141B2C)
-    "cardBox > div": { backgroundColor: "#141B2C" } as object,
+    "cardBox > div": {
+      backgroundImage: "linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,.015))",
+      backgroundColor: "#141B2C",
+      border: "1px solid rgba(255,255,255,.09)",
+      boxShadow: "0 30px 70px rgba(0,0,0,.45)",
+    } as object,
 
     // Header
     headerTitle: "font-bold",

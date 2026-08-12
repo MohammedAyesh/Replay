@@ -72,19 +72,36 @@ function AuthHeroLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="relative min-h-[100dvh] bg-[#0B0F1A] overflow-x-hidden">
-      <img
-        src={`${basePath}/auth-hero.png`}
-        alt=""
-        className="absolute inset-0 w-full h-full object-cover object-center"
+      <style>{`
+        @keyframes rpDrift {
+          0%, 100% { transform: translate(0, 0); }
+          50% { transform: translate(-3%, 3%); }
+        }
+      `}</style>
+      <div
+        className="absolute -inset-[10%] z-0"
+        style={{
+          background: `
+            radial-gradient(60% 45% at 15% 10%, rgba(47,216,196,.22), transparent 60%),
+            radial-gradient(55% 50% at 90% 20%, rgba(123,92,255,.2), transparent 60%),
+            radial-gradient(65% 55% at 25% 95%, rgba(212,255,79,.09), transparent 60%),
+            radial-gradient(70% 60% at 100% 100%, rgba(47,216,196,.12), transparent 60%),
+            linear-gradient(160deg, #0B0F1A, #0D1220 45%, #0B0F1A)
+          `,
+          animation: "rpDrift 18s ease-in-out infinite",
+        }}
         aria-hidden="true"
       />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/40 to-black/80" />
-      {/* Ambient glow */}
-      <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-        <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-[420px] h-[420px] rounded-full bg-[#2FD8C4]/20 blur-[90px]" />
-        <div className="absolute bottom-0 left-1/4 w-[320px] h-[320px] rounded-full bg-[#7B5CFF]/15 blur-[100px]" />
-        <div className="absolute top-1/3 right-0 w-[220px] h-[220px] rounded-full bg-[#D4FF4F]/10 blur-[80px]" />
-      </div>
+      <div
+        className="absolute inset-0 z-0 opacity-50"
+        style={{
+          backgroundImage: "radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px)",
+          backgroundSize: "26px 26px",
+          maskImage: "radial-gradient(60% 60% at 50% 30%, #000, transparent)",
+          WebkitMaskImage: "radial-gradient(60% 60% at 50% 30%, #000, transparent)",
+        }}
+        aria-hidden="true"
+      />
 
       {/* Back button — fixed, physical top-left in both languages */}
       <button
@@ -107,9 +124,8 @@ function AuthHeroLayout({ children }: { children: React.ReactNode }) {
         <span>{locale.toUpperCase()}</span>
       </button>
 
-      {/* Content — tiny logo mark above, children below */}
-      <div className="relative z-10 flex flex-col items-center w-full pt-16 pb-12 px-4 gap-5">
-        {/* Tiny logo mark — 26 px, ball geometry */}
+      {/* Tiny logo row */}
+      <div className="relative z-10 flex justify-center px-[14px] pt-5">
         <svg viewBox="-5 0 225 200" width="26" height="24" aria-hidden="true">
           <defs>
             <clipPath id="authMarkClip">
@@ -130,6 +146,9 @@ function AuthHeroLayout({ children }: { children: React.ReactNode }) {
           <circle cx="178" cy="46" r="7.5" fill="#0B0F1A" />
           <circle cx="178" cy="46" r="5.5" fill="#FF5A3C" />
         </svg>
+      </div>
+      {/* Independently centered auth content */}
+      <div className="relative z-[5] flex min-h-[calc(100vh-46px)] flex-col justify-center p-6">
         {children}
       </div>
     </div>
