@@ -1,0 +1,90 @@
+SCOPE: exactly TWO changes.
+  1. index.html — add a branded loading screen that renders before React starts
+  2. login.tsx — fix the Sign In and Create Account links so they no longer
+     trigger a full page reload
+
+Do not touch account.tsx's sign-out logic in any way — its window.location.replace
+call and the signOut()/timeout race are intentional, there to guarantee all
+cached data is fully cleared on logout, and must not be converted to a
+client-side transition. Confirm you understand this reasoning is correct
+before proceeding — if you find a reason this ISN'T actually intentional,
+stop and tell me instead of changing it.
+
+Do not touch onboarding, Clerk's internal flow, any route, query, or handler.
+
+--- PART 1: branded loading screen in index.html ---
+
+WHY: sign-out, and the "Continue with Google" return trip, both trigger a
+real full browser page reload — there is a genuine gap where NO JavaScript
+has run yet, so nothing built in React can render into it. The only thing
+that can cover this gap is something in the raw HTML itself, painted before
+the app's JS or stylesheet has loaded.
+
+WHAT TO BUILD:
+
+1. In index.html's <head>, add a small inline <style> block (not an external
+   file — it must be guaranteed available at first paint) that immediately
+   sets the page background to this app's dark navy void colour (#0B0F1A),
+   so the browser's default white never shows even for an instant.
+
+2. Inside that same inline style block, add markup and a CSS keyframe
+   animation for a small centered loading treatment using the app's logo
+   mark — reuse the exact facet geometry already used elsewhere in this
+   project (public/replay-mark.svg / the same SVG used in AuthHeroLayout).
+   Do not redraw or approximate the geometry.
+
+   For the animation: something like the logo's seven hexagonal facets
+   fading in and out in a staggered sequence, sweeping gently around the
+   shape — modern and simple, not busy. Pure CSS keyframes on the SVG
+   polygons' opacity, no JavaScript required for the animation itself.
+
+3. Place this loading markup as a child INSIDE the existing <div id="root">
+   element, before React mounts. When React's root renders, it will
+   naturally replace everything inside #root — which means the loader
+   disappears automatically the instant the app takes over. No manual
+   removal script needed; this is the simplest and safest handoff mechanism,
+   use it rather than inventing a separate cleanup step.
+
+This loader will now cover: the sign-out hard reload, the Google OAuth return
+trip, and as a side effect, any other hard navigation that might exist or
+appear in the future. That's the point — it's a general safety net, not a
+one-off patch for a single button.
+
+--- PART 2: fix the actual bug in login.tsx ---
+
+The Sign In and Create Account buttons on the landing page currently use
+plain <a href="..."> tags. Every other navigation in this app goes through
+the client-side router without a page reload — these two don't, and that's
+the direct cause of the flash on that specific transition.
+
+Convert both to the app's existing client-side navigation pattern (Wouter's
+Link component or setLocation — match whatever pattern is already used
+elsewhere in this file or in layout.tsx for internal navigation). Confirm
+Clerk's <SignIn />/<SignUp /> components still mount and function correctly
+once reached via client-side navigation instead of a hard link — if anything
+about Clerk's setup actually requires a real page load to work correctly,
+stop and tell me why before proceeding, rather than forcing the change.
+
+If this fix works, sign-in/sign-up should no longer show any flash at all —
+no reload happens, so there's nothing for the Part 1 loader to even cover on
+this path.
+
+--- VERIFY ---
+
+1. Press Sign In and Create Account from the landing page — confirm there is
+   NO white flash and ideally no full reload at all (check the Network tab
+   for a document navigation vs. a client-side transition).
+2. Sign out from the Profile page — confirm the branded loader appears
+   instead of a white flash, and that logout still fully completes and
+   redirects correctly.
+3. If reachable, test "Continue with Google" and confirm the loader also
+   covers that return trip.
+4. Confirm the loader always disappears correctly once the app has loaded —
+   it must never get stuck on screen.
+5. Confirm Sign In and Sign Up still work completely, with a real test
+   session, after the link-type change.
+
+A passing build is NOT sufficient — actually click through both flows and
+watch what happens, don't just inspect the code.
+
+Show me the complete diff.

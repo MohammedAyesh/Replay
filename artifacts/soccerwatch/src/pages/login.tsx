@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   useLoginAsGuest,
   listBanners,
@@ -472,8 +472,8 @@ export default function Login() {
             {/* Buttons */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24 }}>
               {/* Sign In — lime bg, DARK text */}
-              <a
-                href={`${basePath}/sign-in`}
+              <Link
+                href="/sign-in"
                 style={{
                   display: "block",
                   width: "100%",
@@ -493,11 +493,11 @@ export default function Login() {
                 }}
               >
                 {tc.signIn}
-              </a>
+              </Link>
 
               {/* Create Account — bordered translucent */}
-              <a
-                href={`${basePath}/sign-up`}
+              <Link
+                href="/sign-up"
                 style={{
                   display: "block",
                   width: "100%",
@@ -517,7 +517,7 @@ export default function Login() {
                 }}
               >
                 {tc.createAccount}
-              </a>
+              </Link>
 
               {/* "or" divider */}
               <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 0" }}>
