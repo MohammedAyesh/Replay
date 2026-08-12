@@ -488,7 +488,7 @@ export default function FieldDetail() {
 
       {/* ── Recordings tab (default / always shown when no live match) ──────── */}
       {(!varEnabled || currentTab === "recordings") && (
-        <div className="flex-1 overflow-y-auto pb-24">
+        <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
           {videosLoading ? (
             <div className="p-4 space-y-3">
               <div className="h-52 bg-muted rounded-2xl animate-pulse" />
@@ -580,7 +580,7 @@ export default function FieldDetail() {
 
       {/* ── VAR tab ──────────────────────────────────────────────────────────── */}
       {varEnabled && currentTab === "var" && (
-        <div className="flex-1 overflow-y-auto pb-24 px-4 py-4 space-y-4">
+        <div className="flex-1 overflow-y-auto no-scrollbar pb-24 px-4 py-4 space-y-4">
           {/* Match title + LIVE badge */}
           {matchData?.match && (
             <div className="flex items-center gap-2">

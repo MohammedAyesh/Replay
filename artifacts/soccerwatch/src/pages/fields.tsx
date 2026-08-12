@@ -54,7 +54,7 @@ export default function Fields({ embedded = false }: { embedded?: boolean }) {
         </div>
       </motion.div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-28">
+      <div className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-28">
         <div className="flex flex-col gap-3">
           {isLoading ? (
             <>

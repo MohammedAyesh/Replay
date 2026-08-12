@@ -104,7 +104,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
   const isMutating = followMutation.isPending || unfollowMutation.isPending;
 
   return (
-    <div className="flex-1 bg-background flex flex-col h-full overflow-y-auto">
+    <div className="flex-1 bg-background flex flex-col h-full overflow-y-auto no-scrollbar">
       {/* Top bar */}
       <div className="pt-safe px-4 pt-4 flex items-center gap-2 sticky top-0 z-10 bg-background/95 backdrop-blur-md pb-3">
         <button

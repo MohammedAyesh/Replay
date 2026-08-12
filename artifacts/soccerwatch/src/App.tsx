@@ -114,7 +114,7 @@ function AuthHeroLayout({
   };
 
   return (
-    <div className="relative min-h-[100dvh] bg-[#0B0F1A] overflow-x-hidden">
+    <div className="relative h-[100dvh] min-h-[100dvh] overflow-x-hidden overflow-y-auto no-scrollbar bg-[#0B0F1A]">
       <style>{`
         @keyframes rpDrift {
           0%, 100% { transform: translate(0, 0); }

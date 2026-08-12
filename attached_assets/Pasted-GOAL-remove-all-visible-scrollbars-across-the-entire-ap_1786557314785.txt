@@ -1,0 +1,80 @@
+GOAL: remove all visible scrollbars across the entire app, on every device,
+permanently — not just hide them on one page. Scrolling itself (touch, wheel,
+keyboard) must keep working exactly as it does today. This is a visual-only
+change.
+
+This project already has a "no-scrollbar" utility class defined in index.css,
+already applied successfully to the Home page. Reuse that exact same class
+everywhere — do not create a new one, do not write new scrollbar CSS.
+
+Attached: two screenshots showing scrollbar problems —
+  1. The onboarding page, showing what looks like a DUPLICATED scrollbar
+     (two separate scroll tracks visible).
+  2. The View page, Academies section, when an academy card is expanded —
+     shows a scrollbar appearing there.
+
+--- STEP 1: FIND EVERY SCROLLING ELEMENT. Report before changing anything. ---
+
+Search the whole frontend for every element that can scroll — anything with
+overflow-y-auto, overflow-auto, overflow-scroll, or similar. For each one,
+report the file and the element.
+
+For the onboarding page specifically: identify whether there are TWO nested
+elements both capable of scrolling at the same time — a parent AND a child.
+This exact bug (nested double-scroll) has happened three times before in this
+project, always caused by a scrollable child sitting inside a parent that is
+ALSO scrollable, instead of the parent being a fixed, non-scrolling container.
+Confirm whether that's what's happening here.
+
+For the View/Academies expanded-card case: identify what element is actually
+scrolling when a card expands — is it the whole page, or a container specific
+to the expanded content?
+
+Report all of this before making any change.
+
+--- STEP 2: FIX EACH ONE ---
+
+For any TRUE duplicate-scroll case found (two elements both able to scroll for
+the same content): fix the STRUCTURE first. The outer/parent element should
+NOT scroll — it should be a fixed container. Only ONE element per screen
+should actually be the scrolling one. Do not just hide both scrollbars while
+leaving two elements both capable of scrolling — that hides the symptom and
+leaves the actual bug in place, which can cause janky or double-speed
+scrolling under a user's thumb.
+
+Once each screen has exactly ONE correct scrolling element, add the existing
+"no-scrollbar" class to that element — and only that element — so its track
+is hidden but it still scrolls normally by touch, wheel, and keyboard.
+
+Apply this consistently across every page and every scrollable region in the
+app — not just the two screenshots. If you find other scrolling elements
+during Step 1 that already show a visible scrollbar, fix those too using the
+same class.
+
+--- MUST NOT CHANGE ---
+
+Any layout, spacing, sizing, or visual design beyond removing the scrollbar
+track. Any data, query, handler, mutation, or route. Any page's existing
+functionality. The floating bottom nav, the sticky headers, or any existing
+scroll-related fix already in place (e.g. the flex/min-h-0 pattern used to fix
+earlier scroll bugs on Account and My Clips) — do not undo any of those, only
+add the scrollbar-hiding class on top of correctly-structured containers.
+
+--- VERIFY ---
+
+For every page in the app — Home, View (both Fields and Academies sections,
+including an EXPANDED academy card), My Clips, Profile, Field Detail,
+Onboarding, Sign In, Sign Up, and Admin if reachable — confirm:
+  - no visible scrollbar track anywhere, on desktop AND on a narrow/mobile
+    viewport
+  - scrolling still works normally everywhere — actually scroll each page,
+    don't just look at it
+  - the onboarding page specifically shows only ONE scroll behavior, not two
+  - the expanded academy card in View scrolls smoothly with no visible track
+  - nothing is clipped, cut off, or unreachable that was reachable before
+
+A passing build is NOT sufficient — this project has shipped scroll bugs that
+passed the build before. Actually scroll through every page listed above
+before reporting done.
+
+Show me the complete diff, and a short list of every file you touched.

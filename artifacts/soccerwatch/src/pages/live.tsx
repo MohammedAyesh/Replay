@@ -11,7 +11,7 @@ const CAMERAS = [
 
 export default function Live() {
   return (
-    <div className="flex-1 overflow-y-auto bg-background">
+    <div className="flex-1 overflow-y-auto no-scrollbar bg-background">
       <div className="px-4 pt-6 pb-4 flex items-center gap-3">
         <div className="flex items-center gap-2">
           <Radio className="w-5 h-5 text-red-500" />

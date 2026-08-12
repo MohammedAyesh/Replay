@@ -114,7 +114,7 @@ export default function Account() {
         <p className="text-sm text-muted-foreground">{isGuest ? t.account.guestSubtitle : t.account.subtitle}</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-28">
+      <div className="flex-1 overflow-y-auto no-scrollbar pb-28">
         {/* Profile Card */}
         <div className="bg-background px-4 pb-4">
           <div className="flex items-center gap-3">

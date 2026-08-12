@@ -891,7 +891,7 @@ export default function MyClips() {
         </div>
       </motion.div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-28">
+      <div className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-28">
         <AnimatePresence mode="wait">
           {tab === "saved" ? (
             <motion.div

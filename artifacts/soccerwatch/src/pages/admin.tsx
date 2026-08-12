@@ -1804,7 +1804,7 @@ function AcademiesTab() {
                             }
 
                             return (
-                              <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                              <div className="space-y-1.5 max-h-72 overflow-y-auto no-scrollbar">
                                 {fieldRecs.map((rec) => {
                                   const isLinked = linked.has(rec.id);
                                   return (
@@ -4628,7 +4628,7 @@ export default function Admin() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-zinc-800/60 bg-zinc-950 flex-shrink-0 px-2 overflow-x-auto scrollbar-none" style={{ scrollbarWidth: "none" }}>
+      <div className="flex border-b border-zinc-800/60 bg-zinc-950 flex-shrink-0 px-2 overflow-x-auto no-scrollbar">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -4647,7 +4647,7 @@ export default function Admin() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 pb-24">
+      <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-24">
         {tab === "clips" && <ClipsTab />}
         {tab === "accounts" && <AccountsTab />}
         {tab === "fields" && <FieldsTab />}
