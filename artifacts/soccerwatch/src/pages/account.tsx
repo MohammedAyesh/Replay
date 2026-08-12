@@ -73,7 +73,9 @@ export default function Account() {
 
     // Sign out of Clerk, then navigate.  We race against a 2-second timeout
     // so the user isn't stuck if signOut hangs or never resolves.
+    console.time("[Replay] Clerk signOut");
     const signOutPromise = signOut().catch(() => {});
+    signOutPromise.then(() => console.timeEnd("[Replay] Clerk signOut"));
     const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2000));
     Promise.race([signOutPromise, timeoutPromise]).then(() => {
       window.location.replace(`${basePath}/`);
