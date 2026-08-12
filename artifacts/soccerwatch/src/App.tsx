@@ -75,13 +75,17 @@ function AuthHeroLayout({ children }: { children: React.ReactNode }) {
 
       if (!exactTextElement) return;
 
-      const badge =
-        exactTextElement.parentElement?.textContent?.trim().toLowerCase() ===
-        "development mode"
-          ? exactTextElement.parentElement
-          : exactTextElement;
+      let badge: HTMLElement | null = exactTextElement as HTMLElement;
+      while (
+        badge.parentElement &&
+        badge.parentElement !== card &&
+        badge.parentElement.textContent?.trim().toLowerCase() ===
+          "development mode"
+      ) {
+        badge = badge.parentElement;
+      }
 
-      (badge as HTMLElement).style.display = "none";
+      badge.style.display = "none";
     };
 
     hideDevelopmentBadge();
@@ -109,6 +113,36 @@ function AuthHeroLayout({ children }: { children: React.ReactNode }) {
         @keyframes rpDrift {
           0%, 100% { transform: translate(0, 0); }
           50% { transform: translate(-3%, 3%); }
+        }
+        .cl-cardBox,
+        .cl-cardBox .cl-footer,
+        .cl-cardBox .cl-footerAction {
+          background: #141B2C !important;
+          background-color: #141B2C !important;
+          border-color: transparent !important;
+          box-shadow: none !important;
+        }
+        .cl-cardBox .cl-footer {
+          padding: 0 24px 26px !important;
+        }
+        .cl-cardBox .cl-footerAction {
+          display: flex !important;
+          flex-direction: row !important;
+          align-items: center !important;
+          justify-content: center !important;
+          gap: 4px !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          white-space: nowrap !important;
+        }
+        .cl-cardBox .cl-footerActionText,
+        .cl-cardBox .cl-footerActionLink {
+          margin: 0 !important;
+          white-space: nowrap !important;
+        }
+        .cl-cardBox [class*="development"],
+        .cl-cardBox [data-localization-key*="development"] {
+          display: none !important;
         }
       `}</style>
       <div

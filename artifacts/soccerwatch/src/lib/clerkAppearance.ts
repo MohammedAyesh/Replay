@@ -33,13 +33,13 @@ export const clerkAppearance = {
   },
   elements: {
     // Modal shell
-    rootBox: "!w-[calc(100%+48px)] !-mx-6 flex justify-center",
+    rootBox: "w-full flex justify-center",
     cardBox:
-      "!rounded-[26px] !w-full !max-w-[440px] !overflow-hidden !border !border-white/[0.09] !bg-[#141B2C] !shadow-[0_30px_70px_rgba(0,0,0,0.45)]",
+      "!rounded-[26px] !w-[400px] !max-w-full !mx-auto !overflow-hidden !border !border-white/[0.09] !bg-[#141B2C] !shadow-[0_30px_70px_rgba(0,0,0,0.45)]",
     card:
       "!shadow-none !border-0 !rounded-none !bg-transparent !px-6 !pt-[30px] !pb-[26px]" as string,
     footer:
-      "!shadow-none !border-0 !rounded-none !bg-transparent !px-6 !pb-[26px]" as string,
+      "!shadow-none !border-0 !rounded-none !bg-[#141B2C] !px-6 !pb-[26px]" as string,
 
     // Header
     headerTitle: "!font-['Cairo'] !font-extrabold !text-[19px] !leading-[1.35]",
@@ -67,9 +67,11 @@ export const clerkAppearance = {
 
     // Footer & links — preserve the existing sign-in/sign-up actions
     footerAction:
-      "!bg-[#141B2C] !shadow-none !border-0 !px-6 !pb-[26px]",
-    footerActionText: "!mt-[18px] !text-white/[0.5] !text-[12.5px] !font-semibold",
-    footerActionLink: "!text-[#D4FF4F] !font-extrabold",
+      "!flex !flex-row !items-center !justify-center !gap-1 !whitespace-nowrap !bg-[#141B2C] !shadow-none !border-0 !px-0 !pb-0",
+    footerActionText:
+      "!mt-0 !whitespace-nowrap !text-white/[0.5] !text-[12.5px] !font-semibold",
+    footerActionLink:
+      "!whitespace-nowrap !text-[#D4FF4F] !font-extrabold",
 
     // Dividers — visible, but quiet
     dividerText: "!text-white/[0.4] !text-[11.5px] !font-semibold",
