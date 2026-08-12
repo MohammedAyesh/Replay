@@ -1,0 +1,81 @@
+SCOPE: two separate problems. Investigate BOTH, but keep them as fully
+independent findings — do not let one investigation's assumptions bleed into
+the other. Do NOT make any code change in this task. Read-only only.
+
+=========================================================
+PROBLEM 1 — sign-out still shows white before the loader appears
+=========================================================
+
+CRITICAL DETAIL: the sequence is white flash FIRST, then the branded loader
+appears, then sign-out actually completes. This means the loader is likely
+rendering successfully — but something is still painting white BEFORE it
+gets a chance to. This is a different bug than "the loader isn't there."
+
+Investigate, in order:
+
+1. Confirm the loader markup added to index.html is still present exactly as
+   built — check it wasn't accidentally removed or altered in this or any
+   later task.
+
+2. Check the EXACT inline <style> block placement in index.html's <head>.
+   Is it truly inline (not an external stylesheet link, not something loaded
+   asynchronously)? Anything that isn't inline and synchronous can itself
+   arrive too late to prevent an initial white paint.
+
+3. Check whether there's ANY other stylesheet, font import, or resource in
+   index.html's <head> that loads BEFORE the inline loader style — order
+   matters here, since the browser paints progressively as it parses.
+
+4. Check the actual sign-out code path in account.tsx again. Does anything
+   run BEFORE window.location.replace() is called that could cause a visible
+   blank frame — for example, does the current page's content unmount or
+   clear itself first, revealing a white gap, before the navigation even
+   starts?
+
+5. Check whether the loader's background colour and the loader element itself
+   are both present at the very start of <body>, or whether there's any
+   possibility the browser paints an unstyled #root div (default white/
+   transparent) for even one frame before the inline style applies.
+
+6. Test this literally: use browser dev tools network throttling (slow 3G) on
+   the sign-out flow specifically, and describe frame by frame what actually
+   paints, in what order, with rough timing. This is worth doing directly
+   rather than only reading source code, since the bug is about paint timing,
+   which source alone won't fully explain.
+
+Report your findings precisely — which exact thing is painting white, and
+when, before the loader takes over.
+
+=========================================================
+PROBLEM 2 — add a loading state to /view (Fields and Academies take ~2s)
+=========================================================
+
+This is NOT a hard page reload — /view is a client-side page, already running
+inside React, simply waiting on network requests to finish. Do not reuse or
+adapt the index.html sign-out loader for this — that mechanism is for a
+different kind of gap and does not belong here.
+
+Investigate:
+
+1. Confirm exactly which network requests /view is waiting on, and roughly
+   how long they take right now — is it consistently ~2 seconds, or does it
+   vary a lot? (We just added server-side caching to the Fields collections
+   endpoint in an earlier task — confirm whether that's still working, since
+   if Fields is still slow, that cache may need checking rather than papering
+   over the delay with a loader.)
+
+2. Does /view (or the Fields/Academies components it renders) currently show
+   ANY loading state at all right now — a spinner, a skeleton, blank space,
+   or nothing?
+
+3. Report exactly which component(s) would need a loading state: the /view
+   container itself, or the individual Fields/Academies list components it
+   renders (embedded mode)?
+
+4. Confirm whether this project already has any other in-app (not
+   full-page-reload) loading pattern used elsewhere — e.g. skeleton loaders
+   on other pages — that this should match for consistency, rather than
+   inventing a new visual style.
+
+Report your findings. Do not propose or apply a fix for either problem yet —
+that comes in a separate task once both root causes are actually confirmed.
