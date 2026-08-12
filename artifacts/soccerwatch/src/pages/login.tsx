@@ -439,7 +439,7 @@ export default function Login() {
                 fontFamily: headFont,
                 fontWeight: 700,
                 fontSize: 42,
-                lineHeight: 1,
+                lineHeight: 1.05,
                 letterSpacing: "-0.02em",
               }}
             >
