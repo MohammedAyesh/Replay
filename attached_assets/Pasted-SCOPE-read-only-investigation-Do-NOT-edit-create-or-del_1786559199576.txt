@@ -1,0 +1,54 @@
+SCOPE: read-only investigation. Do NOT edit, create, or delete any file, and
+do not write any code in this task.
+
+PROBLEM: a plain white page briefly fills the entire screen — a few seconds —
+during two specific moments:
+  1. Pressing Sign In or Create Account on the landing page (the flash happens
+     at that first transition specifically, not during Clerk's later internal
+     steps like entering a code).
+  2. Pressing Sign Out on the Profile page.
+
+CONTEXT FOR YOU, NOT YET AN INSTRUCTION TO BUILD: we plan to replace this
+white flash with a small centered branded loading animation — likely the
+Replay logo mark, possibly with its hexagonal facets appearing/fading in
+sequence. Do not build this yet. This investigation exists to determine
+whether that's even possible, and where it would need to live if so.
+
+--- QUESTIONS TO ANSWER ---
+
+1. THE CRITICAL QUESTION: when Sign In/Create Account succeeds and redirects
+   to /home, is this a FULL BROWSER PAGE RELOAD (the whole document unloads
+   and reloads — check the Network tab for a full navigation/document
+   request, or check whether forceRedirectUrl on the Clerk component triggers
+   window.location assignment under the hood), OR is it a client-side route
+   change that stays within the already-running React app? These are very
+   different, and determine what kind of fix is even possible.
+
+2. Same question for Sign Out: find the exact handler on the Profile page.
+   Does it call something like window.location.href, window.location.reload,
+   or a full navigation — or does it use the app's client-side router? Report
+   the exact code.
+
+3. If either case IS a full page reload: a real gap exists where NO
+   JavaScript has run yet — nothing built in React can paint into that gap.
+   Confirm whether that's actually happening here.
+
+4. Check index.html and the earliest-loading CSS: is a background colour set
+   on <html> or <body> BEFORE the app's stylesheet loads? If not, that alone
+   would explain a white flash during any hard navigation — the browser's
+   default white shows until CSS applies. This is worth fixing regardless of
+   anything else found.
+
+5. This project has an existing mechanism referred to as "skip-flash" (it was
+   mentioned as an existing safeguard that must keep working during an
+   earlier task). Find it, report exactly what it does, what page/moment it
+   currently covers, and whether it is relevant to or could be extended to
+   cover this exact problem.
+
+6. Confirm whether the same white-flash issue also happens on Verify Email or
+   Complete Profile (the other Clerk-related transitions), or if it's truly
+   isolated to the two moments described.
+
+Report your findings on all six points, with exact file names and line
+references where relevant. Do not propose a fix or write any code — that
+comes in a separate task once we understand the actual cause.
