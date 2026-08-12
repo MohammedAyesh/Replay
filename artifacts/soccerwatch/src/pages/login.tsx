@@ -106,7 +106,7 @@ const COPY = {
     createAccount: "إنشاء حساب",
     browseGuest: "تصفح كزائر",
     or: "أو",
-    heroLine1: "مش لازم تحكي عنها —",
+    heroLine1: "مش لازم تحكي عنها",
     heroLine2: "إحنا صورناها.",
     heroSub:
       "دقائق بعد صافرة النهاية، تكون في التطبيق — جاهزة للمشاهدة والقص والمشاركة.",
@@ -424,7 +424,7 @@ export default function Login() {
               position: "absolute",
               inset: 0,
               background:
-                "radial-gradient(ellipse 95% 82% at 50% 42%,rgba(11,15,26,0) 0%,rgba(11,15,26,.08) 52%,rgba(11,15,26,.68) 100%),linear-gradient(180deg,rgba(11,15,26,.18) 0%,rgba(11,15,26,0) 42%,rgba(11,15,26,.78) 100%)",
+                "radial-gradient(ellipse 95% 82% at 50% 42%,rgba(11,15,26,0) 0%,rgba(11,15,26,.16) 52%,rgba(11,15,26,.85) 100%),linear-gradient(180deg,rgba(11,15,26,.32) 0%,rgba(11,15,26,0) 42%,rgba(11,15,26,.92) 100%)",
             }}
           />
 
@@ -439,7 +439,7 @@ export default function Login() {
                 fontFamily: headFont,
                 fontWeight: 700,
                 fontSize: 42,
-                lineHeight: 1.08,
+                lineHeight: 0.98,
                 letterSpacing: "-0.02em",
               }}
             >

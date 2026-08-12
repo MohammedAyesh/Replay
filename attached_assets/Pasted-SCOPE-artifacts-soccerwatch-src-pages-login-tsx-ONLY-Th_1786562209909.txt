@@ -1,0 +1,53 @@
+SCOPE: artifacts/soccerwatch/src/pages/login.tsx ONLY. The hero background
+region. Do not touch any button, handler, route, the language toggle, the
+entrance animation timing added in the prior task, or any section below the
+hero.
+
+--- PART 1: STRENGTHEN THE VIGNETTE ---
+
+The current vignette is the correct SHAPE (radial, edge-darkened, clear
+center) but too LIGHT overall — it doesn't read as a visible change from the
+previous flat overlay. Increase its strength, keeping the same radial shape
+and the same navy #0B0F1A colour throughout — do not introduce any other
+colour, do not go back to a flat full-image tint.
+
+Take the current overlay:
+  radial-gradient(ellipse 95% 82% at 50% 42%, rgba(11,15,26,0) 0%, rgba(11,15,26,.08) 52%, rgba(11,15,26,.68) 100%),
+  linear-gradient(180deg, rgba(11,15,26,.18) 0%, rgba(11,15,26,0) 42%, rgba(11,15,26,.78) 100%)
+
+Increase the opacity values so the edges and top/bottom read as noticeably
+darker while the CENTER of the image (where the vignette is currently at 0%
+opacity) stays clear and unobscured. As a starting point, roughly double the
+non-zero opacity values (e.g. .08 → .16, .68 → .85, .18 → .32, .78 → .92,
+adjust as needed), but use your own judgement so the result is clearly darker
+at the edges without ever looking like a flat filled tint across the whole
+image. The 0% centre stop stays at 0 opacity — the middle of the photo must
+remain the brightest, clearest part.
+
+--- PART 2: TIGHTEN THE HEADLINE ---
+
+Remove the em dash currently at the end of the first headline line, in BOTH
+languages:
+  English line 1: "No need to tell the story. —" -> "No need to tell the story."
+  Arabic line 1: "مش لازم تحكي عنها —" -> "مش لازم تحكي عنها"
+
+Reduce the vertical gap between the two headline lines so they read as one
+tight, connected statement rather than two separated lines. Adjust the
+line-height or margin between them — whichever currently controls that
+spacing — to bring them noticeably closer together.
+
+--- MUST NOT CHANGE ---
+
+Any button, handler, route, or the language toggle. The entrance animation
+timing and stagger already implemented. The subtitle text. Any section below
+the hero.
+
+--- VERIFY ---
+
+Hard-reload the landing page in both languages. Confirm the vignette is
+CLEARLY darker at the edges than before, with the center of the image still
+bright and clear — not just marginally different. Confirm no dash appears
+between the two headline lines and they now sit visibly closer together.
+Confirm buttons still work.
+
+Show me the diff.
