@@ -176,24 +176,26 @@ function AuthHeroLayout({
         aria-hidden="true"
       />
 
-      {/* Back button — fixed, physical top-left in both languages */}
+      {/* Auth controls stay fixed inside the centered 440px app frame on desktop. */}
       {showBackButton && (
         <button
           type="button"
           onClick={handleBack}
           aria-label="Back"
-          className="fixed left-3 top-3 z-50 flex h-[34px] w-[34px] items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white"
+          className="fixed top-3 z-50 flex h-[34px] w-[34px] items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white"
+          style={{ left: "max(12px, calc(50% - 220px + 12px))" }}
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
       )}
 
-      {/* Language toggle — fixed, physical top-right in both languages */}
+      {/* Language toggle — physical top-right within the app frame in both languages */}
       <button
         type="button"
         onClick={() => setLocale(locale === "ar" ? "en" : "ar")}
         aria-label={t.language}
-        className="fixed right-3 top-3 z-50 flex items-center gap-1.5 rounded-[99px] border border-white/10 bg-white/[0.04] px-3.5 py-2 text-sm font-semibold text-white"
+        className="fixed top-3 z-50 flex items-center gap-1.5 rounded-[99px] border border-white/10 bg-white/[0.04] px-3.5 py-2 text-sm font-semibold text-white"
+        style={{ right: "max(12px, calc(50% - 220px + 12px))" }}
       >
         <Globe className="h-4 w-4" aria-hidden="true" />
         <span>{locale.toUpperCase()}</span>
