@@ -424,7 +424,7 @@ export default function Login() {
               position: "absolute",
               inset: 0,
               background:
-                "radial-gradient(ellipse 110% 88% at 50% 44%,rgba(11,15,26,0) 0%,rgba(11,15,26,.05) 34%,rgba(11,15,26,.22) 70%,rgba(11,15,26,.84) 100%),linear-gradient(180deg,rgba(11,15,26,.38) 0%,rgba(11,15,26,.12) 35%,rgba(11,15,26,.24) 68%,rgba(11,15,26,.94) 100%)",
+                "radial-gradient(ellipse 110% 88% at 50% 44%,rgba(11,15,26,0) 0%,rgba(11,15,26,.04) 34%,rgba(11,15,26,.18) 70%,rgba(11,15,26,.34) 100%),linear-gradient(180deg,rgba(11,15,26,.12) 0%,rgba(11,15,26,0) 35%,rgba(11,15,26,.12) 68%,rgba(11,15,26,.28) 100%),rgba(11,15,26,.6)",
             }}
           />
 
