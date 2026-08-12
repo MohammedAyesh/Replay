@@ -444,7 +444,7 @@ export default function Login() {
               }}
             >
               <span style={{ display: "block", color: "#F3F6FA" }}>{tc.heroLine1}</span>
-              <span style={{ display: "block", color: "#D4FF4F" }}>{tc.heroLine2}</span>
+              <span style={{ display: "block", position: "relative", top: 3, color: "#D4FF4F" }}>{tc.heroLine2}</span>
             </motion.h1>
             <motion.p
               initial={{ opacity: 0, y: 12 }}
