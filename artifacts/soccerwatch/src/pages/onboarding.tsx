@@ -11,18 +11,12 @@ import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
 
-const POSITIONS = [
-  { value: "goalkeeper", label: "Goalkeeper" },
-  { value: "defender", label: "Defender" },
-  { value: "midfielder", label: "Midfielder" },
-  { value: "forward", label: "Forward" },
-];
-
-const GENDERS = [
-  { value: "male", label: "Male" },
-  { value: "female", label: "Female" },
-  { value: "prefer_not_to_say", label: "Prefer not to say" },
-];
+const POSITION_VALUES = ["goalkeeper", "defender", "midfielder", "forward"] as const;
+const GENDER_VALUES = [
+  { value: "male", labelKey: "male" },
+  { value: "female", labelKey: "female" },
+  { value: "prefer_not_to_say", labelKey: "preferNotToSay" },
+] as const;
 
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 28 },
@@ -32,7 +26,7 @@ const fadeUp = (delay = 0) => ({
 
 export default function Onboarding() {
   const [, setLocation] = useLocation();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const { toast } = useToast();
   const { user: authUser, isLoading: authLoading, isGuest } = useAuth();
   const { isSignedIn } = useUser();
@@ -47,6 +41,9 @@ export default function Onboarding() {
 
   const queryClient = useQueryClient();
   const updateProfile = useUpdateProfile();
+  const copy = t.onboarding;
+  const isArabic = locale === "ar";
+  const textDirection = isArabic ? "rtl" : "ltr";
 
   // Guard: only kick truly unauthenticated users to login. If Clerk says
   // the user IS signed in, wait for the local user record to arrive instead
@@ -90,7 +87,11 @@ export default function Onboarding() {
           setLocation("/home");
         },
         onError: () => {
-          toast({ variant: "destructive", title: "Failed to save profile", description: "Please try again" });
+          toast({
+            variant: "destructive",
+            title: copy.saveFailed,
+            description: copy.saveFailedDesc,
+          });
         },
       }
     );
@@ -109,12 +110,23 @@ export default function Onboarding() {
   }
 
   return (
-    <div className="w-full flex flex-col text-white">
-      <motion.h1 {...fadeUp(0.1)} className="text-3xl font-bold leading-tight mb-2">
-        Complete your profile
+    <div
+      dir={textDirection}
+      className={`w-full flex flex-col text-white ${isArabic ? "text-right" : "text-left"}`}
+      style={{
+        fontFamily: isArabic
+          ? "'Tajawal', 'Cairo', sans-serif"
+          : "'Inter', system-ui, sans-serif",
+      }}
+    >
+      <motion.h1
+        {...fadeUp(0.1)}
+        className={`mb-2 text-3xl font-bold leading-tight ${isArabic ? "font-['Cairo']" : ""}`}
+      >
+        {copy.title}
       </motion.h1>
-      <motion.p {...fadeUp(0.15)} className="text-[#2FD8C4] text-sm mb-8">
-        Help us personalize your Replay experience.
+      <motion.p {...fadeUp(0.15)} className="mb-8 text-sm text-[#2FD8C4]">
+        {copy.subtitle}
       </motion.p>
 
       <motion.form
@@ -123,48 +135,58 @@ export default function Onboarding() {
         className="flex flex-col gap-4"
       >
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-name" className="text-white/80 text-sm font-medium">Full name</Label>
+          <Label htmlFor="onboarding-name" className="text-sm font-medium text-white/80">
+            {copy.fullName}
+          </Label>
           <Input
             id="onboarding-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Your full name"
-            className="rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
+            placeholder={copy.fullNamePlaceholder}
+            className={`h-12 rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary ${isArabic ? "text-right" : "text-left"}`}
             autoComplete="name"
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-phone" className="text-white/80 text-sm font-medium">Phone number</Label>
+          <Label htmlFor="onboarding-phone" className="text-sm font-medium text-white/80">
+            {copy.phoneNumber}
+          </Label>
           <Input
             id="onboarding-phone"
             type="tel"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            placeholder="+1 555 000 0000"
-            className="rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
+            placeholder={copy.phonePlaceholder}
+            className={`h-12 rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary ${isArabic ? "text-right" : "text-left"}`}
             autoComplete="tel"
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-position" className="text-white/80 text-sm font-medium">Preferred position</Label>
+          <Label htmlFor="onboarding-position" className="text-sm font-medium text-white/80">
+            {copy.preferredPosition}
+          </Label>
           <select
             id="onboarding-position"
             value={position}
             onChange={(e) => setPosition(e.target.value)}
-            className="w-full h-12 rounded-[13px] bg-white/[0.04] border border-white/10 text-white px-3 focus:outline-none focus:ring-2 focus:ring-primary appearance-none"
+            className={`h-12 w-full appearance-none rounded-[13px] border border-white/10 bg-white/[0.04] px-3 text-white focus:outline-none focus:ring-2 focus:ring-primary ${isArabic ? "text-right" : "text-left"}`}
             style={{ backgroundImage: "none" }}
           >
-            <option value="" disabled className="text-black">Select position</option>
-            {POSITIONS.map((p) => (
-              <option key={p.value} value={p.value} className="text-black">{p.label}</option>
+            <option value="" disabled className="text-black">{copy.selectPosition}</option>
+            {POSITION_VALUES.map((value) => (
+              <option key={value} value={value} className="text-black">
+                {copy.positions[value]}
+              </option>
             ))}
           </select>
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-age" className="text-white/80 text-sm font-medium">Age</Label>
+          <Label htmlFor="onboarding-age" className="text-sm font-medium text-white/80">
+            {copy.age}
+          </Label>
           <Input
             id="onboarding-age"
             type="number"
@@ -172,23 +194,27 @@ export default function Onboarding() {
             max={99}
             value={age}
             onChange={(e) => setAge(e.target.value)}
-            placeholder="25"
-            className="rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary h-12"
+            placeholder={copy.agePlaceholder}
+            className={`h-12 rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary ${isArabic ? "text-right" : "text-left"}`}
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-gender" className="text-white/80 text-sm font-medium">Gender</Label>
+          <Label htmlFor="onboarding-gender" className="text-sm font-medium text-white/80">
+            {copy.gender}
+          </Label>
           <select
             id="onboarding-gender"
             value={gender}
             onChange={(e) => setGender(e.target.value)}
-            className="w-full h-12 rounded-[13px] bg-white/[0.04] border border-white/10 text-white px-3 focus:outline-none focus:ring-2 focus:ring-primary appearance-none"
+            className={`h-12 w-full appearance-none rounded-[13px] border border-white/10 bg-white/[0.04] px-3 text-white focus:outline-none focus:ring-2 focus:ring-primary ${isArabic ? "text-right" : "text-left"}`}
             style={{ backgroundImage: "none" }}
           >
-            <option value="" disabled className="text-black">Select gender</option>
-            {GENDERS.map((g) => (
-              <option key={g.value} value={g.value} className="text-black">{g.label}</option>
+            <option value="" disabled className="text-black">{copy.selectGender}</option>
+            {GENDER_VALUES.map(({ value, labelKey }) => (
+              <option key={value} value={value} className="text-black">
+                {copy.genders[labelKey]}
+              </option>
             ))}
           </select>
         </div>
@@ -197,9 +223,9 @@ export default function Onboarding() {
           <Button
             type="submit"
             disabled={!allFilled || updateProfile.isPending}
-            className="w-full bg-primary hover:bg-primary/90 text-[#0B0F1A] font-semibold py-4 rounded-[14px] text-base disabled:opacity-50"
+            className="w-full rounded-[14px] bg-primary py-4 text-base font-semibold text-[#0B0F1A] hover:bg-primary/90 disabled:opacity-50"
           >
-            {updateProfile.isPending ? "Saving..." : "Continue"}
+            {updateProfile.isPending ? copy.saving : copy.continue}
           </Button>
         </div>
       </motion.form>

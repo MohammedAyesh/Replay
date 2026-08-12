@@ -58,7 +58,13 @@ if (!clerkPubKey) {
   throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY");
 }
 
-function AuthHeroLayout({ children }: { children: React.ReactNode }) {
+function AuthHeroLayout({
+  children,
+  showBackButton = true,
+}: {
+  children: React.ReactNode;
+  showBackButton?: boolean;
+}) {
   const { t, locale, setLocale } = useTranslation();
   const [, setLocation] = useLocation();
 
@@ -171,14 +177,16 @@ function AuthHeroLayout({ children }: { children: React.ReactNode }) {
       />
 
       {/* Back button — fixed, physical top-left in both languages */}
-      <button
-        type="button"
-        onClick={handleBack}
-        aria-label="Back"
-        className="fixed left-3 top-3 z-50 flex h-[34px] w-[34px] items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white"
-      >
-        <ArrowLeft className="h-4 w-4" />
-      </button>
+      {showBackButton && (
+        <button
+          type="button"
+          onClick={handleBack}
+          aria-label="Back"
+          className="fixed left-3 top-3 z-50 flex h-[34px] w-[34px] items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+      )}
 
       {/* Language toggle — fixed, physical top-right in both languages */}
       <button
@@ -304,7 +312,7 @@ function AppRouter() {
         <Route path="/sign-in/*?" component={SignInPage} />
         <Route path="/sign-up/*?" component={SignUpPage} />
         <Route path="/onboarding">
-          <AuthHeroLayout>
+          <AuthHeroLayout showBackButton={false}>
             <Onboarding />
           </AuthHeroLayout>
         </Route>
