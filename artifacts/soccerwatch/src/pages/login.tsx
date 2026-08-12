@@ -424,7 +424,7 @@ export default function Login() {
               position: "absolute",
               inset: 0,
               background:
-                "radial-gradient(ellipse 95% 82% at 50% 42%,rgba(11,15,26,0) 0%,rgba(11,15,26,.16) 52%,rgba(11,15,26,.85) 100%),linear-gradient(180deg,rgba(11,15,26,.32) 0%,rgba(11,15,26,0) 42%,rgba(11,15,26,.92) 100%)",
+                "radial-gradient(ellipse 110% 88% at 50% 44%,rgba(11,15,26,0) 0%,rgba(11,15,26,.05) 34%,rgba(11,15,26,.22) 70%,rgba(11,15,26,.84) 100%),linear-gradient(180deg,rgba(11,15,26,.38) 0%,rgba(11,15,26,.12) 35%,rgba(11,15,26,.24) 68%,rgba(11,15,26,.94) 100%)",
             }}
           />
 
@@ -439,7 +439,7 @@ export default function Login() {
                 fontFamily: headFont,
                 fontWeight: 700,
                 fontSize: 42,
-                lineHeight: 0.98,
+                lineHeight: 1,
                 letterSpacing: "-0.02em",
               }}
             >
