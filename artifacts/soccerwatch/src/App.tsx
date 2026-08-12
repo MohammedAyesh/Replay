@@ -62,6 +62,39 @@ function AuthHeroLayout({ children }: { children: React.ReactNode }) {
   const { t, locale, setLocale } = useTranslation();
   const [, setLocation] = useLocation();
 
+  useEffect(() => {
+    const hideDevelopmentBadge = () => {
+      const card = document.querySelector(".cl-cardBox");
+      if (!card) return;
+
+      const exactTextElement = Array.from(card.querySelectorAll("*")).find(
+        (element) =>
+          element.children.length === 0 &&
+          element.textContent?.trim().toLowerCase() === "development mode",
+      );
+
+      if (!exactTextElement) return;
+
+      const badge =
+        exactTextElement.parentElement?.textContent?.trim().toLowerCase() ===
+        "development mode"
+          ? exactTextElement.parentElement
+          : exactTextElement;
+
+      (badge as HTMLElement).style.display = "none";
+    };
+
+    hideDevelopmentBadge();
+    const observer = new MutationObserver(hideDevelopmentBadge);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
   const handleBack = () => {
     if (window.history.length > 1) {
       window.history.back();
