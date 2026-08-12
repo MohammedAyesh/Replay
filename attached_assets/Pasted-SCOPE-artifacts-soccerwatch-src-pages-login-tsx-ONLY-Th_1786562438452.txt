@@ -1,0 +1,56 @@
+SCOPE: artifacts/soccerwatch/src/pages/login.tsx ONLY. The hero vignette and
+headline spacing specifically. Do not touch anything else already confirmed
+working — buttons, handlers, routes, entrance animation timing, language
+toggle, subtitle.
+
+--- STEP 1: RULE OUT A STALE RENDER FIRST ---
+
+This exact situation — a diff that is verifiably correct in source, but not
+visible on the live page — happened once before in this project with the
+Clerk sign-in card, and the actual cause was a stale dev-server/HMR state
+requiring a full workflow restart plus a hard browser reload, not incorrect
+code. Before changing any value, do a full restart (not hot reload) and load
+the page with a cache-busting query string, then report whether the vignette
+is now visibly different at that fresh load. If it now looks correct, STOP —
+report that and skip Step 2 entirely.
+
+--- STEP 2: ONLY IF STEP 1 DOESN'T RESOLVE IT — CHECK THE MOBILE CROP ---
+
+The hero image uses object-fit: cover with object-position: center 38% inside
+a tall mobile-shaped container. The source photo is landscape. On a real phone
+viewport, this crops away most of the image, showing only a narrow vertical
+slice near its vertical center.
+
+Check, at realistic mobile widths (390px and 412px wide, roughly 700-800px
+tall, matching common phone screens): does the vignette's darkened region
+(the outer edge of the radial gradient, and the top/bottom of the linear
+gradient) actually fall within that visible cropped slice, or does it sit
+mostly outside what a phone screen actually shows? Report what you find —
+this determines whether the fix is "no code problem, needed a restart" or
+"the gradient's percentage stops need to be resized specifically for the
+narrow visible mobile crop, not for the full image."
+
+If the darkened zone IS being cropped out of view on mobile: adjust the
+gradient's percentage stops (not just their opacity) so the darkening
+actually occurs within the visible portion of the image on a real phone
+screen, while keeping the same navy #0B0F1A colour and keeping the very
+center of the visible crop the clearest, brightest point.
+
+--- STEP 3: SMALL HEADLINE SPACING INCREASE ---
+
+The two headline lines currently use line-height: 0.98, which is tighter than
+intended. Increase it slightly — to roughly 1.04-1.06 — enough to add a touch
+more breathing room between the two lines without returning to the original
+1.08 spacing. This is a small nudge, not a full reversal.
+
+--- VERIFY ---
+
+Confirm, on an ACTUAL mobile-width preview (not desktop), after a full
+restart and hard reload: the image edges are now visibly, unmistakably
+darker than the center — not a subtle difference, an obvious one. Confirm the
+headline lines now have a touch more space between them than before, but are
+still clearly closer than the original spacing. Confirm no other change
+occurred anywhere else on the page.
+
+Show me the diff, and explicitly tell me whether Step 1 or Step 2 turned out
+to be the real cause.
