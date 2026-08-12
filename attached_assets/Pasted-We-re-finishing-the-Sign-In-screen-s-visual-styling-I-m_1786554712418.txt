@@ -1,0 +1,66 @@
+We're finishing the Sign In screen's visual styling. I'm attaching the design
+file (.dc.html) and a screenshot of how it should look.
+
+Only touch clerkAppearance.ts, plus wherever <ClerkProvider> is actually set
+up if the dev-mode badge needs a different fix there. Don't touch the
+background, the logo, the back button, or the language toggle — those are
+already correct. Don't touch onboarding, routes, or any Clerk logic, fields,
+or validation — this is styling only.
+
+FIRST: open the attached .dc.html and find the Sign In section specifically
+(look for where isSignin is true). That section shows exactly how the button,
+the inputs, the labels, the divider, and the header text should look — colors,
+roundness, spacing, weight. Use it as your reference for every value below,
+not your own judgment of what looks good.
+
+Here's what needs to visibly change on the real Sign In page. For each one,
+look at how it renders right now, compare it to the .dc.html reference, and
+update whatever CSS or class names actually control it in this Clerk version
+— you know the real class names this SDK exposes, I don't, so use your own
+judgment on the exact syntax:
+
+1. The "Continue" button is currently a full pill (rounded like a capsule).
+   The reference shows a softly rounded rectangle, not a pill. Fix the shape.
+   Also confirm the text is dark on the lime background — it should read
+   clearly, not wash out.
+
+2. The Google button currently looks like a flat dark box with barely any
+   border. The reference shows a lighter, more visible border and a subtle
+   translucent background, so it doesn't disappear against the card.
+
+3. The "or" divider is barely visible. The reference shows a legible label
+   with soft lines on either side, not the current very dark styling.
+
+4. The field labels above the email/password boxes have no real styling
+   right now. The reference shows them bold and slightly muted, sitting
+   clearly above each field.
+
+5. The input boxes are currently too dark and blend into the card. The
+   reference shows a lighter, subtly translucent fill so the fields are
+   visually distinct from the card behind them.
+
+6. The title and subtitle text at the top of the card have no real styling.
+   The reference shows the title bold and a specific size, with the subtitle
+   smaller and more muted.
+
+7. The "Sign up" link at the bottom should be bold and clearly lime-colored
+   — check it actually stands out, not just colored.
+
+Now, the "Development mode" badge. We already tried
+unsafe_disableDevelopmentModeWarnings and it didn't work, by your own report.
+Before trying anything else, figure out WHY — check exactly how the appearance
+object reaches <ClerkProvider>, confirm the layout key is actually part of
+what gets passed in (not dropped somewhere, not overridden by a default
+value elsewhere), and tell me what you find. Only apply a fix once you
+understand why the first attempt didn't take effect — don't just reapply the
+same flag again and hope.
+
+Before you say you're done: open Sign In in the preview, take a screenshot,
+and compare it side by side against the attached target screenshot. Go
+through my list above one item at a time and confirm each one actually
+changed in the real page — not just in the code. If anything still doesn't
+match, keep going until it does. Then confirm Sign In still actually works —
+sign in with a real test session, not just a visual check. Confirm Home and
+the other pages are untouched.
+
+Show me the before/after screenshots and the diff.

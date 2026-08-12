@@ -47,30 +47,31 @@ export const clerkAppearance = {
     } as object,
 
     // Header
-    headerTitle: "font-bold",
-    headerSubtitle: "",
+    headerTitle: "!font-extrabold !text-[19px]",
+    headerSubtitle: "!mt-2 !text-[13px] !font-semibold !text-white/[0.55]",
 
     // Primary button — lime bg, dark text, fully rounded
     formButtonPrimary:
-      "!bg-[#D4FF4F] hover:!bg-[#c8f240] !text-[#0B0F1A] font-semibold !rounded-[99px]",
+      "!bg-[#D4FF4F] hover:!bg-[#c8f240] !text-[#0B0F1A] !font-extrabold !rounded-[14px]",
 
     // Social / secondary buttons
-    socialButtonsBlockButton: "!border-[#232C42] hover:!bg-[#1B2438]",
-    socialButtonsBlockButtonText: "font-medium",
+    socialButtonsBlockButton:
+      "!border-white/[0.12] !bg-white/[0.05] hover:!bg-white/[0.09]",
+    socialButtonsBlockButtonText: "!text-[#F3F6FA] !font-bold",
 
     // Form fields
-    formFieldLabel: "font-medium",
+    formFieldLabel: "!text-white/[0.7] !text-[12.5px] !font-bold",
     formFieldInput:
-      "!border-[#232C42] focus:!border-[#D4FF4F] !bg-[#0B0F1A] !rounded-[12px]",
+      "!border-white/[0.1] focus:!border-[#2FD8C4] !bg-white/[0.035] !rounded-[13px]",
 
     // Footer & links
     footerAction: "!bg-transparent",
-    footerActionText: "",
-    footerActionLink: "!text-[#D4FF4F] font-semibold",
+    footerActionText: "!text-white/[0.5] !font-semibold",
+    footerActionLink: "!text-[#D4FF4F] !font-extrabold",
 
     // Dividers
-    dividerText: "",
-    dividerLine: "!bg-[#232C42]",
+    dividerText: "!text-white/[0.4] !text-[11.5px] !font-semibold",
+    dividerLine: "!bg-white/[0.1]",
 
     // Inline indicators
     identityPreviewEditButton: "!text-[#D4FF4F]",
