@@ -1,0 +1,32 @@
+TASK: Fix the clip export renderer so it animates ZOOM (w/h) as well as position (x/y), and uses the FULL stored crop keyframe path instead of downsampling to 30 points.
+
+STRICT RULES FOR THIS TASK:
+1. Tackle ONLY this one fix. Do not touch fps, output resolution, encoding presets, the intro pipeline, source selection, logging, or anything else — even if you notice other problems. Note them at the end instead.
+2. Before writing any code, give me a plain-English summary of exactly which files you will change and what you intend to do. Wait for my approval before building.
+3. After implementation, provide a clear DIFF (before/after of the exact lines changed) for every file you touched.
+
+BACKGROUND (verified by log analysis of a real export, clip id 2437):
+- ffmpegExport.ts currently builds one crop filter where w/h are frozen from the FIRST keyframe (rawFrameW/rawFrameH from keyframe[0]) and only x/y are animated via a nested if() expression chain.
+- Because zoom changes are discarded, positions saved for a small zoomed-in frame get replayed with a large frame, pushing the crop outside the video — the pad step then fills the overflow with black. This is the confirmed cause of the black-space bug (observed: pad=3930:1404 on a 3840x1080 source).
+- MAX_CROP_KEYFRAMES = 30 exists only because the nested if() expression breaks past ~30 branches. A real user path had 558 keyframes reduced to 30, which smears fast pans. The client-side preview (applyFrameToVideo) interpolates the full path linearly per animation frame — export must match that behavior.
+
+REQUIRED APPROACH:
+1. Replace the nested if() expression mechanism with FFmpeg's sendcmd filter driving a crop filter, reading commands from a generated temp file:
+   - Generate a command file with one entry per output frame time (interpolate the stored keyframe path linearly, exactly like applyFrameToVideo does client-side).
+   - Each entry sets crop w, h, x, y for that timestamp (crop supports w/h/x/y as runtime commands).
+   - Filter chain becomes: [pad if needed],sendcmd=f=<cmdfile>,crop@dyn=<w0>:<h0>:<x0>:<y0>,scale=1920:1080:force_original_aspect_ratio=disable
+   - The scale step normalizes the varying crop sizes to the fixed output, so the encoder always sees constant dimensions.
+2. Per-keyframe pixel math: w_px = w*SRC_W, h_px = h*SRC_H per keyframe (NOT from keyframe[0] only). Round w/h to even numbers. Clamp x,y so the crop stays inside the padded canvas.
+3. Recompute the pad canvas bounds across the ENTIRE path using each keyframe's own w/h (max extent of x+w, y+h, and negative x/y across all keyframes) — not the first keyframe's size. If no keyframe exceeds the source bounds, skip the pad entirely.
+4. Remove the 30-point downsampling for the render path (MAX_CROP_KEYFRAMES). If you want a safety ceiling on the command file size, cap at one command per output frame (that is already the natural density).
+5. Write the command file into the same temp area as the render output and delete it in the same finally block that cleans up the temp files.
+6. Keep the existing behavior for single-keyframe/static clips (plain crop, no sendcmd) as a fast path.
+7. Keep sanitizeKeyframes' validation, but make sure it no longer rewrites or drops keyframes solely because h doesn't match the first frame's aspect-derived height — h varies with w by design (h = w * srcAspect / outAspect).
+
+VERIFICATION REQUIRED BEFORE REPORTING DONE:
+- Build must pass.
+- Run one test render through renderClip using the exact stored 558-keyframe crop path of user_clips id 2437 (copy its crop_path JSON from the DB) against any short local test video of 3840x1080 (generate one with ffmpeg color/testsrc if needed). Confirm: the render completes, the generated command file's first/last timestamps span the clip, and ffprobe on the output shows 1920x1080.
+- Report the generated command file line count and paste its first 5 and last 5 lines.
+- Confirm the pad step was NOT triggered for in-bounds sections (log the computed canvas size).
+
+Do NOT deploy, do NOT modify the database, do NOT touch any other route or file beyond what this fix strictly requires.
