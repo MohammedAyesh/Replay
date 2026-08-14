@@ -1,0 +1,17 @@
+TASK: Fix the sendcmd frame-drop / stream-death bug found in the Stage-3 diagnostic. One fix only, diff required, plan-then-build as usual.
+
+EVIDENCE RECAP: From the clean buffer /tmp/diag_buffer_2551.mp4, the current sendcmd render drops frames at zoom transitions (freezes at 5.8s/6.9s/14.3s) and terminated the video stream at t=17.87s — the exact frame where the crop sat at the clamped right edge (x=1920, w=1920, x+w=3840) and then shrank+panned simultaneously. Hypothesis: per-command transient states (w/h/x/y applied sequentially) create momentarily-invalid crop geometry, worst at exact boundaries.
+
+STEP 0 (report first, before any code): Read the preserved /tmp/diag_renderA_stderr.txt in full. Report any lines containing "reconfig", "reinit", "Changed", "Invalid", "clip", or anything unusual near the end of the render — we want FFmpeg's own account of the death at 17.9s.
+
+THEN IMPLEMENT in buildCropCommands (ffmpegExport.ts only):
+1. TRANSIENT-SAFE ORDERING: track the previously emitted w/h. When the new w <= old w (zooming in / same), emit commands in order w, h, x, y. When new w > old w (zooming out), emit x, y, w, h.
+2. TRANSITION-SAFE CLAMP: clamp each frame's x so that x + max(oldW, newW) <= canvasW, and y so that y + max(oldH, newH) <= canvasH. This guarantees geometry stays legal no matter which command lands first, and keeps the window off the exact boundary during size changes.
+3. SIZE QUANTIZATION: only emit w/h commands when the interpolated width differs from the last EMITTED width by >= 8 px (derive h from the emitted w exactly as now, keep even rounding). Emit x/y every frame as now. This cuts pipeline size-rebuilds from ~30/s to only meaningful zoom steps.
+4. First command line must still establish full w/h/x/y explicitly.
+
+VERIFICATION (must pass before reporting done):
+- TypeScript build passes (paste output).
+- Regenerate the command file from clip 2551's stored crop path and re-render from the PRESERVED buffer /tmp/diag_buffer_2551.mp4 with the production render args (same as diagnostic Render A).
+- Paste: (a) final frame= line — required: video duration ~74.0s (NOT 17.9s), drop=0, dup within a few frames of 741 (that's the expected 20->30fps duplication, being fixed separately next); (b) ffprobe video stream duration and nb_frames (~2222); (c) freezedetect output — required: zero freeze events, or at most the single ~0.67s content-static event at ~25s that the static control also showed; (d) the new command file's total line count and the count of lines containing "w " (should be far fewer than before due to quantization).
+- If ANY criterion fails: stop immediately, paste everything, change nothing further.

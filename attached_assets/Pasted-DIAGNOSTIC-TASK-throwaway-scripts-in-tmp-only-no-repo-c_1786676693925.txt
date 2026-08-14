@@ -1,0 +1,16 @@
+DIAGNOSTIC TASK — throwaway scripts in /tmp only, no repo code changes. We now know the ~10s playback freezes in exported clips PREDATE the sendcmd renderer — they occurred with the old nested-if renderer too. Prime suspect is therefore what both renderers share: the bufferRemoteClip stage (Bunny HLS -> local ultrafast MP4) and/or the forced -r 30 cfr conversion. Run this staged experiment using the REAL source of user_clips id 2551 (its video_id's 2160p HLS on Bunny, same URL selection as production) and its real start/end window:
+
+STAGE 1 — Where is the freeze in the shipped export? Download the actual exported file (exportedUrl of clip 2551) and run: ffmpeg -i <file> -vf "freezedetect=n=0.003:d=0.5" -map 0:v -f null - 2>&1 | grep freeze — paste all freeze_start/freeze_end/freeze_duration lines.
+
+STAGE 2 — Is the buffer already broken? Run bufferRemoteClip exactly as production does for 2551's window, keep the buffer file. Then: (a) run the same freezedetect on the buffer file and paste results; (b) extract the video frame timeline: ffprobe -select_streams v -show_entries frame=pts_time -of csv <buffer> and report the frame interval statistics — expected uniform ~0.05s at 20fps; report every gap larger than 0.075s with its timestamp; (c) report the buffer's container duration vs (frame_count / fps).
+
+STAGE 3 — Render A/B from that same buffer:
+  A: current renderClip (sendcmd, full w/h/x/y animation) — capture full ffmpeg stderr, report final dup=/drop=, then freezedetect the output.
+  B: identical render but a STATIC crop filter (no sendcmd, fixed 1920x1080 window at a constant position) — same reports.
+
+VERDICT — answer these three explicitly:
+  1. Do freeze time-ranges already exist in the BUFFER file (yes -> buffer stage is the root cause)?
+  2. Do the freeze ranges in the shipped export (Stage 1) line up with the buffer's gaps (Stage 2b)?
+  3. Does render A show materially more dup/freeze than render B from the same buffer (yes -> sendcmd resize is a second, separate frame-eater)?
+
+Report only. Do not fix anything. Keep the buffer file and both render outputs in /tmp until I confirm, delete everything else.

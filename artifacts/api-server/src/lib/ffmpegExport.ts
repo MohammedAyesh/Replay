@@ -183,7 +183,7 @@ function normalizePath(kfs: KF[], is9to16: boolean): KF[] {
   return kfs.map((kf) => {
     const w = kf.w > 0 ? kf.w : baseW;
     const derivedH = (w * SRC_ASPECT) / outAspect;
-    if (Math.abs((kf.h ?? 1) - derivedH) <= 0.02) return kf;
+    if (Math.abs((kf.h ?? 1) - derivedH) <= 0.05) return kf;
     const cx = (kf.x ?? 0) + w / 2;
     const h = (baseW * SRC_ASPECT) / outAspect;
     const lo = Math.min(0, 1 - baseW);
@@ -245,111 +245,220 @@ function downsampleKeyframes(kfs: KF[]): KF[] {
 /**
  * Build the video filter chain: pad -> crop -> scale.
  *
+ * For single-keyframe (static) clips a plain `crop=W:H:X:Y` expression is
+ * returned directly (no command file, cmdFilePath is null).
+ *
+ * For multi-keyframe clips the filter uses a hybrid approach:
+ *
+ *   • Zoom (w/h): encoded as FFmpeg if() expression chains evaluated from a
+ *     downsampled (~28 point) zoom path embedded directly in the filter string.
+ *     FFmpeg evaluates these per-frame and negotiates the variable output size
+ *     with downstream filters at pipeline setup time — avoiding the silent
+ *     stream-death that occurs when sendcmd changes crop@dyn w/h mid-stream.
+ *
+ *   • Pan (x/y): a temporary sendcmd command file is written with one entry per
+ *     output frame (30 fps), encoding the interpolated x/y position at each
+ *     timestamp from the full keyframe path (no downsampling).
+ *
  * The crop frame is allowed to extend beyond the source (that's how a clip gets
  * deliberate black bars), but FFmpeg's crop filter cannot read outside the input.
  * So the source is first padded onto a larger black canvas big enough to contain
- * every frame position the pan visits, and the crop then runs entirely inside
- * that canvas. Regions of the frame that fall outside the original picture pick
- * up the pad colour — black bars, exactly as previewed.
+ * every frame position the pan visits (computed across ALL keyframes, not just
+ * kfs[0]), and the crop then runs entirely inside that canvas.
  *
- * Frame SIZE is taken from the first keyframe and held constant for the clip
- * (only position animates), which keeps the crop dimensions fixed and lets the
- * whole pan be expressed as a single x/y expression.
+ * Callers are responsible for deleting cmdFilePath after the render (success or
+ * failure) via cleanupTempFile.
  */
-function buildVideoFilter(keyframes: KF[], clipDuration: number, is9to16: boolean): string {
+function buildCropCommands(
+  keyframes: KF[],
+  clipDuration: number,
+  is9to16: boolean,
+): { filter: string; cmdFilePath: string | null } {
   const { w: OUT_W, h: OUT_H } = getOutputDims(is9to16);
+  // Normalize but do NOT downsample — the x/y sendcmd path preserves full
+  // keyframe resolution; the zoom path gets its own separate downsampling.
+  const kfs = normalizePath(sanitizeKeyframes(keyframes), is9to16);
 
-  const kfs = downsampleKeyframes(normalizePath(sanitizeKeyframes(keyframes), is9to16));
+  const scaleFilter = `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=disable`;
 
-  const fallbackW = is9to16 ? (SRC_H * 9 / 16) / SRC_W : 0.5;
-  const w0 = kfs[0]?.w && kfs[0].w > 0 ? kfs[0].w : fallbackW;
-  const h0 = kfs[0]?.h && kfs[0].h > 0 ? kfs[0].h : 1;
+  /** Round a pixel dimension to the nearest even integer (required by yuv420p). */
+  const toEven = (n: number) => {
+    const r = Math.max(2, Math.round(n));
+    return r % 2 === 0 ? r : r + 1;
+  };
 
-  // Frame size in source pixels (may exceed SRC_W / SRC_H — that's the black space)
-  const rawFrameW = Math.max(2, Math.round(w0 * SRC_W));
-  const rawFrameH = Math.max(2, Math.round(h0 * SRC_H));
+  /** Pixel dimensions for a single keyframe. */
+  const kfPx = (kf: KF) => ({
+    w: toEven(kf.w * SRC_W),
+    h: toEven(kf.h * SRC_H),
+  });
 
-  const xsSrc = kfs.map((kf) => (kf.x ?? 0) * SRC_W);
-  const ysSrc = kfs.map((kf) => (kf.y ?? 0) * SRC_H);
-  const minX = xsSrc.length ? Math.min(...xsSrc) : 0;
-  const maxX = xsSrc.length ? Math.max(...xsSrc) : 0;
-  const minY = ysSrc.length ? Math.min(...ysSrc) : 0;
-  const maxY = ysSrc.length ? Math.max(...ysSrc) : 0;
+  // Compute pad bounds from ALL keyframes (not just kfs[0]) so a zoom-in
+  // mid-clip doesn't push the crop rectangle outside the padded canvas.
+  let minX = 0;
+  let minY = 0;
+  let maxExtentX = 0; // max of (x * SRC_W + w_px) across all keyframes
+  let maxExtentY = 0; // max of (y * SRC_H + h_px) across all keyframes
 
-  // Padding needed on each side so every visited frame position is in-canvas
-  const padLeft = Math.max(0, Math.ceil(-minX));
-  const padTop = Math.max(0, Math.ceil(-minY));
-  const padRight = Math.max(0, Math.ceil(maxX + rawFrameW - SRC_W));
-  const padBottom = Math.max(0, Math.ceil(maxY + rawFrameH - SRC_H));
+  if (kfs.length > 0) {
+    minX = Infinity;
+    minY = Infinity;
+    for (const kf of kfs) {
+      const { w: wpx, h: hpx } = kfPx(kf);
+      const xSrc = (kf.x ?? 0) * SRC_W;
+      const ySrc = (kf.y ?? 0) * SRC_H;
+      if (xSrc < minX) minX = xSrc;
+      if (ySrc < minY) minY = ySrc;
+      const extX = xSrc + wpx;
+      const extY = ySrc + hpx;
+      if (extX > maxExtentX) maxExtentX = extX;
+      if (extY > maxExtentY) maxExtentY = extY;
+    }
+    if (!isFinite(minX)) { minX = 0; minY = 0; }
+  }
 
-  // Belt and braces on top of sanitizeKeyframes: whatever the inputs, the
-  // canvas FFmpeg is asked to allocate stays bounded.
+  const padLeft   = Math.max(0, Math.ceil(-minX));
+  const padTop    = Math.max(0, Math.ceil(-minY));
+  const padRight  = Math.max(0, Math.ceil(maxExtentX - SRC_W));
+  const padBottom = Math.max(0, Math.ceil(maxExtentY - SRC_H));
+
+  // Belt and braces: keep the canvas within FFmpeg-survivable bounds.
   const canvasW = Math.min(SRC_W * MAX_CANVAS_W_SCALE, SRC_W + padLeft + padRight);
   const canvasH = Math.min(SRC_H * MAX_CANVAS_H_SCALE, SRC_H + padTop + padBottom);
-
-  // A frame larger than the (clamped) canvas would make crop= fail outright.
-  // Only reachable from inputs sanitizeKeyframes already rejected as nonsense;
-  // render a valid, if oddly framed, clip rather than erroring the job.
-  const frameW = Math.min(rawFrameW, canvasW);
-  const frameH = Math.min(rawFrameH, canvasH);
 
   const needsPad = padLeft > 0 || padTop > 0 || padRight > 0 || padBottom > 0;
   const padFilter = needsPad
     ? `pad=${canvasW}:${canvasH}:${padLeft}:${padTop}:black,`
     : "";
 
-  // Crop coordinates are relative to the padded canvas
-  const toCanvasX = (kf: KF) =>
-    Math.round(Math.max(0, Math.min(canvasW - frameW, (kf.x ?? 0) * SRC_W + padLeft)));
-  const toCanvasY = (kf: KF) =>
-    Math.round(Math.max(0, Math.min(canvasH - frameH, (kf.y ?? 0) * SRC_H + padTop)));
+  /** Canvas-relative x for a keyframe, clamped so crop stays inside canvas. */
+  const toCanvasX = (kf: KF, wpx: number) =>
+    Math.round(Math.max(0, Math.min(canvasW - wpx, (kf.x ?? 0) * SRC_W + padLeft)));
+  const toCanvasY = (kf: KF, hpx: number) =>
+    Math.round(Math.max(0, Math.min(canvasH - hpx, (kf.y ?? 0) * SRC_H + padTop)));
 
-  const scaleFilter = `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=disable`;
-
+  // ── 0 keyframes: centre-crop with fallback dimensions ────────────────────
   if (kfs.length === 0) {
+    const fallbackW = is9to16 ? (SRC_H * 9 / 16) / SRC_W : 0.5;
+    const frameW = Math.min(toEven(fallbackW * SRC_W), canvasW);
+    const frameH = Math.min(toEven(1 * SRC_H), canvasH);
     const x = Math.round((canvasW - frameW) / 2);
     const y = Math.round((canvasH - frameH) / 2);
-    return `${padFilter}crop=${frameW}:${frameH}:${x}:${y},${scaleFilter}`;
+    return {
+      filter: `${padFilter}crop=${frameW}:${frameH}:${x}:${y},${scaleFilter}`,
+      cmdFilePath: null,
+    };
   }
 
+  // ── 1 keyframe: static crop, no sendcmd ──────────────────────────────────
   if (kfs.length === 1) {
-    return `${padFilter}crop=${frameW}:${frameH}:${toCanvasX(kfs[0])}:${toCanvasY(kfs[0])},${scaleFilter}`;
+    const { w: wpx, h: hpx } = kfPx(kfs[0]);
+    const frameW = Math.min(wpx, canvasW);
+    const frameH = Math.min(hpx, canvasH);
+    const xCanvas = toCanvasX(kfs[0], frameW);
+    const yCanvas = toCanvasY(kfs[0], frameH);
+    return {
+      filter: `${padFilter}crop=${frameW}:${frameH}:${xCanvas}:${yCanvas},${scaleFilter}`,
+      cmdFilePath: null,
+    };
   }
 
-  // Convert keyframe t-fractions to absolute seconds within the clip (filter t starts at 0)
-  const pts = kfs.map((kf) => ({
-    t: kf.t * clipDuration,
-    x: toCanvasX(kf),
-    y: toCanvasY(kf),
-  }));
+  // ── Multi-keyframe: hybrid zoom-expression + x/y sendcmd ─────────────────
+  //
+  // ZOOM (w/h): Build FFmpeg if() expression chains from a downsampled zoom path.
+  // Using sendcmd to change crop@dyn w/h mid-stream silently terminates the
+  // video stream in FFmpeg 7.1 (format renegotiation kills the encoder pipeline).
+  // Embedding w/h as expression strings is safe because FFmpeg negotiates the
+  // variable output size at pipeline setup time and the downstream scale filter
+  // handles it correctly.
+  //
+  // PAN (x/y): Write one sendcmd entry per output frame at 30 fps from the full
+  // keyframe path (no downsampling needed — x/y changes never trigger format
+  // renegotiation, so there is no depth or stability limit to worry about).
+  //
+  // In FFmpeg filter option values, commas must be escaped as \, because the
+  // filter-graph parser uses commas to separate filters. Within a TypeScript
+  // string this is "\\,".
 
-  // Build piecewise linear expressions with plain commas throughout,
-  // then escape exactly once at the end before embedding in the filter string.
-  // Calling esc() inside the loop AND on the outer wrap causes double-escaping:
-  //   \,  →  \\,  which FFmpeg reads as literal-backslash + filter-separator.
-  function buildExpr(axis: "x" | "y"): string {
-    let expr = `${pts[pts.length - 1][axis]}`;
-    for (let i = pts.length - 2; i >= 0; i--) {
-      const a = pts[i];
-      const b = pts[i + 1];
-      const tDiff = b.t - a.t;
-      let segExpr: string;
-      if (tDiff < 0.001) {
-        segExpr = `${a[axis]}`;
-      } else {
-        const slope = (b[axis] - a[axis]) / tDiff;
-        segExpr = `${a[axis]}+${slope.toFixed(4)}*(t-${a.t.toFixed(4)})`;
-      }
-      expr = `if(lt(t,${b.t.toFixed(4)}),${segExpr},${expr})`;
+  // Number of zoom sample points for the if() expression chains.
+  // FFmpeg's expression evaluator has a recursion depth limit; 28 segments is
+  // well within it and provides smooth zoom animation for typical clips.
+  const ZOOM_SAMPLES = Math.min(MAX_CROP_KEYFRAMES - 2, kfs.length);
+
+  // Sample the zoom path at ZOOM_SAMPLES evenly-spaced time points.
+  const zoomKfs: Array<{ tSec: number; wpx: number; hpx: number }> = [];
+  for (let i = 0; i < ZOOM_SAMPLES; i++) {
+    const tFrac = i / Math.max(1, ZOOM_SAMPLES - 1);
+    const kf = sampleAt(kfs, tFrac);
+    const { w: wpx, h: hpx } = kfPx(kf);
+    zoomKfs.push({ tSec: tFrac * clipDuration, wpx: Math.min(wpx, canvasW), hpx: Math.min(hpx, canvasH) });
+  }
+
+  /**
+   * Build a piecewise-linear FFmpeg if() expression for one dimension.
+   * idx=0 → w, idx=1 → h.
+   */
+  const buildDimExpr = (samples: typeof zoomKfs, idx: 0 | 1): string => {
+    if (samples.length === 1) return String(idx === 0 ? samples[0].wpx : samples[0].hpx);
+    const val = (s: typeof zoomKfs[0]) => idx === 0 ? s.wpx : s.hpx;
+    // Build right-to-left so the rightmost interval is the default.
+    let expr = String(val(samples[samples.length - 1]));
+    for (let i = samples.length - 2; i >= 0; i--) {
+      const s0 = samples[i];
+      const s1 = samples[i + 1];
+      const v0 = val(s0);
+      const v1 = val(s1);
+      const tEnd = s1.tSec;
+      // Linear segment from s0 to s1.
+      const seg =
+        v0 === v1
+          ? String(v0)
+          : `(${v0}+(${((v1 - v0) / Math.max(1e-6, s1.tSec - s0.tSec)).toFixed(6)}*(t-${s0.tSec.toFixed(6)})))`;
+      expr = `if(lt(t\\,${tEnd.toFixed(6)})\\,${seg}\\,${expr})`;
     }
     return expr;
+  };
+
+  const wExpr = buildDimExpr(zoomKfs, 0);
+  const hExpr = buildDimExpr(zoomKfs, 1);
+
+  // Initial position for the crop@dyn filter (from the t=0 sample).
+  const kf0 = sampleAt(kfs, kfs[0].t);
+  const { w: init_w, h: init_h } = kfPx(kf0);
+  const initW = Math.min(init_w, canvasW);
+  const initH = Math.min(init_h, canvasH);
+  const initX = toCanvasX(kf0, initW);
+  const initY = toCanvasY(kf0, initH);
+
+  // Build x/y-only sendcmd file — one entry per output frame at 30 fps.
+  const FPS = 30;
+  const frameCount = Math.ceil(clipDuration * FPS);
+  const lines: string[] = [];
+
+  for (let i = 0; i < frameCount; i++) {
+    const timeSec = i / FPS;
+    const t = clipDuration > 1e-6 ? timeSec / clipDuration : 0;
+    const kf = sampleAt(kfs, t);
+    // Clamp x/y using the zoom width at this frame so the crop stays in canvas.
+    const { w: wpx, h: hpx } = kfPx(kf);
+    const curW = Math.min(wpx, canvasW);
+    const curH = Math.min(hpx, canvasH);
+    const safeX = Math.round(Math.max(0, Math.min(canvasW - curW, (kf.x ?? 0) * SRC_W + padLeft)));
+    const safeY = Math.round(Math.max(0, Math.min(canvasH - curH, (kf.y ?? 0) * SRC_H + padTop)));
+    lines.push(`${timeSec.toFixed(6)} [enter] crop@dyn x ${safeX}, crop@dyn y ${safeY};`);
   }
 
-  const esc = (s: string) => s.replace(/,/g, "\\,");
-  const xExpr = esc(`max(0,min(${canvasW - frameW},${buildExpr("x")}))`);
-  const yExpr = esc(`max(0,min(${canvasH - frameH},${buildExpr("y")}))`);
+  const cmdFilePath = path.join(os.tmpdir(), `soccerwatch-crop-${randomUUID()}.txt`);
+  fs.writeFileSync(cmdFilePath, lines.join("\n") + "\n", "utf8");
 
-  return `${padFilter}crop=${frameW}:${frameH}:${xExpr}:${yExpr},${scaleFilter}`;
+  // Escape colons in the path (FFmpeg option-value separator on some platforms)
+  const escapedCmdPath = cmdFilePath.replace(/:/g, "\\:");
+
+  // The filter chain: sendcmd provides per-frame x/y; w/h are if() expressions.
+  const filter =
+    `${padFilter}sendcmd=f=${escapedCmdPath},crop@dyn=${wExpr}:${hExpr}:${initX}:${initY},${scaleFilter}`;
+
+  return { filter, cmdFilePath };
 }
 
 /**
@@ -567,12 +676,13 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     );
   }
   const is9to16 = aspectRatio === "9:16";
-  // Includes pad (for out-of-source black bars), crop pan, and the output scale
-  const cropFilter = buildVideoFilter(cropPath, clipDuration, is9to16);
+  // Includes pad (for out-of-source black bars), crop pan, and the output scale.
+  // For multi-keyframe clips this writes a sendcmd command file to disk.
+  const { filter: cropFilter, cmdFilePath } = buildCropCommands(cropPath, clipDuration, is9to16);
 
   const tmpPath = path.join(os.tmpdir(), `soccerwatch-clip-${randomUUID()}.mp4`);
 
-  logger.info({ tmpPath, startSec, endSec, clipDuration, cropFilter }, "FFmpeg args ready");
+  logger.info({ tmpPath, startSec, endSec, clipDuration, cropFilter, hasCmdFile: !!cmdFilePath }, "FFmpeg args ready");
 
   // Build HTTP headers string for CDN access.
   // Bunny CDN blocks server-side requests without browser-like headers;
@@ -665,11 +775,14 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
       // the path from a successful resolve — so on failure nobody else can
       // clean it up.
       fs.unlink(tmpPath, () => {});
+      if (cmdFilePath) cleanupTempFile(cmdFilePath);
       reject(err);
     });
 
     proc.on("close", (code, signal) => {
       clearTimeout(timeout);
+      // Always clean up the sendcmd command file regardless of outcome.
+      if (cmdFilePath) cleanupTempFile(cmdFilePath);
       if (code !== 0) {
         logger.error({ code, signal, stderr: stderr.slice(-2000) }, "FFmpeg exited with non-zero code");
         fs.unlink(tmpPath, () => {});
