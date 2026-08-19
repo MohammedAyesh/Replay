@@ -1,0 +1,18 @@
+TASK: Permanently fix the returned black-space bug in clip exports. Plan-first: complete STEP 0 and STEP 1 and report findings + your implementation plan, then WAIT for my approval before writing any code. Diff required after implementation. One fix only.
+
+STEP 0 — CONFIRM THE DIAGNOSIS (read-only): The hypothesis is a two-sources-of-truth mismatch in buildCropCommands (ffmpegExport.ts, commit 5997716): the rendered crop w/h follows the 28-sample smoothed if() expression, but the sendcmd x/y clamping uses curW/curH from the FULL keyframe path. During fast zoom changes these disagree, so safeX/safeY permit positions where x + expression_w > canvasW or y + expression_h > canvasH; FFmpeg's crop auto-clamps and, when a pad canvas exists, the window overlaps the black pad → black bars. Verify with a throwaway /tmp script: take the most recent black-space clip's stored path (query user_clips, last 24h, pick the newest multi-keyframe clip), rebuild the same 28 zoom samples and the same sendcmd x/y values the current code generates, evaluate the expression's piecewise-linear w/h at every output frame, and report every frame where x + expr_w > canvasW or y + expr_h > canvasH with the overshoot in pixels. Also report how many of that clip's keyframes have h > 1.0 (by-design letterbox) so we can separate designed black bars from the bug.
+
+STEP 1 — PLAN: Report the Step 0 evidence and your implementation plan for the fix below. Wait for approval.
+
+STEP 2 — THE PERMANENT FIX (ffmpegExport.ts only), built on one principle: the clamp math and the render math must use the IDENTICAL size curve.
+1. Extract the 28-point zoom polyline into a single helper: evalZoomAt(timeSec) -> {wpx, hpx}, implementing exactly the same piecewise-linear interpolation the if() expression encodes (same samples, same segments). Build BOTH the w/h expression strings AND all sendcmd clamping from this one helper.
+2. In the sendcmd loop, clamp each frame's x/y against evalZoomAt(timeSec)'s w/h — not the full path's kfPx. Pan positions still come from the full path; only the clamp bound changes.
+3. Improve the zoom samples themselves: instead of 28 evenly-spaced time samples, pick sample points adaptively — always include t=0 and t=end, then greedily add the keyframe times with the largest w-deviation from the current polyline until 28 points are used or max deviation < 8px (Ramer-Douglas-Peucker style). This minimizes smoothing lag at fast zooms, shrinking the visible zoom approximation error too.
+4. GEOMETRIC INVARIANT: after generating all frames, assert for every frame that x >= 0, y >= 0, x + evalZoomAt(t).wpx <= canvasW, y + evalZoomAt(t).hpx <= canvasH. If any frame violates it, fail the export loudly with a logged error — never ship a silently wrong render.
+5. Keep the by-design letterbox: keyframes with h > 1 still pad and show intentional bars, exactly as the preview does. Do not change the pad-bounds computation, the FPS constant, encoding, or anything else.
+
+STEP 3 — VERIFICATION (required before reporting done):
+- TypeScript build passes (paste output).
+- Re-render the Step 0 black-space clip from its real Bunny source with production args. Paste: full ffmpeg stderr final frame= line; ffprobe width/height/duration; freezedetect output (must be zero freeze events); and re-run the Step 0 overshoot analysis on the NEW command file + expression — required: zero frames with overshoot.
+- Confirm the invariant check passes for clip 2551's path as well (regression guard for the previous fix).
+- If anything fails: stop, paste everything, change nothing further.
