@@ -1,0 +1,11 @@
+READ-ONLY INVESTIGATION — no code changes. New symptom: a 16:9 clip with zoom gestures plays correctly (zoom animates) in the My Clips preview, but the downloaded MP4 has NO zoom — static/wide framing throughout. Prior finding: the development DB has zero completed exports in the last 24h, so the affected export likely ran through the DEPLOYED production app, not this workspace. Investigate WHERE that export ran and WHICH renderer built it:
+
+1. ENVIRONMENT SPLIT: Does the deployed production app use a different DATABASE_URL than this workspace? Query the PRODUCTION database (if accessible) for user_clips completed in the last 48h: clip id, user, created_at, aspect ratio, keyframe count, min/max of w in crop_path, export status, exportedUrl. Identify the clip(s) matching the symptom (16:9, w varies in storage, recent).
+
+2. WHICH RENDERER IS DEPLOYED: Determine what code the production deployment is running. Check the deployment's build/publish timestamp against the commit history: does the deployed bundle predate the hybrid renderer (commit 5997716, Aug 14)? If deployment logs or the deployed bundle are inspectable, check whether it contains "crop@dyn" and "sendcmd" (hybrid) or only the old nested if() x/y expression with fixed w/h (pre-fix). State clearly: deployed = pre-#111 (frozen zoom), 5997716 hybrid (zoom via expression), or #114 (evalZoomAt).
+
+3. THE FILE ITSELF: Download the exportedUrl of the affected clip. Extract frames at ~5 evenly spaced times (ffmpeg -ss N -frames:v 1) and report whether the visible field-of-view changes (zoom animates) or stays constant. Also report ffprobe duration vs expected.
+
+4. STORED PATH SANITY: For that clip, confirm the stored crop_path has genuine w variation (report min/max/first/last w). This proves the recording side captured zoom and the loss is in rendering.
+
+VERDICT: State which renderer produced the bad file and whether the root cause is (a) stale production deployment running pre-fix code, (b) a real defect in the current hybrid path, or (c) something else. Propose the fix plan (e.g. redeploy after the gate clears, or a code fix) but implement NOTHING.

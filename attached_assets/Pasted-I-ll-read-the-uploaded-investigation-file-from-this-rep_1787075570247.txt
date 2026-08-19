@@ -1,0 +1,104 @@
+I’ll read the uploaded investigation file from this repl and compare its findings with the current export behavior.
+
+
+
+Opened Pasted-READ-ONLY-INVESTIGATION-no-code-changes-New-symptom-a-1_1787075076564.txt
+The file requests a read-only production-vs-deployment investigation, with no code changes. I’ll follow that scope: check production clip records, identify the deployed renderer version, and inspect the affected exported MP4 if an exact clip can be found.
+
+
+
+10 actions
+The deployment logs already show a strong mismatch: production rendered with a fixed crop=1920:1080:... filter and no crop@dyn/sendcmd, which is the older renderer. I’m verifying that against production clip records and the deployment’s own timestamps before concluding.
+
+
+
+22 actions
+Production confirms the likely bad-export class: clip 442 is the newest completed 16:9 export with genuine zoom data (w 0.50→0.20), while newer completed clips 475/478 have constant w=0.50 and therefore cannot demonstrate the symptom. I’m doing the last checks on clip 442’s expected duration, export log, and download accessibility.
+
+
+
+7 actions
+I read the uploaded investigation file and completed the requested read-only checks. No code changes were made.
+
+Findings
+1. Production and development are separate
+Production currently has an active healthy deployment:
+
+Primary URL: https://replayjo.com
+Alternate URL: https://replayjo.replit.app
+Deployment type: autoscale
+Build status: successful
+Visibility: public
+Completed exports in the last 48 hours:
+
+Environment	Completed exports	Time range
+Development	2	Aug 18, 16:57 UTC
+Production	2	Aug 17, 06:27–11:24 UTC
+The two recent production exports, clips 475 and 478, have constant w=0.5, so they do not contain recorded zoom variation.
+
+2. The affected production clip is clip 442
+The newest production export with genuine zoom variation is:
+
+Clip: 442
+Created: Aug 12, 2026 16:20 UTC
+Aspect ratio: 16:9
+Keyframes: 252
+Stored width range: 0.20–0.50
+First width: 0.50
+Last width: 0.20
+Status: done
+Source recording duration: 59:47
+Expected exported duration: approximately 38.0688 seconds
+Exported URL: stored in Bunny Storage
+This confirms the recording side captured zoom correctly. The zoom was lost after recording.
+
+3. Production was running the old renderer
+The production FFmpeg logs from Aug 12 and Aug 17 show filters shaped like:
+
+crop=1920:1080:max(0,min(1920,if(...)))
+
+They do not contain:
+
+crop@dyn
+sendcmd
+
+The logged production filter matches the renderer from before commit 5997716:
+
+Production: pre-#111 renderer
+Not: the hybrid renderer from 5997716
+Not: the Task #114 evalZoomAt renderer
+For comparison:
+
+Hybrid renderer commit 5997716: Aug 14
+Task #114 commit: Aug 18
+Production was still logging the old fixed-width crop=1920:1080 path on Aug 17
+So the production deployment was stale relative to both the hybrid renderer and Task #114.
+
+4. The exported MP4 could not be downloaded from this repl
+I attempted to inspect clip 442 frame-by-frame as requested.
+
+The stored URL points to Bunny’s authenticated storage origin:
+
+https://storage.bunnycdn.com/...
+
+That returned 401 Unauthorized.
+
+The inferred public CDN URL returned 403 Forbidden, including with browser-style Referer and Origin headers. This repl does not contain the production Bunny Storage API key, so I could not retrieve the MP4 to run ffprobe or extract the five sample frames without requesting a new credential.
+
+The production logs and stored crop path are sufficient to identify the renderer, but the frame-level visual inspection remains blocked by storage access.
+
+Verdict
+For the specific bad production export, the cause is:
+
+(a) A stale production deployment running the pre-#111 renderer.
+
+The stored path proves zoom was captured. Production logs prove the old renderer generated a fixed 1920×1080 crop, which explains why the downloaded MP4 stayed wide.
+
+There is also a separate issue already found in the workspace’s newer hybrid renderer: FFmpeg 7.1.1 does not evaluate the crop w/h expressions per frame when they depend on t, so redeploying Task #114 by itself would not yet be sufficient to restore animated zoom. The current follow-up task #115 should address that renderer behavior before publishing.
+
+Recommended sequence:
+
+Replace the current dynamic-zoom implementation with an FFmpeg-compatible approach.
+Verify an export with stored w variation.
+Publish/redeploy the corrected renderer.
+Re-export clip 442 and inspect its frames and duration.

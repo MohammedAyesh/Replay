@@ -1349,7 +1349,7 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
                 {/* Ratio toggle */}
                 <button
                   onClick={() => applyFrameChange(
-                    frameZoomRef.current,
+                    selectedRatio === "16:9" ? 1 : frameZoomRef.current,
                     selectedRatio === "16:9" ? "9:16" : "16:9"
                   )}
                   className="px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-bold"
@@ -1409,14 +1409,16 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
               )}
 
               {/* Frame sizing — set the shot (and any black bars) before recording */}
-              <div className="flex justify-center">
-                <FrameSizeSlider
-                  zoom={frameZoom}
-                  frame={frame}
-                  maxZoom={maxZoomFor(selectedRatio)}
-                  onChange={(z) => applyFrameChange(z, selectedRatioRef.current)}
-                />
-              </div>
+              {selectedRatio !== "9:16" && (
+                <div className="flex justify-center">
+                  <FrameSizeSlider
+                    zoom={frameZoom}
+                    frame={frame}
+                    maxZoom={maxZoomFor(selectedRatio)}
+                    onChange={(z) => applyFrameChange(z, selectedRatioRef.current)}
+                  />
+                </div>
+              )}
 
               {/* Clip button */}
               <div className="flex justify-center">
@@ -1466,13 +1468,15 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
               style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
             >
               {/* Resizing mid-recording is captured like any other frame change */}
-              <FrameSizeSlider
-                zoom={frameZoom}
-                frame={frame}
-                maxZoom={maxZoomFor(selectedRatio)}
-                compact
-                onChange={(z) => applyFrameChange(z, selectedRatioRef.current)}
-              />
+              {selectedRatio !== "9:16" && (
+                <FrameSizeSlider
+                  zoom={frameZoom}
+                  frame={frame}
+                  maxZoom={maxZoomFor(selectedRatio)}
+                  compact
+                  onChange={(z) => applyFrameChange(z, selectedRatioRef.current)}
+                />
+              )}
               <button
                 onClick={() => stopRecording()}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-red-500 text-white font-bold text-sm"

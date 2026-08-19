@@ -1,0 +1,17 @@
+Two-part request. Part A is read-only. Part B is plan-only — no code changes anywhere until I approve.
+
+PART A — SHOW ME TASK #115: You referenced "follow-up task #115" addressing the FFmpeg crop w/h evaluation issue. Report: who/what created it, its current status (drafted/building/complete), its full plan text, and whether it has touched ANY code yet. If it has already made changes, list every file and show the diff.
+
+PART B — PROVE THE CLAIM, THEN PLAN THE FIX:
+
+STEP 0 (empirical proof, throwaway /tmp script): Render a 30s test that settles this: generate a labeled test source (ffmpeg testsrc, 3840x1080, 20fps), build a crop path with strong zoom variation (w: 0.5 -> 0.2 -> 0.5), render it through the CURRENT renderClip, then extract 6 frames evenly spaced from the output and report whether the visible field of view changes. Also state what value the w/h expression actually evaluates to at init (FFmpeg evaluates crop w/h ONCE — with t unavailable, which branch of the if() chain wins?). This proves or disproves: current renderer = frozen zoom.
+
+STEP 1 (the plan — wait for approval): If frozen zoom is confirmed, plan the replacement with these REQUIREMENTS:
+1. Zoom AND pan must both animate per-frame in the export. Pan at full keyframe fidelity (no 30-point smearing regression); zoom at high fidelity.
+2. No mid-stream stream death (the sendcmd w/h lesson stands — see .agents/memory/sendcmd-wh-stream-death.md).
+3. Evaluate zoompan as the primary candidate: it is FFmpeg's purpose-built per-frame zoom+pan filter with a FIXED output size (no renegotiation). Its z/x/y expressions ARE evaluated per frame. To escape the ~30-deep nested if() recursion limit, use FLAT piecewise-linear expressions (sum-of-clamped-segments form: v0 + Σ slope_i * clip(t - t_i, 0, dt_i) or the st/ld equivalent) so the FULL keyframe path fits for x, y, AND zoom. Check zoompan's known integer-rounding jitter issue and whether input upscaling or the supersample trick is needed.
+4. If zoompan proves unsuitable, propose the best alternative with the same guarantees and say why.
+5. Keep: the by-design letterbox for h>1 paths, the geometric invariant (adapted to the new mechanism, still failing loudly), single-source-of-truth for all clamping math, cleanup of any temp files.
+6. VERIFICATION PLAN must include, non-negotiably: a render of a real zoom-varying clip path with FRAMES EXTRACTED at 6+ timestamps proving the field of view visibly changes and matches the stored path direction (zoom-in where it should zoom in), full-duration check, freezedetect zero, dup consistent with the known 20->30fps math only, and the invariant passing. Metrics-only verification is explicitly insufficient — this is the lesson of the last two tasks.
+
+Report Step 0 results + the Part A answers + the Step 1 plan. Implement NOTHING yet.

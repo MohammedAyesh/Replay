@@ -1,0 +1,33 @@
+FINAL TASK — implement the zoompan renderer fix to completion. This is a finish-to-done task: do NOT stop to ask for approval at any point. Iterate, test, and self-correct until every acceptance criterion below passes, then deliver the final report. Only stop early if you hit a hard blocker that makes the approach impossible (defined at the bottom).
+
+IMPLEMENT (in artifacts/api-server/src/lib/ffmpegExport.ts):
+Replace the current hybrid crop@dyn/sendcmd/if() renderer for multi-keyframe clips with the prototype-proven zoompan approach:
+1. Map the source onto the existing padded canvas (same pad-bounds math, computed across ALL keyframes; intentional letterbox for h>1 preserved exactly as today).
+2. Upscale the canvas for zoompan coordinate precision — default 4x, per the prototype.
+3. Drive zoompan with per-frame z/x/y using FLAT piecewise-linear expressions (sum-of-clamped-segments, NOT nested if()) built from the FULL keyframe path for zoom AND pan — no downsampling, no 28-point smoothing.
+4. d=1, fixed output size (1920x1080 or 9:16 dims), 30fps output as today.
+5. One geometry helper is the single source of truth for zoom, x/y, and the invariant.
+6. Geometric invariant: every output frame's window must be finite, non-negative, and inside the padded canvas — violation aborts the export loudly (logged error + thrown, job marked failed). Never ship silently wrong output.
+7. Static/single-keyframe fast paths stay as today. Temp files cleaned on success AND failure. No changes outside ffmpegExport.ts.
+
+PRE-AUTHORIZED DECISIONS (do not stop to ask):
+- If 4x supersampling renders slower than 0.5x realtime or is memory-unsafe on a real-length clip: drop to 2x automatically, note it in the report with the measured numbers at both levels.
+- If the 9:16 canvas at the chosen supersampling exceeds practical memory: implement a guard that crops the working canvas to the path's actual visited extent (plus margin) and/or reduces supersampling for 9:16 only. Document what the guard does.
+- If zoompan's frame counter vs timestamp semantics cause any off-by-one or timing drift: fix it and prove alignment in verification.
+- If any acceptance test fails: diagnose, fix, and re-run the full suite. Repeat until pass. Do not report "complete" with any failing criterion.
+
+ACCEPTANCE CRITERIA (all mandatory, all must be in the final report with evidence):
+A. TypeScript build passes (paste output).
+B. 16:9 REAL-PATH RENDER: render a genuinely zoom-varying stored clip path (e.g. production clip 442's path: w 0.50->0.20, or clip 2567's) at production args. Extract 6+ frames at known timestamps. VISUAL PROOF REQUIRED: zoom-in sections visibly tighter, zoom-out visibly wider, pan direction matches the stored path. Paste the frame descriptions/contact-sheet result.
+C. Full duration matches expected (ffprobe duration + nb_frames), no truncation, no early video-stream death.
+D. freezedetect: zero freeze events (excluding content-static moments present in the source).
+E. dup/drop: drop=0; dup consistent ONLY with the known 20->30fps conversion math.
+F. Invariant passes for every frame on both test paths; demonstrate the failure path works by feeding one deliberately-invalid path and showing it aborts loudly.
+G. 9:16 RENDER: short vertical clip with zoom+pan; state the canvas dims used; extracted frames proving correct framing (no stretching), zoom and pan animating.
+H. PERFORMANCE: wall-clock time, speed factor vs realtime, and peak memory for the 16:9 real-path render. Must be >= 0.5x realtime and memory-safe (state the supersampling level shipped).
+I. Regression: a static single-keyframe clip and a pan-only clip still render correctly.
+J. THE DIFF: full before/after of every change.
+
+HARD BLOCKER (the only reason to stop early): zoompan fundamentally cannot satisfy the criteria on this FFmpeg build. In that case do NOT improvise an alternative architecture — deliver a full report of what failed with evidence and stop.
+
+FINAL REPORT: the diff, all acceptance evidence A–J, the pre-authorized decisions taken (if any), and a one-paragraph plain-English summary of what changed. Also update .agents/memory with the zoompan lessons (per-frame evaluation, supersampling requirement, canvas mapping) so future sessions don't relitigate this.

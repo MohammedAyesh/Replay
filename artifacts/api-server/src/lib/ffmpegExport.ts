@@ -87,23 +87,6 @@ export interface FfmpegExportOptions {
 }
 
 
-/**
- * Build an FFmpeg crop filter string for the given keyframes.
- *
- * keyframe.t  — 0-1 fraction of clip duration (not recording duration)
- * keyframe.x  — left edge of crop window as fraction of SRC_W
- * keyframe.w  — width of crop window as fraction of SRC_W
- *
- * Returns a crop= filter string like "crop=1920:1080:x_expr:0".
- *
- * In FFmpeg filter option values, commas must be escaped as \, because the
- * filter graph parser uses comma to separate filters.
- */
-// Maximum number of keyframes in the FFmpeg crop expression.
-// FFmpeg's expression evaluator hits a recursion/depth limit with deeply nested if() chains;
-// 30 segments is smooth enough for any pan and well within the limit.
-const MAX_CROP_KEYFRAMES = 30;
-
 const SRC_ASPECT = SRC_W / SRC_H;
 
 /** Output pixel dimensions for a given aspect ratio — shared by the main
@@ -220,64 +203,329 @@ function sampleAt(kfs: KF[], t: number): KF {
 }
 
 /**
- * Resample the pan path onto MAX_CROP_KEYFRAMES evenly spaced points in TIME.
+ * Build the fixed-size multi-keyframe renderer.
  *
- * Sampling by index (the previous approach) weights each recorded keyframe
- * equally, but keyframes are emitted on a fixed wall-clock interval while their
- * timestamps come from the video clock. A playback stall therefore piles up many
- * keyframes at the same instant and, sampled by index, that frozen moment
- * consumed a disproportionate share of the budget and starved real camera
- * motion of resolution.
+ * zoompan evaluates z/x/y per output frame, unlike crop's w/h expressions.
+ * The input is padded to the output aspect ratio first, then supersampled so
+ * zoompan's integer coordinate quantization does not turn slow pans into
+ * visible staircase motion.
  */
-function downsampleKeyframes(kfs: KF[]): KF[] {
-  if (kfs.length <= MAX_CROP_KEYFRAMES) return kfs;
-  const t0 = kfs[0].t;
-  const t1 = kfs[kfs.length - 1].t;
-  if (!(t1 > t0)) return [kfs[0], kfs[kfs.length - 1]];
-  const result: KF[] = [];
-  for (let i = 0; i < MAX_CROP_KEYFRAMES; i++) {
-    const t = t0 + ((t1 - t0) * i) / (MAX_CROP_KEYFRAMES - 1);
-    result.push(sampleAt(kfs, t));
+function buildZoompanFilter(options: {
+  kfs: KF[];
+  clipDuration: number;
+  is9to16: boolean;
+  outW: number;
+  outH: number;
+  canvasW: number;
+  canvasH: number;
+  padLeft: number;
+  padTop: number;
+}): string {
+  const {
+    kfs,
+    clipDuration,
+    is9to16,
+    outW,
+    outH,
+    canvasW,
+    canvasH,
+    padLeft,
+    padTop,
+  } = options;
+  const evenCeil = (value: number) => Math.max(2, Math.ceil(value / 2) * 2);
+  const evenFloor = (value: number) => Math.max(2, Math.floor(value / 2) * 2);
+
+  type BoundedRegion = {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    sourceLeft: number;
+    sourceTop: number;
+    sourceWidth: number;
+    sourceHeight: number;
+    sourcePadLeft: number;
+    sourcePadTop: number;
+  };
+
+  /**
+   * A vertical output normally visits a much smaller part of the panoramic
+   * source than the full 3840px width. Keep only that union plus a tiny safety
+   * margin, then pad the region to the requested output aspect.
+   */
+  const boundedVerticalRegion = (): BoundedRegion | null => {
+    if (!is9to16) return null;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const kf of kfs) {
+      const x = kf.x * SRC_W;
+      const y = kf.y * SRC_H;
+      const w = Math.max(2, kf.w * SRC_W);
+      const h = Math.max(2, kf.h * SRC_H);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + w);
+      maxY = Math.max(maxY, y + h);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
+
+    const left = Math.floor(minX) - 2;
+    const top = Math.floor(minY) - 2;
+    const right = left + evenCeil(Math.ceil(maxX) + 2 - left);
+    const bottom = top + evenCeil(Math.ceil(maxY) + 2 - top);
+    const width = right - left;
+    const height = bottom - top;
+    const sourceLeft = Math.max(0, Math.min(SRC_W - 2, evenFloor(left)));
+    const sourceTop = Math.max(0, Math.min(SRC_H - 2, evenFloor(top)));
+    const sourceRight = Math.min(SRC_W, right);
+    const sourceBottom = Math.min(SRC_H, bottom);
+    if (sourceRight <= sourceLeft || sourceBottom <= sourceTop) return null;
+
+    const sourceWidth = Math.min(
+      evenFloor(SRC_W - sourceLeft),
+      evenFloor(sourceRight - sourceLeft),
+    );
+    const sourceHeight = Math.min(
+      evenFloor(SRC_H - sourceTop),
+      evenFloor(sourceBottom - sourceTop),
+    );
+    if (sourceWidth < 2 || sourceHeight < 2) return null;
+
+    return {
+      left,
+      top,
+      width,
+      height,
+      sourceLeft,
+      sourceTop,
+      sourceWidth,
+      sourceHeight,
+      sourcePadLeft: sourceLeft - left,
+      sourcePadTop: sourceTop - top,
+    };
+  };
+
+  const boundedRegion = boundedVerticalRegion();
+  const baseCanvasW = boundedRegion?.width ?? canvasW;
+  const baseCanvasH = boundedRegion?.height ?? canvasH;
+  const aspectUnitW = is9to16 ? 9 : 16;
+  const aspectUnitH = is9to16 ? 16 : 9;
+  let aspectUnits = Math.max(
+    Math.ceil(baseCanvasW / aspectUnitW),
+    Math.ceil(baseCanvasH / aspectUnitH),
+  );
+  while (
+    (aspectUnitW * aspectUnits) % 2 !== 0 ||
+    (aspectUnitH * aspectUnits) % 2 !== 0
+  ) {
+    aspectUnits++;
   }
-  return result;
+  const workingCanvasW = aspectUnitW * aspectUnits;
+  const workingCanvasH = aspectUnitH * aspectUnits;
+
+  const DEFAULT_SUPERSAMPLE = 4;
+  const FALLBACK_SUPERSAMPLE = 2;
+  const MINIMUM_SUPERSAMPLE = 1;
+  // Select the highest quality level that stays under the post-fallback
+  // working-raster ceiling. The 1x last resort matters for a vertical path
+  // that genuinely visits most of the panoramic source.
+  const MAX_SUPERSAMPLED_PIXELS = 60_000_000;
+  const supersample = [DEFAULT_SUPERSAMPLE, FALLBACK_SUPERSAMPLE, MINIMUM_SUPERSAMPLE]
+    .find((candidate) =>
+      workingCanvasW * workingCanvasH * candidate ** 2 <= MAX_SUPERSAMPLED_PIXELS,
+    ) ?? MINIMUM_SUPERSAMPLE;
+  const workingW = workingCanvasW * supersample;
+  const workingH = workingCanvasH * supersample;
+
+  const formatNumber = (value: number) =>
+    Number.isFinite(value) ? Number(value.toFixed(9)).toString() : "0";
+
+  type Geometry = {
+    zoom: number;
+    xPx: number;
+    yPx: number;
+    windowW: number;
+    windowH: number;
+  };
+
+  /**
+   * This is the only geometry calculation used by both the expressions and
+   * the invariant. The source path is still interpolated in its original
+   * normalized coordinates; only the final canvas coordinates are scaled.
+   */
+  const evalGeometryAt = (timeSec: number): Geometry => {
+    const tFrac = clipDuration > 1e-6 ? timeSec / clipDuration : 0;
+    const kf = sampleAt(kfs, tFrac);
+    const wpx = Math.max(2, kf.w * SRC_W);
+    const zoom = workingCanvasW / wpx;
+    return {
+      zoom,
+      xPx: kf.x * SRC_W + (boundedRegion ? -boundedRegion.left : padLeft),
+      yPx: kf.y * SRC_H + (boundedRegion ? -boundedRegion.top : padTop),
+      windowW: workingCanvasW / zoom,
+      windowH: workingCanvasH / zoom,
+    };
+  };
+
+  /**
+   * Flat piecewise-linear expression:
+   * v0 + slope0*clip(time-t0,0,dt0) + ...
+   *
+   * `on` is zoompan's output frame counter and starts at zero. Commas inside
+   * clip() are escaped for the FFmpeg filter-graph parser.
+   */
+  const buildFlatExpr = (values: number[]): string => {
+    if (values.length === 1) return formatNumber(values[0]);
+    const terms = [formatNumber(values[0])];
+    for (let i = 0; i < values.length - 1; i++) {
+      const t0 = kfs[i].t * clipDuration;
+      const dt = Math.max(1e-9, (kfs[i + 1].t - kfs[i].t) * clipDuration);
+      const slope = (values[i + 1] - values[i]) / dt;
+      terms.push(
+        `(${formatNumber(slope)}*clip((on/30)-${formatNumber(t0)}\\,0\\,${formatNumber(dt)}))`,
+      );
+    }
+    return terms.join("+");
+  };
+
+  const geometryAtKeyframes = kfs.map((kf) =>
+    evalGeometryAt(kf.t * clipDuration),
+  );
+  // Interpolate the recorded crop width, then derive zoom from that exact
+  // width curve. Interpolating reciprocal zoom values would change the crop
+  // geometry between keyframes and invalidate the invariant below.
+  const widthExpr = buildFlatExpr(
+    geometryAtKeyframes.map((g) => g.windowW),
+  );
+  const zoomExpr = `${formatNumber(workingCanvasW)}/(${widthExpr})`;
+  const xExpr = buildFlatExpr(
+    geometryAtKeyframes.map((g) => g.xPx * supersample),
+  );
+  const yExpr = buildFlatExpr(
+    geometryAtKeyframes.map((g) => g.yPx * supersample),
+  );
+
+  const FPS = 30;
+  const frameCount = Math.ceil(clipDuration * FPS);
+  const EPSILON = 1 / supersample + 1e-6;
+  for (let i = 0; i < frameCount; i++) {
+    const timeSec = i / FPS;
+    const geometry = evalGeometryAt(timeSec);
+    const quantizedX = Math.round(geometry.xPx * supersample) / supersample;
+    const quantizedY = Math.round(geometry.yPx * supersample) / supersample;
+    const kf = sampleAt(
+      kfs,
+      clipDuration > 1e-6 ? timeSec / clipDuration : 0,
+    );
+    const requestedW = Math.max(2, kf.w * SRC_W);
+    const requestedH = Math.max(2, kf.h * SRC_H);
+    const valid =
+      Number.isFinite(geometry.zoom) &&
+      geometry.zoom > 0 &&
+      Number.isFinite(quantizedX) &&
+      Number.isFinite(quantizedY) &&
+      quantizedX >= -EPSILON &&
+      quantizedY >= -EPSILON &&
+      quantizedX + geometry.windowW <= workingCanvasW + EPSILON &&
+      quantizedY + geometry.windowH <= workingCanvasH + EPSILON &&
+      Math.abs(geometry.windowW - requestedW) <= 2 &&
+      Math.abs(geometry.windowH - requestedH) <= 2;
+    if (!valid) {
+      logger.error(
+        {
+          frame: i,
+          timeSec,
+          geometry,
+          quantizedX,
+          quantizedY,
+          requestedW,
+          requestedH,
+          workingCanvasW,
+          workingCanvasH,
+          supersample,
+        },
+        "buildCropCommands: zoompan geometric invariant violated — export aborted",
+      );
+      throw new Error(
+        `Zoompan geometry invariant failed at frame ${i} ` +
+        `(t=${timeSec.toFixed(3)}s): ` +
+        `x=${quantizedX.toFixed(3)} y=${quantizedY.toFixed(3)} ` +
+        `window=${geometry.windowW.toFixed(3)}x${geometry.windowH.toFixed(3)} ` +
+        `requested=${requestedW.toFixed(3)}x${requestedH.toFixed(3)} ` +
+        `canvas=${workingCanvasW}x${workingCanvasH}`,
+      );
+    }
+  }
+
+  logger.info(
+    {
+      workingCanvasW,
+      workingCanvasH,
+      supersample,
+      supersampledW: workingW,
+      supersampledH: workingH,
+      workingPixels: workingW * workingH,
+      boundedRegion: !!boundedRegion,
+      keyframes: kfs.length,
+      frames: frameCount,
+    },
+    "zoompan geometry validated",
+  );
+
+  const zoompanPadFilter =
+    boundedRegion
+      ? `fps=${FPS},crop=${boundedRegion.sourceWidth}:${boundedRegion.sourceHeight}:` +
+        `${boundedRegion.sourceLeft}:${boundedRegion.sourceTop},` +
+        `pad=${boundedRegion.width}:${boundedRegion.height}:` +
+        `${boundedRegion.sourcePadLeft}:${boundedRegion.sourcePadTop}:black,` +
+        `pad=${workingCanvasW}:${workingCanvasH}:0:0:black,`
+      : `fps=${FPS},pad=${workingCanvasW}:${workingCanvasH}:${padLeft}:${padTop}:black,`;
+  const renderFilter =
+    `${zoompanPadFilter}` +
+    `scale=${workingW}:${workingH}:flags=lanczos,`;
+  return (
+    `${renderFilter}zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':` +
+    `d=1:s=${outW}x${outH}:fps=${FPS}`
+  );
 }
 
 /**
- * Build the video filter chain: pad -> crop -> scale.
+ * Build the video filter chain: pad -> crop -> scale for static clips, or
+ * pad -> supersample -> zoompan for multi-keyframe clips.
  *
  * For single-keyframe (static) clips a plain `crop=W:H:X:Y` expression is
- * returned directly (no command file, cmdFilePath is null).
+ * returned directly without a filter script.
  *
- * For multi-keyframe clips the filter uses a hybrid approach:
- *
- *   • Zoom (w/h): encoded as FFmpeg if() expression chains evaluated from a
- *     downsampled (~28 point) zoom path embedded directly in the filter string.
- *     FFmpeg evaluates these per-frame and negotiates the variable output size
- *     with downstream filters at pipeline setup time — avoiding the silent
- *     stream-death that occurs when sendcmd changes crop@dyn w/h mid-stream.
- *
- *   • Pan (x/y): a temporary sendcmd command file is written with one entry per
- *     output frame (30 fps), encoding the interpolated x/y position at each
- *     timestamp from the full keyframe path (no downsampling).
+ * For multi-keyframe clips the source is mapped to an aspect-matched padded
+ * canvas and rendered with fixed-size zoompan expressions. This avoids crop
+ * w/h reconfiguration, which FFmpeg does not reliably apply per frame.
  *
  * The crop frame is allowed to extend beyond the source (that's how a clip gets
  * deliberate black bars), but FFmpeg's crop filter cannot read outside the input.
  * So the source is first padded onto a larger black canvas big enough to contain
  * every frame position the pan visits (computed across ALL keyframes, not just
  * kfs[0]), and the crop then runs entirely inside that canvas.
- *
- * Callers are responsible for deleting cmdFilePath after the render (success or
- * failure) via cleanupTempFile.
  */
 function buildCropCommands(
   keyframes: KF[],
   clipDuration: number,
   is9to16: boolean,
-): { filter: string; cmdFilePath: string | null } {
+): { filter: string; filterScriptPath: string | null } {
   const { w: OUT_W, h: OUT_H } = getOutputDims(is9to16);
-  // Normalize but do NOT downsample — the x/y sendcmd path preserves full
-  // keyframe resolution; the zoom path gets its own separate downsampling.
-  const kfs = normalizePath(sanitizeKeyframes(keyframes), is9to16);
+  const normalized = normalizePath(sanitizeKeyframes(keyframes), is9to16)
+    .sort((a, b) => a.t - b.t);
+  const kfs = normalized.reduce<KF[]>((result, kf) => {
+    const previous = result[result.length - 1];
+    if (previous && Math.abs(previous.t - kf.t) <= 1e-9) {
+      result[result.length - 1] = kf;
+    } else {
+      result.push(kf);
+    }
+    return result;
+  }, []);
 
   const scaleFilter = `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=disable`;
 
@@ -346,7 +594,7 @@ function buildCropCommands(
     const y = Math.round((canvasH - frameH) / 2);
     return {
       filter: `${padFilter}crop=${frameW}:${frameH}:${x}:${y},${scaleFilter}`,
-      cmdFilePath: null,
+      filterScriptPath: null,
     };
   }
 
@@ -359,106 +607,28 @@ function buildCropCommands(
     const yCanvas = toCanvasY(kfs[0], frameH);
     return {
       filter: `${padFilter}crop=${frameW}:${frameH}:${xCanvas}:${yCanvas},${scaleFilter}`,
-      cmdFilePath: null,
+      filterScriptPath: null,
     };
   }
 
-  // ── Multi-keyframe: hybrid zoom-expression + x/y sendcmd ─────────────────
-  //
-  // ZOOM (w/h): Build FFmpeg if() expression chains from a downsampled zoom path.
-  // Using sendcmd to change crop@dyn w/h mid-stream silently terminates the
-  // video stream in FFmpeg 7.1 (format renegotiation kills the encoder pipeline).
-  // Embedding w/h as expression strings is safe because FFmpeg negotiates the
-  // variable output size at pipeline setup time and the downstream scale filter
-  // handles it correctly.
-  //
-  // PAN (x/y): Write one sendcmd entry per output frame at 30 fps from the full
-  // keyframe path (no downsampling needed — x/y changes never trigger format
-  // renegotiation, so there is no depth or stability limit to worry about).
-  //
-  // In FFmpeg filter option values, commas must be escaped as \, because the
-  // filter-graph parser uses commas to separate filters. Within a TypeScript
-  // string this is "\\,".
+  const filter = buildZoompanFilter({
+    kfs,
+    clipDuration,
+    is9to16,
+    outW: OUT_W,
+    outH: OUT_H,
+    canvasW,
+    canvasH,
+    padLeft,
+    padTop,
+  });
+  // Keep the full keyframe path out of execve's argument-size limit. FFmpeg's
+  // filter-script input parses the same graph as -vf, but spawn receives only
+  // this short file path.
+  const filterScriptPath = path.join(os.tmpdir(), `soccerwatch-filter-${randomUUID()}.txt`);
+  fs.writeFileSync(filterScriptPath, `${filter}\n`, "utf8");
+  return { filter: "", filterScriptPath };
 
-  // Number of zoom sample points for the if() expression chains.
-  // FFmpeg's expression evaluator has a recursion depth limit; 28 segments is
-  // well within it and provides smooth zoom animation for typical clips.
-  const ZOOM_SAMPLES = Math.min(MAX_CROP_KEYFRAMES - 2, kfs.length);
-
-  // Sample the zoom path at ZOOM_SAMPLES evenly-spaced time points.
-  const zoomKfs: Array<{ tSec: number; wpx: number; hpx: number }> = [];
-  for (let i = 0; i < ZOOM_SAMPLES; i++) {
-    const tFrac = i / Math.max(1, ZOOM_SAMPLES - 1);
-    const kf = sampleAt(kfs, tFrac);
-    const { w: wpx, h: hpx } = kfPx(kf);
-    zoomKfs.push({ tSec: tFrac * clipDuration, wpx: Math.min(wpx, canvasW), hpx: Math.min(hpx, canvasH) });
-  }
-
-  /**
-   * Build a piecewise-linear FFmpeg if() expression for one dimension.
-   * idx=0 → w, idx=1 → h.
-   */
-  const buildDimExpr = (samples: typeof zoomKfs, idx: 0 | 1): string => {
-    if (samples.length === 1) return String(idx === 0 ? samples[0].wpx : samples[0].hpx);
-    const val = (s: typeof zoomKfs[0]) => idx === 0 ? s.wpx : s.hpx;
-    // Build right-to-left so the rightmost interval is the default.
-    let expr = String(val(samples[samples.length - 1]));
-    for (let i = samples.length - 2; i >= 0; i--) {
-      const s0 = samples[i];
-      const s1 = samples[i + 1];
-      const v0 = val(s0);
-      const v1 = val(s1);
-      const tEnd = s1.tSec;
-      // Linear segment from s0 to s1.
-      const seg =
-        v0 === v1
-          ? String(v0)
-          : `(${v0}+(${((v1 - v0) / Math.max(1e-6, s1.tSec - s0.tSec)).toFixed(6)}*(t-${s0.tSec.toFixed(6)})))`;
-      expr = `if(lt(t\\,${tEnd.toFixed(6)})\\,${seg}\\,${expr})`;
-    }
-    return expr;
-  };
-
-  const wExpr = buildDimExpr(zoomKfs, 0);
-  const hExpr = buildDimExpr(zoomKfs, 1);
-
-  // Initial position for the crop@dyn filter (from the t=0 sample).
-  const kf0 = sampleAt(kfs, kfs[0].t);
-  const { w: init_w, h: init_h } = kfPx(kf0);
-  const initW = Math.min(init_w, canvasW);
-  const initH = Math.min(init_h, canvasH);
-  const initX = toCanvasX(kf0, initW);
-  const initY = toCanvasY(kf0, initH);
-
-  // Build x/y-only sendcmd file — one entry per output frame at 30 fps.
-  const FPS = 30;
-  const frameCount = Math.ceil(clipDuration * FPS);
-  const lines: string[] = [];
-
-  for (let i = 0; i < frameCount; i++) {
-    const timeSec = i / FPS;
-    const t = clipDuration > 1e-6 ? timeSec / clipDuration : 0;
-    const kf = sampleAt(kfs, t);
-    // Clamp x/y using the zoom width at this frame so the crop stays in canvas.
-    const { w: wpx, h: hpx } = kfPx(kf);
-    const curW = Math.min(wpx, canvasW);
-    const curH = Math.min(hpx, canvasH);
-    const safeX = Math.round(Math.max(0, Math.min(canvasW - curW, (kf.x ?? 0) * SRC_W + padLeft)));
-    const safeY = Math.round(Math.max(0, Math.min(canvasH - curH, (kf.y ?? 0) * SRC_H + padTop)));
-    lines.push(`${timeSec.toFixed(6)} [enter] crop@dyn x ${safeX}, crop@dyn y ${safeY};`);
-  }
-
-  const cmdFilePath = path.join(os.tmpdir(), `soccerwatch-crop-${randomUUID()}.txt`);
-  fs.writeFileSync(cmdFilePath, lines.join("\n") + "\n", "utf8");
-
-  // Escape colons in the path (FFmpeg option-value separator on some platforms)
-  const escapedCmdPath = cmdFilePath.replace(/:/g, "\\:");
-
-  // The filter chain: sendcmd provides per-frame x/y; w/h are if() expressions.
-  const filter =
-    `${padFilter}sendcmd=f=${escapedCmdPath},crop@dyn=${wExpr}:${hExpr}:${initX}:${initY},${scaleFilter}`;
-
-  return { filter, cmdFilePath };
 }
 
 /**
@@ -677,12 +847,22 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   }
   const is9to16 = aspectRatio === "9:16";
   // Includes pad (for out-of-source black bars), crop pan, and the output scale.
-  // For multi-keyframe clips this writes a sendcmd command file to disk.
-  const { filter: cropFilter, cmdFilePath } = buildCropCommands(cropPath, clipDuration, is9to16);
+  // Multi-keyframe clips use zoompan; static clips keep the direct crop fast path.
+  const { filter: cropFilter, filterScriptPath } = buildCropCommands(cropPath, clipDuration, is9to16);
 
   const tmpPath = path.join(os.tmpdir(), `soccerwatch-clip-${randomUUID()}.mp4`);
 
-  logger.info({ tmpPath, startSec, endSec, clipDuration, cropFilter, hasCmdFile: !!cmdFilePath }, "FFmpeg args ready");
+  logger.info(
+    {
+      tmpPath,
+      startSec,
+      endSec,
+      clipDuration,
+      cropFilter: filterScriptPath ? undefined : cropFilter,
+      filterScriptPath,
+    },
+    "FFmpeg args ready",
+  );
 
   // Build HTTP headers string for CDN access.
   // Bunny CDN blocks server-side requests without browser-like headers;
@@ -699,9 +879,15 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   //
   // Only done when there is an intro: the plain export path keeps the source's
   // own audio parameters and costs no extra probe.
-  const mainHasAudio = options.introUrl
-    ? await probeHasAudio(videoUrl, referer)
-    : true;
+  let mainHasAudio = true;
+  try {
+    if (options.introUrl) {
+      mainHasAudio = await probeHasAudio(videoUrl, referer);
+    }
+  } catch (err) {
+    if (filterScriptPath) cleanupTempFile(filterScriptPath);
+    throw err;
+  }
   const needsSilentTrack = !!options.introUrl && !mainHasAudio;
 
   // Only attach -headers for remote HTTP(S) sources.  For local file paths
@@ -722,7 +908,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     // Clip duration
     "-t", String(clipDuration),
     // pad -> crop pan -> scale, all built together so black bars survive
-    "-vf", cropFilter,
+    ...(filterScriptPath ? ["-filter_script:v", filterScriptPath] : ["-vf", cropFilter]),
     // H.264 video, fast encode, web-compatible
     "-c:v", "libx264",
     "-preset", "veryfast",
@@ -775,14 +961,15 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
       // the path from a successful resolve — so on failure nobody else can
       // clean it up.
       fs.unlink(tmpPath, () => {});
-      if (cmdFilePath) cleanupTempFile(cmdFilePath);
+      if (filterScriptPath) cleanupTempFile(filterScriptPath);
       reject(err);
     });
 
     proc.on("close", (code, signal) => {
       clearTimeout(timeout);
-      // Always clean up the sendcmd command file regardless of outcome.
-      if (cmdFilePath) cleanupTempFile(cmdFilePath);
+      // Keep cleanup conditional for compatibility with the static crop path;
+      // multi-keyframe zoompan stores its filter graph in this script.
+      if (filterScriptPath) cleanupTempFile(filterScriptPath);
       if (code !== 0) {
         logger.error({ code, signal, stderr: stderr.slice(-2000) }, "FFmpeg exited with non-zero code");
         fs.unlink(tmpPath, () => {});

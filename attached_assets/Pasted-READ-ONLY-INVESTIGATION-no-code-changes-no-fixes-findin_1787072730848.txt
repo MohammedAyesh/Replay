@@ -1,0 +1,17 @@
+READ-ONLY INVESTIGATION — no code changes, no fixes, findings + proposed plan first.
+
+SYMPTOM: For 16:9 clips recorded with zoom gestures, the in-app preview on My Clips plays the zoom correctly, but the exported/downloaded MP4 has NO zoom — it stays static/wide for the whole clip. Pan may still work. This appeared after the recent hybrid renderer changes (evalZoomAt / adaptive zoom sampling, commit lineage of Tasks #111/#114) and possibly the normalizePath tolerance widening (0.02 → 0.05).
+
+TRACE THE ZOOM VALUES THROUGH THE PIPELINE, WITH NUMBERS AT EACH STAGE:
+
+1. STORED: Pick the most recent 16:9 multi-keyframe clip exported in the last 24h that exhibits the bug (query user_clips). Report: clip id, keyframe count, and the min/max/first/last of w across the stored crop_path JSON. If w varies in storage (e.g. 0.2 to 0.5), the recording side is fine and the loss is server-side.
+
+2. AFTER SANITIZE + NORMALIZE: Using a throwaway read-only script in /tmp that imports the real functions from ffmpegExport.ts, run the stored path through sanitizeKeyframes then normalizePath(kfs, false) and report min/max of w and h AFTER each step. SPECIFIC SUSPECT: does normalizePath rewrite the keyframes' w or h to a constant (e.g. all w forced to baseW / zoom-1) because the h-vs-derivedH check fails? Report how many keyframes get rewritten vs passed through, and for 3 example keyframes show before/after values. Note maxZoomFor caps 16:9 zoom at 1 in the UI, so valid 16:9 w values are >= the base width and h should equal w * SRC_ASPECT / outAspect — verify what the stored h actually is relative to that formula.
+
+3. ZOOM SAMPLES: Continuing in the script, build the adaptive zoom samples (zoomKfs) exactly as buildCropCommands does for this path. Report: how many samples were selected, and the min/max of wpx across them. SPECIFIC SUSPECT: does the adaptive sampler terminate early (max deviation < 8px) or collapse to ~2 samples with near-identical wpx, producing an effectively constant zoom expression even though the stored path varies?
+
+4. FINAL FILTER: Report the wExpr/hExpr the code would emit for this clip (first 200 chars is enough) — is it a constant number or a varying if() chain? And from the actual server logs of the real export, paste the logged cropFilter string for comparison.
+
+5. PREVIEW CONTRAST: Briefly confirm what the My Clips preview player uses (client-side interpolation of the raw stored keyframes via applyFrameToVideo) — i.e., the preview bypasses sanitize/normalize/sampling entirely, which is why it can look correct while the export is wrong.
+
+VERDICT: State exactly which stage the zoom variation disappears at (storage → sanitize → normalize → sampling → expression), which specific code decision causes it, and propose a fix plan — but DO NOT implement anything. If the stage-by-stage numbers show the zoom surviving all the way into the expression, instead check the export's source selection and the rendered file itself (ffprobe + a few extracted frames) and report where reality diverges.

@@ -1,0 +1,20 @@
+TASK: UI-only change — disallow zoom while recording clips in 9:16 (vertical) format. Plan-first: state which component(s) and exact lines you intend to change, then WAIT for my approval before implementing. Diff required after implementation. One change only.
+
+REQUIRED BEHAVIOR:
+1. When the clip recorder is in 9:16 (vertical) aspect mode — or the user switches into it — the Zoom control in the recording interface must be hidden (preferred) or fully disabled. No zoom interaction may be possible in 9:16: this includes the button, AND any pinch/scroll/drag-to-zoom gesture handlers if they exist — audit for gesture-based zoom paths, not just the button.
+2. In 16:9 (horizontal) mode, zoom stays exactly as it is today — visible and fully functional.
+3. On switching 16:9 → 9:16 mid-session, the zoom state must reset/lock to the editor's standard default vertical window (the same initial w the editor already assigns when starting fresh in 9:16 — NOT the 16:9 default width), so no prior zoom level leaks into the vertical recording. Any keyframes captured AFTER the switch must reflect this locked default width. Do not modify keyframes captured before the switch.
+4. Switching 9:16 → 16:9 restores the zoom control and normal behavior.
+
+STRICT CONSTRAINTS:
+- Zero backend changes: do NOT touch ffmpegExport.ts, any export route, cropFrame math used by the exporter, or any server code.
+- Scope isolation: modify only the frontend clip-recorder / player-overlay component(s) where the aspect toggle and zoom control live.
+- No regressions: 16:9 recording flow, pan tracking, keyframe capture logic, and general playback UI must be untouched. Pan must continue to work normally in 9:16 — only zoom is locked.
+
+PLAN FIRST: Inspect the components handling the clip recorder, aspect-ratio toggle, and zoom control. Report: file paths, component names, the exact conditional you'll add, how zoom state is stored (so the reset is done at the right layer), and whether any gesture-based zoom paths exist. Wait for approval.
+
+VERIFICATION (after approval + implementation):
+- TypeScript check passes (paste output).
+- Provide the diff.
+- Confirm by walking the rendered logic (or a UI test if the project has one): (a) zoom control absent/disabled in 9:16, (b) present and functional in 16:9, (c) switching 16:9→9:16 with an active zoom resets to the default vertical width and keyframes recorded after the switch carry that width, (d) pan still records normally in 9:16.
+- Note any other issues spotted but do not fix them.

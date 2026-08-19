@@ -11,4 +11,5 @@
 - [Clip intro — playback vs export](clip-intro-playback-export.md) — intro is suppressed in all playback responses (hardcoded null); export path calls resolveIntroVideoUrl and prepends at correct dimensions.
 - [Recording visibility dates](recording-visibility-dates.md) — recording visibility uses exact per-field whitelisted dates plus time windows; recurring weekday rules are no longer active.
 - [Clerk auth card surface](clerk-card-surface.md) — card and footer are separate appearance surfaces; existing development badges may need a card-scoped exact-text UI guard.
-- [sendcmd w/h kills video stream](sendcmd-wh-stream-death.md) — FFmpeg 7.1: sendcmd changing crop@dyn w/h mid-stream silently terminates video; use if() expressions for zoom, sendcmd only for x/y pan.
+- [FFmpeg crop w/h per-frame](ffmpeg-crop-wh-per-frame.md) — crop w/h expressions evaluate with t=NaN at init (never per-frame); if(lt(t,...)) zoom expressions never animate; sendcmd w/h changes are silently ignored (not stream-terminating) in FFmpeg 7.1.1.
+- [Zoompan renderer geometry](zoompan-renderer.md) — map the padded 32:9 source onto an output-aspect canvas before zoompan; supersample 4x by default, 2x for large vertical canvases.
