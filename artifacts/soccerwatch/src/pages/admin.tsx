@@ -4530,7 +4530,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "accounts", label: "Accounts" },
   { id: "fields", label: "Fields" },
   { id: "banners", label: "Banners" },
-  { id: "academies", label: "Academies" },
   { id: "recordings", label: "Recordings" },
   { id: "live", label: "Live Control" },
   { id: "matches", label: "Matches" },
