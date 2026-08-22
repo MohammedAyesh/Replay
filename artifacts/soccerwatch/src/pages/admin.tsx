@@ -5,7 +5,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Eye, EyeOff, UserCheck, UserX, Shield, ShieldOff, Trash2, Plus, Save, X,
   ExternalLink, Image, RefreshCw, Search, Pencil, ChevronDown, ChevronUp,
-  GraduationCap, Video, Check, Radio, Square, AlertTriangle, Lock,
+  GraduationCap, Video, Check, Radio, Square, AlertTriangle,
   Play, Clock, CheckCircle2, XCircle, Loader2, ExternalLink as LinkIcon,
   CalendarDays, ChevronLeft, ChevronRight,
   Download,
@@ -3824,82 +3824,25 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
 }
 
 function LiveTab() {
-  // The live-control password is held in memory for the life of this component
-  // only.
-  //
-  // It used to be written to sessionStorage in plaintext and echoed on every
-  // request, so anything running in the page origin — Clerk, the Replit dev
-  // banner, an ad creative, any XSS — could read it and start or stop a camera,
-  // and it survived every navigation until someone remembered to click "Lock
-  // console". The cost of this change is re-entering it after a page reload,
-  // which is the right trade for a credential that controls a live broadcast.
-  const [unlocked, setUnlocked] = useState(false);
-  const [passwordInput, setPasswordInput] = useState("");
-  const [pwError, setPwError] = useState(false);
-  const [adminPassword, setAdminPassword] = useState("");
+  const adminPassword = "";
   const [configMissing, setConfigMissing] = useState<string[]>([]);
-  const [recordRefresh, setRecordRefresh] = useState(0);
 
-  // Verify password by calling /admin/contabo/config — if it returns 401, password is wrong
-  const handleUnlock = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPwError(false);
+  useEffect(() => {
+    let cancelled = false;
     try {
-      const res = await fetch(`${basePath}/api/admin/contabo/config`, {
+      void fetch(`${basePath}/api/admin/contabo/config`, {
         credentials: "include",
-        headers: { "X-Admin-Password": passwordInput },
+      }).then(async (res) => {
+        const data = await res.json() as { missing?: string[] };
+        if (!cancelled && data.missing?.length) setConfigMissing(data.missing);
+      }).catch(() => {
+        // Individual controls surface reachability errors; config discovery is best-effort.
       });
-      if (res.status === 401) { setPwError(true); return; }
-      const data = await res.json() as { configured: boolean; missing?: string[] };
-      if (data.missing && data.missing.length > 0) setConfigMissing(data.missing);
-      setAdminPassword(passwordInput);
-      setUnlocked(true);
-      // Deliberately not persisted — see the note on the state above.
-      // Clear any value left behind by an older build.
-      try {
-        sessionStorage.removeItem("contabo_unlocked");
-        sessionStorage.removeItem("contabo_pw");
-      } catch { /* no sessionStorage */ }
     } catch {
-      setPwError(true);
+      // fetch can only throw synchronously in unusual browser environments.
     }
-  };
-
-  if (!unlocked) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 px-4">
-        <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-4">
-          <Lock className="w-5 h-5 text-zinc-400" />
-        </div>
-        <h2 className="text-white font-bold text-lg mb-1">Live Control</h2>
-        <p className="text-zinc-500 text-sm mb-6 text-center">Enter the admin password to access the live stream controls</p>
-        <form onSubmit={handleUnlock} className="w-full max-w-xs space-y-3">
-          <input
-            type="password"
-            value={passwordInput}
-            onChange={(e) => setPasswordInput(e.target.value)}
-            placeholder="Admin password"
-            autoFocus
-            className={cn(
-              "w-full bg-zinc-800 border rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-500 outline-none transition-colors",
-              pwError ? "border-red-600" : "border-zinc-700 focus:border-primary"
-            )}
-          />
-          {pwError && (
-            <p className="text-red-400 text-xs flex items-center gap-1.5">
-              <XCircle className="w-3.5 h-3.5" /> Incorrect password
-            </p>
-          )}
-          <button
-            type="submit"
-            className="w-full bg-primary text-black font-bold py-3 rounded-xl text-sm hover:opacity-90 transition-opacity"
-          >
-            Unlock
-          </button>
-        </form>
-      </div>
-    );
-  }
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -3942,17 +3885,6 @@ function LiveTab() {
       {/* ── Request 4K Footage ────────────────────────────── */}
       <SdPullSection adminPassword={adminPassword} />
 
-      {/* Lock button */}
-      <button
-        onClick={() => {
-          setUnlocked(false);
-          setAdminPassword("");
-          setPasswordInput("");
-        }}
-        className="flex items-center gap-2 text-zinc-600 text-xs hover:text-zinc-400 transition-colors mx-auto"
-      >
-        <Lock className="w-3 h-3" /> Lock console
-      </button>
     </div>
   );
 }
