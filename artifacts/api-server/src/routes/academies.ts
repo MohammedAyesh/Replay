@@ -15,6 +15,14 @@ const uploadVideo = multer({ storage: multer.memoryStorage(), limits: { fileSize
 
 const router: IRouter = Router();
 
+// Temporarily keep this academy out of released/public surfaces without
+// deleting its stored record or associated configuration.
+const HIDDEN_ACADEMY_NAMES = new Set(["jordan united football academy"]);
+
+function isHiddenAcademy(academy: typeof academiesTable.$inferSelect): boolean {
+  return HIDDEN_ACADEMY_NAMES.has(academy.name.trim().toLowerCase());
+}
+
 async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<number | null> {
   const userId = await getLocalUserId(req);
   if (!userId) return null;
@@ -56,7 +64,8 @@ async function buildSummary(academy: typeof academiesTable.$inferSelect) {
 // ── Public routes ────────────────────────────────────────────────────────────
 
 router.get("/academies", async (_req, res): Promise<void> => {
-  const academies = await db.select().from(academiesTable).orderBy(academiesTable.name);
+  const academies = (await db.select().from(academiesTable).orderBy(academiesTable.name))
+    .filter((academy) => !isHiddenAcademy(academy));
   const summaries = await Promise.all(academies.map(buildSummary));
   res.json(summaries);
 });
@@ -66,7 +75,7 @@ router.get("/academies/:id", async (req, res): Promise<void> => {
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const [academy] = await db.select().from(academiesTable).where(eq(academiesTable.id, id));
-  if (!academy) { res.status(404).json({ error: "Academy not found" }); return; }
+  if (!academy || isHiddenAcademy(academy)) { res.status(404).json({ error: "Academy not found" }); return; }
 
   res.json(await buildSummary(academy));
 });
@@ -74,6 +83,9 @@ router.get("/academies/:id", async (req, res): Promise<void> => {
 router.get("/academies/:id/recordings", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [academy] = await db.select().from(academiesTable).where(eq(academiesTable.id, id));
+  if (!academy || isHiddenAcademy(academy)) { res.status(404).json({ error: "Academy not found" }); return; }
 
   const rows = await db
     .select({ recording: recordingsTable, field: fieldsTable })
@@ -128,7 +140,8 @@ router.get("/admin/academies", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
 
-  const academies = await db.select().from(academiesTable).orderBy(academiesTable.name);
+  const academies = (await db.select().from(academiesTable).orderBy(academiesTable.name))
+    .filter((academy) => !isHiddenAcademy(academy));
   const summaries = await Promise.all(academies.map(buildSummary));
   res.json(summaries);
 });
