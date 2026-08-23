@@ -2,10 +2,26 @@ import { Router, type IRouter } from "express";
 
 const router: IRouter = Router();
 
-const LIVE_PLAYBACK_BASE = "https://replayjo.b-cdn.net";
-const VALID_CAMERAS = ["camera1", "camera2"];
+const LIVE_PLAYBACK_BASE = "http://169.58.73.17:8088";
+const VALID_CAMERAS = ["camera1", "camera2"] as const;
+const UPSTREAM_CAMERAS: Record<(typeof VALID_CAMERAS)[number], string> = {
+  camera1: "cam1",
+  camera2: "cam2",
+};
 /** A segment file name only: no slashes, no dot-segments, must end in .ts */
 const SEGMENT_NAME_RE = /^[A-Za-z0-9_-]+\.ts$/;
+
+export function rewriteLiveManifest(manifest: string, camera: string): string {
+  return manifest.replace(
+    /^([A-Za-z0-9_-]+\.ts)(\r?)$/gm,
+    (_line, segment: string, carriageReturn: string) =>
+      `/api/live/${camera}/${segment}${carriageReturn}`,
+  );
+}
+
+function upstreamPath(camera: string): string {
+  return `${LIVE_PLAYBACK_BASE}/${UPSTREAM_CAMERAS[camera as keyof typeof UPSTREAM_CAMERAS]}/hls`;
+}
 
 /**
  * GET /api/live/:camera/index.m3u8
@@ -21,8 +37,8 @@ router.get("/live/:camera/index.m3u8", async (req, res): Promise<void> => {
 
   try {
     const upstream = await fetch(
-      `${LIVE_PLAYBACK_BASE}/${camera}/index.m3u8`,
-      { signal: AbortSignal.timeout(5000) },
+      `${upstreamPath(camera)}/live.m3u8`,
+      { signal: AbortSignal.timeout(10000) },
     );
     if (!upstream.ok) {
       res.status(upstream.status).send("Stream unavailable");
@@ -31,11 +47,9 @@ router.get("/live/:camera/index.m3u8", async (req, res): Promise<void> => {
 
     const text = await upstream.text();
 
-    // Rewrite relative segment URLs → /api/live/:camera/<segment>
-    const rewritten = text.replace(
-      /^(seg_[^\s]+\.ts)$/gm,
-      `/api/live/${camera}/$1`,
-    );
+    // Rewrite only bare segment names. Comment/tag lines, including
+    // EXT-X-PROGRAM-DATE-TIME, are deliberately never touched.
+    const rewritten = rewriteLiveManifest(text, camera);
 
     res.set("Content-Type", "application/vnd.apple.mpegurl");
     res.set("Cache-Control", "no-store");
@@ -63,8 +77,8 @@ router.get("/live/:camera/:segment", async (req, res): Promise<void> => {
 
   try {
     const upstream = await fetch(
-      `${LIVE_PLAYBACK_BASE}/${camera}/${segment}`,
-      { signal: AbortSignal.timeout(10000) },
+      `${upstreamPath(camera)}/${segment}`,
+      { signal: AbortSignal.timeout(20000) },
     );
     if (!upstream.ok) {
       res.status(upstream.status).send("Segment unavailable");

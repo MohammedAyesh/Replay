@@ -11,6 +11,7 @@ import {
   Download,
 } from "lucide-react";
 import Hls from "hls.js";
+import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import { cn } from "@/lib/utils";
 import {
   getGetFeedQueryKey,
@@ -29,7 +30,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2456,7 +2457,7 @@ function LiveSchedulesSection({ adminPassword }: { adminPassword: string }) {
 const CAMERAS = ["camera1", "camera2"] as const;
 type Camera = typeof CAMERAS[number];
 
-const LIVE_PLAYBACK_BASE = "https://replayjo.b-cdn.net";
+const LIVE_PLAYBACK_BASE = `${basePath}/api/live`;
 
 interface CameraStatus {
   live: boolean;
@@ -2747,6 +2748,171 @@ function CameraCard({
             <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── VAR Review Tab ───────────────────────────────────────────────────────────
+
+interface VarTimeline {
+  position: number;
+  liveEdge: number;
+  programTime?: number;
+}
+
+function formatVarProgramTime(timestamp: number): string {
+  return `${new Date(timestamp).toISOString().replace("T", " ").replace("Z", "")} UTC`;
+}
+
+function VarTab() {
+  const [camera, setCamera] = useState<Camera>("camera1");
+  const [rate, setRate] = useState(1);
+  const [timeline, setTimeline] = useState<VarTimeline | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const seekBy = useCallback((seconds: number, pause = false) => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (pause) video.pause();
+    if (video.seekable.length) {
+      const start = video.seekable.start(0);
+      const end = video.seekable.end(video.seekable.length - 1);
+      video.currentTime = Math.min(end, Math.max(start, video.currentTime + seconds));
+    } else {
+      video.currentTime = Math.max(0, video.currentTime + seconds);
+    }
+  }, []);
+
+  const changeRate = useCallback((nextRate: number) => {
+    setRate(nextRate);
+    if (videoRef.current) videoRef.current.playbackRate = nextRate;
+  }, []);
+
+  const goLive = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !video.seekable.length) return;
+    video.currentTime = video.seekable.end(video.seekable.length - 1) - 1;
+    video.playbackRate = 1;
+    setRate(1);
+    video.play().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "SELECT" || target?.isContentEditable) return;
+      const key = event.key.toLowerCase();
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        seekBy(-1 / 20, true);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        seekBy(1 / 20, true);
+      } else if (key === "j") {
+        event.preventDefault();
+        seekBy(-10);
+      } else if (key === "l") {
+        event.preventDefault();
+        seekBy(10);
+      } else if (event.code === "Space") {
+        event.preventDefault();
+        const video = videoRef.current;
+        if (video) {
+          if (video.paused) video.play().catch(() => {});
+          else video.pause();
+        }
+      }
+    };
+    panel.addEventListener("keydown", handleKeyDown);
+    return () => panel.removeEventListener("keydown", handleKeyDown);
+  }, [seekBy]);
+
+  const positionLabel = timeline?.programTime != null
+    ? formatVarProgramTime(timeline.programTime)
+    : timeline
+      ? `${Math.max(0, timeline.liveEdge - timeline.position).toFixed(1)}s behind live edge (relative)`
+      : "Waiting for timeline…";
+
+  return (
+    <div
+      ref={panelRef}
+      tabIndex={0}
+      className="space-y-4 outline-none"
+      aria-label="VAR review controls"
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-white text-lg font-semibold">VAR Review</p>
+          <p className="text-zinc-500 text-xs mt-0.5">Review the live DVR window with frame-accurate controls.</p>
+        </div>
+        <select
+          value={camera}
+          onChange={(event) => {
+            setCamera(event.target.value as Camera);
+            setTimeline(null);
+            setRate(1);
+          }}
+          aria-label="VAR camera"
+          className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary"
+        >
+          <option value="camera1">Camera 1</option>
+          <option value="camera2">Camera 2</option>
+        </select>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3">
+        <SharedHlsPlayer
+          key={camera}
+          ref={videoRef}
+          url={`${LIVE_PLAYBACK_BASE}/${camera}/index.m3u8`}
+          label={`${camera === "camera1" ? "Camera 1" : "Camera 2"} · VAR`}
+          windowSeconds={300}
+          retryOnNetworkError
+          onTimelineChange={setTimeline}
+        />
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-primary" />
+          <span className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">Playback position</span>
+          <span className="text-white text-sm font-mono tabular-nums">{positionLabel}</span>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => seekBy(-30)} className="review-control">−30 sec</button>
+          <button type="button" onClick={() => seekBy(-10)} className="review-control">−10 sec</button>
+          <button type="button" onClick={() => seekBy(-1 / 20, true)} className="review-control">Frame −</button>
+          <button type="button" onClick={() => seekBy(1 / 20, true)} className="review-control">Frame +</button>
+          <button type="button" onClick={goLive} className="review-control border-red-700/60 text-red-400 hover:bg-red-900/20">Go live</button>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-zinc-500">Speed</span>
+          {[0.25, 0.5, 1].map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => changeRate(value)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors",
+                rate === value
+                  ? "border-primary bg-primary/15 text-primary"
+                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-white",
+              )}
+            >
+              {value}×
+            </button>
+          ))}
+        </div>
+
+        <p className="text-[11px] text-zinc-600">
+          Focus this panel for shortcuts: ←/→ frame step · J/L ±10 seconds · Space play/pause
+        </p>
       </div>
     </div>
   );

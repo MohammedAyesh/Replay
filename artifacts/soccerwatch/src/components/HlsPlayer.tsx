@@ -30,11 +30,23 @@ export interface HlsPlayerProps {
   label: string;
   windowSeconds?: number;
   retryOnNetworkError?: boolean;
+  onTimelineChange?: (timeline: {
+    position: number;
+    liveEdge: number;
+    programTime?: number;
+  }) => void;
 }
 
 export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
-  function HlsPlayer({ url, label, windowSeconds, retryOnNetworkError = false }, forwardedRef) {
+  function HlsPlayer({
+    url,
+    label,
+    windowSeconds,
+    retryOnNetworkError = false,
+    onTimelineChange,
+  }, forwardedRef) {
     const videoRef = useRef<HTMLVideoElement>(null);
+    const programAnchorRef = useRef<{ mediaTime: number; wallTime: number } | null>(null);
 
     // Expose the internal video element via forwardRef
     useImperativeHandle(forwardedRef, () => videoRef.current!, []);
@@ -54,6 +66,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
       setError(null);
       setWaiting(false);
       setTimeline({ start: 0, end: 0, position: 0 });
+      programAnchorRef.current = null;
 
       let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -73,6 +86,18 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           setReady(true);
           setWaiting(false);
           el.play().catch(() => {});
+        });
+        hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
+          const fragment = data.details?.fragments?.find(
+            (candidate: { programDateTime?: number }) =>
+              Number.isFinite(candidate.programDateTime),
+          );
+          if (fragment && Number.isFinite(fragment.programDateTime)) {
+            programAnchorRef.current = {
+              mediaTime: fragment.start,
+              wallTime: fragment.programDateTime as number,
+            };
+          }
         });
 
         const clearTransientError = () =>
@@ -161,6 +186,14 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
             ? Math.max(rawStart, rawEnd - windowSeconds)
             : rawStart;
         setTimeline({ start, end: rawEnd, position: el.currentTime });
+        const anchor = programAnchorRef.current;
+        onTimelineChange?.({
+          position: el.currentTime,
+          liveEdge: rawEnd,
+          programTime: anchor
+            ? anchor.wallTime + (el.currentTime - anchor.mediaTime) * 1000
+            : undefined,
+        });
       };
 
       updateTimeline();
@@ -170,7 +203,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         window.clearInterval(timer);
         el.removeEventListener("timeupdate", updateTimeline);
       };
-    }, [url, ready, windowSeconds]);
+    }, [url, ready, windowSeconds, onTimelineChange]);
 
     const hasDvrWindow = timeline.end - timeline.start > 3;
     const isLive = hasDvrWindow && timeline.end - timeline.position < 8;
