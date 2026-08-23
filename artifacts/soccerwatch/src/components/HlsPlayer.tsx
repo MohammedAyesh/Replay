@@ -89,7 +89,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         });
         hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
           const fragment = data.details?.fragments?.find(
-            (candidate: { programDateTime?: number }) =>
+            (candidate: { programDateTime?: number | null }) =>
               Number.isFinite(candidate.programDateTime),
           );
           if (fragment && Number.isFinite(fragment.programDateTime)) {

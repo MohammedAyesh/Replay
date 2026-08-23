@@ -8,6 +8,8 @@ const UPSTREAM_CAMERAS: Record<(typeof VALID_CAMERAS)[number], string> = {
   camera1: "cam1",
   camera2: "cam2",
 };
+const isValidCamera = (camera: string): camera is (typeof VALID_CAMERAS)[number] =>
+  VALID_CAMERAS.includes(camera as (typeof VALID_CAMERAS)[number]);
 /** A segment file name only: no slashes, no dot-segments, must end in .ts */
 const SEGMENT_NAME_RE = /^[A-Za-z0-9_-]+\.ts$/;
 
@@ -30,7 +32,7 @@ function upstreamPath(camera: string): string {
  */
 router.get("/live/:camera/index.m3u8", async (req, res): Promise<void> => {
   const camera = req.params.camera as string;
-  if (!VALID_CAMERAS.includes(camera)) {
+  if (!isValidCamera(camera)) {
     res.status(400).send("Invalid camera");
     return;
   }
@@ -70,7 +72,7 @@ router.get("/live/:camera/:segment", async (req, res): Promise<void> => {
   // Express decodes %2e%2f etc. before we see it, so an endsWith(".ts") check
   // alone still admits values like "../../other.ts" which fetch would resolve
   // outside the camera directory. Match the segment shape exactly instead.
-  if (!VALID_CAMERAS.includes(camera) || !SEGMENT_NAME_RE.test(segment)) {
+  if (!isValidCamera(camera) || !SEGMENT_NAME_RE.test(segment)) {
     res.status(400).send("Invalid request");
     return;
   }

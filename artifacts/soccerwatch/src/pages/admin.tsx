@@ -2884,11 +2884,11 @@ function VarTab() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => seekBy(-30)} className="review-control">−30 sec</button>
-          <button type="button" onClick={() => seekBy(-10)} className="review-control">−10 sec</button>
-          <button type="button" onClick={() => seekBy(-1 / 20, true)} className="review-control">Frame −</button>
-          <button type="button" onClick={() => seekBy(1 / 20, true)} className="review-control">Frame +</button>
-          <button type="button" onClick={goLive} className="review-control border-red-700/60 text-red-400 hover:bg-red-900/20">Go live</button>
+          <button type="button" onClick={() => seekBy(-30)} className="px-3 py-2 rounded-lg border border-zinc-700 text-xs font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors">−30 sec</button>
+          <button type="button" onClick={() => seekBy(-10)} className="px-3 py-2 rounded-lg border border-zinc-700 text-xs font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors">−10 sec</button>
+          <button type="button" onClick={() => seekBy(-1 / 20, true)} className="px-3 py-2 rounded-lg border border-zinc-700 text-xs font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors">Frame −</button>
+          <button type="button" onClick={() => seekBy(1 / 20, true)} className="px-3 py-2 rounded-lg border border-zinc-700 text-xs font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors">Frame +</button>
+          <button type="button" onClick={goLive} className="px-3 py-2 rounded-lg border border-red-700/60 text-xs font-semibold text-red-400 hover:bg-red-900/20 transition-colors">Go live</button>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -4698,6 +4698,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "banners", label: "Banners" },
   { id: "recordings", label: "Recordings" },
   { id: "live", label: "Live Control" },
+  { id: "var", label: "VAR" },
   { id: "matches", label: "Matches" },
 ];
 
@@ -4752,6 +4753,7 @@ export default function Admin() {
         {tab === "academies" && <AcademiesTab />}
         {tab === "recordings" && <RecordingsTab />}
         {tab === "live" && <LiveTab />}
+        {tab === "var" && <VarTab />}
         {tab === "matches" && <MatchesTab />}
       </div>
     </div>
