@@ -2771,6 +2771,9 @@ function VarTab() {
   const [timeline, setTimeline] = useState<VarTimeline | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const handleTimelineChange = useCallback((nextTimeline: VarTimeline) => {
+    setTimeline(nextTimeline);
+  }, []);
 
   const seekBy = useCallback((seconds: number, pause = false) => {
     const video = videoRef.current;
@@ -2872,7 +2875,7 @@ function VarTab() {
           label={`${camera === "camera1" ? "Camera 1" : "Camera 2"} · VAR`}
           windowSeconds={300}
           retryOnNetworkError
-          onTimelineChange={setTimeline}
+          onTimelineChange={handleTimelineChange}
         />
       </div>
 
