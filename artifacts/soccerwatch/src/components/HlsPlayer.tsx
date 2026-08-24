@@ -75,7 +75,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           enableWorker: false,
           liveSyncDurationCount: 10,
           maxLiveSyncPlaybackRate: 1.05,
-          liveMaxLatencyDurationCount: 10,
+          liveMaxLatencyDurationCount: 20,
           maxBufferLength: 40,
           maxMaxBufferLength: 60,
           backBufferLength: 90,
