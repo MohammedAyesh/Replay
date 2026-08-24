@@ -310,7 +310,7 @@ interface PlaybackJob {
   playback?: string | null;    // old field name
   error?: string | null;
   note?: string; // old downloading note
-  engine?: string; // which pull method actually ran: "playback" | "download" | "ftp"
+  engine?: string; // which pull method actually ran: "playback" | "download"
 }
 
 interface LiveJobRef {
@@ -318,7 +318,7 @@ interface LiveJobRef {
   jobId: string;
   initialJob: PlaybackJob;
   /** Saved so the retry button can re-submit the identical request. */
-  savedRequest?: { date: string; startHour: number; endHour: number; title: string; camera: Camera; source: "playback" | "sd" | "ftp" };
+  savedRequest?: { date: string; startHour: number; endHour: number; title: string; camera: Camera; source: "playback" | "sd" };
 }
 
 interface FtpAvailability {

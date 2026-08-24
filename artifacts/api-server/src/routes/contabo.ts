@@ -306,6 +306,9 @@ router.get("/admin/contabo/recordings", requireContaboAuth as import("express").
 });
 
 // ─── FTP instant-footage route ────────────────────────────────────────────────
+// FTP push has been disabled on both cameras as of 2026-08-24. This endpoint
+// remains for already-pushed clips and will report progressively less footage
+// until FTP is enabled again.
 
 /**
  * GET /admin/contabo/ftp/:cam/available
@@ -362,10 +365,11 @@ router.get("/admin/contabo/sd/:cam/available", requireContaboAuth as import("exp
 });
 
 /**
- * POST /admin/contabo/hq/:cam?source=ftp|sd&start=...&end=...&title=...
+ * POST /admin/contabo/hq/:cam?source=sd|playback&start=...&end=...&title=...
  * Proxy: POST {CONTROL_URL}/record-hq/{cam}?source=...&start=...&end=...&title=...
- * source defaults to "ftp" (fast — assembles from footage already on the VPS).
- * source="sd" pulls from the camera's SD card (slow, especially on camera 1).
+ * source defaults to "playback" and pulls from the camera's SD card through
+ * the playback engine. source="sd" pulls from the same card through a
+ * different, slower command. The former ftp engine no longer exists.
  * start/end are "YYYY-MM-DD HH:MM:SS" Amman local time.
  * Returns { status, cam, jobId, poll }
  */
@@ -377,8 +381,8 @@ router.post("/admin/contabo/hq/:cam", requireContaboAuth as import("express").Re
   if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
 
   const source = (req.query.source as string | undefined) ?? "playback";
-  if (!["ftp", "sd", "playback"].includes(source)) {
-    res.status(400).json({ error: "source must be 'ftp', 'sd', or 'playback'" });
+  if (!["sd", "playback"].includes(source)) {
+    res.status(400).json({ error: "source must be 'sd' or 'playback'" });
     return;
   }
 
