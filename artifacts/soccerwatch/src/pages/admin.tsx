@@ -116,6 +116,7 @@ interface AdminRecording {
   hasTrackingBundle?: boolean;
   trackingSegmentCount?: number | null;
   trackingFrameCoverage?: string | null;
+  trackingVideoStartSeconds?: number | null;
 }
 
 interface AdminBanner {
@@ -4170,8 +4171,11 @@ function CalendarMonth({
 function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
   const [hasBundle, setHasBundle] = useState(Boolean(recording.hasTrackingBundle));
   const [busy, setBusy] = useState(false);
+  const [savingStart, setSavingStart] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [videoStart, setVideoStart] = useState("");
+  const [videoStart, setVideoStart] = useState(
+    recording.hasTrackingBundle ? String(recording.trackingVideoStartSeconds ?? 0) : "",
+  );
   const [verifying, setVerifying] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -4230,6 +4234,31 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
     }
   };
 
+  const saveVideoStart = async () => {
+    const startSeconds = videoStart.trim() === "" ? 0 : Number(videoStart);
+    if (!Number.isFinite(startSeconds) || startSeconds < 0) {
+      setMessage("Video start must be a non-negative number of seconds");
+      return;
+    }
+    setSavingStart(true);
+    setMessage(null);
+    try {
+      const result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
+        method: "PATCH",
+        body: JSON.stringify({ videoStartSeconds: startSeconds }),
+      }) as { videoStartSeconds: number };
+      setVideoStart(String(result.videoStartSeconds));
+      setMessage(
+        `Ready · ${recording.trackingSegmentCount ?? "—"} segments · ${recording.trackingFrameCoverage ?? "coverage unavailable"} · `
+        + `starts ${result.videoStartSeconds}s into the video`,
+      );
+    } catch {
+      setMessage("Could not save the video start time");
+    } finally {
+      setSavingStart(false);
+    }
+  };
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
@@ -4275,6 +4304,17 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
             title="Seconds into the recording at which the tracked window begins. The 2026-08-24 hour starts 18 minutes in, so 1080."
           />
           s in
+          {hasBundle && (
+            <button
+              type="button"
+              className="rounded border border-primary/50 px-2 py-1 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+              disabled={busy || savingStart}
+              data-testid={`button-save-video-start-${recording.id}`}
+              onClick={() => void saveVideoStart()}
+            >
+              {savingStart ? "Saving…" : "Save time"}
+            </button>
+          )}
         </label>
         <button
           type="button"

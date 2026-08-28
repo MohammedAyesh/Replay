@@ -18,7 +18,11 @@ function toAdminRecording(
   r: typeof recordingsTable.$inferSelect,
   fieldName: string | null,
   hasTrackingBundle = false,
-  trackingManifest: { segmentCount?: number; frameCount?: number } | null = null,
+  trackingManifest: {
+    segmentCount?: number;
+    frameCount?: number;
+    videoStartSeconds?: number;
+  } | null = null,
 ) {
   return {
     id: r.id,
@@ -35,6 +39,7 @@ function toAdminRecording(
     trackingFrameCoverage: trackingManifest
       ? `0-${Math.max(0, (trackingManifest.frameCount ?? 1) - 1)} (${trackingManifest.frameCount ?? 0} frames)`
       : null,
+    trackingVideoStartSeconds: trackingManifest?.videoStartSeconds ?? 0,
   };
 }
 

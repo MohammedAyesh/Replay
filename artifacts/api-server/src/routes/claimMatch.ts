@@ -969,6 +969,46 @@ async function storeUploadBundle(recordingId: number, adminId: number, upload: U
   };
 }
 
+router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const recordingId = parseId(req.params.id);
+  if (!recordingId) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const startSeconds = firstNumber((req.body as UnknownRecord | undefined)?.videoStartSeconds);
+  if (startSeconds === undefined || startSeconds < 0) {
+    res.status(400).json({ error: "videoStartSeconds must be a non-negative number" });
+    return;
+  }
+  const [existing] = await db
+    .select({ id: recordingTrackingBundlesTable.id, manifest: recordingTrackingBundlesTable.manifest })
+    .from(recordingTrackingBundlesTable)
+    .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+  if (!existing) {
+    res.status(404).json({ error: "Tracking bundle not found" });
+    return;
+  }
+  const manifest: TrackingManifest = {
+    ...existing.manifest,
+    videoStartSeconds: startSeconds,
+  };
+  const [saved] = await db
+    .update(recordingTrackingBundlesTable)
+    .set({ manifest, updatedAt: new Date(), uploadedBy: adminId })
+    .where(eq(recordingTrackingBundlesTable.id, existing.id))
+    .returning({ updatedAt: recordingTrackingBundlesTable.updatedAt });
+  res.json({
+    recordingId,
+    videoStartSeconds: manifest.videoStartSeconds,
+    updatedAt: saved?.updatedAt?.toISOString() ?? new Date().toISOString(),
+  });
+});
+
 router.put("/admin/recordings/:id/tracking-bundle", bundleUpload.single("bundle"), async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) {
