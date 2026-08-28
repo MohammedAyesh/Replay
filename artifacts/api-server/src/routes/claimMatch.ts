@@ -25,7 +25,7 @@ import {
   type TrackingSegmentPayload,
   type ClaimEarnedClip,
 } from "@workspace/db";
-import { getLocalUserId } from "../lib/clerkUserBridge";
+import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { readClaimSegment, readCompressedClaimSegment, writeClaimSegment } from "../lib/claimMatchStorage";
 
@@ -41,8 +41,8 @@ function parseId(value: string | string[]): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-async function requireAccountUser(req: Parameters<typeof getLocalUserId>[0]): Promise<number | null> {
-  const userId = await getLocalUserId(req);
+async function requireAccountUser(req: Parameters<typeof getLocalAccountUserId>[0]): Promise<number | null> {
+  const userId = await getLocalAccountUserId(req);
   if (!userId) return null;
   const [user] = await db
     .select({ id: usersTable.id, isGuest: usersTable.isGuest })
@@ -549,7 +549,7 @@ async function readBundleSegments(bundleId: number): Promise<TrackingSegmentPayl
 router.get("/claim-match/demo", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
-    res.status(401).json({ error: "Authenticated account required" });
+    unauthenticatedResponse(res, req, "Authenticated account required");
     return;
   }
   const [bundle] = await db
@@ -593,7 +593,7 @@ function formatMoment(seconds: number): string {
 router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
-    res.status(401).json({ error: "Authenticated account required" });
+    unauthenticatedResponse(res, req, "Authenticated account required");
     return;
   }
   const params = GetClaimMatchParams.safeParse({ id: recordingIdFromRequest(req.params.id) });
@@ -633,7 +633,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
 router.get("/recordings/:id/claim-match/segments/:segmentIndex", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
-    res.status(401).json({ error: "Authenticated account required" });
+    unauthenticatedResponse(res, req, "Authenticated account required");
     return;
   }
   const params = GetClaimMatchSegmentParams.safeParse({
@@ -669,7 +669,7 @@ router.get("/recordings/:id/claim-match/segments/:segmentIndex", async (req, res
 router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
-    res.status(401).json({ error: "Authenticated account required" });
+    unauthenticatedResponse(res, req, "Authenticated account required");
     return;
   }
   const params = GetClaimMatchParams.safeParse({ id: recordingIdFromRequest(req.params.id) });
@@ -723,7 +723,7 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
 router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
-    res.status(401).json({ error: "Authenticated account required" });
+    unauthenticatedResponse(res, req, "Authenticated account required");
     return;
   }
   const params = GetClaimMatchParams.safeParse({ id: recordingIdFromRequest(req.params.id) });
@@ -823,7 +823,7 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
 router.delete("/claim-match/corrections/:correctionId", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
-    res.status(401).json({ error: "Authenticated account required" });
+    unauthenticatedResponse(res, req, "Authenticated account required");
     return;
   }
   const correctionId = parseId(req.params.correctionId);

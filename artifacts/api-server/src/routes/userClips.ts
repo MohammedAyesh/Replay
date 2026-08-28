@@ -20,7 +20,7 @@ import {
   RecordViewResponse,
   RecordShareResponse,
 } from "@workspace/api-zod";
-import { getLocalUserId } from "../lib/clerkUserBridge";
+import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import {
   getBunnyPlaybackUrl,
   getBunnyThumbnailUrl,
@@ -387,7 +387,7 @@ export async function selectExportSource(options: {
 router.post("/user-clips", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -489,7 +489,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
 router.get("/user-clips", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -536,7 +536,7 @@ router.get("/user-clips", async (req, res): Promise<void> => {
 router.delete("/user-clips/:id", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -576,7 +576,7 @@ router.delete("/user-clips/:id", async (req, res): Promise<void> => {
 router.patch("/user-clips/:id", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -659,7 +659,7 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
 router.post("/user-clips/:id/like", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -933,7 +933,7 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
   if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
 
   const accessibleClip = await getExportAccessibleClip(req, clipId);
-  if (accessibleClip === false) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  if (accessibleClip === false) { unauthenticatedResponse(res, req); return; }
   const clip = accessibleClip;
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
@@ -988,7 +988,7 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
   if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
 
   const accessibleClip = await getExportAccessibleClip(req, clipId);
-  if (accessibleClip === false) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  if (accessibleClip === false) { unauthenticatedResponse(res, req); return; }
   const clip = accessibleClip;
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
@@ -1004,7 +1004,7 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
  */
 router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
-  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  if (!userId) { unauthenticatedResponse(res, req); return; }
 
   const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const clipId = parseInt(rawId, 10);

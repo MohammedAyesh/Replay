@@ -8,7 +8,7 @@ import {
   ToggleLikeParams,
   ToggleLikeResponse,
 } from "@workspace/api-zod";
-import { getLocalUserId } from "../lib/clerkUserBridge";
+import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { getBunnyPlaybackUrl, getBunnyProxiedPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
 import { introPlaybackPath } from "./clipIntro";
 
@@ -173,7 +173,7 @@ router.post("/clips/:id/like", async (req, res): Promise<void> => {
 
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 

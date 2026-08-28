@@ -24,6 +24,9 @@ import { eq, inArray } from "drizzle-orm";
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(),
   getLocalUserRecord: vi.fn(),
+  unauthenticatedResponse: vi.fn((res: any, _req: any, error = "Unauthenticated") => {
+    res.status(401).json({ error, reason: "no_credentials" });
+  }),
 }));
 
 import { getLocalUserId } from "../lib/clerkUserBridge";

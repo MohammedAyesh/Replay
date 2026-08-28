@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { db, usersTable, academiesTable } from "@workspace/db";
 import { GetMeResponse, LoginAsGuestResponse } from "@workspace/api-zod";
-import { getLocalUserRecord } from "../lib/clerkUserBridge";
+import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { GUEST_COOKIE_OPTIONS } from "../lib/cookies";
 
 const router: IRouter = Router();
@@ -11,7 +11,7 @@ const router: IRouter = Router();
 router.get("/auth/me", async (req, res): Promise<void> => {
   const user = await getLocalUserRecord(req);
   if (!user) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -92,7 +92,7 @@ router.post("/auth/admin-setup", async (req, res): Promise<void> => {
 
   const user = await getLocalUserRecord(req);
   if (!user) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 

@@ -6,7 +6,7 @@ import {
   UnsaveClipParams,
   ListSavedClipsResponse,
 } from "@workspace/api-zod";
-import { getLocalUserId } from "../lib/clerkUserBridge";
+import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { getBunnyPlaybackUrl, isBunnyConfigured } from "../lib/bunny";
 
 const router: IRouter = Router();
@@ -91,7 +91,7 @@ router.put("/saved-clips/:clipId", async (req, res): Promise<void> => {
 
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -113,7 +113,7 @@ router.delete("/saved-clips/:clipId", async (req, res): Promise<void> => {
 
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 

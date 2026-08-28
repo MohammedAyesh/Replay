@@ -2,14 +2,14 @@ import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
 import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable } from "@workspace/db";
 import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody, UpdateLocaleBody, UpdateLocaleResponse } from "@workspace/api-zod";
-import { getLocalUserId, getLocalUserRecord } from "../lib/clerkUserBridge";
+import { getLocalUserId, getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
 
 router.patch("/account/profile", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -48,7 +48,7 @@ router.patch("/account/profile", async (req, res): Promise<void> => {
 router.patch("/account/locale", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 

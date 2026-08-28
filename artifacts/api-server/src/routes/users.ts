@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, sql } from "drizzle-orm";
 import { db, usersTable, followsTable, userClipsTable } from "@workspace/db";
-import { getLocalUserId } from "../lib/clerkUserBridge";
+import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
 
@@ -69,8 +69,8 @@ router.get("/users/:id", async (req, res): Promise<void> => {
   res.json(profile);
 });
 
-async function requireNonGuestViewer(req: Parameters<typeof getLocalUserId>[0]) {
-  const viewerId = await getLocalUserId(req);
+async function requireNonGuestViewer(req: Parameters<typeof getLocalAccountUserId>[0]) {
+  const viewerId = await getLocalAccountUserId(req);
   if (!viewerId) return null;
   const [viewer] = await db
     .select({ id: usersTable.id, isGuest: usersTable.isGuest })
@@ -89,7 +89,7 @@ router.post("/users/:id/follow", async (req, res): Promise<void> => {
 
   const viewerId = await requireNonGuestViewer(req);
   if (!viewerId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
@@ -126,7 +126,7 @@ router.delete("/users/:id/follow", async (req, res): Promise<void> => {
 
   const viewerId = await requireNonGuestViewer(req);
   if (!viewerId) {
-    res.status(401).json({ error: "Unauthenticated" });
+    unauthenticatedResponse(res, req);
     return;
   }
 
