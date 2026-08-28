@@ -37,6 +37,7 @@ import {
   boxAtFrame,
   boxesOverlap,
   crossingsForWindow,
+  findHitTracks,
   frameToMatchSeconds,
   laterSeparatedFrame,
   matchSecondsToFrame,
@@ -46,6 +47,9 @@ import {
   startNarrowing,
   type NarrowingAnswer,
   type NarrowingState,
+  type ClaimBundle,
+  type ClaimBox,
+  type ClaimTrack,
 } from "@/lib/claim-match-engine";
 import {
   enqueueClaimAction,
@@ -60,7 +64,18 @@ import {
 } from "@/lib/claim-match-segments";
 
 type Stage = "find" | "following" | "still" | "picker" | "look" | "done";
-type Candidate = { id: string; label: string; x: number; y: number; w: number; h: number; overlap?: boolean };
+type Candidate = {
+  id: string;
+  label: string;
+  box: ClaimBox;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  overlap?: boolean;
+  distance?: number;
+};
+type ShirtTone = "light" | "dark" | "unreadable";
 
 function segmentAsBundle(
   manifest: ClaimMatchResponse["manifest"],
@@ -82,15 +97,6 @@ function segmentAsBundle(
   };
 }
 
-const stageMeta: Record<Stage, { label: string; number: string }> = {
-  find: { label: "Find yourself", number: "01" },
-  following: { label: "Following", number: "02" },
-  still: { label: "Still you here?", number: "03" },
-  picker: { label: "Which one of these is you?", number: "04" },
-  look: { label: "Take another look", number: "05" },
-  done: { label: "Done", number: "06" },
-};
-
 function formatTime(seconds: number) {
   const safe = Math.max(0, Math.floor(seconds));
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
@@ -100,33 +106,99 @@ function initials(label: string) {
   return label.slice(0, 2).toUpperCase();
 }
 
-function StageRail({ stage, progress, onJump }: { stage: Stage; progress: number; onJump: (stage: Stage) => void }) {
-  const stages = Object.keys(stageMeta) as Stage[];
-  return (
-    <div className="claim-stage-rail" aria-label="Claim progress">
-      <div className="claim-stage-line" aria-hidden="true">
-        <span style={{ width: `${Math.min(100, progress)}%` }} />
-      </div>
-      {stages.map((item, index) => {
-        const complete = index < stages.indexOf(stage);
-        const active = item === stage;
-        return (
-          <button
-            key={item}
-            type="button"
-            data-testid={`button-stage-${item}`}
-            className={`claim-stage ${active ? "is-active" : ""} ${complete ? "is-complete" : ""}`}
-            onClick={() => (complete ? onJump(item) : undefined)}
-            aria-current={active ? "step" : undefined}
-            disabled={!complete && !active}
-          >
-            <span className="claim-stage-dot">{complete ? <Check size={12} /> : stageMeta[item].number}</span>
-            <span className="claim-stage-label">{stageMeta[item].label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
+function detectionAtFrame(track: ClaimTrack, frame: number, tolerance = 2): ClaimBox | null {
+  const box = boxAtFrame(track, frame);
+  return box && Math.abs(box.frame - frame) <= tolerance ? box : null;
+}
+
+function boxCenter(box: ClaimBox) {
+  return { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+}
+
+function nearestDetectionFrame(
+  bundle: ClaimBundle,
+  tracks: ClaimTrack[],
+  targetFrame: number,
+  requiredTrackId?: string | null,
+): number | null {
+  const maxOffset = Math.max(2, Math.round(bundle.frameRate * 4));
+  let bestFrame: number | null = null;
+  let bestCount = -1;
+  for (let offset = 0; offset <= maxOffset; offset += 1) {
+    const frames = offset === 0 ? [targetFrame] : [targetFrame - offset, targetFrame + offset];
+    for (const frame of frames) {
+      if (frame < 0 || frame >= bundle.frameCount) continue;
+      if (requiredTrackId && !tracks.some((track) => track.id === requiredTrackId && detectionAtFrame(track, frame))) continue;
+      const count = tracks.reduce((total, track) => total + (detectionAtFrame(track, frame) ? 1 : 0), 0);
+      if (count > bestCount) {
+        bestCount = count;
+        bestFrame = frame;
+      }
+    }
+    if (bestCount >= 2) return bestFrame;
+  }
+  return bestCount >= 2 ? bestFrame : null;
+}
+
+function nearestCrossingOtherTrack(
+  bundle: ClaimBundle,
+  trackId: string | null,
+  momentSeconds: number,
+): string | null {
+  if (!trackId) return null;
+  const frame = matchSecondsToFrame(momentSeconds, bundle);
+  const crossing = bundle.crossings
+    ?.filter((item) => item.trackId === trackId)
+    .sort((a, b) => Math.abs(a.frame - frame) - Math.abs(b.frame - frame))[0];
+  return crossing?.otherTrackId || null;
+}
+
+function captionForTrack(track: ClaimTrack, frame: number, bundle: ClaimBundle, shirtTone: ShirtTone) {
+  const before = track.boxes
+    .filter((box) => box.frame <= frame)
+    .sort((a, b) => b.frame - a.frame)[0];
+  const after = track.boxes
+    .filter((box) => box.frame >= frame)
+    .sort((a, b) => a.frame - b.frame)[0];
+  let movement = "standing";
+  let direction = "";
+  if (before && after && after.frame > before.frame) {
+    const beforeCenter = boxCenter(before);
+    const afterCenter = boxCenter(after);
+    const seconds = (after.frame - before.frame) / bundle.frameRate;
+    const pixelsPerSecond = Math.hypot(afterCenter.x - beforeCenter.x, afterCenter.y - beforeCenter.y) / Math.max(seconds, 0.01);
+    const bodyHeight = Math.max((before.h + after.h) / 2, 1);
+    const bodyLengthsPerSecond = pixelsPerSecond / bodyHeight;
+    if (bodyLengthsPerSecond >= 1.2) movement = "sprinting";
+    else if (bodyLengthsPerSecond >= 0.55) movement = "running";
+    else if (bodyLengthsPerSecond >= 0.15) movement = "jogging";
+    if (movement !== "standing") {
+      direction = Math.abs(afterCenter.x - beforeCenter.x) >= Math.abs(afterCenter.y - beforeCenter.y)
+        ? (afterCenter.x < beforeCenter.x ? " left" : " right")
+        : (afterCenter.y < beforeCenter.y ? " up" : " down");
+    }
+  }
+  const shirt = shirtTone === "unreadable" ? "shirt unclear" : `${shirtTone} shirt`;
+  return `${movement}${direction}, ${shirt}`;
+}
+
+function pointInVideoPixels(
+  event: React.MouseEvent<HTMLDivElement>,
+  width: number,
+  height: number,
+) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const videoAspect = width / height;
+  const displayAspect = rect.width / rect.height;
+  const scale = displayAspect > videoAspect ? rect.width / width : rect.height / height;
+  const renderedWidth = width * scale;
+  const renderedHeight = height * scale;
+  const offsetX = (renderedWidth - rect.width) / 2;
+  const offsetY = (renderedHeight - rect.height) / 2;
+  return {
+    x: (event.clientX - rect.left + offsetX) / scale,
+    y: (event.clientY - rect.top + offsetY) / scale,
+  };
 }
 
 function SkeletonPage() {
@@ -174,6 +246,8 @@ function MiniVideo({
   onSeek,
   onToggleMute,
   onFullscreen,
+  onVideoTap,
+  onVideoReady,
   candidates,
   activeTrackId,
   showCandidates,
@@ -191,6 +265,8 @@ function MiniVideo({
   onSeek: (value: number) => void;
   onToggleMute: () => void;
   onFullscreen: () => void;
+  onVideoTap: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onVideoReady: () => void;
   candidates: Candidate[];
   activeTrackId: string | null;
   showCandidates: boolean;
@@ -203,7 +279,7 @@ function MiniVideo({
   }, [slow, videoRef]);
   return (
     <div className="claim-video-shell" data-testid="video-claim-match">
-      <div className="claim-video-stage">
+      <div className="claim-video-stage" onClick={onVideoTap}>
         {recording.videoUrl ? (
           <video
             ref={videoRef}
@@ -211,7 +287,8 @@ function MiniVideo({
             src={recording.videoUrl}
             muted={muted}
             playsInline
-            onClick={() => onToggle()}
+            onLoadedData={onVideoReady}
+            onSeeked={onVideoReady}
             onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
             onPlay={() => onToggle(true)}
             onPause={() => onToggle(false)}
@@ -220,11 +297,7 @@ function MiniVideo({
         ) : (
           <div className="claim-fallback-video" role="img" aria-label="Match recording preview">
             <div className="fallback-field-lines" />
-            <div className="fallback-player p-one"><span>7</span></div>
-            <div className="fallback-player p-two"><span>11</span></div>
-            <div className="fallback-player p-three"><span>4</span></div>
-            <div className="fallback-ball" />
-            <div className="fallback-camera-stamp">CAM 02 / LIVE REC</div>
+            <div className="fallback-camera-stamp">MATCH VIDEO UNAVAILABLE · TRACKING DATA STILL LOADED</div>
           </div>
         )}
         <div className="claim-video-topline">
@@ -244,11 +317,11 @@ function MiniVideo({
           </div>
         ))}
         <div className="claim-video-bottom">
-          <button type="button" className="claim-icon-button" data-testid="button-video-play" onClick={() => onToggle()} aria-label={playing ? "Pause match" : "Play match"}>{playing ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</button>
-          <div className="claim-video-time"><span>{formatTime(currentTime)}</span><input type="range" min={0} max={duration} value={Math.min(duration, currentTime)} onChange={(event) => onSeek(Number(event.target.value))} aria-label="Match position" data-testid="input-match-position" /><span>{formatTime(duration)}</span></div>
-          <button type="button" className={`claim-icon-button ${slow ? "is-on" : ""}`} data-testid="button-slow-motion" onClick={onToggleSlow} aria-label="Toggle slow motion"><Gauge size={17} /></button>
-          <button type="button" className="claim-icon-button" data-testid="button-video-mute" onClick={onToggleMute} aria-label={muted ? "Unmute match" : "Mute match"}>{muted ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
-          <button type="button" className="claim-icon-button" data-testid="button-video-fullscreen" onClick={onFullscreen} aria-label="Fullscreen video"><Expand size={17} /></button>
+          <button type="button" className="claim-icon-button" data-testid="button-video-play" onClick={(event) => { event.stopPropagation(); onToggle(); }} aria-label={playing ? "Pause match" : "Play match"}>{playing ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</button>
+          <div className="claim-video-time" onClick={(event) => event.stopPropagation()}><span>{formatTime(currentTime)}</span><input type="range" min={0} max={duration} value={Math.min(duration, currentTime)} onChange={(event) => onSeek(Number(event.target.value))} aria-label="Match position" data-testid="input-match-position" /><span>{formatTime(duration)}</span></div>
+          <button type="button" className={`claim-icon-button ${slow ? "is-on" : ""}`} data-testid="button-slow-motion" onClick={(event) => { event.stopPropagation(); onToggleSlow(); }} aria-label="Toggle slow motion"><Gauge size={17} /></button>
+          <button type="button" className="claim-icon-button" data-testid="button-video-mute" onClick={(event) => { event.stopPropagation(); onToggleMute(); }} aria-label={muted ? "Unmute match" : "Mute match"}>{muted ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
+          <button type="button" className="claim-icon-button" data-testid="button-video-fullscreen" onClick={(event) => { event.stopPropagation(); onFullscreen(); }} aria-label="Fullscreen video"><Expand size={17} /></button>
         </div>
       </div>
       <div className="claim-buffer-note"><span className="buffer-pulse" /> Video buffered ahead <b>you can keep watching</b><span>·</span> we’ll save in the background</div>
@@ -306,6 +379,9 @@ export default function ClaimMatchPage() {
   const [muted, setMuted] = useState(false);
   const [slow, setSlow] = useState(false);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
+  const [confirmedFromSeconds, setConfirmedFromSeconds] = useState(0);
+  const [narrowing, setNarrowing] = useState<NarrowingState | null>(null);
+  const [crossingOtherTrackId, setCrossingOtherTrackId] = useState<string | null>(null);
   const [claimedPercent, setClaimedPercent] = useState(0);
   const [clipsUnlocked, setClipsUnlocked] = useState(0);
   const [corrections, setCorrections] = useState<ClaimCorrection[]>([]);
@@ -321,6 +397,9 @@ export default function ClaimMatchPage() {
   const [segmentRetryToken, setSegmentRetryToken] = useState(0);
   const [boundaryNotice, setBoundaryNotice] = useState("");
   const [boundaryRepickPending, setBoundaryRepickPending] = useState(false);
+  const [shirtToneByTrack, setShirtToneByTrack] = useState<Record<string, ShirtTone>>({});
+  const [videoReadyTick, setVideoReadyTick] = useState(0);
+  const lastKnownPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   const response = isDemo ? demoQuery.data : claimQuery.data;
   const activeRecordingId = isDemo ? response?.recording.id || 0 : recordingId;
@@ -337,7 +416,10 @@ export default function ClaimMatchPage() {
   const earnedClips = serverProgress?.earnedClips || [];
   const currentSegmentIndex = manifest ? segmentIndexAtTime(manifest, currentTime) : 0;
   const activeSegment = segmentCache[currentSegmentIndex];
-  const bundle = manifest && activeSegment ? segmentAsBundle(manifest, activeSegment) : null;
+  const bundle = useMemo(
+    () => (manifest && activeSegment ? segmentAsBundle(manifest, activeSegment) : null),
+    [activeSegment, manifest],
+  );
   const hasData = Boolean(response && recording && manifest && serverProgress);
   const activeCorrection = allCorrections.find((item) => !item.undone);
   const currentFrame = bundle ? matchSecondsToFrame(currentTime, bundle) : 0;
@@ -428,12 +510,19 @@ export default function ClaimMatchPage() {
     setNotice("Saved on this device · will sync when you’re back");
   }, [activeRecordingId]);
 
-  const saveProgress = useCallback((nextStage: Stage, nextTrackId = currentTrackId, nextPercent = progressValue, nextClips = clipsUnlocked) => {
+  const saveProgress = useCallback((
+    nextStage: Stage,
+    nextTrackId = currentTrackId,
+    nextPercent = progressValue,
+    nextClips = clipsUnlocked,
+    nextConfirmedFrom = confirmedFromSeconds,
+    nextPosition = currentTime,
+  ) => {
     const payload = {
       currentTrackId: nextTrackId,
       stage: nextStage,
-      confirmedFromSeconds: currentTime,
-      currentPositionSeconds: currentTime,
+      confirmedFromSeconds: nextConfirmedFrom,
+      currentPositionSeconds: nextPosition,
       claimedPercent: nextPercent,
       clipsUnlocked: nextClips,
       completed: nextStage === "done",
@@ -448,7 +537,7 @@ export default function ClaimMatchPage() {
         onError: () => void queueProgress(payload),
       });
     }
-  }, [currentTime, currentTrackId, progressValue, clipsUnlocked, earnedClips, isOffline, activeRecordingId, updateProgress, queueProgress]);
+  }, [currentTime, currentTrackId, progressValue, clipsUnlocked, confirmedFromSeconds, earnedClips, isOffline, activeRecordingId, updateProgress, queueProgress]);
 
   const previousSegmentIndex = useRef<number | null>(null);
   useEffect(() => {
@@ -466,25 +555,74 @@ export default function ClaimMatchPage() {
     saveProgress("picker", null, progressValue, clipsUnlocked);
   }, [clipsUnlocked, currentSegmentIndex, manifest, progressValue, saveProgress]);
 
-  const [narrowing, setNarrowing] = useState<NarrowingState | null>(null);
-
   const goStage = useCallback((next: Stage, trackId = currentTrackId) => {
     const percentByStage: Record<Stage, number> = { find: 0, following: 19, still: 38, picker: 55, look: 73, done: 100 };
     setStage(next);
     setClaimedPercent(percentByStage[next]);
     setCurrentTrackId(trackId);
-    if (next === "following" && trackId && bundle) {
-      setNarrowing(startNarrowing(
-        crossingsForWindow(bundle, trackId, currentTime, bundle.duration),
-        currentTime,
-        bundle.duration,
-      ));
-    }
     setClipsUnlocked((value) => Math.max(value, next === "done" ? earnedClips.length : value));
     saveProgress(next, trackId, Math.max(progressValue, percentByStage[next]), clipsUnlocked);
-  }, [bundle, currentTime, currentTrackId, earnedClips.length, progressValue, clipsUnlocked, saveProgress]);
+  }, [currentTrackId, earnedClips.length, progressValue, clipsUnlocked, saveProgress]);
 
   const stillQuestion = narrowing ? nextNarrowingQuestion(narrowing) : null;
+
+  const beginFollowing = useCallback((trackId: string, atSeconds = currentTime) => {
+    if (!bundle) return;
+    const confirmedAt = atSeconds;
+    const track = bundle.tracks.find((item) => item.id === trackId);
+    const box = track ? detectionAtFrame(track, matchSecondsToFrame(confirmedAt, bundle)) : null;
+    if (box) lastKnownPositionRef.current = boxCenter(box);
+    setCurrentTrackId(trackId);
+    setConfirmedFromSeconds(confirmedAt);
+    setNarrowing(null);
+    setCrossingOtherTrackId(null);
+    setStage("following");
+    setClaimedPercent((value) => Math.max(value, 19));
+    setNotice("Following you through the match");
+    saveProgress("following", trackId, Math.max(progressValue, 19), clipsUnlocked, confirmedAt, confirmedAt);
+  }, [bundle, clipsUnlocked, currentTime, progressValue, saveProgress]);
+
+  const seekToFrame = useCallback((frame: number) => {
+    if (!bundle) return;
+    const seconds = frameToMatchSeconds(frame, bundle);
+    setCurrentTime(seconds);
+    if (videoRef.current) videoRef.current.currentTime = seconds;
+  }, [bundle]);
+
+  const startCorrectionCheck = useCallback(() => {
+    if (!bundle || !currentTrackId) {
+      setStage("picker");
+      setNotice("Choose yourself in this frame");
+      return;
+    }
+    const observedAt = currentTime;
+    const state = startNarrowing(
+      crossingsForWindow(bundle, currentTrackId, confirmedFromSeconds, observedAt),
+      confirmedFromSeconds,
+      observedAt,
+    );
+    setNarrowing(state);
+    const question = nextNarrowingQuestion(state);
+    const otherTrackId = question.kind === "complete"
+      ? null
+      : nearestCrossingOtherTrack(bundle, currentTrackId, question.momentSeconds);
+    setCrossingOtherTrackId(otherTrackId);
+    if (question.kind === "question") {
+      setCurrentTime(question.momentSeconds);
+      if (videoRef.current) videoRef.current.currentTime = question.momentSeconds;
+      setStage("still");
+      setClaimedPercent((value) => Math.max(value, 38));
+      setNotice("Quick check — keep watching");
+      saveProgress("still", currentTrackId, Math.max(progressValue, 38), clipsUnlocked, confirmedFromSeconds, question.momentSeconds);
+    } else {
+      setCurrentTime(question.momentSeconds);
+      if (videoRef.current) videoRef.current.currentTime = question.momentSeconds;
+      setStage("picker");
+      setClaimedPercent((value) => Math.max(value, 55));
+      setNotice("Choose yourself at this clear moment");
+      saveProgress("picker", null, Math.max(progressValue, 55), clipsUnlocked, confirmedFromSeconds, question.momentSeconds);
+    }
+  }, [bundle, clipsUnlocked, confirmedFromSeconds, currentTime, currentTrackId, progressValue, saveProgress]);
 
   const confirmStill = useCallback((answer: NarrowingAnswer) => {
     if (!narrowing || !bundle) {
@@ -495,17 +633,27 @@ export default function ClaimMatchPage() {
       setNotice("No problem — we’ll keep this moment and check again later");
       return;
     }
-    const next = answerNarrowing(narrowing, answer, stillQuestion?.momentSeconds ?? currentTime);
+    const answerMoment = stillQuestion?.momentSeconds ?? currentTime;
+    const next = answerNarrowing(narrowing, answer, answerMoment);
     setNarrowing(next);
+    if (answer === "yes") setConfirmedFromSeconds(answerMoment);
     const nextQuestion = nextNarrowingQuestion(next);
+    const nextOtherTrackId = nextQuestion.kind === "complete"
+      ? null
+      : nearestCrossingOtherTrack(bundle, currentTrackId, nextQuestion.momentSeconds);
+    setCrossingOtherTrackId(nextOtherTrackId);
     if (nextQuestion.kind === "picker" || nextQuestion.kind === "complete") {
-      goStage("picker");
+      setStage("picker");
+      setClaimedPercent((value) => Math.max(value, 55));
+      setCurrentTime(nextQuestion.momentSeconds);
+      if (videoRef.current) videoRef.current.currentTime = nextQuestion.momentSeconds;
+      saveProgress("picker", null, Math.max(progressValue, 55), clipsUnlocked, confirmedFromSeconds, nextQuestion.momentSeconds);
     } else {
       setCurrentTime(nextQuestion.momentSeconds);
-      saveProgress("still", currentTrackId, progressValue, clipsUnlocked);
+      saveProgress("still", currentTrackId, progressValue, clipsUnlocked, answer === "yes" ? answerMoment : confirmedFromSeconds, nextQuestion.momentSeconds);
       setNotice("Here’s the next clear passage");
     }
-  }, [bundle, clipsUnlocked, currentTime, currentTrackId, goStage, narrowing, progressValue, saveProgress, stillQuestion]);
+  }, [bundle, clipsUnlocked, confirmedFromSeconds, currentTime, currentTrackId, narrowing, progressValue, saveProgress, stillQuestion]);
 
   const skipAhead = useCallback(() => {
     if (!bundle) return;
@@ -515,49 +663,131 @@ export default function ClaimMatchPage() {
     setNotice("Skipped ahead to a clearer passage");
   }, [bundle, currentTime]);
 
+  const candidateStage = stage === "find" || stage === "picker" || stage === "look";
+  const candidateFrame = useMemo(() => {
+    if (!bundle || !candidateStage) return currentFrame;
+    return nearestDetectionFrame(bundle, bundle.tracks, currentFrame, crossingOtherTrackId) ?? currentFrame;
+  }, [bundle, candidateStage, crossingOtherTrackId, currentFrame]);
+
+  useEffect(() => {
+    if (!bundle || !candidateStage || candidateFrame === currentFrame) return;
+    const seconds = frameToMatchSeconds(candidateFrame, bundle);
+    setCurrentTime(seconds);
+    if (videoRef.current) videoRef.current.currentTime = seconds;
+  }, [bundle, candidateFrame, candidateStage, currentFrame]);
+
   const candidates = useMemo<Candidate[]>(() => {
     if (!bundle) return [];
-    const tracks = bundle.tracks.slice(0, stage === "picker" || stage === "look" ? 4 : 1);
-    return tracks.map((track, index) => {
-      const box = boxAtFrame(track, currentFrame) || track.boxes[0];
-      return {
+    const sourceTracks = candidateStage
+      ? bundle.tracks
+      : bundle.tracks.filter((track) => track.id === currentTrackId);
+    const anchorTrack = currentTrackId ? bundle.tracks.find((track) => track.id === currentTrackId) : null;
+    const anchorBox = anchorTrack ? detectionAtFrame(anchorTrack, candidateFrame) : null;
+    const anchor = lastKnownPositionRef.current || (anchorBox ? boxCenter(anchorBox) : { x: bundle.width / 2, y: bundle.height / 2 });
+    const ranked = sourceTracks
+      .map((track) => {
+        const box = detectionAtFrame(track, candidateFrame);
+        if (!box) return null;
+        const center = boxCenter(box);
+        return {
+          track,
+          box,
+          distance: Math.hypot(center.x - anchor.x, center.y - anchor.y),
+        };
+      })
+      .filter((item): item is { track: ClaimTrack; box: ClaimBox; distance: number } => Boolean(item))
+      .sort((a, b) => a.distance - b.distance);
+    const forced = crossingOtherTrackId ? ranked.find((item) => item.track.id === crossingOtherTrackId) : undefined;
+    const selected = ranked.slice(0, 4);
+    if (forced && !selected.some((item) => item.track.id === forced.track.id)) {
+      selected.splice(Math.max(0, selected.length - 1), 1, forced);
+    }
+    return selected
+      .sort((a, b) => a.distance - b.distance)
+      .map(({ track, box, distance }) => ({
         id: track.id,
-        label: track.label || String(index + 1),
-        x: (box?.x || 500) / bundle.width * 100,
-        y: (box?.y || 200) / bundle.height * 100,
-        w: (box?.w || 100) / bundle.width * 100,
-        h: (box?.h || 220) / bundle.height * 100,
-        overlap: stage === "look" && index < 2,
-      };
-    });
-  }, [bundle, currentFrame, stage]);
+        label: captionForTrack(track, candidateFrame, bundle, shirtToneByTrack[track.id] || "unreadable"),
+        box,
+        distance,
+        x: box.x / bundle.width * 100,
+        y: box.y / bundle.height * 100,
+        w: box.w / bundle.width * 100,
+        h: box.h / bundle.height * 100,
+      }))
+      .map((candidate, index, all) => ({
+        ...candidate,
+        overlap: all.some((other) => other.id !== candidate.id && boxesOverlap(candidate.box, other.box)),
+      }));
+  }, [bundle, candidateFrame, candidateStage, crossingOtherTrackId, currentTrackId, shirtToneByTrack]);
 
-  const firstCandidate = candidates[0];
-  const currentLabel = bundle?.tracks.find((track) => track.id === currentTrackId)?.label
-    || firstCandidate?.label
-    || "player";
+  const followedTrack = bundle?.tracks.find((track) => track.id === currentTrackId);
+  const followedBox = followedTrack ? detectionAtFrame(followedTrack, currentFrame) : null;
+  const currentLabel = currentTrackId
+    ? (bundle?.tracks.find((track) => track.id === currentTrackId)?.label || "player")
+    : candidates[0]?.label || "player";
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !bundle || !candidates.length || video.readyState < 2) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = Math.max(1, Math.round(canvas.width * bundle.height / bundle.width));
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    try {
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const nextTones: Record<string, ShirtTone> = {};
+      for (const candidate of candidates) {
+        const sx = Math.max(0, Math.floor(candidate.box.x / bundle.width * canvas.width));
+        const sy = Math.max(0, Math.floor((candidate.box.y + candidate.box.h * 0.18) / bundle.height * canvas.height));
+        const sw = Math.max(1, Math.floor(candidate.box.w / bundle.width * canvas.width));
+        const sh = Math.max(1, Math.floor(candidate.box.h * 0.38 / bundle.height * canvas.height));
+        const pixels = context.getImageData(sx, sy, Math.min(sw, canvas.width - sx), Math.min(sh, canvas.height - sy)).data;
+        let luminance = 0;
+        let samples = 0;
+        for (let index = 0; index < pixels.length; index += 16) {
+          luminance += pixels[index] * 0.2126 + pixels[index + 1] * 0.7152 + pixels[index + 2] * 0.0722;
+          samples += 1;
+        }
+        nextTones[candidate.id] = samples ? (luminance / samples >= 132 ? "light" : "dark") : "unreadable";
+      }
+      setShirtToneByTrack((previous) => {
+        const changed = Object.entries(nextTones).some(([id, tone]) => previous[id] !== tone);
+        return changed ? { ...previous, ...nextTones } : previous;
+      });
+    } catch {
+      // Canvas can be unavailable for a cross-origin recording; captions stay honest.
+    }
+  }, [bundle, candidates, videoReadyTick]);
 
   useEffect(() => {
     if (!response || !bundle) return;
     setStage((response.progress.stage as Stage) || "find");
     setCurrentTrackId(response.progress.currentTrackId || null);
+    setConfirmedFromSeconds(response.progress.confirmedFromSeconds || 0);
     setCurrentTime(response.progress.currentPositionSeconds || 0);
     setClaimedPercent(response.progress.claimedPercent || 0);
     setClipsUnlocked(response.progress.clipsUnlocked || 0);
     setCorrections(response.corrections);
-    if (response.progress.currentTrackId && response.progress.stage === "following") {
-      setNarrowing(startNarrowing(
-        crossingsForWindow(
-          bundle,
-          response.progress.currentTrackId,
-          response.progress.confirmedFromSeconds,
-          bundle.duration,
-        ),
-        response.progress.confirmedFromSeconds,
-        bundle.duration,
-      ));
-    }
+    setNarrowing(null);
+    setCrossingOtherTrackId(null);
   }, [bundle, response]);
+
+  useEffect(() => {
+    if (!bundle || !currentTrackId) return;
+    const track = bundle.tracks.find((item) => item.id === currentTrackId);
+    const box = track ? detectionAtFrame(track, currentFrame) : null;
+    if (box) lastKnownPositionRef.current = boxCenter(box);
+  }, [bundle, currentFrame, currentTrackId]);
+
+  useEffect(() => {
+    if (stage !== "following" || !bundle || !currentTrackId || followedBox || currentTime <= confirmedFromSeconds + 0.05) return;
+    setStage("picker");
+    setCurrentTrackId(null);
+    setNarrowing(null);
+    setNotice("Tracking ended here — choose yourself in the next clear frame");
+    saveProgress("picker", null, Math.max(progressValue, 55), clipsUnlocked, confirmedFromSeconds, currentTime);
+  }, [bundle, clipsUnlocked, confirmedFromSeconds, currentTime, currentTrackId, followedBox, progressValue, saveProgress, stage]);
 
   const lastSavedPosition = useRef(0);
   useEffect(() => {
@@ -637,8 +867,7 @@ export default function ClaimMatchPage() {
         if (stage === "still") {
           confirmStill("no");
         } else if (stage === "following") {
-          setNotice("No problem — we’ll try another moment");
-          goStage("picker");
+          startCorrectionCheck();
         }
       } else if (key === "s") {
         event.preventDefault();
@@ -653,14 +882,13 @@ export default function ClaimMatchPage() {
       } else if (stage === "picker" && /^[1-4]$/.test(key)) {
         const candidate = candidates[Number(key) - 1];
         if (candidate) {
-          setCurrentTrackId(candidate.id);
-          goStage("following", candidate.id);
+          beginFollowing(candidate.id);
         }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [candidates, confirmStill, goStage, seekBy, slow, stage]);
+  }, [beginFollowing, candidates, confirmStill, seekBy, slow, stage, startCorrectionCheck]);
 
   useEffect(() => {
     if (!playing || recording?.videoUrl) return;
@@ -669,25 +897,28 @@ export default function ClaimMatchPage() {
   }, [duration, playing, recording?.videoUrl, slow]);
 
   const onCorrection = (chosen: Candidate, method = "picker", allowOverlap = false) => {
+    if (!bundle) return;
     const isBoundaryRepick = boundaryRepickPending;
     const rejected = currentTrackId && currentTrackId !== chosen.id ? currentTrackId : null;
-    const chosenTrack = bundle?.tracks.find((track) => track.id === chosen.id);
-    const otherTrack = candidates.find((candidate) => candidate.id !== chosen.id);
-    const chosenBox = chosenTrack && boxAtFrame(chosenTrack, currentFrame);
-    const otherBox = otherTrack && bundle?.tracks.find((track) => track.id === otherTrack.id) &&
-      boxAtFrame(bundle.tracks.find((track) => track.id === otherTrack.id)!, currentFrame);
-    if (!allowOverlap && chosenBox && otherBox && boxesOverlap(chosenBox, otherBox) && bundle) {
-      const separated = laterSeparatedFrame(bundle, [chosen.id, otherTrack!.id], currentFrame);
+    const overlapping = candidates.find((candidate) => candidate.id !== chosen.id && boxesOverlap(chosen.box, candidate.box));
+    if (!allowOverlap && overlapping) {
+      const separated = laterSeparatedFrame(bundle, [chosen.id, overlapping.id], candidateFrame);
       if (separated !== null) {
-        setCurrentTime(frameToMatchSeconds(separated, bundle));
+        seekToFrame(separated);
         setCurrentTrackId(chosen.id);
-        goStage("look", chosen.id);
+        setCrossingOtherTrackId(overlapping.id);
+        setStage("look");
+        setClaimedPercent((value) => Math.max(value, 73));
         setNotice("We found a clearer frame after they separate");
         return;
       }
+      setNotice("These two tracks are still overlapped — choose a box with a clean edge");
+      return;
     }
-    setCurrentTrackId(chosen.id);
-    goStage(stage === "look" ? "done" : "following", chosen.id);
+    const selectionMoment = frameToMatchSeconds(candidateFrame, bundle);
+    setCurrentTime(selectionMoment);
+    if (videoRef.current) videoRef.current.currentTime = selectionMoment;
+    beginFollowing(chosen.id, selectionMoment);
     if (isBoundaryRepick) {
       setBoundaryRepickPending(false);
       setBoundaryNotice("");
@@ -791,31 +1022,61 @@ export default function ClaimMatchPage() {
     setCurrentTime(value);
     if (videoRef.current) videoRef.current.currentTime = value;
   };
-  const handleStageMain = () => {
-    if (stage === "find") {
-      if (firstCandidate) {
-        setCurrentTrackId(firstCandidate.id);
-        goStage("following", firstCandidate.id);
-      }
-    } else if (stage === "following") {
-      const question = narrowing ? nextNarrowingQuestion(narrowing) : null;
-      if (question?.kind === "question") {
-        setCurrentTime(question.momentSeconds);
-        if (videoRef.current) videoRef.current.currentTime = question.momentSeconds;
-      }
-      goStage("still");
+  const handleVideoTap = (event: React.MouseEvent<HTMLDivElement>) => {
+    const point = pointInVideoPixels(event, bundle.width, bundle.height);
+    if (point.x < 0 || point.y < 0 || point.x > bundle.width || point.y > bundle.height) return;
+    const hits = findHitTracks(bundle, currentFrame, point.x, point.y)
+      .filter(({ box }) => Math.abs(box.frame - currentFrame) <= 2);
+    if (!hits.length) {
+      setNotice("No player detected at that point in this frame");
+      return;
     }
-    else if (stage === "still") goStage("picker");
-    else if (stage === "picker" && firstCandidate) onCorrection(firstCandidate);
-    else if (stage === "look" && firstCandidate) onCorrection(firstCandidate, "overlap-resolved");
-    else if (stage === "done") setLocation("/my-clips");
+    const hitCandidates = hits.map(({ track, box }) => ({
+      id: track.id,
+      label: captionForTrack(track, currentFrame, bundle, shirtToneByTrack[track.id] || "unreadable"),
+      box,
+      x: box.x / bundle.width * 100,
+      y: box.y / bundle.height * 100,
+      w: box.w / bundle.width * 100,
+      h: box.h / bundle.height * 100,
+    }));
+    const chosen = hitCandidates.find((candidate) => candidate.id !== currentTrackId) || hitCandidates[0];
+    if (chosen.id === currentTrackId && stage === "following") {
+      setNotice("Still following this player");
+      return;
+    }
+    if (hits.length > 1) {
+      const other = hits.find(({ track }) => track.id !== chosen.id);
+      if (other) {
+        const separated = laterSeparatedFrame(bundle, [chosen.id, other.track.id], currentFrame);
+        if (separated === null) {
+          setNotice("Those detections stay overlapped here — no guess recorded");
+          return;
+        }
+        seekToFrame(separated);
+        setCurrentTrackId(chosen.id);
+        setCrossingOtherTrackId(other.track.id);
+        setStage("look");
+        setClaimedPercent((value) => Math.max(value, 73));
+        setNotice("We found the first clean frame after the overlap");
+        return;
+      }
+    }
+    onCorrection(chosen, "video-tap");
   };
-
-  const activeBox = firstCandidate;
-  const overlapPair = candidates.length > 1 && activeBox && boxesOverlap(
-    { x: activeBox.x, y: activeBox.y, w: activeBox.w, h: activeBox.h, frame: currentFrame },
-    { x: candidates[1].x, y: candidates[1].y, w: candidates[1].w, h: candidates[1].h, frame: currentFrame },
-  );
+  const handlePrimaryAction = () => {
+    if (stage === "find") {
+      if (candidates[0]) beginFollowing(candidates[0].id);
+    } else if (stage === "following") {
+      startCorrectionCheck();
+    } else if (stage === "still") {
+      confirmStill("yes");
+    } else if (stage === "picker" && candidates[0]) {
+      onCorrection(candidates[0]);
+    } else if (stage === "look" && candidates[0]) {
+      onCorrection(candidates[0], "overlap-resolved", true);
+    }
+  };
 
   return (
     <main className="claim-page" data-testid="page-claim-match">
@@ -839,8 +1100,6 @@ export default function ClaimMatchPage() {
           </div>
         </div>
 
-        <StageRail stage={stage} progress={progressValue} onJump={(next) => { setStage(next); saveProgress(next); }} />
-
         <section className="claim-workspace">
           <div className="claim-video-column">
             <MiniVideo
@@ -855,6 +1114,8 @@ export default function ClaimMatchPage() {
                onSeek={handleSeek}
               onToggleMute={() => setMuted((value) => !value)}
               onFullscreen={handleFullscreen}
+               onVideoTap={handleVideoTap}
+               onVideoReady={() => setVideoReadyTick((value) => value + 1)}
               candidates={candidates}
               activeTrackId={currentTrackId}
               showCandidates={stage !== "done"}
@@ -896,28 +1157,27 @@ export default function ClaimMatchPage() {
           <aside className="claim-action-column">
             {stage === "find" && (
               <div className="claim-panel claim-panel-find" data-testid="panel-find-yourself">
-                <span className="claim-step-count">01 / 06</span>
-                <h2>Find yourself</h2>
-                <p>We picked a player to start. Watch a few seconds, then tell us if this feels like you.</p>
-                <div className="claim-prompt-card"><div className="prompt-icon"><ScanSearch size={19} /></div><div><b>Follow the highlighted player</b><span>The outline stays with them as the match moves.</span></div></div>
-                <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-start-following" onClick={handleStageMain}>That’s me <ChevronRight size={17} /></button>
-                <button type="button" className="claim-text-button" data-testid="button-skip-find" onClick={() => goStage("picker")}>I can’t see myself yet <ArrowLeft size={14} /></button>
+                <span className="claim-context"><ScanSearch size={16} /> DETECTIONS IN THIS FRAME</span>
+                <h2>Tap your player</h2>
+                <p>We’ll follow one real tracked player through the recording. Tap a highlighted box, or choose the closest clear detection below.</p>
+                <div className="claim-prompt-card"><div className="prompt-icon"><LocateFixed size={19} /></div><div><b>{candidates.length} players detected</b><span>Boxes never come from placeholder positions.</span></div></div>
+                <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-start-following" onClick={handlePrimaryAction} disabled={!candidates[0]}>Follow the closest detection <ChevronRight size={17} /></button>
+                <button type="button" className="claim-text-button" data-testid="button-skip-find" onClick={() => goStage("picker")}>Show all detections <ArrowLeft size={14} /></button>
               </div>
             )}
             {stage === "following" && (
               <div className="claim-panel" data-testid="panel-following">
-                <span className="claim-step-count">02 / 06 <span className="claim-live-pill"><span /> FOLLOWING</span></span>
+                <span className="claim-live-pill"><span /> FOLLOWING</span>
                 <h2>Following your player</h2>
-                <p>Nice. We’ll keep an eye on this player and pause when we need a quick check-in.</p>
-                <div className="claim-follow-status"><div className="claim-follow-avatar">{initials(currentLabel)}</div><div><b>Player {currentLabel}</b><span>Tracking is steady</span></div><ShieldCheck size={19} /></div>
-                <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-confirm-still-here" onClick={handleStageMain}>Keep going <ChevronRight size={17} /></button>
-                <button type="button" className="claim-text-button" data-testid="button-change-identity" onClick={() => goStage("picker")}>Not me — show me options <RotateCcw size={14} /></button>
+                <p>The outlined box follows the selected track continuously. We’ll only interrupt when a real crossing needs your help.</p>
+                <div className="claim-follow-status"><div className="claim-follow-avatar">{initials(currentLabel)}</div><div><b>Tracked player</b><span>{followedBox && followedTrack ? captionForTrack(followedTrack, currentFrame, bundle, shirtToneByTrack[currentTrackId || ""] || "unreadable") : "Detection temporarily out of range"}</span></div><ShieldCheck size={19} /></div>
+                <button type="button" className="claim-button claim-button-secondary claim-button-wide" data-testid="button-change-identity" onClick={startCorrectionCheck}>That’s not me <RotateCcw size={14} /></button>
                 <p className="claim-undo-copy"><Undo2 size={13} /> Changed your mind? You can undo any correction for the next 10 seconds.</p>
               </div>
             )}
             {stage === "still" && (
               <div className="claim-panel" data-testid="panel-still-you">
-                <span className="claim-step-count">03 / 06</span>
+                <span className="claim-context"><Clock3 size={15} /> NARROWING A CROSSING</span>
                 <h2>Still you here?</h2>
                 <p>We’re checking in before the next busy passage. No rush — a quick yes or no is enough.</p>
                 <div className="claim-question-card"><Clock3 size={18} /><span>At <b>{formatTime(stillQuestion?.momentSeconds ?? currentTime)}</b>, does the outlined player still look like you?</span></div>
@@ -930,41 +1190,41 @@ export default function ClaimMatchPage() {
             )}
             {stage === "picker" && (
               <div className="claim-panel claim-panel-picker" data-testid="panel-picker">
-                <span className="claim-step-count">04 / 06</span>
+                <span className="claim-context"><LocateFixed size={15} /> REAL DETECTIONS ONLY</span>
                 {boundaryNotice && (
                   <div className="mb-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-medium text-primary" role="status" data-testid="notice-segment-boundary">
                     {boundaryNotice}
                   </div>
                 )}
-                <h2>Which one of these<br />is you?</h2>
-                <p>It’s okay if they look similar. Pick the player you mean — we’ll use the next clear moment to confirm.</p>
+                <h2>Which detection is you?</h2>
+                <p>These boxes are from the current tracking frame, ranked by distance from your last confirmed position.</p>
                 <div className="candidate-list">
                   {candidates.map((candidate, index) => (
                     <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-candidate-${index + 1}`} onClick={() => onCorrection(candidate)}>
-                      <span className="candidate-number">{index + 1}</span><span className="candidate-avatar">{initials(candidate.label)}</span><span className="candidate-copy"><b>Player {candidate.label}</b><small>{index === 0 ? "Closest to your last pick" : "In this frame"}</small></span><ChevronRight size={16} />
+                      <span className="candidate-number">{index + 1}</span><span className="candidate-avatar">{initials(candidate.label)}</span><span className="candidate-copy"><b>Detection {index + 1}</b><small>{candidate.label}{candidate.overlap ? " · overlap" : ""}</small></span><ChevronRight size={16} />
                     </button>
                   ))}
                 </div>
-                <button type="button" className="claim-text-button claim-skip-button" data-testid="button-skip-picker" onClick={() => goStage("look")}>I’m hidden — show a clearer passage <FastForward size={14} /></button>
+                {candidates.length === 0 && <div className="claim-empty-detections">No valid boxes are visible in this frame. Scrub or use the video to find a clear passage.</div>}
+                <button type="button" className="claim-text-button claim-skip-button" data-testid="button-skip-picker" onClick={skipAhead}>I’m hidden — show a clearer passage <FastForward size={14} /></button>
                 <p className="claim-key-note">Choose with <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> on your keyboard</p>
               </div>
             )}
             {stage === "look" && (
               <div className="claim-panel claim-panel-overlap" data-testid="panel-take-another-look">
-                <span className="claim-step-count">05 / 06</span>
+                <span className="claim-context"><ScanSearch size={14} /> OVERLAP RESOLVED</span>
                 <div className="overlap-tag"><ScanSearch size={14} /> OVERLAP MOMENT</div>
-                <h2>Take another look</h2>
-                <p>Two players crossed paths here. We paused just after they separate so you can choose with a little more room.</p>
-                <div className="overlap-callout"><div className="overlap-visual"><span className="overlap-box one" /><span className="overlap-box two" /><span className="overlap-seam" /></div><div><b>Nothing went wrong.</b><span>Busy frames happen in every match.</span></div></div>
+                <h2>Choose after the crossing</h2>
+                <p>We waited for real boxes to separate. Pick the tracked player now — no guess is recorded until a clean frame exists.</p>
+                <div className="overlap-callout"><div className="prompt-icon"><ScanSearch size={17} /></div><div><b>Real overlap detected.</b><span>The video is paused on the first later frame where both tracks are separated.</span></div></div>
                 <div className="look-controls"><button type="button" className={`look-control ${slow ? "selected" : ""}`} data-testid="button-look-slow" onClick={() => setSlow((value) => !value)}><Gauge size={15} /> Slow motion <kbd>S</kbd></button><button type="button" className="look-control" data-testid="button-look-back" onClick={() => setCurrentTime((value) => Math.max(0, value - 5))}><RotateCcw size={15} /> 5 sec back</button></div>
-                <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-resolve-overlap" onClick={handleStageMain}>Choose this player <ChevronRight size={17} /></button>
-                <button type="button" className="claim-text-button" data-testid="button-skip-overlap" onClick={() => goStage("following", currentTrackId)}>Skip this moment — no guess <FastForward size={14} /></button>
+                <div className="candidate-list">{candidates.map((candidate, index) => <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-overlap-candidate-${index + 1}`} onClick={() => onCorrection(candidate, "overlap-resolved", true)}><span className="candidate-number">{index + 1}</span><span className="candidate-copy"><b>{candidate.id === currentTrackId ? "Follow this track" : "Crossing track"}</b><small>{candidate.label}</small></span><ChevronRight size={16} /></button>)}</div>
+                <button type="button" className="claim-text-button" data-testid="button-skip-overlap" onClick={() => currentTrackId && beginFollowing(currentTrackId)}>Skip this moment — keep the confirmed track <FastForward size={14} /></button>
               </div>
             )}
             {stage === "done" && (
               <div className="claim-panel claim-panel-complete" data-testid="panel-done">
                 <div className="complete-graphic"><span className="complete-ring"><Check size={24} /></span><span className="complete-spark spark-a" /><span className="complete-spark spark-b" /><span className="complete-spark spark-c" /></div>
-                <span className="claim-step-count">06 / 06</span>
                 <h2>Done. That’s all yours.</h2>
                  <p>You claimed <b>{Math.round(progressValue)}%</b> of this match. We found the moments where you made the difference.</p>
                  <div className="earned-count"><Sparkles size={18} /><b>{clipsUnlocked} earned clips</b><span>ready in My Clips</span></div>
