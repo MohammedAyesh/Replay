@@ -15,3 +15,4 @@
 - [Zoompan renderer geometry](zoompan-renderer.md) — map the padded 32:9 source onto an output-aspect canvas before zoompan; supersample 4x by default, 2x for large vertical canvases.
 - [Development schema push](development-schema-push.md) — the DB push wrapper requires an interactive shell; noninteractive agents should not assume it can apply migrations.
 - [Claim queue invalidation loop](claim-queue-invalidation-loop.md) — never invalidate Claim Match queries after an empty offline-queue flush; unstable mutation dependencies can create a permanent refetch skeleton.
+- [GCS gzip downloads](gcs-gzip-downloads.md) — Google Cloud Storage auto-decompresses gzip objects unless download uses `{ decompress: false }`; preserve bytes when forwarding Content-Encoding.

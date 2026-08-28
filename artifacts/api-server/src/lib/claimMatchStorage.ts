@@ -66,12 +66,15 @@ export async function writeClaimSegment(
 
 export async function readClaimSegment(objectPath: string): Promise<Buffer> {
   const file = fileForObjectPath(objectPath);
-  const [body] = await file.download();
+  const [body] = await file.download({ decompress: false });
   return gunzipSync(body);
 }
 
 export async function readCompressedClaimSegment(objectPath: string): Promise<Buffer> {
   const file = fileForObjectPath(objectPath);
-  const [body] = await file.download();
+  // GCS auto-decompresses objects with contentEncoding=gzip by default.
+  // Keep the wire format intact because the segment route forwards this
+  // buffer with Content-Encoding: gzip for browser-side decoding.
+  const [body] = await file.download({ decompress: false });
   return body;
 }
