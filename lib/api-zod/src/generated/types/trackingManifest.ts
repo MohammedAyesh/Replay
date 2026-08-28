@@ -22,6 +22,8 @@ export interface TrackingManifest {
   /** @exclusiveMinimum 0 */
   duration: number;
   matchOffset: number;
+  /** @minimum 0 */
+  videoStartSeconds?: number;
   /** @minimum 1 */
   segmentCount: number;
   segments: TrackingSegmentManifest[];

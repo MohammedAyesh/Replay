@@ -337,6 +337,12 @@ function parseUploadedBundle(input: unknown): UploadBundle | null {
         frameCount: Math.max(1, Math.round(firstNumber(rawMetadata.frameCount, rawMetadata.frames) ?? (segments.at(-1)?.endFrame ?? 0) + 1)),
         duration: firstNumber(rawMetadata.duration) ?? segments.at(-1)?.endSeconds ?? 1,
         matchOffset: firstNumber(rawMetadata.matchOffset, rawMetadata.match_offset) ?? 0,
+        videoStartSeconds: Math.max(0, firstNumber(
+          rawMetadata.videoStartSeconds,
+          rawMetadata.video_start_seconds,
+          rawMetadata.videoOffset,
+          rawMetadata.offsetSec,
+        ) ?? 0),
         segmentCount: segments.length,
         segments: segments.map((segment) => ({
           index: segment.segmentIndex,
@@ -366,6 +372,9 @@ function parseUploadedBundle(input: unknown): UploadBundle | null {
       frameCount: Math.max(1, Math.round(firstNumber(source.frameCount, source.frames) ?? firstNumber(sourceMeta.frameCount) ?? segment.endFrame + 1)),
       duration: firstNumber(source.duration) ?? firstNumber(sourceMeta.duration) ?? segment.endSeconds,
       matchOffset: firstNumber(source.matchOffset, source.match_offset) ?? 0,
+      videoStartSeconds: Math.max(0, firstNumber(
+        source.videoStartSeconds, source.video_start_seconds, source.videoOffset,
+      ) ?? 0),
       segmentCount: 1,
       segments: [{
         index: 0,
@@ -426,6 +435,12 @@ export function parseZipBundle(buffer: Buffer): UploadBundle | null {
       frameCount: Math.max(1, Math.round(firstNumber(rawManifest.frameCount, rawManifest.frames) ?? segments.at(-1)!.endFrame + 1)),
       duration: firstNumber(rawManifest.duration) ?? segments.at(-1)!.endSeconds,
       matchOffset: firstNumber(rawManifest.matchOffset, rawManifest.match_offset) ?? 0,
+      videoStartSeconds: Math.max(0, firstNumber(
+        rawManifest.videoStartSeconds,
+        rawManifest.video_start_seconds,
+        rawManifest.videoOffset,
+        rawManifest.offsetSec,
+      ) ?? 0),
       segmentCount: segments.length,
       segments: segments.map((segment) => ({
         index: segment.segmentIndex,
@@ -624,7 +639,11 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
 
   res.json(GetClaimMatchResponse.parse({
     recording: toRecording(row.recording, row.fieldName ?? null),
-    manifest: row.bundle.manifest,
+    // Bundles uploaded before videoStartSeconds existed have no value for it.
+    // Default to 0 rather than failing the response, but that default is a
+    // guess and it is almost always wrong on a recording longer than the
+    // tracked window.
+    manifest: { ...row.bundle.manifest, videoStartSeconds: row.bundle.manifest.videoStartSeconds ?? 0 },
     progress: toProgress(progress ?? null, params.data.id),
     corrections: corrections.map(toCorrection),
   }));
@@ -899,6 +918,7 @@ async function storeUploadBundle(recordingId: number, adminId: number, upload: U
   }
   const manifest: TrackingManifest = {
     ...upload.manifest,
+    videoStartSeconds: Math.max(0, upload.manifest.videoStartSeconds ?? 0),
     segmentCount: storedSegments.length,
     segments: storedSegments.map(({ segment, objectPath }) => ({
       index: segment.segmentIndex,
@@ -943,6 +963,7 @@ async function storeUploadBundle(recordingId: number, adminId: number, upload: U
     crossingCount: storedSegments.reduce((sum, item) => sum + item.segment.crossings.length, 0),
     segmentCount: storedSegments.length,
     frameCoverage: `0-${manifest.frameCount - 1} (${manifest.frameCount} frames)`,
+    videoStartSeconds: manifest.videoStartSeconds,
     segmentRanges: manifest.segments,
     uploadedAt: saved.updatedAt.toISOString(),
   };
@@ -970,6 +991,19 @@ router.put("/admin/recordings/:id/tracking-bundle", bundleUpload.single("bundle"
   const upload = req.file?.buffer
     ? parseZipBundle(req.file.buffer)
     : parseUploadedBundle(req.body);
+
+  // Where the tracked window starts inside the video is a property of THIS
+  // pairing of bundle and recording, not of the bundle - the same tracking can
+  // be attached to a differently-trimmed video. So an explicit form field wins
+  // over whatever the bundle happened to carry. Getting this wrong does not
+  // fail loudly: it draws every box against footage from another part of the
+  // match, which looks like broken tracking rather than a wrong number.
+  const overrideStart = firstNumber(
+    (req.body as UnknownRecord | undefined)?.videoStartSeconds,
+  );
+  if (upload && overrideStart !== undefined) {
+    upload.manifest.videoStartSeconds = Math.max(0, overrideStart);
+  }
   if (!upload) {
     res.status(400).json({
       error: "Invalid tracking bundle. Upload a ZIP containing manifest.json and every segment JSON file.",

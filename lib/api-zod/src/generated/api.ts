@@ -268,6 +268,7 @@ export const GetClaimMatchResponse = zod.object({
   "frameCount": zod.number().min(1),
   "duration": zod.number().gt(getClaimMatchResponseManifestDurationExclusiveMin),
   "matchOffset": zod.number(),
+  "videoStartSeconds": zod.number().min(0).optional(),
   "segmentCount": zod.number().min(1),
   "segments": zod.array(zod.object({
   "index": zod.number().min(getClaimMatchResponseManifestSegmentsItemIndexMin),

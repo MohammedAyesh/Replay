@@ -58,7 +58,17 @@ export type TrackingManifest = {
   frameRate: number;
   frameCount: number;
   duration: number;
+  /**
+   * Display only: added to tracking time so the clock reads like the wider
+   * match. Never use it to seek - that was the bug that put every box on empty
+   * grass, because one field was being asked to be two different things.
+   */
   matchOffset: number;
+  /**
+   * Where tracking frame 0 sits inside the video file, in seconds. The recording
+   * is often longer than the tracked window.
+   */
+  videoStartSeconds: number;
   segmentCount: number;
   segments: Array<{
     index: number;

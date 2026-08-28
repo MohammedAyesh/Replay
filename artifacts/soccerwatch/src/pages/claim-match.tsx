@@ -38,9 +38,12 @@ import {
   boxesOverlap,
   crossingsForWindow,
   findHitTracks,
-  frameToMatchSeconds,
+  frameToTrackingSeconds,
   laterSeparatedFrame,
-  matchSecondsToFrame,
+  trackingSecondsToFrame,
+  trackingToVideoTime,
+  videoTimeToTracking,
+  clampToTracked,
   nextNarrowingQuestion,
   answerNarrowing,
   skipToClearPassage,
@@ -90,6 +93,7 @@ function segmentAsBundle(
     frameCount: manifest.frameCount,
     duration: manifest.duration,
     matchOffset: manifest.matchOffset,
+    videoStartSeconds: manifest.videoStartSeconds ?? 0,
     tracks: segment.tracks,
     crossings: segment.crossings,
     inPlaySpans: segment.inPlaySpans,
@@ -146,7 +150,7 @@ function nearestCrossingOtherTrack(
   momentSeconds: number,
 ): string | null {
   if (!trackId) return null;
-  const frame = matchSecondsToFrame(momentSeconds, bundle);
+  const frame = trackingSecondsToFrame(momentSeconds, bundle);
   const crossing = bundle.crossings
     ?.filter((item) => item.trackId === trackId)
     .sort((a, b) => Math.abs(a.frame - frame) - Math.abs(b.frame - frame))[0];
@@ -422,7 +426,32 @@ export default function ClaimMatchPage() {
   );
   const hasData = Boolean(response && recording && manifest && serverProgress);
   const activeCorrection = allCorrections.find((item) => !item.undone);
-  const currentFrame = bundle ? matchSecondsToFrame(currentTime, bundle) : 0;
+  const currentFrame = bundle ? trackingSecondsToFrame(currentTime, bundle) : 0;
+
+  /**
+   * THE BOUNDARY BETWEEN THE TWO CLOCKS.
+   *
+   * Everything on this screen - currentTime, crossings, in-play spans, events,
+   * saved progress - is TRACKING time, 0..duration. The <video> element is the
+   * only thing that speaks video time, and the recording is usually longer than
+   * the tracked window: the 2026-08-24 recording is two hours and tracking
+   * starts 18 minutes into it. Every assignment to video.currentTime goes
+   * through toVideoTime, and every reading of it comes back through
+   * fromVideoTime. Nothing else in this file may touch video.currentTime
+   * directly - one field doing both jobs is what drew every box on empty grass.
+   */
+  const toVideoTime = useCallback(
+    (trackingSeconds: number) => bundle
+      ? trackingToVideoTime(clampToTracked(trackingSeconds, bundle), bundle)
+      : trackingSeconds,
+    [bundle],
+  );
+  const fromVideoTime = useCallback(
+    (videoSeconds: number) => bundle
+      ? clampToTracked(videoTimeToTracking(videoSeconds, bundle), bundle)
+      : videoSeconds,
+    [bundle],
+  );
 
   const loadSegment = useCallback((index: number): Promise<void> => {
     if (!manifest || !activeRecordingId || segmentCacheRef.current[index]) {
@@ -495,7 +524,7 @@ export default function ClaimMatchPage() {
   const seekBy = useCallback((delta: number) => {
     const next = Math.max(0, Math.min(duration, currentTime + delta));
     setCurrentTime(next);
-    if (videoRef.current) videoRef.current.currentTime = next;
+    if (videoRef.current) videoRef.current.currentTime = toVideoTime(next);
   }, [currentTime, duration]);
 
   const queueProgress = useCallback(async (payload: Record<string, unknown>) => {
@@ -570,7 +599,7 @@ export default function ClaimMatchPage() {
     if (!bundle) return;
     const confirmedAt = atSeconds;
     const track = bundle.tracks.find((item) => item.id === trackId);
-    const box = track ? detectionAtFrame(track, matchSecondsToFrame(confirmedAt, bundle)) : null;
+    const box = track ? detectionAtFrame(track, trackingSecondsToFrame(confirmedAt, bundle)) : null;
     if (box) lastKnownPositionRef.current = boxCenter(box);
     setCurrentTrackId(trackId);
     setConfirmedFromSeconds(confirmedAt);
@@ -584,9 +613,9 @@ export default function ClaimMatchPage() {
 
   const seekToFrame = useCallback((frame: number) => {
     if (!bundle) return;
-    const seconds = frameToMatchSeconds(frame, bundle);
+    const seconds = frameToTrackingSeconds(frame, bundle);
     setCurrentTime(seconds);
-    if (videoRef.current) videoRef.current.currentTime = seconds;
+    if (videoRef.current) videoRef.current.currentTime = toVideoTime(seconds);
   }, [bundle]);
 
   const startCorrectionCheck = useCallback(() => {
@@ -609,14 +638,14 @@ export default function ClaimMatchPage() {
     setCrossingOtherTrackId(otherTrackId);
     if (question.kind === "question") {
       setCurrentTime(question.momentSeconds);
-      if (videoRef.current) videoRef.current.currentTime = question.momentSeconds;
+      if (videoRef.current) videoRef.current.currentTime = toVideoTime(question.momentSeconds);
       setStage("still");
       setClaimedPercent((value) => Math.max(value, 38));
       setNotice("Quick check — keep watching");
       saveProgress("still", currentTrackId, Math.max(progressValue, 38), clipsUnlocked, confirmedFromSeconds, question.momentSeconds);
     } else {
       setCurrentTime(question.momentSeconds);
-      if (videoRef.current) videoRef.current.currentTime = question.momentSeconds;
+      if (videoRef.current) videoRef.current.currentTime = toVideoTime(question.momentSeconds);
       setStage("picker");
       setClaimedPercent((value) => Math.max(value, 55));
       setNotice("Choose yourself at this clear moment");
@@ -646,7 +675,7 @@ export default function ClaimMatchPage() {
       setStage("picker");
       setClaimedPercent((value) => Math.max(value, 55));
       setCurrentTime(nextQuestion.momentSeconds);
-      if (videoRef.current) videoRef.current.currentTime = nextQuestion.momentSeconds;
+      if (videoRef.current) videoRef.current.currentTime = toVideoTime(nextQuestion.momentSeconds);
       saveProgress("picker", null, Math.max(progressValue, 55), clipsUnlocked, confirmedFromSeconds, nextQuestion.momentSeconds);
     } else {
       setCurrentTime(nextQuestion.momentSeconds);
@@ -659,7 +688,7 @@ export default function ClaimMatchPage() {
     if (!bundle) return;
     const next = skipToClearPassage(currentTime, bundle.inPlaySpans, bundle.duration);
     setCurrentTime(next);
-    if (videoRef.current) videoRef.current.currentTime = next;
+    if (videoRef.current) videoRef.current.currentTime = toVideoTime(next);
     setNotice("Skipped ahead to a clearer passage");
   }, [bundle, currentTime]);
 
@@ -671,9 +700,9 @@ export default function ClaimMatchPage() {
 
   useEffect(() => {
     if (!bundle || !candidateStage || candidateFrame === currentFrame) return;
-    const seconds = frameToMatchSeconds(candidateFrame, bundle);
+    const seconds = frameToTrackingSeconds(candidateFrame, bundle);
     setCurrentTime(seconds);
-    if (videoRef.current) videoRef.current.currentTime = seconds;
+    if (videoRef.current) videoRef.current.currentTime = toVideoTime(seconds);
   }, [bundle, candidateFrame, candidateStage, currentFrame]);
 
   const candidates = useMemo<Candidate[]>(() => {
@@ -915,9 +944,9 @@ export default function ClaimMatchPage() {
       setNotice("These two tracks are still overlapped — choose a box with a clean edge");
       return;
     }
-    const selectionMoment = frameToMatchSeconds(candidateFrame, bundle);
+    const selectionMoment = frameToTrackingSeconds(candidateFrame, bundle);
     setCurrentTime(selectionMoment);
-    if (videoRef.current) videoRef.current.currentTime = selectionMoment;
+    if (videoRef.current) videoRef.current.currentTime = toVideoTime(selectionMoment);
     beginFollowing(chosen.id, selectionMoment);
     if (isBoundaryRepick) {
       setBoundaryRepickPending(false);
@@ -1020,7 +1049,7 @@ export default function ClaimMatchPage() {
   const handleFullscreen = () => videoRef.current?.requestFullscreen?.();
   const handleSeek = (value: number) => {
     setCurrentTime(value);
-    if (videoRef.current) videoRef.current.currentTime = value;
+    if (videoRef.current) videoRef.current.currentTime = toVideoTime(value);
   };
   const handleVideoTap = (event: React.MouseEvent<HTMLDivElement>) => {
     const point = pointInVideoPixels(event, bundle.width, bundle.height);
@@ -1120,7 +1149,7 @@ export default function ClaimMatchPage() {
               activeTrackId={currentTrackId}
               showCandidates={stage !== "done"}
                duration={duration}
-               onTimeUpdate={setCurrentTime}
+               onTimeUpdate={(value) => setCurrentTime(fromVideoTime(value))}
             />
             {segmentLoading && (
               <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500" role="status" data-testid="status-loading-tracking-segment">

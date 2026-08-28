@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import Hls from "hls.js";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
+import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import {
   getGetFeedQueryKey,
@@ -4170,6 +4171,8 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
   const [hasBundle, setHasBundle] = useState(Boolean(recording.hasTrackingBundle));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [videoStart, setVideoStart] = useState("");
+  const [verifying, setVerifying] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const upload = async (file: File) => {
@@ -4181,10 +4184,22 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         crossingCount: number;
         segmentCount: number;
         frameCoverage: string;
+        videoStartSeconds?: number;
       };
+      // Where the tracked window starts inside THIS recording. It belongs to
+      // the pairing, not to the bundle: the same tracking can be attached to a
+      // differently-trimmed video. Getting it wrong does not fail - it draws
+      // every box against footage from elsewhere in the match, which reads as
+      // broken tracking rather than a wrong number, so it is asked for here
+      // rather than assumed to be zero.
+      const startSeconds = videoStart.trim() === "" ? undefined : Number(videoStart);
+      if (startSeconds !== undefined && !Number.isFinite(startSeconds)) {
+        throw new Error("Video start must be a number of seconds");
+      }
       if (file.name.toLowerCase().endsWith(".zip")) {
         const form = new FormData();
         form.append("bundle", file, file.name);
+        if (startSeconds !== undefined) form.append("videoStartSeconds", String(startSeconds));
         result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
           method: "PUT",
           body: form,
@@ -4192,15 +4207,23 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
       } else {
         const raw = await file.text();
         const payload = JSON.parse(raw);
+        if (startSeconds !== undefined) payload.videoStartSeconds = startSeconds;
         result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
           method: "PUT",
           body: JSON.stringify(payload),
         }) as typeof result;
       }
       setHasBundle(true);
-      setMessage(`Ready · ${result.segmentCount} segments · ${result.trackCount} tracks · ${result.frameCoverage}`);
+      setMessage(
+        `Ready · ${result.segmentCount} segments · ${result.trackCount} tracks · `
+        + `starts ${result.videoStartSeconds ?? 0}s into the video · ${result.frameCoverage}`,
+      );
     } catch (error) {
-      setMessage(error instanceof SyntaxError ? "That file is not valid JSON" : "Upload failed — check manifest, segment ranges, and file names");
+      setMessage(error instanceof SyntaxError
+        ? "That file is not valid JSON"
+        : error instanceof Error && error.message.startsWith("Video start")
+          ? error.message
+          : "Upload failed — check manifest, segment ranges, and file names");
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -4236,16 +4259,45 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
           if (file) void upload(file);
         }}
       />
-      <button
-        type="button"
-        className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
-        disabled={busy}
-        data-testid={`button-upload-tracking-bundle-${recording.id}`}
-        onClick={() => inputRef.current?.click()}
-      >
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-        {busy ? "Saving…" : hasBundle ? "Replace bundle" : "Upload bundle"}
-      </button>
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+          starts
+          <input
+            type="number"
+            min={0}
+            step={1}
+            inputMode="numeric"
+            placeholder="0"
+            value={videoStart}
+            onChange={(event) => setVideoStart(event.target.value)}
+            className="w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-xs text-zinc-200 focus:border-primary focus:outline-none"
+            data-testid={`input-video-start-${recording.id}`}
+            title="Seconds into the recording at which the tracked window begins. The 2026-08-24 hour starts 18 minutes in, so 1080."
+          />
+          s in
+        </label>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+          disabled={busy}
+          data-testid={`button-upload-tracking-bundle-${recording.id}`}
+          onClick={() => inputRef.current?.click()}
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          {busy ? "Saving…" : hasBundle ? "Replace bundle" : "Upload bundle"}
+        </button>
+        {hasBundle && (
+          <button
+            type="button"
+            className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary"
+            data-testid={`button-verify-tracking-bundle-${recording.id}`}
+            onClick={() => setVerifying((value) => !value)}
+          >
+            {verifying ? "Hide check" : "Check alignment"}
+          </button>
+        )}
+      </div>
+      {verifying && <TrackingAlignmentCheck recordingId={recording.id} />}
     </div>
   );
 }

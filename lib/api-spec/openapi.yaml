@@ -1972,6 +1972,19 @@ components:
           exclusiveMinimum: 0
         matchOffset:
           type: number
+          description: >-
+            Display only. Added to tracking time to show a clock that matches the
+            wider match, e.g. an hour that starts at minute 40. Must never be used
+            to seek.
+        videoStartSeconds:
+          type: number
+          minimum: 0
+          description: >-
+            Where tracking frame 0 sits inside the video file, in seconds. The
+            recording can be longer than the tracked window - the 2026-08-24
+            recording is two hours and the tracked hour starts 18 minutes in, so
+            this is 1080. Optional for bundles uploaded before this field existed;
+            the server fills 0 and the boxes will be wrong until it is set.
         segmentCount:
           type: integer
           minimum: 1

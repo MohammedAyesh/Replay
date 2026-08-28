@@ -34,7 +34,10 @@ export interface ClaimBundle {
   frameRate: number;
   frameCount: number;
   duration: number;
+  /** display only - added to tracking time so the clock reads like the match */
   matchOffset: number;
+  /** where tracking frame 0 sits inside the video file, in seconds */
+  videoStartSeconds: number;
   tracks: ClaimTrack[];
   crossings: ClaimCrossing[];
   inPlaySpans: ClaimInPlaySpan[];
@@ -57,12 +60,46 @@ export interface NarrowingQuestion {
   crossingCount: number;
 }
 
-export function frameToMatchSeconds(frame: number, bundle: ClaimBundle): number {
-  return Math.max(0, frame / bundle.frameRate + bundle.matchOffset);
+/**
+ * THREE CLOCKS, and conflating any two of them puts every box on empty grass.
+ *
+ *   tracking   0 .. duration. The canonical clock. Frames, crossings, in-play
+ *              spans and events are all expressed in it, and so is every piece
+ *              of stored progress. Prefer it everywhere.
+ *   video      what you assign to video.currentTime. The recording is usually
+ *              longer than the tracked window - the 2026-08-24 recording is two
+ *              hours and tracking starts 18 minutes in - so this is tracking
+ *              time plus videoStartSeconds.
+ *   display    what the person reads on screen. Tracking time plus matchOffset,
+ *              so an hour that is really minutes 40-100 of a match reads that
+ *              way. NEVER seek with this.
+ *
+ * The original code had one offset doing the jobs of two, which is why the
+ * overlays sat on grass while the tracking itself was fine.
+ */
+export function frameToTrackingSeconds(frame: number, bundle: ClaimBundle): number {
+  return Math.max(0, frame / bundle.frameRate);
 }
 
-export function matchSecondsToFrame(seconds: number, bundle: ClaimBundle): number {
-  return Math.max(0, Math.round((seconds - bundle.matchOffset) * bundle.frameRate));
+export function trackingSecondsToFrame(seconds: number, bundle: ClaimBundle): number {
+  return Math.max(0, Math.round(seconds * bundle.frameRate));
+}
+
+export function trackingToVideoTime(seconds: number, bundle: ClaimBundle): number {
+  return Math.max(0, seconds + (bundle.videoStartSeconds || 0));
+}
+
+export function videoTimeToTracking(seconds: number, bundle: ClaimBundle): number {
+  return seconds - (bundle.videoStartSeconds || 0);
+}
+
+/** clamp a tracking time to the window we actually have tracking for */
+export function clampToTracked(seconds: number, bundle: ClaimBundle): number {
+  return Math.max(0, Math.min(bundle.duration, seconds));
+}
+
+export function trackingToDisplay(seconds: number, bundle: ClaimBundle): number {
+  return Math.max(0, seconds + (bundle.matchOffset || 0));
 }
 
 export function crossingsForWindow(
@@ -73,7 +110,7 @@ export function crossingsForWindow(
 ): number[] {
   const crossings = bundle.crossings
     .filter((crossing) => crossing.trackId === trackId)
-    .map((crossing) => frameToMatchSeconds(crossing.frame, bundle))
+    .map((crossing) => frameToTrackingSeconds(crossing.frame, bundle))
     .filter((seconds) => seconds > lowerSeconds && seconds < upperSeconds)
     .sort((a, b) => a - b);
   return groupDenseCrossings(crossings);
