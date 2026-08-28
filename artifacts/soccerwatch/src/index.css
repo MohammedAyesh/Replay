@@ -332,33 +332,65 @@
 .claim-stage.is-complete .claim-stage-dot { border-color: rgba(212,255,79,.55); color: var(--claim-green); }
 .claim-stage.is-active .claim-stage-dot { border-color: var(--claim-green); color: #0e1513; background: var(--claim-green); }
 .claim-stage-label { max-width: 110px; font-family: var(--app-font-mono); font-size: 9px; letter-spacing: .05em; text-align: center; text-transform: uppercase; }
-.claim-workspace { position: relative; display: block; }
-.claim-video-column { min-width: 0; width: 100%; }
-.claim-video-shell { overflow: hidden; border: 1px solid var(--claim-line); background: #0a1110; box-shadow: 0 22px 60px rgba(0,0,0,.22); }
-/* The frame takes the aspect of the View (the full 3840x1080 panorama by default). The <video> is
-   positioned by frameToVideoStyle so exactly that view fills the frame; boxes are percentages of
-   the same frame. Never object-fit: cover here - it crops without telling the overlay. */
-.claim-video-stage { position: relative; overflow: hidden; background: #0a1110; }
-.claim-video-frame { position: relative; width: 100%; overflow: hidden; background: #17251f; cursor: crosshair; }
-.claim-video { display: block; object-fit: fill; }
-.claim-fallback-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* ── Stage: the page IS the player, modelled on VideoPlayer in field-detail ── */
+.claim-page-stage { position: fixed; inset: 0; z-index: 50; overflow: hidden; background: #000; }
+.claim-stage { position: absolute; inset: 0; background: #000; }
+.claim-stage-centre { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+/* The frame box has the OUTPUT aspect (16:9). The <video> and the overlay layer inside it are
+   positioned by the same frame (applyFrame), so a box always sits on its pixel. */
+.claim-frame-box { position: relative; overflow: hidden; background: #000; touch-action: none; cursor: grab; }
+.claim-frame-box:active { cursor: grabbing; }
+.claim-video { display: block; object-fit: fill; pointer-events: none; user-select: none; }
+.claim-overlay-layer { pointer-events: none; }
+.claim-fallback-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: hidden; background: linear-gradient(155deg, #1b352b 0%, #204d39 42%, #13251e 100%); }
 .claim-video-error { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; color: var(--claim-ink); background: rgba(10,17,16,.82); font-family: var(--app-font-mono); font-size: 11px; text-align: center; }
-.claim-video-stage:fullscreen { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100vw; height: 100vh; background: #000; }
-.claim-video-stage:fullscreen .claim-video-frame { width: 100%; max-height: 100vh; }
-.claim-fallback-video { overflow: hidden; background: linear-gradient(155deg, #1b352b 0%, #204d39 42%, #13251e 100%); }
-.fallback-field-lines { position: absolute; inset: 8% 5%; border: 1px solid rgba(220,248,209,.35); transform: perspective(450px) rotateX(10deg); }
-.fallback-field-lines::before, .fallback-field-lines::after { position: absolute; content: ""; border: 1px solid rgba(220,248,209,.28); }
-.fallback-field-lines::before { inset: 22% 34%; }
-.fallback-field-lines::after { width: 20%; height: 34%; top: 33%; left: 0; border-left: 0; }
-.fallback-player { position: absolute; display: grid; width: 7.5%; aspect-ratio: .42; place-items: center; border: 2px solid var(--claim-green); border-radius: 45% 45% 22% 22%; background: rgba(212,255,79,.28); box-shadow: 0 0 0 8px rgba(212,255,79,.07); color: var(--claim-green); font-family: var(--app-font-mono); font-size: 14px; font-weight: 600; }
-.fallback-player::before { position: absolute; top: -27%; width: 55%; aspect-ratio: 1; border: 2px solid var(--claim-green); border-radius: 50%; content: ""; background: rgba(212,255,79,.2); }
-.fallback-player.p-one { left: 34%; top: 41%; }
-.fallback-player.p-two { left: 55%; top: 33%; border-color: rgba(239,243,230,.8); background: rgba(239,243,230,.16); color: var(--claim-ink); }
-.fallback-player.p-two::before { border-color: rgba(239,243,230,.8); }
-.fallback-player.p-three { left: 68%; top: 49%; border-color: rgba(255,131,95,.85); background: rgba(255,131,95,.12); color: #ffd5c9; }
-.fallback-player.p-three::before { border-color: rgba(255,131,95,.85); }
-.fallback-ball { position: absolute; top: 45%; left: 48%; width: 14px; height: 14px; border-radius: 50%; background: #eef3e6; box-shadow: 0 0 0 4px rgba(238,243,230,.08); }
-.fallback-camera-stamp { position: absolute; right: 14px; bottom: 61px; color: rgba(238,243,230,.62); font-family: var(--app-font-mono); font-size: 8px; letter-spacing: .1em; }
+.claim-stage-top, .claim-stage-bottom { position: absolute; z-index: 20; transition: opacity .25s ease; }
+.claim-stage-top.is-hidden, .claim-stage-bottom.is-hidden { opacity: 0; pointer-events: none; }
+.claim-stage-top { top: 0; left: 0; right: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: max(12px, env(safe-area-inset-top)) 16px 0; background: linear-gradient(rgba(0,0,0,.65), transparent); }
+.claim-stage-top-left, .claim-stage-top-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.claim-stage-title { display: grid; gap: 2px; min-width: 0; color: var(--claim-ink); }
+.claim-stage-title b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.claim-stage-title span { color: var(--claim-muted); font-family: var(--app-font-mono); font-size: 9px; }
+.claim-minimap { position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; background: rgba(0,0,0,.55); }
+.claim-minimap::before { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; content: ""; background: rgba(255,255,255,.25); }
+.claim-minimap-frame { position: absolute; border: 2px solid var(--claim-green); box-sizing: border-box; }
+.claim-minimap-dot { position: absolute; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--claim-orange); box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
+.claim-stage-bottom { position: absolute; z-index: 20; transition: opacity .25s ease; }
+.claim-stage-top.is-hidden, .claim-stage-bottom.is-hidden { opacity: 0; pointer-events: none; }
+.claim-stage-top { top: 0; left: 0; right: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: max(12px, env(safe-area-inset-top)) 16px 0; background: linear-gradient(rgba(0,0,0,.65), transparent); }
+.claim-stage-top-left, .claim-stage-top-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.claim-stage-title { display: grid; gap: 2px; min-width: 0; color: var(--claim-ink); }
+.claim-stage-title b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.claim-stage-title span { color: var(--claim-muted); font-family: var(--app-font-mono); font-size: 9px; }
+.claim-minimap { position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; background: rgba(0,0,0,.55); }
+.claim-minimap::before { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; content: ""; background: rgba(255,255,255,.25); }
+.claim-minimap-frame { position: absolute; border: 2px solid var(--claim-green); box-sizing: border-box; }
+.claim-minimap-dot { position: absolute; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--claim-orange); box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
+.claim-stage-bottom { right: 0; bottom: 0; left: 0; display: grid; gap: 10px; padding: 24px 16px max(16px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.8)); }
+.claim-seek-row { display: flex; align-items: center; gap: 10px; }
+.claim-clock { min-width: 44px; color: #fff; font-family: var(--app-font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.claim-clock:last-child { text-align: right; }
+.claim-seek-track { position: relative; flex: 1; display: flex; align-items: center; }
+.claim-seek-track input { width: 100%; height: 3px; accent-color: var(--claim-green); }
+.claim-seek-goal { position: absolute; top: 50%; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; transform: translateY(-50%); background: var(--claim-orange); pointer-events: none; }
+.claim-tools-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.claim-zoom { display: flex; flex: 1 1 200px; align-items: center; gap: 8px; min-width: 160px; max-width: 320px; padding: 6px 10px; border-radius: 999px; color: rgba(255,255,255,.7); background: rgba(0,0,0,.5); font-family: var(--app-font-mono); font-size: 9px; text-transform: uppercase; }
+.claim-zoom input { flex: 1; height: 3px; accent-color: var(--claim-green); }
+.claim-tool { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid rgba(255,255,255,.15); border-radius: 999px; cursor: pointer; color: #fff; background: rgba(0,0,0,.5); font-size: 11px; font-weight: 600; }
+.claim-tool-play { width: 44px; justify-content: center; padding: 0; color: #0e1513; background: #fff; }
+.claim-tool.is-on { color: #0e1513; background: var(--claim-green); border-color: var(--claim-green); }
+/* The stage panel floats over the picture; it must never cover the centre where the player is. */
+.claim-stage-panel { position: absolute; z-index: 25; right: 16px; top: 64px; width: min(340px, calc(100% - 32px)); max-height: calc(100% - 200px); overflow: auto; }
+.claim-stage-panel .claim-panel { padding: 18px; }
+.claim-stage-panel .claim-panel h2 { font-size: clamp(22px, 2.4vw, 30px); }
+.claim-stage-panel .claim-panel > p { margin-top: 10px; font-size: 12px; }
+.claim-stage-panel .claim-resume-card, .claim-stage-panel .claim-undo-copy { display: none; }
+/* Portrait phones: a 16:9 frame with the panel over it is unusable. Ask for landscape. */
+.claim-turn-card { display: none; }
+@media (orientation: portrait) and (hover: none) and (pointer: coarse) {
+  .claim-page-stage .claim-stage-panel { top: auto; bottom: 0; right: 0; left: 0; width: 100%; max-height: 55%; border-radius: 16px 16px 0 0; }
+  .claim-page-stage .claim-stage-centre { align-items: flex-start; }
+}
 .claim-video-topline { position: absolute; top: 14px; left: 16px; color: rgba(238,243,230,.76); font-family: var(--app-font-mono); font-size: 9px; letter-spacing: .08em; }
 .claim-live-dot { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--claim-orange); }
 .claim-video-divider { display: inline-block; width: 1px; height: 10px; margin: 0 8px; vertical-align: middle; background: rgba(238,243,230,.28); }
@@ -393,7 +425,6 @@
 .claim-key-hints, .claim-help { display: flex; gap: 15px; color: var(--claim-dim); font-family: var(--app-font-mono); font-size: 9px; }
 .claim-help { align-items: center; color: var(--claim-muted); }
 kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; padding: 0 4px; place-items: center; border: 1px solid rgba(196,224,184,.2); border-radius: 3px; color: var(--claim-muted); background: rgba(196,224,184,.06); font-family: var(--app-font-mono); font-size: 9px; }
-.claim-action-column { position: absolute; right: 18px; bottom: 59px; z-index: 4; display: grid; width: min(360px, calc(100% - 36px)); gap: 10px; pointer-events: none; }
 .claim-panel { min-height: 0; max-height: min(68vh, 580px); overflow: auto; padding: clamp(20px, 2.4vw, 30px); border: 1px solid rgba(212,255,79,.22); background: linear-gradient(140deg, rgba(23,37,33,.96), rgba(16,26,25,.94)); box-shadow: 0 18px 42px rgba(0,0,0,.3); pointer-events: auto; }
 .claim-context { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 17px; color: var(--claim-green); font-family: var(--app-font-mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
 .claim-step-count { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; color: var(--claim-dim); font-family: var(--app-font-mono); font-size: 9px; letter-spacing: .13em; text-transform: uppercase; }
@@ -505,7 +536,6 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
   .claim-wrap { width: min(100% - 28px, 680px); padding-top: 34px; }
   .claim-intro-row { align-items: flex-start; flex-direction: column; margin-bottom: 31px; }
   .claim-match-card { width: 100%; }
-  .claim-action-column { position: static; width: 100%; margin-top: 12px; pointer-events: auto; }
   .claim-panel { max-height: none; }
   .claim-earned-section { margin-top: 54px; }
   .claim-clips-grid { grid-template-columns: 1fr; }

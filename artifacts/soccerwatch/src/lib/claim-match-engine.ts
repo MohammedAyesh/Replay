@@ -207,13 +207,25 @@ export function skipToClearPassage(
   return Math.min(duration, next?.start ?? target);
 }
 
+/**
+ * Nearest box to a frame. Boxes are exported sorted by frame, so this is a
+ * binary search; a track with 300+ boxes is looked up in ~9 steps instead of a
+ * full scan, which matters now that the overlay updates every tracking frame.
+ */
 export function boxAtFrame(track: ClaimTrack, frame: number): ClaimBox | null {
-  if (track.boxes.length === 0 || frame < track.startFrame || frame > track.endFrame) return null;
-  let nearest = track.boxes[0];
-  for (const box of track.boxes) {
-    if (Math.abs(box.frame - frame) < Math.abs(nearest.frame - frame)) nearest = box;
+  const boxes = track.boxes;
+  if (boxes.length === 0 || frame < track.startFrame || frame > track.endFrame) return null;
+  let lo = 0;
+  let hi = boxes.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (boxes[mid].frame < frame) lo = mid + 1;
+    else hi = mid;
   }
-  return nearest;
+  const after = boxes[lo];
+  const before = lo > 0 ? boxes[lo - 1] : null;
+  if (before && Math.abs(before.frame - frame) < Math.abs(after.frame - frame)) return before;
+  return after;
 }
 
 export function boxContainsPoint(box: ClaimBox, x: number, y: number): boolean {
