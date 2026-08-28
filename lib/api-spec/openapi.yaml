@@ -335,6 +335,45 @@ paths:
         "404":
           description: Recording or tracking bundle not found
 
+  /recordings/{id}/claim-match/segments/{segmentIndex}:
+    get:
+      operationId: getClaimMatchSegment
+      tags: [claimMatch]
+      summary: Get one compressed tracking segment for the current player
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: segmentIndex
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Tracking segment
+          headers:
+            Content-Encoding:
+              schema:
+                type: string
+                enum: [gzip]
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackingSegment"
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Recording or tracking segment not found
+
   /claim-match/corrections/{correctionId}:
     delete:
       operationId: undoClaimMatchCorrection
@@ -379,6 +418,14 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/TrackingBundle"
+          multipart/form-data:
+            schema:
+              type: object
+              required: [bundle]
+              properties:
+                bundle:
+                  type: string
+                  description: ZIP file containing manifest.json and the segment JSON files
       responses:
         "200":
           description: Tracking bundle stored
@@ -1834,8 +1881,108 @@ components:
         clipId:
           type: ["string", "null"]
 
+    TrackingSegment:
+      type: object
+      required: [version, segmentIndex, name, startFrame, endFrame, startSeconds, endSeconds, tracks, crossings, inPlaySpans, events]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        segmentIndex:
+          type: integer
+          minimum: 0
+        name:
+          type: string
+        startFrame:
+          type: integer
+          minimum: 0
+        endFrame:
+          type: integer
+          minimum: 0
+        startSeconds:
+          type: number
+          minimum: 0
+        endSeconds:
+          type: number
+          minimum: 0
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingTrack"
+        crossings:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingCrossing"
+        inPlaySpans:
+          type: array
+          items:
+            $ref: "#/components/schemas/InPlaySpan"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingEvent"
+
+    TrackingSegmentManifest:
+      type: object
+      required: [index, name, startFrame, endFrame, startSeconds, endSeconds, objectPath]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        name:
+          type: string
+        startFrame:
+          type: integer
+          minimum: 0
+        endFrame:
+          type: integer
+          minimum: 0
+        startSeconds:
+          type: number
+          minimum: 0
+        endSeconds:
+          type: number
+          minimum: 0
+        objectPath:
+          type: string
+
+    TrackingManifest:
+      type: object
+      required: [version, label, width, height, frameRate, frameCount, duration, matchOffset, segmentCount, segments]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        label:
+          type: string
+        width:
+          type: integer
+          minimum: 1
+        height:
+          type: integer
+          minimum: 1
+        frameRate:
+          type: number
+          exclusiveMinimum: 0
+        frameCount:
+          type: integer
+          minimum: 1
+        duration:
+          type: number
+          exclusiveMinimum: 0
+        matchOffset:
+          type: number
+        segmentCount:
+          type: integer
+          minimum: 1
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingSegmentManifest"
+
     TrackingBundle:
       type: object
+      description: Legacy single-file upload accepted during migration. New uploads should be ZIP bundles.
       required: [version, label, width, height, frameRate, frameCount, duration, matchOffset, tracks, crossings, inPlaySpans, events]
       properties:
         version:
@@ -1879,7 +2026,7 @@ components:
 
     TrackingBundleSummary:
       type: object
-      required: [recordingId, label, duration, trackCount, crossingCount, uploadedAt]
+      required: [recordingId, label, duration, segmentCount, frameCoverage, trackCount, crossingCount, uploadedAt]
       properties:
         recordingId:
           type: integer
@@ -1891,6 +2038,14 @@ components:
           type: integer
         crossingCount:
           type: integer
+        segmentCount:
+          type: integer
+        frameCoverage:
+          type: string
+        segmentRanges:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingSegmentManifest"
         uploadedAt:
           type: string
 
@@ -2013,12 +2168,12 @@ components:
 
     ClaimMatchResponse:
       type: object
-      required: [recording, bundle, progress, corrections]
+      required: [recording, manifest, progress, corrections]
       properties:
         recording:
           $ref: "#/components/schemas/Recording"
-        bundle:
-          $ref: "#/components/schemas/TrackingBundle"
+        manifest:
+          $ref: "#/components/schemas/TrackingManifest"
         progress:
           $ref: "#/components/schemas/ClaimProgress"
         corrections:

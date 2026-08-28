@@ -1,9 +1,14 @@
 import { Router, type IRouter } from "express";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
+import multer from "multer";
+import { unzipSync, gunzipSync, strFromU8 } from "fflate";
+import { randomUUID } from "node:crypto";
 import {
   CreateClaimMatchCorrectionBody,
   GetClaimMatchResponse,
   GetClaimMatchParams,
+  GetClaimMatchSegmentParams,
+  GetClaimMatchSegmentResponse,
   ReplaceTrackingBundleBody,
   UpdateClaimMatchProgressBody,
 } from "@workspace/api-zod";
@@ -13,15 +18,22 @@ import {
   recordingsTable,
   fieldsTable,
   recordingTrackingBundlesTable,
+  recordingTrackingSegmentsTable,
   claimMatchProgressTable,
   claimMatchCorrectionsTable,
-  type TrackingBundlePayload,
+  type TrackingManifest,
+  type TrackingSegmentPayload,
   type ClaimEarnedClip,
 } from "@workspace/db";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
+import { readClaimSegment, readCompressedClaimSegment, writeClaimSegment } from "../lib/claimMatchStorage";
 
 const router: IRouter = Router();
+const bundleUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 75 * 1024 * 1024 },
+});
 
 function parseId(value: string | string[]): number | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -77,7 +89,15 @@ function firstString(...values: unknown[]): string | undefined {
  * (fps/video_fps, bbox/boundingBox, track_id, and so on). This means an
  * operator can upload Mohammed's JSON directly without hand-editing it.
  */
-function normalizeBundle(input: unknown): unknown {
+function normalizeBundle(
+  input: unknown,
+  segmentIndex = 0,
+  segmentName = "segment-01",
+  segmentStartFrame = 0,
+  segmentEndFrame?: number,
+  segmentStartSeconds = 0,
+  segmentEndSeconds?: number,
+): unknown {
   const source = asRecord(input);
   const metadata = asRecord(source.metadata ?? source.video);
   const dimensions = asRecord(source.dimensions ?? metadata.dimensions);
@@ -192,24 +212,237 @@ function normalizeBundle(input: unknown): unknown {
 
   return {
     version: Math.max(1, Math.round(firstNumber(source.version) ?? 1)),
-    label: firstString(source.label, source.name, metadata.label) ?? "Match tracking",
-    width: Math.max(1, Math.round(width ?? 1920)),
-    height: Math.max(1, Math.round(height ?? 1080)),
-    frameRate: frameRate ?? 25,
-    frameCount: Math.max(1, Math.round(frameCount ?? Math.max(1, (duration ?? 1) * (frameRate ?? 25)))),
-    duration: duration ?? 1,
-    matchOffset,
+    segmentIndex,
+    name: segmentName,
+    startFrame: Math.max(0, Math.round(firstNumber(source.startFrame, source.start_frame) ?? segmentStartFrame)),
+    endFrame: Math.max(
+      0,
+      Math.round(firstNumber(source.endFrame, source.end_frame) ?? segmentEndFrame ?? frameCount ?? 1),
+    ),
+    startSeconds: Math.max(0, firstNumber(source.startSeconds, source.start_seconds) ?? segmentStartSeconds),
+    endSeconds: Math.max(0, firstNumber(source.endSeconds, source.end_seconds) ?? segmentEndSeconds ?? duration ?? 1),
     tracks,
     crossings,
     inPlaySpans,
     events,
+    // Kept on the normalized intermediate value for manifest construction.
+    _metadata: {
+      label: firstString(source.label, source.name, metadata.label) ?? "Match tracking",
+      width: Math.max(1, Math.round(width ?? 1920)),
+      height: Math.max(1, Math.round(height ?? 1080)),
+      frameRate: frameRate ?? 25,
+      frameCount: Math.max(1, Math.round(frameCount ?? Math.max(1, (duration ?? 1) * (frameRate ?? 25)))),
+      duration: duration ?? 1,
+      matchOffset,
+    },
   };
 }
 
-function parseBundle(input: unknown): TrackingBundlePayload | null {
-  const normalized = normalizeBundle(input);
-  const result = ReplaceTrackingBundleBody.safeParse(normalized);
-  return result.success ? result.data as TrackingBundlePayload : null;
+function parseSegment(
+  input: unknown,
+  segmentIndex: number,
+  segmentName: string,
+  startFrame: number,
+  endFrame: number,
+  startSeconds: number,
+  endSeconds: number,
+): TrackingSegmentPayload | null {
+  const normalized = normalizeBundle(input, segmentIndex, segmentName, startFrame, endFrame, startSeconds, endSeconds) as UnknownRecord;
+  const metadata = asRecord(normalized._metadata);
+  const result = ReplaceTrackingBundleBody.safeParse({
+    ...metadata,
+    ...normalized,
+  });
+  if (!result.success) return null;
+  const value = result.data as unknown as TrackingSegmentPayload;
+  return {
+    ...value,
+    segmentIndex,
+    name: segmentName,
+    startFrame,
+    endFrame,
+    startSeconds,
+    endSeconds,
+  };
+}
+
+function namespaceSegment(segment: TrackingSegmentPayload): TrackingSegmentPayload {
+  const prefix = `s${segment.segmentIndex}:`;
+  const namespace = (id: string) => id.startsWith(prefix) ? id : `${prefix}${id}`;
+  return {
+    ...segment,
+    tracks: segment.tracks.map((track) => ({
+      ...track,
+      id: namespace(track.id),
+    })),
+    crossings: segment.crossings.map((crossing) => ({
+      ...crossing,
+      trackId: namespace(crossing.trackId),
+      otherTrackId: namespace(crossing.otherTrackId),
+    })),
+  };
+}
+
+type UploadBundle = {
+  manifest: Omit<TrackingManifest, "segments"> & { segments: Array<TrackingManifest["segments"][number] & { file?: string; path?: string }> };
+  segments: TrackingSegmentPayload[];
+};
+
+function readJsonEntry(entries: Record<string, Uint8Array>, names: string[]): unknown | null {
+  const name = names.find((candidate) => entries[candidate]);
+  if (!name) return null;
+  try {
+    return JSON.parse(strFromU8(entries[name]));
+  } catch {
+    return null;
+  }
+}
+
+function entryNamesForSegment(
+  entry: UnknownRecord,
+  index: number,
+  name: string,
+): string[] {
+  const declared = firstString(entry.file, entry.path);
+  const candidates = [declared, `segments/${name}.json`, `segments/${name}.json.gz`, `segment-${String(index + 1).padStart(2, "0")}.json`, `${name}.json`]
+    .filter((value): value is string => Boolean(value));
+  return candidates;
+}
+
+function parseUploadedBundle(input: unknown): UploadBundle | null {
+  const source = asRecord(input);
+  const rawMetadata = asRecord(source.manifest ?? input);
+  const rawSegments = Array.isArray(rawMetadata.segments) ? rawMetadata.segments : [];
+  if (rawSegments.length > 0) {
+    const segments: TrackingSegmentPayload[] = [];
+    for (let index = 0; index < rawSegments.length; index++) {
+      const entry = asRecord(rawSegments[index]);
+      const startFrame = Math.max(0, Math.round(firstNumber(entry.startFrame, entry.start_frame) ?? 0));
+      const endFrame = Math.max(startFrame, Math.round(firstNumber(entry.endFrame, entry.end_frame) ?? startFrame));
+      const startSeconds = Math.max(0, firstNumber(entry.startSeconds, entry.start_seconds) ?? 0);
+      const endSeconds = Math.max(startSeconds, firstNumber(entry.endSeconds, entry.end_seconds) ?? 0);
+      const payload = asRecord(entry.payload).tracks ? entry.payload : entry;
+      const segment = parseSegment(payload, index, firstString(entry.name) ?? `segment-${String(index + 1).padStart(2, "0")}`, startFrame, endFrame, startSeconds, endSeconds);
+      if (!segment) return null;
+      segments.push(namespaceSegment(segment));
+    }
+    const firstSegment = segments[0];
+    return {
+      manifest: {
+        version: Math.max(1, Math.round(firstNumber(rawMetadata.version) ?? 1)),
+        label: firstString(rawMetadata.label, rawMetadata.name) ?? "Match tracking",
+        width: Math.max(1, Math.round(firstNumber(rawMetadata.width) ?? 1920)),
+        height: Math.max(1, Math.round(firstNumber(rawMetadata.height) ?? 1080)),
+        frameRate: firstNumber(rawMetadata.frameRate, rawMetadata.fps) ?? 25,
+        frameCount: Math.max(1, Math.round(firstNumber(rawMetadata.frameCount, rawMetadata.frames) ?? (segments.at(-1)?.endFrame ?? 0) + 1)),
+        duration: firstNumber(rawMetadata.duration) ?? segments.at(-1)?.endSeconds ?? 1,
+        matchOffset: firstNumber(rawMetadata.matchOffset, rawMetadata.match_offset) ?? 0,
+        segmentCount: segments.length,
+        segments: segments.map((segment) => ({
+          index: segment.segmentIndex,
+          name: segment.name,
+          startFrame: segment.startFrame,
+          endFrame: segment.endFrame,
+          startSeconds: segment.startSeconds,
+          endSeconds: segment.endSeconds,
+          objectPath: "",
+        })),
+      },
+      segments,
+    };
+  }
+
+  const legacy = parseSegment(input, 0, "segment-01", 0, Math.max(0, Math.round(firstNumber(source.frameCount, source.frames) ?? 0) - 1), 0, firstNumber(source.duration) ?? 1);
+  if (!legacy) return null;
+  const sourceMeta = asRecord((normalizeBundle(input) as UnknownRecord)._metadata);
+  const segment = namespaceSegment(legacy);
+  return {
+    manifest: {
+      version: Math.max(1, Math.round(firstNumber(source.version) ?? 1)),
+      label: firstString(source.label, source.name) ?? "Match tracking",
+      width: Math.max(1, Math.round(firstNumber(source.width) ?? firstNumber(sourceMeta.width) ?? 1920)),
+      height: Math.max(1, Math.round(firstNumber(source.height) ?? firstNumber(sourceMeta.height) ?? 1080)),
+      frameRate: firstNumber(source.frameRate, source.fps) ?? firstNumber(sourceMeta.frameRate) ?? 25,
+      frameCount: Math.max(1, Math.round(firstNumber(source.frameCount, source.frames) ?? firstNumber(sourceMeta.frameCount) ?? segment.endFrame + 1)),
+      duration: firstNumber(source.duration) ?? firstNumber(sourceMeta.duration) ?? segment.endSeconds,
+      matchOffset: firstNumber(source.matchOffset, source.match_offset) ?? 0,
+      segmentCount: 1,
+      segments: [{
+        index: 0,
+        name: segment.name,
+        startFrame: segment.startFrame,
+        endFrame: segment.endFrame,
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds,
+        objectPath: "",
+      }],
+    },
+    segments: [segment],
+  };
+}
+
+export function parseZipBundle(buffer: Buffer): UploadBundle | null {
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(buffer);
+  } catch {
+    return null;
+  }
+  const manifest = readJsonEntry(entries, ["manifest.json", "tracking-manifest.json"]);
+  if (!manifest) return null;
+  const rawManifest = asRecord(manifest);
+  const rawSegments = Array.isArray(rawManifest.segments) ? rawManifest.segments : [];
+  if (rawSegments.length === 0) return null;
+  const segments: TrackingSegmentPayload[] = [];
+  for (let index = 0; index < rawSegments.length; index++) {
+    const entry = asRecord(rawSegments[index]);
+    const startFrame = Math.max(0, Math.round(firstNumber(entry.startFrame, entry.start_frame) ?? 0));
+    const endFrame = Math.max(startFrame, Math.round(firstNumber(entry.endFrame, entry.end_frame) ?? startFrame));
+    const startSeconds = Math.max(0, firstNumber(entry.startSeconds, entry.start_seconds) ?? startFrame / (firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25));
+    const endSeconds = Math.max(startSeconds, firstNumber(entry.endSeconds, entry.end_seconds) ?? endFrame / (firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25));
+    const name = firstString(entry.name) ?? `segment-${String(index + 1).padStart(2, "0")}`;
+    const jsonEntry = entryNamesForSegment(entry, index, name).find((candidate) => entries[candidate]);
+    if (!jsonEntry) return null;
+    let segmentSource: unknown;
+    try {
+      const bytes = entries[jsonEntry];
+      segmentSource = jsonEntry.endsWith(".gz")
+        ? JSON.parse(new TextDecoder().decode(gunzipForZip(bytes)))
+        : JSON.parse(strFromU8(bytes));
+    } catch {
+      return null;
+    }
+    const segment = parseSegment(segmentSource, index, name, startFrame, endFrame, startSeconds, endSeconds);
+    if (!segment) return null;
+    segments.push(namespaceSegment(segment));
+  }
+  return {
+    manifest: {
+      version: Math.max(1, Math.round(firstNumber(rawManifest.version) ?? 1)),
+      label: firstString(rawManifest.label, rawManifest.name) ?? "Match tracking",
+      width: Math.max(1, Math.round(firstNumber(rawManifest.width) ?? 1920)),
+      height: Math.max(1, Math.round(firstNumber(rawManifest.height) ?? 1080)),
+      frameRate: firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25,
+      frameCount: Math.max(1, Math.round(firstNumber(rawManifest.frameCount, rawManifest.frames) ?? segments.at(-1)!.endFrame + 1)),
+      duration: firstNumber(rawManifest.duration) ?? segments.at(-1)!.endSeconds,
+      matchOffset: firstNumber(rawManifest.matchOffset, rawManifest.match_offset) ?? 0,
+      segmentCount: segments.length,
+      segments: segments.map((segment) => ({
+        index: segment.segmentIndex,
+        name: segment.name,
+        startFrame: segment.startFrame,
+        endFrame: segment.endFrame,
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds,
+        objectPath: "",
+      })),
+    },
+    segments,
+  };
+}
+
+function gunzipForZip(bytes: Uint8Array): Uint8Array {
+  return gunzipSync(bytes);
 }
 
 function recordingIdFromRequest(value: string | string[]): number | null {
@@ -292,6 +525,24 @@ async function getRecordingBundle(recordingId: number) {
   return row ?? null;
 }
 
+async function getBundleSegments(bundleId: number) {
+  return db
+    .select()
+    .from(recordingTrackingSegmentsTable)
+    .where(eq(recordingTrackingSegmentsTable.bundleId, bundleId))
+    .orderBy(asc(recordingTrackingSegmentsTable.segmentIndex));
+}
+
+async function readBundleSegments(bundleId: number): Promise<TrackingSegmentPayload[]> {
+  const rows = await getBundleSegments(bundleId);
+  const segments: TrackingSegmentPayload[] = [];
+  for (const row of rows) {
+    const body = await readClaimSegment(row.objectPath);
+    segments.push(JSON.parse(body.toString("utf8")) as TrackingSegmentPayload);
+  }
+  return segments;
+}
+
 // The demo deliberately resolves to the first real uploaded bundle. It never
 // manufactures a recording or synthetic player metrics, so Mohammed's sample
 // can be opened through one stable URL after an admin uploads it.
@@ -314,11 +565,11 @@ router.get("/claim-match/demo", async (req, res): Promise<void> => {
 });
 
 function getMomentClips(
-  bundle: TrackingBundlePayload,
+  segments: TrackingSegmentPayload[],
   momentSeconds: number,
   existing: ClaimEarnedClip[],
 ): ClaimEarnedClip[] {
-  const newClips = bundle.events
+  const newClips = segments.flatMap((segment) => segment.events)
     .filter((event) => ["goal", "shot", "kickoff", "second-half", "second_half"].includes(event.type.toLowerCase()))
     .filter((event) => Math.abs(event.time - momentSeconds) <= 12)
     .map((event) => ({
@@ -351,7 +602,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     return;
   }
   const row = await getRecordingBundle(params.data.id);
-  if (!row?.bundle) {
+  if (!row?.bundle?.manifest) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
@@ -373,10 +624,46 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
 
   res.json(GetClaimMatchResponse.parse({
     recording: toRecording(row.recording, row.fieldName ?? null),
-    bundle: row.bundle.payload,
+    manifest: row.bundle.manifest,
     progress: toProgress(progress ?? null, params.data.id),
     corrections: corrections.map(toCorrection),
   }));
+});
+
+router.get("/recordings/:id/claim-match/segments/:segmentIndex", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    res.status(401).json({ error: "Authenticated account required" });
+    return;
+  }
+  const params = GetClaimMatchSegmentParams.safeParse({
+    id: recordingIdFromRequest(req.params.id),
+    segmentIndex: Number.parseInt(Array.isArray(req.params.segmentIndex) ? req.params.segmentIndex[0] : req.params.segmentIndex, 10),
+  });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const row = await getRecordingBundle(params.data.id);
+  if (!row?.bundle?.manifest) {
+    res.status(404).json({ error: "Recording or tracking bundle not found" });
+    return;
+  }
+  const manifestSegment = row.bundle.manifest.segments.find((segment) => segment.index === params.data.segmentIndex);
+  if (!manifestSegment) {
+    res.status(404).json({ error: "Tracking segment not found" });
+    return;
+  }
+  try {
+    const compressed = await readCompressedClaimSegment(manifestSegment.objectPath);
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Encoding", "gzip");
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.setHeader("Content-Length", String(compressed.byteLength));
+    res.status(200).send(compressed);
+  } catch {
+    res.status(404).json({ error: "Tracking segment not found" });
+  }
 });
 
 router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
@@ -396,7 +683,7 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     return;
   }
   const row = await getRecordingBundle(params.data.id);
-  if (!row?.bundle) {
+  if (!row?.bundle?.manifest) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
@@ -454,7 +741,8 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
-  const trackIds = new Set(row.bundle.payload.tracks.map((track) => track.id));
+  const segments = await readBundleSegments(row.bundle.id);
+  const trackIds = new Set(segments.flatMap((segment) => segment.tracks.map((track) => track.id)));
   if (
     !trackIds.has(body.data.chosenTrackId) ||
     (body.data.rejectedTrackId !== undefined &&
@@ -485,7 +773,7 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
       eq(claimMatchProgressTable.userId, userId),
       eq(claimMatchProgressTable.recordingId, params.data.id),
     ));
-  const earnedClips = getMomentClips(row.bundle.payload, body.data.momentSeconds, progress?.earnedClips ?? []);
+  const earnedClips = getMomentClips(segments, body.data.momentSeconds, progress?.earnedClips ?? []);
   const [created] = await db
     .insert(claimMatchCorrectionsTable)
     .values({
@@ -508,7 +796,7 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
       stage: "following",
       confirmedFromSeconds: body.data.momentSeconds,
       currentPositionSeconds: body.data.momentSeconds,
-      claimedPercent: Math.min(100, (body.data.momentSeconds / row.bundle.payload.duration) * 100),
+      claimedPercent: Math.min(100, (body.data.momentSeconds / row.bundle.manifest.duration) * 100),
       clipsUnlocked: earnedClips.length,
       correctionCount: 1,
       completed: false,
@@ -521,7 +809,7 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
         stage: "following",
         confirmedFromSeconds: body.data.momentSeconds,
         currentPositionSeconds: body.data.momentSeconds,
-        claimedPercent: sql`LEAST(100, GREATEST(${claimMatchProgressTable.claimedPercent}, ${(body.data.momentSeconds / row.bundle.payload.duration) * 100}))`,
+        claimedPercent: sql`LEAST(100, GREATEST(${claimMatchProgressTable.claimedPercent}, ${(body.data.momentSeconds / row.bundle.manifest.duration) * 100}))`,
         clipsUnlocked: earnedClips.length,
         correctionCount: sql`${claimMatchProgressTable.correctionCount} + 1`,
         earnedClips,
@@ -574,7 +862,93 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
   res.json(toCorrection({ ...correction, undone: true }));
 });
 
-router.put("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<void> => {
+export function validateUploadBundle(upload: UploadBundle): string | null {
+  const { manifest, segments } = upload;
+  if (manifest.segmentCount !== segments.length || manifest.segments.length !== segments.length) {
+    return "Manifest segment count does not match the uploaded files";
+  }
+  const ranges = [...manifest.segments].sort((a, b) => a.index - b.index);
+  for (let index = 0; index < ranges.length; index++) {
+    const range = ranges[index];
+    const segment = segments[index];
+    if (range.index !== index || segment.segmentIndex !== index) return "Segment indexes must be sequential starting at zero";
+    if (range.startFrame !== segment.startFrame || range.endFrame !== segment.endFrame) return `Segment ${index + 1} frame range does not match its file`;
+    if (index === 0 && range.startFrame !== 0) return "The first segment must start at frame 0";
+    if (index > 0 && range.startFrame !== ranges[index - 1].endFrame + 1) return "Segment frame ranges must be continuous with no gaps";
+    if (range.endFrame < range.startFrame || range.endSeconds < range.startSeconds) return "Segment ranges must have a positive length";
+    const ids = new Set(segment.tracks.map((track) => track.id));
+    if (segment.crossings.some((crossing) => !ids.has(crossing.trackId) || !ids.has(crossing.otherTrackId))) {
+      return `Segment ${index + 1} contains a crossing for a track that is not in that segment`;
+    }
+  }
+  if (ranges.at(-1)?.endFrame !== manifest.frameCount - 1) return "Segment frame coverage must end at the manifest frame count";
+  return null;
+}
+
+async function storeUploadBundle(recordingId: number, adminId: number, upload: UploadBundle) {
+  const validationError = validateUploadBundle(upload);
+  if (validationError) throw new Error(validationError);
+  const storedSegments: Array<{
+    segment: TrackingSegmentPayload;
+    objectPath: string;
+    compressedBytes: number;
+  }> = [];
+  for (const segment of upload.segments) {
+    const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}.json.gz`, segment);
+    storedSegments.push({ segment, ...stored });
+  }
+  const manifest: TrackingManifest = {
+    ...upload.manifest,
+    segmentCount: storedSegments.length,
+    segments: storedSegments.map(({ segment, objectPath }) => ({
+      index: segment.segmentIndex,
+      name: segment.name,
+      startFrame: segment.startFrame,
+      endFrame: segment.endFrame,
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+      objectPath,
+    })),
+  };
+  const [saved] = await db.transaction(async (tx) => {
+    const [bundle] = await tx
+      .insert(recordingTrackingBundlesTable)
+      .values({ recordingId, manifest, uploadedBy: adminId })
+      .onConflictDoUpdate({
+        target: recordingTrackingBundlesTable.recordingId,
+        set: { manifest, uploadedBy: adminId, updatedAt: new Date() },
+      })
+      .returning();
+    await tx.delete(recordingTrackingSegmentsTable).where(eq(recordingTrackingSegmentsTable.bundleId, bundle.id));
+    await tx.insert(recordingTrackingSegmentsTable).values(storedSegments.map(({ segment, objectPath, compressedBytes }) => ({
+      bundleId: bundle.id,
+      segmentIndex: segment.segmentIndex,
+      name: segment.name,
+      startFrame: segment.startFrame,
+      endFrame: segment.endFrame,
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+      objectPath,
+      compressedBytes,
+      trackCount: segment.tracks.length,
+      crossingCount: segment.crossings.length,
+    })));
+    return [bundle];
+  });
+  return {
+    recordingId,
+    label: manifest.label,
+    duration: manifest.duration,
+    trackCount: storedSegments.reduce((sum, item) => sum + item.segment.tracks.length, 0),
+    crossingCount: storedSegments.reduce((sum, item) => sum + item.segment.crossings.length, 0),
+    segmentCount: storedSegments.length,
+    frameCoverage: `0-${manifest.frameCount - 1} (${manifest.frameCount} frames)`,
+    segmentRanges: manifest.segments,
+    uploadedAt: saved.updatedAt.toISOString(),
+  };
+}
+
+router.put("/admin/recordings/:id/tracking-bundle", bundleUpload.single("bundle"), async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) {
     res.status(403).json({ error: "Forbidden" });
@@ -593,29 +967,20 @@ router.put("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<vo
     res.status(404).json({ error: "Recording not found" });
     return;
   }
-  const bundle = parseBundle(req.body);
-  if (!bundle) {
+  const upload = req.file?.buffer
+    ? parseZipBundle(req.file.buffer)
+    : parseUploadedBundle(req.body);
+  if (!upload) {
     res.status(400).json({
-      error: "Invalid tracking bundle. Include dimensions, frame rate, duration, tracks, crossings, in-play spans, and events.",
+      error: "Invalid tracking bundle. Upload a ZIP containing manifest.json and every segment JSON file.",
     });
     return;
   }
-  const [saved] = await db
-    .insert(recordingTrackingBundlesTable)
-    .values({ recordingId, payload: bundle, uploadedBy: adminId })
-    .onConflictDoUpdate({
-      target: recordingTrackingBundlesTable.recordingId,
-      set: { payload: bundle, uploadedBy: adminId, updatedAt: new Date() },
-    })
-    .returning();
-  res.json({
-    recordingId,
-    label: bundle.label,
-    duration: bundle.duration,
-    trackCount: bundle.tracks.length,
-    crossingCount: bundle.crossings.length,
-    uploadedAt: saved.updatedAt.toISOString(),
-  });
+  try {
+    res.json(await storeUploadBundle(recordingId, adminId, upload));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Could not store tracking bundle" });
+  }
 });
 
 export default router;

@@ -113,6 +113,8 @@ interface AdminRecording {
   videoUrl: string;
   isVisible: boolean;
   hasTrackingBundle?: boolean;
+  trackingSegmentCount?: number | null;
+  trackingFrameCoverage?: string | null;
 }
 
 interface AdminBanner {
@@ -333,9 +335,13 @@ interface FtpAvailability {
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
 async function apiFetch(path: string, opts?: RequestInit) {
+  const isMultipart = typeof FormData !== "undefined" && opts?.body instanceof FormData;
   const res = await fetch(`${basePath}/api${path}`, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(opts?.headers ?? {}) },
+    headers: {
+      ...(isMultipart ? {} : { "Content-Type": "application/json" }),
+      ...(opts?.headers ?? {}),
+    },
     ...opts,
   });
   if (!res.ok) throw new Error(`${res.status}`);
@@ -4170,16 +4176,31 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
     setBusy(true);
     setMessage(null);
     try {
-      const raw = await file.text();
-      const payload = JSON.parse(raw);
-      const result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      }) as { trackCount: number; crossingCount: number };
+      let result: {
+        trackCount: number;
+        crossingCount: number;
+        segmentCount: number;
+        frameCoverage: string;
+      };
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        const form = new FormData();
+        form.append("bundle", file, file.name);
+        result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
+          method: "PUT",
+          body: form,
+        }) as typeof result;
+      } else {
+        const raw = await file.text();
+        const payload = JSON.parse(raw);
+        result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        }) as typeof result;
+      }
       setHasBundle(true);
-      setMessage(`Ready · ${result.trackCount} tracks · ${result.crossingCount} crossings`);
+      setMessage(`Ready · ${result.segmentCount} segments · ${result.trackCount} tracks · ${result.frameCoverage}`);
     } catch (error) {
-      setMessage(error instanceof SyntaxError ? "That file is not valid JSON" : "Upload could not be saved");
+      setMessage(error instanceof SyntaxError ? "That file is not valid JSON" : "Upload failed — check manifest, segment ranges, and file names");
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -4198,14 +4219,16 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
             #{recording.id} · {recording.date} · {recording.timeSlot}
           </p>
           <p className="text-[10px] text-zinc-500">
-            {message || (hasBundle ? "Tracking bundle ready for Claim Your Match" : "No tracking bundle")}
+            {message || (hasBundle
+              ? `${recording.trackingSegmentCount ?? "—"} segments · ${recording.trackingFrameCoverage ?? "coverage unavailable"}`
+              : "No tracking bundle")}
           </p>
         </div>
       </div>
       <input
         ref={inputRef}
         type="file"
-        accept=".json,application/json"
+        accept=".zip,.json,application/zip,application/json"
         className="hidden"
         data-testid={`input-tracking-bundle-${recording.id}`}
         onChange={(event) => {
@@ -4221,7 +4244,7 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         onClick={() => inputRef.current?.click()}
       >
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-        {busy ? "Saving…" : hasBundle ? "Replace JSON" : "Upload JSON"}
+        {busy ? "Saving…" : hasBundle ? "Replace bundle" : "Upload bundle"}
       </button>
     </div>
   );

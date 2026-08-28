@@ -52,8 +52,10 @@ import type {
   ProfileInput,
   PublicProfile,
   Recording,
+  ReplaceTrackingBundleBodyTwo,
   TrackingBundle,
   TrackingBundleSummary,
+  TrackingSegment,
   UpdateAcademyInput,
   UpdateUserClipInput,
   User,
@@ -1210,6 +1212,88 @@ export const useCreateClaimMatchCorrection = <TError = ErrorType<void>,
       return useMutation(getCreateClaimMatchCorrectionMutationOptions(options));
     }
 
+export const getGetClaimMatchSegmentUrl = (id: number,
+    segmentIndex: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/segments/${segmentIndex}`
+}
+
+/**
+ * @summary Get one compressed tracking segment for the current player
+ */
+export const getClaimMatchSegment = async (id: number,
+    segmentIndex: number, options?: RequestInit): Promise<TrackingSegment> => {
+
+  return customFetch<TrackingSegment>(getGetClaimMatchSegmentUrl(id,segmentIndex),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetClaimMatchSegmentQueryKey = (id: number,
+    segmentIndex: number,) => {
+    return [
+    `/api/recordings/${id}/claim-match/segments/${segmentIndex}`
+    ] as const;
+    }
+
+
+export const getGetClaimMatchSegmentQueryOptions = <TData = Awaited<ReturnType<typeof getClaimMatchSegment>>, TError = ErrorType<void>>(id: number,
+    segmentIndex: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchSegment>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetClaimMatchSegmentQueryKey(id,segmentIndex);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getClaimMatchSegment>>> = ({ signal }) => getClaimMatchSegment(id,segmentIndex, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined && segmentIndex !== null && segmentIndex !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchSegment>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetClaimMatchSegmentQueryResult = NonNullable<Awaited<ReturnType<typeof getClaimMatchSegment>>>
+export type GetClaimMatchSegmentQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get one compressed tracking segment for the current player
+ */
+
+export function useGetClaimMatchSegment<TData = Awaited<ReturnType<typeof getClaimMatchSegment>>, TError = ErrorType<void>>(
+ id: number,
+    segmentIndex: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchSegment>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetClaimMatchSegmentQueryOptions(id,segmentIndex,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getUndoClaimMatchCorrectionUrl = (correctionId: number,) => {
 
 
@@ -1292,14 +1376,14 @@ export const getReplaceTrackingBundleUrl = (id: number,) => {
  * @summary Upload or replace a recording tracking bundle
  */
 export const replaceTrackingBundle = async (id: number,
-    trackingBundle: TrackingBundle, options?: RequestInit): Promise<TrackingBundleSummary> => {
+    replaceTrackingBundleBody: TrackingBundle | ReplaceTrackingBundleBodyTwo, options?: RequestInit): Promise<TrackingBundleSummary> => {
 
   return customFetch<TrackingBundleSummary>(getReplaceTrackingBundleUrl(id),
   {
     ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(trackingBundle)
+    method: 'PUT'
+    ,
+    body: JSON.stringify(replaceTrackingBundleBody)
   }
 );}
 
@@ -1307,8 +1391,8 @@ export const replaceTrackingBundle = async (id: number,
 
 
 export const getReplaceTrackingBundleMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle>}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle | ReplaceTrackingBundleBodyTwo>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle | ReplaceTrackingBundleBodyTwo>}, TContext> => {
 
 const mutationKey = ['replaceTrackingBundle'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -1320,7 +1404,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof replaceTrackingBundle>>, {id: number;data: BodyType<TrackingBundle>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof replaceTrackingBundle>>, {id: number;data: BodyType<TrackingBundle | ReplaceTrackingBundleBodyTwo>}> = (props) => {
           const {id,data} = props ?? {};
 
           return  replaceTrackingBundle(id,data,requestOptions)
@@ -1334,18 +1418,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type ReplaceTrackingBundleMutationResult = NonNullable<Awaited<ReturnType<typeof replaceTrackingBundle>>>
-    export type ReplaceTrackingBundleMutationBody = BodyType<TrackingBundle>
+    export type ReplaceTrackingBundleMutationBody = BodyType<TrackingBundle | ReplaceTrackingBundleBodyTwo>
     export type ReplaceTrackingBundleMutationError = ErrorType<void>
 
     /**
  * @summary Upload or replace a recording tracking bundle
  */
 export const useReplaceTrackingBundle = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle>}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle | ReplaceTrackingBundleBodyTwo>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof replaceTrackingBundle>>,
         TError,
-        {id: number;data: BodyType<TrackingBundle>},
+        {id: number;data: BodyType<TrackingBundle | ReplaceTrackingBundleBodyTwo>},
         TContext
       > => {
       return useMutation(getReplaceTrackingBundleMutationOptions(options));

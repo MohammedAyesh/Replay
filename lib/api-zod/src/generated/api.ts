@@ -228,31 +228,21 @@ export const GetClaimMatchParams = zod.object({
 
 
 
-export const getClaimMatchResponseBundleFrameRateExclusiveMin = 0;
+export const getClaimMatchResponseManifestFrameRateExclusiveMin = 0;
 
 
-export const getClaimMatchResponseBundleDurationExclusiveMin = 0;
+export const getClaimMatchResponseManifestDurationExclusiveMin = 0;
 
-export const getClaimMatchResponseBundleTracksItemStartFrameMin = 0;
 
-export const getClaimMatchResponseBundleTracksItemEndFrameMin = 0;
+export const getClaimMatchResponseManifestSegmentsItemIndexMin = 0;
 
-export const getClaimMatchResponseBundleTracksItemBoxesItemFrameMin = 0;
+export const getClaimMatchResponseManifestSegmentsItemStartFrameMin = 0;
 
-export const getClaimMatchResponseBundleTracksItemBoxesItemWMin = 0;
+export const getClaimMatchResponseManifestSegmentsItemEndFrameMin = 0;
 
-export const getClaimMatchResponseBundleTracksItemBoxesItemHMin = 0;
+export const getClaimMatchResponseManifestSegmentsItemStartSecondsMin = 0;
 
-export const getClaimMatchResponseBundleCrossingsItemFrameMin = 0;
-
-export const getClaimMatchResponseBundleCrossingsItemConfidenceMin = 0;
-export const getClaimMatchResponseBundleCrossingsItemConfidenceMax = 1;
-
-export const getClaimMatchResponseBundleInPlaySpansItemStartMin = 0;
-
-export const getClaimMatchResponseBundleInPlaySpansItemEndMin = 0;
-
-export const getClaimMatchResponseBundleEventsItemTimeMin = 0;
+export const getClaimMatchResponseManifestSegmentsItemEndSecondsMin = 0;
 
 
 
@@ -269,43 +259,24 @@ export const GetClaimMatchResponse = zod.object({
   "highlightMoment": zod.string().nullish(),
   "fieldName": zod.string().nullish()
 }),
-  "bundle": zod.object({
+  "manifest": zod.object({
   "version": zod.number().min(1),
   "label": zod.string(),
   "width": zod.number().min(1),
   "height": zod.number().min(1),
-  "frameRate": zod.number().gt(getClaimMatchResponseBundleFrameRateExclusiveMin),
+  "frameRate": zod.number().gt(getClaimMatchResponseManifestFrameRateExclusiveMin),
   "frameCount": zod.number().min(1),
-  "duration": zod.number().gt(getClaimMatchResponseBundleDurationExclusiveMin),
+  "duration": zod.number().gt(getClaimMatchResponseManifestDurationExclusiveMin),
   "matchOffset": zod.number(),
-  "tracks": zod.array(zod.object({
-  "id": zod.string(),
-  "label": zod.string().nullish(),
-  "startFrame": zod.number().min(getClaimMatchResponseBundleTracksItemStartFrameMin),
-  "endFrame": zod.number().min(getClaimMatchResponseBundleTracksItemEndFrameMin),
-  "boxes": zod.array(zod.object({
-  "frame": zod.number().min(getClaimMatchResponseBundleTracksItemBoxesItemFrameMin),
-  "x": zod.number(),
-  "y": zod.number(),
-  "w": zod.number().min(getClaimMatchResponseBundleTracksItemBoxesItemWMin),
-  "h": zod.number().min(getClaimMatchResponseBundleTracksItemBoxesItemHMin)
-}))
-})),
-  "crossings": zod.array(zod.object({
-  "frame": zod.number().min(getClaimMatchResponseBundleCrossingsItemFrameMin),
-  "trackId": zod.string(),
-  "otherTrackId": zod.string(),
-  "confidence": zod.number().min(getClaimMatchResponseBundleCrossingsItemConfidenceMin).max(getClaimMatchResponseBundleCrossingsItemConfidenceMax).optional()
-})),
-  "inPlaySpans": zod.array(zod.object({
-  "start": zod.number().min(getClaimMatchResponseBundleInPlaySpansItemStartMin),
-  "end": zod.number().min(getClaimMatchResponseBundleInPlaySpansItemEndMin)
-})),
-  "events": zod.array(zod.object({
-  "type": zod.string(),
-  "time": zod.number().min(getClaimMatchResponseBundleEventsItemTimeMin),
-  "label": zod.string().nullish(),
-  "clipId": zod.string().nullish()
+  "segmentCount": zod.number().min(1),
+  "segments": zod.array(zod.object({
+  "index": zod.number().min(getClaimMatchResponseManifestSegmentsItemIndexMin),
+  "name": zod.string(),
+  "startFrame": zod.number().min(getClaimMatchResponseManifestSegmentsItemStartFrameMin),
+  "endFrame": zod.number().min(getClaimMatchResponseManifestSegmentsItemEndFrameMin),
+  "startSeconds": zod.number().min(getClaimMatchResponseManifestSegmentsItemStartSecondsMin),
+  "endSeconds": zod.number().min(getClaimMatchResponseManifestSegmentsItemEndSecondsMin),
+  "objectPath": zod.string()
 }))
 }),
   "progress": zod.object({
@@ -436,6 +407,92 @@ export const CreateClaimMatchCorrectionResponse = zod.object({
 
 
 /**
+ * @summary Get one compressed tracking segment for the current player
+ */
+export const getClaimMatchSegmentPathSegmentIndexMin = 0;
+
+
+
+export const GetClaimMatchSegmentParams = zod.object({
+  "id": zod.coerce.number(),
+  "segmentIndex": zod.coerce.number().min(getClaimMatchSegmentPathSegmentIndexMin)
+})
+
+
+export const getClaimMatchSegmentResponseSegmentIndexMin = 0;
+
+export const getClaimMatchSegmentResponseStartFrameMin = 0;
+
+export const getClaimMatchSegmentResponseEndFrameMin = 0;
+
+export const getClaimMatchSegmentResponseStartSecondsMin = 0;
+
+export const getClaimMatchSegmentResponseEndSecondsMin = 0;
+
+export const getClaimMatchSegmentResponseTracksItemStartFrameMin = 0;
+
+export const getClaimMatchSegmentResponseTracksItemEndFrameMin = 0;
+
+export const getClaimMatchSegmentResponseTracksItemBoxesItemFrameMin = 0;
+
+export const getClaimMatchSegmentResponseTracksItemBoxesItemWMin = 0;
+
+export const getClaimMatchSegmentResponseTracksItemBoxesItemHMin = 0;
+
+export const getClaimMatchSegmentResponseCrossingsItemFrameMin = 0;
+
+export const getClaimMatchSegmentResponseCrossingsItemConfidenceMin = 0;
+export const getClaimMatchSegmentResponseCrossingsItemConfidenceMax = 1;
+
+export const getClaimMatchSegmentResponseInPlaySpansItemStartMin = 0;
+
+export const getClaimMatchSegmentResponseInPlaySpansItemEndMin = 0;
+
+export const getClaimMatchSegmentResponseEventsItemTimeMin = 0;
+
+
+
+export const GetClaimMatchSegmentResponse = zod.object({
+  "version": zod.number().min(1),
+  "segmentIndex": zod.number().min(getClaimMatchSegmentResponseSegmentIndexMin),
+  "name": zod.string(),
+  "startFrame": zod.number().min(getClaimMatchSegmentResponseStartFrameMin),
+  "endFrame": zod.number().min(getClaimMatchSegmentResponseEndFrameMin),
+  "startSeconds": zod.number().min(getClaimMatchSegmentResponseStartSecondsMin),
+  "endSeconds": zod.number().min(getClaimMatchSegmentResponseEndSecondsMin),
+  "tracks": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string().nullish(),
+  "startFrame": zod.number().min(getClaimMatchSegmentResponseTracksItemStartFrameMin),
+  "endFrame": zod.number().min(getClaimMatchSegmentResponseTracksItemEndFrameMin),
+  "boxes": zod.array(zod.object({
+  "frame": zod.number().min(getClaimMatchSegmentResponseTracksItemBoxesItemFrameMin),
+  "x": zod.number(),
+  "y": zod.number(),
+  "w": zod.number().min(getClaimMatchSegmentResponseTracksItemBoxesItemWMin),
+  "h": zod.number().min(getClaimMatchSegmentResponseTracksItemBoxesItemHMin)
+}))
+})),
+  "crossings": zod.array(zod.object({
+  "frame": zod.number().min(getClaimMatchSegmentResponseCrossingsItemFrameMin),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string(),
+  "confidence": zod.number().min(getClaimMatchSegmentResponseCrossingsItemConfidenceMin).max(getClaimMatchSegmentResponseCrossingsItemConfidenceMax).optional()
+})),
+  "inPlaySpans": zod.array(zod.object({
+  "start": zod.number().min(getClaimMatchSegmentResponseInPlaySpansItemStartMin),
+  "end": zod.number().min(getClaimMatchSegmentResponseInPlaySpansItemEndMin)
+})),
+  "events": zod.array(zod.object({
+  "type": zod.string(),
+  "time": zod.number().min(getClaimMatchSegmentResponseEventsItemTimeMin),
+  "label": zod.string().nullish(),
+  "clipId": zod.string().nullish()
+}))
+})
+
+
+/**
  * @summary Undo a previously synced correction
  */
 export const UndoClaimMatchCorrectionParams = zod.object({
@@ -532,7 +589,19 @@ export const ReplaceTrackingBundleBody = zod.object({
   "label": zod.string().nullish(),
   "clipId": zod.string().nullish()
 }))
-})
+}).describe('Legacy single-file upload accepted during migration. New uploads should be ZIP bundles.')
+
+export const replaceTrackingBundleResponseSegmentRangesItemIndexMin = 0;
+
+export const replaceTrackingBundleResponseSegmentRangesItemStartFrameMin = 0;
+
+export const replaceTrackingBundleResponseSegmentRangesItemEndFrameMin = 0;
+
+export const replaceTrackingBundleResponseSegmentRangesItemStartSecondsMin = 0;
+
+export const replaceTrackingBundleResponseSegmentRangesItemEndSecondsMin = 0;
+
+
 
 export const ReplaceTrackingBundleResponse = zod.object({
   "recordingId": zod.number(),
@@ -540,6 +609,17 @@ export const ReplaceTrackingBundleResponse = zod.object({
   "duration": zod.number(),
   "trackCount": zod.number(),
   "crossingCount": zod.number(),
+  "segmentCount": zod.number(),
+  "frameCoverage": zod.string(),
+  "segmentRanges": zod.array(zod.object({
+  "index": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemIndexMin),
+  "name": zod.string(),
+  "startFrame": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemStartFrameMin),
+  "endFrame": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemEndFrameMin),
+  "startSeconds": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemStartSecondsMin),
+  "endSeconds": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemEndSecondsMin),
+  "objectPath": zod.string()
+})).optional(),
   "uploadedAt": zod.string()
 })
 

@@ -10,24 +10,20 @@ import type { TrackingCrossing } from './trackingCrossing';
 import type { TrackingEvent } from './trackingEvent';
 import type { TrackingTrack } from './trackingTrack';
 
-/**
- * Legacy single-file upload accepted during migration. New uploads should be ZIP bundles.
- */
-export interface TrackingBundle {
+export interface TrackingSegment {
   /** @minimum 1 */
   version: number;
-  label: string;
-  /** @minimum 1 */
-  width: number;
-  /** @minimum 1 */
-  height: number;
-  /** @exclusiveMinimum 0 */
-  frameRate: number;
-  /** @minimum 1 */
-  frameCount: number;
-  /** @exclusiveMinimum 0 */
-  duration: number;
-  matchOffset: number;
+  /** @minimum 0 */
+  segmentIndex: number;
+  name: string;
+  /** @minimum 0 */
+  startFrame: number;
+  /** @minimum 0 */
+  endFrame: number;
+  /** @minimum 0 */
+  startSeconds: number;
+  /** @minimum 0 */
+  endSeconds: number;
   tracks: TrackingTrack[];
   crossings: TrackingCrossing[];
   inPlaySpans: InPlaySpan[];

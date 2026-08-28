@@ -31,7 +31,7 @@ import {
   useUndoClaimMatchCorrection,
   useUpdateClaimMatchProgress,
 } from "@workspace/api-client-react";
-import type { ClaimCorrection, ClaimMatchResponse } from "@workspace/api-client-react";
+import type { ClaimCorrection, ClaimMatchResponse, TrackingSegment } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import {
   boxAtFrame,
@@ -53,9 +53,34 @@ import {
   removeClaimAction,
   type ClaimQueueAction,
 } from "@/lib/claim-match-storage";
+import {
+  crossedSegmentBoundary,
+  retainNearbySegments,
+  segmentIndexAtTime,
+} from "@/lib/claim-match-segments";
 
 type Stage = "find" | "following" | "still" | "picker" | "look" | "done";
 type Candidate = { id: string; label: string; x: number; y: number; w: number; h: number; overlap?: boolean };
+
+function segmentAsBundle(
+  manifest: ClaimMatchResponse["manifest"],
+  segment: TrackingSegment,
+) {
+  return {
+    version: manifest.version,
+    label: manifest.label,
+    width: manifest.width,
+    height: manifest.height,
+    frameRate: manifest.frameRate,
+    frameCount: manifest.frameCount,
+    duration: manifest.duration,
+    matchOffset: manifest.matchOffset,
+    tracks: segment.tracks,
+    crossings: segment.crossings,
+    inPlaySpans: segment.inPlaySpans,
+    events: segment.events,
+  };
+}
 
 const stageMeta: Record<Stage, { label: string; number: string }> = {
   find: { label: "Find yourself", number: "01" },
@@ -272,11 +297,16 @@ export default function ClaimMatchPage() {
   const [queuedCount, setQueuedCount] = useState(0);
   const [undoExpiresAt, setUndoExpiresAt] = useState(0);
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
+  const [segmentCache, setSegmentCache] = useState<Record<number, TrackingSegment>>({});
+  const segmentCacheRef = useRef<Record<number, TrackingSegment>>({});
+  const [segmentLoading, setSegmentLoading] = useState(false);
+  const [boundaryNotice, setBoundaryNotice] = useState("");
+  const [boundaryRepickPending, setBoundaryRepickPending] = useState(false);
 
   const response = isDemo ? demoQuery.data : claimQuery.data;
   const activeRecordingId = isDemo ? response?.recording.id || 0 : recordingId;
   const recording = response?.recording;
-  const bundle = response?.bundle;
+  const manifest = response?.manifest;
   const serverProgress = response?.progress;
   const allCorrections = useMemo(() => {
     const remote = response?.corrections || [];
@@ -284,11 +314,43 @@ export default function ClaimMatchPage() {
     return [...remote, ...corrections.filter((item) => !remoteIds.has(item.clientId))];
   }, [corrections, response]);
   const progressValue = Math.max(claimedPercent, serverProgress?.claimedPercent || 0);
-  const duration = bundle?.duration || 1;
+  const duration = manifest?.duration || 1;
   const earnedClips = serverProgress?.earnedClips || [];
-  const hasData = Boolean(response && recording && bundle && serverProgress);
+  const currentSegmentIndex = manifest ? segmentIndexAtTime(manifest, currentTime) : 0;
+  const activeSegment = segmentCache[currentSegmentIndex];
+  const bundle = manifest && activeSegment ? segmentAsBundle(manifest, activeSegment) : null;
+  const hasData = Boolean(response && recording && manifest && serverProgress);
   const activeCorrection = allCorrections.find((item) => !item.undone);
   const currentFrame = bundle ? matchSecondsToFrame(currentTime, bundle) : 0;
+
+  const loadSegment = useCallback(async (index: number) => {
+    if (!manifest || !activeRecordingId || segmentCacheRef.current[index]) return;
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+    const segmentResponse = await fetch(`${basePath}/api/recordings/${activeRecordingId}/claim-match/segments/${index}`, {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!segmentResponse.ok) throw new Error(`Segment ${index} failed: ${segmentResponse.status}`);
+    const segment = await segmentResponse.json() as TrackingSegment;
+    segmentCacheRef.current = { ...segmentCacheRef.current, [index]: segment };
+    setSegmentCache(segmentCacheRef.current);
+  }, [activeRecordingId, manifest]);
+
+  useEffect(() => {
+    if (!manifest || !activeRecordingId) return;
+    let cancelled = false;
+    const neighborIndexes = [currentSegmentIndex - 1, currentSegmentIndex, currentSegmentIndex + 1]
+      .filter((index) => manifest.segments.some((segment) => segment.index === index));
+    setSegmentLoading(!segmentCacheRef.current[currentSegmentIndex]);
+    void Promise.all(neighborIndexes.map((index) => loadSegment(index)))
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setSegmentLoading(false);
+      });
+    segmentCacheRef.current = retainNearbySegments(segmentCacheRef.current, currentSegmentIndex);
+    setSegmentCache(segmentCacheRef.current);
+    return () => { cancelled = true; };
+  }, [activeRecordingId, currentSegmentIndex, loadSegment, manifest]);
 
   const seekBy = useCallback((delta: number) => {
     const next = Math.max(0, Math.min(duration, currentTime + delta));
@@ -329,6 +391,22 @@ export default function ClaimMatchPage() {
       });
     }
   }, [currentTime, currentTrackId, progressValue, clipsUnlocked, earnedClips, isOffline, activeRecordingId, updateProgress, queueProgress]);
+
+  const previousSegmentIndex = useRef<number | null>(null);
+  useEffect(() => {
+    if (!manifest || !crossedSegmentBoundary(previousSegmentIndex.current, currentSegmentIndex)) {
+      if (manifest) previousSegmentIndex.current = currentSegmentIndex;
+      return;
+    }
+    previousSegmentIndex.current = currentSegmentIndex;
+    setCurrentTrackId(null);
+    setNarrowing(null);
+    setBoundaryNotice("Lost you at the ten-minute mark. Which one is you?");
+    setBoundaryRepickPending(true);
+    setStage("picker");
+    setNotice("Choose yourself again — this keeps segment boundaries honest");
+    saveProgress("picker", null, progressValue, clipsUnlocked);
+  }, [clipsUnlocked, currentSegmentIndex, manifest, progressValue, saveProgress]);
 
   const [narrowing, setNarrowing] = useState<NarrowingState | null>(null);
 
@@ -517,6 +595,7 @@ export default function ClaimMatchPage() {
   }, [duration, playing, recording?.videoUrl, slow]);
 
   const onCorrection = (chosen: Candidate, method = "picker", allowOverlap = false) => {
+    const isBoundaryRepick = boundaryRepickPending;
     const rejected = currentTrackId && currentTrackId !== chosen.id ? currentTrackId : null;
     const chosenTrack = bundle?.tracks.find((track) => track.id === chosen.id);
     const otherTrack = candidates.find((candidate) => candidate.id !== chosen.id);
@@ -535,6 +614,12 @@ export default function ClaimMatchPage() {
     }
     setCurrentTrackId(chosen.id);
     goStage(stage === "look" ? "done" : "following", chosen.id);
+    if (isBoundaryRepick) {
+      setBoundaryRepickPending(false);
+      setBoundaryNotice("");
+      setNotice("Following you in this segment");
+      return;
+    }
     const payload = {
       clientId: `claim-${activeRecordingId}-${Math.round(currentTime * 10)}-${chosen.id}`,
       momentSeconds: currentTime,
@@ -589,9 +674,10 @@ export default function ClaimMatchPage() {
   if (authLoading) return <SkeletonPage />;
   if (!user || isGuest) return <ErrorState onRetry={() => setLocation("/login")} />;
   if ((isDemo && demoQuery.isLoading) || (!isDemo && claimQuery.isLoading)) return <SkeletonPage />;
-  if ((isDemo && demoQuery.isError) || (!isDemo && claimQuery.isError) || !hasData || !recording || !bundle || !serverProgress) {
+  if ((isDemo && demoQuery.isError) || (!isDemo && claimQuery.isError) || !hasData || !recording || !manifest || !serverProgress) {
     return <ErrorState onRetry={() => (isDemo ? demoQuery.refetch() : claimQuery.refetch())} />;
   }
+  if (segmentLoading || !bundle) return <SkeletonPage />;
 
   const handleBack = () => {
     const previous: Record<Stage, Stage> = { find: "find", following: "find", still: "following", picker: "still", look: "picker", done: "look" };
@@ -683,6 +769,12 @@ export default function ClaimMatchPage() {
                duration={duration}
                onTimeUpdate={setCurrentTime}
             />
+            {segmentLoading && (
+              <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500" role="status" data-testid="status-loading-tracking-segment">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                Loading tracking for this ten-minute section…
+              </div>
+            )}
 
             <div className="claim-timeline" aria-label="Match timeline">
               <div className="timeline-track">
@@ -747,6 +839,11 @@ export default function ClaimMatchPage() {
             {stage === "picker" && (
               <div className="claim-panel claim-panel-picker" data-testid="panel-picker">
                 <span className="claim-step-count">04 / 06</span>
+                {boundaryNotice && (
+                  <div className="mb-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-medium text-primary" role="status" data-testid="notice-segment-boundary">
+                    {boundaryNotice}
+                  </div>
+                )}
                 <h2>Which one of these<br />is you?</h2>
                 <p>It’s okay if they look similar. Pick the player you mean — we’ll use the next clear moment to confirm.</p>
                 <div className="candidate-list">

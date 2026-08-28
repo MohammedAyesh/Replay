@@ -20,15 +20,14 @@ export type ClaimEarnedClip = {
   status: string;
 };
 
-export type TrackingBundlePayload = {
+export type TrackingSegmentPayload = {
   version: number;
-  label: string;
-  width: number;
-  height: number;
-  frameRate: number;
-  frameCount: number;
-  duration: number;
-  matchOffset: number;
+  segmentIndex: number;
+  name: string;
+  startFrame: number;
+  endFrame: number;
+  startSeconds: number;
+  endSeconds: number;
   tracks: Array<{
     id: string;
     label?: string | null;
@@ -51,6 +50,27 @@ export type TrackingBundlePayload = {
   }>;
 };
 
+export type TrackingManifest = {
+  version: number;
+  label: string;
+  width: number;
+  height: number;
+  frameRate: number;
+  frameCount: number;
+  duration: number;
+  matchOffset: number;
+  segmentCount: number;
+  segments: Array<{
+    index: number;
+    name: string;
+    startFrame: number;
+    endFrame: number;
+    startSeconds: number;
+    endSeconds: number;
+    objectPath: string;
+  }>;
+};
+
 export const recordingTrackingBundlesTable = pgTable(
   "recording_tracking_bundles",
   {
@@ -58,7 +78,7 @@ export const recordingTrackingBundlesTable = pgTable(
     recordingId: integer("recording_id")
       .notNull()
       .references(() => recordingsTable.id, { onDelete: "cascade" }),
-    payload: jsonb("payload").notNull().$type<TrackingBundlePayload>(),
+    manifest: jsonb("manifest").notNull().$type<TrackingManifest>(),
     uploadedBy: integer("uploaded_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),
@@ -68,6 +88,33 @@ export const recordingTrackingBundlesTable = pgTable(
   (table) => ({
     recordingUnique: uniqueIndex("recording_tracking_bundles_recording_unique").on(
       table.recordingId,
+    ),
+  }),
+);
+
+export const recordingTrackingSegmentsTable = pgTable(
+  "recording_tracking_segments",
+  {
+    id: serial("id").primaryKey(),
+    bundleId: integer("bundle_id")
+      .notNull()
+      .references(() => recordingTrackingBundlesTable.id, { onDelete: "cascade" }),
+    segmentIndex: integer("segment_index").notNull(),
+    name: text("name").notNull(),
+    startFrame: integer("start_frame").notNull(),
+    endFrame: integer("end_frame").notNull(),
+    startSeconds: doublePrecision("start_seconds").notNull(),
+    endSeconds: doublePrecision("end_seconds").notNull(),
+    objectPath: text("object_path").notNull(),
+    compressedBytes: integer("compressed_bytes").notNull().default(0),
+    trackCount: integer("track_count").notNull().default(0),
+    crossingCount: integer("crossing_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    bundleIndexUnique: uniqueIndex("recording_tracking_segments_bundle_index_unique").on(
+      table.bundleId,
+      table.segmentIndex,
     ),
   }),
 );
@@ -133,5 +180,6 @@ export const claimMatchCorrectionsTable = pgTable(
 );
 
 export type TrackingBundleRow = typeof recordingTrackingBundlesTable.$inferSelect;
+export type TrackingSegmentRow = typeof recordingTrackingSegmentsTable.$inferSelect;
 export type ClaimMatchProgressRow = typeof claimMatchProgressTable.$inferSelect;
 export type ClaimMatchCorrectionRow = typeof claimMatchCorrectionsTable.$inferSelect;

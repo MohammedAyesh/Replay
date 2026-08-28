@@ -520,6 +520,64 @@ export interface TrackingEvent {
   clipId?: string | null;
 }
 
+export interface TrackingSegment {
+  /** @minimum 1 */
+  version: number;
+  /** @minimum 0 */
+  segmentIndex: number;
+  name: string;
+  /** @minimum 0 */
+  startFrame: number;
+  /** @minimum 0 */
+  endFrame: number;
+  /** @minimum 0 */
+  startSeconds: number;
+  /** @minimum 0 */
+  endSeconds: number;
+  tracks: TrackingTrack[];
+  crossings: TrackingCrossing[];
+  inPlaySpans: InPlaySpan[];
+  events: TrackingEvent[];
+}
+
+export interface TrackingSegmentManifest {
+  /** @minimum 0 */
+  index: number;
+  name: string;
+  /** @minimum 0 */
+  startFrame: number;
+  /** @minimum 0 */
+  endFrame: number;
+  /** @minimum 0 */
+  startSeconds: number;
+  /** @minimum 0 */
+  endSeconds: number;
+  objectPath: string;
+}
+
+export interface TrackingManifest {
+  /** @minimum 1 */
+  version: number;
+  label: string;
+  /** @minimum 1 */
+  width: number;
+  /** @minimum 1 */
+  height: number;
+  /** @exclusiveMinimum 0 */
+  frameRate: number;
+  /** @minimum 1 */
+  frameCount: number;
+  /** @exclusiveMinimum 0 */
+  duration: number;
+  matchOffset: number;
+  /** @minimum 1 */
+  segmentCount: number;
+  segments: TrackingSegmentManifest[];
+}
+
+/**
+ * Legacy single-file upload accepted during migration. New uploads should be ZIP bundles.
+ */
 export interface TrackingBundle {
   /** @minimum 1 */
   version: number;
@@ -547,6 +605,9 @@ export interface TrackingBundleSummary {
   duration: number;
   trackCount: number;
   crossingCount: number;
+  segmentCount: number;
+  frameCoverage: string;
+  segmentRanges?: TrackingSegmentManifest[];
   uploadedAt: string;
 }
 
@@ -621,8 +682,13 @@ export interface ClaimCorrectionInput {
 
 export interface ClaimMatchResponse {
   recording: Recording;
-  bundle: TrackingBundle;
+  manifest: TrackingManifest;
   progress: ClaimProgress;
   corrections: ClaimCorrection[];
 }
+
+export type ReplaceTrackingBundleBodyTwo = {
+  /** ZIP file containing manifest.json and the segment JSON files */
+  bundle: string;
+};
 

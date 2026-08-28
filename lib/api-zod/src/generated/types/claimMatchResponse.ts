@@ -8,11 +8,11 @@
 import type { ClaimCorrection } from './claimCorrection';
 import type { ClaimProgress } from './claimProgress';
 import type { Recording } from './recording';
-import type { TrackingBundle } from './trackingBundle';
+import type { TrackingManifest } from './trackingManifest';
 
 export interface ClaimMatchResponse {
   recording: Recording;
-  bundle: TrackingBundle;
+  manifest: TrackingManifest;
   progress: ClaimProgress;
   corrections: ClaimCorrection[];
 }

@@ -18,6 +18,7 @@ function toAdminRecording(
   r: typeof recordingsTable.$inferSelect,
   fieldName: string | null,
   hasTrackingBundle = false,
+  trackingManifest: { segmentCount?: number; frameCount?: number } | null = null,
 ) {
   return {
     id: r.id,
@@ -30,6 +31,10 @@ function toAdminRecording(
     videoUrl: r.videoUrl,
     fieldName,
     hasTrackingBundle,
+    trackingSegmentCount: trackingManifest?.segmentCount ?? null,
+    trackingFrameCoverage: trackingManifest
+      ? `0-${Math.max(0, (trackingManifest.frameCount ?? 1) - 1)} (${trackingManifest.frameCount ?? 0} frames)`
+      : null,
   };
 }
 
@@ -47,7 +52,8 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
     .select({
       recording: recordingsTable,
       fieldName: fieldsTable.name,
-      hasTrackingBundle: recordingTrackingBundlesTable.id,
+       hasTrackingBundle: recordingTrackingBundlesTable.id,
+       trackingManifest: recordingTrackingBundlesTable.manifest,
     })
     .from(recordingsTable)
     .leftJoin(fieldsTable, eq(recordingsTable.fieldId, fieldsTable.id))
@@ -57,8 +63,8 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
     )
     .orderBy(desc(recordingsTable.createdAt));
 
-  res.json(rows.map(({ recording, fieldName, hasTrackingBundle }) =>
-    toAdminRecording(recording, fieldName ?? null, hasTrackingBundle !== null),
+  res.json(rows.map(({ recording, fieldName, hasTrackingBundle, trackingManifest }) =>
+    toAdminRecording(recording, fieldName ?? null, hasTrackingBundle !== null, trackingManifest),
   ));
 });
 
