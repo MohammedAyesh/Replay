@@ -14,3 +14,4 @@
 - [FFmpeg crop w/h per-frame](ffmpeg-crop-wh-per-frame.md) — crop w/h expressions evaluate with t=NaN at init (never per-frame); if(lt(t,...)) zoom expressions never animate; sendcmd w/h changes are silently ignored (not stream-terminating) in FFmpeg 7.1.1.
 - [Zoompan renderer geometry](zoompan-renderer.md) — map the padded 32:9 source onto an output-aspect canvas before zoompan; supersample 4x by default, 2x for large vertical canvases.
 - [Development schema push](development-schema-push.md) — the DB push wrapper requires an interactive shell; noninteractive agents should not assume it can apply migrations.
+- [Claim queue invalidation loop](claim-queue-invalidation-loop.md) — never invalidate Claim Match queries after an empty offline-queue flush; unstable mutation dependencies can create a permanent refetch skeleton.

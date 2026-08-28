@@ -281,6 +281,9 @@ export default function ClaimMatchPage() {
   const demoQuery = useQuery<ClaimMatchResponse>({
     queryKey: ["claim-match", "demo"],
     enabled: isDemo && Boolean(user) && !isGuest,
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const response = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/claim-match/demo`, {
         credentials: "include",
@@ -292,6 +295,9 @@ export default function ClaimMatchPage() {
   const updateProgress = useUpdateClaimMatchProgress();
   const createCorrection = useCreateClaimMatchCorrection();
   const undoCorrection = useUndoClaimMatchCorrection();
+  const updateProgressAsync = updateProgress.mutateAsync;
+  const createCorrectionAsync = createCorrection.mutateAsync;
+  const undoCorrectionAsync = undoCorrection.mutateAsync;
   const queryClient = useQueryClient();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [stage, setStage] = useState<Stage>("find");
@@ -309,7 +315,10 @@ export default function ClaimMatchPage() {
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
   const [segmentCache, setSegmentCache] = useState<Record<number, TrackingSegment>>({});
   const segmentCacheRef = useRef<Record<number, TrackingSegment>>({});
+  const segmentRequestsRef = useRef<Record<number, Promise<void>>>({});
   const [segmentLoading, setSegmentLoading] = useState(false);
+  const [segmentError, setSegmentError] = useState("");
+  const [segmentRetryToken, setSegmentRetryToken] = useState(0);
   const [boundaryNotice, setBoundaryNotice] = useState("");
   const [boundaryRepickPending, setBoundaryRepickPending] = useState(false);
 
@@ -333,34 +342,73 @@ export default function ClaimMatchPage() {
   const activeCorrection = allCorrections.find((item) => !item.undone);
   const currentFrame = bundle ? matchSecondsToFrame(currentTime, bundle) : 0;
 
-  const loadSegment = useCallback(async (index: number) => {
-    if (!manifest || !activeRecordingId || segmentCacheRef.current[index]) return;
+  const loadSegment = useCallback((index: number): Promise<void> => {
+    if (!manifest || !activeRecordingId || segmentCacheRef.current[index]) {
+      return Promise.resolve();
+    }
+    const existingRequest = segmentRequestsRef.current[index];
+    if (existingRequest) return existingRequest;
+
     const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-    const segmentResponse = await fetch(`${basePath}/api/recordings/${activeRecordingId}/claim-match/segments/${index}`, {
+    const request = fetch(`${basePath}/api/recordings/${activeRecordingId}/claim-match/segments/${index}`, {
       credentials: "include",
       headers: { Accept: "application/json" },
-    });
-    if (!segmentResponse.ok) throw new Error(`Segment ${index} failed: ${segmentResponse.status}`);
-    const segment = await segmentResponse.json() as TrackingSegment;
-    segmentCacheRef.current = { ...segmentCacheRef.current, [index]: segment };
-    setSegmentCache(segmentCacheRef.current);
+    })
+      .then(async (segmentResponse) => {
+        if (!segmentResponse.ok) {
+          throw new Error(`Segment ${index} failed: ${segmentResponse.status}`);
+        }
+        const segment = await segmentResponse.json() as TrackingSegment;
+        segmentCacheRef.current = { ...segmentCacheRef.current, [index]: segment };
+        setSegmentCache(segmentCacheRef.current);
+      })
+      .finally(() => {
+        delete segmentRequestsRef.current[index];
+      });
+    segmentRequestsRef.current[index] = request;
+    return request;
   }, [activeRecordingId, manifest]);
+
+  useEffect(() => {
+    segmentCacheRef.current = {};
+    segmentRequestsRef.current = {};
+    setSegmentCache({});
+    setSegmentError("");
+  }, [activeRecordingId]);
 
   useEffect(() => {
     if (!manifest || !activeRecordingId) return;
     let cancelled = false;
     const neighborIndexes = [currentSegmentIndex - 1, currentSegmentIndex, currentSegmentIndex + 1]
       .filter((index) => manifest.segments.some((segment) => segment.index === index));
-    setSegmentLoading(!segmentCacheRef.current[currentSegmentIndex]);
-    void Promise.all(neighborIndexes.map((index) => loadSegment(index)))
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setSegmentLoading(false);
+    const currentReady = Boolean(segmentCacheRef.current[currentSegmentIndex]);
+    setSegmentLoading(!currentReady);
+    setSegmentError("");
+
+    void loadSegment(currentSegmentIndex)
+      .then(() => {
+        if (cancelled) return;
+        setSegmentLoading(false);
+        const retained = retainNearbySegments(segmentCacheRef.current, currentSegmentIndex);
+        segmentCacheRef.current = retained;
+        setSegmentCache(retained);
+
+        // Neighbor segments improve boundary seeking, but they must never block
+        // the current segment from rendering or turn a background failure into
+        // a permanent loading skeleton.
+        for (const index of neighborIndexes) {
+          if (index !== currentSegmentIndex) void loadSegment(index).catch(() => undefined);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSegmentLoading(false);
+          setSegmentError("The tracking segment could not be loaded. Your saved progress is safe.");
+        }
       });
-    segmentCacheRef.current = retainNearbySegments(segmentCacheRef.current, currentSegmentIndex);
-    setSegmentCache(segmentCacheRef.current);
+
     return () => { cancelled = true; };
-  }, [activeRecordingId, currentSegmentIndex, loadSegment, manifest]);
+  }, [activeRecordingId, currentSegmentIndex, loadSegment, manifest, segmentRetryToken]);
 
   const seekBy = useCallback((delta: number) => {
     const next = Math.max(0, Math.min(duration, currentTime + delta));
@@ -532,24 +580,40 @@ export default function ClaimMatchPage() {
   const flushQueue = useCallback(async () => {
     if (isOffline || !user || isGuest) return;
     const actions = await readClaimQueue();
+    if (actions.length === 0) {
+      setQueuedCount(0);
+      return;
+    }
+    let changed = false;
     for (const action of actions) {
       try {
         if (action.kind === "progress") {
-          await updateProgress.mutateAsync({ id: action.recordingId, data: action.payload as never });
+          await updateProgressAsync({ id: action.recordingId, data: action.payload as never });
         } else if (action.kind === "correction") {
-          await createCorrection.mutateAsync({ id: action.recordingId, data: action.payload as never });
+          await createCorrectionAsync({ id: action.recordingId, data: action.payload as never });
         } else {
-          await undoCorrection.mutateAsync({ correctionId: action.correctionId });
+          await undoCorrectionAsync({ correctionId: action.correctionId });
         }
         await removeClaimAction(action.id);
+        changed = true;
       } catch {
         break;
       }
     }
     const remaining = await readClaimQueue();
     setQueuedCount(remaining.length);
-    await queryClient.invalidateQueries({ queryKey: ["claim-match"] });
-  }, [createCorrection, isGuest, isOffline, queryClient, undoCorrection, updateProgress, user]);
+    if (changed) {
+      await queryClient.invalidateQueries({ queryKey: ["claim-match"] });
+    }
+  }, [
+    createCorrectionAsync,
+    isGuest,
+    isOffline,
+    queryClient,
+    undoCorrectionAsync,
+    updateProgressAsync,
+    user,
+  ]);
 
   useEffect(() => { void flushQueue(); }, [flushQueue]);
 
@@ -695,6 +759,15 @@ export default function ClaimMatchPage() {
   if ((isDemo && demoQuery.isLoading) || (!isDemo && claimQuery.isLoading)) return <SkeletonPage />;
   if ((isDemo && demoQuery.isError) || (!isDemo && claimQuery.isError) || !hasData || !recording || !manifest || !serverProgress) {
     return <ErrorState onRetry={() => (isDemo ? demoQuery.refetch() : claimQuery.refetch())} />;
+  }
+  if (segmentError) {
+    return (
+      <ErrorState
+        title="The tracking data did not finish loading."
+        message={segmentError}
+        onRetry={() => setSegmentRetryToken((value) => value + 1)}
+      />
+    );
   }
   if (segmentLoading || !bundle) return <SkeletonPage />;
 
