@@ -22,6 +22,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
+import Hls from "hls.js";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -33,6 +34,7 @@ import {
 } from "@workspace/api-client-react";
 import type { ClaimCorrection, ClaimMatchResponse, TrackingSegment } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
+import { frameToVideoStyle } from "@/lib/cropFrame";
 import {
   boxAtFrame,
   boxesOverlap,
@@ -71,10 +73,6 @@ type Candidate = {
   id: string;
   label: string;
   box: ClaimBox;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
   overlap?: boolean;
   distance?: number;
 };
@@ -186,22 +184,44 @@ function captionForTrack(track: ClaimTrack, frame: number, bundle: ClaimBundle, 
   return `${movement}${direction}, ${shirt}`;
 }
 
-function pointInVideoPixels(
-  event: React.MouseEvent<HTMLDivElement>,
-  width: number,
-  height: number,
-) {
-  const rect = event.currentTarget.getBoundingClientRect();
-  const videoAspect = width / height;
-  const displayAspect = rect.width / rect.height;
-  const scale = displayAspect > videoAspect ? rect.width / width : rect.height / height;
-  const renderedWidth = width * scale;
-  const renderedHeight = height * scale;
-  const offsetX = (renderedWidth - rect.width) / 2;
-  const offsetY = (renderedHeight - rect.height) / 2;
+/**
+ * ONE TRANSFORM for the video, the boxes and the taps.
+ *
+ * A View is the part of the source frame that fills the frame element, as
+ * fractions of the source: {x:0, y:0, w:1, h:1} is the whole panorama. The
+ * frame element takes the view's aspect ratio, the <video> is positioned by
+ * frameToVideoStyle (cropFrame.ts) so that exactly the view fills it, and every
+ * box and every tap is converted through the same numbers. Zooming to follow a
+ * player is then a different View and nothing else changes.
+ *
+ * Never use object-fit: cover here - it crops the video without telling the
+ * overlay, which is how boxes ended up half a screen from their players.
+ */
+type View = { x: number; y: number; w: number; h: number };
+const FULL_VIEW: View = { x: 0, y: 0, w: 1, h: 1 };
+
+function boxToViewStyle(box: ClaimBox, bundle: ClaimBundle, view: View) {
   return {
-    x: (event.clientX - rect.left + offsetX) / scale,
-    y: (event.clientY - rect.top + offsetY) / scale,
+    left: `${((box.x / bundle.width - view.x) / view.w) * 100}%`,
+    top: `${((box.y / bundle.height - view.y) / view.h) * 100}%`,
+    width: `${(box.w / bundle.width / view.w) * 100}%`,
+    height: `${(box.h / bundle.height / view.h) * 100}%`,
+  };
+}
+
+function pointInVideoPixels(
+  event: React.MouseEvent<HTMLElement>,
+  frameEl: HTMLElement,
+  bundle: ClaimBundle,
+  view: View,
+) {
+  const rect = frameEl.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return { x: -1, y: -1 };
+  const fx = (event.clientX - rect.left) / rect.width;
+  const fy = (event.clientY - rect.top) / rect.height;
+  return {
+    x: (view.x + fx * view.w) * bundle.width,
+    y: (view.y + fy * view.h) * bundle.height,
   };
 }
 
@@ -238,13 +258,65 @@ function ErrorState({
   );
 }
 
+/**
+ * Plays the recording straight from Bunny Stream. The API hands us the Bunny
+ * HLS manifest (through /api/hls-proxy, which only adds the Referer Bunny's
+ * pull zone insists on). hls.js does the playback everywhere except Safari,
+ * which plays HLS natively. Nothing is fetched from the VPS.
+ */
+function useBunnyHls(videoRef: React.RefObject<HTMLVideoElement | null>, url: string | undefined) {
+  const [videoError, setVideoError] = useState("");
+  useEffect(() => {
+    const video = videoRef.current;
+    setVideoError("");
+    if (!video || !url) return;
+    let hls: Hls | null = null;
+    let retryTimer: number | null = null;
+    let networkRetries = 0;
+    if (url.includes(".m3u8") && Hls.isSupported()) {
+      hls = new Hls({ enableWorker: false, maxBufferLength: 30, backBufferLength: 60 });
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setVideoError(""); });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal || !hls) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          networkRetries += 1;
+          if (networkRetries > 5) { setVideoError("The recording could not be loaded. Check your connection and try again."); return; }
+          setVideoError("Reconnecting…");
+          retryTimer = window.setTimeout(() => hls?.startLoad(), 1000 * networkRetries);
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError();
+        } else {
+          setVideoError("The recording could not be played.");
+        }
+      });
+    } else {
+      video.src = url;
+      video.onerror = () => setVideoError("The recording could not be played.");
+    }
+    return () => {
+      if (retryTimer) window.clearTimeout(retryTimer);
+      video.onerror = null;
+      if (hls) hls.destroy();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [url, videoRef]);
+  return videoError;
+}
+
 function MiniVideo({
   recording,
+  bundle,
+  view,
   currentTime,
   playing,
   muted,
   slow,
   videoRef,
+  frameRef,
+  stageRef,
   onToggle,
   onToggleSlow,
   onSeek,
@@ -259,11 +331,15 @@ function MiniVideo({
   onTimeUpdate,
 }: {
   recording: ClaimMatchResponse["recording"] | { videoUrl?: string; fieldName?: string | null; court?: string; date?: string; score?: string | null };
+  bundle: ClaimBundle;
+  view: View;
   currentTime: number;
   playing: boolean;
   muted: boolean;
   slow: boolean;
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  frameRef: React.RefObject<HTMLDivElement | null>;
+  stageRef: React.RefObject<HTMLDivElement | null>;
   onToggle: (forcePlaying?: boolean) => void;
   onToggleSlow: () => void;
   onSeek: (value: number) => void;
@@ -278,48 +354,57 @@ function MiniVideo({
   onTimeUpdate: (value: number) => void;
 }) {
   const displayScore = recording.score || "—";
+  const videoError = useBunnyHls(videoRef, recording.videoUrl);
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = slow ? 0.5 : 1;
   }, [slow, videoRef]);
+  const frameAspect = `${bundle.width * view.w} / ${bundle.height * view.h}`;
+  const videoStyle = frameToVideoStyle(view);
   return (
     <div className="claim-video-shell" data-testid="video-claim-match">
-      <div className="claim-video-stage" onClick={onVideoTap}>
-        {recording.videoUrl ? (
-          <video
-            ref={videoRef}
-            className="claim-video"
-            src={recording.videoUrl}
-            muted={muted}
-            playsInline
-            onLoadedData={onVideoReady}
-            onSeeked={onVideoReady}
-            onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
-            onPlay={() => onToggle(true)}
-            onPause={() => onToggle(false)}
-            aria-label="Match recording"
-          />
-        ) : (
-          <div className="claim-fallback-video" role="img" aria-label="Match recording preview">
-            <div className="fallback-field-lines" />
-            <div className="fallback-camera-stamp">MATCH VIDEO UNAVAILABLE · TRACKING DATA STILL LOADED</div>
-          </div>
-        )}
+      <div className="claim-video-stage" ref={stageRef}>
+        <div className="claim-video-frame" ref={frameRef} style={{ aspectRatio: frameAspect }} onClick={onVideoTap}>
+          {recording.videoUrl ? (
+            <video
+              ref={videoRef}
+              className="claim-video"
+              style={videoStyle}
+              crossOrigin="anonymous"
+              muted={muted}
+              playsInline
+              preload="auto"
+              onLoadedData={onVideoReady}
+              onSeeked={onVideoReady}
+              onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+              onPlay={() => onToggle(true)}
+              onPause={() => onToggle(false)}
+              onEnded={() => onToggle(false)}
+              aria-label="Match recording"
+            />
+          ) : (
+            <div className="claim-fallback-video" role="img" aria-label="Match recording preview">
+              <div className="fallback-field-lines" />
+              <div className="fallback-camera-stamp">MATCH VIDEO UNAVAILABLE · TRACKING DATA STILL LOADED</div>
+            </div>
+          )}
+          {videoError && <div className="claim-video-error" role="alert">{videoError}</div>}
+          {showCandidates && candidates.map((candidate, index) => (
+            <div
+              key={candidate.id}
+              className={`claim-track-box ${candidate.id === activeTrackId ? "is-active" : ""} ${candidate.overlap ? "is-overlap" : ""}`}
+              style={boxToViewStyle(candidate.box, bundle, view)}
+              data-testid={`overlay-track-${candidate.id}`}
+            >
+              <span>{candidate.id === activeTrackId ? `${index + 1} / ${candidate.label}` : index + 1}</span>
+            </div>
+          ))}
+        </div>
         <div className="claim-video-topline">
           <span className="claim-live-dot" /> MATCH RECORDING <span className="claim-video-divider" /> {recording.fieldName || "Amman Sports City"} / {recording.court || "Court 2"}
         </div>
         <div className="claim-scorebug">
           <span>RPL</span><b>{displayScore}</b><small>{formatTime(currentTime)}</small>
         </div>
-        {showCandidates && candidates.map((candidate, index) => (
-          <div
-            key={candidate.id}
-            className={`claim-track-box ${candidate.id === activeTrackId ? "is-active" : ""} ${candidate.overlap ? "is-overlap" : ""}`}
-            style={{ left: `${candidate.x}%`, top: `${candidate.y}%`, width: `${candidate.w}%`, height: `${candidate.h}%` }}
-            data-testid={`overlay-track-${candidate.id}`}
-          >
-            <span>{index + 1} / {candidate.label}</span>
-          </div>
-        ))}
         <div className="claim-video-bottom">
           <button type="button" className="claim-icon-button" data-testid="button-video-play" onClick={(event) => { event.stopPropagation(); onToggle(); }} aria-label={playing ? "Pause match" : "Play match"}>{playing ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</button>
           <div className="claim-video-time" onClick={(event) => event.stopPropagation()}><span>{formatTime(currentTime)}</span><input type="range" min={0} max={duration} value={Math.min(duration, currentTime)} onChange={(event) => onSeek(Number(event.target.value))} aria-label="Match position" data-testid="input-match-position" /><span>{formatTime(duration)}</span></div>
@@ -377,6 +462,11 @@ export default function ClaimMatchPage() {
   const undoCorrectionAsync = undoCorrection.mutateAsync;
   const queryClient = useQueryClient();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  // The part of the panorama on screen. Full frame for now; a follow-crop is
+  // a different View and nothing else in the page needs to change.
+  const [view] = useState<View>(FULL_VIEW);
   const [stage, setStage] = useState<Stage>("find");
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -452,6 +542,12 @@ export default function ClaimMatchPage() {
       : videoSeconds,
     [bundle],
   );
+  /** The only way this page moves the playhead. Tracking seconds in. */
+  const seekTracking = useCallback((trackingSeconds: number) => {
+    const next = bundle ? clampToTracked(trackingSeconds, bundle) : Math.max(0, trackingSeconds);
+    setCurrentTime(next);
+    if (videoRef.current) videoRef.current.currentTime = toVideoTime(next);
+  }, [bundle, toVideoTime]);
 
   const loadSegment = useCallback((index: number): Promise<void> => {
     if (!manifest || !activeRecordingId || segmentCacheRef.current[index]) {
@@ -522,10 +618,8 @@ export default function ClaimMatchPage() {
   }, [activeRecordingId, currentSegmentIndex, loadSegment, manifest, segmentRetryToken]);
 
   const seekBy = useCallback((delta: number) => {
-    const next = Math.max(0, Math.min(duration, currentTime + delta));
-    setCurrentTime(next);
-    if (videoRef.current) videoRef.current.currentTime = toVideoTime(next);
-  }, [currentTime, duration]);
+    seekTracking(currentTime + delta);
+  }, [currentTime, seekTracking]);
 
   const queueProgress = useCallback(async (payload: Record<string, unknown>) => {
     await enqueueClaimAction({
@@ -614,9 +708,8 @@ export default function ClaimMatchPage() {
   const seekToFrame = useCallback((frame: number) => {
     if (!bundle) return;
     const seconds = frameToTrackingSeconds(frame, bundle);
-    setCurrentTime(seconds);
-    if (videoRef.current) videoRef.current.currentTime = toVideoTime(seconds);
-  }, [bundle]);
+    seekTracking(seconds);
+  }, [bundle, seekTracking]);
 
   const startCorrectionCheck = useCallback(() => {
     if (!bundle || !currentTrackId) {
@@ -637,15 +730,13 @@ export default function ClaimMatchPage() {
       : nearestCrossingOtherTrack(bundle, currentTrackId, question.momentSeconds);
     setCrossingOtherTrackId(otherTrackId);
     if (question.kind === "question") {
-      setCurrentTime(question.momentSeconds);
-      if (videoRef.current) videoRef.current.currentTime = toVideoTime(question.momentSeconds);
+      seekTracking(question.momentSeconds);
       setStage("still");
       setClaimedPercent((value) => Math.max(value, 38));
       setNotice("Quick check — keep watching");
       saveProgress("still", currentTrackId, Math.max(progressValue, 38), clipsUnlocked, confirmedFromSeconds, question.momentSeconds);
     } else {
-      setCurrentTime(question.momentSeconds);
-      if (videoRef.current) videoRef.current.currentTime = toVideoTime(question.momentSeconds);
+      seekTracking(question.momentSeconds);
       setStage("picker");
       setClaimedPercent((value) => Math.max(value, 55));
       setNotice("Choose yourself at this clear moment");
@@ -674,11 +765,10 @@ export default function ClaimMatchPage() {
     if (nextQuestion.kind === "picker" || nextQuestion.kind === "complete") {
       setStage("picker");
       setClaimedPercent((value) => Math.max(value, 55));
-      setCurrentTime(nextQuestion.momentSeconds);
-      if (videoRef.current) videoRef.current.currentTime = toVideoTime(nextQuestion.momentSeconds);
+      seekTracking(nextQuestion.momentSeconds);
       saveProgress("picker", null, Math.max(progressValue, 55), clipsUnlocked, confirmedFromSeconds, nextQuestion.momentSeconds);
     } else {
-      setCurrentTime(nextQuestion.momentSeconds);
+      seekTracking(nextQuestion.momentSeconds);
       saveProgress("still", currentTrackId, progressValue, clipsUnlocked, answer === "yes" ? answerMoment : confirmedFromSeconds, nextQuestion.momentSeconds);
       setNotice("Here’s the next clear passage");
     }
@@ -687,10 +777,9 @@ export default function ClaimMatchPage() {
   const skipAhead = useCallback(() => {
     if (!bundle) return;
     const next = skipToClearPassage(currentTime, bundle.inPlaySpans, bundle.duration);
-    setCurrentTime(next);
-    if (videoRef.current) videoRef.current.currentTime = toVideoTime(next);
+    seekTracking(next);
     setNotice("Skipped ahead to a clearer passage");
-  }, [bundle, currentTime]);
+  }, [bundle, currentTime, seekTracking]);
 
   const candidateStage = stage === "find" || stage === "picker" || stage === "look";
   const candidateFrame = useMemo(() => {
@@ -701,9 +790,8 @@ export default function ClaimMatchPage() {
   useEffect(() => {
     if (!bundle || !candidateStage || candidateFrame === currentFrame) return;
     const seconds = frameToTrackingSeconds(candidateFrame, bundle);
-    setCurrentTime(seconds);
-    if (videoRef.current) videoRef.current.currentTime = toVideoTime(seconds);
-  }, [bundle, candidateFrame, candidateStage, currentFrame]);
+    seekTracking(seconds);
+  }, [bundle, candidateFrame, candidateStage, currentFrame, seekTracking]);
 
   const candidates = useMemo<Candidate[]>(() => {
     if (!bundle) return [];
@@ -738,10 +826,6 @@ export default function ClaimMatchPage() {
         label: captionForTrack(track, candidateFrame, bundle, shirtToneByTrack[track.id] || "unreadable"),
         box,
         distance,
-        x: box.x / bundle.width * 100,
-        y: box.y / bundle.height * 100,
-        w: box.w / bundle.width * 100,
-        h: box.h / bundle.height * 100,
       }))
       .map((candidate, index, all) => ({
         ...candidate,
@@ -904,7 +988,7 @@ export default function ClaimMatchPage() {
         setNotice(slow ? "Normal speed" : "Slow motion on");
       } else if (key === "f") {
         event.preventDefault();
-        videoRef.current?.requestFullscreen?.();
+        void stageRef.current?.requestFullscreen?.();
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         seekBy(-5);
@@ -945,8 +1029,7 @@ export default function ClaimMatchPage() {
       return;
     }
     const selectionMoment = frameToTrackingSeconds(candidateFrame, bundle);
-    setCurrentTime(selectionMoment);
-    if (videoRef.current) videoRef.current.currentTime = toVideoTime(selectionMoment);
+    seekTracking(selectionMoment);
     beginFollowing(chosen.id, selectionMoment);
     if (isBoundaryRepick) {
       setBoundaryRepickPending(false);
@@ -1046,13 +1129,16 @@ export default function ClaimMatchPage() {
       else video.pause();
     }
   };
-  const handleFullscreen = () => videoRef.current?.requestFullscreen?.();
+  const handleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen?.();
+    else void stageRef.current?.requestFullscreen?.();
+  };
   const handleSeek = (value: number) => {
-    setCurrentTime(value);
-    if (videoRef.current) videoRef.current.currentTime = toVideoTime(value);
+    seekTracking(value);
   };
   const handleVideoTap = (event: React.MouseEvent<HTMLDivElement>) => {
-    const point = pointInVideoPixels(event, bundle.width, bundle.height);
+    if (!frameRef.current) return;
+    const point = pointInVideoPixels(event, frameRef.current, bundle, view);
     if (point.x < 0 || point.y < 0 || point.x > bundle.width || point.y > bundle.height) return;
     const hits = findHitTracks(bundle, currentFrame, point.x, point.y)
       .filter(({ box }) => Math.abs(box.frame - currentFrame) <= 2);
@@ -1064,10 +1150,6 @@ export default function ClaimMatchPage() {
       id: track.id,
       label: captionForTrack(track, currentFrame, bundle, shirtToneByTrack[track.id] || "unreadable"),
       box,
-      x: box.x / bundle.width * 100,
-      y: box.y / bundle.height * 100,
-      w: box.w / bundle.width * 100,
-      h: box.h / bundle.height * 100,
     }));
     const chosen = hitCandidates.find((candidate) => candidate.id !== currentTrackId) || hitCandidates[0];
     if (chosen.id === currentTrackId && stage === "following") {
@@ -1133,11 +1215,15 @@ export default function ClaimMatchPage() {
           <div className="claim-video-column">
             <MiniVideo
               recording={recording}
+              bundle={bundle}
+              view={view}
               currentTime={currentTime}
               playing={playing}
               muted={muted}
               slow={slow}
               videoRef={videoRef}
+              frameRef={frameRef}
+              stageRef={stageRef}
               onToggle={handlePlay}
               onToggleSlow={() => setSlow((value) => !value)}
                onSeek={handleSeek}
@@ -1246,7 +1332,7 @@ export default function ClaimMatchPage() {
                 <h2>Choose after the crossing</h2>
                 <p>We waited for real boxes to separate. Pick the tracked player now — no guess is recorded until a clean frame exists.</p>
                 <div className="overlap-callout"><div className="prompt-icon"><ScanSearch size={17} /></div><div><b>Real overlap detected.</b><span>The video is paused on the first later frame where both tracks are separated.</span></div></div>
-                <div className="look-controls"><button type="button" className={`look-control ${slow ? "selected" : ""}`} data-testid="button-look-slow" onClick={() => setSlow((value) => !value)}><Gauge size={15} /> Slow motion <kbd>S</kbd></button><button type="button" className="look-control" data-testid="button-look-back" onClick={() => setCurrentTime((value) => Math.max(0, value - 5))}><RotateCcw size={15} /> 5 sec back</button></div>
+                <div className="look-controls"><button type="button" className={`look-control ${slow ? "selected" : ""}`} data-testid="button-look-slow" onClick={() => setSlow((value) => !value)}><Gauge size={15} /> Slow motion <kbd>S</kbd></button><button type="button" className="look-control" data-testid="button-look-back" onClick={() => seekTracking(currentTime - 5)}><RotateCcw size={15} /> 5 sec back</button></div>
                 <div className="candidate-list">{candidates.map((candidate, index) => <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-overlap-candidate-${index + 1}`} onClick={() => onCorrection(candidate, "overlap-resolved", true)}><span className="candidate-number">{index + 1}</span><span className="candidate-copy"><b>{candidate.id === currentTrackId ? "Follow this track" : "Crossing track"}</b><small>{candidate.label}</small></span><ChevronRight size={16} /></button>)}</div>
                 <button type="button" className="claim-text-button" data-testid="button-skip-overlap" onClick={() => currentTrackId && beginFollowing(currentTrackId)}>Skip this moment — keep the confirmed track <FastForward size={14} /></button>
               </div>

@@ -335,9 +335,17 @@
 .claim-workspace { position: relative; display: block; }
 .claim-video-column { min-width: 0; width: 100%; }
 .claim-video-shell { overflow: hidden; border: 1px solid var(--claim-line); background: #0a1110; box-shadow: 0 22px 60px rgba(0,0,0,.22); }
-.claim-video-stage { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #17251f; }
-.claim-video, .claim-fallback-video { width: 100%; height: 100%; display: block; object-fit: cover; }
-.claim-fallback-video { position: relative; overflow: hidden; background: linear-gradient(155deg, #1b352b 0%, #204d39 42%, #13251e 100%); }
+/* The frame takes the aspect of the View (the full 3840x1080 panorama by default). The <video> is
+   positioned by frameToVideoStyle so exactly that view fills the frame; boxes are percentages of
+   the same frame. Never object-fit: cover here - it crops without telling the overlay. */
+.claim-video-stage { position: relative; overflow: hidden; background: #0a1110; }
+.claim-video-frame { position: relative; width: 100%; overflow: hidden; background: #17251f; cursor: crosshair; }
+.claim-video { display: block; object-fit: fill; }
+.claim-fallback-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.claim-video-error { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; color: var(--claim-ink); background: rgba(10,17,16,.82); font-family: var(--app-font-mono); font-size: 11px; text-align: center; }
+.claim-video-stage:fullscreen { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100vw; height: 100vh; background: #000; }
+.claim-video-stage:fullscreen .claim-video-frame { width: 100%; max-height: 100vh; }
+.claim-fallback-video { overflow: hidden; background: linear-gradient(155deg, #1b352b 0%, #204d39 42%, #13251e 100%); }
 .fallback-field-lines { position: absolute; inset: 8% 5%; border: 1px solid rgba(220,248,209,.35); transform: perspective(450px) rotateX(10deg); }
 .fallback-field-lines::before, .fallback-field-lines::after { position: absolute; content: ""; border: 1px solid rgba(220,248,209,.28); }
 .fallback-field-lines::before { inset: 22% 34%; }
@@ -358,7 +366,7 @@
 .claim-scorebug span { color: var(--claim-green); }
 .claim-scorebug b { font-weight: 500; }
 .claim-scorebug small { grid-column: 1 / -1; color: var(--claim-muted); font-size: 8px; text-align: right; }
-.claim-track-box { position: absolute; z-index: 2; min-width: 24px; min-height: 34px; border: 1px solid rgba(238,243,230,.52); background: rgba(238,243,230,.04); pointer-events: none; }
+.claim-track-box { position: absolute; z-index: 2; box-sizing: border-box; border: 1px solid rgba(238,243,230,.52); background: rgba(238,243,230,.04); pointer-events: none; }
 .claim-track-box.is-active { border: 2px solid var(--claim-green); background: rgba(212,255,79,.12); box-shadow: 0 0 0 4px rgba(212,255,79,.06); }
 .claim-track-box.is-overlap { border-color: var(--claim-orange); background: rgba(255,131,95,.11); }
 .claim-track-box span { position: absolute; top: -17px; left: -2px; padding: 2px 4px; color: #0e1513; background: var(--claim-green); font-family: var(--app-font-mono); font-size: 8px; white-space: nowrap; }
@@ -507,7 +515,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
   .claim-header { height: 56px; padding: 0 15px; }.claim-back span { display: none; }.claim-save-status { font-size: 0; }.claim-save-status span { margin-right: 0; }
   .claim-wrap { width: calc(100% - 24px); padding: 29px 0 50px; }
   .claim-intro-row h1 { font-size: 47px; }.claim-intro-copy { margin-top: 16px; font-size: 13px; }
-  .claim-video-stage { aspect-ratio: 4 / 5; }.claim-video-topline { top: 11px; left: 10px; font-size: 7px; }.claim-video-divider, .claim-video-topline ~ .claim-scorebug { display: none; }
+  .claim-video-topline { top: 11px; left: 10px; font-size: 7px; }.claim-video-divider, .claim-video-topline ~ .claim-scorebug { display: none; }
   .claim-video-bottom { flex-wrap: wrap; gap: 7px; padding: 9px; }.claim-video-time { order: 5; flex-basis: 100%; }.claim-icon-button { width: 30px; height: 30px; }
   .claim-key-hints { gap: 8px; flex-wrap: wrap; }.claim-key-hints span:nth-child(2) { display: none; }.claim-bottom-row { padding-top: 16px; }
   .claim-panel { padding: 23px 18px; }.claim-panel h2 { font-size: 34px; }.claim-panel > p { font-size: 12px; }
