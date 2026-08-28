@@ -98,8 +98,7 @@ export const ListFieldsResponseItem = zod.object({
   "thumbnailUrl": zod.string().nullish(),
   "latitude": zod.number().nullish(),
   "longitude": zod.number().nullish(),
-  "lastRecordedAt": zod.string().nullish(),
-  "clipsVisible": zod.boolean().optional().describe('Whether users can create clips from recordings in this field')
+  "lastRecordedAt": zod.string().nullish()
 })
 export const ListFieldsResponse = zod.array(ListFieldsResponseItem)
 
@@ -121,8 +120,7 @@ export const GetFieldResponse = zod.object({
   "thumbnailUrl": zod.string().nullish(),
   "latitude": zod.number().nullish(),
   "longitude": zod.number().nullish(),
-  "lastRecordedAt": zod.string().nullish(),
-  "clipsVisible": zod.boolean().optional().describe('Whether users can create clips from recordings in this field')
+  "lastRecordedAt": zod.string().nullish()
 })
 
 
@@ -134,8 +132,7 @@ export const GetBunnyCollectionsResponseItem = zod.object({
   "name": zod.string(),
   "videoCount": zod.number(),
   "previewImageUrl": zod.string().nullish(),
-  "id": zod.number().nullish().describe('The corresponding fields table row id, if this collection has been synced via \/admin\/fields\/sync. Null for collections Bunny has that haven\'t been synced into a field yet.'),
-  "clipsVisible": zod.boolean().optional().describe('Whether users can create clips from recordings in this field')
+  "id": zod.number().nullish().describe('The corresponding fields table row id, if this collection has been synced via \/admin\/fields\/sync. Null for collections Bunny has that haven\'t been synced into a field yet.')
 })
 export const GetBunnyCollectionsResponse = zod.array(GetBunnyCollectionsResponseItem)
 
@@ -218,6 +215,332 @@ export const GetRecordingResponse = zod.object({
   "videoUrl": zod.string().optional(),
   "highlightMoment": zod.string().nullish(),
   "fieldName": zod.string().nullish()
+})
+
+
+/**
+ * @summary Get a recording tracking bundle and the current player's claim progress
+ */
+export const GetClaimMatchParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+
+
+export const getClaimMatchResponseBundleFrameRateExclusiveMin = 0;
+
+
+export const getClaimMatchResponseBundleDurationExclusiveMin = 0;
+
+export const getClaimMatchResponseBundleTracksItemStartFrameMin = 0;
+
+export const getClaimMatchResponseBundleTracksItemEndFrameMin = 0;
+
+export const getClaimMatchResponseBundleTracksItemBoxesItemFrameMin = 0;
+
+export const getClaimMatchResponseBundleTracksItemBoxesItemWMin = 0;
+
+export const getClaimMatchResponseBundleTracksItemBoxesItemHMin = 0;
+
+export const getClaimMatchResponseBundleCrossingsItemFrameMin = 0;
+
+export const getClaimMatchResponseBundleCrossingsItemConfidenceMin = 0;
+export const getClaimMatchResponseBundleCrossingsItemConfidenceMax = 1;
+
+export const getClaimMatchResponseBundleInPlaySpansItemStartMin = 0;
+
+export const getClaimMatchResponseBundleInPlaySpansItemEndMin = 0;
+
+export const getClaimMatchResponseBundleEventsItemTimeMin = 0;
+
+
+
+export const GetClaimMatchResponse = zod.object({
+  "recording": zod.object({
+  "id": zod.number(),
+  "fieldId": zod.number(),
+  "court": zod.string(),
+  "date": zod.string(),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullish(),
+  "videoUrl": zod.string().optional(),
+  "highlightMoment": zod.string().nullish(),
+  "fieldName": zod.string().nullish()
+}),
+  "bundle": zod.object({
+  "version": zod.number().min(1),
+  "label": zod.string(),
+  "width": zod.number().min(1),
+  "height": zod.number().min(1),
+  "frameRate": zod.number().gt(getClaimMatchResponseBundleFrameRateExclusiveMin),
+  "frameCount": zod.number().min(1),
+  "duration": zod.number().gt(getClaimMatchResponseBundleDurationExclusiveMin),
+  "matchOffset": zod.number(),
+  "tracks": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string().nullish(),
+  "startFrame": zod.number().min(getClaimMatchResponseBundleTracksItemStartFrameMin),
+  "endFrame": zod.number().min(getClaimMatchResponseBundleTracksItemEndFrameMin),
+  "boxes": zod.array(zod.object({
+  "frame": zod.number().min(getClaimMatchResponseBundleTracksItemBoxesItemFrameMin),
+  "x": zod.number(),
+  "y": zod.number(),
+  "w": zod.number().min(getClaimMatchResponseBundleTracksItemBoxesItemWMin),
+  "h": zod.number().min(getClaimMatchResponseBundleTracksItemBoxesItemHMin)
+}))
+})),
+  "crossings": zod.array(zod.object({
+  "frame": zod.number().min(getClaimMatchResponseBundleCrossingsItemFrameMin),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string(),
+  "confidence": zod.number().min(getClaimMatchResponseBundleCrossingsItemConfidenceMin).max(getClaimMatchResponseBundleCrossingsItemConfidenceMax).optional()
+})),
+  "inPlaySpans": zod.array(zod.object({
+  "start": zod.number().min(getClaimMatchResponseBundleInPlaySpansItemStartMin),
+  "end": zod.number().min(getClaimMatchResponseBundleInPlaySpansItemEndMin)
+})),
+  "events": zod.array(zod.object({
+  "type": zod.string(),
+  "time": zod.number().min(getClaimMatchResponseBundleEventsItemTimeMin),
+  "label": zod.string().nullish(),
+  "clipId": zod.string().nullish()
+}))
+}),
+  "progress": zod.object({
+  "recordingId": zod.number(),
+  "currentTrackId": zod.string().nullish(),
+  "stage": zod.string(),
+  "confirmedFromSeconds": zod.number(),
+  "currentPositionSeconds": zod.number(),
+  "claimedPercent": zod.number(),
+  "clipsUnlocked": zod.number(),
+  "correctionCount": zod.number(),
+  "completed": zod.boolean(),
+  "earnedClips": zod.array(zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "momentSeconds": zod.number(),
+  "kind": zod.string(),
+  "status": zod.string()
+})),
+  "updatedAt": zod.string()
+}),
+  "corrections": zod.array(zod.object({
+  "id": zod.number(),
+  "clientId": zod.string(),
+  "recordingId": zod.number(),
+  "momentSeconds": zod.number(),
+  "rejectedTrackId": zod.string().nullish(),
+  "chosenTrackId": zod.string(),
+  "answerMethod": zod.string(),
+  "questionCount": zod.number(),
+  "undone": zod.boolean(),
+  "createdAt": zod.string()
+}))
+})
+
+
+/**
+ * @summary Save claim progress for the current player
+ */
+export const UpdateClaimMatchProgressParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const updateClaimMatchProgressBodyConfirmedFromSecondsMin = 0;
+
+export const updateClaimMatchProgressBodyCurrentPositionSecondsMin = 0;
+
+export const updateClaimMatchProgressBodyClaimedPercentMin = 0;
+export const updateClaimMatchProgressBodyClaimedPercentMax = 100;
+
+export const updateClaimMatchProgressBodyClipsUnlockedMin = 0;
+
+
+
+export const UpdateClaimMatchProgressBody = zod.object({
+  "currentTrackId": zod.string().nullish(),
+  "stage": zod.string(),
+  "confirmedFromSeconds": zod.number().min(updateClaimMatchProgressBodyConfirmedFromSecondsMin),
+  "currentPositionSeconds": zod.number().min(updateClaimMatchProgressBodyCurrentPositionSecondsMin),
+  "claimedPercent": zod.number().min(updateClaimMatchProgressBodyClaimedPercentMin).max(updateClaimMatchProgressBodyClaimedPercentMax),
+  "clipsUnlocked": zod.number().min(updateClaimMatchProgressBodyClipsUnlockedMin),
+  "completed": zod.boolean(),
+  "earnedClips": zod.array(zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "momentSeconds": zod.number(),
+  "kind": zod.string(),
+  "status": zod.string()
+})).optional()
+})
+
+export const UpdateClaimMatchProgressResponse = zod.object({
+  "recordingId": zod.number(),
+  "currentTrackId": zod.string().nullish(),
+  "stage": zod.string(),
+  "confirmedFromSeconds": zod.number(),
+  "currentPositionSeconds": zod.number(),
+  "claimedPercent": zod.number(),
+  "clipsUnlocked": zod.number(),
+  "correctionCount": zod.number(),
+  "completed": zod.boolean(),
+  "earnedClips": zod.array(zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "momentSeconds": zod.number(),
+  "kind": zod.string(),
+  "status": zod.string()
+})),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Record an identity correction, safely repeatable by client id
+ */
+export const CreateClaimMatchCorrectionParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+export const createClaimMatchCorrectionBodyMomentSecondsMin = 0;
+
+export const createClaimMatchCorrectionBodyQuestionCountMin = 0;
+
+
+
+export const CreateClaimMatchCorrectionBody = zod.object({
+  "clientId": zod.string().min(1),
+  "momentSeconds": zod.number().min(createClaimMatchCorrectionBodyMomentSecondsMin),
+  "rejectedTrackId": zod.string().nullish(),
+  "chosenTrackId": zod.string(),
+  "answerMethod": zod.string(),
+  "questionCount": zod.number().min(createClaimMatchCorrectionBodyQuestionCountMin)
+})
+
+export const CreateClaimMatchCorrectionResponse = zod.object({
+  "id": zod.number(),
+  "clientId": zod.string(),
+  "recordingId": zod.number(),
+  "momentSeconds": zod.number(),
+  "rejectedTrackId": zod.string().nullish(),
+  "chosenTrackId": zod.string(),
+  "answerMethod": zod.string(),
+  "questionCount": zod.number(),
+  "undone": zod.boolean(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Undo a previously synced correction
+ */
+export const UndoClaimMatchCorrectionParams = zod.object({
+  "correctionId": zod.coerce.number()
+})
+
+export const UndoClaimMatchCorrectionResponse = zod.object({
+  "id": zod.number(),
+  "clientId": zod.string(),
+  "recordingId": zod.number(),
+  "momentSeconds": zod.number(),
+  "rejectedTrackId": zod.string().nullish(),
+  "chosenTrackId": zod.string(),
+  "answerMethod": zod.string(),
+  "questionCount": zod.number(),
+  "undone": zod.boolean(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Upload or replace a recording tracking bundle
+ */
+export const ReplaceTrackingBundleParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+
+
+export const replaceTrackingBundleBodyFrameRateExclusiveMin = 0;
+
+
+export const replaceTrackingBundleBodyDurationExclusiveMin = 0;
+
+export const replaceTrackingBundleBodyTracksItemStartFrameMin = 0;
+
+export const replaceTrackingBundleBodyTracksItemEndFrameMin = 0;
+
+export const replaceTrackingBundleBodyTracksItemBoxesItemFrameMin = 0;
+
+export const replaceTrackingBundleBodyTracksItemBoxesItemWMin = 0;
+
+export const replaceTrackingBundleBodyTracksItemBoxesItemHMin = 0;
+
+export const replaceTrackingBundleBodyCrossingsItemFrameMin = 0;
+
+export const replaceTrackingBundleBodyCrossingsItemConfidenceMin = 0;
+export const replaceTrackingBundleBodyCrossingsItemConfidenceMax = 1;
+
+export const replaceTrackingBundleBodyInPlaySpansItemStartMin = 0;
+
+export const replaceTrackingBundleBodyInPlaySpansItemEndMin = 0;
+
+export const replaceTrackingBundleBodyEventsItemTimeMin = 0;
+
+
+
+export const ReplaceTrackingBundleBody = zod.object({
+  "version": zod.number().min(1),
+  "label": zod.string(),
+  "width": zod.number().min(1),
+  "height": zod.number().min(1),
+  "frameRate": zod.number().gt(replaceTrackingBundleBodyFrameRateExclusiveMin),
+  "frameCount": zod.number().min(1),
+  "duration": zod.number().gt(replaceTrackingBundleBodyDurationExclusiveMin),
+  "matchOffset": zod.number(),
+  "tracks": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string().nullish(),
+  "startFrame": zod.number().min(replaceTrackingBundleBodyTracksItemStartFrameMin),
+  "endFrame": zod.number().min(replaceTrackingBundleBodyTracksItemEndFrameMin),
+  "boxes": zod.array(zod.object({
+  "frame": zod.number().min(replaceTrackingBundleBodyTracksItemBoxesItemFrameMin),
+  "x": zod.number(),
+  "y": zod.number(),
+  "w": zod.number().min(replaceTrackingBundleBodyTracksItemBoxesItemWMin),
+  "h": zod.number().min(replaceTrackingBundleBodyTracksItemBoxesItemHMin)
+}))
+})),
+  "crossings": zod.array(zod.object({
+  "frame": zod.number().min(replaceTrackingBundleBodyCrossingsItemFrameMin),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string(),
+  "confidence": zod.number().min(replaceTrackingBundleBodyCrossingsItemConfidenceMin).max(replaceTrackingBundleBodyCrossingsItemConfidenceMax).optional()
+})),
+  "inPlaySpans": zod.array(zod.object({
+  "start": zod.number().min(replaceTrackingBundleBodyInPlaySpansItemStartMin),
+  "end": zod.number().min(replaceTrackingBundleBodyInPlaySpansItemEndMin)
+})),
+  "events": zod.array(zod.object({
+  "type": zod.string(),
+  "time": zod.number().min(replaceTrackingBundleBodyEventsItemTimeMin),
+  "label": zod.string().nullish(),
+  "clipId": zod.string().nullish()
+}))
+})
+
+export const ReplaceTrackingBundleResponse = zod.object({
+  "recordingId": zod.number(),
+  "label": zod.string(),
+  "duration": zod.number(),
+  "trackCount": zod.number(),
+  "crossingCount": zod.number(),
+  "uploadedAt": zod.string()
 })
 
 

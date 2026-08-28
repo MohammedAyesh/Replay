@@ -27,6 +27,7 @@ import NotFound from "@/pages/not-found";
 import Academies from "@/pages/academies";
 import View from "@/pages/view";
 import Live from "@/pages/live";
+import ClaimMatch from "@/pages/claim-match";
 import { useAuth } from "@/lib/auth";
 import { ArrowLeft, Globe } from "lucide-react";
 
@@ -193,7 +194,7 @@ function AuthHeroLayout({
       <button
         type="button"
         onClick={() => setLocale(locale === "ar" ? "en" : "ar")}
-        aria-label={t.language}
+        aria-label="Change language"
         className="fixed top-3 z-50 flex items-center gap-1.5 rounded-[99px] border border-white/10 bg-white/[0.04] px-3.5 py-2 text-sm font-semibold text-white"
         style={{ right: "max(12px, calc(50% - 220px + 12px))" }}
       >
@@ -321,13 +322,15 @@ function AppRouter() {
         <Route path="/home" component={Home} />
         {/* <Route path="/watch" component={Watch} /> */}
         <Route path="/view" component={View} />
-        <Route path="/fields" component={Fields} />
+        <Route path="/fields"><Fields /></Route>
         <Route path="/fields/:id" component={FieldDetail} />
-        <Route path="/academies" component={Academies} />
+        <Route path="/academies"><Academies /></Route>
         <Route path="/player/:id" component={Player} />
         <Route path="/players/:id" component={Profile} />
         <Route path="/my-clips" component={MyClips} />
         <Route path="/live" component={Live} />
+        <Route path="/claim-match/demo" component={ClaimMatch} />
+        <Route path="/claim-match/:id" component={ClaimMatch} />
         <Route path="/account" component={Account} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />

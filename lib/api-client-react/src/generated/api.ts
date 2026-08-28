@@ -30,6 +30,11 @@ import type {
   Banner,
   BunnyCollection,
   BunnyVideo,
+  ClaimCorrection,
+  ClaimCorrectionInput,
+  ClaimMatchResponse,
+  ClaimProgress,
+  ClaimProgressInput,
   Clip,
   CreateAcademyInput,
   CreateAdInput,
@@ -47,6 +52,8 @@ import type {
   ProfileInput,
   PublicProfile,
   Recording,
+  TrackingBundle,
+  TrackingBundleSummary,
   UpdateAcademyInput,
   UpdateUserClipInput,
   User,
@@ -983,6 +990,366 @@ export function useGetRecording<TData = Awaited<ReturnType<typeof getRecording>>
 
 
 
+
+export const getGetClaimMatchUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match`
+}
+
+/**
+ * @summary Get a recording tracking bundle and the current player's claim progress
+ */
+export const getClaimMatch = async (id: number, options?: RequestInit): Promise<ClaimMatchResponse> => {
+
+  return customFetch<ClaimMatchResponse>(getGetClaimMatchUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetClaimMatchQueryKey = (id: number,) => {
+    return [
+    `/api/recordings/${id}/claim-match`
+    ] as const;
+    }
+
+
+export const getGetClaimMatchQueryOptions = <TData = Awaited<ReturnType<typeof getClaimMatch>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimMatch>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetClaimMatchQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getClaimMatch>>> = ({ signal }) => getClaimMatch(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClaimMatch>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetClaimMatchQueryResult = NonNullable<Awaited<ReturnType<typeof getClaimMatch>>>
+export type GetClaimMatchQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a recording tracking bundle and the current player's claim progress
+ */
+
+export function useGetClaimMatch<TData = Awaited<ReturnType<typeof getClaimMatch>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimMatch>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetClaimMatchQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateClaimMatchProgressUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match`
+}
+
+/**
+ * @summary Save claim progress for the current player
+ */
+export const updateClaimMatchProgress = async (id: number,
+    claimProgressInput: ClaimProgressInput, options?: RequestInit): Promise<ClaimProgress> => {
+
+  return customFetch<ClaimProgress>(getUpdateClaimMatchProgressUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimProgressInput)
+  }
+);}
+
+
+
+
+export const getUpdateClaimMatchProgressMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateClaimMatchProgress>>, TError,{id: number;data: BodyType<ClaimProgressInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateClaimMatchProgress>>, TError,{id: number;data: BodyType<ClaimProgressInput>}, TContext> => {
+
+const mutationKey = ['updateClaimMatchProgress'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateClaimMatchProgress>>, {id: number;data: BodyType<ClaimProgressInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateClaimMatchProgress(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateClaimMatchProgressMutationResult = NonNullable<Awaited<ReturnType<typeof updateClaimMatchProgress>>>
+    export type UpdateClaimMatchProgressMutationBody = BodyType<ClaimProgressInput>
+    export type UpdateClaimMatchProgressMutationError = ErrorType<void>
+
+    /**
+ * @summary Save claim progress for the current player
+ */
+export const useUpdateClaimMatchProgress = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateClaimMatchProgress>>, TError,{id: number;data: BodyType<ClaimProgressInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateClaimMatchProgress>>,
+        TError,
+        {id: number;data: BodyType<ClaimProgressInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateClaimMatchProgressMutationOptions(options));
+    }
+
+export const getCreateClaimMatchCorrectionUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/corrections`
+}
+
+/**
+ * @summary Record an identity correction, safely repeatable by client id
+ */
+export const createClaimMatchCorrection = async (id: number,
+    claimCorrectionInput: ClaimCorrectionInput, options?: RequestInit): Promise<ClaimCorrection> => {
+
+  return customFetch<ClaimCorrection>(getCreateClaimMatchCorrectionUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimCorrectionInput)
+  }
+);}
+
+
+
+
+export const getCreateClaimMatchCorrectionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchCorrection>>, TError,{id: number;data: BodyType<ClaimCorrectionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchCorrection>>, TError,{id: number;data: BodyType<ClaimCorrectionInput>}, TContext> => {
+
+const mutationKey = ['createClaimMatchCorrection'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createClaimMatchCorrection>>, {id: number;data: BodyType<ClaimCorrectionInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  createClaimMatchCorrection(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateClaimMatchCorrectionMutationResult = NonNullable<Awaited<ReturnType<typeof createClaimMatchCorrection>>>
+    export type CreateClaimMatchCorrectionMutationBody = BodyType<ClaimCorrectionInput>
+    export type CreateClaimMatchCorrectionMutationError = ErrorType<void>
+
+    /**
+ * @summary Record an identity correction, safely repeatable by client id
+ */
+export const useCreateClaimMatchCorrection = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchCorrection>>, TError,{id: number;data: BodyType<ClaimCorrectionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createClaimMatchCorrection>>,
+        TError,
+        {id: number;data: BodyType<ClaimCorrectionInput>},
+        TContext
+      > => {
+      return useMutation(getCreateClaimMatchCorrectionMutationOptions(options));
+    }
+
+export const getUndoClaimMatchCorrectionUrl = (correctionId: number,) => {
+
+
+
+
+  return `/api/claim-match/corrections/${correctionId}`
+}
+
+/**
+ * @summary Undo a previously synced correction
+ */
+export const undoClaimMatchCorrection = async (correctionId: number, options?: RequestInit): Promise<ClaimCorrection> => {
+
+  return customFetch<ClaimCorrection>(getUndoClaimMatchCorrectionUrl(correctionId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getUndoClaimMatchCorrectionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof undoClaimMatchCorrection>>, TError,{correctionId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof undoClaimMatchCorrection>>, TError,{correctionId: number}, TContext> => {
+
+const mutationKey = ['undoClaimMatchCorrection'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof undoClaimMatchCorrection>>, {correctionId: number}> = (props) => {
+          const {correctionId} = props ?? {};
+
+          return  undoClaimMatchCorrection(correctionId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UndoClaimMatchCorrectionMutationResult = NonNullable<Awaited<ReturnType<typeof undoClaimMatchCorrection>>>
+
+    export type UndoClaimMatchCorrectionMutationError = ErrorType<void>
+
+    /**
+ * @summary Undo a previously synced correction
+ */
+export const useUndoClaimMatchCorrection = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof undoClaimMatchCorrection>>, TError,{correctionId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof undoClaimMatchCorrection>>,
+        TError,
+        {correctionId: number},
+        TContext
+      > => {
+      return useMutation(getUndoClaimMatchCorrectionMutationOptions(options));
+    }
+
+export const getReplaceTrackingBundleUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/tracking-bundle`
+}
+
+/**
+ * @summary Upload or replace a recording tracking bundle
+ */
+export const replaceTrackingBundle = async (id: number,
+    trackingBundle: TrackingBundle, options?: RequestInit): Promise<TrackingBundleSummary> => {
+
+  return customFetch<TrackingBundleSummary>(getReplaceTrackingBundleUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(trackingBundle)
+  }
+);}
+
+
+
+
+export const getReplaceTrackingBundleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle>}, TContext> => {
+
+const mutationKey = ['replaceTrackingBundle'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof replaceTrackingBundle>>, {id: number;data: BodyType<TrackingBundle>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  replaceTrackingBundle(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReplaceTrackingBundleMutationResult = NonNullable<Awaited<ReturnType<typeof replaceTrackingBundle>>>
+    export type ReplaceTrackingBundleMutationBody = BodyType<TrackingBundle>
+    export type ReplaceTrackingBundleMutationError = ErrorType<void>
+
+    /**
+ * @summary Upload or replace a recording tracking bundle
+ */
+export const useReplaceTrackingBundle = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceTrackingBundle>>, TError,{id: number;data: BodyType<TrackingBundle>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof replaceTrackingBundle>>,
+        TError,
+        {id: number;data: BodyType<TrackingBundle>},
+        TContext
+      > => {
+      return useMutation(getReplaceTrackingBundleMutationOptions(options));
+    }
 
 export const getListAcademiesUrl = () => {
 

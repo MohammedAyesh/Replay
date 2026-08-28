@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, desc } from "drizzle-orm";
-import { db, recordingsTable, fieldsTable, usersTable } from "@workspace/db";
+import { db, recordingsTable, fieldsTable, usersTable, recordingTrackingBundlesTable } from "@workspace/db";
 import { GetRecordingParams, GetRecordingResponse } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 
@@ -14,7 +14,11 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
   return userId;
 }
 
-function toAdminRecording(r: typeof recordingsTable.$inferSelect, fieldName: string | null) {
+function toAdminRecording(
+  r: typeof recordingsTable.$inferSelect,
+  fieldName: string | null,
+  hasTrackingBundle = false,
+) {
   return {
     id: r.id,
     fieldId: r.fieldId,
@@ -25,6 +29,7 @@ function toAdminRecording(r: typeof recordingsTable.$inferSelect, fieldName: str
     score: r.score ?? null,
     videoUrl: r.videoUrl,
     fieldName,
+    hasTrackingBundle,
   };
 }
 
@@ -39,12 +44,22 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
 
   const rows = await db
-    .select({ recording: recordingsTable, fieldName: fieldsTable.name })
+    .select({
+      recording: recordingsTable,
+      fieldName: fieldsTable.name,
+      hasTrackingBundle: recordingTrackingBundlesTable.id,
+    })
     .from(recordingsTable)
     .leftJoin(fieldsTable, eq(recordingsTable.fieldId, fieldsTable.id))
+    .leftJoin(
+      recordingTrackingBundlesTable,
+      eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id),
+    )
     .orderBy(desc(recordingsTable.createdAt));
 
-  res.json(rows.map(({ recording, fieldName }) => toAdminRecording(recording, fieldName ?? null)));
+  res.json(rows.map(({ recording, fieldName, hasTrackingBundle }) =>
+    toAdminRecording(recording, fieldName ?? null, hasTrackingBundle !== null),
+  ));
 });
 
 router.post("/admin/recordings", async (req, res): Promise<void> => {
@@ -77,7 +92,7 @@ router.post("/admin/recordings", async (req, res): Promise<void> => {
     })
     .returning();
 
-  res.status(201).json(toAdminRecording(recording, field.name));
+  res.status(201).json(toAdminRecording(recording, field.name, false));
 });
 
 router.get("/recordings/:id", async (req, res): Promise<void> => {

@@ -66,8 +66,6 @@ export interface BunnyCollection {
      * @nullable
      */
   id?: number | null;
-  /** Whether users can create clips from recordings in this field */
-  clipsVisible?: boolean;
 }
 
 export interface BunnyVideo {
@@ -469,5 +467,162 @@ export interface AdStats {
   completions: number;
   skipRate: number;
   completionRate: number;
+}
+
+export interface TrackingBox {
+  /** @minimum 0 */
+  frame: number;
+  x: number;
+  y: number;
+  /** @minimum 0 */
+  w: number;
+  /** @minimum 0 */
+  h: number;
+}
+
+export interface TrackingTrack {
+  id: string;
+  /** @nullable */
+  label?: string | null;
+  /** @minimum 0 */
+  startFrame: number;
+  /** @minimum 0 */
+  endFrame: number;
+  boxes: TrackingBox[];
+}
+
+export interface TrackingCrossing {
+  /** @minimum 0 */
+  frame: number;
+  trackId: string;
+  otherTrackId: string;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  confidence?: number;
+}
+
+export interface InPlaySpan {
+  /** @minimum 0 */
+  start: number;
+  /** @minimum 0 */
+  end: number;
+}
+
+export interface TrackingEvent {
+  type: string;
+  /** @minimum 0 */
+  time: number;
+  /** @nullable */
+  label?: string | null;
+  /** @nullable */
+  clipId?: string | null;
+}
+
+export interface TrackingBundle {
+  /** @minimum 1 */
+  version: number;
+  label: string;
+  /** @minimum 1 */
+  width: number;
+  /** @minimum 1 */
+  height: number;
+  /** @exclusiveMinimum 0 */
+  frameRate: number;
+  /** @minimum 1 */
+  frameCount: number;
+  /** @exclusiveMinimum 0 */
+  duration: number;
+  matchOffset: number;
+  tracks: TrackingTrack[];
+  crossings: TrackingCrossing[];
+  inPlaySpans: InPlaySpan[];
+  events: TrackingEvent[];
+}
+
+export interface TrackingBundleSummary {
+  recordingId: number;
+  label: string;
+  duration: number;
+  trackCount: number;
+  crossingCount: number;
+  uploadedAt: string;
+}
+
+export interface ClaimEarnedClip {
+  id: string;
+  title: string;
+  momentSeconds: number;
+  kind: string;
+  status: string;
+}
+
+export interface ClaimCorrection {
+  id: number;
+  clientId: string;
+  recordingId: number;
+  momentSeconds: number;
+  /** @nullable */
+  rejectedTrackId?: string | null;
+  chosenTrackId: string;
+  answerMethod: string;
+  questionCount: number;
+  undone: boolean;
+  createdAt: string;
+}
+
+export interface ClaimProgress {
+  recordingId: number;
+  /** @nullable */
+  currentTrackId?: string | null;
+  stage: string;
+  confirmedFromSeconds: number;
+  currentPositionSeconds: number;
+  claimedPercent: number;
+  clipsUnlocked: number;
+  correctionCount: number;
+  completed: boolean;
+  earnedClips: ClaimEarnedClip[];
+  updatedAt: string;
+}
+
+export interface ClaimProgressInput {
+  /** @nullable */
+  currentTrackId?: string | null;
+  stage: string;
+  /** @minimum 0 */
+  confirmedFromSeconds: number;
+  /** @minimum 0 */
+  currentPositionSeconds: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  claimedPercent: number;
+  /** @minimum 0 */
+  clipsUnlocked: number;
+  completed: boolean;
+  earnedClips?: ClaimEarnedClip[];
+}
+
+export interface ClaimCorrectionInput {
+  /** @minLength 1 */
+  clientId: string;
+  /** @minimum 0 */
+  momentSeconds: number;
+  /** @nullable */
+  rejectedTrackId?: string | null;
+  chosenTrackId: string;
+  answerMethod: string;
+  /** @minimum 0 */
+  questionCount: number;
+}
+
+export interface ClaimMatchResponse {
+  recording: Recording;
+  bundle: TrackingBundle;
+  progress: ClaimProgress;
+  corrections: ClaimCorrection[];
 }
 

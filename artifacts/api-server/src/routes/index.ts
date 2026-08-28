@@ -20,6 +20,7 @@ import hlsProxyRouter from "./hlsProxy";
 import liveSchedulesRouter from "./liveSchedules";
 import clipIntroRouter from "./clipIntro";
 import matchesRouter from "./matches";
+import claimMatchRouter from "./claimMatch";
 
 const router: IRouter = Router();
 
@@ -44,5 +45,6 @@ router.use(hlsProxyRouter);
 router.use(liveSchedulesRouter);
 router.use(clipIntroRouter);
 router.use(matchesRouter);
+router.use(claimMatchRouter);
 
 export default router;

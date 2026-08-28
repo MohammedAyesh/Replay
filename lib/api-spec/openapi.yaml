@@ -33,6 +33,8 @@ tags:
     description: User profiles and follows
   - name: academies
     description: Soccer academies
+  - name: claimMatch
+    description: Claim Your Match tracking and player identity
 
 paths:
   /healthz:
@@ -240,6 +242,156 @@ paths:
                 $ref: "#/components/schemas/Recording"
         "404":
           description: Not found
+
+  /recordings/{id}/claim-match:
+    get:
+      operationId: getClaimMatch
+      tags: [claimMatch]
+      summary: Get a recording tracking bundle and the current player's claim progress
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Claim Your Match state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimMatchResponse"
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Recording or tracking bundle not found
+
+    patch:
+      operationId: updateClaimMatchProgress
+      tags: [claimMatch]
+      summary: Save claim progress for the current player
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimProgressInput"
+      responses:
+        "200":
+          description: Updated claim progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimProgress"
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Recording or tracking bundle not found
+
+  /recordings/{id}/claim-match/corrections:
+    post:
+      operationId: createClaimMatchCorrection
+      tags: [claimMatch]
+      summary: Record an identity correction, safely repeatable by client id
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimCorrectionInput"
+      responses:
+        "200":
+          description: Correction already recorded or recorded now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimCorrection"
+        "201":
+          description: Correction recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimCorrection"
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Recording or tracking bundle not found
+
+  /claim-match/corrections/{correctionId}:
+    delete:
+      operationId: undoClaimMatchCorrection
+      tags: [claimMatch]
+      summary: Undo a previously synced correction
+      security:
+        - clerkSession: []
+      parameters:
+        - name: correctionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Correction marked undone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimCorrection"
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Correction belongs to another user
+        "404":
+          description: Correction not found
+
+  /admin/recordings/{id}/tracking-bundle:
+    put:
+      operationId: replaceTrackingBundle
+      tags: [admin]
+      summary: Upload or replace a recording tracking bundle
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackingBundle"
+      responses:
+        "200":
+          description: Tracking bundle stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackingBundleSummary"
+        "400":
+          description: Invalid tracking bundle
+        "403":
+          description: Forbidden
+        "404":
+          description: Recording not found
 
   /academies:
     get:
@@ -1603,3 +1755,279 @@ components:
           type: number
         completionRate:
           type: number
+
+    TrackingBox:
+      type: object
+      required: [frame, x, y, w, h]
+      properties:
+        frame:
+          type: integer
+          minimum: 0
+        x:
+          type: number
+        y:
+          type: number
+        w:
+          type: number
+          minimum: 0
+        h:
+          type: number
+          minimum: 0
+
+    TrackingTrack:
+      type: object
+      required: [id, startFrame, endFrame, boxes]
+      properties:
+        id:
+          type: string
+        label:
+          type: ["string", "null"]
+        startFrame:
+          type: integer
+          minimum: 0
+        endFrame:
+          type: integer
+          minimum: 0
+        boxes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingBox"
+
+    TrackingCrossing:
+      type: object
+      required: [frame, trackId, otherTrackId]
+      properties:
+        frame:
+          type: integer
+          minimum: 0
+        trackId:
+          type: string
+        otherTrackId:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    InPlaySpan:
+      type: object
+      required: [start, end]
+      properties:
+        start:
+          type: number
+          minimum: 0
+        end:
+          type: number
+          minimum: 0
+
+    TrackingEvent:
+      type: object
+      required: [type, time]
+      properties:
+        type:
+          type: string
+        time:
+          type: number
+          minimum: 0
+        label:
+          type: ["string", "null"]
+        clipId:
+          type: ["string", "null"]
+
+    TrackingBundle:
+      type: object
+      required: [version, label, width, height, frameRate, frameCount, duration, matchOffset, tracks, crossings, inPlaySpans, events]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        label:
+          type: string
+        width:
+          type: integer
+          minimum: 1
+        height:
+          type: integer
+          minimum: 1
+        frameRate:
+          type: number
+          exclusiveMinimum: 0
+        frameCount:
+          type: integer
+          minimum: 1
+        duration:
+          type: number
+          exclusiveMinimum: 0
+        matchOffset:
+          type: number
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingTrack"
+        crossings:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingCrossing"
+        inPlaySpans:
+          type: array
+          items:
+            $ref: "#/components/schemas/InPlaySpan"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingEvent"
+
+    TrackingBundleSummary:
+      type: object
+      required: [recordingId, label, duration, trackCount, crossingCount, uploadedAt]
+      properties:
+        recordingId:
+          type: integer
+        label:
+          type: string
+        duration:
+          type: number
+        trackCount:
+          type: integer
+        crossingCount:
+          type: integer
+        uploadedAt:
+          type: string
+
+    ClaimEarnedClip:
+      type: object
+      required: [id, title, momentSeconds, kind, status]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        momentSeconds:
+          type: number
+        kind:
+          type: string
+        status:
+          type: string
+
+    ClaimCorrection:
+      type: object
+      required: [id, clientId, recordingId, momentSeconds, chosenTrackId, answerMethod, questionCount, undone, createdAt]
+      properties:
+        id:
+          type: integer
+        clientId:
+          type: string
+        recordingId:
+          type: integer
+        momentSeconds:
+          type: number
+        rejectedTrackId:
+          type: ["string", "null"]
+        chosenTrackId:
+          type: string
+        answerMethod:
+          type: string
+        questionCount:
+          type: integer
+        undone:
+          type: boolean
+        createdAt:
+          type: string
+
+    ClaimProgress:
+      type: object
+      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, clipsUnlocked, correctionCount, completed, earnedClips, updatedAt]
+      properties:
+        recordingId:
+          type: integer
+        currentTrackId:
+          type: ["string", "null"]
+        stage:
+          type: string
+        confirmedFromSeconds:
+          type: number
+        currentPositionSeconds:
+          type: number
+        claimedPercent:
+          type: number
+        clipsUnlocked:
+          type: integer
+        correctionCount:
+          type: integer
+        completed:
+          type: boolean
+        earnedClips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimEarnedClip"
+        updatedAt:
+          type: string
+
+    ClaimProgressInput:
+      type: object
+      required: [stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, clipsUnlocked, completed]
+      properties:
+        currentTrackId:
+          type: ["string", "null"]
+        stage:
+          type: string
+        confirmedFromSeconds:
+          type: number
+          minimum: 0
+        currentPositionSeconds:
+          type: number
+          minimum: 0
+        claimedPercent:
+          type: number
+          minimum: 0
+          maximum: 100
+        clipsUnlocked:
+          type: integer
+          minimum: 0
+        completed:
+          type: boolean
+        earnedClips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimEarnedClip"
+
+    ClaimCorrectionInput:
+      type: object
+      required: [clientId, momentSeconds, chosenTrackId, answerMethod, questionCount]
+      properties:
+        clientId:
+          type: string
+          minLength: 1
+        momentSeconds:
+          type: number
+          minimum: 0
+        rejectedTrackId:
+          type: ["string", "null"]
+        chosenTrackId:
+          type: string
+        answerMethod:
+          type: string
+        questionCount:
+          type: integer
+          minimum: 0
+
+    ClaimMatchResponse:
+      type: object
+      required: [recording, bundle, progress, corrections]
+      properties:
+        recording:
+          $ref: "#/components/schemas/Recording"
+        bundle:
+          $ref: "#/components/schemas/TrackingBundle"
+        progress:
+          $ref: "#/components/schemas/ClaimProgress"
+        corrections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimCorrection"
+
+  securitySchemes:
+    clerkSession:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

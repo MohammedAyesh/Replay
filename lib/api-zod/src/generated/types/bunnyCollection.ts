@@ -17,6 +17,4 @@ export interface BunnyCollection {
      * @nullable
      */
   id?: number | null;
-  /** Whether users can create clips from recordings in this field */
-  clipsVisible?: boolean;
 }

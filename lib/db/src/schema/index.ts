@@ -12,3 +12,4 @@ export * from "./liveSchedules";
 export * from "./clipSettings";
 export * from "./recordingSchedules";
 export * from "./matches";
+export * from "./claimMatch";

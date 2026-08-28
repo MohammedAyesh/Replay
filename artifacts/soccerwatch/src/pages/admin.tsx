@@ -112,6 +112,7 @@ interface AdminRecording {
   score: string | null;
   videoUrl: string;
   isVisible: boolean;
+  hasTrackingBundle?: boolean;
 }
 
 interface AdminBanner {
@@ -4159,6 +4160,73 @@ function CalendarMonth({
   );
 }
 
+function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
+  const [hasBundle, setHasBundle] = useState(Boolean(recording.hasTrackingBundle));
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const raw = await file.text();
+      const payload = JSON.parse(raw);
+      const result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }) as { trackCount: number; crossingCount: number };
+      setHasBundle(true);
+      setMessage(`Ready · ${result.trackCount} tracks · ${result.crossingCount} crossings`);
+    } catch (error) {
+      setMessage(error instanceof SyntaxError ? "That file is not valid JSON" : "Upload could not be saved");
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cn(
+          "h-2 w-2 rounded-full",
+          hasBundle ? "bg-emerald-400" : "bg-zinc-600",
+        )} />
+        <div className="min-w-0">
+          <p className="truncate text-xs font-medium text-zinc-200">
+            #{recording.id} · {recording.date} · {recording.timeSlot}
+          </p>
+          <p className="text-[10px] text-zinc-500">
+            {message || (hasBundle ? "Tracking bundle ready for Claim Your Match" : "No tracking bundle")}
+          </p>
+        </div>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        data-testid={`input-tracking-bundle-${recording.id}`}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void upload(file);
+        }}
+      />
+      <button
+        type="button"
+        className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+        disabled={busy}
+        data-testid={`button-upload-tracking-bundle-${recording.id}`}
+        onClick={() => inputRef.current?.click()}
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+        {busy ? "Saving…" : hasBundle ? "Replace JSON" : "Upload JSON"}
+      </button>
+    </div>
+  );
+}
+
 function FieldScheduleSection({
   fieldId, fieldName, recordings, schedules, onSchedulesChange,
 }: {
@@ -4233,6 +4301,14 @@ function FieldScheduleSection({
       </div>
 
       <div className="p-3 space-y-3 bg-zinc-950/40">
+        <div className="space-y-2">
+          <p className="text-zinc-500 text-[11px] uppercase tracking-wider font-semibold">
+            Claim Your Match bundles
+          </p>
+          {recordings.map((recording) => (
+            <TrackingBundleUpload key={recording.id} recording={recording} />
+          ))}
+        </div>
         <p className="text-zinc-500 text-[11px] uppercase tracking-wider font-semibold">
           Whitelisted dates
         </p>

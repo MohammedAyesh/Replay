@@ -85,7 +85,10 @@ app.use(
 // Secret enables req.signedCookies — the guest identity cookie is signed so it
 // cannot be forged by a client.
 app.use(cookieParser(COOKIE_SECRET));
-app.use(express.json());
+// Tracking bundles contain every-second-frame boxes and can be several MB for
+// a ten-minute clip. Keep the normal JSON API behavior while allowing the
+// authenticated admin upload to carry a real bundle.
+app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // Most /api responses are per-user and cookie-authenticated. Without an

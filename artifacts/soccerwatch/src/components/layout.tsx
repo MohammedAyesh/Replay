@@ -13,7 +13,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 
   const isLogin = location === "/";
-  const isImmersivePlayer = location.startsWith("/player/");
+  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim-match/");
   const isWatchFeed = location === "/home";
   const { isFullscreenVideo } = useFullscreenVideo();
 
@@ -42,7 +42,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => setLocale(locale === "ar" ? "en" : "ar")}
-              aria-label={t.language}
+              aria-label="Change language"
               className="flex shrink-0 items-center gap-1.5 rounded-[99px] border-0 bg-white/[0.07] px-3.5 py-2 text-sm font-semibold text-foreground"
             >
               <Globe className="h-4 w-4" aria-hidden="true" />
