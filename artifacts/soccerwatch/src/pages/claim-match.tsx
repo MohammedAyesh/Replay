@@ -140,14 +140,24 @@ function SkeletonPage() {
   );
 }
 
-function ErrorState({ onRetry }: { onRetry: () => void }) {
+function ErrorState({
+  onRetry,
+  title = "We lost the thread for a moment.",
+  message = "Your progress is safe. Try loading the match again and we’ll pick up from the last calm checkpoint.",
+  actionLabel = "Try again",
+}: {
+  onRetry: () => void;
+  title?: string;
+  message?: string;
+  actionLabel?: string;
+}) {
   return (
     <main className="claim-page claim-centered" data-testid="claim-error">
       <div className="claim-error-mark"><CircleHelp size={28} /></div>
       <p className="claim-eyebrow">Replay / Claim your match</p>
-      <h1>We lost the thread for a moment.</h1>
-      <p className="claim-muted">Your progress is safe. Try loading the match again and we’ll pick up from the last calm checkpoint.</p>
-      <button type="button" className="claim-button claim-button-primary" data-testid="button-retry-claim" onClick={onRetry}>Try again <RotateCcw size={16} /></button>
+      <h1>{title}</h1>
+      <p className="claim-muted">{message}</p>
+      <button type="button" className="claim-button claim-button-primary" data-testid="button-retry-claim" onClick={onRetry}>{actionLabel} <RotateCcw size={16} /></button>
     </main>
   );
 }
@@ -672,7 +682,16 @@ export default function ClaimMatchPage() {
   };
 
   if (authLoading) return <SkeletonPage />;
-  if (!user || isGuest) return <ErrorState onRetry={() => setLocation("/login")} />;
+  if (!user || isGuest) {
+    return (
+      <ErrorState
+        title="Sign in to claim your match."
+        message="Claim Your Match needs a player account so your answers and unlocked clips can be saved."
+        actionLabel="Sign in"
+        onRetry={() => setLocation("/sign-in")}
+      />
+    );
+  }
   if ((isDemo && demoQuery.isLoading) || (!isDemo && claimQuery.isLoading)) return <SkeletonPage />;
   if ((isDemo && demoQuery.isError) || (!isDemo && claimQuery.isError) || !hasData || !recording || !manifest || !serverProgress) {
     return <ErrorState onRetry={() => (isDemo ? demoQuery.refetch() : claimQuery.refetch())} />;
