@@ -28,6 +28,7 @@ import Academies from "@/pages/academies";
 import View from "@/pages/view";
 import Live from "@/pages/live";
 import ClaimMatch from "@/pages/claim-match";
+import IdentityBoard from "@/pages/identity-board";
 import { useAuth } from "@/lib/auth";
 import { ArrowLeft, Globe } from "lucide-react";
 
@@ -334,6 +335,7 @@ function AppRouter() {
         <Route path="/account" component={Account} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />
+        <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

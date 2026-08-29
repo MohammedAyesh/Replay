@@ -19,4 +19,6 @@ export interface TrackingSegmentManifest {
   /** @minimum 0 */
   endSeconds: number;
   objectPath: string;
+  /** Object path of the crop strips for the identity board, when the bundle carried them. */
+  spritesPath?: string;
 }

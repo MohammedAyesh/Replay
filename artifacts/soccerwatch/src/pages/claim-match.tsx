@@ -77,10 +77,46 @@ type Candidate = {
 };
 type ShirtTone = "light" | "dark" | "unreadable";
 
+/**
+ * Apply the identity board's map to one segment: every part of an identity
+ * that lives in this segment becomes one track under the identity's id, so a
+ * player follows one long track across segment boundaries. Tracks the board
+ * never touched are kept as they are. Crossings are re-pointed.
+ */
+function applyIdentities(
+  segment: TrackingSegment,
+  identities: ClaimMatchResponse["manifest"]["identities"] | undefined,
+): Pick<TrackingSegment, "tracks" | "crossings"> {
+  if (!identities || identities.length === 0) return segment;
+  const byId = new Map(segment.tracks.map((track) => [track.id, track] as const));
+  const rename = new Map<string, string>();
+  const merged: TrackingSegment["tracks"] = [];
+  const consumed = new Set<string>();
+  for (const identity of identities) {
+    const boxes: ClaimBox[] = [];
+    for (const part of identity.parts) {
+      const track = byId.get(part.trackId);
+      if (!track) continue;
+      consumed.add(track.id);
+      rename.set(track.id, identity.id);
+      for (const box of track.boxes) if (box.frame >= part.fromFrame && box.frame <= part.toFrame) boxes.push(box);
+    }
+    if (!boxes.length) continue;
+    boxes.sort((a, b) => a.frame - b.frame);
+    merged.push({ id: identity.id, label: identity.name ?? null, startFrame: boxes[0].frame, endFrame: boxes[boxes.length - 1].frame, boxes });
+  }
+  const tracks = [...merged, ...segment.tracks.filter((track) => !consumed.has(track.id))];
+  const crossings = segment.crossings
+    .map((crossing) => ({ ...crossing, trackId: rename.get(crossing.trackId) ?? crossing.trackId, otherTrackId: rename.get(crossing.otherTrackId) ?? crossing.otherTrackId }))
+    .filter((crossing) => crossing.trackId !== crossing.otherTrackId);
+  return { tracks, crossings };
+}
+
 function segmentAsBundle(
   manifest: ClaimMatchResponse["manifest"],
   segment: TrackingSegment,
 ) {
+  const applied = applyIdentities(segment, manifest.identities);
   return {
     version: manifest.version,
     label: manifest.label,
@@ -91,8 +127,8 @@ function segmentAsBundle(
     duration: manifest.duration,
     matchOffset: manifest.matchOffset,
     videoStartSeconds: manifest.videoStartSeconds ?? 0,
-    tracks: segment.tracks,
-    crossings: segment.crossings,
+    tracks: applied.tracks,
+    crossings: applied.crossings,
     inPlaySpans: segment.inPlaySpans,
     events: segment.events,
   };
@@ -488,11 +524,19 @@ export default function ClaimMatchPage() {
 
   const previousSegmentIndex = useRef<number | null>(null);
   useEffect(() => {
-    if (!manifest || !crossedSegmentBoundary(previousSegmentIndex.current, currentSegmentIndex)) {
-      if (manifest) previousSegmentIndex.current = currentSegmentIndex;
+    // wait for the new segment's bundle so an identity that continues into it
+    // can be recognised before anyone is asked anything
+    if (!manifest || !bundle) return;
+    if (!crossedSegmentBoundary(previousSegmentIndex.current, currentSegmentIndex)) {
+      previousSegmentIndex.current = currentSegmentIndex;
       return;
     }
     previousSegmentIndex.current = currentSegmentIndex;
+    // An identity from the board spans segments under one id: keep following.
+    if (currentTrackId && bundle.tracks.some((track) => track.id === currentTrackId)) {
+      setNotice("Still with you into the next section");
+      return;
+    }
     setCurrentTrackId(null);
     setNarrowing(null);
     setBoundaryNotice("Lost you at the ten-minute mark. Which one is you?");
@@ -500,7 +544,7 @@ export default function ClaimMatchPage() {
     setStage("picker");
     setNotice("Choose yourself again — this keeps segment boundaries honest");
     saveProgress("picker", null, progressValue, clipsUnlocked);
-  }, [clipsUnlocked, currentSegmentIndex, manifest, progressValue, saveProgress]);
+  }, [bundle, clipsUnlocked, currentSegmentIndex, currentTrackId, manifest, progressValue, saveProgress]);
 
   const goStage = useCallback((next: Stage, trackId = currentTrackId) => {
     const percentByStage: Record<Stage, number> = { find: 0, following: 19, still: 38, picker: 55, look: 73, done: 100 };
