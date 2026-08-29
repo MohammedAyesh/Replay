@@ -1,0 +1,32 @@
+ROLE: You are running a STRICT READ-ONLY DIAGNOSTIC. You are forbidden from making any changes of any kind in this phase.
+
+HARD CONSTRAINTS — NON-NEGOTIABLE:
+
+Do NOT edit, create, delete, move, or rename any file.
+Do NOT install packages, run codegen, modify lib/api-spec/openapi.yaml, touch the database, run migrations, or restart/reconfigure any workflow or server.
+Do NOT run any command that mutates state. Reading files and searching the codebase only.
+Your ONLY output is a written diagnostic report. If you believe a change is needed, describe it in the report — do not perform it.
+
+CONTEXT (why I need this diagnosis): We are about to build two frontend-only demo features, and I will approve the architecture separately before any code is written:
+
+Demo Player Portfolio — a public, read-only, scroll-driven portfolio page with a unique URL per player, replicating the attached "Replay Player Portfolio v3" design (screenshots + zip attached) at 95%+ visual fidelity, adapted to our existing dark theme (lime 
+#D4FF4F primary, teal 
+#2FD8C4, violet 
+#7B5CFF, void/near-black backgrounds). Active sections: Hero (name, age, gender, position, profile-image placeholder positioned exactly as in the design), Player History (teams/academies list), and a Video Vault showing the player's existing saved clips from My Clips. The "Game Stats" ledger and "AI Analysis" sections (including the radar chart) will be built visually but covered with a premium "Coming Soon / Demo" overlay.
+Profile Editor — an editing surface for the player covering ONLY the active fields: image upload placeholder, Name, Age, Gender, Position, Teams/Academies.
+
+ANALYZE AND REPORT ON EXACTLY THESE AREAS:
+
+Routing. The wouter route table in artifacts/soccerwatch/src/App.tsx: list every registered route, how basePath and AuthRedirectGuard behave for anonymous visitors, and confirm whether a new public route (e.g. /portfolio/:id or a slug-based URL) would be reachable logged-out without touching the guard. Note how the Layout wrapper in src/components/layout.tsx (440px frame, bottom tab bar, hideTabBar logic) would apply to a full-bleed scroll-story page, and what the minimal-touch way is for a new route to opt out of the header/tab bar.
+Profile data. The existing /players/:id page (src/pages/profile.tsx) and the useGetUserProfile → PublicProfile shape: list every field it exposes (name, age, position, etc.) and state explicitly which of my required fields are MISSING from the current user model — I expect at least gender, profile photo, and teams/academies history don't exist. For each missing field, state where it would live today (users table? onboarding data?) — but propose, don't change. Also report what /onboarding and /account currently collect and edit, since the Profile Editor should follow their patterns.
+Clips. How My Clips (src/pages/my-clips.tsx) fetches and renders saved clips: the exact hook(s) from @workspace/api-client-react (e.g. useListUserClips), the clip object shape (title, videoId/Bunny GUID, startTime/endTime, cropPath, aspectRatio, visibility, academyId, thumbnail source), how playback URLs are built (the hls-proxy / Bunny pattern), and whether a clip's visibility field could later drive a "share to portfolio" toggle. Confirm whether another user's clips are fetchable read-only today, or whether clips are strictly owner-scoped — this decides if the demo portfolio can show real clips for any player or only for the logged-in viewer.
+Theming & i18n. Where the theme tokens live (Tailwind config / index.css), which fonts are loaded (and whether a condensed display face like Rajdhani exists or would need adding — report only), and how src/i18n + RTL logical properties work, since all new strings must ship EN + AR.
+
+REQUIRED OUTPUT — A DIAGNOSTIC REPORT WITH:
+
+A. Current-state summary of the four areas above, with exact file paths.
+B. A proposed integration architecture: new routes, new page/component files (isolated in their own folders), which existing files would need touching and the precise minimal diff each would need — with the explicit goal that no backend, OpenAPI, codegen, or DB change is required for the demo, and no existing page or feature is altered.
+C. A gap list: every data field the design needs that the current model lacks, with your recommended demo-phase workaround (static/local data) vs. the future real implementation.
+D. Open questions you need me to answer before we write any code.
+
+Do not begin any implementation. End your turn after delivering the report.
