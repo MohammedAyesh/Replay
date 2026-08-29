@@ -400,6 +400,8 @@
 .claim-scorebug small { grid-column: 1 / -1; color: var(--claim-muted); font-size: 8px; text-align: right; }
 .claim-track-box { position: absolute; z-index: 2; box-sizing: border-box; border: 1px solid rgba(238,243,230,.52); background: rgba(238,243,230,.04); pointer-events: none; }
 .claim-track-box.is-active { border: 2px solid var(--claim-green); background: rgba(212,255,79,.12); box-shadow: 0 0 0 4px rgba(212,255,79,.06); }
+.candidate-thumb { flex: 0 0 auto; height: 64px; width: auto; border-radius: 6px; background: #0a1110; border: 1px solid rgba(255,255,255,.12); }
+.claim-track-box.is-coasting { border-style: dashed; opacity: .75; }
 .claim-track-box.is-overlap { border-color: var(--claim-orange); background: rgba(255,131,95,.11); }
 .claim-track-box span { position: absolute; top: -17px; left: -2px; padding: 2px 4px; color: #0e1513; background: var(--claim-green); font-family: var(--app-font-mono); font-size: 8px; white-space: nowrap; }
 .claim-track-box:not(.is-active) span { color: var(--claim-ink); background: rgba(10,17,16,.84); }

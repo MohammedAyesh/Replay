@@ -33,6 +33,8 @@ import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import {
   boxAtFrame,
   boxesOverlap,
+  continuationsFor,
+  positionAtFrame,
   crossingsForWindow,
   findHitTracks,
   frameToTrackingSeconds,
@@ -64,12 +66,14 @@ import {
 } from "@/lib/claim-match-segments";
 
 type Stage = "find" | "following" | "still" | "picker" | "look" | "done";
+const AUTO_LINK_MAX = 3;
 type Candidate = {
   id: string;
   label: string;
   box: ClaimBox;
   overlap?: boolean;
   distance?: number;
+  coasting?: boolean;
 };
 type ShirtTone = "light" | "dark" | "unreadable";
 
@@ -179,6 +183,47 @@ function captionForTrack(track: ClaimTrack, frame: number, bundle: ClaimBundle, 
   return `${movement}${direction}, ${shirt}`;
 }
 
+
+/**
+ * A cropped still of one candidate, drawn from the paused <video> at the
+ * candidate frame. drawImage works on a cross-origin video even when the
+ * canvas is tainted, and nothing reads the pixels back, so this is safe on
+ * the real Bunny stream. Redrawn whenever the video reports a new frame.
+ */
+function CandidateThumb({ videoRef, box, bundle, tick, size = 64 }: {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  box: ClaimBox;
+  bundle: ClaimBundle;
+  tick: number;
+  size?: number;
+}) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const video = videoRef.current;
+    const canvas = ref.current;
+    if (!video || !canvas || video.readyState < 2 || !video.videoWidth) return;
+    const sx = video.videoWidth / bundle.width;
+    const sy = video.videoHeight / bundle.height;
+    // a little context around the box, keeping the player's aspect
+    const padX = box.w * 0.35;
+    const padY = box.h * 0.12;
+    const x0 = Math.max(0, (box.x - padX) * sx);
+    const y0 = Math.max(0, (box.y - padY) * sy);
+    const w = Math.min(video.videoWidth - x0, (box.w + 2 * padX) * sx);
+    const h = Math.min(video.videoHeight - y0, (box.h + 2 * padY) * sy);
+    canvas.width = Math.round(size * (w / h));
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    try {
+      context.drawImage(video, x0, y0, w, h, 0, 0, canvas.width, canvas.height);
+    } catch {
+      // nothing to draw yet
+    }
+  }, [videoRef, box, bundle, tick, size]);
+  return <canvas ref={ref} className="candidate-thumb" aria-hidden="true" />;
+}
+
 function SkeletonPage() {
   return (
     <main className="claim-page" data-testid="claim-loading">
@@ -269,6 +314,9 @@ export default function ClaimMatchPage() {
   const [boundaryRepickPending, setBoundaryRepickPending] = useState(false);
   const [shirtToneByTrack, setShirtToneByTrack] = useState<Record<string, ShirtTone>>({});
   const [videoReadyTick, setVideoReadyTick] = useState(0);
+  const [continuationIds, setContinuationIds] = useState<string[] | null>(null);
+  const [autoLinks, setAutoLinks] = useState<Array<{ from: string; to: string; at: number }>>([]);
+  const autoLinkRunRef = useRef(0);
   const lastKnownPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   const response = isDemo ? demoQuery.data : claimQuery.data;
@@ -471,6 +519,8 @@ export default function ClaimMatchPage() {
     const track = bundle.tracks.find((item) => item.id === trackId);
     const box = track ? detectionAtFrame(track, trackingSecondsToFrame(confirmedAt, bundle)) : null;
     if (box) lastKnownPositionRef.current = boxCenter(box);
+    setContinuationIds(null);
+    autoLinkRunRef.current = 0;
     setCurrentTrackId(trackId);
     setConfirmedFromSeconds(confirmedAt);
     setNarrowing(null);
@@ -572,14 +622,14 @@ export default function ClaimMatchPage() {
   const candidates = useMemo<Candidate[]>(() => {
     if (!bundle) return [];
     const sourceTracks = candidateStage
-      ? bundle.tracks
+      ? (continuationIds ? bundle.tracks.filter((track) => continuationIds.includes(track.id)) : bundle.tracks)
       : bundle.tracks.filter((track) => track.id === currentTrackId);
     const anchorTrack = currentTrackId ? bundle.tracks.find((track) => track.id === currentTrackId) : null;
     const anchorBox = anchorTrack ? detectionAtFrame(anchorTrack, candidateFrame) : null;
     const anchor = lastKnownPositionRef.current || (anchorBox ? boxCenter(anchorBox) : { x: bundle.width / 2, y: bundle.height / 2 });
     const ranked = sourceTracks
       .map((track) => {
-        const box = detectionAtFrame(track, candidateFrame);
+        const box = candidateStage ? detectionAtFrame(track, candidateFrame) : positionAtFrame(track, candidateFrame, bundle);
         if (!box) return null;
         const center = boxCenter(box);
         return {
@@ -602,15 +652,19 @@ export default function ClaimMatchPage() {
         label: captionForTrack(track, candidateFrame, bundle, shirtToneByTrack[track.id] || "unreadable"),
         box,
         distance,
+        coasting: Boolean((box as { interpolated?: boolean }).interpolated),
       }))
       .map((candidate, index, all) => ({
         ...candidate,
         overlap: all.some((other) => other.id !== candidate.id && boxesOverlap(candidate.box, other.box)),
       }));
-  }, [bundle, candidateFrame, candidateStage, crossingOtherTrackId, currentTrackId, shirtToneByTrack]);
+  }, [bundle, candidateFrame, candidateStage, continuationIds, crossingOtherTrackId, currentTrackId, shirtToneByTrack]);
 
   const followedTrack = bundle?.tracks.find((track) => track.id === currentTrackId);
-  const followedBox = followedTrack ? detectionAtFrame(followedTrack, currentFrame) : null;
+  // Alive through internal gaps: the linker coasts a track through an occlusion,
+  // and a missing detection is not the end of the track.
+  const followedBox = followedTrack && bundle ? positionAtFrame(followedTrack, currentFrame, bundle) : null;
+  const followedEnded = Boolean(followedTrack && currentFrame > followedTrack.endFrame);
   const currentLabel = currentTrackId
     ? (bundle?.tracks.find((track) => track.id === currentTrackId)?.label || "player")
     : candidates[0]?.label || "player";
@@ -669,14 +723,36 @@ export default function ClaimMatchPage() {
     if (box) lastKnownPositionRef.current = boxCenter(box);
   }, [bundle, currentFrame, currentTrackId]);
 
+  /**
+   * The track under the player ended. Measured on the real hour, a third of
+   * track ends have exactly one track starting nearby within three seconds
+   * that a person could physically have reached - those are stitched
+   * silently (at most AUTO_LINK_MAX in a row, each undoable). Several
+   * candidates is a question with only those candidates. None is the picker.
+   */
   useEffect(() => {
-    if (stage !== "following" || !bundle || !currentTrackId || followedBox || currentTime <= confirmedFromSeconds + 0.05) return;
+    if (stage !== "following" || !bundle || !followedTrack || !followedEnded || currentTime <= confirmedFromSeconds + 0.05) return;
+    const next = continuationsFor(bundle, followedTrack);
+    if (next.length === 1 && autoLinkRunRef.current < AUTO_LINK_MAX) {
+      autoLinkRunRef.current += 1;
+      const chosen = next[0].track;
+      setCurrentTrackId(chosen.id);
+      setAutoLinks((list) => [...list, { from: followedTrack.id, to: chosen.id, at: currentTime }]);
+      setNotice(`Followed you through a crossing (${next[0].gapSeconds.toFixed(1)} s) · undo if that's wrong`);
+      setUndoExpiresAt(Date.now() + 10_000);
+      saveProgress("following", chosen.id, progressValue, clipsUnlocked, confirmedFromSeconds, currentTime);
+      return;
+    }
+    autoLinkRunRef.current = 0;
+    setContinuationIds(next.length > 1 ? next.map((item) => item.track.id) : null);
     setStage("picker");
     setCurrentTrackId(null);
     setNarrowing(null);
-    setNotice("Tracking ended here — choose yourself in the next clear frame");
+    setNotice(next.length > 1
+      ? `Lost you in a crossing — which of these ${next.length} is you?`
+      : "Tracking ended here — choose yourself in the next clear frame");
     saveProgress("picker", null, Math.max(progressValue, 55), clipsUnlocked, confirmedFromSeconds, currentTime);
-  }, [bundle, clipsUnlocked, confirmedFromSeconds, currentTime, currentTrackId, followedBox, progressValue, saveProgress, stage]);
+  }, [bundle, clipsUnlocked, confirmedFromSeconds, currentTime, followedEnded, followedTrack, progressValue, saveProgress, stage]);
 
   const lastSavedPosition = useRef(0);
   useEffect(() => {
@@ -849,6 +925,19 @@ export default function ClaimMatchPage() {
   };
 
   const undo = () => {
+    const lastAuto = autoLinks[autoLinks.length - 1];
+    if (lastAuto && undoExpiresAt && Date.now() < undoExpiresAt && (!activeCorrection || activeCorrection.id > 0 || activeCorrection.createdAt < new Date(Date.now() - 10_000).toISOString())) {
+      // undo an automatic stitch: back to the track that ended, at the moment it ended,
+      // and ask instead of guessing
+      setAutoLinks((list) => list.slice(0, -1));
+      setUndoExpiresAt(0);
+      autoLinkRunRef.current = AUTO_LINK_MAX; // no re-stitch straight after an undo
+      seekTracking(lastAuto.at);
+      setCurrentTrackId(null);
+      setStage("picker");
+      setNotice("Stitch undone — choose yourself here");
+      return;
+    }
     if (!activeCorrection || !undoExpiresAt || Date.now() >= undoExpiresAt) {
       setNotice("Nothing to undo yet");
       return;
@@ -1017,7 +1106,7 @@ export default function ClaimMatchPage() {
             <div className="candidate-list">
               {candidates.map((candidate, index) => (
                 <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-candidate-${index + 1}`} onClick={() => onCorrection(candidate)}>
-                  <span className="candidate-number">{index + 1}</span><span className="candidate-avatar">{initials(candidate.label)}</span><span className="candidate-copy"><b>Detection {index + 1}</b><small>{candidate.label}{candidate.overlap ? " · overlap" : ""}</small></span><ChevronRight size={16} />
+                  <span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>Detection {index + 1}</b><small>{candidate.label}{candidate.overlap ? " · overlap" : ""}</small></span><ChevronRight size={16} />
                 </button>
               ))}
             </div>
@@ -1034,7 +1123,7 @@ export default function ClaimMatchPage() {
             <p>We waited for real boxes to separate. Pick the tracked player now — no guess is recorded until a clean frame exists.</p>
             <div className="overlap-callout"><div className="prompt-icon"><ScanSearch size={17} /></div><div><b>Real overlap detected.</b><span>The video is paused on the first later frame where both tracks are separated.</span></div></div>
             <div className="look-controls"><button type="button" className={`look-control ${slow ? "selected" : ""}`} data-testid="button-look-slow" onClick={() => setSlow((value) => !value)}><Gauge size={15} /> Slow motion <kbd>S</kbd></button><button type="button" className="look-control" data-testid="button-look-back" onClick={() => seekTracking(currentTime - 5)}><RotateCcw size={15} /> 5 sec back</button></div>
-            <div className="candidate-list">{candidates.map((candidate, index) => <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-overlap-candidate-${index + 1}`} onClick={() => onCorrection(candidate, "overlap-resolved", true)}><span className="candidate-number">{index + 1}</span><span className="candidate-copy"><b>{candidate.id === currentTrackId ? "Follow this track" : "Crossing track"}</b><small>{candidate.label}</small></span><ChevronRight size={16} /></button>)}</div>
+            <div className="candidate-list">{candidates.map((candidate, index) => <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-overlap-candidate-${index + 1}`} onClick={() => onCorrection(candidate, "overlap-resolved", true)}><span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>{candidate.id === currentTrackId ? "Follow this track" : "Crossing track"}</b><small>{candidate.label}</small></span><ChevronRight size={16} /></button>)}</div>
             <button type="button" className="claim-text-button" data-testid="button-skip-overlap" onClick={() => currentTrackId && beginFollowing(currentTrackId)}>Skip this moment — keep the confirmed track <FastForward size={14} /></button>
           </div>
         )}
@@ -1050,8 +1139,8 @@ export default function ClaimMatchPage() {
         )}
 
         <div className="claim-resume-card" data-testid="card-resume-claim"><div className="resume-icon"><Play size={15} fill="currentColor" /></div><div><span className="resume-label">RESUME LATER</span><b>Your place is saved</b><span>Come back anytime — no need to start over.</span></div><LockKeyhole size={15} className="resume-lock" /></div>
-        {allCorrections.length > 0 && stage !== "done" && (
-          <div className="claim-correction-status" data-testid="status-correction"><span><Check size={13} /> Correction saved</span>{activeCorrection && <button type="button" data-testid="button-undo-correction" onClick={undo}>Undo</button>}</div>
+        {(allCorrections.length > 0 || autoLinks.length > 0) && stage !== "done" && (
+          <div className="claim-correction-status" data-testid="status-correction"><span><Check size={13} /> {autoLinks.length > 0 && undoExpiresAt ? "Stitched through a crossing" : "Correction saved"}</span>{(activeCorrection || (autoLinks.length > 0 && undoExpiresAt > 0)) && <button type="button" data-testid="button-undo-correction" onClick={undo}>Undo</button>}</div>
         )}
     </>
   );
