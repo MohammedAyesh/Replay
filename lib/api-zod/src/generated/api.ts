@@ -277,8 +277,18 @@ export const GetClaimMatchResponse = zod.object({
   "endFrame": zod.number().min(getClaimMatchResponseManifestSegmentsItemEndFrameMin),
   "startSeconds": zod.number().min(getClaimMatchResponseManifestSegmentsItemStartSecondsMin),
   "endSeconds": zod.number().min(getClaimMatchResponseManifestSegmentsItemEndSecondsMin),
-  "objectPath": zod.string()
+  "objectPath": zod.string(),
+  "spritesPath": zod.string().optional()
+})),
+  "identities": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string().nullish(),
+  "parts": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(0),
+  "toFrame": zod.number().min(0)
 }))
+})).optional()
 }),
   "progress": zod.object({
   "recordingId": zod.number(),

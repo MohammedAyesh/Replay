@@ -78,7 +78,22 @@ export type TrackingManifest = {
     startSeconds: number;
     endSeconds: number;
     objectPath: string;
+    /** crop strips for the identity board, when the bundle carried them */
+    spritesPath?: string;
   }>;
+  /**
+   * The identity board's result: pieces of tracks that are one person.
+   * Track ids are segment-namespaced ("s2:t41"); frames are absolute. Optional,
+   * set by PUT /admin/recordings/:id/identities. The claim page merges tracks
+   * from it at load time.
+   */
+  identities?: TrackingIdentity[];
+};
+
+export type TrackingIdentity = {
+  id: string;
+  name?: string | null;
+  parts: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
 };
 
 export const recordingTrackingBundlesTable = pgTable(

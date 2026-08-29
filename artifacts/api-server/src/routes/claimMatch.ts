@@ -3,6 +3,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import multer from "multer";
 import { unzipSync, gunzipSync, strFromU8 } from "fflate";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import {
   CreateClaimMatchCorrectionBody,
   GetClaimMatchResponse,
@@ -30,6 +31,19 @@ import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { readClaimSegment, readCompressedClaimSegment, writeClaimSegment } from "../lib/claimMatchStorage";
 
 const router: IRouter = Router();
+
+/** identity board result: pieces of tracks that are one person */
+const IdentityMapBody = z.object({
+  identities: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().nullish(),
+    parts: z.array(z.object({
+      trackId: z.string().min(1),
+      fromFrame: z.number().int().min(0),
+      toFrame: z.number().int().min(0),
+    })).min(1),
+  })).max(200),
+});
 const bundleUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 75 * 1024 * 1024 },
@@ -286,6 +300,13 @@ function namespaceSegment(segment: TrackingSegmentPayload): TrackingSegmentPaylo
 type UploadBundle = {
   manifest: Omit<TrackingManifest, "segments"> & { segments: Array<TrackingManifest["segments"][number] & { file?: string; path?: string }> };
   segments: TrackingSegmentPayload[];
+  /**
+   * Optional per-segment crop strips for the identity board:
+   * { trackId: [{ f: frame, j: base64 jpeg }, ...] }, read from
+   * sprites/<segment name>.json in the zip. Stored as their own object so the
+   * claim page never downloads them.
+   */
+  sprites?: Record<number, unknown>;
 };
 
 function readJsonEntry(entries: Record<string, Uint8Array>, names: string[]): unknown | null {
@@ -403,6 +424,7 @@ export function parseZipBundle(buffer: Buffer): UploadBundle | null {
   const rawSegments = Array.isArray(rawManifest.segments) ? rawManifest.segments : [];
   if (rawSegments.length === 0) return null;
   const segments: TrackingSegmentPayload[] = [];
+  const sprites: Record<number, unknown> = {};
   for (let index = 0; index < rawSegments.length; index++) {
     const entry = asRecord(rawSegments[index]);
     const startFrame = Math.max(0, Math.round(firstNumber(entry.startFrame, entry.start_frame) ?? 0));
@@ -424,8 +446,21 @@ export function parseZipBundle(buffer: Buffer): UploadBundle | null {
     const segment = parseSegment(segmentSource, index, name, startFrame, endFrame, startSeconds, endSeconds);
     if (!segment) return null;
     segments.push(namespaceSegment(segment));
+    const spriteEntry = [`sprites/${name}.json`, `sprites/segment-${String(index + 1).padStart(2, "0")}.json`].find((candidate) => entries[candidate]);
+    if (spriteEntry) {
+      try {
+        const raw = JSON.parse(strFromU8(entries[spriteEntry])) as Record<string, unknown>;
+        const prefix = `s${index}:`;
+        const namespaced: Record<string, unknown> = {};
+        for (const [trackId, strips] of Object.entries(raw)) namespaced[trackId.startsWith(prefix) ? trackId : `${prefix}${trackId}`] = strips;
+        sprites[index] = namespaced;
+      } catch {
+        // a broken sprite file must not fail the bundle
+      }
+    }
   }
   return {
+    sprites,
     manifest: {
       version: Math.max(1, Math.round(firstNumber(rawManifest.version) ?? 1)),
       label: firstString(rawManifest.label, rawManifest.name) ?? "Match tracking",
@@ -912,9 +947,15 @@ async function storeUploadBundle(recordingId: number, adminId: number, upload: U
     objectPath: string;
     compressedBytes: number;
   }> = [];
+  const spritePaths: Record<number, string> = {};
   for (const segment of upload.segments) {
     const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}.json.gz`, segment);
     storedSegments.push({ segment, ...stored });
+    const strips = upload.sprites?.[segment.segmentIndex];
+    if (strips) {
+      const storedSprites = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}-sprites.json.gz`, strips);
+      spritePaths[segment.segmentIndex] = storedSprites.objectPath;
+    }
   }
   const manifest: TrackingManifest = {
     ...upload.manifest,
@@ -928,6 +969,7 @@ async function storeUploadBundle(recordingId: number, adminId: number, upload: U
       startSeconds: segment.startSeconds,
       endSeconds: segment.endSeconds,
       objectPath,
+      ...(spritePaths[segment.segmentIndex] ? { spritesPath: spritePaths[segment.segmentIndex] } : {}),
     })),
   };
   const [saved] = await db.transaction(async (tx) => {
@@ -1055,6 +1097,80 @@ router.put("/admin/recordings/:id/tracking-bundle", bundleUpload.single("bundle"
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Could not store tracking bundle" });
   }
+});
+
+/**
+ * GET /recordings/:id/claim-match/sprites/:segmentIndex
+ * Crop strips for the identity board, one object per segment. Only present
+ * when the bundle zip carried sprites/<segment>.json.
+ */
+router.get("/recordings/:id/claim-match/sprites/:segmentIndex", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+  const params = GetClaimMatchSegmentParams.safeParse({
+    id: recordingIdFromRequest(req.params.id),
+    segmentIndex: Number.parseInt(Array.isArray(req.params.segmentIndex) ? req.params.segmentIndex[0] : req.params.segmentIndex, 10),
+  });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const row = await getRecordingBundle(params.data.id);
+  const manifestSegment = row?.bundle?.manifest?.segments.find((segment) => segment.index === params.data.segmentIndex);
+  const spritesPath = (manifestSegment as { spritesPath?: string } | undefined)?.spritesPath;
+  if (!spritesPath) {
+    res.status(404).json({ error: "No sprites for this segment" });
+    return;
+  }
+  try {
+    const compressed = await readCompressedClaimSegment(spritesPath);
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Encoding", "gzip");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("Content-Length", String(compressed.byteLength));
+    res.status(200).send(compressed);
+  } catch {
+    res.status(404).json({ error: "Sprites not found" });
+  }
+});
+
+/**
+ * PUT /admin/recordings/:id/identities
+ * The identity board's result: which track pieces are one person. Stored on
+ * the manifest (jsonb, no migration); the claim page merges tracks from it at
+ * load time, so identity survives segment boundaries and re-uploads of the
+ * same bundle keep it as long as track ids are stable.
+ */
+router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const recordingId = parseId(req.params.id);
+  if (!recordingId) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const body = IdentityMapBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const row = await getRecordingBundle(recordingId);
+  if (!row?.bundle?.manifest) {
+    res.status(404).json({ error: "Recording or tracking bundle not found" });
+    return;
+  }
+  const manifest: TrackingManifest = { ...row.bundle.manifest, identities: body.data.identities };
+  await db
+    .update(recordingTrackingBundlesTable)
+    .set({ manifest, updatedAt: new Date() })
+    .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+  res.json({ recordingId, identities: body.data.identities.length });
 });
 
 export default router;

@@ -553,6 +553,23 @@ export interface TrackingSegmentManifest {
   /** @minimum 0 */
   endSeconds: number;
   objectPath: string;
+  /** Object path of the crop strips for the identity board, when the bundle carried them. */
+  spritesPath?: string;
+}
+
+export interface TrackingIdentityPart {
+  trackId: string;
+  /** @minimum 0 */
+  fromFrame: number;
+  /** @minimum 0 */
+  toFrame: number;
+}
+
+export interface TrackingIdentity {
+  id: string;
+  /** @nullable */
+  name?: string | null;
+  parts: TrackingIdentityPart[];
 }
 
 export interface TrackingManifest {
@@ -575,6 +592,8 @@ export interface TrackingManifest {
   /** @minimum 1 */
   segmentCount: number;
   segments: TrackingSegmentManifest[];
+  /** The identity board's result - pieces of tracks that are one person. Optional. */
+  identities?: TrackingIdentity[];
 }
 
 /**

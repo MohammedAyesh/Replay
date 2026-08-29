@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { TrackingSegmentManifest } from './trackingSegmentManifest';
+import type { TrackingIdentity } from './trackingIdentity';
 
 export interface TrackingManifest {
   /** @minimum 1 */
@@ -27,4 +28,6 @@ export interface TrackingManifest {
   /** @minimum 1 */
   segmentCount: number;
   segments: TrackingSegmentManifest[];
+  /** The identity board's result - pieces of tracks that are one person. Optional. */
+  identities?: TrackingIdentity[];
 }

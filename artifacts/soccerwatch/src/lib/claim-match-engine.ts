@@ -207,13 +207,111 @@ export function skipToClearPassage(
   return Math.min(duration, next?.start ?? target);
 }
 
+/**
+ * Nearest box to a frame. Boxes are exported sorted by frame, so this is a
+ * binary search; a track with 300+ boxes is looked up in ~9 steps instead of a
+ * full scan, which matters now that the overlay updates every tracking frame.
+ */
 export function boxAtFrame(track: ClaimTrack, frame: number): ClaimBox | null {
-  if (track.boxes.length === 0 || frame < track.startFrame || frame > track.endFrame) return null;
-  let nearest = track.boxes[0];
-  for (const box of track.boxes) {
-    if (Math.abs(box.frame - frame) < Math.abs(nearest.frame - frame)) nearest = box;
+  const boxes = track.boxes;
+  if (boxes.length === 0 || frame < track.startFrame || frame > track.endFrame) return null;
+  let lo = 0;
+  let hi = boxes.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (boxes[mid].frame < frame) lo = mid + 1;
+    else hi = mid;
   }
-  return nearest;
+  const after = boxes[lo];
+  const before = lo > 0 ? boxes[lo - 1] : null;
+  if (before && Math.abs(before.frame - frame) < Math.abs(after.frame - frame)) return before;
+  return after;
+}
+
+/**
+ * Where the track is at a frame, even inside an internal gap: the linker keeps a
+ * track alive through an occlusion (no detection for a few seconds) and the
+ * page must not treat that as "tracking ended". Returns the real box when one
+ * is within `tolerance` frames, otherwise a box interpolated between the
+ * neighbouring detections when the gap is at most `maxGapSeconds`, flagged
+ * `interpolated`. Null only outside the track's life or across a longer gap.
+ */
+export function positionAtFrame(
+  track: ClaimTrack,
+  frame: number,
+  bundle: ClaimBundle,
+  tolerance = 2,
+  maxGapSeconds = 10,
+): (ClaimBox & { interpolated?: boolean }) | null {
+  const boxes = track.boxes;
+  if (boxes.length === 0 || frame < track.startFrame || frame > track.endFrame) return null;
+  let lo = 0;
+  let hi = boxes.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (boxes[mid].frame < frame) lo = mid + 1;
+    else hi = mid;
+  }
+  const after = boxes[lo];
+  const before = lo > 0 ? boxes[lo - 1] : after;
+  const nearest = Math.abs(before.frame - frame) <= Math.abs(after.frame - frame) ? before : after;
+  if (Math.abs(nearest.frame - frame) <= tolerance) return nearest;
+  if (after.frame <= before.frame) return null;
+  if ((after.frame - before.frame) / bundle.frameRate > maxGapSeconds) return null;
+  const t = (frame - before.frame) / (after.frame - before.frame);
+  return {
+    frame,
+    x: before.x + (after.x - before.x) * t,
+    y: before.y + (after.y - before.y) * t,
+    w: before.w + (after.w - before.w) * t,
+    h: before.h + (after.h - before.h) * t,
+    interpolated: true,
+  };
+}
+
+/** metres per pixel at a box, taking a standing player as 1.75 m */
+export function metresPerPixel(box: ClaimBox): number {
+  return 1.75 / Math.max(box.h, 1);
+}
+
+export interface Continuation {
+  track: ClaimTrack;
+  gapSeconds: number;
+  distanceMetres: number;
+  impliedSpeed: number;
+}
+
+/**
+ * Tracks that could be the same player carrying on after `track` ends: they
+ * start after it ends (so they never coexist - a hard constraint), within
+ * `windowSeconds`, and within what a person can cover at `maxSpeed` m/s.
+ * Sorted nearest first. Exactly one result is a silent stitch; several is a
+ * question for the player; none means the picker.
+ */
+export function continuationsFor(
+  bundle: ClaimBundle,
+  track: ClaimTrack,
+  windowSeconds = 3,
+  maxSpeed = 8,
+): Continuation[] {
+  const last = track.boxes[track.boxes.length - 1];
+  if (!last) return [];
+  const cx = last.x + last.w / 2;
+  const cy = last.y + last.h;
+  const mpp = metresPerPixel(last);
+  const out: Continuation[] = [];
+  for (const other of bundle.tracks) {
+    if (other.id === track.id || other.startFrame <= track.endFrame) continue;
+    const gapSeconds = (other.startFrame - track.endFrame) / bundle.frameRate;
+    if (gapSeconds > windowSeconds) continue;
+    const first = other.boxes[0];
+    if (!first) continue;
+    const distanceMetres = Math.hypot(first.x + first.w / 2 - cx, first.y + first.h - cy) * mpp;
+    const impliedSpeed = distanceMetres / Math.max(gapSeconds, 0.05);
+    if (impliedSpeed > maxSpeed) continue;
+    out.push({ track: other, gapSeconds, distanceMetres, impliedSpeed });
+  }
+  return out.sort((a, b) => a.distanceMetres - b.distanceMetres);
 }
 
 export function boxContainsPoint(box: ClaimBox, x: number, y: number): boolean {

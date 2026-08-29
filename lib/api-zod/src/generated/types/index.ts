@@ -53,6 +53,8 @@ export * from './trackingBundle';
 export * from './trackingBundleSummary';
 export * from './trackingCrossing';
 export * from './trackingEvent';
+export * from './trackingIdentity';
+export * from './trackingIdentityPart';
 export * from './trackingManifest';
 export * from './trackingSegment';
 export * from './trackingSegmentManifest';

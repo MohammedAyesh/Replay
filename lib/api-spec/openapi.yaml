@@ -1945,6 +1945,36 @@ components:
           minimum: 0
         objectPath:
           type: string
+        spritesPath:
+          type: string
+          description: Object path of the crop strips for the identity board, when the bundle carried them.
+
+    TrackingIdentityPart:
+      type: object
+      required: [trackId, fromFrame, toFrame]
+      properties:
+        trackId:
+          type: string
+        fromFrame:
+          type: integer
+          minimum: 0
+        toFrame:
+          type: integer
+          minimum: 0
+
+    TrackingIdentity:
+      type: object
+      required: [id, parts]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          nullable: true
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingIdentityPart"
 
     TrackingManifest:
       type: object
@@ -1992,6 +2022,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TrackingSegmentManifest"
+        identities:
+          type: array
+          description: The identity board's result - pieces of tracks that are one person. Optional.
+          items:
+            $ref: "#/components/schemas/TrackingIdentity"
 
     TrackingBundle:
       type: object
