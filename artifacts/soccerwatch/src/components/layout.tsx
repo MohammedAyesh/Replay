@@ -24,7 +24,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div
       className={cn(
-        "mx-auto w-full max-w-[440px] bg-background relative flex flex-col shadow-2xl rp-glow",
+        "app-shell mx-auto w-full max-w-[440px] bg-background relative flex flex-col shadow-2xl rp-glow",
         (isLogin || isAuthPage) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
       )}
     >

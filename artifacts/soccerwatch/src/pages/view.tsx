@@ -10,9 +10,9 @@ export default function View() {
   const [section, setSection] = useState<Section>("academies");
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
+    <div className="view-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
       {/* Header — not sticky */}
-      <div className="shrink-0 px-4 pb-3 pt-4">
+      <div className="view-page-header shrink-0 px-4 pb-3 pt-4">
         <h1 className="mb-3 text-2xl font-bold text-foreground">
           {locale === "ar" ? "استعراض" : "Browse"}
         </h1>

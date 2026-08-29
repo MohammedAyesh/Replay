@@ -231,7 +231,7 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
   );
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
+    <div className="academies-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
       <motion.div initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } }}
         className={embedded ? "shrink-0 bg-background px-4 pb-3 pt-4" : "sticky top-0 z-10 shrink-0 bg-background px-4 pb-3 pt-4"}
@@ -250,7 +250,7 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
         </div>
       </motion.div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 space-y-4">
+      <div className="academies-page-scroll min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 space-y-4">
         {isLoading ? (
           <>{[1, 2, 3].map((i) => <div key={i} className="h-[150px] animate-pulse rounded-[22px] border border-border bg-card" />)}</>
         ) : filtered.length === 0 ? (

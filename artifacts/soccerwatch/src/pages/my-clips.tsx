@@ -842,7 +842,7 @@ export default function MyClips() {
   const createdCount = userClips?.length ?? 0;
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
+      <div className="my-clips-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
@@ -891,7 +891,7 @@ export default function MyClips() {
         </div>
       </motion.div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-28">
+      <div className="my-clips-scroll min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-28">
         <AnimatePresence mode="wait">
           {tab === "saved" ? (
             <motion.div

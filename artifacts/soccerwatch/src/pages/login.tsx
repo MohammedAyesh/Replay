@@ -324,7 +324,7 @@ export default function Login() {
         WebkitFontSmoothing: "antialiased",
       }}
     >
-      <div style={{ maxWidth: 440, margin: "0 auto", position: "relative" }}>
+      <div className="login-shell" style={{ maxWidth: 440, margin: "0 auto", position: "relative" }}>
 
         {/* ── STICKY HEADER ───────────────────────────────────────────────── */}
         <header
@@ -390,6 +390,7 @@ export default function Login() {
 
         {/* ── HERO ────────────────────────────────────────────────────────── */}
         <section
+          className="login-hero"
           style={{
             position: "relative",
             minHeight: "100vh",
@@ -429,7 +430,7 @@ export default function Login() {
           />
 
           {/* Hero content */}
-          <div style={{ position: "relative", padding: "0 22px 30px" }}>
+          <div className="login-hero-content" style={{ position: "relative", padding: "0 22px 30px" }}>
             <motion.h1
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
@@ -592,7 +593,7 @@ export default function Login() {
         `}</style>
 
         {/* ── MAIN CONTENT ─────────────────────────────────────────────── */}
-        <main style={{ padding: "0 20px 40px", display: "flex", flexDirection: "column" }}>
+        <main className="login-main-content" style={{ padding: "0 20px 40px", display: "flex", flexDirection: "column" }}>
 
           {/* ── HOW IT WORKS ──────────────────────────────────────────── */}
           <section style={{ marginTop: 52 }}>

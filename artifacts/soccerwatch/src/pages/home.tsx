@@ -134,8 +134,8 @@ export default function Home() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
-      <div className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-4">
+    <div className="home-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
+      <div className="home-page-scroll min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-4">
         <div className="mb-4 flex items-center gap-3 px-1">
           <h1 className="text-sm font-semibold text-foreground">
             {locale === "ar" ? "الأخبار والتحديثات" : "News & updates"}
@@ -143,7 +143,7 @@ export default function Home() {
           <div className="h-px flex-1 bg-border" />
         </div>
 
-        <div className="flex flex-col gap-3">
+        <div className="home-news-grid flex flex-col gap-3">
           {newsPosts.map((post, index) => (
             <NewsCard
               key={post.id}

@@ -4912,15 +4912,15 @@ export default function Admin() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-background min-h-0 overflow-hidden">
+    <div className="admin-page flex-1 flex flex-col bg-background min-h-0 overflow-hidden">
       {/* Header */}
-      <div className="pt-safe px-4 pt-5 pb-3 bg-zinc-950 border-b border-zinc-800/60 flex-shrink-0">
+      <div className="admin-page-header pt-safe px-4 pt-5 pb-3 bg-zinc-950 border-b border-zinc-800/60 flex-shrink-0">
         <p className="text-zinc-500 text-xs uppercase tracking-widest font-semibold mb-0.5">Admin Console</p>
         <h1 className="font-display font-black text-3xl text-white uppercase tracking-tight">REPLAY</h1>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-zinc-800/60 bg-zinc-950 flex-shrink-0 px-2 overflow-x-auto no-scrollbar">
+      <div className="admin-page-tabs flex border-b border-zinc-800/60 bg-zinc-950 flex-shrink-0 px-2 overflow-x-auto no-scrollbar">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -4939,7 +4939,7 @@ export default function Admin() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-24">
+      <div className="admin-page-content flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-24">
         {tab === "clips" && <ClipsTab />}
         {tab === "accounts" && <AccountsTab />}
         {tab === "fields" && <FieldsTab />}

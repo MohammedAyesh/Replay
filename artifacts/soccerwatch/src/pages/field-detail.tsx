@@ -424,11 +424,11 @@ export default function FieldDetail() {
   const selectedVideos = selectedDate ? (videosByDate.get(selectedDate) ?? []) : [];
 
   return (
-    <div className="flex-1 bg-background flex flex-col h-full overflow-hidden">
+    <div className="field-detail-page flex-1 bg-background flex flex-col h-full overflow-hidden">
       <motion.header
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } }}
-        className="pt-safe px-4 py-4 bg-background sticky top-0 z-10 flex items-center gap-3"
+        className="field-detail-header pt-safe px-4 py-4 bg-background sticky top-0 z-10 flex items-center gap-3"
       >
         <button onClick={() => window.history.back()} className="w-10 h-10 flex items-center justify-center -ms-2 rounded-full hover:bg-muted text-foreground">
           <ChevronLeft className="w-6 h-6 rtl:hidden" />
@@ -450,7 +450,7 @@ export default function FieldDetail() {
       <motion.div
         initial={{ opacity: 0, scale: 1.04 }}
         animate={{ opacity: 1, scale: 1, transition: { duration: 0.5, ease: "easeOut" as const } }}
-        className="relative h-36 overflow-hidden shrink-0"
+        className="field-detail-hero relative h-36 overflow-hidden shrink-0"
       >
         {collection?.previewImageUrl ? (
           <img src={collection.previewImageUrl} alt={collection.name}
@@ -465,7 +465,7 @@ export default function FieldDetail() {
 
       {/* Tab strip — only rendered when a live match is active on camera1 */}
       {varEnabled && (
-        <div className="flex border-b border-border bg-card shrink-0">
+        <div className="field-detail-tabs flex border-b border-border bg-card shrink-0">
           {(["recordings", "var"] as const).map((tab) => (
             <button
               key={tab}
@@ -488,7 +488,7 @@ export default function FieldDetail() {
 
       {/* ── Recordings tab (default / always shown when no live match) ──────── */}
       {(!varEnabled || currentTab === "recordings") && (
-        <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
+        <div className="field-detail-recordings flex-1 overflow-y-auto no-scrollbar pb-24">
           {videosLoading ? (
             <div className="p-4 space-y-3">
               <div className="h-52 bg-muted rounded-2xl animate-pulse" />
@@ -580,7 +580,7 @@ export default function FieldDetail() {
 
       {/* ── VAR tab ──────────────────────────────────────────────────────────── */}
       {varEnabled && currentTab === "var" && (
-        <div className="flex-1 overflow-y-auto no-scrollbar pb-24 px-4 py-4 space-y-4">
+        <div className="field-detail-var flex-1 overflow-y-auto no-scrollbar pb-24 px-4 py-4 space-y-4">
           {/* Match title + LIVE badge */}
           {matchData?.match && (
             <div className="flex items-center gap-2">

@@ -31,11 +31,11 @@ export default function Fields({ embedded = false }: { embedded?: boolean }) {
   );
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
+    <div className="fields-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
       <motion.div
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } }}
-        className={embedded ? "shrink-0 bg-background px-4 pb-3 pt-4" : "sticky top-0 z-10 shrink-0 bg-background px-4 pb-3 pt-4"}
+        className={`fields-page-header ${embedded ? "shrink-0 bg-background px-4 pb-3 pt-4" : "sticky top-0 z-10 shrink-0 bg-background px-4 pb-3 pt-4"}`}
       >
         {!embedded && (
           <>
@@ -54,8 +54,8 @@ export default function Fields({ embedded = false }: { embedded?: boolean }) {
         </div>
       </motion.div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-28">
-        <div className="flex flex-col gap-3">
+      <div className="fields-page-scroll min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-28">
+        <div className="fields-card-grid flex flex-col gap-3">
           {isLoading ? (
             <>
               {[1, 2, 3, 4].map((i) => (
