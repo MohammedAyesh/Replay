@@ -288,7 +288,8 @@ export const GetClaimMatchResponse = zod.object({
   "fromFrame": zod.number().min(0),
   "toFrame": zod.number().min(0)
 }))
-})).optional()
+})).optional(),
+  "provenance": zod.object({}).passthrough().optional()
 }),
   "progress": zod.object({
   "recordingId": zod.number(),

@@ -30,4 +30,6 @@ export interface TrackingManifest {
   segments: TrackingSegmentManifest[];
   /** The identity board's result - pieces of tracks that are one person. Optional. */
   identities?: TrackingIdentity[];
+  /** How the bundle was produced (linker, parameters, measurements). Free-form. */
+  provenance?: Record<string, unknown>;
 }

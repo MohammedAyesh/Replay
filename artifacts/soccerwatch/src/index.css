@@ -556,7 +556,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 }
 
 /* ── Identity board ─────────────────────────────────────────────────────── */
-.idb { min-height: 100vh; padding: 18px 20px 80px; color: #eef3e6; background: #0b100f; font-size: 13px; }
+.idb { direction: ltr; text-align: left; min-height: 100vh; padding: 18px 20px 80px; color: #eef3e6; background: #0b100f; font-size: 13px; }
 .idb-header { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; }
 .idb-header h1 { margin: 0; font-size: 22px; }
 .idb-header p { margin: 2px 0 0; color: #91a08f; }
@@ -565,6 +565,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .idb-actions button { border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06); color: #eef3e6; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; }
 .idb-actions button.is-primary { background: #d4ff4f; color: #0e1513; border-color: #d4ff4f; }
 .idb-actions button:disabled { opacity: .5; cursor: default; }
+.idb-coverage { margin: 4px 0 10px; color: #91a08f; font-family: var(--app-font-mono); font-size: 10px; line-height: 1.5; }
 .idb-status { padding: 8px 12px; border-radius: 6px; background: rgba(212,255,79,.08); color: #d4ff4f; }
 .idb-status.is-warn { background: rgba(255,131,95,.12); color: #ff835f; }
 .idb-rows { display: grid; gap: 6px; }

@@ -83,6 +83,7 @@ export default function IdentityBoard() {
   const [flash, setFlash] = useState("");
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<Row[][]>([]);
+  const [spriteCoverage, setSpriteCoverage] = useState<Array<{ name: string; ok: boolean; reason?: string }>>([]);
 
   const fps = manifest?.frameRate ?? 20;
 
@@ -98,20 +99,26 @@ export default function IdentityBoard() {
         setManifest(claim.manifest);
         const all: Record<string, Track> = {};
         const spr: Record<string, Sprite[]> = {};
+        const coverage: Array<{ name: string; ok: boolean; reason?: string }> = [];
         for (const entry of claim.manifest.segments) {
           setStatus(`Loading ${entry.name}…`);
           const segment = await get<Segment>(`/recordings/${recordingId}/claim-match/segments/${entry.index}`);
           for (const t of segment.tracks) all[t.id] = t;
           try {
             const s = await get<Record<string, Sprite[]>>(`/recordings/${recordingId}/claim-match/sprites/${entry.index}`);
+            const matched = Object.keys(s).filter((k) => segment.tracks.some((t) => t.id === k)).length;
             Object.assign(spr, s);
-          } catch {
-            // no sprites for this segment - rows will show frame times only
+            coverage.push(matched > 0
+              ? { name: entry.name, ok: true }
+              : { name: entry.name, ok: false, reason: `${Object.keys(s).length} strips but none match this segment's track ids (e.g. ${Object.keys(s)[0] ?? "-"} vs ${segment.tracks[0]?.id ?? "-"})` });
+          } catch (error) {
+            coverage.push({ name: entry.name, ok: false, reason: error instanceof Error && error.message.endsWith("404") ? "bundle carried no sprites for it" : (error instanceof Error ? error.message : "failed") });
           }
           if (cancelled) return;
         }
         setTracks(all);
         setSprites(spr);
+        setSpriteCoverage(coverage);
         const saved = claim.manifest.identities;
         if (saved && saved.length) {
           setRows(saved.map((i: TrackingIdentity) => ({ id: i.id, name: i.name ?? "", parts: i.parts })));
@@ -341,7 +348,7 @@ export default function IdentityBoard() {
   };
 
   return (
-    <main className="idb" data-testid="page-identity-board">
+    <main className="idb" dir="ltr" data-testid="page-identity-board">
       <header className="idb-header">
         <button type="button" className="idb-back" onClick={() => setLocation("/admin")}>← Admin</button>
         <div>
@@ -354,6 +361,12 @@ export default function IdentityBoard() {
         </div>
       </header>
       {(status || flash) && <p className={`idb-status ${flash.startsWith("Refused") ? "is-warn" : ""}`}>{status || flash}</p>}
+      {spriteCoverage.length > 0 && (
+        <p className="idb-coverage">
+          Crops: {spriteCoverage.map((c) => `${c.name} ${c.ok ? "✓" : `✗ (${c.reason})`}`).join(" · ")}
+          {" · bundle: "}{manifest?.provenance?.linker ? String(manifest.provenance.linker).split(" (")[0] : "no provenance (original linker)"}
+        </p>
+      )}
 
       <section className="idb-rows">{mainRows.map((row) => renderRow(row, false))}</section>
 

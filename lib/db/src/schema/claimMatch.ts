@@ -88,6 +88,8 @@ export type TrackingManifest = {
    * from it at load time.
    */
   identities?: TrackingIdentity[];
+  /** How the bundle was produced (linker, parameters, measurements). Free-form. */
+  provenance?: Record<string, unknown>;
 };
 
 export type TrackingIdentity = {
