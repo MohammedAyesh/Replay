@@ -385,6 +385,11 @@ export default function ClaimMatchPage() {
   const duration = manifest?.duration || 1;
   const earnedClips = serverProgress?.earnedClips || [];
   const currentSegmentIndex = manifest ? segmentIndexAtTime(manifest, currentTime) : 0;
+  const orderedSegments = useMemo(
+    () => (manifest ? [...manifest.segments].sort((a, b) => a.startSeconds - b.startSeconds) : []),
+    [manifest],
+  );
+  const currentSegmentPosition = Math.max(0, orderedSegments.findIndex((segment) => segment.index === currentSegmentIndex));
   const activeSegment = segmentCache[currentSegmentIndex];
   const bundle = useMemo(
     () => (manifest && activeSegment ? segmentAsBundle(manifest, activeSegment) : null),
@@ -537,6 +542,39 @@ export default function ClaimMatchPage() {
       });
     }
   }, [currentTime, currentTrackId, progressValue, clipsUnlocked, confirmedFromSeconds, earnedClips, isOffline, activeRecordingId, updateProgress, queueProgress]);
+
+  const moveToSegment = useCallback((direction: -1 | 1) => {
+    if (!manifest || orderedSegments.length < 2) return;
+    const targetPosition = currentSegmentPosition + direction;
+    const target = orderedSegments[targetPosition];
+    if (!target) return;
+    const targetWindow = reviewWindowAt(target.startSeconds, duration);
+    setBoundaryNotice("");
+    setBoundaryRepickPending(false);
+    setPlaying(false);
+    videoRef.current?.pause();
+    seekTracking(target.startSeconds);
+    if (stage === "following" && currentTrackId) {
+      setReviewWindowStart(targetWindow.start);
+      setReviewWindowEnd(targetWindow.end);
+      setReviewNoCount(0);
+      setReviewState("prompt");
+    }
+    setNotice(`Segment ${targetPosition + 1} of ${orderedSegments.length}`);
+    saveProgress(stage, currentTrackId, progressValue, clipsUnlocked, confirmedFromSeconds, target.startSeconds);
+  }, [
+    clipsUnlocked,
+    confirmedFromSeconds,
+    currentSegmentPosition,
+    currentTrackId,
+    duration,
+    manifest,
+    orderedSegments,
+    progressValue,
+    saveProgress,
+    seekTracking,
+    stage,
+  ]);
 
   const previousSegmentIndex = useRef<number | null>(null);
   useEffect(() => {
@@ -1274,6 +1312,20 @@ export default function ClaimMatchPage() {
     .map((event) => event.time);
   const panelBody = (
     <>
+        {orderedSegments.length > 1 && stage !== "done" && (
+          <div className="claim-segment-nav" data-testid="segment-navigation">
+            <button type="button" className="claim-segment-nav-button" data-testid="button-previous-segment" onClick={() => moveToSegment(-1)} disabled={currentSegmentPosition <= 0}>
+              <ArrowLeft size={14} /> Previous
+            </button>
+            <div className="claim-segment-nav-label">
+              <span>SEGMENT {currentSegmentPosition + 1} / {orderedSegments.length}</span>
+              <small>10-minute section</small>
+            </div>
+            <button type="button" className="claim-segment-nav-button" data-testid="button-next-segment" onClick={() => moveToSegment(1)} disabled={currentSegmentPosition >= orderedSegments.length - 1}>
+              Next 10 min <ChevronRight size={14} />
+            </button>
+          </div>
+        )}
         {stage === "find" && (
           <div className="claim-panel claim-panel-find" data-testid="panel-find-yourself">
             <span className="claim-context"><ScanSearch size={16} /> DETECTIONS IN THIS FRAME</span>

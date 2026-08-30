@@ -29,6 +29,18 @@ describe("claim match segments", () => {
     expect(segmentIndexAtTime(manifest, 3599)).toBe(2);
   });
 
+  it("assigns a shared boundary to the segment that starts there", () => {
+    const adjacentManifest = {
+      ...manifest,
+      segments: [
+        { ...manifest.segments[0], endSeconds: 1200 },
+        { ...manifest.segments[1], startSeconds: 1200 },
+        manifest.segments[2],
+      ],
+    };
+    expect(segmentIndexAtTime(adjacentManifest, 1200)).toBe(1);
+  });
+
   it("keeps only current, previous, and next cache entries", () => {
     const cache = {
       0: { segmentIndex: 0 },

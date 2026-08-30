@@ -356,7 +356,7 @@ function parseUploadedBundle(input: unknown): UploadBundle | null {
         height: Math.max(1, Math.round(firstNumber(rawMetadata.height) ?? 1080)),
         frameRate: firstNumber(rawMetadata.frameRate, rawMetadata.fps) ?? 25,
         frameCount: Math.max(1, Math.round(firstNumber(rawMetadata.frameCount, rawMetadata.frames) ?? (segments.at(-1)?.endFrame ?? 0) + 1)),
-        duration: firstNumber(rawMetadata.duration) ?? segments.at(-1)?.endSeconds ?? 1,
+        duration: Math.max(firstNumber(rawMetadata.duration) ?? 0, segments.at(-1)?.endSeconds ?? 0) || 1,
         matchOffset: firstNumber(rawMetadata.matchOffset, rawMetadata.match_offset) ?? 0,
         videoStartSeconds: Math.max(0, firstNumber(
           rawMetadata.videoStartSeconds,
@@ -468,7 +468,7 @@ export function parseZipBundle(buffer: Buffer): UploadBundle | null {
       height: Math.max(1, Math.round(firstNumber(rawManifest.height) ?? 1080)),
       frameRate: firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25,
       frameCount: Math.max(1, Math.round(firstNumber(rawManifest.frameCount, rawManifest.frames) ?? segments.at(-1)!.endFrame + 1)),
-      duration: firstNumber(rawManifest.duration) ?? segments.at(-1)!.endSeconds,
+      duration: Math.max(firstNumber(rawManifest.duration) ?? 0, segments.at(-1)!.endSeconds),
       matchOffset: firstNumber(rawManifest.matchOffset, rawManifest.match_offset) ?? 0,
       videoStartSeconds: Math.max(0, firstNumber(
         rawManifest.videoStartSeconds,

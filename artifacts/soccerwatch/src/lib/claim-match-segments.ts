@@ -1,8 +1,9 @@
 import type { TrackingManifest, TrackingSegment } from "@workspace/api-client-react";
 
 export function segmentIndexAtTime(manifest: TrackingManifest, seconds: number): number {
-  const match = manifest.segments.find((segment) =>
-    seconds >= segment.startSeconds && seconds <= segment.endSeconds,
+  const lastIndex = manifest.segments.length - 1;
+  const match = manifest.segments.find((segment, position) =>
+    seconds >= segment.startSeconds && (seconds < segment.endSeconds || position === lastIndex),
   );
   if (match) return match.index;
   return seconds < (manifest.segments[0]?.startSeconds ?? 0)
