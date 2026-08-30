@@ -161,12 +161,14 @@ export function ClaimStage({
   playing,
   muted,
   slow,
+  playbackRate,
   goalTimes,
   videoRef,
   onToggle,
   onSeek,
   onSkip,
   onToggleSlow,
+  onCyclePlaybackRate,
   onToggleMute,
   onTap,
   onTimeUpdate,
@@ -189,12 +191,14 @@ export function ClaimStage({
   playing: boolean;
   muted: boolean;
   slow: boolean;
+  playbackRate: number;
   goalTimes: number[];
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onToggle: (forcePlaying?: boolean) => void;
   onSeek: (trackingSeconds: number) => void;
   onSkip: (delta: number) => void;
   onToggleSlow: () => void;
+  onCyclePlaybackRate: () => void;
   onToggleMute: () => void;
   /** a tap on the picture, in source pixels */
   onTap: (x: number, y: number) => void;
@@ -432,8 +436,8 @@ export function ClaimStage({
   const shownTime = scrub ?? currentTime;
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.playbackRate = slow ? 0.5 : 1;
-  }, [slow, videoRef]);
+    if (videoRef.current) videoRef.current.playbackRate = slow ? 0.5 : playbackRate;
+  }, [playbackRate, slow, videoRef]);
 
   const onLoadedMetadata = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
     const v = e.currentTarget;
@@ -554,6 +558,7 @@ export function ClaimStage({
           </div>
           <button type="button" className={`claim-tool ${manual ? "is-on" : ""}`} onClick={recentre} aria-label="Follow the player"><LocateFixed size={15} /> {manual ? "Re-centre" : "Following"}</button>
           <button type="button" className={`claim-tool ${slow ? "is-on" : ""}`} data-testid="button-slow-motion" onClick={onToggleSlow} aria-label="Toggle slow motion"><Gauge size={15} /> Slow</button>
+           <button type="button" className={`claim-tool ${playbackRate > 1 && !slow ? "is-on" : ""}`} data-testid="button-video-speed" onClick={onCyclePlaybackRate} aria-label={`Playback speed ${playbackRate} times. Increase playback speed`}> <SkipForward size={15} /> {playbackRate}x</button>
           <button type="button" className="claim-tool" data-testid="button-video-mute" onClick={onToggleMute} aria-label={muted ? "Unmute match" : "Mute match"}>{muted ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
           <button type="button" className="claim-tool" data-testid="button-video-fullscreen" onClick={toggleFullscreen} aria-label="Fullscreen video">{isFullscreen ? <Shrink size={15} /> : <Expand size={15} />}</button>
         </div>

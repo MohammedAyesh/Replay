@@ -67,6 +67,7 @@ import {
 
 type Stage = "find" | "following" | "still" | "picker" | "look" | "done";
 const AUTO_LINK_MAX = 3;
+const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2] as const;
 type Candidate = {
   id: string;
   label: string;
@@ -329,6 +330,7 @@ export default function ClaimMatchPage() {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [slow, setSlow] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [confirmedFromSeconds, setConfirmedFromSeconds] = useState(0);
   const [narrowing, setNarrowing] = useState<NarrowingState | null>(null);
@@ -908,9 +910,12 @@ export default function ClaimMatchPage() {
 
   useEffect(() => {
     if (!playing || recording?.videoUrl) return;
-    const timer = window.setInterval(() => setCurrentTime((value) => Math.min(duration, value + (slow ? 0.2 : 0.8))), 800);
+    const timer = window.setInterval(() => {
+      const rate = slow ? 0.5 : playbackRate;
+      setCurrentTime((value) => Math.min(duration, value + (0.8 * rate)));
+    }, 800);
     return () => window.clearInterval(timer);
-  }, [duration, playing, recording?.videoUrl, slow]);
+  }, [duration, playbackRate, playing, recording?.videoUrl, slow]);
 
   const onCorrection = (chosen: Candidate, method = "picker", allowOverlap = false) => {
     if (!bundle) return;
@@ -1047,6 +1052,13 @@ export default function ClaimMatchPage() {
   };
   const handleSeek = (value: number) => {
     seekTracking(value);
+  };
+  const cyclePlaybackRate = () => {
+    setPlaybackRate((current) => {
+      const currentIndex = PLAYBACK_SPEEDS.indexOf(current as (typeof PLAYBACK_SPEEDS)[number]);
+      return PLAYBACK_SPEEDS[(currentIndex + 1) % PLAYBACK_SPEEDS.length];
+    });
+    setSlow(false);
   };
   const handleVideoTap = (x: number, y: number) => {
     if (x < 0 || y < 0 || x > bundle.width || y > bundle.height) return;
@@ -1204,12 +1216,14 @@ export default function ClaimMatchPage() {
         playing={playing}
         muted={muted}
         slow={slow}
+        playbackRate={playbackRate}
         goalTimes={goalTimes}
         videoRef={videoRef}
         onToggle={handlePlay}
         onSeek={handleSeek}
         onSkip={seekBy}
         onToggleSlow={() => setSlow((value) => !value)}
+        onCyclePlaybackRate={cyclePlaybackRate}
         onToggleMute={() => setMuted((value) => !value)}
         onTap={handleVideoTap}
         onTimeUpdate={(value) => setCurrentTime(fromVideoTime(value))}
