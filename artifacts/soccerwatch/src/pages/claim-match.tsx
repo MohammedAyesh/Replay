@@ -120,6 +120,10 @@ function segmentAsBundle(
   segment: TrackingSegment,
 ) {
   const applied = applyIdentities(segment, manifest.identities);
+  const totalDuration = Math.max(
+    manifest.duration,
+    ...manifest.segments.map((range) => range.endSeconds),
+  );
   return {
     version: manifest.version,
     label: manifest.label,
@@ -127,7 +131,7 @@ function segmentAsBundle(
     height: manifest.height,
     frameRate: manifest.frameRate,
     frameCount: manifest.frameCount,
-    duration: manifest.duration,
+    duration: totalDuration,
     matchOffset: manifest.matchOffset,
     videoStartSeconds: manifest.videoStartSeconds ?? 0,
     tracks: applied.tracks,
@@ -382,7 +386,9 @@ export default function ClaimMatchPage() {
     return [...remote, ...corrections.filter((item) => !remoteIds.has(item.clientId))];
   }, [corrections, response]);
   const progressValue = Math.max(claimedPercent, serverProgress?.claimedPercent || 0);
-  const duration = manifest?.duration || 1;
+  const duration = manifest
+    ? Math.max(manifest.duration, ...manifest.segments.map((segment) => segment.endSeconds), 1)
+    : 1;
   const earnedClips = serverProgress?.earnedClips || [];
   const currentSegmentIndex = manifest ? segmentIndexAtTime(manifest, currentTime) : 0;
   const orderedSegments = useMemo(
