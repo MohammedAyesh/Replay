@@ -604,14 +604,15 @@ export default function ClaimMatchPage() {
     setReviewWindowStart(nextWindow.start);
     setReviewWindowEnd(nextWindow.end);
     setReviewNoCount(0);
-    setReviewState("watching");
+    setReviewState("prompt");
     setStage("following");
     setClaimedPercent((value) => Math.max(value, 19));
-    setNotice("Following you through the match");
-    seekTracking(confirmedAt);
-    startVideoPlayback();
-    saveProgress("following", trackId, Math.max(progressValue, 19), clipsUnlocked, confirmedAt, confirmedAt);
-  }, [bundle, clipsUnlocked, currentTime, duration, progressValue, saveProgress, seekTracking, startVideoPlayback]);
+    setPlaying(false);
+    videoRef.current?.pause();
+    setNotice(`Skipped to ${formatTime(nextWindow.end)} · is this you?`);
+    seekTracking(nextWindow.end);
+    saveProgress("following", trackId, Math.max(progressValue, 19), clipsUnlocked, confirmedAt, nextWindow.end);
+  }, [bundle, clipsUnlocked, currentTime, duration, progressValue, saveProgress, seekTracking]);
 
   const seekToFrame = useCallback((frame: number) => {
     if (!bundle) return;
@@ -731,12 +732,13 @@ export default function ClaimMatchPage() {
     setReviewWindowStart(nextWindow.start);
     setReviewWindowEnd(nextWindow.end);
     setReviewNoCount(0);
-    setReviewState("watching");
-    seekTracking(nextWindow.start);
-    startVideoPlayback();
+    setReviewState("prompt");
+    setPlaying(false);
+    videoRef.current?.pause();
+    seekTracking(nextWindow.end);
     setClaimedPercent((value) => Math.max(value, Math.min(99, (nextWindow.start / Math.max(duration, 1)) * 100)));
-    setNotice(`Reviewing ${formatTime(nextWindow.start)}–${formatTime(nextWindow.end)}`);
-    saveProgress("following", currentTrackId, Math.max(progressValue, 19), clipsUnlocked, nextWindow.start, nextWindow.start);
+    setNotice(`Skipped to ${formatTime(nextWindow.end)} · is this you?`);
+    saveProgress("following", currentTrackId, Math.max(progressValue, 19), clipsUnlocked, nextWindow.start, nextWindow.end);
   }, [
     bundle,
     clipsUnlocked,
@@ -854,6 +856,7 @@ export default function ClaimMatchPage() {
     const resumedStage = (response.progress.stage as Stage) || "find";
     const resumedPosition = response.progress.currentPositionSeconds || 0;
     const normalizedStage = resumedStage === "still" ? "following" : resumedStage;
+    const resumedWindowAnchor = response.progress.confirmedFromSeconds ?? resumedPosition;
     setStage(normalizedStage);
     setCurrentTrackId(response.progress.currentTrackId || null);
     setConfirmedFromSeconds(response.progress.confirmedFromSeconds || 0);
@@ -864,13 +867,16 @@ export default function ClaimMatchPage() {
     setNarrowing(null);
     setCrossingOtherTrackId(null);
     if ((normalizedStage === "following") && response.progress.currentTrackId) {
-      const resumedWindow = reviewWindowAt(resumedPosition, bundle.duration);
+      const resumedWindow = reviewWindowAt(resumedWindowAnchor, bundle.duration);
       setReviewWindowStart(resumedWindow.start);
       setReviewWindowEnd(resumedWindow.end);
       setReviewNoCount(0);
-      setReviewState("watching");
+      setReviewState("prompt");
+      setPlaying(false);
+      videoRef.current?.pause();
+      seekTracking(resumedWindow.end);
     }
-  }, [bundle, response]);
+  }, [bundle, response, seekTracking]);
 
   useEffect(() => {
     if (!bundle || !currentTrackId) return;
@@ -1284,7 +1290,7 @@ export default function ClaimMatchPage() {
               <>
                 <span className="claim-context"><Clock3 size={15} /> TEN-SECOND CHECK</span>
                 <h2>Is this you?</h2>
-                <p>Check the highlighted player in this ten-second window. We’ll keep moving through the match as you confirm each passage.</p>
+                <p>We skipped ahead to the next ten-second checkpoint. Check the highlighted player and confirm without waiting for the video to play.</p>
                 <div className="claim-question-card"><Clock3 size={18} /><span>Window <b>{formatTime(reviewWindowStart)}–{formatTime(reviewWindowEnd)}</b>{reviewNoCount > 0 ? " · replayed at 3×" : ""}</span></div>
                 {reviewNoCount > 0 && <div className="review-replay-note" role="status"><Gauge size={16} /><span>That window just replayed at 3×. If it still isn’t you, choose yourself again.</span></div>}
                 <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-review-yes" onClick={() => answerReview("yes")}>Yes, this is me <Check size={17} /></button>
