@@ -579,6 +579,15 @@ export default function ClaimMatchPage() {
     if (video) void video.play().catch(() => setPlaying(false));
   }, []);
 
+  const toggleVideoPlayback = useCallback(() => {
+    const next = !playing;
+    setPlaying(next);
+    const video = videoRef.current;
+    if (!video) return;
+    if (next) void video.play().catch(() => setPlaying(false));
+    else video.pause();
+  }, [playing]);
+
   const beginFollowing = useCallback((trackId: string, atSeconds = currentTime) => {
     if (!bundle) return;
     const confirmedAt = atSeconds;
@@ -599,9 +608,10 @@ export default function ClaimMatchPage() {
     setStage("following");
     setClaimedPercent((value) => Math.max(value, 19));
     setNotice("Following you through the match");
+    seekTracking(confirmedAt);
     startVideoPlayback();
     saveProgress("following", trackId, Math.max(progressValue, 19), clipsUnlocked, confirmedAt, confirmedAt);
-  }, [bundle, clipsUnlocked, currentTime, duration, progressValue, saveProgress, startVideoPlayback]);
+  }, [bundle, clipsUnlocked, currentTime, duration, progressValue, saveProgress, seekTracking, startVideoPlayback]);
 
   const seekToFrame = useCallback((frame: number) => {
     if (!bundle) return;
@@ -982,11 +992,19 @@ export default function ClaimMatchPage() {
       if (event.target instanceof HTMLInputElement) return;
       if (event.code === "Space") {
         event.preventDefault();
-        if (stage === "still") {
+        if (stage === "following" && reviewState === "prompt") {
+          answerReview("no");
+        } else if (stage === "still") {
           confirmStill("no");
         } else if (stage === "following") {
-          startCorrectionCheck();
+          toggleVideoPlayback();
         }
+      } else if (stage === "following" && reviewState === "prompt" && key === "y") {
+        event.preventDefault();
+        answerReview("yes");
+      } else if (stage === "following" && reviewState === "prompt" && key === "n") {
+        event.preventDefault();
+        answerReview("no");
       } else if (key === "s") {
         event.preventDefault();
         setSlow((value) => !value);
@@ -1006,16 +1024,16 @@ export default function ClaimMatchPage() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [beginFollowing, candidates, confirmStill, seekBy, slow, stage, startCorrectionCheck]);
+  }, [answerReview, beginFollowing, candidates, confirmStill, reviewState, seekBy, slow, stage, toggleVideoPlayback]);
 
   useEffect(() => {
     if (!playing || recording?.videoUrl) return;
     const timer = window.setInterval(() => {
-      const rate = slow ? 0.5 : playbackRate;
+      const rate = reviewState === "replay" ? 3 : (slow ? 0.5 : playbackRate);
       setCurrentTime((value) => Math.min(duration, value + (0.8 * rate)));
     }, 800);
     return () => window.clearInterval(timer);
-  }, [duration, playbackRate, playing, recording?.videoUrl, slow]);
+  }, [duration, playbackRate, playing, recording?.videoUrl, reviewState, slow]);
 
   useEffect(() => {
     if (stage !== "following" || !bundle || !currentTrackId || reviewWindowEnd <= reviewWindowStart) return;
@@ -1177,6 +1195,7 @@ export default function ClaimMatchPage() {
   const handlePlay = (forcePlaying?: boolean) => {
     const video = videoRef.current;
     const next = forcePlaying ?? !playing;
+    if (reviewState === "prompt" && next) return;
     setPlaying(next);
     if (video) {
       if (next) void video.play().catch(() => setPlaying(false));
@@ -1261,12 +1280,34 @@ export default function ClaimMatchPage() {
         )}
         {stage === "following" && (
           <div className="claim-panel" data-testid="panel-following">
-            <span className="claim-live-pill"><span /> FOLLOWING</span>
-            <h2>Following your player</h2>
-            <p>The outlined box follows the selected track continuously. We’ll only interrupt when a real crossing needs your help.</p>
-            <div className="claim-follow-status"><div className="claim-follow-avatar">{initials(currentLabel)}</div><div><b>Tracked player</b><span>{followedBox && followedTrack ? captionForTrack(followedTrack, currentFrame, bundle, shirtToneByTrack[currentTrackId || ""] || "unreadable") : "Detection temporarily out of range"}</span></div><ShieldCheck size={19} /></div>
-            <button type="button" className="claim-button claim-button-secondary claim-button-wide" data-testid="button-change-identity" onClick={startCorrectionCheck}>That’s not me <RotateCcw size={14} /></button>
-            <p className="claim-undo-copy"><Undo2 size={13} /> Changed your mind? You can undo any correction for the next 10 seconds.</p>
+            {reviewState === "prompt" ? (
+              <>
+                <span className="claim-context"><Clock3 size={15} /> TEN-SECOND CHECK</span>
+                <h2>Is this you?</h2>
+                <p>Check the highlighted player in this ten-second window. We’ll keep moving through the match as you confirm each passage.</p>
+                <div className="claim-question-card"><Clock3 size={18} /><span>Window <b>{formatTime(reviewWindowStart)}–{formatTime(reviewWindowEnd)}</b>{reviewNoCount > 0 ? " · replayed at 3×" : ""}</span></div>
+                {reviewNoCount > 0 && <div className="review-replay-note" role="status"><Gauge size={16} /><span>That window just replayed at 3×. If it still isn’t you, choose yourself again.</span></div>}
+                <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-review-yes" onClick={() => answerReview("yes")}>Yes, this is me <Check size={17} /></button>
+                <button type="button" className="claim-button claim-button-secondary claim-button-wide" data-testid="button-review-no" onClick={() => answerReview("no")}>{reviewNoCount > 0 ? "No, choose me again" : "No, replay at 3×"} <X size={17} /></button>
+                <p className="claim-key-note">Press <kbd>Y</kbd> for yes or <kbd>N</kbd> for no</p>
+              </>
+            ) : reviewState === "replay" ? (
+              <>
+                <span className="claim-context"><Gauge size={15} /> REPLAYING AT 3×</span>
+                <h2>Watch this window again</h2>
+                <p>We’re replaying the same ten seconds at 3×. When it ends, we’ll ask you to confirm the player once more.</p>
+                <div className="claim-question-card"><Clock3 size={18} /><span>Reviewing <b>{formatTime(reviewWindowStart)}–{formatTime(reviewWindowEnd)}</b></span></div>
+                <div className="review-replay-note" role="status"><Gauge size={16} /><span>3× replay in progress — the match will pause for your answer.</span></div>
+              </>
+            ) : (
+              <>
+                <span className="claim-live-pill"><span /> REVIEWING NEXT WINDOW</span>
+                <h2>Reviewing your match</h2>
+                <p>We’ll pause every ten seconds and ask if the highlighted player is you. Your answers keep the track accurate.</p>
+                <div className="claim-follow-status"><div className="claim-follow-avatar">{initials(currentLabel)}</div><div><b>Next check in</b><span>{formatTime(reviewWindowEnd - currentTime)} · window ends at {formatTime(reviewWindowEnd)}</span></div><ShieldCheck size={19} /></div>
+                <p className="claim-undo-copy"><Undo2 size={13} /> The video pauses at each checkpoint so you can answer without rushing.</p>
+              </>
+            )}
           </div>
         )}
         {stage === "still" && (
@@ -1350,6 +1391,7 @@ export default function ClaimMatchPage() {
         muted={muted}
         slow={slow}
         playbackRate={playbackRate}
+        forcedPlaybackRate={reviewState === "replay" ? 3 : null}
         goalTimes={goalTimes}
         videoRef={videoRef}
         onToggle={handlePlay}

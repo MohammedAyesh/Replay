@@ -454,6 +454,8 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-undo-copy svg { flex: 0 0 auto; margin-top: 1px; color: var(--claim-green); }
 .claim-question-card { align-items: flex-start; color: var(--claim-muted); font-size: 11px; line-height: 1.5; }
 .claim-question-card svg { flex: 0 0 auto; color: var(--claim-green); }
+.review-replay-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 13px; padding: 10px 12px; border: 1px solid rgba(123,92,255,.35); color: #c8c1ff; background: rgba(123,92,255,.1); font-family: var(--app-font-mono); font-size: 9px; line-height: 1.45; }
+.review-replay-note svg { flex: 0 0 auto; margin-top: 1px; color: #a99bff; }
 .claim-key-note { color: var(--claim-dim) !important; font-family: var(--app-font-mono); font-size: 9px !important; text-align: center; }
 .candidate-list { display: grid; gap: 7px; margin-top: 22px; }
 .candidate-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px; border: 1px solid var(--claim-line); cursor: pointer; color: var(--claim-ink); text-align: left; background: rgba(196,224,184,.035); transition: border-color .2s ease, background .2s ease, transform .2s ease; }
