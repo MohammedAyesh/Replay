@@ -162,6 +162,7 @@ export function ClaimStage({
   muted,
   slow,
   playbackRate,
+  forcedPlaybackRate,
   goalTimes,
   videoRef,
   onToggle,
@@ -192,6 +193,7 @@ export function ClaimStage({
   muted: boolean;
   slow: boolean;
   playbackRate: number;
+  forcedPlaybackRate?: number | null;
   goalTimes: number[];
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onToggle: (forcePlaying?: boolean) => void;
@@ -436,8 +438,8 @@ export function ClaimStage({
   const shownTime = scrub ?? currentTime;
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.playbackRate = slow ? 0.5 : playbackRate;
-  }, [playbackRate, slow, videoRef]);
+    if (videoRef.current) videoRef.current.playbackRate = forcedPlaybackRate ?? (slow ? 0.5 : playbackRate);
+  }, [forcedPlaybackRate, playbackRate, slow, videoRef]);
 
   const onLoadedMetadata = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
     const v = e.currentTarget;

@@ -66,8 +66,10 @@ import {
 } from "@/lib/claim-match-segments";
 
 type Stage = "find" | "following" | "still" | "picker" | "look" | "done";
+type ReviewState = "watching" | "prompt" | "replay";
 const AUTO_LINK_MAX = 3;
 const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2] as const;
+const REVIEW_WINDOW_SECONDS = 10;
 type Candidate = {
   id: string;
   label: string;
@@ -138,6 +140,14 @@ function segmentAsBundle(
 function formatTime(seconds: number) {
   const safe = Math.max(0, Math.floor(seconds));
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function reviewWindowAt(seconds: number, duration: number) {
+  const start = Math.max(0, Math.min(duration, Math.floor(Math.max(0, seconds) / REVIEW_WINDOW_SECONDS) * REVIEW_WINDOW_SECONDS));
+  return {
+    start,
+    end: Math.min(duration, start + REVIEW_WINDOW_SECONDS),
+  };
 }
 
 function initials(label: string) {
@@ -331,6 +341,10 @@ export default function ClaimMatchPage() {
   const [muted, setMuted] = useState(false);
   const [slow, setSlow] = useState(false);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [reviewState, setReviewState] = useState<ReviewState>("watching");
+  const [reviewWindowStart, setReviewWindowStart] = useState(0);
+  const [reviewWindowEnd, setReviewWindowEnd] = useState(10);
+  const [reviewNoCount, setReviewNoCount] = useState(0);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [confirmedFromSeconds, setConfirmedFromSeconds] = useState(0);
   const [narrowing, setNarrowing] = useState<NarrowingState | null>(null);
@@ -559,9 +573,16 @@ export default function ClaimMatchPage() {
 
   const stillQuestion = narrowing ? nextNarrowingQuestion(narrowing) : null;
 
+  const startVideoPlayback = useCallback(() => {
+    setPlaying(true);
+    const video = videoRef.current;
+    if (video) void video.play().catch(() => setPlaying(false));
+  }, []);
+
   const beginFollowing = useCallback((trackId: string, atSeconds = currentTime) => {
     if (!bundle) return;
     const confirmedAt = atSeconds;
+    const nextWindow = reviewWindowAt(confirmedAt, duration);
     const track = bundle.tracks.find((item) => item.id === trackId);
     const box = track ? detectionAtFrame(track, trackingSecondsToFrame(confirmedAt, bundle)) : null;
     if (box) lastKnownPositionRef.current = boxCenter(box);
@@ -571,11 +592,16 @@ export default function ClaimMatchPage() {
     setConfirmedFromSeconds(confirmedAt);
     setNarrowing(null);
     setCrossingOtherTrackId(null);
+    setReviewWindowStart(nextWindow.start);
+    setReviewWindowEnd(nextWindow.end);
+    setReviewNoCount(0);
+    setReviewState("watching");
     setStage("following");
     setClaimedPercent((value) => Math.max(value, 19));
     setNotice("Following you through the match");
+    startVideoPlayback();
     saveProgress("following", trackId, Math.max(progressValue, 19), clipsUnlocked, confirmedAt, confirmedAt);
-  }, [bundle, clipsUnlocked, currentTime, progressValue, saveProgress]);
+  }, [bundle, clipsUnlocked, currentTime, duration, progressValue, saveProgress, startVideoPlayback]);
 
   const seekToFrame = useCallback((frame: number) => {
     if (!bundle) return;
@@ -652,6 +678,70 @@ export default function ClaimMatchPage() {
     seekTracking(next);
     setNotice("Skipped ahead to a clearer passage");
   }, [bundle, currentTime, seekTracking]);
+
+  const answerReview = useCallback((answer: "yes" | "no") => {
+    if (reviewState !== "prompt" || !bundle || !currentTrackId) return;
+
+    if (answer === "no") {
+      if (reviewNoCount === 0) {
+        setReviewNoCount(1);
+        setReviewState("replay");
+        setSlow(false);
+        seekTracking(reviewWindowStart);
+        startVideoPlayback();
+        setNotice("Replaying this window at 3×");
+        return;
+      }
+
+      setReviewState("watching");
+      setReviewNoCount(0);
+      setCurrentTrackId(null);
+      setNarrowing(null);
+      setContinuationIds(null);
+      setStage("picker");
+      seekTracking(reviewWindowStart);
+      setNotice("Choose yourself in this ten-second window");
+      saveProgress("picker", null, Math.max(progressValue, 55), clipsUnlocked, confirmedFromSeconds, reviewWindowStart);
+      return;
+    }
+
+    const nextWindow = reviewWindowAt(reviewWindowEnd, duration);
+    if (reviewWindowEnd >= duration - 0.05 || nextWindow.end <= nextWindow.start) {
+      setReviewState("watching");
+      setPlaying(false);
+      videoRef.current?.pause();
+      setStage("done");
+      setClaimedPercent(100);
+      setNotice("Match claimed");
+      saveProgress("done", currentTrackId, 100, clipsUnlocked, confirmedFromSeconds, reviewWindowEnd);
+      return;
+    }
+
+    setConfirmedFromSeconds(nextWindow.start);
+    setReviewWindowStart(nextWindow.start);
+    setReviewWindowEnd(nextWindow.end);
+    setReviewNoCount(0);
+    setReviewState("watching");
+    seekTracking(nextWindow.start);
+    startVideoPlayback();
+    setClaimedPercent((value) => Math.max(value, Math.min(99, (nextWindow.start / Math.max(duration, 1)) * 100)));
+    setNotice(`Reviewing ${formatTime(nextWindow.start)}–${formatTime(nextWindow.end)}`);
+    saveProgress("following", currentTrackId, Math.max(progressValue, 19), clipsUnlocked, nextWindow.start, nextWindow.start);
+  }, [
+    bundle,
+    clipsUnlocked,
+    confirmedFromSeconds,
+    currentTrackId,
+    duration,
+    progressValue,
+    reviewNoCount,
+    reviewState,
+    reviewWindowEnd,
+    reviewWindowStart,
+    saveProgress,
+    seekTracking,
+    startVideoPlayback,
+  ]);
 
   const candidateStage = stage === "find" || stage === "picker" || stage === "look";
   const candidateFrame = useMemo(() => {
@@ -751,15 +841,25 @@ export default function ClaimMatchPage() {
 
   useEffect(() => {
     if (!response || !bundle) return;
-    setStage((response.progress.stage as Stage) || "find");
+    const resumedStage = (response.progress.stage as Stage) || "find";
+    const resumedPosition = response.progress.currentPositionSeconds || 0;
+    const normalizedStage = resumedStage === "still" ? "following" : resumedStage;
+    setStage(normalizedStage);
     setCurrentTrackId(response.progress.currentTrackId || null);
     setConfirmedFromSeconds(response.progress.confirmedFromSeconds || 0);
-    setCurrentTime(response.progress.currentPositionSeconds || 0);
+    setCurrentTime(resumedPosition);
     setClaimedPercent(response.progress.claimedPercent || 0);
     setClipsUnlocked(response.progress.clipsUnlocked || 0);
     setCorrections(response.corrections);
     setNarrowing(null);
     setCrossingOtherTrackId(null);
+    if ((normalizedStage === "following") && response.progress.currentTrackId) {
+      const resumedWindow = reviewWindowAt(resumedPosition, bundle.duration);
+      setReviewWindowStart(resumedWindow.start);
+      setReviewWindowEnd(resumedWindow.end);
+      setReviewNoCount(0);
+      setReviewState("watching");
+    }
   }, [bundle, response]);
 
   useEffect(() => {
@@ -916,6 +1016,39 @@ export default function ClaimMatchPage() {
     }, 800);
     return () => window.clearInterval(timer);
   }, [duration, playbackRate, playing, recording?.videoUrl, slow]);
+
+  useEffect(() => {
+    if (stage !== "following" || !bundle || !currentTrackId || reviewWindowEnd <= reviewWindowStart) return;
+
+    if (reviewState === "watching" && currentTime >= reviewWindowEnd - 0.05) {
+      const checkpoint = reviewWindowEnd;
+      setPlaying(false);
+      videoRef.current?.pause();
+      setCurrentTime(checkpoint);
+      setReviewState("prompt");
+      setReviewNoCount(0);
+      setNotice(`Checkpoint ready · ${formatTime(reviewWindowStart)}–${formatTime(checkpoint)}`);
+      saveProgress("following", currentTrackId, progressValue, clipsUnlocked, confirmedFromSeconds, checkpoint);
+    } else if (reviewState === "replay" && currentTime >= reviewWindowEnd - 0.05) {
+      setPlaying(false);
+      videoRef.current?.pause();
+      setCurrentTime(reviewWindowEnd);
+      setReviewState("prompt");
+      setNotice("Replay complete · is this you?");
+    }
+  }, [
+    bundle,
+    clipsUnlocked,
+    confirmedFromSeconds,
+    currentTime,
+    currentTrackId,
+    progressValue,
+    reviewState,
+    reviewWindowEnd,
+    reviewWindowStart,
+    saveProgress,
+    stage,
+  ]);
 
   const onCorrection = (chosen: Candidate, method = "picker", allowOverlap = false) => {
     if (!bundle) return;
