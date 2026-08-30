@@ -43,6 +43,11 @@ import { baseWidth, makeFrame, OUT_ASPECT } from "@/lib/cropFrame";
 import type { ClaimBox, ClaimBundle } from "@/lib/claim-match-engine";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { SkipFlash } from "@/components/skip-flash";
+import {
+  prepareVideoCache,
+  subscribeToVideoCache,
+  type VideoCacheUpdate,
+} from "@/lib/video-cache";
 
 export type StageCandidate = {
   id: string;
@@ -96,7 +101,11 @@ function frameContaining(
   return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, zoom };
 }
 
-function useBunnyHls(videoRef: React.RefObject<HTMLVideoElement | null>, url: string | undefined) {
+function useBunnyHls(
+  videoRef: React.RefObject<HTMLVideoElement | null>,
+  url: string | undefined,
+  onCacheUpdate: (update: VideoCacheUpdate) => void,
+) {
   const [videoError, setVideoError] = useState("");
   useEffect(() => {
     const video = videoRef.current;
@@ -105,36 +114,41 @@ function useBunnyHls(videoRef: React.RefObject<HTMLVideoElement | null>, url: st
     let hls: Hls | null = null;
     let retryTimer: number | null = null;
     let networkRetries = 0;
-    if (url.includes(".m3u8") && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: false, maxBufferLength: 30, backBufferLength: 60 });
-      hls.loadSource(url);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setVideoError(""); });
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (!data.fatal || !hls) return;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          networkRetries += 1;
-          if (networkRetries > 5) { setVideoError("The recording could not be loaded. Check your connection and try again."); return; }
-          setVideoError("Reconnecting…");
-          retryTimer = window.setTimeout(() => hls?.startLoad(), 1000 * networkRetries);
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          hls.recoverMediaError();
-        } else {
-          setVideoError("The recording could not be played.");
-        }
-      });
-    } else {
-      video.src = url;
-      video.onerror = () => setVideoError("The recording could not be played.");
-    }
+    const unsubscribeCache = subscribeToVideoCache(onCacheUpdate);
+    const startPlayback = () => {
+      if (url.includes(".m3u8") && Hls.isSupported()) {
+        hls = new Hls({ enableWorker: false, maxBufferLength: 30, backBufferLength: 60 });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setVideoError(""); });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal || !hls) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            networkRetries += 1;
+            if (networkRetries > 5) { setVideoError("The recording could not be loaded. Check your connection and try again."); return; }
+            setVideoError("Reconnecting…");
+            retryTimer = window.setTimeout(() => hls?.startLoad(), 1000 * networkRetries);
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+          } else {
+            setVideoError("The recording could not be played.");
+          }
+        });
+      } else {
+        video.src = url;
+        video.onerror = () => setVideoError("The recording could not be played.");
+      }
+    };
+    startPlayback();
     return () => {
+      unsubscribeCache();
       if (retryTimer) window.clearTimeout(retryTimer);
       video.onerror = null;
       if (hls) hls.destroy();
       video.removeAttribute("src");
       video.load();
     };
-  }, [url, videoRef]);
+  }, [onCacheUpdate, url, videoRef]);
   return videoError;
 }
 
@@ -146,6 +160,20 @@ function formatClock(seconds: number) {
   return h > 0
     ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
     : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function browserSafeVideoUrl(url: string | undefined) {
+  if (!url) return undefined;
+  if (url.startsWith("/api/hls-proxy/")) return url;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
+      return `/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`;
+    }
+  } catch {
+    // Relative and non-URL sources are already handled by the existing player.
+  }
+  return url;
 }
 
 export function ClaimStage({
@@ -216,7 +244,60 @@ export function ClaimStage({
   const minimapFrameRef = useRef<HTMLDivElement | null>(null);
   const minimapDotRef = useRef<HTMLDivElement | null>(null);
 
-  const videoError = useBunnyHls(videoRef, videoUrl);
+  const playbackUrl = browserSafeVideoUrl(videoUrl);
+  const [videoCachePhase, setVideoCachePhase] = useState<"idle" | "preparing" | "ready" | "caching" | "cached" | "unavailable">(
+    playbackUrl?.includes(".m3u8") ? "idle" : "ready",
+  );
+  const [cachedResourceCount, setCachedResourceCount] = useState(0);
+  const [cacheError, setCacheError] = useState("");
+  const cacheStartedForRef = useRef<string | null>(null);
+  const handleCacheUpdate = useCallback((update: VideoCacheUpdate) => {
+    if (typeof update.cachedCount === "number") setCachedResourceCount(update.cachedCount);
+    if (update.kind === "ready") setVideoCachePhase("ready");
+    if (update.kind === "stored") setVideoCachePhase("caching");
+    if (update.kind === "hit") setVideoCachePhase("cached");
+    if (update.kind === "error") {
+      setVideoCachePhase("unavailable");
+      if (update.detail) setCacheError(update.detail);
+    }
+  }, []);
+  const videoError = useBunnyHls(videoRef, playbackUrl, handleCacheUpdate);
+  useEffect(() => {
+    cacheStartedForRef.current = null;
+    setCachedResourceCount(0);
+    setCacheError("");
+    setVideoCachePhase(playbackUrl?.includes(".m3u8") ? "idle" : "ready");
+  }, [playbackUrl]);
+  const beginVideoCache = useCallback(() => {
+    if (!playbackUrl?.includes(".m3u8")) return;
+    if (cacheStartedForRef.current === playbackUrl) return;
+    cacheStartedForRef.current = playbackUrl;
+    setVideoCachePhase("preparing");
+    setCacheError("");
+    void prepareVideoCache(playbackUrl)
+      .then((available) => {
+        if (!available) {
+          cacheStartedForRef.current = null;
+          handleCacheUpdate({ kind: "error", detail: "Browser cache is unavailable" });
+        }
+        else setVideoCachePhase((phase) => phase === "preparing" ? "ready" : phase);
+      })
+      .catch(() => {
+        cacheStartedForRef.current = null;
+        handleCacheUpdate({ kind: "error", detail: "Browser cache could not be started" });
+      });
+  }, [handleCacheUpdate, playbackUrl]);
+  const videoCacheLabel = videoCachePhase === "preparing"
+    ? "Preparing video cache"
+    : videoCachePhase === "caching"
+      ? `Caching video · ${cachedResourceCount} part${cachedResourceCount === 1 ? "" : "s"}`
+      : videoCachePhase === "cached"
+        ? `Video cache active · ${cachedResourceCount} part${cachedResourceCount === 1 ? "" : "s"}`
+        : videoCachePhase === "idle"
+          ? "Cache starts when you play"
+        : videoCachePhase === "unavailable"
+          ? "Video cache unavailable"
+          : "Video cache ready";
 
   // ── frame model (refs: read by the rAF loop, never per-frame React state) ──
   const srcAspectRef = useRef(bundle.width / bundle.height);
@@ -478,7 +559,7 @@ export function ClaimStage({
               onLoadedMetadata={onLoadedMetadata}
               onLoadedData={onVideoReady}
               onSeeked={onVideoReady}
-              onPlay={() => onToggle(true)}
+              onPlay={() => { beginVideoCache(); onToggle(true); }}
               onPause={() => onToggle(false)}
               onEnded={() => onToggle(false)}
               aria-label="Match recording"
@@ -517,6 +598,16 @@ export function ClaimStage({
         <div className="claim-stage-top-left">{topLeft}</div>
         <div className="claim-stage-top-right">
           {topRight}
+          {playbackUrl?.includes(".m3u8") && (
+            <div
+              className={`claim-video-cache-status is-${videoCachePhase}`}
+              role="status"
+              title={cacheError || "Previously fetched HLS resources are replayed from this device when available."}
+            >
+              <span className="claim-video-cache-dot" />
+              {videoCacheLabel}
+            </div>
+          )}
           <div className="claim-minimap" style={{ width: minimapW, height: minimapH }} aria-hidden="true">
             <div ref={minimapFrameRef} className="claim-minimap-frame" />
             <div ref={minimapDotRef} className="claim-minimap-dot" />

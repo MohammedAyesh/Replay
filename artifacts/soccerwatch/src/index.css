@@ -351,6 +351,12 @@
 .claim-stage-title { display: grid; gap: 2px; min-width: 0; color: var(--claim-ink); }
 .claim-stage-title b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .claim-stage-title span { color: var(--claim-muted); font-family: var(--app-font-mono); font-size: 9px; }
+.claim-video-cache-status { display: flex; align-items: center; gap: 6px; max-width: 190px; color: var(--claim-muted); font-family: var(--app-font-mono); font-size: 8px; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.claim-video-cache-dot { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--claim-green); box-shadow: 0 0 0 3px rgba(212,255,79,.1); }
+.claim-video-cache-status.is-preparing .claim-video-cache-dot, .claim-video-cache-status.is-caching .claim-video-cache-dot { animation: claim-cache-pulse 1s ease-in-out infinite; }
+.claim-video-cache-status.is-unavailable { color: var(--claim-orange); }
+.claim-video-cache-status.is-unavailable .claim-video-cache-dot { background: var(--claim-orange); box-shadow: 0 0 0 3px rgba(255,131,95,.1); }
+@keyframes claim-cache-pulse { 50% { opacity: .35; transform: scale(.75); } }
 .claim-minimap { position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; background: rgba(0,0,0,.55); }
 .claim-minimap::before { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; content: ""; background: rgba(255,255,255,.25); }
 .claim-minimap-frame { position: absolute; border: 2px solid var(--claim-green); box-sizing: border-box; }
