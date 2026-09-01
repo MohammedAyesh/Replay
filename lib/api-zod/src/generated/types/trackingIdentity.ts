@@ -9,7 +9,6 @@ import type { TrackingIdentityPart } from './trackingIdentityPart';
 
 export interface TrackingIdentity {
   id: string;
-  /** @nullable */
   name?: string | null;
   parts: TrackingIdentityPart[];
 }

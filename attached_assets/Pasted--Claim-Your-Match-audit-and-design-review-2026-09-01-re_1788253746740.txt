@@ -1,0 +1,509 @@
+# Claim Your Match — audit and design review
+
+**2026-09-01 · read-only, no code changed · repo at 6a75ab5 (2026-08-29)**
+
+Scope: `claim-match.tsx`, `ClaimStage.tsx`, `claim-match-engine.ts`, `claim-match-segments.ts`,
+`claim-match-storage.ts` (client), `routes/claimMatch.ts`, `lib/claimMatchStorage.ts`,
+`schema/claimMatch.ts`, migrations 0016/0017, `identity-board.tsx`,
+`TrackingAlignmentCheck.tsx`, the admin bundle panel in `admin.tsx`, and all related tests.
+
+Around fifty defects were found. They are not fifty independent bugs — they cluster into
+six root causes, and one design decision underneath all six. Part 1 is the audit.
+Part 2 is the design question, which matters more.
+
+---
+
+## Executive summary
+
+The pure geometry in `claim-match-engine.ts` is good work and should survive any rewrite.
+Everything stateful around it — the state machine, the metric, the ingest contract, the
+storage lifecycle — was written without a model of what the numbers mean, and it shows.
+
+Three facts, each independently sufficient to make the feature non-functional today:
+
+1. **`setStage("done")` is never called anywhere.** The terminal state is unreachable, so
+   `completed` is never true, `clipsUnlocked` never advances, and the completion panel has
+   never rendered for any user.
+2. **There is a guaranteed gap between every pair of segments, and landing in it jumps you
+   to the last segment of the match.** Proven below against the repo's own test fixture.
+3. **Earned clips are written to `claim_match_progress.earned_clips` and read by nothing.**
+   The done screen promises clips "ready in My Clips". They are not there and never were.
+
+---
+
+# Part 1 — Root causes
+
+## RC1 · The feature has no terminal state and no definition of its own metric
+
+**The `done` stage is unreachable.** Grep `setStage(` and `goStage(` across
+`claim-match.tsx`: no call passes `"done"`. The only references to the literal are the type
+union, the render guard, `completed: nextStage === "done"`, and
+`clipsUnlocked: next === "done" ? earnedClips.length : value`. The *exits* from `done` were
+written (`handleBack` maps `done → look`; the panel has a "Take another look" button). The
+entrance was not.
+
+Consequences, all confirmed:
+
+| Effect | Cause |
+|---|---|
+| `completed` is never `true` in the DB | only set from `nextStage === "done"` |
+| `clipsUnlocked` never increases | only increases when `next === "done"` |
+| Completion panel is dead code | `stage === "done"` never holds |
+| The claim never ends | no end condition exists anywhere |
+
+**`claimedPercent` is two different fabricated numbers.** The client sets it from a lookup
+table of *stage* — `{find:0, following:19, still:38, picker:55, look:73, done:100}`. The
+server sets it from *playhead position* — `min(100, momentSeconds / duration * 100)`. They
+are reconciled with `Math.max`, so the stored value is whichever lied bigger. The done panel
+renders "You claimed 73% of this match. We found the moments where you made the difference."
+Neither clause is true.
+
+Nothing anywhere measures coverage — the fraction of the match for which the user's identity
+is actually established — even though the data to compute it is present. **The missing metric
+and the missing terminal state are the same hole:** you cannot write a completion condition
+until you define what claiming a match means numerically.
+
+**`goStage` also regresses the local value.** `setClaimedPercent(percentByStage[next])` is a
+raw set, not a max, while the save path uses `Math.max`. Going back a stage lowers the
+displayed percent and leaves local and persisted state divergent.
+
+## RC2 · Segments leak out of storage and into the product
+
+Segments are a chunking decision for object storage. They have become a first-class concept
+in the UX, and the seams are visible to the user.
+
+**The 50 ms hole.** Frame ranges are validated contiguous
+(`startFrame === previous.endFrame + 1`). Seconds are never validated at all. The zip parser
+derives them independently: `startSeconds ?? startFrame / frameRate`,
+`endSeconds ?? endFrame / frameRate`. So segment *n* ends at `endFrame/fps` and segment *n+1*
+begins at `(endFrame+1)/fps` — a hole of exactly one frame period between every pair.
+
+`segmentIndexAtTime` matches `seconds >= startSeconds && seconds <= endSeconds`; on no match
+its fallback is segment 0 if before the start, **otherwise the last segment**.
+
+Proven with the repo's own test fixture from `claim-match-segments.test.ts`:
+
+```
+t=1        -> segment 0
+t=1200     -> segment 0
+t=1200.02  -> segment 2      <-- 20 minutes in, thrown to the final segment
+t=1201     -> segment 1
+t=2400.02  -> segment 2
+t=3599     -> segment 2
+```
+
+The fixture itself encodes the gap — `1200 → 1200.04`, exactly 1/25 s at its `frameRate: 25`.
+The author modelled the data correctly and then chose three assertion points that all avoid
+the seam. The bug was written into the test and stepped around.
+
+`currentTime` is written from the rAF loop at arbitrary float values ~20×/s, so landing in a
+hole is routine, not exotic.
+
+**The cascade when it happens.** Hole → wrong segment → `bundle` memo changes →
+`crossedSegmentBoundary` true → current track id absent from that segment → stage forced to
+`picker` → `saveProgress` persists it. The user reads: *"Lost you at the ten-minute mark.
+Which one is you?"* — hardcoded text, regardless of where the boundary actually is.
+
+**The reset effect makes it worse.** 
+
+```js
+useEffect(() => { setStage(...); setCurrentTime(progress.currentPositionSeconds); },
+          [bundle, response])
+```
+
+`bundle` changes on every segment crossing and `response` changes on every background
+refetch (window focus, reconnect). So crossing a boundary — or merely tabbing away and back —
+teleports the playhead to the last saved position and resets the stage. This effect and the
+boundary effect both try to own `stage` in the same tick.
+
+**Segment-local reasoning.** `segmentAsBundle` hands the engine whole-manifest `duration`
+and `frameCount` alongside a single segment's `tracks`. So `continuationsFor` can only ever
+find continuations *inside the current segment* — a track ending at a boundary can never be
+stitched across it. The identity map is the intended fix, and it works, but only if the
+identity board has been run (see RC3).
+
+## RC3 · Human labels are collected and thrown away
+
+This is the largest missed opportunity in the feature.
+
+**The narrowing answers are discarded.** The `still` stage asks up to three binary
+"is this still you?" questions per crossing — a human adjudicating identity at exactly the
+moments the tracker is least certain. Those answers live in `narrowing` React state and are
+never persisted. Only the final picker click becomes a `claim_match_corrections` row.
+
+**`questionCount` is fabricated.** It is written as `stage === "look" ? 2 : 1` instead of
+`narrowing.questionCount`. The one field that would tell you how much friction a claim costs
+is a constant.
+
+**The identity board is unreachable.** Zero references to `/identities` in `admin.tsx`. The
+route is registered in `App.tsx`, the page is fully built, and it is the only mechanism that
+makes a claim survive a segment boundary — reachable exclusively by hand-typing the URL.
+Nothing in the upload flow indicates it exists or should be run. In practice it never runs,
+so `manifest.identities` is empty, so `applyIdentities` no-ops, so every boundary drops the
+user's track.
+
+**The board never re-derives.** `autoRows` runs once, at load, only `if (!saved.length)`.
+It is greedy in start-time order and only ever compares against `parts[parts.length - 1]`.
+Once a track is wrongly appended to a row, every later candidacy test for that row is computed
+from the wrong seam position — so tracks after it were attached, or not attached, on bad
+information. Cut the wrong link by hand and those downstream decisions keep their assignments.
+The poison stays. There is no recompute button, and after the first save the auto-grouping can
+never be regenerated.
+
+**The board's headline feature corrupts the claim page.** In `applyIdentities`:
+
+```js
+rename.set(track.id, identity.id);
+```
+
+`rename` is a single `Map<trackId, identityId>`. Split a track — "this is someone else from
+here on", the operation the board exists for — and its head is in one identity, its tail in
+another. Both iterations write the same key; last write wins. Every crossing referencing that
+track is then re-pointed to one identity arbitrarily, corrupting the graph the claim page uses
+to generate narrowing questions. `consumed` has the same shape of problem: the source track is
+dropped wholesale, so any part-window gap silently deletes those boxes.
+
+**Other board defects**
+
+- Row internal consistency is never re-validated after an edit. Cut B out of `[A,B,C]` and the
+  gap that justified C may now violate the 6 s / 8 m/s rule. Nothing checks. The only invariant
+  enforced anywhere is coexistence, only for the dropped piece, only against the destination.
+- Split-off tails over 20 s become `mainRows`, and `suggestionFor` only runs for `fragments` —
+  so the piece you just identified as someone else gets no help finding who they are.
+- Suggestions are one-directional (fragment → mainRow only). A player represented entirely by
+  fragments can never be assembled from suggestions.
+- `K_PER_ROW = 14` samples crops evenly across a row. The frames needed to judge a link are the
+  two either side of a join — precisely what even sampling skips. No seam markers. You are asked
+  to audit joins you cannot see.
+- `rename` bypasses `commit`, so renames are not undoable. No dirty flag, no `beforeunload`
+  anywhere in the frontend. Close the tab after an hour of work and it is gone.
+- Dragging a row handle onto "Drop here to make a new person" calls `mergeRows(id, "new")`,
+  `to` is `undefined`, silent `return`. Dead interaction, no feedback.
+- `fragments` threshold uses `rowSpan` = sum of part durations, not wall-clock span. Three 8 s
+  pieces scattered across an hour = "main row"; one continuous 19 s appearance = "fragment".
+- `boxAt` has no empty-array guard (the engine's version does). A zero-box track — which ingest
+  accepts — throws and kills the whole board.
+- `IdentityMapBody` caps at 200 identities; a fragmented hour will exceed it and the save fails
+  as `save -> 400` after all the work.
+- `cropsForRow` is unmemoized, so typing a name re-samples every crop strip on the page.
+- No coverage or quality signal anywhere. The header says "N people". Nothing says how much of
+  the match is unassigned or whether the last merge helped.
+
+## RC4 · Ingest is built to fail silently
+
+The project already paid for this lesson once: a wrong `videoStartSeconds` does not error, it
+draws every box against footage from elsewhere in the match. `TrackingAlignmentCheck` was
+written to catch that specific case. The generalisation was never made.
+
+**Silent wrong defaults.** `normalizeBundle` falls back to `frameRate ?? 25`, `width ?? 1920`,
+`height ?? 1080` — for a 4096×1152 @ 20 fps camera. Omit fps and every time conversion is 25%
+off with no error. These should reject, not default.
+
+**No diagnosis on failure.** `parseSegment` returns bare `null` for ~15 distinct causes. The
+admin UI then discards even the errors the server *does* produce — messages like
+"Segment frame ranges must be continuous with no gaps" are replaced with
+"Upload failed — check manifest, segment ranges, and file names". An operator debugging a
+75 MB upload has no information at all.
+
+**Validation gaps.** Nothing checks that boxes lie within width/height, that box frames fall
+inside the segment's declared range, that `track.startFrame/endFrame` agree with the boxes,
+that tracks have any boxes at all, or — as in RC2 — that seconds are contiguous.
+
+**Memory profile.** `multer.memoryStorage()` holds the whole 75 MB zip; `unzipSync`
+materialises *every* entry at once into `Record<string, Uint8Array>`; each segment is then
+`JSON.parse`d into live objects. Tracking JSON gzips near 10:1, so a 75 MB zip is ~700 MB of
+text and several times that as parsed objects — plausibly multiple GB of heap, synchronously,
+on the request thread. This is the same failure the VPS side already documented
+("never buffer the whole file, it OOMs on multi-GB hours; use a streamed PUT").
+
+**Two limits on one endpoint.** `multer` allows 75 MB; `express.json` is capped at 50 MB. A
+legacy JSON bundle between the two gets a 413 with an HTML body, surfaced as the generic
+failure string.
+
+**`videoStart` means two different things.** On upload, blank → `undefined` → don't override →
+falls back to whatever the bundle carried, or 0. On "Save time", blank → explicitly 0. The
+field whose wrongness is invisible defaults to the dangerous value on the path where it matters
+most. It should be required for a first upload.
+
+## RC5 · Claim state is client-authoritative and unvalidated
+
+- `stage` is `zod.string()` on a `text` column with no enum or constraint, and the client does
+  `response.progress.stage as Stage`. Any junk string persists and renders a page with no panel.
+- `clipsUnlocked`, `completed` and `claimedPercent` are whatever the client PATCHes. Nothing
+  validates `clipsUnlocked <= earnedClips.length`. Harmless while clips are vapour; not harmless
+  the moment they gate anything.
+- **No visibility check on any tracking route.** Any authenticated non-guest can read the
+  manifest and every tracking segment for any recording id, bypassing the per-field date
+  whitelist the rest of the app enforces.
+- `POST /corrections` calls `readBundleSegments`, fetching and `JSON.parse`ing **every segment
+  of the hour from object storage** to check one track id and scan for events. Tens of MB per
+  correction tap. Track ids are already namespaced `s<n>:`, so the right segment is known; events
+  could live on the manifest.
+- **Earned clips are unearned.** `getMomentClips` matches any goal/shot/kickoff within ±12 s of
+  the correction moment, **with no reference to the user's track**. You earn a goal clip for
+  tapping near a goal, and every user claiming the same match earns the identical set.
+- The correction is recorded at the wrong timestamp. `onCorrection` seeks to `selectionMoment`
+  (derived from `candidateFrame`) but posts `momentSeconds: currentTime` — the pre-seek value —
+  and `candidateFrame` deliberately differs from `currentFrame` because the picker snaps to the
+  nearest frame with ≥2 detections. That wrong timestamp then feeds server `claimedPercent` and
+  the ±12 s clip window.
+- Undo targets the wrong correction. `allCorrections` is `[...remote (desc), ...localOptimistic]`
+  and `activeCorrection` is `.find(!undone)` — the newest *server* correction, not the optimistic
+  one just created. The undo condition mixes id sign, ISO string comparison and a single shared
+  `undoExpiresAt` for two unrelated actions, so making a correction silently cancels the ability
+  to undo an auto-stitch.
+- `POST /corrections` unconditionally sets `stage: "following"` server-side, diverging from a
+  client that returns early on boundary re-picks without posting.
+
+## RC6 · Storage, lifecycle and schema drift
+
+Credit first: the gzip handling in `lib/claimMatchStorage.ts` is correct — `decompress: false`
+on both reads, raw bytes forwarded with `Content-Encoding: gzip`, and a comment explaining why.
+That is one documented lesson that did land in code.
+
+- **Every re-upload orphans a full copy.** `storeUploadBundle` writes to fresh `randomUUID()`
+  paths and deletes/re-inserts the segment rows. Old objects are never deleted. Re-uploading is
+  the *designed* workflow (upload → check alignment → re-upload with a corrected offset), so
+  ghost copies of whole hours accumulate by design.
+- **Recording deletion orphans everything irrecoverably.** The bundle cascades on recording
+  delete, taking every `objectPath` with it. No lifecycle rule, no reaper, no bucket manifest.
+- **Non-atomic writes.** Segments are written to GCS in a sequential loop, then the DB
+  transaction runs. Fail at segment 4 of 6 → four orphans and a 400. Fail in the transaction →
+  all of them orphaned.
+- **Migration and ORM disagree.** `0017` adds `manifest jsonb` **nullable**; the Drizzle schema
+  declares it `.notNull()`. The DB and the ORM state different facts about the same column, which
+  is why every read site needs a `?.manifest` guard.
+- **Dead `payload` column.** NOT NULL was dropped, the column never was. It still holds full
+  legacy bundles, is not declared in the schema file, and is read by nothing.
+- Per `replit.md`, `drizzle-kit push` "is unaware of the hand-written migrations" — two migration
+  systems that do not know about each other, on a schema that already disagrees with itself.
+- `compressedBytes` / `trackCount` / `crossingCount` are written per segment and never read; the
+  summary recomputes them.
+
+## Appendix · Everything else
+
+**Performance**
+
+- `onTimeUpdate` fires once per tracking frame (~20 Hz) and calls `setCurrentTime`, re-rendering
+  the entire 1229-line component 20×/s. `ClaimStage` goes to real trouble to write the crop frame
+  straight to the DOM so following never re-renders React; this cancels that.
+- `saveProgress` is a `useCallback` depending on `currentTime`, so it gets a new identity 20×/s,
+  so every effect depending on it re-runs 20×/s.
+- The shirt-tone effect depends on `candidates` (a fresh array 20×/s) and runs `getImageData` on
+  four crops — a canvas readback per candidate per frame, on a phone decoding 4K HLS.
+- `nearestDetectionFrame` seeks the video from an effect with no hysteresis; on HLS keyframe
+  seeking this can oscillate.
+
+**Offline queue**
+
+- `flushQueue` does `catch { break; }`, treating every failure as retryable. A correction
+  referencing a track id that no longer exists returns a permanent 400, sits at the head of the
+  queue forever, and blocks everything behind it. No attempt counter, no drop rule.
+- `removeClaimAction` opens IndexedDB without an `onupgradeneeded` handler (unlike the other two).
+  If the store is absent, `transaction("queue")` throws synchronously inside `onsuccess`, outside
+  any try — the promise never settles and the flush hangs.
+- `invalidateQueries({ queryKey: ["claim-match"] })` matches nothing. Orval's key is
+  `["/api/recordings/<id>/claim-match"]`. Only the demo query's `["claim-match","demo"]` matches.
+  The loop documented in `claim-queue-invalidation-loop.md` was stopped, but the invalidate it
+  guards never worked.
+
+**UI / copy**
+
+- `matchOffset` is dead. Two long comment blocks defend it, it is in the schema, the DB type and
+  the OpenAPI spec, and it is referenced in exactly one place: passed into an object nobody reads
+  it from. `trackingToDisplay` is exported and never imported. The clock shows tracking time.
+- Space is bound to "Not me" in the `still` stage. Space is play/pause in every video player.
+  The guard excludes `HTMLInputElement` only — not textarea or contenteditable.
+- "Lost you at the ten-minute mark" is hardcoded regardless of the actual boundary.
+- Tracker vocabulary is exposed throughout: "Detection 3", "coasting", "overlap",
+  "Tracking ended here". These are tracker states presented as user problems.
+- After upload the admin list is not invalidated, so rows keep rendering
+  `recording.trackingSegmentCount ?? "—"`; `saveVideoStart` composes its success message from
+  those stale fields.
+
+**Hygiene**
+
+- Four separate implementations of "find the box at a frame", with different tolerances:
+  `boxAtFrame` (nearest, unbounded), `positionAtFrame` (±2 + interpolation), `detectionAtFrame`
+  (±2), identity-board `boxAt` (nearest, unguarded), `TrackingAlignmentCheck` `boxAt` (±4).
+- Three time formatters; `formatClaimTime` is exported and unused.
+- `recordingIdFromRequest` wraps `parseId` for nothing; `gunzipForZip` wraps `gunzipSync` for
+  nothing.
+- `makeFrame` clamps the origin, contradicting `cropFrame.ts`'s own documented invariant that
+  frames may extend outside the source for letterboxing. Correct for the claim page, wrong for
+  the crop editor — a shared helper serving two contradictory contracts.
+
+**Test coverage**
+
+Four tests on narrowing, three on segments, two on the upload parser. Untested: `continuationsFor`
+(the auto-stitch rule that silently reassigns identity), `positionAtFrame`, `boxAtFrame`,
+`boxesOverlap`, `laterSeparatedFrame`, `skipToClearPassage`, and all three time conversions —
+`trackingToVideoTime`, `videoTimeToTracking`, `clampToTracked`. The functions whose confusion
+caused the "every box on empty grass" incident, and which have twenty lines of comment prose
+written about them across two files, have zero tests. The prose was the fix.
+
+No tests exist for the claim page, the identity board, or the storage layer. Every finding above
+lives in the untested part.
+
+---
+
+# Part 2 — The design question
+
+## What is catastrophically wrong
+
+**Identity is modelled as a continuous chain when it should be sparse anchors.**
+
+The current design asks the user to establish an unbroken thread of trust: identify yourself
+once, then follow that thread forward through the whole match in playback order, answering
+questions whenever the tracker is unsure. Every problem in Part 1's RC1 and RC2 is downstream
+of that single choice:
+
+| Chain forces | Which produces |
+|---|---|
+| A notion of "how far along the thread you are" | `claimedPercent` as a stage counter with no meaning |
+| A terminal state at the end of the thread | a `done` stage nobody wired up |
+| Handling for the thread breaking | boundary re-picks, "Lost you at the ten-minute mark" |
+| Guessing to keep the thread alive | auto-stitch, capped at 3, each needing undo |
+| Serial, ordered, uninterruptible work | 40 minutes of labour, all-or-nothing |
+
+Chains break. This one breaks at every segment boundary, every track death, every tab refocus,
+and every 50 ms hole. And because the value is in the *whole* chain, a break near the end
+destroys work done at the beginning.
+
+**Anchors do not break.** Ask the user to identify themselves in 6–10 well-chosen frames
+scattered across the match — frames selected for clarity, separation and information gain, not
+by playback order. Each answer is an independent, permanent fact. The system then propagates
+identity *between* anchors across the tracking graph, and reports confidence for each interval.
+
+Everything changes:
+
+- **90 seconds of work instead of 40 minutes.** Each anchor is: look at 2–4 large crops, tap
+  yourself. That is a phone interaction, not a desk session.
+- **Interruptible and resumable by construction.** Any anchor answered is banked. There is no
+  thread to lose. Close the tab mid-way and you have lost nothing.
+- **Order-free.** Anchors can be answered in any order, which means they can be batched,
+  prefetched, or spread across sessions.
+- **Degrades gracefully.** Six anchors is better than four, not "failed". There is no state in
+  which the user is stuck.
+- **Segment boundaries become invisible.** They are a storage detail again, because nothing in
+  the interaction depends on continuity of playback.
+- **"Done" becomes definable.** You are done when the next question would not materially change
+  your coverage — an information-gain threshold, not a stage.
+
+The good news: the algorithm this needs already exists in the repo. `continuationsFor` — start
+after the previous track ends, within reach at 8 m/s, coexistence forbidden — is exactly the
+edge rule for the graph. The narrowing binary search is exactly the question-selection strategy,
+applied globally over the graph instead of sequentially over the timeline. **The rewrite keeps
+the geometry engine and replaces what drives it.**
+
+## The second thing that is wrong: who is asked to do the work
+
+Even with anchors, per-player identification is O(players × matches) of human effort. A coach
+identifying a squad once is O(1) per match — and with kit/number/appearance persistence across
+matches, closer to O(1) per season.
+
+The project already has academies. The Aug 28 plan already sketched an Academy Console. Identity
+labelling is a **roster operation**, not a fan operation. Ten players each spending 90 seconds
+per match is worse in every dimension than one coach spending five minutes once — worse for
+total effort, worse for consistency, worse as a training set, and worse for the player, who
+should open the app and simply find their clips waiting.
+
+Recommended split:
+
+- **Coach / academy:** establishes and maintains squad identity. Gets the identity board, made
+  good (below).
+- **Player:** confirms or corrects, in seconds, only where the system is genuinely unsure about
+  *them*. Never sees a track id, never follows a thread.
+
+## The third thing: confidence is missing entirely
+
+Everything in the current model is boolean — a track is you or it is not. `crossing.confidence`
+exists in the schema and is read by nothing. Without confidence the system cannot degrade, cannot
+rank questions, cannot decide when to stop, and cannot express "sure here, unsure there".
+
+Make it a first-class field and the undefined quantities define themselves:
+
+- **Coverage / "claimed %"** = fraction of your in-play person-seconds attributed to you at or
+  above a confidence threshold. Honest, computable, and directly displayable.
+- **Done** = the best available question's expected information gain falls below a threshold.
+- **Which question to ask next** = the one that most reduces uncertainty in coverage. Never ask a
+  question whose answer changes nothing.
+
+## What a rewrite looks like
+
+**Data model**
+
+- The unit is an **identity**, not a track. Track ids never reach the client, never appear in copy.
+- Every attribution carries a confidence and a provenance (inferred / user-confirmed / coach-set).
+- Bundles carry a content hash; identity maps reference it, so a re-upload with renumbered ids
+  fails loudly instead of silently shrinking a player's identity.
+- Segments become a transport concern only. The client requests a **time window**; the server
+  serves whatever segments cover it. No segment index ever reaches component state. Prefetch the
+  neighbours. There is no such thing as a boundary event in the UI.
+
+**Server**
+
+- Server-authoritative claim state. The client proposes answers; the server computes coverage,
+  confidence and completion. `clipsUnlocked` and `completed` are never client-writable.
+- Persist **every** answer — including "not sure" — with the question that produced it and the
+  candidates that were offered. That is the training set, and it is the actual long-term asset of
+  this feature. Right now it is discarded.
+- Validate visibility on tracking routes like everywhere else.
+- Stream ingest. Reject on missing fps/dimensions rather than defaulting. Return the real reason
+  for every rejection. Delete superseded objects; add a reaper for orphans.
+
+**Player UI**
+
+- **The match strip is the progress bar.** One horizontal band showing the whole match with your
+  coverage painted on it: confirmed, inferred, uncertain, absent. It replaces the percentage,
+  because it is self-evidently the same information and cannot lie.
+- **Questions are faces, not boxes on a panorama.** 2–4 large crops taken at the moment of maximum
+  separation — `laterSeparatedFrame` and the sprite strips already produce exactly this. Tap
+  yourself. Always offer "I'm not in this one" and "skip".
+- **No tracker vocabulary.** No "Detection 3", no "coasting", no "overlap", no "tracking ended".
+  Say what happened in human terms or say nothing.
+- **Nothing is ever lost.** Every answer is banked immediately; there is no thread to break and no
+  state to restore.
+
+**Identity board (coach tool)**
+
+- Human edits become **constraints** (must-link / cannot-link), not final assignments. Re-derive
+  the grouping subject to them, and show what moved. That converges; hand-editing a frozen guess
+  does not.
+- Seam-first display: show the crops on either side of each join, not an even sample. That is the
+  only view that lets a human audit a link.
+- A live coverage score: unassigned person-seconds, single-part rows, fragments remaining. The
+  operator should be able to see whether they are winning.
+- Autosave and undo across the whole session, including renames.
+
+## What to keep
+
+Not everything needs rewriting. This is genuinely good and should survive:
+
+- `continuationsFor` — coexistence as a hard constraint, reachability at 8 m/s, exactly-one →
+  stitch / several → ask / none → picker. The right idea, correctly implemented.
+- `positionAtFrame` — coasting through occlusions instead of declaring a track dead.
+- `metresPerPixel = 1.75 / box height` — the local scale trick, used consistently.
+- The coexistence invariant in the identity board: two pieces overlapping in time are two people.
+  "The one rule the tracker can never get wrong, and the one rule a tired human would."
+- `TrackingAlignmentCheck` — a genuinely thoughtful tool for the one thing no schema check can
+  express. Generalise its instinct, do not discard it.
+- The three-clocks discipline (tracking / video / display) — the doctrine is right even though
+  `matchOffset` was never wired up.
+- The overlay layer sharing the video's exact transform, so boxes stay glued to pixels.
+- Streaming gzip segment storage with `decompress: false` on both read paths.
+
+## Suggested order
+
+1. **Decide what "claimed" means numerically.** Coverage at a confidence threshold. Everything
+   else — the metric, the completion condition, the stopping rule, the board's score — falls out
+   of this one definition. Nothing else should be built first.
+2. **Stop the bleeding on the current build** if it needs to stay up: the seconds hole, the reset
+   effect, the unreachable `done`, the query-key invalidation. Four small fixes that remove most
+   of the "it loses me" reports.
+3. **Prototype the anchor interaction** against one real hour with a saved identity map. Measure
+   time-to-coverage against the current chain. This is falsifiable in a day and it decides the
+   rewrite.
+4. **Move labelling to the coach surface** and let the player flow become confirm-or-correct.
+5. Then the ingest, storage and lifecycle work, which is ordinary engineering once the model is
+   settled.

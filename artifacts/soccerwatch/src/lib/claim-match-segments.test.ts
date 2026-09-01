@@ -41,6 +41,11 @@ describe("claim match segments", () => {
     expect(segmentIndexAtTime(adjacentManifest, 1200)).toBe(1);
   });
 
+  it("assigns a short compressed-file seam to the following segment", () => {
+    expect(segmentIndexAtTime(manifest, 1200.02)).toBe(1);
+    expect(segmentIndexAtTime(manifest, 2400.02)).toBe(2);
+  });
+
   it("keeps only current, previous, and next cache entries", () => {
     const cache = {
       0: { segmentIndex: 0 },

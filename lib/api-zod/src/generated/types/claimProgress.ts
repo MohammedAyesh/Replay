@@ -14,10 +14,32 @@ export interface ClaimProgress {
   stage: string;
   confirmedFromSeconds: number;
   currentPositionSeconds: number;
+  /** Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage. */
   claimedPercent: number;
+  /**
+     * Union of the accepted track spans, in tracking seconds.
+     * @minimum 0
+     */
+  coverageSeconds: number;
+  /**
+     * coverageSeconds divided by the tracked match duration.
+     * @minimum 0
+     * @maximum 100
+     */
+  coveragePercent: number;
+  /** @minimum 0 */
+  answeredAnchorCount: number;
+  /** @minimum 0 */
+  acceptedAnchorCount: number;
+  /**
+     * Anchor moments answered as not me or skipped.
+     * @items.minimum 0
+     */
+  unresolvedMoments: number[];
   clipsUnlocked: number;
   correctionCount: number;
   completed: boolean;
+  completionReason: string;
   earnedClips: ClaimEarnedClip[];
   updatedAt: string;
 }

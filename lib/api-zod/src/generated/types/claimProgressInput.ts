@@ -16,12 +16,14 @@ export interface ClaimProgressInput {
   /** @minimum 0 */
   currentPositionSeconds: number;
   /**
+     * Accepted for backwards compatibility; the server recalculates it.
      * @minimum 0
      * @maximum 100
      */
   claimedPercent: number;
   /** @minimum 0 */
   clipsUnlocked: number;
+  /** Accepted for backwards compatibility; the server recalculates it. */
   completed: boolean;
   earnedClips?: ClaimEarnedClip[];
 }

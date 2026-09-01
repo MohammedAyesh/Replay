@@ -2027,6 +2027,10 @@ components:
           description: The identity board's result - pieces of tracks that are one person. Optional.
           items:
             $ref: "#/components/schemas/TrackingIdentity"
+        provenance:
+          type: object
+          additionalProperties: true
+          description: How the tracking bundle was produced.
 
     TrackingBundle:
       type: object
@@ -2139,7 +2143,7 @@ components:
 
     ClaimProgress:
       type: object
-      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, clipsUnlocked, correctionCount, completed, earnedClips, updatedAt]
+      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, updatedAt]
       properties:
         recordingId:
           type: integer
@@ -2153,12 +2157,38 @@ components:
           type: number
         claimedPercent:
           type: number
+          description: >-
+            Backwards-compatible name for coveragePercent. This is derived from
+            accepted attributed person-seconds on the server, never from UI stage.
+        coverageSeconds:
+          type: number
+          minimum: 0
+          description: Union of the accepted track spans, in tracking seconds.
+        coveragePercent:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: coverageSeconds divided by the tracked match duration.
+        answeredAnchorCount:
+          type: integer
+          minimum: 0
+        acceptedAnchorCount:
+          type: integer
+          minimum: 0
+        unresolvedMoments:
+          type: array
+          description: Anchor moments answered as not me or skipped.
+          items:
+            type: number
+            minimum: 0
         clipsUnlocked:
           type: integer
         correctionCount:
           type: integer
         completed:
           type: boolean
+        completionReason:
+          type: string
         earnedClips:
           type: array
           items:
@@ -2184,11 +2214,13 @@ components:
           type: number
           minimum: 0
           maximum: 100
+          description: Accepted for backwards compatibility; the server recalculates it.
         clipsUnlocked:
           type: integer
           minimum: 0
         completed:
           type: boolean
+          description: Accepted for backwards compatibility; the server recalculates it.
         earnedClips:
           type: array
           items:

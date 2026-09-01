@@ -1,14 +1,17 @@
 import type { TrackingManifest, TrackingSegment } from "@workspace/api-client-react";
 
 export function segmentIndexAtTime(manifest: TrackingManifest, seconds: number): number {
-  const lastIndex = manifest.segments.length - 1;
-  const match = manifest.segments.find((segment, position) =>
-    seconds >= segment.startSeconds && (seconds < segment.endSeconds || position === lastIndex),
+  const ordered = [...manifest.segments].sort((a, b) => a.startSeconds - b.startSeconds);
+  const match = ordered.find((segment, position) =>
+    seconds >= segment.startSeconds
+      && (seconds < segment.endSeconds || position === ordered.length - 1),
   );
   if (match) return match.index;
-  return seconds < (manifest.segments[0]?.startSeconds ?? 0)
-    ? (manifest.segments[0]?.index ?? 0)
-    : (manifest.segments.at(-1)?.index ?? 0);
+  // A small clock seam can exist between compressed segment files. Assign it
+  // to the segment that starts next, rather than falling through to the final
+  // segment and jumping the player to the wrong end of the match.
+  const next = ordered.find((segment) => seconds < segment.startSeconds);
+  return next?.index ?? (ordered.at(-1)?.index ?? 0);
 }
 
 export function retainNearbySegments(

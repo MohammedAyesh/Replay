@@ -5,8 +5,9 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
-import type { TrackingSegmentManifest } from './trackingSegmentManifest';
 import type { TrackingIdentity } from './trackingIdentity';
+import type { TrackingManifestProvenance } from './trackingManifestProvenance';
+import type { TrackingSegmentManifest } from './trackingSegmentManifest';
 
 export interface TrackingManifest {
   /** @minimum 1 */
@@ -22,14 +23,18 @@ export interface TrackingManifest {
   frameCount: number;
   /** @exclusiveMinimum 0 */
   duration: number;
+  /** Display only. Added to tracking time to show a clock that matches the wider match, e.g. an hour that starts at minute 40. Must never be used to seek. */
   matchOffset: number;
-  /** @minimum 0 */
+  /**
+     * Where tracking frame 0 sits inside the video file, in seconds. The recording can be longer than the tracked window - the 2026-08-24 recording is two hours and the tracked hour starts 18 minutes in, so this is 1080. Optional for bundles uploaded before this field existed; the server fills 0 and the boxes will be wrong until it is set.
+     * @minimum 0
+     */
   videoStartSeconds?: number;
   /** @minimum 1 */
   segmentCount: number;
   segments: TrackingSegmentManifest[];
   /** The identity board's result - pieces of tracks that are one person. Optional. */
   identities?: TrackingIdentity[];
-  /** How the bundle was produced (linker, parameters, measurements). Free-form. */
-  provenance?: Record<string, unknown>;
+  /** How the tracking bundle was produced. */
+  provenance?: TrackingManifestProvenance;
 }

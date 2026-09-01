@@ -64,12 +64,17 @@ import {
   retainNearbySegments,
   segmentIndexAtTime,
 } from "@/lib/claim-match-segments";
+import {
+  buildClaimAnchors,
+  nextUnansweredAnchor,
+} from "@/lib/claim-match-anchors";
 
 type Stage = "find" | "following" | "still" | "picker" | "look" | "done";
 type ReviewState = "watching" | "prompt" | "replay";
 const AUTO_LINK_MAX = 3;
 const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2] as const;
 const REVIEW_WINDOW_SECONDS = 10;
+const EMPTY_ANCHOR_TRACK = "__none__";
 type Candidate = {
   id: string;
   label: string;
@@ -315,6 +320,7 @@ export default function ClaimMatchPage() {
   const isDemo = !params.id || params.id === "demo";
   const recordingId = isDemo ? 0 : Number(params.id);
   const queryKey = getGetClaimMatchQueryKey(recordingId);
+  const responseQueryKey = isDemo ? ["claim-match", "demo"] : queryKey;
   const claimQuery = useGetClaimMatch(recordingId, { query: { enabled: !isDemo, queryKey } });
   const demoQuery = useQuery<ClaimMatchResponse>({
     queryKey: ["claim-match", "demo"],
@@ -350,6 +356,7 @@ export default function ClaimMatchPage() {
   const [reviewWindowEnd, setReviewWindowEnd] = useState(10);
   const [reviewNoCount, setReviewNoCount] = useState(0);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
+  const [anchorMode, setAnchorMode] = useState(false);
   const [confirmedFromSeconds, setConfirmedFromSeconds] = useState(0);
   const [narrowing, setNarrowing] = useState<NarrowingState | null>(null);
   const [crossingOtherTrackId, setCrossingOtherTrackId] = useState<string | null>(null);
@@ -385,10 +392,12 @@ export default function ClaimMatchPage() {
     const remoteIds = new Set(remote.map((item) => item.clientId));
     return [...remote, ...corrections.filter((item) => !remoteIds.has(item.clientId))];
   }, [corrections, response]);
-  const progressValue = Math.max(claimedPercent, serverProgress?.claimedPercent || 0);
   const duration = manifest
     ? Math.max(manifest.duration, ...manifest.segments.map((segment) => segment.endSeconds), 1)
     : 1;
+  const progressValue = serverProgress?.coveragePercent
+    ?? serverProgress?.claimedPercent
+    ?? 0;
   const earnedClips = serverProgress?.earnedClips || [];
   const currentSegmentIndex = manifest ? segmentIndexAtTime(manifest, currentTime) : 0;
   const orderedSegments = useMemo(
@@ -401,6 +410,22 @@ export default function ClaimMatchPage() {
     () => (manifest && activeSegment ? segmentAsBundle(manifest, activeSegment) : null),
     [activeSegment, manifest],
   );
+  const goalTimes = (bundle?.events ?? [])
+    .filter((event) => event.type.toLowerCase() === "goal")
+    .map((event) => event.time);
+  const claimAnchors = useMemo(
+    // Keep anchor ids stable while progressive segment data is swapped in.
+    () => buildClaimAnchors(duration, [], duration < 120 ? 4 : 8),
+    [duration],
+  );
+  const answeredAnchorMoments = useMemo(
+    () => allCorrections
+      .filter((item) => !item.undone && item.answerMethod.startsWith("anchor-"))
+      .map((item) => item.momentSeconds),
+    [allCorrections],
+  );
+  const nextAnchorIndex = nextUnansweredAnchor(claimAnchors, answeredAnchorMoments);
+  const currentAnchor = claimAnchors[nextAnchorIndex >= 0 ? nextAnchorIndex : Math.max(0, claimAnchors.length - 1)] ?? null;
   const hasData = Boolean(response && recording && manifest && serverProgress);
   const activeCorrection = allCorrections.find((item) => !item.undone);
   const currentFrame = bundle ? trackingSecondsToFrame(currentTime, bundle) : 0;
@@ -607,13 +632,10 @@ export default function ClaimMatchPage() {
   }, [bundle, clipsUnlocked, currentSegmentIndex, currentTrackId, manifest, progressValue, saveProgress]);
 
   const goStage = useCallback((next: Stage, trackId = currentTrackId) => {
-    const percentByStage: Record<Stage, number> = { find: 0, following: 19, still: 38, picker: 55, look: 73, done: 100 };
     setStage(next);
-    setClaimedPercent(percentByStage[next]);
     setCurrentTrackId(trackId);
-    setClipsUnlocked((value) => Math.max(value, next === "done" ? earnedClips.length : value));
-    saveProgress(next, trackId, Math.max(progressValue, percentByStage[next]), clipsUnlocked);
-  }, [currentTrackId, earnedClips.length, progressValue, clipsUnlocked, saveProgress]);
+    saveProgress(next, trackId, progressValue, clipsUnlocked);
+  }, [currentTrackId, progressValue, clipsUnlocked, saveProgress]);
 
   const stillQuestion = narrowing ? nextNarrowingQuestion(narrowing) : null;
 
@@ -622,6 +644,27 @@ export default function ClaimMatchPage() {
     const video = videoRef.current;
     if (video) void video.play().catch(() => setPlaying(false));
   }, []);
+
+  const openAnchorReview = useCallback((index: number) => {
+    const anchor = claimAnchors[index];
+    if (!anchor) return;
+    setAnchorMode(true);
+    setCurrentTrackId(null);
+    setNarrowing(null);
+    setCrossingOtherTrackId(null);
+    setBoundaryNotice("");
+    setBoundaryRepickPending(false);
+    setStage("picker");
+    setPlaying(false);
+    videoRef.current?.pause();
+    seekTracking(anchor.momentSeconds);
+    setNotice(`Identity check · ${formatTime(anchor.momentSeconds)}`);
+  }, [claimAnchors, seekTracking]);
+
+  const startAnchorReview = useCallback(() => {
+    const first = nextUnansweredAnchor(claimAnchors, answeredAnchorMoments);
+    openAnchorReview(first >= 0 ? first : 0);
+  }, [answeredAnchorMoments, claimAnchors, openAnchorReview]);
 
   const toggleVideoPlayback = useCallback(() => {
     const next = !playing;
@@ -901,8 +944,16 @@ export default function ClaimMatchPage() {
     const resumedPosition = response.progress.currentPositionSeconds || 0;
     const normalizedStage = resumedStage === "still" ? "following" : resumedStage;
     const resumedWindowAnchor = response.progress.confirmedFromSeconds ?? resumedPosition;
-    setStage(normalizedStage);
-    setCurrentTrackId(response.progress.currentTrackId || null);
+    const savedAnchorMoments = response.corrections
+      .filter((item) => !item.undone && item.answerMethod.startsWith("anchor-"))
+      .map((item) => item.momentSeconds);
+    const savedAnchorIndex = nextUnansweredAnchor(claimAnchors, savedAnchorMoments);
+    const resumeAnchors = !response.progress.completed
+      && response.corrections.some((item) => !item.undone && item.answerMethod.startsWith("anchor-"))
+      && savedAnchorIndex >= 0;
+    setAnchorMode(resumeAnchors);
+    setStage(response.progress.completed ? "done" : resumeAnchors ? "picker" : normalizedStage);
+    setCurrentTrackId(resumeAnchors ? null : response.progress.currentTrackId || null);
     setConfirmedFromSeconds(response.progress.confirmedFromSeconds || 0);
     setCurrentTime(resumedPosition);
     setClaimedPercent(response.progress.claimedPercent || 0);
@@ -910,7 +961,11 @@ export default function ClaimMatchPage() {
     setCorrections(response.corrections);
     setNarrowing(null);
     setCrossingOtherTrackId(null);
-    if ((normalizedStage === "following") && response.progress.currentTrackId) {
+    if (resumeAnchors) {
+      seekTracking(claimAnchors[savedAnchorIndex].momentSeconds);
+      setPlaying(false);
+      videoRef.current?.pause();
+    } else if ((normalizedStage === "following") && response.progress.currentTrackId) {
       const resumedWindow = reviewWindowAt(resumedWindowAnchor, bundle.duration);
       setReviewWindowStart(resumedWindow.start);
       setReviewWindowEnd(resumedWindow.end);
@@ -920,7 +975,7 @@ export default function ClaimMatchPage() {
       videoRef.current?.pause();
       seekTracking(resumedWindow.end);
     }
-  }, [bundle, response, seekTracking]);
+  }, [bundle, claimAnchors, response, seekTracking]);
 
   useEffect(() => {
     if (!bundle || !currentTrackId) return;
@@ -1118,8 +1173,85 @@ export default function ClaimMatchPage() {
     stage,
   ]);
 
+  const recordAnchorAnswer = useCallback((
+    answer: "yes" | "no" | "skip",
+    chosenTrackId: string = EMPTY_ANCHOR_TRACK,
+  ) => {
+    if (!anchorMode || !currentAnchor || !bundle) return;
+    const momentSeconds = currentAnchor.momentSeconds;
+    const answerMethod = `anchor-${answer}`;
+    const payload = {
+      clientId: `claim-${activeRecordingId}-${currentAnchor.id}`,
+      momentSeconds,
+      rejectedTrackId: null,
+      chosenTrackId: answer === "yes" ? chosenTrackId : EMPTY_ANCHOR_TRACK,
+      answerMethod,
+      questionCount: nextAnchorIndex >= 0 ? nextAnchorIndex : 0,
+    };
+    const optimistic: ClaimCorrection = {
+      id: -Date.now(),
+      ...payload,
+      recordingId: activeRecordingId,
+      undone: false,
+      createdAt: new Date().toISOString(),
+    };
+    setCorrections((items) => [...items, optimistic]);
+    setNotice(answer === "yes" ? "Answer saved · finding another clear moment" : "Moment noted · finding another clear moment");
+    const queueAction = {
+      id: `correction-${payload.clientId}`,
+      kind: "correction" as const,
+      recordingId: activeRecordingId,
+      payload,
+      createdAt: Date.now(),
+    };
+    if (isOffline) {
+      void enqueueClaimAction(queueAction).then(async () => setQueuedCount((await readClaimQueue()).length));
+    } else {
+      createCorrection.mutate({ id: activeRecordingId, data: payload }, {
+        onSuccess: (correction) => {
+          setCorrections((items) => items.map((item) => item.id === optimistic.id ? correction : item));
+          void queryClient.invalidateQueries({ queryKey: responseQueryKey });
+        },
+        onError: () => void enqueueClaimAction(queueAction).then(async () => setQueuedCount((await readClaimQueue()).length)),
+      });
+    }
+    const nextIndex = nextUnansweredAnchor(
+      claimAnchors,
+      [...answeredAnchorMoments, momentSeconds],
+    );
+    if (nextIndex < 0) {
+      setAnchorMode(false);
+      setStage("picker");
+      setCurrentTrackId(null);
+      saveProgress("picker", null, progressValue, clipsUnlocked, 0, momentSeconds);
+      setNotice("Anchor pass complete · we’re checking your coverage");
+    } else {
+      openAnchorReview(nextIndex);
+    }
+  }, [
+    activeRecordingId,
+    anchorMode,
+    answeredAnchorMoments,
+    bundle,
+    claimAnchors,
+    clipsUnlocked,
+    createCorrection,
+    currentAnchor,
+    isOffline,
+    nextAnchorIndex,
+    openAnchorReview,
+    progressValue,
+    queryClient,
+    responseQueryKey,
+    saveProgress,
+  ]);
+
   const onCorrection = (chosen: Candidate, method = "picker", allowOverlap = false) => {
     if (!bundle) return;
+    if (anchorMode) {
+      recordAnchorAnswer("yes", chosen.id);
+      return;
+    }
     const isBoundaryRepick = boundaryRepickPending;
     const rejected = currentTrackId && currentTrackId !== chosen.id ? currentTrackId : null;
     const overlapping = candidates.find((candidate) => candidate.id !== chosen.id && boxesOverlap(chosen.box, candidate.box));
@@ -1168,7 +1300,10 @@ export default function ClaimMatchPage() {
       void enqueueClaimAction(action).then(async () => setQueuedCount((await readClaimQueue()).length));
     } else {
       createCorrection.mutate({ id: activeRecordingId, data: payload }, {
-        onSuccess: (correction) => setCorrections((items) => items.map((item) => item.id === optimistic.id ? correction : item)),
+        onSuccess: (correction) => {
+          setCorrections((items) => items.map((item) => item.id === optimistic.id ? correction : item));
+          void queryClient.invalidateQueries({ queryKey: responseQueryKey });
+        },
         onError: () => void enqueueClaimAction({ id: `correction-${payload.clientId}`, kind: "correction", recordingId: activeRecordingId, payload, createdAt: Date.now() }).then(async () => setQueuedCount((await readClaimQueue()).length)),
       });
     }
@@ -1301,7 +1436,7 @@ export default function ClaimMatchPage() {
   };
   const handlePrimaryAction = () => {
     if (stage === "find") {
-      if (candidates[0]) beginFollowing(candidates[0].id);
+      startAnchorReview();
     } else if (stage === "following") {
       startCorrectionCheck();
     } else if (stage === "still") {
@@ -1313,33 +1448,24 @@ export default function ClaimMatchPage() {
     }
   };
 
-  const goalTimes = bundle.events
-    .filter((event) => event.type.toLowerCase() === "goal")
-    .map((event) => event.time);
   const panelBody = (
     <>
-        {orderedSegments.length > 1 && stage !== "done" && (
-          <div className="claim-segment-nav" data-testid="segment-navigation">
-            <button type="button" className="claim-segment-nav-button" data-testid="button-previous-segment" onClick={() => moveToSegment(-1)} disabled={currentSegmentPosition <= 0}>
-              <ArrowLeft size={14} /> Previous
-            </button>
-            <div className="claim-segment-nav-label">
-              <span>SEGMENT {currentSegmentPosition + 1} / {orderedSegments.length}</span>
-              <small>10-minute section</small>
-            </div>
-            <button type="button" className="claim-segment-nav-button" data-testid="button-next-segment" onClick={() => moveToSegment(1)} disabled={currentSegmentPosition >= orderedSegments.length - 1}>
-              Next 10 min <ChevronRight size={14} />
-            </button>
-          </div>
-        )}
+        <div className="claim-coverage-summary" data-testid="claim-coverage-summary">
+          <div><span>Match coverage</span><b>{Math.round(progressValue)}%</b></div>
+          <small>
+            {serverProgress?.coverageSeconds?.toFixed(1) ?? "0.0"} attributed seconds
+            {serverProgress?.answeredAnchorCount ? ` · ${serverProgress.answeredAnchorCount} moments answered` : ""}
+            {serverProgress?.unresolvedMoments?.length ? ` · ${serverProgress.unresolvedMoments.length} unresolved` : ""}
+          </small>
+        </div>
         {stage === "find" && (
           <div className="claim-panel claim-panel-find" data-testid="panel-find-yourself">
-            <span className="claim-context"><ScanSearch size={16} /> DETECTIONS IN THIS FRAME</span>
-            <h2>Tap your player</h2>
-            <p>We’ll follow one real tracked player through the recording. Tap a highlighted box, or choose the closest clear detection below.</p>
-            <div className="claim-prompt-card"><div className="prompt-icon"><LocateFixed size={19} /></div><div><b>{candidates.length} players detected</b><span>Boxes never come from placeholder positions.</span></div></div>
-            <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-start-following" onClick={handlePrimaryAction} disabled={!candidates[0]}>Follow the closest detection <ChevronRight size={17} /></button>
-            <button type="button" className="claim-text-button" data-testid="button-skip-find" onClick={() => goStage("picker")}>Show all detections <ArrowLeft size={14} /></button>
+            <span className="claim-context"><ScanSearch size={16} /> IDENTITY CHECKPOINTS</span>
+            <h2>Find your moments</h2>
+            <p>We’ll show you a few clear moments from different parts of the match. Pick yourself when you see you — no need to follow one continuous trail.</p>
+            <div className="claim-prompt-card"><div className="prompt-icon"><LocateFixed size={19} /></div><div><b>{claimAnchors.length} moments to check</b><span>Your answers build coverage across the match.</span></div></div>
+            <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-start-following" onClick={handlePrimaryAction} disabled={!claimAnchors.length}>Show the first moment <ChevronRight size={17} /></button>
+            <button type="button" className="claim-text-button" data-testid="button-skip-find" onClick={startAnchorReview}>Start identity review <ArrowLeft size={14} /></button>
           </div>
         )}
         {stage === "following" && (
@@ -1389,24 +1515,41 @@ export default function ClaimMatchPage() {
         )}
         {stage === "picker" && (
           <div className="claim-panel claim-panel-picker" data-testid="panel-picker">
-            <span className="claim-context"><LocateFixed size={15} /> REAL DETECTIONS ONLY</span>
-            {boundaryNotice && (
-              <div className="mb-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-medium text-primary" role="status" data-testid="notice-segment-boundary">
-                {boundaryNotice}
-              </div>
+            {anchorMode ? (
+              <>
+                <span className="claim-context"><LocateFixed size={15} /> IDENTITY CHECKPOINT</span>
+                <h2>Which player is you?</h2>
+                <p>This is one clear moment from the match. Pick yourself, or tell us you’re not visible. Each answer is saved immediately.</p>
+                <div className="claim-question-card"><Clock3 size={18} /><span>Moment <b>{formatTime(currentAnchor?.momentSeconds ?? currentTime)}</b> · {Math.max(1, nextAnchorIndex + 1)} of {claimAnchors.length}</span></div>
+                <div className="candidate-list">
+                  {candidates.map((candidate, index) => (
+                    <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-candidate-${index + 1}`} onClick={() => onCorrection(candidate)}>
+                      <span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>Player {index + 1}</b><small>{candidate.label}</small></span><ChevronRight size={16} />
+                    </button>
+                  ))}
+                </div>
+                {candidates.length === 0 && <div className="claim-empty-detections">No player is clear in this moment. You can skip it and keep your coverage honest.</div>}
+                <button type="button" className="claim-button claim-button-secondary claim-button-wide" data-testid="button-anchor-not-me" onClick={() => recordAnchorAnswer("no")}>I’m not visible here <X size={17} /></button>
+                <button type="button" className="claim-text-button claim-skip-button" data-testid="button-skip-picker" onClick={() => recordAnchorAnswer("skip")}>Skip this moment <FastForward size={14} /></button>
+                <p className="claim-key-note">Choose with <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> on your keyboard</p>
+              </>
+            ) : (
+              <>
+                <span className="claim-context"><LocateFixed size={15} /> CLEAR MOMENT</span>
+                <h2>Which player is you?</h2>
+                <p>These players are visible in this frame. Choose the one that is you.</p>
+                <div className="candidate-list">
+                  {candidates.map((candidate, index) => (
+                    <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-candidate-${index + 1}`} onClick={() => onCorrection(candidate)}>
+                      <span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>Player {index + 1}</b><small>{candidate.label}</small></span><ChevronRight size={16} />
+                    </button>
+                  ))}
+                </div>
+                {candidates.length === 0 && <div className="claim-empty-detections">No player is clear in this frame. Scrub or use the video to find a clear passage.</div>}
+                <button type="button" className="claim-text-button claim-skip-button" data-testid="button-skip-picker" onClick={skipAhead}>I’m hidden — show a clearer passage <FastForward size={14} /></button>
+                <p className="claim-key-note">Choose with <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> on your keyboard</p>
+              </>
             )}
-            <h2>Which detection is you?</h2>
-            <p>These boxes are from the current tracking frame, ranked by distance from your last confirmed position.</p>
-            <div className="candidate-list">
-              {candidates.map((candidate, index) => (
-                <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-candidate-${index + 1}`} onClick={() => onCorrection(candidate)}>
-                  <span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>Detection {index + 1}</b><small>{candidate.label}{candidate.overlap ? " · overlap" : ""}</small></span><ChevronRight size={16} />
-                </button>
-              ))}
-            </div>
-            {candidates.length === 0 && <div className="claim-empty-detections">No valid boxes are visible in this frame. Scrub or use the video to find a clear passage.</div>}
-            <button type="button" className="claim-text-button claim-skip-button" data-testid="button-skip-picker" onClick={skipAhead}>I’m hidden — show a clearer passage <FastForward size={14} /></button>
-            <p className="claim-key-note">Choose with <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> on your keyboard</p>
           </div>
         )}
         {stage === "look" && (
@@ -1425,7 +1568,8 @@ export default function ClaimMatchPage() {
           <div className="claim-panel claim-panel-complete" data-testid="panel-done">
             <div className="complete-graphic"><span className="complete-ring"><Check size={24} /></span><span className="complete-spark spark-a" /><span className="complete-spark spark-b" /><span className="complete-spark spark-c" /></div>
             <h2>Done. That’s all yours.</h2>
-             <p>You claimed <b>{Math.round(progressValue)}%</b> of this match. We found the moments where you made the difference.</p>
+             <p>You confirmed <b>{Math.round(progressValue)}%</b> coverage of this match. The percentage reflects attributed player time, not how many screens you visited.</p>
+             {serverProgress?.unresolvedMoments?.length ? <p className="claim-muted">{serverProgress.unresolvedMoments.length} moments remain unresolved. You can return and review them later.</p> : null}
              <div className="earned-count"><Sparkles size={18} /><b>{clipsUnlocked} earned clips</b><span>ready in My Clips</span></div>
             <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-done-view-clips" onClick={() => setLocation("/my-clips")}>View your clips <ChevronRight size={17} /></button>
             <button type="button" className="claim-text-button" data-testid="button-done-back-match" onClick={() => setStage("look")}>Take another look <ArrowLeft size={14} /></button>

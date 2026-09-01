@@ -56,6 +56,7 @@ export * from './trackingEvent';
 export * from './trackingIdentity';
 export * from './trackingIdentityPart';
 export * from './trackingManifest';
+export * from './trackingManifestProvenance';
 export * from './trackingSegment';
 export * from './trackingSegmentManifest';
 export * from './trackingTrack';

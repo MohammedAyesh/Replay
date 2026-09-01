@@ -233,6 +233,8 @@ export const getClaimMatchResponseManifestFrameRateExclusiveMin = 0;
 
 export const getClaimMatchResponseManifestDurationExclusiveMin = 0;
 
+export const getClaimMatchResponseManifestVideoStartSecondsMin = 0;
+
 
 export const getClaimMatchResponseManifestSegmentsItemIndexMin = 0;
 
@@ -243,6 +245,21 @@ export const getClaimMatchResponseManifestSegmentsItemEndFrameMin = 0;
 export const getClaimMatchResponseManifestSegmentsItemStartSecondsMin = 0;
 
 export const getClaimMatchResponseManifestSegmentsItemEndSecondsMin = 0;
+
+export const getClaimMatchResponseManifestIdentitiesItemPartsItemFromFrameMin = 0;
+
+export const getClaimMatchResponseManifestIdentitiesItemPartsItemToFrameMin = 0;
+
+export const getClaimMatchResponseProgressCoverageSecondsMin = 0;
+
+export const getClaimMatchResponseProgressCoveragePercentMin = 0;
+export const getClaimMatchResponseProgressCoveragePercentMax = 100;
+
+export const getClaimMatchResponseProgressAnsweredAnchorCountMin = 0;
+
+export const getClaimMatchResponseProgressAcceptedAnchorCountMin = 0;
+
+export const getClaimMatchResponseProgressUnresolvedMomentsItemMin = 0;
 
 
 
@@ -267,8 +284,8 @@ export const GetClaimMatchResponse = zod.object({
   "frameRate": zod.number().gt(getClaimMatchResponseManifestFrameRateExclusiveMin),
   "frameCount": zod.number().min(1),
   "duration": zod.number().gt(getClaimMatchResponseManifestDurationExclusiveMin),
-  "matchOffset": zod.number(),
-  "videoStartSeconds": zod.number().min(0).optional(),
+  "matchOffset": zod.number().describe('Display only. Added to tracking time to show a clock that matches the wider match, e.g. an hour that starts at minute 40. Must never be used to seek.'),
+  "videoStartSeconds": zod.number().min(getClaimMatchResponseManifestVideoStartSecondsMin).optional().describe('Where tracking frame 0 sits inside the video file, in seconds. The recording can be longer than the tracked window - the 2026-08-24 recording is two hours and the tracked hour starts 18 minutes in, so this is 1080. Optional for bundles uploaded before this field existed; the server fills 0 and the boxes will be wrong until it is set.'),
   "segmentCount": zod.number().min(1),
   "segments": zod.array(zod.object({
   "index": zod.number().min(getClaimMatchResponseManifestSegmentsItemIndexMin),
@@ -278,18 +295,18 @@ export const GetClaimMatchResponse = zod.object({
   "startSeconds": zod.number().min(getClaimMatchResponseManifestSegmentsItemStartSecondsMin),
   "endSeconds": zod.number().min(getClaimMatchResponseManifestSegmentsItemEndSecondsMin),
   "objectPath": zod.string(),
-  "spritesPath": zod.string().optional()
+  "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
 })),
   "identities": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string().nullish(),
   "parts": zod.array(zod.object({
   "trackId": zod.string(),
-  "fromFrame": zod.number().min(0),
-  "toFrame": zod.number().min(0)
+  "fromFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemPartsItemFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemPartsItemToFrameMin)
 }))
-})).optional(),
-  "provenance": zod.object({}).passthrough().optional()
+})).optional().describe('The identity board\'s result - pieces of tracks that are one person. Optional.'),
+  "provenance": zod.record(zod.string(), zod.unknown()).optional().describe('How the tracking bundle was produced.')
 }),
   "progress": zod.object({
   "recordingId": zod.number(),
@@ -297,10 +314,16 @@ export const GetClaimMatchResponse = zod.object({
   "stage": zod.string(),
   "confirmedFromSeconds": zod.number(),
   "currentPositionSeconds": zod.number(),
-  "claimedPercent": zod.number(),
+  "claimedPercent": zod.number().describe('Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage.'),
+  "coverageSeconds": zod.number().min(getClaimMatchResponseProgressCoverageSecondsMin).describe('Union of the accepted track spans, in tracking seconds.'),
+  "coveragePercent": zod.number().min(getClaimMatchResponseProgressCoveragePercentMin).max(getClaimMatchResponseProgressCoveragePercentMax).describe('coverageSeconds divided by the tracked match duration.'),
+  "answeredAnchorCount": zod.number().min(getClaimMatchResponseProgressAnsweredAnchorCountMin),
+  "acceptedAnchorCount": zod.number().min(getClaimMatchResponseProgressAcceptedAnchorCountMin),
+  "unresolvedMoments": zod.array(zod.number().min(getClaimMatchResponseProgressUnresolvedMomentsItemMin)).describe('Anchor moments answered as not me or skipped.'),
   "clipsUnlocked": zod.number(),
   "correctionCount": zod.number(),
   "completed": zod.boolean(),
+  "completionReason": zod.string(),
   "earnedClips": zod.array(zod.object({
   "id": zod.string(),
   "title": zod.string(),
@@ -348,9 +371,9 @@ export const UpdateClaimMatchProgressBody = zod.object({
   "stage": zod.string(),
   "confirmedFromSeconds": zod.number().min(updateClaimMatchProgressBodyConfirmedFromSecondsMin),
   "currentPositionSeconds": zod.number().min(updateClaimMatchProgressBodyCurrentPositionSecondsMin),
-  "claimedPercent": zod.number().min(updateClaimMatchProgressBodyClaimedPercentMin).max(updateClaimMatchProgressBodyClaimedPercentMax),
+  "claimedPercent": zod.number().min(updateClaimMatchProgressBodyClaimedPercentMin).max(updateClaimMatchProgressBodyClaimedPercentMax).describe('Accepted for backwards compatibility; the server recalculates it.'),
   "clipsUnlocked": zod.number().min(updateClaimMatchProgressBodyClipsUnlockedMin),
-  "completed": zod.boolean(),
+  "completed": zod.boolean().describe('Accepted for backwards compatibility; the server recalculates it.'),
   "earnedClips": zod.array(zod.object({
   "id": zod.string(),
   "title": zod.string(),
@@ -360,16 +383,35 @@ export const UpdateClaimMatchProgressBody = zod.object({
 })).optional()
 })
 
+export const updateClaimMatchProgressResponseCoverageSecondsMin = 0;
+
+export const updateClaimMatchProgressResponseCoveragePercentMin = 0;
+export const updateClaimMatchProgressResponseCoveragePercentMax = 100;
+
+export const updateClaimMatchProgressResponseAnsweredAnchorCountMin = 0;
+
+export const updateClaimMatchProgressResponseAcceptedAnchorCountMin = 0;
+
+export const updateClaimMatchProgressResponseUnresolvedMomentsItemMin = 0;
+
+
+
 export const UpdateClaimMatchProgressResponse = zod.object({
   "recordingId": zod.number(),
   "currentTrackId": zod.string().nullish(),
   "stage": zod.string(),
   "confirmedFromSeconds": zod.number(),
   "currentPositionSeconds": zod.number(),
-  "claimedPercent": zod.number(),
+  "claimedPercent": zod.number().describe('Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage.'),
+  "coverageSeconds": zod.number().min(updateClaimMatchProgressResponseCoverageSecondsMin).describe('Union of the accepted track spans, in tracking seconds.'),
+  "coveragePercent": zod.number().min(updateClaimMatchProgressResponseCoveragePercentMin).max(updateClaimMatchProgressResponseCoveragePercentMax).describe('coverageSeconds divided by the tracked match duration.'),
+  "answeredAnchorCount": zod.number().min(updateClaimMatchProgressResponseAnsweredAnchorCountMin),
+  "acceptedAnchorCount": zod.number().min(updateClaimMatchProgressResponseAcceptedAnchorCountMin),
+  "unresolvedMoments": zod.array(zod.number().min(updateClaimMatchProgressResponseUnresolvedMomentsItemMin)).describe('Anchor moments answered as not me or skipped.'),
   "clipsUnlocked": zod.number(),
   "correctionCount": zod.number(),
   "completed": zod.boolean(),
+  "completionReason": zod.string(),
   "earnedClips": zod.array(zod.object({
   "id": zod.string(),
   "title": zod.string(),
@@ -630,7 +672,8 @@ export const ReplaceTrackingBundleResponse = zod.object({
   "endFrame": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemEndFrameMin),
   "startSeconds": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemStartSecondsMin),
   "endSeconds": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemEndSecondsMin),
-  "objectPath": zod.string()
+  "objectPath": zod.string(),
+  "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
 })).optional(),
   "uploadedAt": zod.string()
 })

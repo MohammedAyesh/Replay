@@ -535,10 +535,16 @@ function toProgress(row: typeof claimMatchProgressTable.$inferSelect | null, rec
     confirmedFromSeconds: row?.confirmedFromSeconds ?? 0,
     currentPositionSeconds: row?.currentPositionSeconds ?? 0,
     claimedPercent: row?.claimedPercent ?? 0,
+    coverageSeconds: 0,
+    coveragePercent: row?.claimedPercent ?? 0,
+    answeredAnchorCount: 0,
+    acceptedAnchorCount: 0,
+    unresolvedMoments: [],
     clipsUnlocked: row?.clipsUnlocked ?? 0,
     correctionCount: row?.correctionCount ?? 0,
     completed: row?.completed ?? false,
     earnedClips: row?.earnedClips ?? [],
+    completionReason: row?.completed ? "coverage-threshold" : "keep-confirming",
     updatedAt: row?.updatedAt.toISOString() ?? new Date().toISOString(),
   };
 }
@@ -634,6 +640,149 @@ function getMomentClips(
   return Array.from(byId.values()).sort((a, b) => a.momentSeconds - b.momentSeconds);
 }
 
+type DerivedClaimState = {
+  coverageSeconds: number;
+  coveragePercent: number;
+  answeredAnchorCount: number;
+  acceptedAnchorCount: number;
+  unresolvedMoments: number[];
+  clipsUnlocked: number;
+  correctionCount: number;
+  completed: boolean;
+  completionReason: string;
+  earnedClips: ClaimEarnedClip[];
+};
+
+const EMPTY_ANCHOR_TRACK = "__none__";
+
+export function isAcceptedClaimAnswer(row: typeof claimMatchCorrectionsTable.$inferSelect): boolean {
+  return !row.undone
+    && row.chosenTrackId !== EMPTY_ANCHOR_TRACK
+    && row.answerMethod !== "anchor-no"
+    && row.answerMethod !== "anchor-skip";
+}
+
+function trackIntervalsForId(
+  manifest: TrackingManifest,
+  segments: TrackingSegmentPayload[],
+  trackId: string,
+): Array<{ startSeconds: number; endSeconds: number }> {
+  const frameRate = Math.max(manifest.frameRate, 0.001);
+  const intervals: Array<{ startSeconds: number; endSeconds: number }> = [];
+  for (const segment of segments) {
+    const track = segment.tracks.find((item) => item.id === trackId);
+    if (track) {
+      intervals.push({
+        startSeconds: Math.max(0, track.startFrame / frameRate),
+        endSeconds: Math.min(manifest.duration, (track.endFrame + 1) / frameRate),
+      });
+    }
+  }
+  const identity = manifest.identities?.find((item) => item.id === trackId);
+  if (identity) {
+    for (const part of identity.parts) {
+      for (const segment of segments) {
+        const track = segment.tracks.find((item) => item.id === part.trackId);
+        if (!track) continue;
+        const startFrame = Math.max(track.startFrame, part.fromFrame);
+        const endFrame = Math.min(track.endFrame, part.toFrame);
+        if (endFrame >= startFrame) {
+          intervals.push({
+            startSeconds: Math.max(0, startFrame / frameRate),
+            endSeconds: Math.min(manifest.duration, (endFrame + 1) / frameRate),
+          });
+        }
+      }
+    }
+  }
+  return intervals;
+}
+
+export function deriveClaimState(
+  manifest: TrackingManifest,
+  segments: TrackingSegmentPayload[],
+  corrections: typeof claimMatchCorrectionsTable.$inferSelect[],
+): DerivedClaimState {
+  const active = corrections.filter((row) => !row.undone);
+  const accepted = active.filter(isAcceptedClaimAnswer);
+  const intervals = accepted.flatMap((row) => trackIntervalsForId(manifest, segments, row.chosenTrackId));
+  const sorted = intervals
+    .map((interval) => ({
+      startSeconds: Math.max(0, Math.min(manifest.duration, interval.startSeconds)),
+      endSeconds: Math.max(0, Math.min(manifest.duration, interval.endSeconds)),
+    }))
+    .filter((interval) => interval.endSeconds > interval.startSeconds)
+    .sort((a, b) => a.startSeconds - b.startSeconds);
+  let coveredSeconds = 0;
+  let end = 0;
+  for (const interval of sorted) {
+    if (interval.startSeconds > end) {
+      coveredSeconds += interval.endSeconds - interval.startSeconds;
+      end = interval.endSeconds;
+    } else if (interval.endSeconds > end) {
+      coveredSeconds += interval.endSeconds - end;
+      end = interval.endSeconds;
+    }
+  }
+  const coveragePercent = Math.min(100, Math.round((coveredSeconds / Math.max(manifest.duration, 0.001)) * 10000) / 100);
+  const anchorAnswers = active.filter((row) => row.answerMethod.startsWith("anchor-"));
+  const unresolvedMoments = anchorAnswers
+    .filter((row) => row.answerMethod === "anchor-no" || row.answerMethod === "anchor-skip")
+    .map((row) => row.momentSeconds)
+    .sort((a, b) => a - b);
+  const requiredAnchors = manifest.duration < 120 ? 1 : 3;
+  const requiredCoverage = manifest.duration < 120 ? 55 : 60;
+  const completed = accepted.length >= requiredAnchors && coveragePercent >= requiredCoverage;
+  const earnedClips = accepted.reduce(
+    (all, row) => getMomentClips(segments, row.momentSeconds, all),
+    [] as ClaimEarnedClip[],
+  );
+  return {
+    coverageSeconds: Math.round(coveredSeconds * 100) / 100,
+    coveragePercent,
+    answeredAnchorCount: anchorAnswers.length,
+    acceptedAnchorCount: accepted.length,
+    unresolvedMoments: Array.from(new Set(unresolvedMoments)).slice(0, 50),
+    clipsUnlocked: earnedClips.length,
+    correctionCount: active.length,
+    completed,
+    completionReason: completed ? "coverage-threshold" : "keep-confirming",
+    earnedClips,
+  };
+}
+
+function progressWithDerived(
+  row: typeof claimMatchProgressTable.$inferSelect | null,
+  recordingId: number,
+  derived: DerivedClaimState,
+) {
+  return {
+    ...toProgress(row, recordingId),
+    claimedPercent: derived.coveragePercent,
+    coverageSeconds: derived.coverageSeconds,
+    coveragePercent: derived.coveragePercent,
+    answeredAnchorCount: derived.answeredAnchorCount,
+    acceptedAnchorCount: derived.acceptedAnchorCount,
+    unresolvedMoments: derived.unresolvedMoments,
+    clipsUnlocked: derived.clipsUnlocked,
+    correctionCount: derived.correctionCount,
+    completed: derived.completed,
+    earnedClips: derived.earnedClips,
+    completionReason: derived.completionReason,
+  };
+}
+
+async function getClaimCorrections(userId: number, recordingId: number) {
+  return db
+    .select()
+    .from(claimMatchCorrectionsTable)
+    .where(and(
+      eq(claimMatchCorrectionsTable.userId, userId),
+      eq(claimMatchCorrectionsTable.recordingId, recordingId),
+    ))
+    .orderBy(desc(claimMatchCorrectionsTable.createdAt));
+}
+
 function formatMoment(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
@@ -671,6 +820,8 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       eq(claimMatchCorrectionsTable.recordingId, params.data.id),
     ))
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
+  const segments = await readBundleSegments(row.bundle.id);
+  const derived = deriveClaimState(row.bundle.manifest, segments, corrections);
 
   res.json(GetClaimMatchResponse.parse({
     recording: toRecording(row.recording, row.fieldName ?? null),
@@ -679,7 +830,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     // guess and it is almost always wrong on a recording longer than the
     // tracked window.
     manifest: { ...row.bundle.manifest, videoStartSeconds: row.bundle.manifest.videoStartSeconds ?? 0 },
-    progress: toProgress(progress ?? null, params.data.id),
+    progress: progressWithDerived(progress ?? null, params.data.id, derived),
     corrections: corrections.map(toCorrection),
   }));
 });
@@ -741,37 +892,46 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
-  const earnedClips = body.data.earnedClips ?? [];
+  const segments = await readBundleSegments(row.bundle.id);
+  const corrections = await getClaimCorrections(userId, params.data.id);
+  const derived = deriveClaimState(row.bundle.manifest, segments, corrections);
+  const nextStage = derived.completed
+    ? "done"
+    : body.data.stage === "done"
+      ? "picker"
+      : body.data.stage;
   const [saved] = await db
     .insert(claimMatchProgressTable)
     .values({
       userId,
       recordingId: params.data.id,
       currentTrackId: body.data.currentTrackId ?? null,
-      stage: body.data.stage,
+      stage: nextStage,
       confirmedFromSeconds: body.data.confirmedFromSeconds,
       currentPositionSeconds: body.data.currentPositionSeconds,
-      claimedPercent: body.data.claimedPercent,
-      clipsUnlocked: body.data.clipsUnlocked,
-      completed: body.data.completed,
-      earnedClips,
+      claimedPercent: derived.coveragePercent,
+      clipsUnlocked: derived.clipsUnlocked,
+      correctionCount: derived.correctionCount,
+      completed: derived.completed,
+      earnedClips: derived.earnedClips,
     })
     .onConflictDoUpdate({
       target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
       set: {
         currentTrackId: body.data.currentTrackId ?? null,
-        stage: body.data.stage,
+        stage: nextStage,
         confirmedFromSeconds: body.data.confirmedFromSeconds,
         currentPositionSeconds: body.data.currentPositionSeconds,
-        claimedPercent: body.data.claimedPercent,
-        clipsUnlocked: body.data.clipsUnlocked,
-        completed: body.data.completed,
-        earnedClips,
+        claimedPercent: derived.coveragePercent,
+        clipsUnlocked: derived.clipsUnlocked,
+        correctionCount: derived.correctionCount,
+        completed: derived.completed,
+        earnedClips: derived.earnedClips,
         updatedAt: new Date(),
       },
     })
     .returning();
-  res.json(toProgress(saved, params.data.id));
+  res.json(progressWithDerived(saved, params.data.id, derived));
 });
 
 router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise<void> => {
@@ -797,8 +957,11 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
   }
   const segments = await readBundleSegments(row.bundle.id);
   const trackIds = new Set(segments.flatMap((segment) => segment.tracks.map((track) => track.id)));
+  const isAnchorNoAnswer = body.data.answerMethod === "anchor-no" || body.data.answerMethod === "anchor-skip";
   if (
-    !trackIds.has(body.data.chosenTrackId) ||
+    (isAnchorNoAnswer
+      ? body.data.chosenTrackId !== EMPTY_ANCHOR_TRACK
+      : !trackIds.has(body.data.chosenTrackId)) ||
     (body.data.rejectedTrackId !== undefined &&
       body.data.rejectedTrackId !== null &&
       !trackIds.has(body.data.rejectedTrackId))
@@ -820,14 +983,6 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     return;
   }
 
-  const [progress] = await db
-    .select()
-    .from(claimMatchProgressTable)
-    .where(and(
-      eq(claimMatchProgressTable.userId, userId),
-      eq(claimMatchProgressTable.recordingId, params.data.id),
-    ));
-  const earnedClips = getMomentClips(segments, body.data.momentSeconds, progress?.earnedClips ?? []);
   const [created] = await db
     .insert(claimMatchCorrectionsTable)
     .values({
@@ -841,32 +996,40 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
       questionCount: body.data.questionCount,
     })
     .returning();
+  const allCorrections = await getClaimCorrections(userId, params.data.id);
+  const derived = deriveClaimState(row.bundle.manifest, segments, allCorrections);
+  const nextStage = derived.completed
+    ? "done"
+    : body.data.answerMethod.startsWith("anchor-")
+      ? "picker"
+      : "following";
   await db
     .insert(claimMatchProgressTable)
     .values({
       userId,
       recordingId: params.data.id,
-      currentTrackId: body.data.chosenTrackId,
-      stage: "following",
+      currentTrackId: isAnchorNoAnswer ? null : body.data.chosenTrackId,
+      stage: nextStage,
       confirmedFromSeconds: body.data.momentSeconds,
       currentPositionSeconds: body.data.momentSeconds,
-      claimedPercent: Math.min(100, (body.data.momentSeconds / row.bundle.manifest.duration) * 100),
-      clipsUnlocked: earnedClips.length,
-      correctionCount: 1,
-      completed: false,
-      earnedClips,
+      claimedPercent: derived.coveragePercent,
+      clipsUnlocked: derived.clipsUnlocked,
+      correctionCount: derived.correctionCount,
+      completed: derived.completed,
+      earnedClips: derived.earnedClips,
     })
     .onConflictDoUpdate({
       target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
       set: {
-        currentTrackId: body.data.chosenTrackId,
-        stage: "following",
+        currentTrackId: isAnchorNoAnswer ? null : body.data.chosenTrackId,
+        stage: nextStage,
         confirmedFromSeconds: body.data.momentSeconds,
         currentPositionSeconds: body.data.momentSeconds,
-        claimedPercent: sql`LEAST(100, GREATEST(${claimMatchProgressTable.claimedPercent}, ${(body.data.momentSeconds / row.bundle.manifest.duration) * 100}))`,
-        clipsUnlocked: earnedClips.length,
-        correctionCount: sql`${claimMatchProgressTable.correctionCount} + 1`,
-        earnedClips,
+        claimedPercent: derived.coveragePercent,
+        clipsUnlocked: derived.clipsUnlocked,
+        correctionCount: derived.correctionCount,
+        completed: derived.completed,
+        earnedClips: derived.earnedClips,
         updatedAt: new Date(),
       },
     });
@@ -906,6 +1069,29 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
       .update(claimMatchProgressTable)
       .set({
         correctionCount: sql`GREATEST(0, ${claimMatchProgressTable.correctionCount} - 1)`,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(claimMatchProgressTable.userId, userId),
+        eq(claimMatchProgressTable.recordingId, correction.recordingId),
+      ));
+  }
+  const bundleRow = await getRecordingBundle(correction.recordingId);
+  if (bundleRow?.bundle) {
+    const [segments, corrections] = await Promise.all([
+      readBundleSegments(bundleRow.bundle.id),
+      getClaimCorrections(userId, correction.recordingId),
+    ]);
+    const derived = deriveClaimState(bundleRow.bundle.manifest, segments, corrections);
+    await db
+      .update(claimMatchProgressTable)
+      .set({
+        claimedPercent: derived.coveragePercent,
+        clipsUnlocked: derived.clipsUnlocked,
+        correctionCount: derived.correctionCount,
+        completed: derived.completed,
+        earnedClips: derived.earnedClips,
+        stage: derived.completed ? "done" : "picker",
         updatedAt: new Date(),
       })
       .where(and(
