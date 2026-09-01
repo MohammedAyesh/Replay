@@ -32,6 +32,7 @@ import type {
   BunnyVideo,
   ClaimCorrection,
   ClaimCorrectionInput,
+  ClaimMatchDemoResetResponse,
   ClaimMatchResponse,
   ClaimProgress,
   ClaimProgressInput,
@@ -1139,6 +1140,76 @@ export const useUpdateClaimMatchProgress = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getUpdateClaimMatchProgressMutationOptions(options));
+    }
+
+export const getResetClaimMatchDemoUrl = () => {
+
+
+
+
+  return `/api/claim-match/demo/reset`
+}
+
+/**
+ * @summary Reset the current player's Claim Demo progress
+ */
+export const resetClaimMatchDemo = async ( options?: RequestInit): Promise<ClaimMatchDemoResetResponse> => {
+
+  return customFetch<ClaimMatchDemoResetResponse>(getResetClaimMatchDemoUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getResetClaimMatchDemoMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetClaimMatchDemo>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resetClaimMatchDemo>>, TError,void, TContext> => {
+
+const mutationKey = ['resetClaimMatchDemo'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetClaimMatchDemo>>, void> = () => {
+
+
+          return  resetClaimMatchDemo(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResetClaimMatchDemoMutationResult = NonNullable<Awaited<ReturnType<typeof resetClaimMatchDemo>>>
+
+    export type ResetClaimMatchDemoMutationError = ErrorType<void>
+
+    /**
+ * @summary Reset the current player's Claim Demo progress
+ */
+export const useResetClaimMatchDemo = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetClaimMatchDemo>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resetClaimMatchDemo>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getResetClaimMatchDemoMutationOptions(options));
     }
 
 export const getCreateClaimMatchCorrectionUrl = (id: number,) => {

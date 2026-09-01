@@ -40,6 +40,13 @@ function writeFallback(actions: ClaimQueueAction[]) {
   }
 }
 
+export function filterClaimActionsForRecording(
+  actions: ClaimQueueAction[],
+  recordingId: number,
+): ClaimQueueAction[] {
+  return actions.filter((action) => action.recordingId !== recordingId);
+}
+
 export async function readClaimQueue(): Promise<ClaimQueueAction[]> {
   if (typeof indexedDB === "undefined") return readFallback();
   return new Promise((resolve) => {
@@ -90,6 +97,28 @@ export async function removeClaimAction(id: string): Promise<void> {
     request.onsuccess = () => {
       const transaction = request.result.transaction("queue", "readwrite");
       transaction.objectStore("queue").delete(id);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => { writeFallback(next); resolve(); };
+    };
+  });
+}
+
+export async function removeClaimActionsForRecording(recordingId: number): Promise<void> {
+  const actions = await readClaimQueue();
+  const next = filterClaimActionsForRecording(actions, recordingId);
+  if (typeof indexedDB === "undefined") {
+    writeFallback(next);
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const request = indexedDB.open("replay-claim-match", 1);
+    request.onerror = () => { writeFallback(next); resolve(); };
+    request.onsuccess = () => {
+      const transaction = request.result.transaction("queue", "readwrite");
+      const store = transaction.objectStore("queue");
+      for (const action of actions) {
+        if (action.recordingId === recordingId) store.delete(action.id);
+      }
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => { writeFallback(next); resolve(); };
     };

@@ -782,6 +782,11 @@ export interface ClaimMatchResponse {
   corrections: ClaimCorrection[];
 }
 
+export interface ClaimMatchDemoResetResponse {
+  recordingId: number;
+  reset: boolean;
+}
+
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */
   bundle: string;

@@ -43,6 +43,9 @@ export function createClaimQueueFlushController() {
   let inFlight: Promise<ClaimQueueFlushResult> | null = null;
 
   return {
+    waitForFlush(): Promise<void> {
+      return inFlight?.then(() => undefined, () => undefined) ?? Promise.resolve();
+    },
     flush(
       task: () => Promise<ClaimQueueFlushResult>,
     ): Promise<ClaimQueueFlushResult> {

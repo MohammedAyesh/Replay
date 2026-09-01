@@ -298,6 +298,25 @@ paths:
         "404":
           description: Recording or tracking bundle not found
 
+  /claim-match/demo/reset:
+    post:
+      operationId: resetClaimMatchDemo
+      tags: [claimMatch]
+      summary: Reset the current player's Claim Demo progress
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Claim Demo reset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimMatchDemoResetResponse"
+        "401":
+          description: Authenticated account required
+        "404":
+          description: No tracking bundle has been uploaded yet
+
   /recordings/{id}/claim-match/corrections:
     post:
       operationId: createClaimMatchCorrection
@@ -2296,6 +2315,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ClaimCorrection"
+
+    ClaimMatchDemoResetResponse:
+      type: object
+      required: [recordingId, reset]
+      properties:
+        recordingId:
+          type: integer
+        reset:
+          type: boolean
 
   securitySchemes:
     clerkSession:

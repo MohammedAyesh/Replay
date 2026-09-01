@@ -25,6 +25,7 @@ import {
   useGetClaimMatch,
   useUndoClaimMatchCorrection,
   useUpdateClaimMatchProgress,
+  useResetClaimMatchDemo,
 } from "@workspace/api-client-react";
 import type { ClaimCorrection, ClaimMatchResponse, TrackingSegment } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
@@ -57,6 +58,7 @@ import {
   enqueueClaimAction,
   readClaimQueue,
   removeClaimAction,
+  removeClaimActionsForRecording,
   type ClaimQueueAction,
 } from "@/lib/claim-match-storage";
 import {
@@ -346,6 +348,7 @@ export default function ClaimMatchPage() {
   const updateProgress = useUpdateClaimMatchProgress();
   const createCorrection = useCreateClaimMatchCorrection();
   const undoCorrection = useUndoClaimMatchCorrection();
+  const resetClaimDemo = useResetClaimMatchDemo();
   const updateProgressAsync = updateProgress.mutateAsync;
   const createCorrectionAsync = createCorrection.mutateAsync;
   const undoCorrectionAsync = undoCorrection.mutateAsync;
@@ -386,6 +389,8 @@ export default function ClaimMatchPage() {
   const [undoExpiresAt, setUndoExpiresAt] = useState(0);
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
   const [queueRetryToken, setQueueRetryToken] = useState(0);
+  const [resettingDemo, setResettingDemo] = useState(false);
+  const [demoResetError, setDemoResetError] = useState("");
   const [segmentCache, setSegmentCache] = useState<Record<number, TrackingSegment>>({});
   const segmentCacheRef = useRef<Record<number, TrackingSegment>>({});
   const segmentRequestsRef = useRef<Record<number, Promise<void>>>({});
@@ -1543,6 +1548,108 @@ export default function ClaimMatchPage() {
     }
   };
 
+  const handleResetDemo = async () => {
+    if (!isDemo || resettingDemo) return;
+    const confirmed = window.confirm(
+      "Start Claim Demo over? Your saved demo answers and progress will be removed. Other matches and clips will not be affected.",
+    );
+    if (!confirmed) return;
+
+    setResettingDemo(true);
+    setDemoResetError("");
+    setNotice("Resetting demo");
+    try {
+      await queueFlushControllerRef.current.waitForFlush();
+      const reset = await resetClaimDemo.mutateAsync();
+      await removeClaimActionsForRecording(reset.recordingId);
+      setQueuedCount((await readClaimQueue()).length);
+      queryClient.setQueryData<ClaimMatchResponse>(responseQueryKey, (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          corrections: [],
+          progress: {
+            ...current.progress,
+            recordingId: reset.recordingId,
+            currentTrackId: null,
+            stage: "find",
+            confirmedFromSeconds: 0,
+            currentPositionSeconds: 0,
+            claimedPercent: 0,
+            coverageSeconds: 0,
+            coveragePercent: 0,
+            answeredAnchorCount: 0,
+            acceptedAnchorCount: 0,
+            unresolvedMoments: [],
+            clipsUnlocked: 0,
+            correctionCount: 0,
+            completed: false,
+            earnedClips: [],
+            completionReason: "keep-confirming",
+            playerStats: {
+              ...current.progress.playerStats,
+              confirmedSeconds: 0,
+              coveragePercent: 0,
+              answeredMoments: 0,
+              acceptedMoments: 0,
+              trackedSegments: 0,
+              matchedEvents: 0,
+            },
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      });
+
+      setStage("find");
+      setCurrentTime(0);
+      setPlaying(false);
+      setReviewState("watching");
+      setReviewWindowStart(0);
+      setReviewWindowEnd(REVIEW_WINDOW_SECONDS);
+      setReviewNoCount(0);
+      setCurrentTrackId(null);
+      setAnchorMode(false);
+      setActiveAnchorIndex(null);
+      setConfirmedFromSeconds(0);
+      setNarrowing(null);
+      setCrossingOtherTrackId(null);
+      setClaimedPercent(0);
+      setClipsUnlocked(0);
+      setCorrections([]);
+      setCompletionSyncPending(false);
+      setUndoExpiresAt(0);
+      setSegmentCache({});
+      setSegmentLoading(false);
+      setSegmentError("");
+      setBoundaryNotice("");
+      setBoundaryRepickPending(false);
+      setShirtToneByTrack({});
+      setVideoReadyTick(0);
+      setContinuationIds(null);
+      setAutoLinks([]);
+      autoLinkRunRef.current = 0;
+      anchorAnswerNonceRef.current = 0;
+      lastKnownPositionRef.current = null;
+      lastSavedPosition.current = 0;
+      segmentCacheRef.current = {};
+      segmentRequestsRef.current = {};
+      pendingSeekTrackingRef.current = null;
+      seekTracking(0);
+      setSegmentRetryToken((value) => value + 1);
+
+      await queryClient.invalidateQueries({
+        queryKey: responseQueryKey,
+        refetchType: "active",
+      });
+      setNotice("Demo reset · start by finding your moments");
+    } catch {
+      setDemoResetError("We couldn’t reset the demo. Try again.");
+      setNotice("Demo reset failed");
+    } finally {
+      setResettingDemo(false);
+    }
+  };
+
   const panelBody = (
     <>
         <div className="claim-coverage-summary" data-testid="claim-coverage-summary">
@@ -1554,6 +1661,20 @@ export default function ClaimMatchPage() {
           </small>
            {completionSyncPending && <small className="claim-completion-sync" role="status">Checking the saved result…</small>}
         </div>
+        {isDemo && (
+          <div className="claim-demo-reset" data-testid="claim-demo-reset">
+            <button
+              type="button"
+              className="claim-text-button"
+              data-testid="button-reset-claim-demo"
+              onClick={() => void handleResetDemo()}
+              disabled={resettingDemo}
+            >
+              {resettingDemo ? "Starting over…" : "Start Claim Demo over"} <RotateCcw size={14} />
+            </button>
+            {demoResetError && <small className="claim-error-text" role="alert">{demoResetError}</small>}
+          </div>
+        )}
         {stage === "find" && (
           <div className="claim-panel claim-panel-find" data-testid="panel-find-yourself">
             <span className="claim-context"><ScanSearch size={16} /> IDENTITY CHECKPOINTS</span>

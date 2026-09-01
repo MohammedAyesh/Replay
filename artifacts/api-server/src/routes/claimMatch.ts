@@ -769,6 +769,15 @@ async function getRecordingBundle(recordingId: number) {
   return row ?? null;
 }
 
+async function getDemoRecordingId(): Promise<number | null> {
+  const [bundle] = await db
+    .select({ recordingId: recordingTrackingBundlesTable.recordingId })
+    .from(recordingTrackingBundlesTable)
+    .orderBy(asc(recordingTrackingBundlesTable.recordingId))
+    .limit(1);
+  return bundle?.recordingId ?? null;
+}
+
 async function getBundleSegments(bundleId: number) {
   return db
     .select()
@@ -796,16 +805,42 @@ router.get("/claim-match/demo", async (req, res): Promise<void> => {
     unauthenticatedResponse(res, req, "Authenticated account required");
     return;
   }
-  const [bundle] = await db
-    .select({ recordingId: recordingTrackingBundlesTable.recordingId })
-    .from(recordingTrackingBundlesTable)
-    .orderBy(asc(recordingTrackingBundlesTable.recordingId))
-    .limit(1);
-  if (!bundle) {
+  const recordingId = await getDemoRecordingId();
+  if (!recordingId) {
     res.status(404).json({ error: "No tracking bundle has been uploaded yet" });
     return;
   }
-  res.redirect(307, `/api/recordings/${bundle.recordingId}/claim-match`);
+  res.redirect(307, `/api/recordings/${recordingId}/claim-match`);
+});
+
+router.post("/claim-match/demo/reset", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+  const recordingId = await getDemoRecordingId();
+  if (!recordingId) {
+    res.status(404).json({ error: "No tracking bundle has been uploaded yet" });
+    return;
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(claimMatchCorrectionsTable)
+      .where(and(
+        eq(claimMatchCorrectionsTable.userId, userId),
+        eq(claimMatchCorrectionsTable.recordingId, recordingId),
+      ));
+    await tx
+      .delete(claimMatchProgressTable)
+      .where(and(
+        eq(claimMatchProgressTable.userId, userId),
+        eq(claimMatchProgressTable.recordingId, recordingId),
+      ));
+  });
+
+  res.json({ recordingId, reset: true });
 });
 
 function getMomentClips(

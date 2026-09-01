@@ -472,6 +472,15 @@ export const UpdateClaimMatchProgressResponse = zod.object({
 
 
 /**
+ * @summary Reset the current player's Claim Demo progress
+ */
+export const ResetClaimMatchDemoResponse = zod.object({
+  "recordingId": zod.number(),
+  "reset": zod.boolean()
+})
+
+
+/**
  * @summary Record an identity correction, safely repeatable by client id
  */
 export const CreateClaimMatchCorrectionParams = zod.object({
