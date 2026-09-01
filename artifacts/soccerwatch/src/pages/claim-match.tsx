@@ -60,6 +60,10 @@ import {
   type ClaimQueueAction,
 } from "@/lib/claim-match-storage";
 import {
+  createClaimQueueFlushController,
+  flushClaimQueue,
+} from "@/lib/claim-match-queue";
+import {
   crossedSegmentBoundary,
   retainNearbySegments,
   segmentIndexAtTime,
@@ -319,8 +323,11 @@ export default function ClaimMatchPage() {
   const { user, isLoading: authLoading, isGuest } = useAuth();
   const isDemo = !params.id || params.id === "demo";
   const recordingId = isDemo ? 0 : Number(params.id);
-  const queryKey = getGetClaimMatchQueryKey(recordingId);
-  const responseQueryKey = isDemo ? ["claim-match", "demo"] : queryKey;
+  const queryKey = useMemo(() => getGetClaimMatchQueryKey(recordingId), [recordingId]);
+  const responseQueryKey = useMemo(
+    () => (isDemo ? ["claim-match", "demo"] as const : queryKey),
+    [isDemo, queryKey],
+  );
   const claimQuery = useGetClaimMatch(recordingId, { query: { enabled: !isDemo, queryKey } });
   const demoQuery = useQuery<ClaimMatchResponse>({
     queryKey: ["claim-match", "demo"],
@@ -343,6 +350,15 @@ export default function ClaimMatchPage() {
   const createCorrectionAsync = createCorrection.mutateAsync;
   const undoCorrectionAsync = undoCorrection.mutateAsync;
   const queryClient = useQueryClient();
+  const queueFlushControllerRef = useRef(createClaimQueueFlushController());
+  const queueSyncRef = useRef({
+    updateProgressAsync,
+    createCorrectionAsync,
+    undoCorrectionAsync,
+    queryClient,
+    responseQueryKey,
+    activeRecordingId: 0,
+  });
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const { setFullscreenVideo } = useFullscreenVideo();
   const [stage, setStage] = useState<Stage>("find");
@@ -369,6 +385,7 @@ export default function ClaimMatchPage() {
   const [completionSyncPending, setCompletionSyncPending] = useState(false);
   const [undoExpiresAt, setUndoExpiresAt] = useState(0);
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
+  const [queueRetryToken, setQueueRetryToken] = useState(0);
   const [segmentCache, setSegmentCache] = useState<Record<number, TrackingSegment>>({});
   const segmentCacheRef = useRef<Record<number, TrackingSegment>>({});
   const segmentRequestsRef = useRef<Record<number, Promise<void>>>({});
@@ -388,6 +405,14 @@ export default function ClaimMatchPage() {
 
   const response = isDemo ? demoQuery.data : claimQuery.data;
   const activeRecordingId = isDemo ? response?.recording.id || 0 : recordingId;
+  queueSyncRef.current = {
+    updateProgressAsync,
+    createCorrectionAsync,
+    undoCorrectionAsync,
+    queryClient,
+    responseQueryKey,
+    activeRecordingId,
+  };
   const recording = response?.recording;
   const manifest = response?.manifest;
   const serverProgress = response?.progress;
@@ -1097,7 +1122,11 @@ export default function ClaimMatchPage() {
   }, [setFullscreenVideo]);
 
   useEffect(() => {
-    const updateOnline = () => setIsOffline(!navigator.onLine);
+    const updateOnline = () => {
+      const offline = !navigator.onLine;
+      setIsOffline(offline);
+      if (!offline) setQueueRetryToken((value) => value + 1);
+    };
     window.addEventListener("online", updateOnline);
     window.addEventListener("offline", updateOnline);
     void readClaimQueue().then((items) => setQueuedCount(items.length));
@@ -1107,50 +1136,37 @@ export default function ClaimMatchPage() {
     };
   }, []);
 
+  const canFlushQueue = !isOffline && Boolean(user) && !isGuest;
   const flushQueue = useCallback(async () => {
-    if (isOffline || !user || isGuest) return;
-    const actions = await readClaimQueue();
-    if (actions.length === 0) {
-      setQueuedCount(0);
-      return;
-    }
-    let changed = false;
-    let changedForActiveRecording = false;
-    for (const action of actions) {
-      try {
-        if (action.kind === "progress") {
-          await updateProgressAsync({ id: action.recordingId, data: action.payload as never });
-        } else if (action.kind === "correction") {
-          await createCorrectionAsync({ id: action.recordingId, data: action.payload as never });
-        } else {
-          await undoCorrectionAsync({ correctionId: action.correctionId });
-        }
-        await removeClaimAction(action.id);
-        changed = true;
-        if (action.recordingId === activeRecordingId) changedForActiveRecording = true;
-      } catch {
-        break;
+    if (!canFlushQueue) return;
+    const context = queueSyncRef.current;
+    const result = await queueFlushControllerRef.current.flush(() =>
+      flushClaimQueue({
+        readActions: readClaimQueue,
+        removeAction: removeClaimAction,
+        syncAction: async (action) => {
+          if (action.kind === "progress") {
+            await context.updateProgressAsync({ id: action.recordingId, data: action.payload as never });
+          } else if (action.kind === "correction") {
+            await context.createCorrectionAsync({ id: action.recordingId, data: action.payload as never });
+          } else {
+            await context.undoCorrectionAsync({ correctionId: action.correctionId });
+          }
+        },
+      }),
+    );
+    setQueuedCount(result.remaining.length);
+    if (result.changed) {
+      await context.queryClient.invalidateQueries({ queryKey: context.responseQueryKey });
+      if (result.succeeded.some((action) => action.recordingId === context.activeRecordingId)) {
+        setCompletionSyncPending(false);
       }
     }
-    const remaining = await readClaimQueue();
-    setQueuedCount(remaining.length);
-    if (changed) {
-      await queryClient.invalidateQueries({ queryKey: responseQueryKey });
-      if (changedForActiveRecording) setCompletionSyncPending(false);
-    }
-  }, [
-    activeRecordingId,
-    createCorrectionAsync,
-    isGuest,
-    isOffline,
-    queryClient,
-    responseQueryKey,
-    undoCorrectionAsync,
-    updateProgressAsync,
-    user,
-  ]);
+  }, [canFlushQueue]);
 
-  useEffect(() => { void flushQueue(); }, [flushQueue]);
+  useEffect(() => {
+    if (canFlushQueue) void flushQueue();
+  }, [canFlushQueue, flushQueue, queueRetryToken]);
 
   useEffect(() => {
     if (!undoExpiresAt) return;
