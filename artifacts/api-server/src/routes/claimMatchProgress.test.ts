@@ -107,4 +107,17 @@ describe("claim match server-derived progress", () => {
     expect(result.acceptedAnchorCount).toBe(0);
     expect(result.coverageSeconds).toBe(0);
   });
+
+  it("uses the latest answer when an unresolved moment is revisited", () => {
+    const first = correction("7", "anchor-no", "__none__", 25);
+    const second = {
+      ...correction("8", "anchor-yes", "player-1", 25),
+      createdAt: new Date(first.createdAt.getTime() + 1000),
+    };
+    const result = deriveClaimState(manifest, segments, [first, second] as never);
+    expect(result.answeredAnchorCount).toBe(1);
+    expect(result.unresolvedMoments).toEqual([]);
+    expect(result.acceptedAnchorCount).toBe(1);
+    expect(result.coverageSeconds).toBe(100);
+  });
 });

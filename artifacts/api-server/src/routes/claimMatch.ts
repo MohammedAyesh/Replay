@@ -662,6 +662,24 @@ export function isAcceptedClaimAnswer(row: typeof claimMatchCorrectionsTable.$in
     && row.answerMethod !== "anchor-skip";
 }
 
+function latestAnchorAnswers(
+  rows: typeof claimMatchCorrectionsTable.$inferSelect[],
+): typeof claimMatchCorrectionsTable.$inferSelect[] {
+  const latestByMoment = new Map<number, typeof claimMatchCorrectionsTable.$inferSelect>();
+  for (const row of rows) {
+    if (row.undone || !row.answerMethod.startsWith("anchor-")) continue;
+    const previous = latestByMoment.get(row.momentSeconds);
+    if (
+      !previous
+      || row.createdAt.getTime() > previous.createdAt.getTime()
+      || (row.createdAt.getTime() === previous.createdAt.getTime() && row.id > previous.id)
+    ) {
+      latestByMoment.set(row.momentSeconds, row);
+    }
+  }
+  return Array.from(latestByMoment.values());
+}
+
 function trackIntervalsForId(
   manifest: TrackingManifest,
   segments: TrackingSegmentPayload[],
@@ -704,7 +722,10 @@ export function deriveClaimState(
   corrections: typeof claimMatchCorrectionsTable.$inferSelect[],
 ): DerivedClaimState {
   const active = corrections.filter((row) => !row.undone);
-  const accepted = active.filter(isAcceptedClaimAnswer);
+  const anchorAnswers = latestAnchorAnswers(corrections);
+  const nonAnchorAnswers = active.filter((row) => !row.answerMethod.startsWith("anchor-"));
+  const accepted = [...nonAnchorAnswers, ...anchorAnswers].filter(isAcceptedClaimAnswer);
+  const acceptedAnchorCount = anchorAnswers.filter(isAcceptedClaimAnswer).length;
   const intervals = accepted.flatMap((row) => trackIntervalsForId(manifest, segments, row.chosenTrackId));
   const sorted = intervals
     .map((interval) => ({
@@ -725,14 +746,13 @@ export function deriveClaimState(
     }
   }
   const coveragePercent = Math.min(100, Math.round((coveredSeconds / Math.max(manifest.duration, 0.001)) * 10000) / 100);
-  const anchorAnswers = active.filter((row) => row.answerMethod.startsWith("anchor-"));
   const unresolvedMoments = anchorAnswers
     .filter((row) => row.answerMethod === "anchor-no" || row.answerMethod === "anchor-skip")
     .map((row) => row.momentSeconds)
     .sort((a, b) => a - b);
   const requiredAnchors = manifest.duration < 120 ? 1 : 3;
   const requiredCoverage = manifest.duration < 120 ? 55 : 60;
-  const completed = accepted.length >= requiredAnchors && coveragePercent >= requiredCoverage;
+  const completed = acceptedAnchorCount >= requiredAnchors && coveragePercent >= requiredCoverage;
   const earnedClips = accepted.reduce(
     (all, row) => getMomentClips(segments, row.momentSeconds, all),
     [] as ClaimEarnedClip[],
@@ -741,7 +761,7 @@ export function deriveClaimState(
     coverageSeconds: Math.round(coveredSeconds * 100) / 100,
     coveragePercent,
     answeredAnchorCount: anchorAnswers.length,
-    acceptedAnchorCount: accepted.length,
+    acceptedAnchorCount,
     unresolvedMoments: Array.from(new Set(unresolvedMoments)).slice(0, 50),
     clipsUnlocked: earnedClips.length,
     correctionCount: active.length,

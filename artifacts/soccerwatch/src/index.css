@@ -540,6 +540,17 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .spark-a { top: 6px; left: 21px; }.spark-b { top: 25px; right: 2px; }.spark-c { bottom: 8px; left: 10px; background: var(--claim-orange); }
 .claim-panel-complete { text-align: center; }
 .claim-panel-complete > p { max-width: 300px; margin-right: auto; margin-left: auto; }
+.claim-unresolved-review { max-width: 340px; margin: 20px auto 0; padding: 12px; border: 1px solid rgba(255,181,92,.28); background: rgba(255,181,92,.06); text-align: left; }
+.claim-unresolved-heading { display: grid; gap: 4px; padding: 2px 2px 9px; }
+.claim-unresolved-heading b { color: #ffc477; font-size: 11px; }
+.claim-unresolved-heading span { color: var(--claim-muted); font-size: 10px; line-height: 1.4; }
+.claim-unresolved-list { display: grid; gap: 6px; }
+.claim-unresolved-row { display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 9px; width: 100%; padding: 9px; border: 1px solid rgba(196,224,184,.14); color: var(--claim-text); background: rgba(196,224,184,.05); cursor: pointer; text-align: left; }
+.claim-unresolved-row:hover, .claim-unresolved-row:focus-visible { border-color: rgba(212,255,79,.52); background: rgba(212,255,79,.08); outline: none; }
+.claim-unresolved-row > span:nth-child(2) { display: grid; gap: 3px; }
+.claim-unresolved-row b { font-size: 11px; font-weight: 600; }
+.claim-unresolved-row small { color: var(--claim-muted); font-size: 9px; }
+.claim-unresolved-row > svg { color: var(--claim-green); }
 .earned-count { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 22px; color: var(--claim-green); }
 .earned-count b { font-size: 12px; }.earned-count span { color: var(--claim-muted); font-size: 10px; }
 .claim-panel-complete .claim-text-button { margin-right: auto; margin-left: auto; }

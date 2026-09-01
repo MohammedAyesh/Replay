@@ -357,6 +357,7 @@ export default function ClaimMatchPage() {
   const [reviewNoCount, setReviewNoCount] = useState(0);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [anchorMode, setAnchorMode] = useState(false);
+  const [activeAnchorIndex, setActiveAnchorIndex] = useState<number | null>(null);
   const [confirmedFromSeconds, setConfirmedFromSeconds] = useState(0);
   const [narrowing, setNarrowing] = useState<NarrowingState | null>(null);
   const [crossingOtherTrackId, setCrossingOtherTrackId] = useState<string | null>(null);
@@ -370,6 +371,7 @@ export default function ClaimMatchPage() {
   const [segmentCache, setSegmentCache] = useState<Record<number, TrackingSegment>>({});
   const segmentCacheRef = useRef<Record<number, TrackingSegment>>({});
   const segmentRequestsRef = useRef<Record<number, Promise<void>>>({});
+  const pendingSeekTrackingRef = useRef<number | null>(null);
   const [segmentLoading, setSegmentLoading] = useState(false);
   const [segmentError, setSegmentError] = useState("");
   const [segmentRetryToken, setSegmentRetryToken] = useState(0);
@@ -380,6 +382,7 @@ export default function ClaimMatchPage() {
   const [continuationIds, setContinuationIds] = useState<string[] | null>(null);
   const [autoLinks, setAutoLinks] = useState<Array<{ from: string; to: string; at: number }>>([]);
   const autoLinkRunRef = useRef(0);
+  const anchorAnswerNonceRef = useRef(0);
   const lastKnownPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   const response = isDemo ? demoQuery.data : claimQuery.data;
@@ -425,7 +428,25 @@ export default function ClaimMatchPage() {
     [allCorrections],
   );
   const nextAnchorIndex = nextUnansweredAnchor(claimAnchors, answeredAnchorMoments);
-  const currentAnchor = claimAnchors[nextAnchorIndex >= 0 ? nextAnchorIndex : Math.max(0, claimAnchors.length - 1)] ?? null;
+  const visibleAnchorIndex = activeAnchorIndex ?? nextAnchorIndex;
+  const currentAnchor = claimAnchors[visibleAnchorIndex] ?? null;
+  const unresolvedAnchorReviews = useMemo(
+    () => (serverProgress?.unresolvedMoments ?? [])
+      .map((momentSeconds) => {
+        let index = -1;
+        let distance = Number.POSITIVE_INFINITY;
+        claimAnchors.forEach((anchor, candidateIndex) => {
+          const candidateDistance = Math.abs(anchor.momentSeconds - momentSeconds);
+          if (candidateDistance < distance) {
+            distance = candidateDistance;
+            index = candidateIndex;
+          }
+        });
+        return { momentSeconds, index };
+      })
+      .filter((item) => item.index >= 0),
+    [claimAnchors, serverProgress?.unresolvedMoments],
+  );
   const hasData = Boolean(response && recording && manifest && serverProgress);
   const activeCorrection = allCorrections.find((item) => !item.undone);
   const currentFrame = bundle ? trackingSecondsToFrame(currentTime, bundle) : 0;
@@ -457,9 +478,22 @@ export default function ClaimMatchPage() {
   /** The only way this page moves the playhead. Tracking seconds in. */
   const seekTracking = useCallback((trackingSeconds: number) => {
     const next = bundle ? clampToTracked(trackingSeconds, bundle) : Math.max(0, trackingSeconds);
+    pendingSeekTrackingRef.current = next;
     setCurrentTime(next);
-    if (videoRef.current) videoRef.current.currentTime = toVideoTime(next);
-  }, [bundle, toVideoTime]);
+    const targetSegmentIndex = manifest ? segmentIndexAtTime(manifest, next) : currentSegmentIndex;
+    if (videoRef.current && targetSegmentIndex === currentSegmentIndex) {
+      videoRef.current.currentTime = toVideoTime(next);
+    }
+  }, [bundle, currentSegmentIndex, manifest, toVideoTime]);
+
+  useEffect(() => {
+    const pending = pendingSeekTrackingRef.current;
+    if (pending === null || !manifest || !activeSegment || !bundle) return;
+    if (activeSegment.segmentIndex !== segmentIndexAtTime(manifest, pending)) return;
+    videoRef.current?.pause();
+    if (videoRef.current) videoRef.current.currentTime = toVideoTime(pending);
+    pendingSeekTrackingRef.current = null;
+  }, [activeSegment, bundle, manifest, toVideoTime]);
 
   const loadSegment = useCallback((index: number): Promise<void> => {
     if (!manifest || !activeRecordingId || segmentCacheRef.current[index]) {
@@ -649,6 +683,7 @@ export default function ClaimMatchPage() {
     const anchor = claimAnchors[index];
     if (!anchor) return;
     setAnchorMode(true);
+    setActiveAnchorIndex(index);
     setCurrentTrackId(null);
     setNarrowing(null);
     setCrossingOtherTrackId(null);
@@ -658,8 +693,9 @@ export default function ClaimMatchPage() {
     setPlaying(false);
     videoRef.current?.pause();
     seekTracking(anchor.momentSeconds);
+    saveProgress("picker", null, progressValue, clipsUnlocked, 0, anchor.momentSeconds);
     setNotice(`Identity check · ${formatTime(anchor.momentSeconds)}`);
-  }, [claimAnchors, seekTracking]);
+  }, [claimAnchors, clipsUnlocked, progressValue, saveProgress, seekTracking]);
 
   const startAnchorReview = useCallback(() => {
     const first = nextUnansweredAnchor(claimAnchors, answeredAnchorMoments);
@@ -952,6 +988,7 @@ export default function ClaimMatchPage() {
       && response.corrections.some((item) => !item.undone && item.answerMethod.startsWith("anchor-"))
       && savedAnchorIndex >= 0;
     setAnchorMode(resumeAnchors);
+    setActiveAnchorIndex(resumeAnchors ? savedAnchorIndex : null);
     setStage(response.progress.completed ? "done" : resumeAnchors ? "picker" : normalizedStage);
     setCurrentTrackId(resumeAnchors ? null : response.progress.currentTrackId || null);
     setConfirmedFromSeconds(response.progress.confirmedFromSeconds || 0);
@@ -1181,7 +1218,7 @@ export default function ClaimMatchPage() {
     const momentSeconds = currentAnchor.momentSeconds;
     const answerMethod = `anchor-${answer}`;
     const payload = {
-      clientId: `claim-${activeRecordingId}-${currentAnchor.id}`,
+      clientId: `claim-${activeRecordingId}-${currentAnchor.id}-${Date.now()}-${++anchorAnswerNonceRef.current}`,
       momentSeconds,
       rejectedTrackId: null,
       chosenTrackId: answer === "yes" ? chosenTrackId : EMPTY_ANCHOR_TRACK,
@@ -1221,6 +1258,7 @@ export default function ClaimMatchPage() {
     );
     if (nextIndex < 0) {
       setAnchorMode(false);
+      setActiveAnchorIndex(null);
       setStage("picker");
       setCurrentTrackId(null);
       saveProgress("picker", null, progressValue, clipsUnlocked, 0, momentSeconds);
@@ -1237,6 +1275,7 @@ export default function ClaimMatchPage() {
     clipsUnlocked,
     createCorrection,
     currentAnchor,
+    anchorAnswerNonceRef,
     isOffline,
     nextAnchorIndex,
     openAnchorReview,
@@ -1569,7 +1608,26 @@ export default function ClaimMatchPage() {
             <div className="complete-graphic"><span className="complete-ring"><Check size={24} /></span><span className="complete-spark spark-a" /><span className="complete-spark spark-b" /><span className="complete-spark spark-c" /></div>
             <h2>Done. That’s all yours.</h2>
              <p>You confirmed <b>{Math.round(progressValue)}%</b> coverage of this match. The percentage reflects attributed player time, not how many screens you visited.</p>
-             {serverProgress?.unresolvedMoments?.length ? <p className="claim-muted">{serverProgress.unresolvedMoments.length} moments remain unresolved. You can return and review them later.</p> : null}
+             {unresolvedAnchorReviews.length ? (
+               <div className="claim-unresolved-review" data-testid="unresolved-anchor-list">
+                 <div className="claim-unresolved-heading"><b>{unresolvedAnchorReviews.length} moments need another look</b><span>Review one without restarting your claim.</span></div>
+                 <div className="claim-unresolved-list">
+                   {unresolvedAnchorReviews.map((item, index) => (
+                     <button
+                       type="button"
+                       className="claim-unresolved-row"
+                       data-testid={`button-review-unresolved-${index + 1}`}
+                       key={`${item.momentSeconds}-${item.index}`}
+                       onClick={() => openAnchorReview(item.index)}
+                     >
+                       <span className="candidate-number">{index + 1}</span>
+                       <span><b>Moment {formatTime(item.momentSeconds)}</b><small>Not visible or skipped</small></span>
+                       <ChevronRight size={16} />
+                     </button>
+                   ))}
+                 </div>
+               </div>
+             ) : <p className="claim-muted">Every reviewed moment is resolved. You can return to the match whenever you want.</p>}
              <div className="earned-count"><Sparkles size={18} /><b>{clipsUnlocked} earned clips</b><span>ready in My Clips</span></div>
             <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-done-view-clips" onClick={() => setLocation("/my-clips")}>View your clips <ChevronRight size={17} /></button>
             <button type="button" className="claim-text-button" data-testid="button-done-back-match" onClick={() => setStage("look")}>Take another look <ArrowLeft size={14} /></button>
