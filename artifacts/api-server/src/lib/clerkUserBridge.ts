@@ -42,6 +42,12 @@ function isSyntheticEmail(email: string): boolean {
   return email.startsWith("clerk_") || email.startsWith("guest_") || email.endsWith("@soccerwatch.local");
 }
 
+function isUniqueConstraintViolation(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { code?: unknown; cause?: unknown };
+  return candidate.code === "23505" || isUniqueConstraintViolation(candidate.cause);
+}
+
 function getCookieNames(req: Request): Set<string> {
   return new Set(
     (req.headers.cookie ?? "")
@@ -93,6 +99,45 @@ type LocalUserProvisionResult = {
   emailMatchLocalUserId: number | null;
 };
 
+export type ClerkProfileSyncPlan = {
+  updateName: boolean;
+  updateEmail: boolean;
+  emailConflictUserId: number | null;
+};
+
+export function getClerkProfileSyncPlan({
+  existingUserId,
+  existingName,
+  existingEmail,
+  freshName,
+  freshEmail,
+  emailOwnerId,
+  emailOwnershipKnown,
+}: {
+  existingUserId: number;
+  existingName: string;
+  existingEmail: string;
+  freshName: string | undefined;
+  freshEmail: string | null;
+  emailOwnerId: number | null;
+  emailOwnershipKnown: boolean;
+}): ClerkProfileSyncPlan {
+  const updateName = Boolean(freshName && freshName !== existingName);
+  const needsEmailUpdate = Boolean(
+    freshEmail && (isSyntheticEmail(existingEmail) || freshEmail !== existingEmail),
+  );
+  const emailConflictUserId =
+    emailOwnershipKnown && emailOwnerId !== null && emailOwnerId !== existingUserId
+      ? emailOwnerId
+      : null;
+
+  return {
+    updateName,
+    updateEmail: needsEmailUpdate && emailOwnershipKnown && emailConflictUserId === null,
+    emailConflictUserId,
+  };
+}
+
 async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<LocalUserProvisionResult> {
   // Fetch Clerk user first — we need it whether the user is new or existing.
   let clerkUser: Awaited<ReturnType<typeof clerkClient.users.getUser>> | null = null;
@@ -114,30 +159,81 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<LocalUser
     const lastName = clerkUser?.lastName?.trim() ?? "";
     const freshName = [firstName, lastName].filter(Boolean).join(" ") || undefined;
 
-    const needsNameUpdate = freshName && freshName !== existing.name;
-    const needsEmailUpdate = freshEmail && (isSyntheticEmail(existing.email) || freshEmail !== existing.email);
+    const needsEmailUpdate = Boolean(
+      freshEmail && (isSyntheticEmail(existing.email) || freshEmail !== existing.email),
+    );
+    let emailOwnerId: number | null = null;
+    let emailOwnershipKnown = !needsEmailUpdate || !freshEmail || isSyntheticEmail(freshEmail);
 
-    if (needsNameUpdate || needsEmailUpdate) {
+    if (!emailOwnershipKnown && freshEmail) {
+      try {
+        const [emailOwner] = await db
+          .select({ id: usersTable.id })
+          .from(usersTable)
+          .where(eq(usersTable.email, freshEmail));
+        emailOwnerId = emailOwner?.id ?? null;
+        emailOwnershipKnown = true;
+      } catch {
+        // Keeping the current local email is safer than risking a unique-key
+        // failure or replacing a value we could not verify.
+        logger.warn(
+          { userId: existing.id },
+          "Could not verify Clerk profile email ownership — preserving local email",
+        );
+      }
+    }
+
+    const syncPlan = getClerkProfileSyncPlan({
+      existingUserId: existing.id,
+      existingName: existing.name,
+      existingEmail: existing.email,
+      freshName,
+      freshEmail,
+      emailOwnerId,
+      emailOwnershipKnown,
+    });
+
+    if (syncPlan.emailConflictUserId !== null) {
+      logger.info(
+        {
+          userId: existing.id,
+          emailOwnerId: syncPlan.emailConflictUserId,
+          splitAccount: true,
+        },
+        "Clerk profile email belongs to another local user — preserving local email",
+      );
+    }
+
+    if (syncPlan.updateName || syncPlan.updateEmail) {
       try {
         await db
           .update(usersTable)
           .set({
-            ...(needsNameUpdate ? { name: freshName } : {}),
-            ...(needsEmailUpdate ? { email: freshEmail } : {}),
+            ...(syncPlan.updateName && freshName ? { name: freshName } : {}),
+            ...(syncPlan.updateEmail && freshEmail ? { email: freshEmail } : {}),
           })
           .where(eq(usersTable.id, existing.id));
       } catch (err) {
-        // users.email is unique: if the fresh address already belongs to another
-        // row, keeping the stale one is strictly better than failing the request.
-        logger.warn({ err, userId: existing.id }, "Could not sync user profile from Clerk");
+        // A concurrent insert can still win between the ownership check and
+        // this update. Keep the request usable and never log SQL params or the
+        // Clerk email address.
+        logger.warn(
+          {
+            userId: existing.id,
+            attemptedNameSync: syncPlan.updateName,
+            attemptedEmailSync: syncPlan.updateEmail,
+            uniqueEmailConflict: isUniqueConstraintViolation(err),
+          },
+          "Could not sync Clerk profile fields — preserving local values",
+        );
       }
     }
 
     return {
       id: existing.id,
       localRowStatus: "found",
-      splitAccount: false,
-      emailMatchLocalUserId: null,
+      splitAccount: syncPlan.emailConflictUserId !== null,
+      emailMatchLocalUserId: syncPlan.emailConflictUserId,
     };
   }
 
@@ -350,16 +446,6 @@ export async function resolveLocalUser(req: Request): Promise<UserResolution> {
       reason: "resolved_clerk",
       diagnostics,
     };
-    if (provision.splitAccount) {
-      logger.warn(
-        {
-          resolvedLocalUserId: user.id,
-          emailMatchLocalUserId: provision.emailMatchLocalUserId,
-          splitAccount: true,
-        },
-        "Clerk user resolved to a synthetic local account beside an existing email row",
-      );
-    }
     return saveResolution(req, resolution);
   }
 
