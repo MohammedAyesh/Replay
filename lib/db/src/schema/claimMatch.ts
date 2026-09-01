@@ -18,6 +18,8 @@ export type ClaimEarnedClip = {
   momentSeconds: number;
   kind: string;
   status: string;
+  /** The real user_clips row created for this accepted match moment. */
+  userClipId?: number;
 };
 
 export type TrackingSegmentPayload = {

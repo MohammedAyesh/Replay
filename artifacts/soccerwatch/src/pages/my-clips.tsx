@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import {
   useListUserClips,
@@ -796,6 +796,7 @@ export default function MyClips() {
   const { isGuest, user } = useAuth();
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("saved");
   const [activeClip, setActiveClip] = useState<UserClip | null>(null);
   const [localClips, setLocalClips] = useState<LocalClipRecord[]>([]);
@@ -824,6 +825,19 @@ export default function MyClips() {
       queryKey: getListClaimMatchClipsQueryKey(),
     },
   });
+  const userClipsById = useMemo(
+    () => new Map((userClips ?? []).map((clip) => [clip.id, clip])),
+    [userClips],
+  );
+
+  // The moments endpoint materializes accepted events into user_clips. Refresh
+  // this list after that happens so a moment can open the real clip player
+  // immediately instead of waiting for a full page reload.
+  useEffect(() => {
+    if (matchMomentGroups?.some((group) => group.clips.some((clip) => clip.userClipId))) {
+      void queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+    }
+  }, [matchMomentGroups, queryClient]);
 
   if (isGuest) {
     return (
@@ -965,6 +979,8 @@ export default function MyClips() {
               <MatchMomentsTab
                 groups={matchMomentGroups}
                 isLoading={matchMomentsLoading}
+                userClipsById={userClipsById}
+                onPlayClip={setActiveClip}
                 onOpenMatch={(recordingId) => setLocation(`/claim-match/${recordingId}`)}
               />
             </motion.div>
@@ -990,10 +1006,14 @@ export default function MyClips() {
 function MatchMomentsTab({
   groups,
   isLoading,
+  userClipsById,
+  onPlayClip,
   onOpenMatch,
 }: {
   groups: ClaimMatchClipGroup[] | undefined;
   isLoading: boolean;
+  userClipsById: Map<number, UserClip>;
+  onPlayClip: (clip: UserClip) => void;
   onOpenMatch: (recordingId: number) => void;
 }) {
   const { t } = useTranslation();
@@ -1066,7 +1086,11 @@ function MatchMomentsTab({
               <button
                 type="button"
                 key={`${group.recordingId}-${clip.id}`}
-                onClick={() => onOpenMatch(group.recordingId)}
+                onClick={() => {
+                  const userClip = clip.userClipId ? userClipsById.get(clip.userClipId) : undefined;
+                  if (userClip) onPlayClip(userClip);
+                  else onOpenMatch(group.recordingId);
+                }}
                 className="group flex items-center gap-3 rounded-[18px] border border-border bg-card p-3 text-start transition-colors hover:border-primary/50"
               >
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">

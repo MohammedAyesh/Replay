@@ -31,6 +31,7 @@ import {
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { logger } from "../lib/logger";
+import { ensureClaimMomentUserClip } from "./userClips";
 import {
   deleteClaimSegment,
   readClaimSegment,
@@ -856,21 +857,36 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
       progress: claimMatchProgressTable,
       recording: recordingsTable,
       fieldName: fieldsTable.name,
+      bundleManifest: recordingTrackingBundlesTable.manifest,
     })
     .from(claimMatchProgressTable)
     .innerJoin(recordingsTable, eq(recordingsTable.id, claimMatchProgressTable.recordingId))
     .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .leftJoin(
+      recordingTrackingBundlesTable,
+      eq(recordingTrackingBundlesTable.recordingId, claimMatchProgressTable.recordingId),
+    )
     .where(eq(claimMatchProgressTable.userId, userId))
     .orderBy(desc(claimMatchProgressTable.updatedAt));
 
-  const groups = rows
-    .map(({ progress, recording, fieldName }) => ({
+  const groups = (await Promise.all(rows.map(async ({ progress, recording, fieldName, bundleManifest }) => {
+    const clips = bundleManifest
+      ? await materializeClaimMoments(userId, recording, bundleManifest, progress.earnedClips ?? [])
+      : progress.earnedClips ?? [];
+    if (clips.some((clip, index) => clip.userClipId !== (progress.earnedClips?.[index]?.userClipId))) {
+      await db
+        .update(claimMatchProgressTable)
+        .set({ earnedClips: clips, updatedAt: new Date() })
+        .where(eq(claimMatchProgressTable.id, progress.id));
+    }
+    return {
       recordingId: recording.id,
       recordingLabel: `${fieldName ?? "Match"} · ${recording.court}`,
       fieldName: fieldName ?? "Match",
       date: recording.date,
-      clips: progress.earnedClips ?? [],
-    }))
+      clips,
+    };
+  })))
     .filter((group) => group.clips.length > 0);
 
   res.json(ListClaimMatchClipsResponse.parse(groups));
@@ -894,6 +910,35 @@ function getMomentClips(
   const byId = new Map(existing.map((clip) => [clip.id, clip]));
   for (const clip of newClips) byId.set(clip.id, clip);
   return Array.from(byId.values()).sort((a, b) => a.momentSeconds - b.momentSeconds);
+}
+
+async function materializeClaimMoments(
+  userId: number,
+  recording: typeof recordingsTable.$inferSelect,
+  manifest: TrackingManifest,
+  clips: ClaimEarnedClip[],
+): Promise<ClaimEarnedClip[]> {
+  return Promise.all(clips.map(async (clip) => {
+    if (clip.userClipId) return clip;
+    try {
+      const materialized = await ensureClaimMomentUserClip({
+        userId,
+        recording,
+        moment: clip,
+        videoStartSeconds: manifest.videoStartSeconds,
+        trackingDuration: manifest.duration,
+      });
+      return { ...clip, userClipId: materialized.userClipId };
+    } catch (error) {
+      // A tracking event can still be displayed when its recording is not a
+      // Bunny Stream asset. It simply cannot become a playable user clip yet.
+      logger.warn(
+        { error, userId, recordingId: recording.id, momentId: clip.id },
+        "Could not materialize claim moment as a user clip",
+      );
+      return clip;
+    }
+  }));
 }
 
 type DerivedClaimState = {
@@ -1222,6 +1267,12 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const segments = await readBundleSegments(row.bundle.id);
   const corrections = await getClaimCorrections(userId, params.data.id);
   const derived = deriveClaimState(row.bundle.manifest, segments, corrections);
+  const earnedClips = await materializeClaimMoments(
+    userId,
+    row.recording,
+    row.bundle.manifest,
+    derived.earnedClips,
+  );
   const nextStage = derived.completed
     ? "done"
     : body.data.stage === "done"
@@ -1240,7 +1291,7 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       clipsUnlocked: derived.clipsUnlocked,
       correctionCount: derived.correctionCount,
       completed: derived.completed,
-      earnedClips: derived.earnedClips,
+      earnedClips,
     })
     .onConflictDoUpdate({
       target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
@@ -1253,15 +1304,15 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
         correctionCount: derived.correctionCount,
         completed: sql`${claimMatchProgressTable.completed} OR ${derived.completed}`,
         stage: sql`CASE WHEN ${claimMatchProgressTable.completed} OR ${derived.completed} THEN 'done' ELSE ${nextStage} END`,
-        earnedClips: derived.earnedClips,
+        earnedClips,
         updatedAt: new Date(),
       },
     })
     .returning();
   const responseCompleted = completionSurvivesConcurrentProgress(saved.completed, derived.completed);
   const responseDerived = responseCompleted && !derived.completed
-    ? { ...derived, completed: true, completionReason: "coverage-threshold" }
-    : derived;
+    ? { ...derived, completed: true, completionReason: "coverage-threshold", earnedClips }
+    : { ...derived, earnedClips };
   res.json(progressWithDerived(saved, params.data.id, responseDerived));
 });
 
@@ -1329,6 +1380,12 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     .returning();
   const allCorrections = await getClaimCorrections(userId, params.data.id);
   const derived = deriveClaimState(row.bundle.manifest, segments, allCorrections);
+  const earnedClips = await materializeClaimMoments(
+    userId,
+    row.recording,
+    row.bundle.manifest,
+    derived.earnedClips,
+  );
   const nextStage = derived.completed
     ? "done"
     : body.data.answerMethod.startsWith("anchor-")
@@ -1347,7 +1404,7 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
       clipsUnlocked: derived.clipsUnlocked,
       correctionCount: derived.correctionCount,
       completed: derived.completed,
-      earnedClips: derived.earnedClips,
+      earnedClips,
     })
     .onConflictDoUpdate({
       target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
@@ -1360,7 +1417,7 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
         correctionCount: derived.correctionCount,
         completed: sql`${claimMatchProgressTable.completed} OR ${derived.completed}`,
         stage: sql`CASE WHEN ${claimMatchProgressTable.completed} OR ${derived.completed} THEN 'done' ELSE ${nextStage} END`,
-        earnedClips: derived.earnedClips,
+        earnedClips,
         updatedAt: new Date(),
       },
     });

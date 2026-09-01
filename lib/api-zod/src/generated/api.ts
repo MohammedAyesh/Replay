@@ -344,7 +344,8 @@ export const GetClaimMatchResponse = zod.object({
   "title": zod.string(),
   "momentSeconds": zod.number(),
   "kind": zod.string(),
-  "status": zod.string()
+  "status": zod.string(),
+  "userClipId": zod.number().optional().describe('The user clip row backing this earned moment, when materialized.')
 })),
   "playerStats": zod.object({
   "confirmedSeconds": zod.number().min(getClaimMatchResponseProgressPlayerStatsConfirmedSecondsMin).describe('Union of the player\'s accepted tracking intervals, in seconds.'),
@@ -403,7 +404,8 @@ export const UpdateClaimMatchProgressBody = zod.object({
   "title": zod.string(),
   "momentSeconds": zod.number(),
   "kind": zod.string(),
-  "status": zod.string()
+  "status": zod.string(),
+  "userClipId": zod.number().optional().describe('The user clip row backing this earned moment, when materialized.')
 })).optional()
 })
 
@@ -456,7 +458,8 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "title": zod.string(),
   "momentSeconds": zod.number(),
   "kind": zod.string(),
-  "status": zod.string()
+  "status": zod.string(),
+  "userClipId": zod.number().optional().describe('The user clip row backing this earned moment, when materialized.')
 })),
   "playerStats": zod.object({
   "confirmedSeconds": zod.number().min(updateClaimMatchProgressResponsePlayerStatsConfirmedSecondsMin).describe('Union of the player\'s accepted tracking intervals, in seconds.'),
@@ -493,7 +496,8 @@ export const ListClaimMatchClipsResponseItem = zod.object({
   "title": zod.string(),
   "momentSeconds": zod.number(),
   "kind": zod.string(),
-  "status": zod.string()
+  "status": zod.string(),
+  "userClipId": zod.number().optional().describe('The user clip row backing this earned moment, when materialized.')
 }))
 })
 export const ListClaimMatchClipsResponse = zod.array(ListClaimMatchClipsResponseItem)

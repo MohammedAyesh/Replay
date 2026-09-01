@@ -130,6 +130,142 @@ export function isLiveVideoId(videoId: string): boolean {
 }
 
 /**
+ * Recording rows store the original Bunny playlist URL, while user_clips
+ * stores only the Bunny Stream GUID. Keep this conversion server-side so a
+ * claim moment can become a normal user clip without trusting a client-supplied
+ * video id.
+ */
+export function extractBunnyVideoId(videoUrl: string): string | null {
+  const value = videoUrl.trim();
+  if (!value) return null;
+
+  try {
+    const parsed = new URL(value);
+    const nestedUrl = parsed.searchParams.get("url");
+    if (nestedUrl) return extractBunnyVideoId(nestedUrl);
+
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const mediaIndex = parts.findIndex((part) =>
+      part.endsWith(".m3u8") || /^play_\d+p\.mp4$/i.test(part),
+    );
+    if (mediaIndex > 0) return parts[mediaIndex - 1] ?? null;
+    if (parsed.hostname.endsWith(".b-cdn.net") && parts.length > 0) return parts[0] ?? null;
+    return null;
+  } catch {
+    // A bare Bunny GUID is useful in a few older recording rows.
+    return /^[a-z0-9-]{16,}$/i.test(value) ? value : null;
+  }
+}
+
+function parseRecordingDuration(value: string | null | undefined): number {
+  const raw = value?.trim() ?? "";
+  if (!raw) return 0;
+  const clock = raw.match(/^(?:(\d+):)?(\d{1,2}):(\d{2})$/);
+  if (clock) {
+    const hours = Number(clock[1] ?? 0);
+    const minutes = Number(clock[2]);
+    const seconds = Number(clock[3]);
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
+type ClaimMomentForClip = Pick<
+  import("@workspace/db").ClaimEarnedClip,
+  "id" | "title" | "momentSeconds" | "kind" | "status"
+>;
+
+/**
+ * Materialize one accepted claim event as a private user clip. The clip uses
+ * the same 16-second window and background FFmpeg export as manually-created
+ * clips, so it is playable immediately through the source HLS and becomes a
+ * downloadable MP4 when the background job finishes.
+ */
+export async function ensureClaimMomentUserClip(options: {
+  userId: number;
+  recording: typeof recordingsTable.$inferSelect;
+  moment: ClaimMomentForClip;
+  videoStartSeconds?: number;
+  trackingDuration?: number;
+}): Promise<{ userClipId: number; exportStatus: string | null }> {
+  const { userId, recording, moment } = options;
+  const videoId = extractBunnyVideoId(recording.videoUrl);
+  if (!videoId || isLiveVideoId(videoId)) {
+    throw new Error(`Recording ${recording.id} does not have a Bunny Stream video`);
+  }
+
+  const trackingDuration = Number.isFinite(options.trackingDuration) && (options.trackingDuration ?? 0) > 0
+    ? options.trackingDuration!
+    : 0;
+  const recordingDuration = parseRecordingDuration(recording.duration) || trackingDuration;
+  if (recordingDuration <= 0) {
+    throw new Error(`Recording ${recording.id} does not have a usable duration`);
+  }
+
+  const videoStartSeconds = Number.isFinite(options.videoStartSeconds)
+    ? Math.max(0, options.videoStartSeconds ?? 0)
+    : 0;
+  const startSeconds = Math.max(0, moment.momentSeconds - 8 + videoStartSeconds);
+  const endSeconds = Math.min(
+    recordingDuration,
+    moment.momentSeconds + 8 + videoStartSeconds,
+  );
+  if (endSeconds <= startSeconds) {
+    throw new Error(`Claim moment ${moment.id} has no exportable video window`);
+  }
+
+  const startTime = Math.max(0, Math.min(1, startSeconds / recordingDuration));
+  const endTime = Math.max(startTime, Math.min(1, endSeconds / recordingDuration));
+  const title = moment.title;
+
+  const candidates = await db
+    .select()
+    .from(userClipsTable)
+    .where(and(
+      eq(userClipsTable.userId, userId),
+      eq(userClipsTable.videoId, videoId),
+      eq(userClipsTable.title, title),
+    ));
+  let clip = candidates.find((candidate) =>
+    Math.abs(parseFloat(candidate.startTime) - startTime) < 0.0001 &&
+    Math.abs(parseFloat(candidate.endTime) - endTime) < 0.0001,
+  );
+
+  if (!clip) {
+    const [created] = await db
+      .insert(userClipsTable)
+      .values({
+        userId,
+        videoId,
+        title,
+        startTime: String(startTime),
+        endTime: String(endTime),
+        cropPath: [],
+        visibility: "private",
+        aspectRatio: "16:9",
+      })
+      .returning();
+    clip = created;
+  }
+
+  let exportStatus = clip.exportStatus ?? null;
+  if (isBunnyConfigured() && isBunnyStorageConfigured() && !inFlight.has(clip.id)) {
+    if (clip.exportStatus !== "done" || !clip.exportedUrl) {
+      inFlight.add(clip.id);
+      await db
+        .update(userClipsTable)
+        .set({ exportStatus: "pending", exportedUrl: null })
+        .where(eq(userClipsTable.id, clip.id));
+      exportStatus = "pending";
+      startBackgroundExport(clip);
+    }
+  }
+
+  return { userClipId: clip.id, exportStatus };
+}
+
+/**
  * The intro FFmpeg prepends to a clip's export.
  *
  * The academy's own intro wins, so each recording carries the branding of the

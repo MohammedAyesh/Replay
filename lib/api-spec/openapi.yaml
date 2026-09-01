@@ -2151,6 +2151,9 @@ components:
           type: string
         status:
           type: string
+        userClipId:
+          type: integer
+          description: The user clip row backing this earned moment, when materialized.
 
     ClaimCorrection:
       type: object

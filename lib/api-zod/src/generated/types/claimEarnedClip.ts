@@ -12,4 +12,6 @@ export interface ClaimEarnedClip {
   momentSeconds: number;
   kind: string;
   status: string;
+  /** The user clip row backing this earned moment, when materialized. */
+  userClipId?: number;
 }
