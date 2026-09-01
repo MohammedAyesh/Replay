@@ -670,8 +670,29 @@ export default function ClaimMatchPage() {
             setNotice("Match claimed · your tracking summary is ready");
           } else if (nextStage === "done") {
             setCompletionSyncPending(false);
-            setStage("picker");
-            setNotice("A little more accepted coverage is needed before this match is claimed");
+             const threshold = claimCompletionThreshold(duration);
+             const savedAnchorMoments = allCorrections
+               .filter((item) => !item.undone && item.answerMethod.startsWith("anchor-"))
+               .map((item) => item.momentSeconds);
+             const unansweredIndex = nextUnansweredAnchor(claimAnchors, savedAnchorMoments);
+             const unresolvedIndex = claimAnchors.findIndex((anchor) =>
+               (saved.unresolvedMoments ?? []).some((moment) => Math.abs(moment - anchor.momentSeconds) <= 0.5),
+             );
+             const reviewIndex = unansweredIndex >= 0 ? unansweredIndex : unresolvedIndex >= 0 ? unresolvedIndex : 0;
+             if (saved.acceptedAnchorCount < threshold.acceptedAnchors && claimAnchors[reviewIndex]) {
+               setAnchorMode(true);
+               setActiveAnchorIndex(reviewIndex);
+               setCurrentTrackId(null);
+               setStage("picker");
+               setReviewState("watching");
+               setPlaying(false);
+               videoRef.current?.pause();
+               seekTracking(claimAnchors[reviewIndex].momentSeconds);
+               setNotice("One identity checkpoint is still needed before this match is claimed");
+             } else {
+               setStage("picker");
+               setNotice("A little more accepted coverage is needed before this match is claimed");
+             }
           } else {
             setNotice("Saved just now");
           }
@@ -682,7 +703,7 @@ export default function ClaimMatchPage() {
         },
       });
     }
-  }, [currentTime, currentTrackId, progressValue, clipsUnlocked, confirmedFromSeconds, earnedClips, isOffline, activeRecordingId, queryClient, responseQueryKey, updateProgress, queueProgress]);
+  }, [allCorrections, claimAnchors, currentTime, currentTrackId, progressValue, clipsUnlocked, confirmedFromSeconds, duration, earnedClips, isOffline, activeRecordingId, queryClient, responseQueryKey, seekTracking, updateProgress, queueProgress]);
 
   const moveToSegment = useCallback((direction: -1 | 1) => {
     if (!manifest || orderedSegments.length < 2) return;
@@ -1059,11 +1080,25 @@ export default function ClaimMatchPage() {
       .filter((item) => !item.undone && item.answerMethod.startsWith("anchor-"))
       .map((item) => item.momentSeconds);
     const savedAnchorIndex = nextUnansweredAnchor(claimAnchors, savedAnchorMoments);
-    const resumeAnchors = !response.progress.completed
+    const threshold = claimCompletionThreshold(duration);
+    const unresolvedAnchorIndex = claimAnchors.findIndex((anchor) =>
+      (response.progress.unresolvedMoments ?? []).some((moment) => Math.abs(moment - anchor.momentSeconds) <= 0.5),
+    );
+    const reviewAnchorIndex = savedAnchorIndex >= 0
+      ? savedAnchorIndex
+      : unresolvedAnchorIndex >= 0
+        ? unresolvedAnchorIndex
+        : 0;
+    const needsIdentityCheckpoint = !response.progress.completed
+      && response.progress.coveragePercent >= threshold.coveragePercent
+      && response.progress.acceptedAnchorCount < threshold.acceptedAnchors;
+    const resumeAnchors = needsIdentityCheckpoint || (
+      !response.progress.completed
       && response.corrections.some((item) => !item.undone && item.answerMethod.startsWith("anchor-"))
-      && savedAnchorIndex >= 0;
+      && savedAnchorIndex >= 0
+    );
     setAnchorMode(resumeAnchors);
-    setActiveAnchorIndex(resumeAnchors ? savedAnchorIndex : null);
+    setActiveAnchorIndex(resumeAnchors ? reviewAnchorIndex : null);
     setStage(response.progress.completed ? "done" : resumeAnchors ? "picker" : normalizedStage);
     if (response.progress.completed) setCompletionSyncPending(false);
     setCurrentTrackId(resumeAnchors ? null : response.progress.currentTrackId || null);
@@ -1075,7 +1110,7 @@ export default function ClaimMatchPage() {
     setNarrowing(null);
     setCrossingOtherTrackId(null);
     if (resumeAnchors) {
-      seekTracking(claimAnchors[savedAnchorIndex].momentSeconds);
+      seekTracking(claimAnchors[reviewAnchorIndex].momentSeconds);
       setPlaying(false);
       videoRef.current?.pause();
     } else if ((normalizedStage === "following") && response.progress.currentTrackId) {
@@ -1088,7 +1123,7 @@ export default function ClaimMatchPage() {
       videoRef.current?.pause();
       seekTracking(resumedWindow.end);
     }
-  }, [bundle, claimAnchors, response, seekTracking]);
+  }, [bundle, claimAnchors, duration, response, seekTracking]);
 
   useEffect(() => {
     if (!bundle || !currentTrackId) return;
