@@ -20,6 +20,7 @@ export * from './claimCorrection';
 export * from './claimCorrectionInput';
 export * from './claimEarnedClip';
 export * from './claimMatchResponse';
+export * from './claimPlayerStats';
 export * from './claimProgress';
 export * from './claimProgressInput';
 export * from './clip';

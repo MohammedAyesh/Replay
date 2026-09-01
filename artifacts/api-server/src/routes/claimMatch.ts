@@ -724,6 +724,15 @@ function toProgress(row: typeof claimMatchProgressTable.$inferSelect | null, rec
     completed: row?.completed ?? false,
     earnedClips: row?.earnedClips ?? [],
     completionReason: row?.completed ? "coverage-threshold" : "keep-confirming",
+    playerStats: {
+      confirmedSeconds: 0,
+      coveragePercent: row?.claimedPercent ?? 0,
+      answeredMoments: 0,
+      acceptedMoments: 0,
+      trackedSegments: 0,
+      totalSegments: 0,
+      matchedEvents: 0,
+    },
     updatedAt: row?.updatedAt.toISOString() ?? new Date().toISOString(),
   };
 }
@@ -830,6 +839,15 @@ type DerivedClaimState = {
   completed: boolean;
   completionReason: string;
   earnedClips: ClaimEarnedClip[];
+  playerStats: {
+    confirmedSeconds: number;
+    coveragePercent: number;
+    answeredMoments: number;
+    acceptedMoments: number;
+    trackedSegments: number;
+    totalSegments: number;
+    matchedEvents: number;
+  };
 };
 
 const EMPTY_ANCHOR_TRACK = "__none__";
@@ -839,6 +857,13 @@ export function isAcceptedClaimAnswer(row: typeof claimMatchCorrectionsTable.$in
     && row.chosenTrackId !== EMPTY_ANCHOR_TRACK
     && row.answerMethod !== "anchor-no"
     && row.answerMethod !== "anchor-skip";
+}
+
+export function completionSurvivesConcurrentProgress(
+  existingCompleted: boolean,
+  derivedCompleted: boolean,
+): boolean {
+  return existingCompleted || derivedCompleted;
 }
 
 function latestAnchorAnswers(
@@ -936,6 +961,21 @@ export function deriveClaimState(
     (all, row) => getMomentClips(segments, row.momentSeconds, all),
     [] as ClaimEarnedClip[],
   );
+  const acceptedTrackIds = new Set<string>();
+  for (const row of accepted) {
+    acceptedTrackIds.add(row.chosenTrackId);
+    const identity = manifest.identities?.find((item) => item.id === row.chosenTrackId);
+    for (const part of identity?.parts ?? []) acceptedTrackIds.add(part.trackId);
+  }
+  const trackedSegments = segments.filter((segment) =>
+    segment.tracks.some((track) => acceptedTrackIds.has(track.id)),
+  ).length;
+  const matchedEvents = segments
+    .flatMap((segment) => segment.events)
+    .filter((event) => sorted.some((interval) =>
+      event.time >= interval.startSeconds && event.time <= interval.endSeconds,
+    ))
+    .length;
   return {
     coverageSeconds: Math.round(coveredSeconds * 100) / 100,
     coveragePercent,
@@ -947,6 +987,15 @@ export function deriveClaimState(
     completed,
     completionReason: completed ? "coverage-threshold" : "keep-confirming",
     earnedClips,
+    playerStats: {
+      confirmedSeconds: Math.round(coveredSeconds * 100) / 100,
+      coveragePercent,
+      answeredMoments: anchorAnswers.length,
+      acceptedMoments: acceptedAnchorCount,
+      trackedSegments,
+      totalSegments: segments.length,
+      matchedEvents,
+    },
   };
 }
 
@@ -968,6 +1017,7 @@ function progressWithDerived(
     completed: derived.completed,
     earnedClips: derived.earnedClips,
     completionReason: derived.completionReason,
+    playerStats: derived.playerStats,
   };
 }
 
@@ -1118,19 +1168,23 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
       set: {
         currentTrackId: body.data.currentTrackId ?? null,
-        stage: nextStage,
         confirmedFromSeconds: body.data.confirmedFromSeconds,
         currentPositionSeconds: body.data.currentPositionSeconds,
         claimedPercent: derived.coveragePercent,
         clipsUnlocked: derived.clipsUnlocked,
         correctionCount: derived.correctionCount,
-        completed: derived.completed,
+        completed: sql`${claimMatchProgressTable.completed} OR ${derived.completed}`,
+        stage: sql`CASE WHEN ${claimMatchProgressTable.completed} OR ${derived.completed} THEN 'done' ELSE ${nextStage} END`,
         earnedClips: derived.earnedClips,
         updatedAt: new Date(),
       },
     })
     .returning();
-  res.json(progressWithDerived(saved, params.data.id, derived));
+  const responseCompleted = completionSurvivesConcurrentProgress(saved.completed, derived.completed);
+  const responseDerived = responseCompleted && !derived.completed
+    ? { ...derived, completed: true, completionReason: "coverage-threshold" }
+    : derived;
+  res.json(progressWithDerived(saved, params.data.id, responseDerived));
 });
 
 router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise<void> => {
@@ -1221,13 +1275,13 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
       target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
       set: {
         currentTrackId: isAnchorNoAnswer ? null : body.data.chosenTrackId,
-        stage: nextStage,
         confirmedFromSeconds: body.data.momentSeconds,
         currentPositionSeconds: body.data.momentSeconds,
         claimedPercent: derived.coveragePercent,
         clipsUnlocked: derived.clipsUnlocked,
         correctionCount: derived.correctionCount,
-        completed: derived.completed,
+        completed: sql`${claimMatchProgressTable.completed} OR ${derived.completed}`,
+        stage: sql`CASE WHEN ${claimMatchProgressTable.completed} OR ${derived.completed} THEN 'done' ELSE ${nextStage} END`,
         earnedClips: derived.earnedClips,
         updatedAt: new Date(),
       },

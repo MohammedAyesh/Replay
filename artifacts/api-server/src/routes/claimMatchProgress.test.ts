@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  completionSurvivesConcurrentProgress,
   deriveClaimState,
   isAcceptedClaimAnswer,
 } from "./claimMatch";
@@ -119,5 +120,37 @@ describe("claim match server-derived progress", () => {
     expect(result.unresolvedMoments).toEqual([]);
     expect(result.acceptedAnchorCount).toBe(1);
     expect(result.coverageSeconds).toBe(100);
+  });
+
+  it("reports supported player results from accepted tracking intervals", () => {
+    const firstSegment = segments[0] as unknown as Record<string, unknown>;
+    const result = deriveClaimState(manifest, [
+      {
+        ...firstSegment,
+        events: [
+          { type: "goal", time: 30 },
+          { type: "shot", time: 75 },
+        ],
+      },
+      segments[1],
+    ] as never, [
+      correction("8", "anchor-yes", "player-1", 10),
+    ] as never);
+
+    expect(result.playerStats).toEqual({
+      confirmedSeconds: 100,
+      coveragePercent: 100,
+      answeredMoments: 1,
+      acceptedMoments: 1,
+      trackedSegments: 2,
+      totalSegments: 2,
+      matchedEvents: 2,
+    });
+  });
+
+  it("does not let an older progress save clear a completed claim", () => {
+    expect(completionSurvivesConcurrentProgress(true, false)).toBe(true);
+    expect(completionSurvivesConcurrentProgress(false, true)).toBe(true);
+    expect(completionSurvivesConcurrentProgress(false, false)).toBe(false);
   });
 });

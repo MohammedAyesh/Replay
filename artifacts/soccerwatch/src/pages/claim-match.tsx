@@ -366,6 +366,7 @@ export default function ClaimMatchPage() {
   const [corrections, setCorrections] = useState<ClaimCorrection[]>([]);
   const [notice, setNotice] = useState("");
   const [queuedCount, setQueuedCount] = useState(0);
+  const [completionSyncPending, setCompletionSyncPending] = useState(false);
   const [undoExpiresAt, setUndoExpiresAt] = useState(0);
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
   const [segmentCache, setSegmentCache] = useState<Record<number, TrackingSegment>>({});
@@ -402,6 +403,7 @@ export default function ClaimMatchPage() {
     ?? serverProgress?.claimedPercent
     ?? 0;
   const earnedClips = serverProgress?.earnedClips || [];
+  const playerStats = serverProgress?.playerStats;
   const currentSegmentIndex = manifest ? segmentIndexAtTime(manifest, currentTime) : 0;
   const orderedSegments = useMemo(
     () => (manifest ? [...manifest.segments].sort((a, b) => a.startSeconds - b.startSeconds) : []),
@@ -598,15 +600,43 @@ export default function ClaimMatchPage() {
       earnedClips,
     };
     if (isOffline) {
+      if (nextStage === "done") {
+        setCompletionSyncPending(true);
+        setNotice("Completion saved on this device · will sync when you’re back");
+      }
       void queueProgress(payload);
     } else {
       setNotice("Saving");
       updateProgress.mutate({ id: activeRecordingId, data: payload }, {
-        onSuccess: () => setNotice("Saved just now"),
-        onError: () => void queueProgress(payload),
+        onSuccess: (saved) => {
+          queryClient.setQueryData<ClaimMatchResponse>(responseQueryKey, (current) => {
+            if (!current || (current.progress.completed && !saved.completed)) return current;
+            return { ...current, progress: saved };
+          });
+          setClaimedPercent(saved.coveragePercent);
+          setClipsUnlocked(saved.clipsUnlocked);
+          if (saved.completed) {
+            setStage("done");
+            setAnchorMode(false);
+            setActiveAnchorIndex(null);
+            setCurrentTrackId(null);
+            setCompletionSyncPending(false);
+            setNotice("Match claimed · your tracking summary is ready");
+          } else if (nextStage === "done") {
+            setCompletionSyncPending(false);
+            setStage("picker");
+            setNotice("A little more accepted coverage is needed before this match is claimed");
+          } else {
+            setNotice("Saved just now");
+          }
+        },
+        onError: () => {
+          if (nextStage === "done") setCompletionSyncPending(true);
+          void queueProgress(payload);
+        },
       });
     }
-  }, [currentTime, currentTrackId, progressValue, clipsUnlocked, confirmedFromSeconds, earnedClips, isOffline, activeRecordingId, updateProgress, queueProgress]);
+  }, [currentTime, currentTrackId, progressValue, clipsUnlocked, confirmedFromSeconds, earnedClips, isOffline, activeRecordingId, queryClient, responseQueryKey, updateProgress, queueProgress]);
 
   const moveToSegment = useCallback((direction: -1 | 1) => {
     if (!manifest || orderedSegments.length < 2) return;
@@ -844,9 +874,8 @@ export default function ClaimMatchPage() {
       setReviewState("watching");
       setPlaying(false);
       videoRef.current?.pause();
-      setStage("done");
-      setClaimedPercent(100);
-      setNotice("Match claimed");
+      setCompletionSyncPending(true);
+      setNotice("Checking your accepted coverage");
       saveProgress("done", currentTrackId, 100, clipsUnlocked, confirmedFromSeconds, reviewWindowEnd);
       return;
     }
@@ -990,6 +1019,7 @@ export default function ClaimMatchPage() {
     setAnchorMode(resumeAnchors);
     setActiveAnchorIndex(resumeAnchors ? savedAnchorIndex : null);
     setStage(response.progress.completed ? "done" : resumeAnchors ? "picker" : normalizedStage);
+    if (response.progress.completed) setCompletionSyncPending(false);
     setCurrentTrackId(resumeAnchors ? null : response.progress.currentTrackId || null);
     setConfirmedFromSeconds(response.progress.confirmedFromSeconds || 0);
     setCurrentTime(resumedPosition);
@@ -1085,6 +1115,7 @@ export default function ClaimMatchPage() {
       return;
     }
     let changed = false;
+    let changedForActiveRecording = false;
     for (const action of actions) {
       try {
         if (action.kind === "progress") {
@@ -1096,6 +1127,7 @@ export default function ClaimMatchPage() {
         }
         await removeClaimAction(action.id);
         changed = true;
+        if (action.recordingId === activeRecordingId) changedForActiveRecording = true;
       } catch {
         break;
       }
@@ -1103,13 +1135,16 @@ export default function ClaimMatchPage() {
     const remaining = await readClaimQueue();
     setQueuedCount(remaining.length);
     if (changed) {
-      await queryClient.invalidateQueries({ queryKey: ["claim-match"] });
+      await queryClient.invalidateQueries({ queryKey: responseQueryKey });
+      if (changedForActiveRecording) setCompletionSyncPending(false);
     }
   }, [
+    activeRecordingId,
     createCorrectionAsync,
     isGuest,
     isOffline,
     queryClient,
+    responseQueryKey,
     undoCorrectionAsync,
     updateProgressAsync,
     user,
@@ -1217,6 +1252,11 @@ export default function ClaimMatchPage() {
     if (!anchorMode || !currentAnchor || !bundle) return;
     const momentSeconds = currentAnchor.momentSeconds;
     const answerMethod = `anchor-${answer}`;
+    const nextIndex = nextUnansweredAnchor(
+      claimAnchors,
+      [...answeredAnchorMoments, momentSeconds],
+    );
+    const isFinalAnchor = nextIndex < 0;
     const payload = {
       clientId: `claim-${activeRecordingId}-${currentAnchor.id}-${Date.now()}-${++anchorAnswerNonceRef.current}`,
       momentSeconds,
@@ -1242,27 +1282,27 @@ export default function ClaimMatchPage() {
       createdAt: Date.now(),
     };
     if (isOffline) {
+      if (isFinalAnchor) setCompletionSyncPending(true);
       void enqueueClaimAction(queueAction).then(async () => setQueuedCount((await readClaimQueue()).length));
     } else {
       createCorrection.mutate({ id: activeRecordingId, data: payload }, {
-        onSuccess: (correction) => {
+        onSuccess: async (correction) => {
           setCorrections((items) => items.map((item) => item.id === optimistic.id ? correction : item));
-          void queryClient.invalidateQueries({ queryKey: responseQueryKey });
+          await queryClient.invalidateQueries({ queryKey: responseQueryKey });
+          if (isFinalAnchor) setCompletionSyncPending(false);
         },
-        onError: () => void enqueueClaimAction(queueAction).then(async () => setQueuedCount((await readClaimQueue()).length)),
+        onError: () => {
+          if (isFinalAnchor) setCompletionSyncPending(true);
+          void enqueueClaimAction(queueAction).then(async () => setQueuedCount((await readClaimQueue()).length));
+        },
       });
     }
-    const nextIndex = nextUnansweredAnchor(
-      claimAnchors,
-      [...answeredAnchorMoments, momentSeconds],
-    );
     if (nextIndex < 0) {
       setAnchorMode(false);
       setActiveAnchorIndex(null);
       setStage("picker");
       setCurrentTrackId(null);
-      saveProgress("picker", null, progressValue, clipsUnlocked, 0, momentSeconds);
-      setNotice("Anchor pass complete · we’re checking your coverage");
+      setNotice(isOffline ? "Anchor pass saved on this device · will finish when you’re back online" : "Anchor pass complete · we’re checking your coverage");
     } else {
       openAnchorReview(nextIndex);
     }
@@ -1496,6 +1536,7 @@ export default function ClaimMatchPage() {
             {serverProgress?.answeredAnchorCount ? ` · ${serverProgress.answeredAnchorCount} moments answered` : ""}
             {serverProgress?.unresolvedMoments?.length ? ` · ${serverProgress.unresolvedMoments.length} unresolved` : ""}
           </small>
+           {completionSyncPending && <small className="claim-completion-sync" role="status">Checking the saved result…</small>}
         </div>
         {stage === "find" && (
           <div className="claim-panel claim-panel-find" data-testid="panel-find-yourself">
@@ -1608,6 +1649,16 @@ export default function ClaimMatchPage() {
             <div className="complete-graphic"><span className="complete-ring"><Check size={24} /></span><span className="complete-spark spark-a" /><span className="complete-spark spark-b" /><span className="complete-spark spark-c" /></div>
             <h2>Done. That’s all yours.</h2>
              <p>You confirmed <b>{Math.round(progressValue)}%</b> coverage of this match. The percentage reflects attributed player time, not how many screens you visited.</p>
+             {playerStats && (
+               <div className="claim-player-stats" data-testid="claim-player-stats">
+                 <div><span>Confirmed time</span><b>{formatTime(playerStats.confirmedSeconds)}</b></div>
+                 <div><span>Match coverage</span><b>{Math.round(playerStats.coveragePercent)}%</b></div>
+                 <div><span>Identity moments</span><b>{playerStats.acceptedMoments}/{playerStats.answeredMoments}</b></div>
+                 <div><span>Sections tracked</span><b>{playerStats.trackedSegments}/{playerStats.totalSegments}</b></div>
+                 <div><span>Match moments</span><b>{playerStats.matchedEvents}</b></div>
+               </div>
+             )}
+             <p className="claim-stats-note">These are the supported tracking results for this match. Distance, top speed, touches, goals, and assists are not estimated without calibrated field and event data.</p>
              {unresolvedAnchorReviews.length ? (
                <div className="claim-unresolved-review" data-testid="unresolved-anchor-list">
                  <div className="claim-unresolved-heading"><b>{unresolvedAnchorReviews.length} moments need another look</b><span>Review one without restarting your claim.</span></div>

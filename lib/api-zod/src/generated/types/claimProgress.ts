@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ClaimEarnedClip } from './claimEarnedClip';
+import type { ClaimPlayerStats } from './claimPlayerStats';
 
 export interface ClaimProgress {
   recordingId: number;
@@ -41,5 +42,6 @@ export interface ClaimProgress {
   completed: boolean;
   completionReason: string;
   earnedClips: ClaimEarnedClip[];
+  playerStats: ClaimPlayerStats;
   updatedAt: string;
 }

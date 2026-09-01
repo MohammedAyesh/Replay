@@ -17,3 +17,4 @@
 - [Claim queue invalidation loop](claim-queue-invalidation-loop.md) — never invalidate Claim Match queries after an empty offline-queue flush; unstable mutation dependencies can create a permanent refetch skeleton.
 - [GCS gzip downloads](gcs-gzip-downloads.md) — Google Cloud Storage auto-decompresses gzip objects unless download uses `{ decompress: false }`; preserve bytes when forwarding Content-Encoding.
 - [Progressive HLS browser cache](progressive-hls-browser-cache.md) — keep persisted cache reads independent from per-client post-Play writes, and make every Cache API failure fall back to network.
+- [Claim completion and results](claim-completion-results.md) — ordinary progress saves cannot clear completion; expose only server-supported tracking results and keep unsupported metrics unavailable.

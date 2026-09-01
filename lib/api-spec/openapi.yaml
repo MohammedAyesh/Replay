@@ -2141,9 +2141,43 @@ components:
         createdAt:
           type: string
 
+    ClaimPlayerStats:
+      type: object
+      required: [confirmedSeconds, coveragePercent, answeredMoments, acceptedMoments, trackedSegments, totalSegments, matchedEvents]
+      properties:
+        confirmedSeconds:
+          type: number
+          minimum: 0
+          description: Union of the player's accepted tracking intervals, in seconds.
+        coveragePercent:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Percentage of the tracked match covered by accepted player intervals.
+        answeredMoments:
+          type: integer
+          minimum: 0
+          description: Identity checkpoint moments answered by the player.
+        acceptedMoments:
+          type: integer
+          minimum: 0
+          description: Identity checkpoint moments accepted as the player.
+        trackedSegments:
+          type: integer
+          minimum: 0
+          description: Tracking segments containing an accepted interval for the player.
+        totalSegments:
+          type: integer
+          minimum: 0
+          description: Total tracking segments in the uploaded match bundle.
+        matchedEvents:
+          type: integer
+          minimum: 0
+          description: Match events that occurred during an accepted player interval.
+
     ClaimProgress:
       type: object
-      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, updatedAt]
+      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
       properties:
         recordingId:
           type: integer
@@ -2193,6 +2227,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ClaimEarnedClip"
+        playerStats:
+          $ref: "#/components/schemas/ClaimPlayerStats"
         updatedAt:
           type: string
 

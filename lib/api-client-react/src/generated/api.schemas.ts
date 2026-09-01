@@ -664,6 +664,45 @@ export interface ClaimCorrection {
   createdAt: string;
 }
 
+export interface ClaimPlayerStats {
+  /**
+     * Union of the player's accepted tracking intervals, in seconds.
+     * @minimum 0
+     */
+  confirmedSeconds: number;
+  /**
+     * Percentage of the tracked match covered by accepted player intervals.
+     * @minimum 0
+     * @maximum 100
+     */
+  coveragePercent: number;
+  /**
+     * Identity checkpoint moments answered by the player.
+     * @minimum 0
+     */
+  answeredMoments: number;
+  /**
+     * Identity checkpoint moments accepted as the player.
+     * @minimum 0
+     */
+  acceptedMoments: number;
+  /**
+     * Tracking segments containing an accepted interval for the player.
+     * @minimum 0
+     */
+  trackedSegments: number;
+  /**
+     * Total tracking segments in the uploaded match bundle.
+     * @minimum 0
+     */
+  totalSegments: number;
+  /**
+     * Match events that occurred during an accepted player interval.
+     * @minimum 0
+     */
+  matchedEvents: number;
+}
+
 export interface ClaimProgress {
   recordingId: number;
   /** @nullable */
@@ -698,6 +737,7 @@ export interface ClaimProgress {
   completed: boolean;
   completionReason: string;
   earnedClips: ClaimEarnedClip[];
+  playerStats: ClaimPlayerStats;
   updatedAt: string;
 }
 

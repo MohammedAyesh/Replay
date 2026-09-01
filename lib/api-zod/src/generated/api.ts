@@ -261,6 +261,21 @@ export const getClaimMatchResponseProgressAcceptedAnchorCountMin = 0;
 
 export const getClaimMatchResponseProgressUnresolvedMomentsItemMin = 0;
 
+export const getClaimMatchResponseProgressPlayerStatsConfirmedSecondsMin = 0;
+
+export const getClaimMatchResponseProgressPlayerStatsCoveragePercentMin = 0;
+export const getClaimMatchResponseProgressPlayerStatsCoveragePercentMax = 100;
+
+export const getClaimMatchResponseProgressPlayerStatsAnsweredMomentsMin = 0;
+
+export const getClaimMatchResponseProgressPlayerStatsAcceptedMomentsMin = 0;
+
+export const getClaimMatchResponseProgressPlayerStatsTrackedSegmentsMin = 0;
+
+export const getClaimMatchResponseProgressPlayerStatsTotalSegmentsMin = 0;
+
+export const getClaimMatchResponseProgressPlayerStatsMatchedEventsMin = 0;
+
 
 
 export const GetClaimMatchResponse = zod.object({
@@ -331,6 +346,15 @@ export const GetClaimMatchResponse = zod.object({
   "kind": zod.string(),
   "status": zod.string()
 })),
+  "playerStats": zod.object({
+  "confirmedSeconds": zod.number().min(getClaimMatchResponseProgressPlayerStatsConfirmedSecondsMin).describe('Union of the player\'s accepted tracking intervals, in seconds.'),
+  "coveragePercent": zod.number().min(getClaimMatchResponseProgressPlayerStatsCoveragePercentMin).max(getClaimMatchResponseProgressPlayerStatsCoveragePercentMax).describe('Percentage of the tracked match covered by accepted player intervals.'),
+  "answeredMoments": zod.number().min(getClaimMatchResponseProgressPlayerStatsAnsweredMomentsMin).describe('Identity checkpoint moments answered by the player.'),
+  "acceptedMoments": zod.number().min(getClaimMatchResponseProgressPlayerStatsAcceptedMomentsMin).describe('Identity checkpoint moments accepted as the player.'),
+  "trackedSegments": zod.number().min(getClaimMatchResponseProgressPlayerStatsTrackedSegmentsMin).describe('Tracking segments containing an accepted interval for the player.'),
+  "totalSegments": zod.number().min(getClaimMatchResponseProgressPlayerStatsTotalSegmentsMin).describe('Total tracking segments in the uploaded match bundle.'),
+  "matchedEvents": zod.number().min(getClaimMatchResponseProgressPlayerStatsMatchedEventsMin).describe('Match events that occurred during an accepted player interval.')
+}),
   "updatedAt": zod.string()
 }),
   "corrections": zod.array(zod.object({
@@ -394,6 +418,21 @@ export const updateClaimMatchProgressResponseAcceptedAnchorCountMin = 0;
 
 export const updateClaimMatchProgressResponseUnresolvedMomentsItemMin = 0;
 
+export const updateClaimMatchProgressResponsePlayerStatsConfirmedSecondsMin = 0;
+
+export const updateClaimMatchProgressResponsePlayerStatsCoveragePercentMin = 0;
+export const updateClaimMatchProgressResponsePlayerStatsCoveragePercentMax = 100;
+
+export const updateClaimMatchProgressResponsePlayerStatsAnsweredMomentsMin = 0;
+
+export const updateClaimMatchProgressResponsePlayerStatsAcceptedMomentsMin = 0;
+
+export const updateClaimMatchProgressResponsePlayerStatsTrackedSegmentsMin = 0;
+
+export const updateClaimMatchProgressResponsePlayerStatsTotalSegmentsMin = 0;
+
+export const updateClaimMatchProgressResponsePlayerStatsMatchedEventsMin = 0;
+
 
 
 export const UpdateClaimMatchProgressResponse = zod.object({
@@ -419,6 +458,15 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "kind": zod.string(),
   "status": zod.string()
 })),
+  "playerStats": zod.object({
+  "confirmedSeconds": zod.number().min(updateClaimMatchProgressResponsePlayerStatsConfirmedSecondsMin).describe('Union of the player\'s accepted tracking intervals, in seconds.'),
+  "coveragePercent": zod.number().min(updateClaimMatchProgressResponsePlayerStatsCoveragePercentMin).max(updateClaimMatchProgressResponsePlayerStatsCoveragePercentMax).describe('Percentage of the tracked match covered by accepted player intervals.'),
+  "answeredMoments": zod.number().min(updateClaimMatchProgressResponsePlayerStatsAnsweredMomentsMin).describe('Identity checkpoint moments answered by the player.'),
+  "acceptedMoments": zod.number().min(updateClaimMatchProgressResponsePlayerStatsAcceptedMomentsMin).describe('Identity checkpoint moments accepted as the player.'),
+  "trackedSegments": zod.number().min(updateClaimMatchProgressResponsePlayerStatsTrackedSegmentsMin).describe('Tracking segments containing an accepted interval for the player.'),
+  "totalSegments": zod.number().min(updateClaimMatchProgressResponsePlayerStatsTotalSegmentsMin).describe('Total tracking segments in the uploaded match bundle.'),
+  "matchedEvents": zod.number().min(updateClaimMatchProgressResponsePlayerStatsMatchedEventsMin).describe('Match events that occurred during an accepted player interval.')
+}),
   "updatedAt": zod.string()
 })
 
