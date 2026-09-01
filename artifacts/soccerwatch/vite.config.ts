@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
+import { isTransientClerkSessionTouchError } from "./src/lib/clerk-network";
 
 const rawPort = process.env.PORT;
 
@@ -31,7 +32,13 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    runtimeErrorOverlay(),
+    runtimeErrorOverlay({
+      // Clerk's background session heartbeat can reject when the preview
+      // browser briefly cannot reach the dev Frontend API. Keep this exact
+      // known transient case out of the blocking overlay; unrelated runtime
+      // errors must continue to surface normally.
+      filter: (error) => !isTransientClerkSessionTouchError(error),
+    }),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
       ? [
