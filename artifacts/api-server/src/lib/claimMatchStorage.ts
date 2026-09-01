@@ -64,6 +64,11 @@ export async function writeClaimSegment(
   return { objectPath, compressedBytes: body.byteLength };
 }
 
+export async function deleteClaimSegment(objectPath: string): Promise<void> {
+  const file = fileForObjectPath(objectPath);
+  await file.delete({ ignoreNotFound: true });
+}
+
 export async function readClaimSegment(objectPath: string): Promise<Buffer> {
   const file = fileForObjectPath(objectPath);
   const [body] = await file.download({ decompress: false });

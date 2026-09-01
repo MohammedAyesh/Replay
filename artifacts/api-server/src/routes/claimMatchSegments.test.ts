@@ -65,4 +65,67 @@ describe("claim match segmented bundles", () => {
     } as never;
     expect(validateUploadBundle(upload)).toContain("continuous");
   });
+
+  it("rejects ZIPs with files that are not declared by the manifest", () => {
+    const manifest = {
+      version: 1,
+      label: "unexpected",
+      width: 1920,
+      height: 1080,
+      frameRate: 25,
+      frameCount: 2,
+      duration: 0.08,
+      segmentCount: 1,
+      segments: [
+        { index: 0, name: "one", startFrame: 0, endFrame: 1, startSeconds: 0, endSeconds: 0.08 },
+      ],
+    };
+    const payload = {
+      tracks: [],
+      crossings: [],
+      inPlaySpans: [],
+      events: [],
+    };
+    const zip = zipSync({
+      "manifest.json": strToU8(JSON.stringify(manifest)),
+      "segments/one.json": strToU8(JSON.stringify(payload)),
+      "notes.txt": strToU8("not tracking data"),
+    });
+
+    expect(parseZipBundle(Buffer.from(zip))).toBeNull();
+  });
+
+  it("rejects archives that exceed the entry-count limit before parsing segments", () => {
+    const zip = zipSync(Object.fromEntries([
+      ["manifest.json", strToU8("{}")],
+      ...Array.from({ length: 512 }, (_, index) => [`extra-${index}.txt`, strToU8("x")]),
+    ]));
+
+    expect(parseZipBundle(Buffer.from(zip))).toBeNull();
+  });
+
+  it("rejects segment ranges outside the manifest frame and duration bounds", () => {
+    const upload = {
+      manifest: {
+        version: 1,
+        label: "out of bounds",
+        width: 1920,
+        height: 1080,
+        frameRate: 25,
+        frameCount: 4,
+        duration: 0.16,
+        matchOffset: 0,
+        videoStartSeconds: 0,
+        segmentCount: 1,
+        segments: [
+          { index: 0, name: "one", startFrame: 0, endFrame: 4, startSeconds: 0, endSeconds: 0.2, objectPath: "" },
+        ],
+      },
+      segments: [
+        { segmentIndex: 0, name: "one", startFrame: 0, endFrame: 4, startSeconds: 0, endSeconds: 0.2, version: 1, tracks: [], crossings: [], inPlaySpans: [], events: [] },
+      ],
+    } as never;
+
+    expect(validateUploadBundle(upload)).toContain("outside the manifest bounds");
+  });
 });

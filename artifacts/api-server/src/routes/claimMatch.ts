@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import multer from "multer";
-import { unzipSync, gunzipSync, strFromU8 } from "fflate";
+import { unzipSync, strFromU8 } from "fflate";
 import { randomUUID } from "node:crypto";
+import { gunzipSync as nodeGunzipSync } from "node:zlib";
 import { z } from "zod";
 import {
   CreateClaimMatchCorrectionBody,
@@ -28,7 +29,13 @@ import {
 } from "@workspace/db";
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
-import { readClaimSegment, readCompressedClaimSegment, writeClaimSegment } from "../lib/claimMatchStorage";
+import { logger } from "../lib/logger";
+import {
+  deleteClaimSegment,
+  readClaimSegment,
+  readCompressedClaimSegment,
+  writeClaimSegment,
+} from "../lib/claimMatchStorage";
 
 const router: IRouter = Router();
 
@@ -48,6 +55,33 @@ const bundleUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 75 * 1024 * 1024 },
 });
+const bundleUploadSingle: import("express").RequestHandler = (req, res, next) => {
+  bundleUpload.single("bundle")(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+      res.status(400).json({ error: "The ZIP file exceeds the 75 MB upload limit" });
+      return;
+    }
+    next(error);
+  });
+};
+
+const MAX_BUNDLE_BYTES = 75 * 1024 * 1024;
+const MAX_BUNDLE_UNCOMPRESSED_BYTES = 300 * 1024 * 1024;
+const MAX_BUNDLE_ENTRY_BYTES = 40 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 1 * 1024 * 1024;
+const MAX_SPRITE_BYTES = 40 * 1024 * 1024;
+const MAX_BUNDLE_ENTRIES = 512;
+const MAX_BUNDLE_SEGMENTS = 256;
+const MAX_TRACKING_DURATION_SECONDS = 3 * 60 * 60;
+const MAX_TRACKING_FRAMES = 10_000_000;
+const MAX_TRACKS_PER_SEGMENT = 10_000;
+const MAX_BOXES_PER_SEGMENT = 2_000_000;
+const MAX_CROSSINGS_PER_SEGMENT = 250_000;
+const MAX_EVENTS_PER_SEGMENT = 250_000;
 
 function parseId(value: string | string[]): number | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -309,16 +343,6 @@ type UploadBundle = {
   sprites?: Record<number, unknown>;
 };
 
-function readJsonEntry(entries: Record<string, Uint8Array>, names: string[]): unknown | null {
-  const name = names.find((candidate) => entries[candidate]);
-  if (!name) return null;
-  try {
-    return JSON.parse(strFromU8(entries[name]));
-  } catch {
-    return null;
-  }
-}
-
 function entryNamesForSegment(
   entry: UnknownRecord,
   index: number,
@@ -328,6 +352,59 @@ function entryNamesForSegment(
   const candidates = [declared, `segments/${name}.json`, `segments/${name}.json.gz`, `segment-${String(index + 1).padStart(2, "0")}.json`, `${name}.json`]
     .filter((value): value is string => Boolean(value));
   return candidates;
+}
+
+class BundleParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BundleParseError";
+  }
+}
+
+function isSafeBundleEntryName(name: string): boolean {
+  if (!name || name.length > 255 || name.startsWith("/") || name.includes("\\")) return false;
+  return name.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
+function unzipBundleEntries(buffer: Buffer): Record<string, Uint8Array> {
+  if (buffer.byteLength > MAX_BUNDLE_BYTES) {
+    throw new BundleParseError("The ZIP file exceeds the 75 MB upload limit");
+  }
+
+  let entryCount = 0;
+  let totalUncompressedBytes = 0;
+  const names = new Set<string>();
+  try {
+    return unzipSync(buffer, {
+      filter: (file) => {
+        entryCount++;
+        if (entryCount > MAX_BUNDLE_ENTRIES) {
+          throw new BundleParseError(`The ZIP contains too many files (maximum ${MAX_BUNDLE_ENTRIES})`);
+        }
+        if (!isSafeBundleEntryName(file.name)) {
+          throw new BundleParseError(`The ZIP contains an unsafe file path: ${file.name}`);
+        }
+        if (names.has(file.name)) {
+          throw new BundleParseError(`The ZIP contains a duplicate file: ${file.name}`);
+        }
+        names.add(file.name);
+        if (file.compression !== 0 && file.compression !== 8) {
+          throw new BundleParseError(`The ZIP uses an unsupported compression method for ${file.name}`);
+        }
+        if (!Number.isSafeInteger(file.originalSize) || file.originalSize > MAX_BUNDLE_ENTRY_BYTES) {
+          throw new BundleParseError(`ZIP entry ${file.name} exceeds the ${MAX_BUNDLE_ENTRY_BYTES / (1024 * 1024)} MB decompressed limit`);
+        }
+        totalUncompressedBytes += file.originalSize;
+        if (totalUncompressedBytes > MAX_BUNDLE_UNCOMPRESSED_BYTES) {
+          throw new BundleParseError("The ZIP exceeds the 300 MB total decompressed limit");
+        }
+        return true;
+      },
+    }) as Record<string, Uint8Array>;
+  } catch (error) {
+    if (error instanceof BundleParseError) throw error;
+    throw new BundleParseError("The ZIP could not be safely decompressed");
+  }
 }
 
 function parseUploadedBundle(input: unknown): UploadBundle | null {
@@ -411,18 +488,52 @@ function parseUploadedBundle(input: unknown): UploadBundle | null {
   };
 }
 
-export function parseZipBundle(buffer: Buffer): UploadBundle | null {
+function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle | null; error: string | null } {
   let entries: Record<string, Uint8Array>;
   try {
-    entries = unzipSync(buffer);
-  } catch {
-    return null;
+    entries = unzipBundleEntries(buffer);
+  } catch (error) {
+    return {
+      upload: null,
+      error: error instanceof BundleParseError ? error.message : "The ZIP could not be safely decompressed",
+    };
   }
-  const manifest = readJsonEntry(entries, ["manifest.json", "tracking-manifest.json"]);
-  if (!manifest) return null;
+
+  const manifestNames = ["manifest.json", "tracking-manifest.json"].filter((name) => Boolean(entries[name]));
+  if (manifestNames.length > 1) {
+    return { upload: null, error: "The ZIP contains duplicate manifest files" };
+  }
+  const manifestName = manifestNames[0];
+  if (!manifestName) {
+    return { upload: null, error: "The ZIP is missing manifest.json" };
+  }
+  if (entries[manifestName].byteLength > MAX_MANIFEST_BYTES) {
+    return { upload: null, error: "The manifest exceeds the 1 MB decompressed limit" };
+  }
+
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(strFromU8(entries[manifestName]));
+  } catch {
+    return { upload: null, error: "The manifest is not valid JSON" };
+  }
   const rawManifest = asRecord(manifest);
   const rawSegments = Array.isArray(rawManifest.segments) ? rawManifest.segments : [];
-  if (rawSegments.length === 0) return null;
+  if (rawSegments.length === 0) {
+    return { upload: null, error: "The manifest must list at least one segment" };
+  }
+  if (rawSegments.length > MAX_BUNDLE_SEGMENTS) {
+    return { upload: null, error: `The bundle contains too many segments (maximum ${MAX_BUNDLE_SEGMENTS})` };
+  }
+  const declaredSegmentCount = firstNumber(rawManifest.segmentCount);
+  if (
+    declaredSegmentCount !== undefined
+    && (!Number.isInteger(declaredSegmentCount) || declaredSegmentCount !== rawSegments.length)
+  ) {
+    return { upload: null, error: "Manifest segment count does not match the uploaded files" };
+  }
+
+  const selectedEntries = new Set([manifestName]);
   const segments: TrackingSegmentPayload[] = [];
   const sprites: Record<number, unknown> = {};
   for (let index = 0; index < rawSegments.length; index++) {
@@ -432,67 +543,135 @@ export function parseZipBundle(buffer: Buffer): UploadBundle | null {
     const startSeconds = Math.max(0, firstNumber(entry.startSeconds, entry.start_seconds) ?? startFrame / (firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25));
     const endSeconds = Math.max(startSeconds, firstNumber(entry.endSeconds, entry.end_seconds) ?? endFrame / (firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25));
     const name = firstString(entry.name) ?? `segment-${String(index + 1).padStart(2, "0")}`;
-    const jsonEntry = entryNamesForSegment(entry, index, name).find((candidate) => entries[candidate]);
-    if (!jsonEntry) return null;
+    if (!isSafeBundleEntryName(name) || name.includes("/")) {
+      return { upload: null, error: `Segment ${index + 1} has an unsafe name` };
+    }
+
+    const matchingEntries = entryNamesForSegment(entry, index, name)
+      .filter((candidate) => Boolean(entries[candidate]));
+    if (matchingEntries.length > 1) {
+      return { upload: null, error: `Segment ${index + 1} has duplicate data files` };
+    }
+    const jsonEntry = matchingEntries[0];
+    if (!jsonEntry) {
+      return { upload: null, error: `Segment ${index + 1} is missing its JSON file` };
+    }
+    if (selectedEntries.has(jsonEntry)) {
+      return { upload: null, error: `Segment ${index + 1} reuses a data file already assigned to another bundle entry` };
+    }
+    selectedEntries.add(jsonEntry);
+
     let segmentSource: unknown;
     try {
       const bytes = entries[jsonEntry];
       segmentSource = jsonEntry.endsWith(".gz")
         ? JSON.parse(new TextDecoder().decode(gunzipForZip(bytes)))
         : JSON.parse(strFromU8(bytes));
-    } catch {
-      return null;
+    } catch (error) {
+      if (error instanceof BundleParseError) {
+        return { upload: null, error: error.message };
+      }
+      return { upload: null, error: `Segment ${index + 1} is not valid JSON or gzip` };
     }
     const segment = parseSegment(segmentSource, index, name, startFrame, endFrame, startSeconds, endSeconds);
-    if (!segment) return null;
+    if (!segment) {
+      return { upload: null, error: `Segment ${index + 1} does not match the tracking schema` };
+    }
     segments.push(namespaceSegment(segment));
-    const spriteEntry = [`sprites/${name}.json`, `sprites/segment-${String(index + 1).padStart(2, "0")}.json`].find((candidate) => entries[candidate]);
+
+    const spriteCandidates = [
+      `sprites/${name}.json`,
+      `sprites/segment-${String(index + 1).padStart(2, "0")}.json`,
+    ];
+    const matchingSpriteEntries = spriteCandidates.filter((candidate) => Boolean(entries[candidate]));
+    if (matchingSpriteEntries.length > 1) {
+      return { upload: null, error: `Segment ${index + 1} has duplicate sprite files` };
+    }
+    const spriteEntry = matchingSpriteEntries[0];
     if (spriteEntry) {
+      if (selectedEntries.has(spriteEntry)) {
+        return { upload: null, error: `Segment ${index + 1} reuses a sprite file already assigned to another bundle entry` };
+      }
+      selectedEntries.add(spriteEntry);
       try {
         const raw = JSON.parse(strFromU8(entries[spriteEntry])) as Record<string, unknown>;
         const prefix = `s${index}:`;
         const namespaced: Record<string, unknown> = {};
-        for (const [trackId, strips] of Object.entries(raw)) namespaced[trackId.startsWith(prefix) ? trackId : `${prefix}${trackId}`] = strips;
+        for (const [trackId, strips] of Object.entries(raw)) {
+          namespaced[trackId.startsWith(prefix) ? trackId : `${prefix}${trackId}`] = strips;
+        }
         sprites[index] = namespaced;
       } catch {
-        // a broken sprite file must not fail the bundle
+        // A broken optional sprite file does not invalidate tracking data.
       }
     }
   }
+
+  const unexpectedEntry = Object.keys(entries).find((name) => !selectedEntries.has(name));
+  if (unexpectedEntry) {
+    return { upload: null, error: `The ZIP contains an unexpected file: ${unexpectedEntry}` };
+  }
+  const declaredFrameCount = firstNumber(rawManifest.frameCount, rawManifest.frames);
+  if (declaredFrameCount !== undefined && (!Number.isInteger(declaredFrameCount) || declaredFrameCount < 1)) {
+    return { upload: null, error: "Manifest frame count must be a positive integer" };
+  }
+  const lastSegment = segments.at(-1)!;
+  if (declaredFrameCount !== undefined && declaredFrameCount < lastSegment.endFrame + 1) {
+    return { upload: null, error: "Manifest frame count is smaller than the uploaded segment coverage" };
+  }
+  const declaredDuration = firstNumber(rawManifest.duration);
+  if (declaredDuration !== undefined && (!Number.isFinite(declaredDuration) || declaredDuration <= 0)) {
+    return { upload: null, error: "Manifest duration must be a positive number" };
+  }
+  if (declaredDuration !== undefined && declaredDuration < lastSegment.endSeconds) {
+    return { upload: null, error: "Manifest duration is shorter than the uploaded segment coverage" };
+  }
+
   return {
-    sprites,
-    manifest: {
-      version: Math.max(1, Math.round(firstNumber(rawManifest.version) ?? 1)),
-      label: firstString(rawManifest.label, rawManifest.name) ?? "Match tracking",
-      width: Math.max(1, Math.round(firstNumber(rawManifest.width) ?? 1920)),
-      height: Math.max(1, Math.round(firstNumber(rawManifest.height) ?? 1080)),
-      frameRate: firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25,
-      frameCount: Math.max(1, Math.round(firstNumber(rawManifest.frameCount, rawManifest.frames) ?? segments.at(-1)!.endFrame + 1)),
-      duration: Math.max(firstNumber(rawManifest.duration) ?? 0, segments.at(-1)!.endSeconds),
-      matchOffset: firstNumber(rawManifest.matchOffset, rawManifest.match_offset) ?? 0,
-      videoStartSeconds: Math.max(0, firstNumber(
-        rawManifest.videoStartSeconds,
-        rawManifest.video_start_seconds,
-        rawManifest.videoOffset,
-        rawManifest.offsetSec,
-      ) ?? 0),
-      segmentCount: segments.length,
-      segments: segments.map((segment) => ({
-        index: segment.segmentIndex,
-        name: segment.name,
-        startFrame: segment.startFrame,
-        endFrame: segment.endFrame,
-        startSeconds: segment.startSeconds,
-        endSeconds: segment.endSeconds,
-        objectPath: "",
-      })),
+    upload: {
+      sprites,
+      manifest: {
+        version: Math.max(1, Math.round(firstNumber(rawManifest.version) ?? 1)),
+        label: firstString(rawManifest.label, rawManifest.name) ?? "Match tracking",
+        width: Math.max(1, Math.round(firstNumber(rawManifest.width) ?? 1920)),
+        height: Math.max(1, Math.round(firstNumber(rawManifest.height) ?? 1080)),
+        frameRate: firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25,
+        frameCount: Math.max(1, Math.round(firstNumber(rawManifest.frameCount, rawManifest.frames) ?? segments.at(-1)!.endFrame + 1)),
+        duration: Math.max(firstNumber(rawManifest.duration) ?? 0, segments.at(-1)!.endSeconds),
+        matchOffset: firstNumber(rawManifest.matchOffset, rawManifest.match_offset) ?? 0,
+        videoStartSeconds: Math.max(0, firstNumber(
+          rawManifest.videoStartSeconds,
+          rawManifest.video_start_seconds,
+          rawManifest.videoOffset,
+          rawManifest.offsetSec,
+        ) ?? 0),
+        segmentCount: segments.length,
+        segments: segments.map((segment) => ({
+          index: segment.segmentIndex,
+          name: segment.name,
+          startFrame: segment.startFrame,
+          endFrame: segment.endFrame,
+          startSeconds: segment.startSeconds,
+          endSeconds: segment.endSeconds,
+          objectPath: "",
+        })),
+      },
+      segments,
     },
-    segments,
+    error: null,
   };
 }
 
+export function parseZipBundle(buffer: Buffer): UploadBundle | null {
+  return parseZipBundleDetailed(buffer).upload;
+}
+
 function gunzipForZip(bytes: Uint8Array): Uint8Array {
-  return gunzipSync(bytes);
+  try {
+    return nodeGunzipSync(bytes, { maxOutputLength: MAX_BUNDLE_ENTRY_BYTES });
+  } catch {
+    throw new BundleParseError(`A gzipped segment is invalid or exceeds the ${MAX_BUNDLE_ENTRY_BYTES / (1024 * 1024)} MB decompressed limit`);
+  }
 }
 
 function recordingIdFromRequest(value: string | string[]): number | null {
@@ -1124,10 +1303,33 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
 
 export function validateUploadBundle(upload: UploadBundle): string | null {
   const { manifest, segments } = upload;
+  if (!Number.isInteger(manifest.width) || manifest.width < 1 || manifest.width > 10_000) {
+    return "Manifest width must be between 1 and 10000 pixels";
+  }
+  if (!Number.isInteger(manifest.height) || manifest.height < 1 || manifest.height > 10_000) {
+    return "Manifest height must be between 1 and 10000 pixels";
+  }
+  if (!Number.isFinite(manifest.frameRate) || manifest.frameRate <= 0 || manifest.frameRate > 240) {
+    return "Manifest frame rate must be greater than 0 and no more than 240";
+  }
+  if (!Number.isInteger(manifest.frameCount) || manifest.frameCount < 1 || manifest.frameCount > MAX_TRACKING_FRAMES) {
+    return `Manifest frame count must be between 1 and ${MAX_TRACKING_FRAMES}`;
+  }
+  if (!Number.isFinite(manifest.duration) || manifest.duration <= 0 || manifest.duration > MAX_TRACKING_DURATION_SECONDS) {
+    return `Manifest duration must be greater than 0 and no more than ${MAX_TRACKING_DURATION_SECONDS / 3600} hours`;
+  }
+  const videoStartSeconds = manifest.videoStartSeconds ?? 0;
+  if (!Number.isFinite(videoStartSeconds) || videoStartSeconds < 0 || videoStartSeconds > MAX_TRACKING_DURATION_SECONDS) {
+    return "Manifest video start must be between 0 and 10800 seconds";
+  }
+  if (segments.length > MAX_BUNDLE_SEGMENTS) {
+    return `The bundle contains too many segments (maximum ${MAX_BUNDLE_SEGMENTS})`;
+  }
   if (manifest.segmentCount !== segments.length || manifest.segments.length !== segments.length) {
     return "Manifest segment count does not match the uploaded files";
   }
   const ranges = [...manifest.segments].sort((a, b) => a.index - b.index);
+  let totalTracks = 0;
   for (let index = 0; index < ranges.length; index++) {
     const range = ranges[index];
     const segment = segments[index];
@@ -1135,86 +1337,172 @@ export function validateUploadBundle(upload: UploadBundle): string | null {
     if (range.startFrame !== segment.startFrame || range.endFrame !== segment.endFrame) return `Segment ${index + 1} frame range does not match its file`;
     if (index === 0 && range.startFrame !== 0) return "The first segment must start at frame 0";
     if (index > 0 && range.startFrame !== ranges[index - 1].endFrame + 1) return "Segment frame ranges must be continuous with no gaps";
-    if (range.endFrame < range.startFrame || range.endSeconds < range.startSeconds) return "Segment ranges must have a positive length";
+    if (
+      range.startFrame < 0
+      || range.endFrame < range.startFrame
+      || range.endFrame >= manifest.frameCount
+      || range.endFrame - range.startFrame + 1 > MAX_TRACKING_FRAMES
+    ) {
+      return `Segment ${index + 1} frame range is outside the manifest bounds`;
+    }
+    if (
+      !Number.isFinite(range.startSeconds)
+      || !Number.isFinite(range.endSeconds)
+      || range.startSeconds < 0
+      || range.endSeconds < range.startSeconds
+      || range.endSeconds > manifest.duration
+    ) {
+      return `Segment ${index + 1} time range is outside the manifest duration`;
+    }
     const ids = new Set(segment.tracks.map((track) => track.id));
+    if (segment.tracks.length > MAX_TRACKS_PER_SEGMENT) {
+      return `Segment ${index + 1} contains too many tracks (maximum ${MAX_TRACKS_PER_SEGMENT})`;
+    }
+    const boxCount = segment.tracks.reduce((count, track) => count + track.boxes.length, 0);
+    if (boxCount > MAX_BOXES_PER_SEGMENT) {
+      return `Segment ${index + 1} contains too many tracking frames (maximum ${MAX_BOXES_PER_SEGMENT})`;
+    }
+    if (segment.crossings.length > MAX_CROSSINGS_PER_SEGMENT) {
+      return `Segment ${index + 1} contains too many crossings (maximum ${MAX_CROSSINGS_PER_SEGMENT})`;
+    }
+    if (segment.events.length > MAX_EVENTS_PER_SEGMENT) {
+      return `Segment ${index + 1} contains too many events (maximum ${MAX_EVENTS_PER_SEGMENT})`;
+    }
+    totalTracks += segment.tracks.length;
+    if (totalTracks > MAX_TRACKS_PER_SEGMENT * MAX_BUNDLE_SEGMENTS) {
+      return "The bundle contains too many tracks";
+    }
+    for (const track of segment.tracks) {
+      if (
+        track.startFrame < 0
+        || track.endFrame < track.startFrame
+        || track.endFrame >= manifest.frameCount
+        || track.boxes.some((box) => (
+          box.frame < 0
+          || box.frame >= manifest.frameCount
+          || !Number.isFinite(box.x)
+          || !Number.isFinite(box.y)
+          || !Number.isFinite(box.w)
+          || !Number.isFinite(box.h)
+          || box.w <= 0
+          || box.h <= 0
+        ))
+      ) {
+        return `Segment ${index + 1} contains a track or box outside its frame range`;
+      }
+    }
     if (segment.crossings.some((crossing) => !ids.has(crossing.trackId) || !ids.has(crossing.otherTrackId))) {
       return `Segment ${index + 1} contains a crossing for a track that is not in that segment`;
+    }
+    if (segment.crossings.some((crossing) => crossing.frame < 0 || crossing.frame >= manifest.frameCount)) {
+      return `Segment ${index + 1} contains a crossing outside the manifest frame range`;
+    }
+    if (segment.events.some((event) => !Number.isFinite(event.time) || event.time < 0 || event.time > manifest.duration)) {
+      return `Segment ${index + 1} contains an event outside the manifest duration`;
     }
   }
   if (ranges.at(-1)?.endFrame !== manifest.frameCount - 1) return "Segment frame coverage must end at the manifest frame count";
   return null;
 }
 
+async function cleanupClaimObjects(paths: Iterable<string>, context: string): Promise<void> {
+  const uniquePaths = [...new Set(paths)].filter(Boolean);
+  if (uniquePaths.length === 0) return;
+  const results = await Promise.allSettled(uniquePaths.map((path) => deleteClaimSegment(path)));
+  const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed.length > 0) {
+    logger.warn({ count: failed.length, context }, "Some Claim Match bundle objects could not be cleaned up");
+  }
+}
+
 async function storeUploadBundle(recordingId: number, adminId: number, upload: UploadBundle) {
   const validationError = validateUploadBundle(upload);
   if (validationError) throw new Error(validationError);
+  const [previousBundle] = await db
+    .select({ id: recordingTrackingBundlesTable.id, manifest: recordingTrackingBundlesTable.manifest })
+    .from(recordingTrackingBundlesTable)
+    .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+  const previousObjectPaths = previousBundle?.manifest.segments.flatMap((segment) => [
+    segment.objectPath,
+    ...(segment.spritesPath ? [segment.spritesPath] : []),
+  ]) ?? [];
   const storedSegments: Array<{
     segment: TrackingSegmentPayload;
     objectPath: string;
     compressedBytes: number;
   }> = [];
   const spritePaths: Record<number, string> = {};
-  for (const segment of upload.segments) {
-    const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}.json.gz`, segment);
-    storedSegments.push({ segment, ...stored });
-    const strips = upload.sprites?.[segment.segmentIndex];
-    if (strips) {
-      const storedSprites = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}-sprites.json.gz`, strips);
-      spritePaths[segment.segmentIndex] = storedSprites.objectPath;
+  try {
+    for (const segment of upload.segments) {
+      const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}.json.gz`, segment);
+      storedSegments.push({ segment, ...stored });
+      const strips = upload.sprites?.[segment.segmentIndex];
+      if (strips) {
+        const storedSprites = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}-sprites.json.gz`, strips);
+        spritePaths[segment.segmentIndex] = storedSprites.objectPath;
+      }
     }
+    const manifest: TrackingManifest = {
+      ...upload.manifest,
+      videoStartSeconds: Math.max(0, upload.manifest.videoStartSeconds ?? 0),
+      segmentCount: storedSegments.length,
+      segments: storedSegments.map(({ segment, objectPath }) => ({
+        index: segment.segmentIndex,
+        name: segment.name,
+        startFrame: segment.startFrame,
+        endFrame: segment.endFrame,
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds,
+        objectPath,
+        ...(spritePaths[segment.segmentIndex] ? { spritesPath: spritePaths[segment.segmentIndex] } : {}),
+      })),
+    };
+    const [saved] = await db.transaction(async (tx) => {
+      const [bundle] = await tx
+        .insert(recordingTrackingBundlesTable)
+        .values({ recordingId, manifest, uploadedBy: adminId })
+        .onConflictDoUpdate({
+          target: recordingTrackingBundlesTable.recordingId,
+          set: { manifest, uploadedBy: adminId, updatedAt: new Date() },
+        })
+        .returning();
+      await tx.delete(recordingTrackingSegmentsTable).where(eq(recordingTrackingSegmentsTable.bundleId, bundle.id));
+      await tx.insert(recordingTrackingSegmentsTable).values(storedSegments.map(({ segment, objectPath, compressedBytes }) => ({
+        bundleId: bundle.id,
+        segmentIndex: segment.segmentIndex,
+        name: segment.name,
+        startFrame: segment.startFrame,
+        endFrame: segment.endFrame,
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds,
+        objectPath,
+        compressedBytes,
+        trackCount: segment.tracks.length,
+        crossingCount: segment.crossings.length,
+      })));
+      return [bundle];
+    });
+    await cleanupClaimObjects(previousObjectPaths, "successful replacement");
+    return {
+      recordingId,
+      label: manifest.label,
+      duration: manifest.duration,
+      trackCount: storedSegments.reduce((sum, item) => sum + item.segment.tracks.length, 0),
+      crossingCount: storedSegments.reduce((sum, item) => sum + item.segment.crossings.length, 0),
+      segmentCount: storedSegments.length,
+      frameCoverage: `0-${manifest.frameCount - 1} (${manifest.frameCount} frames)`,
+      videoStartSeconds: manifest.videoStartSeconds,
+      segmentRanges: manifest.segments,
+      uploadedAt: saved.updatedAt.toISOString(),
+    };
+  } catch (error) {
+    const newObjectPaths = [
+      ...storedSegments.map((segment) => segment.objectPath),
+      ...Object.values(spritePaths),
+    ];
+    await cleanupClaimObjects(newObjectPaths, "failed replacement");
+    throw error;
   }
-  const manifest: TrackingManifest = {
-    ...upload.manifest,
-    videoStartSeconds: Math.max(0, upload.manifest.videoStartSeconds ?? 0),
-    segmentCount: storedSegments.length,
-    segments: storedSegments.map(({ segment, objectPath }) => ({
-      index: segment.segmentIndex,
-      name: segment.name,
-      startFrame: segment.startFrame,
-      endFrame: segment.endFrame,
-      startSeconds: segment.startSeconds,
-      endSeconds: segment.endSeconds,
-      objectPath,
-      ...(spritePaths[segment.segmentIndex] ? { spritesPath: spritePaths[segment.segmentIndex] } : {}),
-    })),
-  };
-  const [saved] = await db.transaction(async (tx) => {
-    const [bundle] = await tx
-      .insert(recordingTrackingBundlesTable)
-      .values({ recordingId, manifest, uploadedBy: adminId })
-      .onConflictDoUpdate({
-        target: recordingTrackingBundlesTable.recordingId,
-        set: { manifest, uploadedBy: adminId, updatedAt: new Date() },
-      })
-      .returning();
-    await tx.delete(recordingTrackingSegmentsTable).where(eq(recordingTrackingSegmentsTable.bundleId, bundle.id));
-    await tx.insert(recordingTrackingSegmentsTable).values(storedSegments.map(({ segment, objectPath, compressedBytes }) => ({
-      bundleId: bundle.id,
-      segmentIndex: segment.segmentIndex,
-      name: segment.name,
-      startFrame: segment.startFrame,
-      endFrame: segment.endFrame,
-      startSeconds: segment.startSeconds,
-      endSeconds: segment.endSeconds,
-      objectPath,
-      compressedBytes,
-      trackCount: segment.tracks.length,
-      crossingCount: segment.crossings.length,
-    })));
-    return [bundle];
-  });
-  return {
-    recordingId,
-    label: manifest.label,
-    duration: manifest.duration,
-    trackCount: storedSegments.reduce((sum, item) => sum + item.segment.tracks.length, 0),
-    crossingCount: storedSegments.reduce((sum, item) => sum + item.segment.crossings.length, 0),
-    segmentCount: storedSegments.length,
-    frameCoverage: `0-${manifest.frameCount - 1} (${manifest.frameCount} frames)`,
-    videoStartSeconds: manifest.videoStartSeconds,
-    segmentRanges: manifest.segments,
-    uploadedAt: saved.updatedAt.toISOString(),
-  };
 }
 
 router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<void> => {
@@ -1257,7 +1545,7 @@ router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<
   });
 });
 
-router.put("/admin/recordings/:id/tracking-bundle", bundleUpload.single("bundle"), async (req, res): Promise<void> => {
+router.put("/admin/recordings/:id/tracking-bundle", bundleUploadSingle, async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) {
     res.status(403).json({ error: "Forbidden" });
@@ -1276,9 +1564,8 @@ router.put("/admin/recordings/:id/tracking-bundle", bundleUpload.single("bundle"
     res.status(404).json({ error: "Recording not found" });
     return;
   }
-  const upload = req.file?.buffer
-    ? parseZipBundle(req.file.buffer)
-    : parseUploadedBundle(req.body);
+  const parsedZip = req.file?.buffer ? parseZipBundleDetailed(req.file.buffer) : null;
+  const upload = parsedZip ? parsedZip.upload : parseUploadedBundle(req.body);
 
   // Where the tracked window starts inside the video is a property of THIS
   // pairing of bundle and recording, not of the bundle - the same tracking can
@@ -1294,14 +1581,20 @@ router.put("/admin/recordings/:id/tracking-bundle", bundleUpload.single("bundle"
   }
   if (!upload) {
     res.status(400).json({
-      error: "Invalid tracking bundle. Upload a ZIP containing manifest.json and every segment JSON file.",
+      error: parsedZip?.error ?? "Invalid tracking bundle. Upload a ZIP containing manifest.json and every segment JSON file.",
     });
+    return;
+  }
+  const validationError = validateUploadBundle(upload);
+  if (validationError) {
+    res.status(400).json({ error: validationError });
     return;
   }
   try {
     res.json(await storeUploadBundle(recordingId, adminId, upload));
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "Could not store tracking bundle" });
+    logger.error({ recordingId, err: error }, "Could not persist Claim Match tracking bundle");
+    res.status(500).json({ error: "Could not save the tracking bundle. The previous bundle was kept." });
   }
 });
 
