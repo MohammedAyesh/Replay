@@ -11,6 +11,7 @@ import {
   GetClaimMatchParams,
   GetClaimMatchSegmentParams,
   GetClaimMatchSegmentResponse,
+  ListClaimMatchClipsResponse,
   ReplaceTrackingBundleBody,
   UpdateClaimMatchProgressBody,
 } from "@workspace/api-zod";
@@ -841,6 +842,38 @@ router.post("/claim-match/demo/reset", async (req, res): Promise<void> => {
   });
 
   res.json({ recordingId, reset: true });
+});
+
+router.get("/claim-match/clips", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+
+  const rows = await db
+    .select({
+      progress: claimMatchProgressTable,
+      recording: recordingsTable,
+      fieldName: fieldsTable.name,
+    })
+    .from(claimMatchProgressTable)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, claimMatchProgressTable.recordingId))
+    .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .where(eq(claimMatchProgressTable.userId, userId))
+    .orderBy(desc(claimMatchProgressTable.updatedAt));
+
+  const groups = rows
+    .map(({ progress, recording, fieldName }) => ({
+      recordingId: recording.id,
+      recordingLabel: `${fieldName ?? "Match"} · ${recording.court}`,
+      fieldName: fieldName ?? "Match",
+      date: recording.date,
+      clips: progress.earnedClips ?? [],
+    }))
+    .filter((group) => group.clips.length > 0);
+
+  res.json(ListClaimMatchClipsResponse.parse(groups));
 });
 
 function getMomentClips(

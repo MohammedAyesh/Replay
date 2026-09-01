@@ -19,6 +19,8 @@ export * from './bunnyVideo';
 export * from './claimCorrection';
 export * from './claimCorrectionInput';
 export * from './claimEarnedClip';
+export * from './claimMatchClipGroup';
+export * from './claimMatchClipsResponse';
 export * from './claimMatchDemoResetResponse';
 export * from './claimMatchResponse';
 export * from './claimPlayerStats';

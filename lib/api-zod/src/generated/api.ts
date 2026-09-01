@@ -481,6 +481,25 @@ export const ResetClaimMatchDemoResponse = zod.object({
 
 
 /**
+ * @summary List the current player's earned match moments
+ */
+export const ListClaimMatchClipsResponseItem = zod.object({
+  "recordingId": zod.number(),
+  "recordingLabel": zod.string().describe('Human-readable match label.'),
+  "fieldName": zod.string(),
+  "date": zod.string(),
+  "clips": zod.array(zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "momentSeconds": zod.number(),
+  "kind": zod.string(),
+  "status": zod.string()
+}))
+})
+export const ListClaimMatchClipsResponse = zod.array(ListClaimMatchClipsResponseItem)
+
+
+/**
  * @summary Record an identity correction, safely repeatable by client id
  */
 export const CreateClaimMatchCorrectionParams = zod.object({

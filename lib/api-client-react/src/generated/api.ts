@@ -32,6 +32,7 @@ import type {
   BunnyVideo,
   ClaimCorrection,
   ClaimCorrectionInput,
+  ClaimMatchClipsResponse,
   ClaimMatchDemoResetResponse,
   ClaimMatchResponse,
   ClaimProgress,
@@ -1211,6 +1212,83 @@ export const useResetClaimMatchDemo = <TError = ErrorType<void>,
       > => {
       return useMutation(getResetClaimMatchDemoMutationOptions(options));
     }
+
+export const getListClaimMatchClipsUrl = () => {
+
+
+
+
+  return `/api/claim-match/clips`
+}
+
+/**
+ * @summary List the current player's earned match moments
+ */
+export const listClaimMatchClips = async ( options?: RequestInit): Promise<ClaimMatchClipsResponse> => {
+
+  return customFetch<ClaimMatchClipsResponse>(getListClaimMatchClipsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListClaimMatchClipsQueryKey = () => {
+    return [
+    `/api/claim-match/clips`
+    ] as const;
+    }
+
+
+export const getListClaimMatchClipsQueryOptions = <TData = Awaited<ReturnType<typeof listClaimMatchClips>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchClips>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListClaimMatchClipsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listClaimMatchClips>>> = ({ signal }) => listClaimMatchClips({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchClips>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListClaimMatchClipsQueryResult = NonNullable<Awaited<ReturnType<typeof listClaimMatchClips>>>
+export type ListClaimMatchClipsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List the current player's earned match moments
+ */
+
+export function useListClaimMatchClips<TData = Awaited<ReturnType<typeof listClaimMatchClips>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchClips>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListClaimMatchClipsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getCreateClaimMatchCorrectionUrl = (id: number,) => {
 

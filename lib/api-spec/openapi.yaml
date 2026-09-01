@@ -317,6 +317,23 @@ paths:
         "404":
           description: No tracking bundle has been uploaded yet
 
+  /claim-match/clips:
+    get:
+      operationId: listClaimMatchClips
+      tags: [claimMatch]
+      summary: List the current player's earned match moments
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Earned match moments grouped by recording
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimMatchClipsResponse"
+        "401":
+          description: Authenticated account required
+
   /recordings/{id}/claim-match/corrections:
     post:
       operationId: createClaimMatchCorrection
@@ -2324,6 +2341,29 @@ components:
           type: integer
         reset:
           type: boolean
+
+    ClaimMatchClipGroup:
+      type: object
+      required: [recordingId, recordingLabel, fieldName, date, clips]
+      properties:
+        recordingId:
+          type: integer
+        recordingLabel:
+          type: string
+          description: Human-readable match label.
+        fieldName:
+          type: string
+        date:
+          type: string
+        clips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimEarnedClip"
+
+    ClaimMatchClipsResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/ClaimMatchClipGroup"
 
   securitySchemes:
     clerkSession:

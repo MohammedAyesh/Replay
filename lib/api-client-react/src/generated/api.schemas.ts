@@ -787,6 +787,17 @@ export interface ClaimMatchDemoResetResponse {
   reset: boolean;
 }
 
+export interface ClaimMatchClipGroup {
+  recordingId: number;
+  /** Human-readable match label. */
+  recordingLabel: string;
+  fieldName: string;
+  date: string;
+  clips: ClaimEarnedClip[];
+}
+
+export type ClaimMatchClipsResponse = ClaimMatchClipGroup[];
+
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */
   bundle: string;

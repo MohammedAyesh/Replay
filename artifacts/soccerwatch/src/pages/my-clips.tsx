@@ -3,11 +3,14 @@ import { Link, useLocation } from "wouter";
 import {
   useListUserClips,
   useDeleteUserClip,
+  useListClaimMatchClips,
+  getListClaimMatchClipsQueryKey,
   getListUserClipsQueryKey,
   UserClip,
 } from "@workspace/api-client-react";
+import type { ClaimMatchClipGroup } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bookmark, Video, Scissors, Trash2, X, Play, Pause, Download, Maximize, Minimize, Lock } from "lucide-react";
+import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Pause, Download, Maximize, Minimize, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
@@ -787,11 +790,12 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 /*  Main page                                                           */
 /* ------------------------------------------------------------------ */
 
-type Tab = "saved" | "created";
+type Tab = "saved" | "created" | "moments";
 
 export default function MyClips() {
   const { isGuest, user } = useAuth();
   const { t } = useTranslation();
+  const [, setLocation] = useLocation();
   const [tab, setTab] = useState<Tab>("saved");
   const [activeClip, setActiveClip] = useState<UserClip | null>(null);
   const [localClips, setLocalClips] = useState<LocalClipRecord[]>([]);
@@ -813,6 +817,12 @@ export default function MyClips() {
 
   const { data: userClips, isLoading: userClipsLoading } = useListUserClips({
     query: { enabled: !isGuest, queryKey: getListUserClipsQueryKey() },
+  });
+  const { data: matchMomentGroups, isLoading: matchMomentsLoading } = useListClaimMatchClips({
+    query: {
+      enabled: !isGuest,
+      queryKey: getListClaimMatchClipsQueryKey(),
+    },
   });
 
   if (isGuest) {
@@ -840,6 +850,7 @@ export default function MyClips() {
 
   const savedCount = localClips.length;
   const createdCount = userClips?.length ?? 0;
+  const matchMomentCount = matchMomentGroups?.reduce((total, group) => total + group.clips.length, 0) ?? 0;
 
   return (
       <div className="my-clips-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
@@ -888,6 +899,24 @@ export default function MyClips() {
               </span>
             )}
           </button>
+          <button
+            onClick={() => setTab("moments")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-sm font-semibold transition-colors ${
+              tab === "moments"
+                ? "bg-primary text-primary-foreground shadow-[0_0_18px_hsl(var(--primary)/0.18)]"
+                : "text-muted-foreground"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            {t.myClips.tabMoments}
+            {matchMomentCount > 0 && (
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                tab === "moments" ? "bg-black/10 text-primary-foreground" : "bg-muted text-muted-foreground"
+              }`}>
+                {matchMomentCount}
+              </span>
+            )}
+          </button>
         </div>
       </motion.div>
 
@@ -911,7 +940,7 @@ export default function MyClips() {
                 }}
               />
             </motion.div>
-          ) : (
+          ) : tab === "created" ? (
             <motion.div
               key="created"
               initial={{ opacity: 0, x: 10 }}
@@ -923,6 +952,20 @@ export default function MyClips() {
                 clips={userClips}
                 isLoading={userClipsLoading}
                 onPlay={setActiveClip}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="moments"
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 10 }}
+              transition={{ duration: 0.2 }}
+            >
+              <MatchMomentsTab
+                groups={matchMomentGroups}
+                isLoading={matchMomentsLoading}
+                onOpenMatch={(recordingId) => setLocation(`/claim-match/${recordingId}`)}
               />
             </motion.div>
           )}
@@ -940,6 +983,108 @@ export default function MyClips() {
         )}
       </AnimatePresence>
 
+    </div>
+  );
+}
+
+function MatchMomentsTab({
+  groups,
+  isLoading,
+  onOpenMatch,
+}: {
+  groups: ClaimMatchClipGroup[] | undefined;
+  isLoading: boolean;
+  onOpenMatch: (recordingId: number) => void;
+}) {
+  const { t } = useTranslation();
+  const total = groups?.reduce((count, group) => count + group.clips.length, 0) ?? 0;
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-3">
+        {[1, 2, 3].map((i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, transition: { delay: i * 0.08 } }}
+            className="h-[132px] animate-pulse rounded-[18px] border border-border bg-card"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (!groups || total === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" as const } }}
+        className="py-20 text-center"
+      >
+        <motion.div
+          initial={{ scale: 0.7, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1, transition: { type: "spring", stiffness: 260, damping: 18, delay: 0.1 } }}
+          className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted"
+        >
+          <Sparkles className="w-8 h-8 text-muted-foreground" />
+        </motion.div>
+        <p className="font-medium text-muted-foreground">{t.myClips.momentsEmpty}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{t.myClips.momentsEmptyDesc}</p>
+        <Link href="/claim-match/demo">
+          <Button variant="outline" className="mt-6">{t.myClips.openMatch}</Button>
+        </Link>
+      </motion.div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="font-display text-lg font-bold text-foreground">{t.myClips.momentsTitle}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{t.myClips.momentsSubtitle}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{total}</span>
+      </div>
+      {groups.map((group) => (
+        <section key={group.recordingId} className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenMatch(group.recordingId)}
+            className="flex items-center justify-between gap-3 px-1 text-start"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-bold text-foreground">{group.recordingLabel}</span>
+              <span className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
+                <CalendarDays className="h-3 w-3" /> {group.date}
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-primary">{t.myClips.openMatch} <ChevronRight className="h-3.5 w-3.5" /></span>
+          </button>
+          <div className="flex flex-col gap-2">
+            {group.clips.map((clip) => (
+              <button
+                type="button"
+                key={`${group.recordingId}-${clip.id}`}
+                onClick={() => onOpenMatch(group.recordingId)}
+                className="group flex items-center gap-3 rounded-[18px] border border-border bg-card p-3 text-start transition-colors hover:border-primary/50"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <Sparkles className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block line-clamp-2 text-sm font-bold leading-tight text-foreground">{clip.title}</span>
+                  <span className="mt-1 flex items-center gap-2 text-[10px] font-medium text-muted-foreground">
+                    <span className="uppercase tracking-[0.12em]">{clip.kind.replace(/[-_]/g, " ")}</span>
+                    <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" /> {formatTime(clip.momentSeconds)}</span>
+                  </span>
+                </span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
