@@ -331,7 +331,7 @@ function namespaceSegment(segment: TrackingSegmentPayload): TrackingSegmentPaylo
   };
 }
 
-type UploadBundle = {
+export type UploadBundle = {
   manifest: Omit<TrackingManifest, "segments"> & { segments: Array<TrackingManifest["segments"][number] & { file?: string; path?: string }> };
   segments: TrackingSegmentPayload[];
   /**
@@ -1415,7 +1415,7 @@ async function cleanupClaimObjects(paths: Iterable<string>, context: string): Pr
   }
 }
 
-async function storeUploadBundle(recordingId: number, adminId: number, upload: UploadBundle) {
+export async function storeUploadBundle(recordingId: number, adminId: number, upload: UploadBundle) {
   const validationError = validateUploadBundle(upload);
   if (validationError) throw new Error(validationError);
   const [previousBundle] = await db
