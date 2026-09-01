@@ -3,6 +3,7 @@ import {
   completionSurvivesConcurrentProgress,
   deriveClaimState,
   isAcceptedClaimAnswer,
+  knownClaimTrackIds,
 } from "./claimMatch";
 
 const manifest = {
@@ -73,6 +74,20 @@ function correction(
 }
 
 describe("claim match server-derived progress", () => {
+  it("accepts canonical identity ids when validating browser corrections", () => {
+    const identityManifest = {
+      ...(manifest as object),
+      identities: [{
+        id: "mohammed",
+        name: "Mohammed",
+        parts: [{ trackId: "player-1", fromFrame: 0, toFrame: 99 }],
+      }],
+    } as never;
+
+    expect(knownClaimTrackIds(identityManifest, segments).has("player-1")).toBe(true);
+    expect(knownClaimTrackIds(identityManifest, segments).has("mohammed")).toBe(true);
+  });
+
   it("merges overlapping accepted track spans and reaches completion from coverage", () => {
     const result = deriveClaimState(manifest, segments, [
       correction("1", "anchor-yes", "player-1", 10),

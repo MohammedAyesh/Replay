@@ -72,6 +72,7 @@ import {
 } from "@/lib/claim-match-segments";
 import {
   buildClaimAnchors,
+  claimCompletionThreshold,
   nextUnansweredAnchor,
 } from "@/lib/claim-match-anchors";
 
@@ -459,6 +460,21 @@ export default function ClaimMatchPage() {
       .map((item) => item.momentSeconds),
     [allCorrections],
   );
+  const acceptedAnchorMoments = useMemo(() => {
+    const latestByMoment = new Map<number, ClaimCorrection>();
+    for (const item of allCorrections) {
+      if (item.undone || !item.answerMethod.startsWith("anchor-")) continue;
+      const previous = latestByMoment.get(item.momentSeconds);
+      if (!previous || item.createdAt >= previous.createdAt) {
+        latestByMoment.set(item.momentSeconds, item);
+      }
+    }
+    return new Set(
+      Array.from(latestByMoment.values())
+        .filter((item) => item.answerMethod === "anchor-yes" && item.chosenTrackId !== EMPTY_ANCHOR_TRACK)
+        .map((item) => item.momentSeconds),
+    );
+  }, [allCorrections]);
   const nextAnchorIndex = nextUnansweredAnchor(claimAnchors, answeredAnchorMoments);
   const visibleAnchorIndex = activeAnchorIndex ?? nextAnchorIndex;
   const currentAnchor = claimAnchors[visibleAnchorIndex] ?? null;
@@ -1273,11 +1289,17 @@ export default function ClaimMatchPage() {
     if (!anchorMode || !currentAnchor || !bundle) return;
     const momentSeconds = currentAnchor.momentSeconds;
     const answerMethod = `anchor-${answer}`;
+    const threshold = claimCompletionThreshold(duration);
+    const acceptedAnchorCountAfterAnswer = acceptedAnchorMoments.size
+      + (answer === "yes" && !acceptedAnchorMoments.has(momentSeconds) ? 1 : 0);
+    const meetsCompletionThreshold = answer === "yes"
+      && progressValue >= threshold.coveragePercent
+      && acceptedAnchorCountAfterAnswer >= threshold.acceptedAnchors;
     const nextIndex = nextUnansweredAnchor(
       claimAnchors,
       [...answeredAnchorMoments, momentSeconds],
     );
-    const isFinalAnchor = nextIndex < 0;
+    const isFinalAnchor = meetsCompletionThreshold || nextIndex < 0;
     const payload = {
       clientId: `claim-${activeRecordingId}-${currentAnchor.id}-${Date.now()}-${++anchorAnswerNonceRef.current}`,
       momentSeconds,
@@ -1310,15 +1332,21 @@ export default function ClaimMatchPage() {
         onSuccess: async (correction) => {
           setCorrections((items) => items.map((item) => item.id === optimistic.id ? correction : item));
           await queryClient.invalidateQueries({ queryKey: responseQueryKey });
-          if (isFinalAnchor) setCompletionSyncPending(false);
+           if (meetsCompletionThreshold) setCompletionSyncPending(false);
         },
         onError: () => {
-          if (isFinalAnchor) setCompletionSyncPending(true);
+          if (meetsCompletionThreshold) setCompletionSyncPending(true);
           void enqueueClaimAction(queueAction).then(async () => setQueuedCount((await readClaimQueue()).length));
         },
       });
     }
-    if (nextIndex < 0) {
+    if (meetsCompletionThreshold && !isOffline) {
+      setAnchorMode(false);
+      setActiveAnchorIndex(null);
+      setStage("done");
+      setCompletionSyncPending(true);
+      setNotice("Final answer saved · checking your claimed match");
+    } else if (nextIndex < 0) {
       setAnchorMode(false);
       setActiveAnchorIndex(null);
       setStage("picker");
@@ -1331,11 +1359,13 @@ export default function ClaimMatchPage() {
     activeRecordingId,
     anchorMode,
     answeredAnchorMoments,
+    acceptedAnchorMoments,
     bundle,
     claimAnchors,
     clipsUnlocked,
     createCorrection,
     currentAnchor,
+    duration,
     anchorAnswerNonceRef,
     isOffline,
     nextAnchorIndex,

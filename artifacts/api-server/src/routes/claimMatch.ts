@@ -901,6 +901,16 @@ export function completionSurvivesConcurrentProgress(
   return existingCompleted || derivedCompleted;
 }
 
+export function knownClaimTrackIds(
+  manifest: TrackingManifest,
+  segments: TrackingSegmentPayload[],
+): Set<string> {
+  return new Set([
+    ...segments.flatMap((segment) => segment.tracks.map((track) => track.id)),
+    ...(manifest.identities ?? []).map((identity) => identity.id),
+  ]);
+}
+
 function latestAnchorAnswers(
   rows: typeof claimMatchCorrectionsTable.$inferSelect[],
 ): typeof claimMatchCorrectionsTable.$inferSelect[] {
@@ -1244,7 +1254,7 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     return;
   }
   const segments = await readBundleSegments(row.bundle.id);
-  const trackIds = new Set(segments.flatMap((segment) => segment.tracks.map((track) => track.id)));
+  const trackIds = knownClaimTrackIds(row.bundle.manifest, segments);
   const isAnchorNoAnswer = body.data.answerMethod === "anchor-no" || body.data.answerMethod === "anchor-skip";
   if (
     (isAnchorNoAnswer
