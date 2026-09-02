@@ -18,6 +18,11 @@ export const usersTable = pgTable("users", {
   profileComplete: boolean("profile_complete").notNull().default(false),
   preferredLocale: text("preferred_locale"),
   academyId: integer("academy_id"),
+  recordingConsent: boolean("recording_consent").notNull().default(false),
+  recordingConsentAt: timestamp("recording_consent_at", { withTimezone: true }),
+  socialMediaConsent: boolean("social_media_consent").notNull().default(false),
+  socialMediaConsentAt: timestamp("social_media_consent_at", { withTimezone: true }),
+  consentRequired: boolean("consent_required").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

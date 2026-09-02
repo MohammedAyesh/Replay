@@ -31,6 +31,18 @@ export interface User {
   profileComplete: boolean;
   /** @nullable */
   preferredLocale?: string | null;
+  recordingConsent: boolean;
+  /** @nullable */
+  recordingConsentAt?: string | null;
+  socialMediaConsent: boolean;
+  /** @nullable */
+  socialMediaConsentAt?: string | null;
+  consentRequired: boolean;
+}
+
+export interface MediaConsentInput {
+  recordingConsent: boolean;
+  socialMediaConsent: boolean;
 }
 
 export interface AuthResponse {

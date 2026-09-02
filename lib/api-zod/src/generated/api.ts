@@ -36,7 +36,12 @@ export const LoginResponse = zod.object({
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
   "profileComplete": zod.boolean(),
-  "preferredLocale": zod.string().nullish()
+  "preferredLocale": zod.string().nullish(),
+  "recordingConsent": zod.boolean(),
+  "recordingConsentAt": zod.coerce.date().nullish(),
+  "socialMediaConsent": zod.boolean(),
+  "socialMediaConsentAt": zod.coerce.date().nullish(),
+  "consentRequired": zod.boolean()
 })
 })
 
@@ -56,7 +61,12 @@ export const LoginAsGuestResponse = zod.object({
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
   "profileComplete": zod.boolean(),
-  "preferredLocale": zod.string().nullish()
+  "preferredLocale": zod.string().nullish(),
+  "recordingConsent": zod.boolean(),
+  "recordingConsentAt": zod.coerce.date().nullish(),
+  "socialMediaConsent": zod.boolean(),
+  "socialMediaConsentAt": zod.coerce.date().nullish(),
+  "consentRequired": zod.boolean()
 })
 })
 
@@ -81,7 +91,40 @@ export const GetMeResponse = zod.object({
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
   "profileComplete": zod.boolean(),
-  "preferredLocale": zod.string().nullish()
+  "preferredLocale": zod.string().nullish(),
+  "recordingConsent": zod.boolean(),
+  "recordingConsentAt": zod.coerce.date().nullish(),
+  "socialMediaConsent": zod.boolean(),
+  "socialMediaConsentAt": zod.coerce.date().nullish(),
+  "consentRequired": zod.boolean()
+})
+
+
+/**
+ * @summary Save recording and social media consent
+ */
+export const UpdateConsentsBody = zod.object({
+  "recordingConsent": zod.boolean(),
+  "socialMediaConsent": zod.boolean()
+})
+
+export const UpdateConsentsResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "isGuest": zod.boolean(),
+  "isAdmin": zod.boolean().optional(),
+  "phone": zod.string().nullish(),
+  "position": zod.string().nullish(),
+  "age": zod.number().nullish(),
+  "gender": zod.string().nullish(),
+  "profileComplete": zod.boolean(),
+  "preferredLocale": zod.string().nullish(),
+  "recordingConsent": zod.boolean(),
+  "recordingConsentAt": zod.coerce.date().nullish(),
+  "socialMediaConsent": zod.boolean(),
+  "socialMediaConsentAt": zod.coerce.date().nullish(),
+  "consentRequired": zod.boolean()
 })
 
 
@@ -1321,7 +1364,12 @@ export const UpdateLocaleResponse = zod.object({
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
   "profileComplete": zod.boolean(),
-  "preferredLocale": zod.string().nullish()
+  "preferredLocale": zod.string().nullish(),
+  "recordingConsent": zod.boolean(),
+  "recordingConsentAt": zod.coerce.date().nullish(),
+  "socialMediaConsent": zod.boolean(),
+  "socialMediaConsentAt": zod.coerce.date().nullish(),
+  "consentRequired": zod.boolean()
 })
 
 
@@ -1352,7 +1400,12 @@ export const UpdateProfileResponse = zod.object({
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
   "profileComplete": zod.boolean(),
-  "preferredLocale": zod.string().nullish()
+  "preferredLocale": zod.string().nullish(),
+  "recordingConsent": zod.boolean(),
+  "recordingConsentAt": zod.coerce.date().nullish(),
+  "socialMediaConsent": zod.boolean(),
+  "socialMediaConsentAt": zod.coerce.date().nullish(),
+  "consentRequired": zod.boolean()
 })
 
 

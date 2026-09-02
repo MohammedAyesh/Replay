@@ -108,6 +108,29 @@ paths:
         "401":
           description: Unauthenticated
 
+  /account/consents:
+    patch:
+      operationId: updateConsents
+      tags: [account]
+      summary: Save recording and social media consent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaConsentInput"
+      responses:
+        "200":
+          description: Updated consent state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Recording consent is required
+        "401":
+          description: Unauthenticated
+
   /fields:
     get:
       operationId: listFields
@@ -1209,7 +1232,7 @@ components:
 
     User:
       type: object
-      required: [id, name, email, isGuest, profileComplete]
+      required: [id, name, email, isGuest, profileComplete, recordingConsent, socialMediaConsent, consentRequired]
       properties:
         id:
           type: integer
@@ -1233,6 +1256,27 @@ components:
           type: boolean
         preferredLocale:
           type: ["string", "null"]
+        recordingConsent:
+          type: boolean
+        recordingConsentAt:
+          type: ["string", "null"]
+          format: date-time
+        socialMediaConsent:
+          type: boolean
+        socialMediaConsentAt:
+          type: ["string", "null"]
+          format: date-time
+        consentRequired:
+          type: boolean
+
+    MediaConsentInput:
+      type: object
+      required: [recordingConsent, socialMediaConsent]
+      properties:
+        recordingConsent:
+          type: boolean
+        socialMediaConsent:
+          type: boolean
 
     AuthResponse:
       type: object

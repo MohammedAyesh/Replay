@@ -37,6 +37,11 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     gender: user.gender ?? null,
     profileComplete: user.profileComplete,
     preferredLocale: user.preferredLocale ?? null,
+    recordingConsent: user.recordingConsent,
+    recordingConsentAt: user.recordingConsentAt?.toISOString() ?? null,
+    socialMediaConsent: user.socialMediaConsent,
+    socialMediaConsentAt: user.socialMediaConsentAt?.toISOString() ?? null,
+    consentRequired: user.consentRequired,
     academyId: user.academyId ?? null,
     liveAccess,
   }));
@@ -63,6 +68,11 @@ router.post("/auth/guest", async (req, res): Promise<void> => {
       age: null,
       gender: null,
       profileComplete: true,
+      recordingConsent: false,
+      recordingConsentAt: null,
+      socialMediaConsent: false,
+      socialMediaConsentAt: null,
+      consentRequired: false,
     },
   }));
 });

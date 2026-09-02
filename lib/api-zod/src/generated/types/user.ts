@@ -23,4 +23,11 @@ export interface User {
   profileComplete: boolean;
   /** @nullable */
   preferredLocale?: string | null;
+  recordingConsent: boolean;
+  /** @nullable */
+  recordingConsentAt?: Date | null;
+  socialMediaConsent: boolean;
+  /** @nullable */
+  socialMediaConsentAt?: Date | null;
+  consentRequired: boolean;
 }

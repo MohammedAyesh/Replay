@@ -1,10 +1,85 @@
 import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
 import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable } from "@workspace/db";
-import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody, UpdateLocaleBody, UpdateLocaleResponse } from "@workspace/api-zod";
+import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody, UpdateLocaleBody, UpdateLocaleResponse, UpdateConsentsBody, UpdateConsentsResponse } from "@workspace/api-zod";
 import { getLocalUserId, getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
+
+router.patch("/account/consents", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req);
+    return;
+  }
+
+  let body;
+  try {
+    body = UpdateConsentsBody.parse(req.body);
+  } catch {
+    res.status(400).json({ error: "Recording consent is required" });
+    return;
+  }
+
+  if (!body.recordingConsent) {
+    res.status(400).json({ error: "Recording consent is required" });
+    return;
+  }
+
+  const [current] = await db
+    .select({
+      recordingConsent: usersTable.recordingConsent,
+      recordingConsentAt: usersTable.recordingConsentAt,
+      socialMediaConsent: usersTable.socialMediaConsent,
+      socialMediaConsentAt: usersTable.socialMediaConsentAt,
+    })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+
+  if (!current) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  const now = new Date();
+  const [updated] = await db
+    .update(usersTable)
+    .set({
+      recordingConsent: true,
+      recordingConsentAt: current.recordingConsentAt ?? now,
+      socialMediaConsent: body.socialMediaConsent,
+      socialMediaConsentAt: body.socialMediaConsent
+        ? current.socialMediaConsentAt ?? now
+        : null,
+      consentRequired: false,
+    })
+    .where(eq(usersTable.id, userId))
+    .returning();
+
+  if (!updated) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  res.json(UpdateConsentsResponse.parse({
+    id: updated.id,
+    name: updated.name,
+    email: updated.email,
+    isGuest: updated.isGuest,
+    isAdmin: updated.isAdmin,
+    phone: updated.phone ?? null,
+    position: updated.position ?? null,
+    age: updated.age ?? null,
+    gender: updated.gender ?? null,
+    profileComplete: updated.profileComplete,
+    preferredLocale: updated.preferredLocale ?? null,
+    recordingConsent: updated.recordingConsent,
+    recordingConsentAt: updated.recordingConsentAt?.toISOString() ?? null,
+    socialMediaConsent: updated.socialMediaConsent,
+    socialMediaConsentAt: updated.socialMediaConsentAt?.toISOString() ?? null,
+    consentRequired: updated.consentRequired,
+  }));
+});
 
 router.patch("/account/profile", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
@@ -42,6 +117,11 @@ router.patch("/account/profile", async (req, res): Promise<void> => {
     age: updated.age ?? null,
     gender: updated.gender ?? null,
     profileComplete: updated.profileComplete,
+    recordingConsent: updated.recordingConsent,
+    recordingConsentAt: updated.recordingConsentAt?.toISOString() ?? null,
+    socialMediaConsent: updated.socialMediaConsent,
+    socialMediaConsentAt: updated.socialMediaConsentAt?.toISOString() ?? null,
+    consentRequired: updated.consentRequired,
   }));
 });
 
@@ -82,6 +162,11 @@ router.patch("/account/locale", async (req, res): Promise<void> => {
     gender: updated.gender ?? null,
     profileComplete: updated.profileComplete,
     preferredLocale: updated.preferredLocale ?? null,
+    recordingConsent: updated.recordingConsent,
+    recordingConsentAt: updated.recordingConsentAt?.toISOString() ?? null,
+    socialMediaConsent: updated.socialMediaConsent,
+    socialMediaConsentAt: updated.socialMediaConsentAt?.toISOString() ?? null,
+    consentRequired: updated.consentRequired,
   }));
 });
 

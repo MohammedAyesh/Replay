@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { ClerkProvider, SignIn, SignUp, useClerk, useUser } from "@clerk/react";
@@ -30,6 +30,7 @@ import Live from "@/pages/live";
 import ClaimMatch from "@/pages/claim-match";
 import IdentityBoard from "@/pages/identity-board";
 import { useAuth } from "@/lib/auth";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
 
 const queryClient = new QueryClient({
@@ -248,15 +249,126 @@ function SignInPage() {
 }
 
 function SignUpPage() {
+  const { locale } = useTranslation();
+  const [recordingConsent, setRecordingConsent] = useState(false);
+  const [socialMediaConsent, setSocialMediaConsent] = useState(false);
+  const [showConsentError, setShowConsentError] = useState(false);
+  const isArabic = locale === "ar";
+  const copy = isArabic
+    ? {
+        recordingTitle: "أوافق على أن يتم تصويري",
+        recordingDescription: "تقوم الكاميرات بتسجيل المباريات حتى يتمكن اللاعبون من المشاهدة وتحديد لحظاتهم.",
+        socialTitle: "أوافق على استخدام مقاطعي على وسائل التواصل الاجتماعي",
+        socialDescription: "تسمح هذه الموافقة لـ Replay بمشاركة المقاطع التي تظهر فيها على قنواتها الاجتماعية. هذا اختياري.",
+        required: "مطلوب",
+        optional: "اختياري",
+        error: "يرجى الموافقة على التصوير للمتابعة.",
+      }
+    : {
+        recordingTitle: "I agree to be recorded",
+        recordingDescription: "Cameras record matches so players can watch and claim their moments.",
+        socialTitle: "I agree to let Replay use my videos on social media",
+        socialDescription: "This lets Replay share clips featuring you on its social channels. This is optional.",
+        required: "Required",
+        optional: "Optional",
+        error: "Please agree to being recorded to continue.",
+      };
+  const blockWithoutRecordingConsent = (event: React.SyntheticEvent) => {
+    if (recordingConsent) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setShowConsentError(true);
+  };
+
   return (
     <AuthHeroLayout>
-      <SignUp
-        routing="path"
-        path={`${basePath}/sign-up`}
-        signInUrl={`${basePath}/sign-in`}
-        forceRedirectUrl={`${basePath}/home`}
-      />
+      <div
+        className="flex w-[440px] max-w-full flex-col items-stretch gap-3"
+        onSubmitCapture={blockWithoutRecordingConsent}
+        onClickCapture={(event) => {
+          const button = (event.target as HTMLElement).closest("button");
+          if (!button) return;
+          const buttonText = `${button.textContent ?? ""} ${button.getAttribute("aria-label") ?? ""}`.toLowerCase();
+          const isSignupAction = button.type === "submit"
+            || /google|apple|github|continue|sign up|create account|register|إنشاء|متابعة/.test(buttonText);
+          if (isSignupAction) blockWithoutRecordingConsent(event);
+        }}
+      >
+        <SignUp
+          routing="path"
+          path={`${basePath}/sign-up`}
+          signInUrl={`${basePath}/sign-in`}
+          forceRedirectUrl={`${basePath}/home`}
+          unsafeMetadata={{
+            soccerwatchRecordingConsent: recordingConsent,
+            soccerwatchSocialMediaConsent: socialMediaConsent,
+          }}
+        />
+        <div
+          dir={isArabic ? "rtl" : "ltr"}
+          className={`rounded-2xl border border-white/10 bg-[#111827] p-4 text-white shadow-xl ${isArabic ? "text-right" : "text-left"}`}
+        >
+          <SignupConsentOption
+            id="signup-recording-consent"
+            checked={recordingConsent}
+            onCheckedChange={(checked) => {
+              setRecordingConsent(checked);
+              setShowConsentError(false);
+            }}
+            title={copy.recordingTitle}
+            description={copy.recordingDescription}
+            badge={copy.required}
+          />
+          <SignupConsentOption
+            id="signup-social-media-consent"
+            checked={socialMediaConsent}
+            onCheckedChange={setSocialMediaConsent}
+            title={copy.socialTitle}
+            description={copy.socialDescription}
+            badge={copy.optional}
+          />
+          {showConsentError && (
+            <p className="mt-3 text-xs font-medium text-[#FF8E7A]" role="alert">{copy.error}</p>
+          )}
+        </div>
+      </div>
     </AuthHeroLayout>
+  );
+}
+
+function SignupConsentOption({
+  id,
+  checked,
+  onCheckedChange,
+  title,
+  description,
+  badge,
+}: {
+  id: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  title: string;
+  description: string;
+  badge: string;
+}) {
+  return (
+    <label htmlFor={id} className="flex cursor-pointer gap-3 py-2">
+      <Checkbox
+        id={id}
+        checked={checked}
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+        className="mt-0.5 border-white/40 data-[state=checked]:border-primary"
+      />
+      <span className="min-w-0">
+        <span className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+          {title}
+          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white/60">
+            {badge}
+          </span>
+        </span>
+        <span className="mt-1 block text-xs leading-5 text-white/60">{description}</span>
+      </span>
+    </label>
   );
 }
 

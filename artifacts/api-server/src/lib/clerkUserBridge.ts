@@ -92,6 +92,20 @@ function extractClerkEmail(clerkUser: Awaited<ReturnType<typeof clerkClient.user
   return primary ?? verified ?? anyEmail ?? null;
 }
 
+function extractSignupConsents(
+  clerkUser: Awaited<ReturnType<typeof clerkClient.users.getUser>> | null,
+): { recordingConsent: boolean; socialMediaConsent: boolean } {
+  const metadata = clerkUser?.unsafeMetadata;
+  if (!metadata || typeof metadata !== "object") {
+    return { recordingConsent: false, socialMediaConsent: false };
+  }
+  const values = metadata as Record<string, unknown>;
+  return {
+    recordingConsent: values.soccerwatchRecordingConsent === true,
+    socialMediaConsent: values.soccerwatchSocialMediaConsent === true,
+  };
+}
+
 type LocalUserProvisionResult = {
   id: number | null;
   localRowStatus: "found" | "created" | "not_found";
@@ -241,6 +255,10 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<LocalUser
   const lastName = clerkUser?.lastName?.trim() ?? "";
   const name = [firstName, lastName].filter(Boolean).join(" ") || "Player";
   const email = extractClerkEmail(clerkUser) ?? `clerk_${clerkId}@soccerwatch.local`;
+  const signupConsents = extractSignupConsents(clerkUser);
+  const signupConsentAt = signupConsents.recordingConsent || signupConsents.socialMediaConsent
+    ? new Date()
+    : null;
   let emailMatchLocalUserId: number | null = null;
   if (!isSyntheticEmail(email)) {
     const [emailMatch] = await db
@@ -258,6 +276,11 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<LocalUser
       email,
       isGuest: false,
       profileComplete: false,
+      recordingConsent: signupConsents.recordingConsent,
+      recordingConsentAt: signupConsents.recordingConsent ? signupConsentAt : null,
+      socialMediaConsent: signupConsents.socialMediaConsent,
+      socialMediaConsentAt: signupConsents.socialMediaConsent ? signupConsentAt : null,
+      consentRequired: false,
     })
     .onConflictDoNothing()
     .returning({ id: usersTable.id });
@@ -309,6 +332,11 @@ async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<LocalUser
       email: `clerk_${clerkId}@soccerwatch.local`,
       isGuest: false,
       profileComplete: false,
+      recordingConsent: signupConsents.recordingConsent,
+      recordingConsentAt: signupConsents.recordingConsent ? signupConsentAt : null,
+      socialMediaConsent: signupConsents.socialMediaConsent,
+      socialMediaConsentAt: signupConsents.socialMediaConsent ? signupConsentAt : null,
+      consentRequired: false,
     })
     .onConflictDoNothing()
     .returning({ id: usersTable.id });

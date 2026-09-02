@@ -44,6 +44,7 @@ export * from './inPlaySpan';
 export * from './likeResult';
 export * from './localeInput';
 export * from './loginInput';
+export * from './mediaConsentInput';
 export * from './patchAdInput';
 export * from './profileInput';
 export * from './profileInputGender';

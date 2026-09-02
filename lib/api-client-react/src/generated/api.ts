@@ -50,6 +50,7 @@ import type {
   LikeResult,
   LocaleInput,
   LoginInput,
+  MediaConsentInput,
   PatchAdInput,
   ProfileInput,
   PublicProfile,
@@ -455,6 +456,76 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Err
 
 
 
+
+export const getUpdateConsentsUrl = () => {
+
+
+
+
+  return `/api/account/consents`
+}
+
+/**
+ * @summary Save recording and social media consent
+ */
+export const updateConsents = async (mediaConsentInput: MediaConsentInput, options?: RequestInit): Promise<User> => {
+
+  return customFetch<User>(getUpdateConsentsUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mediaConsentInput)
+  }
+);}
+
+
+
+
+export const getUpdateConsentsMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateConsents>>, TError,{data: BodyType<MediaConsentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateConsents>>, TError,{data: BodyType<MediaConsentInput>}, TContext> => {
+
+const mutationKey = ['updateConsents'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateConsents>>, {data: BodyType<MediaConsentInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateConsents(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateConsentsMutationResult = NonNullable<Awaited<ReturnType<typeof updateConsents>>>
+    export type UpdateConsentsMutationBody = BodyType<MediaConsentInput>
+    export type UpdateConsentsMutationError = ErrorType<void>
+
+    /**
+ * @summary Save recording and social media consent
+ */
+export const useUpdateConsents = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateConsents>>, TError,{data: BodyType<MediaConsentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateConsents>>,
+        TError,
+        {data: BodyType<MediaConsentInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateConsentsMutationOptions(options));
+    }
 
 export const getListFieldsUrl = () => {
 
