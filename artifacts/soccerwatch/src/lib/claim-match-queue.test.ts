@@ -45,6 +45,26 @@ function queueFixture(actions: ClaimQueueAction[]) {
 }
 
 describe("Claim Match queue flushing", () => {
+  it("drops permanent API rejections and continues with later actions", async () => {
+    const fixture = queueFixture([correctionAction, undoAction]);
+    const attempted: string[] = [];
+    const permanentError = Object.assign(new Error("unknown track"), { status: 400 });
+
+    const result = await flushClaimQueue({
+      ...fixture,
+      syncAction: async (action) => {
+        attempted.push(action.id);
+        if (action.id === correctionAction.id) throw permanentError;
+      },
+    });
+
+    expect(attempted).toEqual([correctionAction.id, undoAction.id]);
+    expect(result.discarded.map((action) => action.id)).toEqual([correctionAction.id]);
+    expect(result.succeeded.map((action) => action.id)).toEqual([undoAction.id]);
+    expect(result.remaining).toEqual([]);
+    expect(result.stoppedOnFailure).toBe(false);
+  });
+
   it("removes only successful actions and leaves a failed action plus later actions queued", async () => {
     const fixture = queueFixture([progressAction, correctionAction, undoAction]);
     const attempted: string[] = [];
@@ -60,6 +80,7 @@ describe("Claim Match queue flushing", () => {
     expect(attempted).toEqual([progressAction.id, correctionAction.id]);
     expect(fixture.removed).toEqual([progressAction.id]);
     expect(result.succeeded.map((action) => action.id)).toEqual([progressAction.id]);
+    expect(result.discarded).toEqual([]);
     expect(result.remaining.map((action) => action.id)).toEqual([
       correctionAction.id,
       undoAction.id,
@@ -100,6 +121,7 @@ describe("Claim Match queue flushing", () => {
         changed: boolean;
         remaining: ClaimQueueAction[];
         succeeded: ClaimQueueAction[];
+        discarded: ClaimQueueAction[];
         stoppedOnFailure: boolean;
       }>((resolve) => {
         calls += 1;
@@ -108,6 +130,7 @@ describe("Claim Match queue flushing", () => {
             changed: false,
             remaining: [],
             succeeded: [],
+            discarded: [],
             stoppedOnFailure: false,
           });
       });
@@ -128,11 +151,13 @@ describe("Claim Match queue flushing", () => {
       changed: false,
       remaining: [],
       succeeded: [],
+      discarded: [],
       stoppedOnFailure: false,
     } satisfies {
       changed: boolean;
       remaining: ClaimQueueAction[];
       succeeded: ClaimQueueAction[];
+      discarded: ClaimQueueAction[];
       stoppedOnFailure: boolean;
     };
 

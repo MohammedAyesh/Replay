@@ -26,6 +26,7 @@ import {
   claimMatchCorrectionsTable,
   type TrackingManifest,
   type TrackingSegmentPayload,
+  type TrackingBundleSummary,
   type ClaimEarnedClip,
 } from "@workspace/db";
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
@@ -38,6 +39,7 @@ import {
   readCompressedClaimSegment,
   writeClaimSegment,
 } from "../lib/claimMatchStorage";
+import { isRecordingVisible } from "../lib/recordingVisibility";
 
 const router: IRouter = Router();
 
@@ -345,6 +347,24 @@ export type UploadBundle = {
   sprites?: Record<number, unknown>;
 };
 
+export function summarizeTrackingSegments(segments: TrackingSegmentPayload[]): TrackingBundleSummary {
+  return {
+    segments: segments.map((segment) => ({
+      segmentIndex: segment.segmentIndex,
+      startFrame: segment.startFrame,
+      endFrame: segment.endFrame,
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.endSeconds,
+      tracks: segment.tracks.map((track) => ({
+        id: track.id,
+        startFrame: track.startFrame,
+        endFrame: track.endFrame,
+      })),
+      events: segment.events,
+    })),
+  };
+}
+
 function entryNamesForSegment(
   entry: UnknownRecord,
   index: number,
@@ -409,9 +429,33 @@ function unzipBundleEntries(buffer: Buffer): Record<string, Uint8Array> {
   }
 }
 
-function parseUploadedBundle(input: unknown): UploadBundle | null {
+export function parseUploadedBundleDetailed(input: unknown): { upload: UploadBundle | null; error: string | null } {
   const source = asRecord(input);
   const rawMetadata = asRecord(source.manifest ?? input);
+  const nestedMetadata = asRecord(rawMetadata.metadata ?? rawMetadata.video);
+  const dimensions = asRecord(rawMetadata.dimensions ?? nestedMetadata.dimensions);
+  const suppliedFrameRate = firstNumber(
+    rawMetadata.frameRate,
+    rawMetadata.fps,
+    rawMetadata.videoFps,
+    nestedMetadata.frameRate,
+    nestedMetadata.fps,
+  );
+  const suppliedWidth = firstNumber(
+    rawMetadata.width,
+    rawMetadata.videoWidth,
+    dimensions.width,
+    nestedMetadata.width,
+  );
+  const suppliedHeight = firstNumber(
+    rawMetadata.height,
+    rawMetadata.videoHeight,
+    dimensions.height,
+    nestedMetadata.height,
+  );
+  if (suppliedFrameRate === undefined) return { upload: null, error: "Manifest frame rate is required" };
+  if (suppliedWidth === undefined) return { upload: null, error: "Manifest width is required" };
+  if (suppliedHeight === undefined) return { upload: null, error: "Manifest height is required" };
   const rawSegments = Array.isArray(rawMetadata.segments) ? rawMetadata.segments : [];
   if (rawSegments.length > 0) {
     const segments: TrackingSegmentPayload[] = [];
@@ -419,21 +463,24 @@ function parseUploadedBundle(input: unknown): UploadBundle | null {
       const entry = asRecord(rawSegments[index]);
       const startFrame = Math.max(0, Math.round(firstNumber(entry.startFrame, entry.start_frame) ?? 0));
       const endFrame = Math.max(startFrame, Math.round(firstNumber(entry.endFrame, entry.end_frame) ?? startFrame));
-      const startSeconds = Math.max(0, firstNumber(entry.startSeconds, entry.start_seconds) ?? 0);
-      const endSeconds = Math.max(startSeconds, firstNumber(entry.endSeconds, entry.end_seconds) ?? 0);
+      const startSeconds = Math.max(0, firstNumber(entry.startSeconds, entry.start_seconds) ?? startFrame / suppliedFrameRate);
+      const endSeconds = Math.max(startSeconds, firstNumber(entry.endSeconds, entry.end_seconds) ?? (endFrame + 1) / suppliedFrameRate);
       const payload = asRecord(entry.payload).tracks ? entry.payload : entry;
       const segment = parseSegment(payload, index, firstString(entry.name) ?? `segment-${String(index + 1).padStart(2, "0")}`, startFrame, endFrame, startSeconds, endSeconds);
-      if (!segment) return null;
+      if (!segment) return {
+        upload: null,
+        error: `Segment ${index + 1} does not match the tracking schema`,
+      };
       segments.push(namespaceSegment(segment));
     }
     const firstSegment = segments[0];
-    return {
+    return { upload: {
       manifest: {
         version: Math.max(1, Math.round(firstNumber(rawMetadata.version) ?? 1)),
         label: firstString(rawMetadata.label, rawMetadata.name) ?? "Match tracking",
-        width: Math.max(1, Math.round(firstNumber(rawMetadata.width) ?? 1920)),
-        height: Math.max(1, Math.round(firstNumber(rawMetadata.height) ?? 1080)),
-        frameRate: firstNumber(rawMetadata.frameRate, rawMetadata.fps) ?? 25,
+        width: Math.max(1, Math.round(suppliedWidth)),
+        height: Math.max(1, Math.round(suppliedHeight)),
+        frameRate: suppliedFrameRate,
         frameCount: Math.max(1, Math.round(firstNumber(rawMetadata.frameCount, rawMetadata.frames) ?? (segments.at(-1)?.endFrame ?? 0) + 1)),
         duration: Math.max(firstNumber(rawMetadata.duration) ?? 0, segments.at(-1)?.endSeconds ?? 0) || 1,
         matchOffset: firstNumber(rawMetadata.matchOffset, rawMetadata.match_offset) ?? 0,
@@ -455,20 +502,25 @@ function parseUploadedBundle(input: unknown): UploadBundle | null {
         })),
       },
       segments,
-    };
+    }, error: null };
   }
 
   const legacy = parseSegment(input, 0, "segment-01", 0, Math.max(0, Math.round(firstNumber(source.frameCount, source.frames) ?? 0) - 1), 0, firstNumber(source.duration) ?? 1);
-  if (!legacy) return null;
+  if (!legacy) {
+    return {
+      upload: null,
+      error: "The request body does not contain a valid tracking segment",
+    };
+  }
   const sourceMeta = asRecord((normalizeBundle(input) as UnknownRecord)._metadata);
   const segment = namespaceSegment(legacy);
-  return {
+  return { upload: {
     manifest: {
       version: Math.max(1, Math.round(firstNumber(source.version) ?? 1)),
       label: firstString(source.label, source.name) ?? "Match tracking",
-      width: Math.max(1, Math.round(firstNumber(source.width) ?? firstNumber(sourceMeta.width) ?? 1920)),
-      height: Math.max(1, Math.round(firstNumber(source.height) ?? firstNumber(sourceMeta.height) ?? 1080)),
-      frameRate: firstNumber(source.frameRate, source.fps) ?? firstNumber(sourceMeta.frameRate) ?? 25,
+      width: Math.max(1, Math.round(suppliedWidth)),
+      height: Math.max(1, Math.round(suppliedHeight)),
+      frameRate: suppliedFrameRate,
       frameCount: Math.max(1, Math.round(firstNumber(source.frameCount, source.frames) ?? firstNumber(sourceMeta.frameCount) ?? segment.endFrame + 1)),
       duration: firstNumber(source.duration) ?? firstNumber(sourceMeta.duration) ?? segment.endSeconds,
       matchOffset: firstNumber(source.matchOffset, source.match_offset) ?? 0,
@@ -487,10 +539,10 @@ function parseUploadedBundle(input: unknown): UploadBundle | null {
       }],
     },
     segments: [segment],
-  };
+  }, error: null };
 }
 
-function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle | null; error: string | null } {
+export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle | null; error: string | null } {
   let entries: Record<string, Uint8Array>;
   try {
     entries = unzipBundleEntries(buffer);
@@ -520,6 +572,12 @@ function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle | null; 
     return { upload: null, error: "The manifest is not valid JSON" };
   }
   const rawManifest = asRecord(manifest);
+  const zipFrameRate = firstNumber(rawManifest.frameRate, rawManifest.fps, rawManifest.videoFps);
+  const zipWidth = firstNumber(rawManifest.width, rawManifest.videoWidth);
+  const zipHeight = firstNumber(rawManifest.height, rawManifest.videoHeight);
+  if (zipFrameRate === undefined) return { upload: null, error: "Manifest frame rate is required" };
+  if (zipWidth === undefined) return { upload: null, error: "Manifest width is required" };
+  if (zipHeight === undefined) return { upload: null, error: "Manifest height is required" };
   const rawSegments = Array.isArray(rawManifest.segments) ? rawManifest.segments : [];
   if (rawSegments.length === 0) {
     return { upload: null, error: "The manifest must list at least one segment" };
@@ -542,8 +600,8 @@ function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle | null; 
     const entry = asRecord(rawSegments[index]);
     const startFrame = Math.max(0, Math.round(firstNumber(entry.startFrame, entry.start_frame) ?? 0));
     const endFrame = Math.max(startFrame, Math.round(firstNumber(entry.endFrame, entry.end_frame) ?? startFrame));
-    const startSeconds = Math.max(0, firstNumber(entry.startSeconds, entry.start_seconds) ?? startFrame / (firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25));
-    const endSeconds = Math.max(startSeconds, firstNumber(entry.endSeconds, entry.end_seconds) ?? endFrame / (firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25));
+    const startSeconds = Math.max(0, firstNumber(entry.startSeconds, entry.start_seconds) ?? startFrame / zipFrameRate);
+    const endSeconds = Math.max(startSeconds, firstNumber(entry.endSeconds, entry.end_seconds) ?? (endFrame + 1) / zipFrameRate);
     const name = firstString(entry.name) ?? `segment-${String(index + 1).padStart(2, "0")}`;
     if (!isSafeBundleEntryName(name) || name.includes("/")) {
       return { upload: null, error: `Segment ${index + 1} has an unsafe name` };
@@ -635,9 +693,9 @@ function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle | null; 
       manifest: {
         version: Math.max(1, Math.round(firstNumber(rawManifest.version) ?? 1)),
         label: firstString(rawManifest.label, rawManifest.name) ?? "Match tracking",
-        width: Math.max(1, Math.round(firstNumber(rawManifest.width) ?? 1920)),
-        height: Math.max(1, Math.round(firstNumber(rawManifest.height) ?? 1080)),
-        frameRate: firstNumber(rawManifest.frameRate, rawManifest.fps) ?? 25,
+         width: Math.max(1, Math.round(zipWidth)),
+         height: Math.max(1, Math.round(zipHeight)),
+         frameRate: zipFrameRate,
         frameCount: Math.max(1, Math.round(firstNumber(rawManifest.frameCount, rawManifest.frames) ?? segments.at(-1)!.endFrame + 1)),
         duration: Math.max(firstNumber(rawManifest.duration) ?? 0, segments.at(-1)!.endSeconds),
         matchOffset: firstNumber(rawManifest.matchOffset, rawManifest.match_offset) ?? 0,
@@ -771,13 +829,21 @@ async function getRecordingBundle(recordingId: number) {
   return row ?? null;
 }
 
+async function getVisibleRecordingBundle(recordingId: number) {
+  const row = await getRecordingBundle(recordingId);
+  if (!row || !(await isRecordingVisible(row.recording))) return null;
+  return row;
+}
+
 async function getDemoRecordingId(): Promise<number | null> {
-  const [bundle] = await db
+  const bundles = await db
     .select({ recordingId: recordingTrackingBundlesTable.recordingId })
     .from(recordingTrackingBundlesTable)
-    .orderBy(asc(recordingTrackingBundlesTable.recordingId))
-    .limit(1);
-  return bundle?.recordingId ?? null;
+    .orderBy(asc(recordingTrackingBundlesTable.recordingId));
+  for (const candidate of bundles) {
+    if (await getVisibleRecordingBundle(candidate.recordingId)) return candidate.recordingId;
+  }
+  return null;
 }
 
 async function getBundleSegments(bundleId: number) {
@@ -796,6 +862,21 @@ async function readBundleSegments(bundleId: number): Promise<TrackingSegmentPayl
     segments.push(JSON.parse(body.toString("utf8")) as TrackingSegmentPayload);
   }
   return segments;
+}
+
+function stateSegmentsFromSummary(summary: TrackingBundleSummary): TrackingBundleSummary["segments"] {
+  return summary.segments;
+}
+
+async function getClaimStateSegments(
+  bundle: typeof recordingTrackingBundlesTable.$inferSelect,
+): Promise<TrackingBundleSummary["segments"]> {
+  if (bundle.manifest.summary?.segments?.length) {
+    return stateSegmentsFromSummary(bundle.manifest.summary);
+  }
+  // Older bundles have no index yet. They are read once for compatibility;
+  // every newly stored bundle carries the compact summary above.
+  return readBundleSegments(bundle.id);
 }
 
 // The demo deliberately resolves to the first real uploaded bundle. It never
@@ -869,7 +950,11 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
     .where(eq(claimMatchProgressTable.userId, userId))
     .orderBy(desc(claimMatchProgressTable.updatedAt));
 
-  const groups = (await Promise.all(rows.map(async ({ progress, recording, fieldName, bundleManifest }) => {
+  const visibleRows = (await Promise.all(rows.map(async (row) => (
+    await isRecordingVisible(row.recording) ? row : null
+  )))).filter((row): row is (typeof rows)[number] => row !== null);
+
+  const groups = (await Promise.all(visibleRows.map(async ({ progress, recording, fieldName, bundleManifest }) => {
     const clips = bundleManifest
       ? await materializeClaimMoments(userId, recording, bundleManifest, progress.earnedClips ?? [])
       : progress.earnedClips ?? [];
@@ -892,8 +977,10 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
   res.json(ListClaimMatchClipsResponse.parse(groups));
 });
 
+type ClaimStateSegment = TrackingBundleSummary["segments"][number];
+
 function getMomentClips(
-  segments: TrackingSegmentPayload[],
+  segments: ClaimStateSegment[],
   momentSeconds: number,
   existing: ClaimEarnedClip[],
 ): ClaimEarnedClip[] {
@@ -981,7 +1068,7 @@ export function completionSurvivesConcurrentProgress(
 
 export function knownClaimTrackIds(
   manifest: TrackingManifest,
-  segments: TrackingSegmentPayload[],
+  segments: ClaimStateSegment[],
 ): Set<string> {
   return new Set([
     ...segments.flatMap((segment) => segment.tracks.map((track) => track.id)),
@@ -1009,7 +1096,7 @@ function latestAnchorAnswers(
 
 function trackIntervalsForId(
   manifest: TrackingManifest,
-  segments: TrackingSegmentPayload[],
+  segments: ClaimStateSegment[],
   trackId: string,
 ): Array<{ startSeconds: number; endSeconds: number }> {
   const frameRate = Math.max(manifest.frameRate, 0.001);
@@ -1045,7 +1132,7 @@ function trackIntervalsForId(
 
 export function deriveClaimState(
   manifest: TrackingManifest,
-  segments: TrackingSegmentPayload[],
+  segments: ClaimStateSegment[],
   corrections: typeof claimMatchCorrectionsTable.$inferSelect[],
 ): DerivedClaimState {
   const active = corrections.filter((row) => !row.undone);
@@ -1127,6 +1214,14 @@ function progressWithDerived(
   recordingId: number,
   derived: DerivedClaimState,
 ) {
+  const completed = Boolean(row?.completed) || derived.completed;
+  const storedClipsById = new Map((row?.earnedClips ?? []).map((clip) => [clip.id, clip]));
+  const earnedClips = derived.earnedClips.map((clip) => ({
+    ...clip,
+    ...(storedClipsById.get(clip.id)?.userClipId
+      ? { userClipId: storedClipsById.get(clip.id)?.userClipId }
+      : {}),
+  }));
   return {
     ...toProgress(row, recordingId),
     claimedPercent: derived.coveragePercent,
@@ -1135,11 +1230,11 @@ function progressWithDerived(
     answeredAnchorCount: derived.answeredAnchorCount,
     acceptedAnchorCount: derived.acceptedAnchorCount,
     unresolvedMoments: derived.unresolvedMoments,
-    clipsUnlocked: derived.clipsUnlocked,
+    clipsUnlocked: earnedClips.length,
     correctionCount: derived.correctionCount,
-    completed: derived.completed,
-    earnedClips: derived.earnedClips,
-    completionReason: derived.completionReason,
+    completed,
+    earnedClips,
+    completionReason: completed ? "coverage-threshold" : derived.completionReason,
     playerStats: derived.playerStats,
   };
 }
@@ -1172,7 +1267,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     res.status(400).json({ error: params.error.message });
     return;
   }
-  const row = await getRecordingBundle(params.data.id);
+  const row = await getVisibleRecordingBundle(params.data.id);
   if (!row?.bundle?.manifest) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
@@ -1192,7 +1287,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       eq(claimMatchCorrectionsTable.recordingId, params.data.id),
     ))
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
-  const segments = await readBundleSegments(row.bundle.id);
+  const segments = await getClaimStateSegments(row.bundle);
   const derived = deriveClaimState(row.bundle.manifest, segments, corrections);
 
   res.json(GetClaimMatchResponse.parse({
@@ -1221,7 +1316,7 @@ router.get("/recordings/:id/claim-match/segments/:segmentIndex", async (req, res
     res.status(400).json({ error: params.error.message });
     return;
   }
-  const row = await getRecordingBundle(params.data.id);
+  const row = await getVisibleRecordingBundle(params.data.id);
   if (!row?.bundle?.manifest) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
@@ -1259,12 +1354,12 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     res.status(400).json({ error: body.error.message });
     return;
   }
-  const row = await getRecordingBundle(params.data.id);
+  const row = await getVisibleRecordingBundle(params.data.id);
   if (!row?.bundle?.manifest) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
-  const segments = await readBundleSegments(row.bundle.id);
+  const segments = await getClaimStateSegments(row.bundle);
   const corrections = await getClaimCorrections(userId, params.data.id);
   const derived = deriveClaimState(row.bundle.manifest, segments, corrections);
   const earnedClips = await materializeClaimMoments(
@@ -1332,12 +1427,12 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     res.status(400).json({ error: body.error.message });
     return;
   }
-  const row = await getRecordingBundle(params.data.id);
+  const row = await getVisibleRecordingBundle(params.data.id);
   if (!row?.bundle) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
-  const segments = await readBundleSegments(row.bundle.id);
+  const segments = await getClaimStateSegments(row.bundle);
   const trackIds = knownClaimTrackIds(row.bundle.manifest, segments);
   const isAnchorNoAnswer = body.data.answerMethod === "anchor-no" || body.data.answerMethod === "anchor-skip";
   if (
@@ -1448,38 +1543,52 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
     res.status(403).json({ error: "Correction belongs to another user" });
     return;
   }
+  const bundleRow = await getVisibleRecordingBundle(correction.recordingId);
+  if (!bundleRow?.bundle) {
+    res.status(404).json({ error: "Recording or tracking bundle not found" });
+    return;
+  }
   if (!correction.undone) {
     await db
       .update(claimMatchCorrectionsTable)
       .set({ undone: true })
       .where(eq(claimMatchCorrectionsTable.id, correctionId));
-    await db
-      .update(claimMatchProgressTable)
-      .set({
-        correctionCount: sql`GREATEST(0, ${claimMatchProgressTable.correctionCount} - 1)`,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(claimMatchProgressTable.userId, userId),
-        eq(claimMatchProgressTable.recordingId, correction.recordingId),
-      ));
   }
-  const bundleRow = await getRecordingBundle(correction.recordingId);
-  if (bundleRow?.bundle) {
-    const [segments, corrections] = await Promise.all([
-      readBundleSegments(bundleRow.bundle.id),
+  {
+    const [segments, corrections, existingProgress] = await Promise.all([
+      getClaimStateSegments(bundleRow.bundle),
       getClaimCorrections(userId, correction.recordingId),
+      db
+        .select()
+        .from(claimMatchProgressTable)
+        .where(and(
+          eq(claimMatchProgressTable.userId, userId),
+          eq(claimMatchProgressTable.recordingId, correction.recordingId),
+        ))
+        .then((rows) => rows[0] ?? null),
     ]);
     const derived = deriveClaimState(bundleRow.bundle.manifest, segments, corrections);
+    const storedClipsById = new Map((existingProgress?.earnedClips ?? []).map((clip) => [clip.id, clip]));
+    const earnedClips = await materializeClaimMoments(
+      userId,
+      bundleRow.recording,
+      bundleRow.bundle.manifest,
+      derived.earnedClips.map((clip) => ({
+        ...clip,
+        ...(storedClipsById.get(clip.id)?.userClipId
+          ? { userClipId: storedClipsById.get(clip.id)?.userClipId }
+          : {}),
+      })),
+    );
     await db
       .update(claimMatchProgressTable)
       .set({
         claimedPercent: derived.coveragePercent,
         clipsUnlocked: derived.clipsUnlocked,
         correctionCount: derived.correctionCount,
-        completed: derived.completed,
-        earnedClips: derived.earnedClips,
-        stage: derived.completed ? "done" : "picker",
+        completed: sql`${claimMatchProgressTable.completed} OR ${derived.completed}`,
+        earnedClips,
+        stage: sql`CASE WHEN ${claimMatchProgressTable.completed} OR ${derived.completed} THEN 'done' ELSE 'picker' END`,
         updatedAt: new Date(),
       })
       .where(and(
@@ -1492,13 +1601,22 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
 
 export function validateUploadBundle(upload: UploadBundle): string | null {
   const { manifest, segments } = upload;
+  if (!Number.isFinite(manifest.width)) {
+    return "Manifest width is required";
+  }
   if (!Number.isInteger(manifest.width) || manifest.width < 1 || manifest.width > 10_000) {
     return "Manifest width must be between 1 and 10000 pixels";
+  }
+  if (!Number.isFinite(manifest.height)) {
+    return "Manifest height is required";
   }
   if (!Number.isInteger(manifest.height) || manifest.height < 1 || manifest.height > 10_000) {
     return "Manifest height must be between 1 and 10000 pixels";
   }
-  if (!Number.isFinite(manifest.frameRate) || manifest.frameRate <= 0 || manifest.frameRate > 240) {
+  if (!Number.isFinite(manifest.frameRate)) {
+    return "Manifest frame rate is required";
+  }
+  if (manifest.frameRate <= 0 || manifest.frameRate > 240) {
     return "Manifest frame rate must be greater than 0 and no more than 240";
   }
   if (!Number.isInteger(manifest.frameCount) || manifest.frameCount < 1 || manifest.frameCount > MAX_TRACKING_FRAMES) {
@@ -1518,6 +1636,7 @@ export function validateUploadBundle(upload: UploadBundle): string | null {
     return "Manifest segment count does not match the uploaded files";
   }
   const ranges = [...manifest.segments].sort((a, b) => a.index - b.index);
+  const rangeTimeTolerance = 1e-6;
   let totalTracks = 0;
   for (let index = 0; index < ranges.length; index++) {
     const range = ranges[index];
@@ -1542,6 +1661,22 @@ export function validateUploadBundle(upload: UploadBundle): string | null {
       || range.endSeconds > manifest.duration
     ) {
       return `Segment ${index + 1} time range is outside the manifest duration`;
+    }
+    const expectedStartSeconds = range.startFrame / manifest.frameRate;
+    const expectedEndSeconds = (range.endFrame + 1) / manifest.frameRate;
+    if (
+      Math.abs(range.startSeconds - expectedStartSeconds) > rangeTimeTolerance
+      || Math.abs(range.endSeconds - expectedEndSeconds) > rangeTimeTolerance
+      || Math.abs(segment.startSeconds - range.startSeconds) > rangeTimeTolerance
+      || Math.abs(segment.endSeconds - range.endSeconds) > rangeTimeTolerance
+    ) {
+      return `Segment ${index + 1} time range does not match its frame range or file`;
+    }
+    if (
+      index > 0
+      && Math.abs(range.startSeconds - ranges[index - 1].endSeconds) > rangeTimeTolerance
+    ) {
+      return `Segment time ranges must be continuous with no gaps`;
     }
     const ids = new Set(segment.tracks.map((track) => track.id));
     if (segment.tracks.length > MAX_TRACKS_PER_SEGMENT) {
@@ -1633,6 +1768,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
     }
     const manifest: TrackingManifest = {
       ...upload.manifest,
+      summary: summarizeTrackingSegments(upload.segments),
       videoStartSeconds: Math.max(0, upload.manifest.videoStartSeconds ?? 0),
       segmentCount: storedSegments.length,
       segments: storedSegments.map(({ segment, objectPath }) => ({
@@ -1754,7 +1890,8 @@ router.put("/admin/recordings/:id/tracking-bundle", bundleUploadSingle, async (r
     return;
   }
   const parsedZip = req.file?.buffer ? parseZipBundleDetailed(req.file.buffer) : null;
-  const upload = parsedZip ? parsedZip.upload : parseUploadedBundle(req.body);
+  const parsedBody = parsedZip ? null : parseUploadedBundleDetailed(req.body);
+  const upload = parsedZip?.upload ?? parsedBody?.upload ?? null;
 
   // Where the tracked window starts inside the video is a property of THIS
   // pairing of bundle and recording, not of the bundle - the same tracking can
@@ -1770,7 +1907,7 @@ router.put("/admin/recordings/:id/tracking-bundle", bundleUploadSingle, async (r
   }
   if (!upload) {
     res.status(400).json({
-      error: parsedZip?.error ?? "Invalid tracking bundle. Upload a ZIP containing manifest.json and every segment JSON file.",
+      error: parsedZip?.error ?? parsedBody?.error ?? "Invalid tracking bundle. Include manifest metadata and segment tracking data.",
     });
     return;
   }
@@ -1806,7 +1943,7 @@ router.get("/recordings/:id/claim-match/sprites/:segmentIndex", async (req, res)
     res.status(400).json({ error: params.error.message });
     return;
   }
-  const row = await getRecordingBundle(params.data.id);
+  const row = await getVisibleRecordingBundle(params.data.id);
   const manifestSegment = row?.bundle?.manifest?.segments.find((segment) => segment.index === params.data.segmentIndex);
   const spritesPath = (manifestSegment as { spritesPath?: string } | undefined)?.spritesPath;
   if (!spritesPath) {

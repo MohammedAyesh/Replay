@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
-import { parseZipBundle, validateUploadBundle } from "./claimMatch";
+import { parseUploadedBundleDetailed, parseZipBundle, parseZipBundleDetailed, validateUploadBundle } from "./claimMatch";
 
 function makeZip(manifest: Record<string, unknown>, segments: Record<string, unknown>) {
   return Buffer.from(zipSync({
@@ -127,5 +127,43 @@ describe("claim match segmented bundles", () => {
     } as never;
 
     expect(validateUploadBundle(upload)).toContain("outside the manifest bounds");
+  });
+
+  it("rejects segment times that do not match their frame ranges", () => {
+    const upload = {
+      manifest: {
+        version: 1, label: "bad time", width: 1920, height: 1080, frameRate: 25,
+        frameCount: 4, duration: 0.3, matchOffset: 0, segmentCount: 1,
+        segments: [{ index: 0, name: "one", startFrame: 0, endFrame: 3, startSeconds: 0.1, endSeconds: 0.26, objectPath: "" }],
+      },
+      segments: [{
+        segmentIndex: 0, name: "one", startFrame: 0, endFrame: 3, startSeconds: 0.1, endSeconds: 0.26,
+        version: 1, tracks: [], crossings: [], inPlaySpans: [], events: [],
+      }],
+    } as never;
+    expect(validateUploadBundle(upload)).toContain("time range does not match");
+  });
+
+  it("reports which required metadata is missing on JSON and ZIP uploads", () => {
+    const bodyResult = parseUploadedBundleDetailed({
+      width: 1920,
+      height: 1080,
+      frameCount: 1,
+      duration: 0.05,
+      tracks: [],
+      crossings: [],
+      inPlaySpans: [],
+      events: [],
+    });
+    expect(bodyResult.error).toBe("Manifest frame rate is required");
+
+    const manifest = {
+      version: 1, label: "missing fps", width: 1920, height: 1080,
+      frameCount: 2, duration: 0.08, segmentCount: 1,
+      segments: [{ index: 0, name: "one", startFrame: 0, endFrame: 1, startSeconds: 0, endSeconds: 0.08 }],
+    };
+    const payload = { tracks: [], crossings: [], inPlaySpans: [], events: [] };
+    const zipResult = parseZipBundleDetailed(makeZip(manifest, { one: payload }));
+    expect(zipResult.error).toBe("Manifest frame rate is required");
   });
 });

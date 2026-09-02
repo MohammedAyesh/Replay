@@ -92,12 +92,30 @@ export type TrackingManifest = {
   identities?: TrackingIdentity[];
   /** How the bundle was produced (linker, parameters, measurements). Free-form. */
   provenance?: Record<string, unknown>;
+  /** Small server-side index used for coverage and completion calculations. */
+  summary?: TrackingBundleSummary;
 };
 
 export type TrackingIdentity = {
   id: string;
   name?: string | null;
   parts: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
+};
+
+export type TrackingBundleSummary = {
+  segments: Array<{
+    segmentIndex: number;
+    startFrame: number;
+    endFrame: number;
+    startSeconds: number;
+    endSeconds: number;
+    tracks: Array<{
+      id: string;
+      startFrame: number;
+      endFrame: number;
+    }>;
+    events: TrackingSegmentPayload["events"];
+  }>;
 };
 
 export const recordingTrackingBundlesTable = pgTable(

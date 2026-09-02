@@ -19,3 +19,5 @@
 - [Progressive HLS browser cache](progressive-hls-browser-cache.md) — keep persisted cache reads independent from per-client post-Play writes, and make every Cache API failure fall back to network.
 - [Claim completion and results](claim-completion-results.md) — ordinary progress saves cannot clear completion; expose only server-supported tracking results and keep unsupported metrics unavailable.
 - [Signup media consent](signup-media-consent.md) — collect recording consent inline during Clerk signup; social-media consent is separate and optional, with no post-signup gate.
+- [Claim Match bundle summaries](claim-match-bundle-summary.md) — derive state from compact ranges/events; reserve full segment reads for legacy manifests.
+- [Claim Match queue rejections](claim-match-queue-rejections.md) — discard permanent invalid offline actions but stop and retain transient failures.

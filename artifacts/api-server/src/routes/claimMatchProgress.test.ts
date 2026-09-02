@@ -4,6 +4,7 @@ import {
   deriveClaimState,
   isAcceptedClaimAnswer,
   knownClaimTrackIds,
+  summarizeTrackingSegments,
 } from "./claimMatch";
 
 const manifest = {
@@ -100,6 +101,18 @@ describe("claim match server-derived progress", () => {
     expect(result.acceptedAnchorCount).toBe(3);
     expect(result.completed).toBe(true);
     expect(result.completionReason).toBe("coverage-threshold");
+  });
+
+  it("derives the same state from the compact bundle summary", () => {
+    const summarySegments = summarizeTrackingSegments(segments as never);
+    const fromSummary = deriveClaimState(manifest, summarySegments.segments, [
+      correction("summary-1", "anchor-yes", "player-1", 10),
+      correction("summary-2", "anchor-yes", "player-1", 50),
+      correction("summary-3", "anchor-yes", "player-1", 90),
+    ] as never);
+    expect(fromSummary.coveragePercent).toBe(100);
+    expect(fromSummary.completed).toBe(true);
+    expect(fromSummary.playerStats.totalSegments).toBe(2);
   });
 
   it("persists no and skip answers without treating them as accepted coverage", () => {

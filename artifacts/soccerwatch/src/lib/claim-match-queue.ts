@@ -4,8 +4,21 @@ export type ClaimQueueFlushResult = {
   changed: boolean;
   remaining: ClaimQueueAction[];
   succeeded: ClaimQueueAction[];
+  discarded: ClaimQueueAction[];
   stoppedOnFailure: boolean;
 };
+
+export function isPermanentClaimQueueError(error: unknown): boolean {
+  const status = typeof error === "object" && error !== null && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : NaN;
+  if (!Number.isInteger(status)) return false;
+  // Client errors normally describe an invalid queued payload. These statuses
+  // remain retryable because the request may become valid later.
+  return status >= 400
+    && status < 500
+    && ![408, 409, 425, 429].includes(status);
+}
 
 export async function flushClaimQueue({
   readActions,
@@ -18,6 +31,7 @@ export async function flushClaimQueue({
 }): Promise<ClaimQueueFlushResult> {
   const actions = await readActions();
   const succeeded: ClaimQueueAction[] = [];
+  const discarded: ClaimQueueAction[] = [];
   let stoppedOnFailure = false;
 
   for (const action of actions) {
@@ -25,16 +39,22 @@ export async function flushClaimQueue({
       await syncAction(action);
       await removeAction(action.id);
       succeeded.push(action);
-    } catch {
+    } catch (error) {
+      if (isPermanentClaimQueueError(error)) {
+        await removeAction(action.id);
+        discarded.push(action);
+        continue;
+      }
       stoppedOnFailure = true;
       break;
     }
   }
 
   return {
-    changed: succeeded.length > 0,
+    changed: succeeded.length > 0 || discarded.length > 0,
     remaining: await readActions(),
     succeeded,
+    discarded,
     stoppedOnFailure,
   };
 }

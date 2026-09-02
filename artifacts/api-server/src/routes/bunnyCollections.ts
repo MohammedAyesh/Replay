@@ -2,24 +2,7 @@ import { Router, type IRouter } from "express";
 import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny.js";
 import { db, fieldsTable, recordingsTable, recordingSchedulesTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-
-/** Returns true if the recording's date+timeSlot falls within any of the provided schedules. */
-function matchesSchedule(
-  date: string,     // ISO date "YYYY-MM-DD"
-  timeSlot: string, // "HH:MM"
-  schedules: { allowedDate: string | null; startTime: string; endTime: string }[]
-): boolean {
-  if (schedules.length === 0) return false;
-  const [th, tm] = timeSlot.split(":").map(Number);
-  if (isNaN(th) || isNaN(tm)) return false;
-  const recMins = th * 60 + tm;
-
-  return schedules.some((s) => {
-    const [sh, sm] = s.startTime.split(":").map(Number);
-    const [eh, em] = s.endTime.split(":").map(Number);
-    return s.allowedDate === date && recMins >= sh * 60 + sm && recMins < eh * 60 + em;
-  });
-}
+import { matchesRecordingSchedule } from "../lib/recordingVisibility";
 
 const router: IRouter = Router();
 
@@ -257,7 +240,7 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
   const visibleGuids = new Set<string>();
   for (const r of dbRecordings) {
     if (!r.date || !r.timeSlot) continue;
-    if (!matchesSchedule(r.date, r.timeSlot, schedules)) continue;
+    if (!matchesRecordingSchedule(r.date, r.timeSlot, schedules)) continue;
     try {
       const g = new URL(r.videoUrl).pathname.split("/").filter(Boolean)[0];
       if (g) visibleGuids.add(g);
@@ -270,7 +253,7 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     .filter((v) => {
       if (visibleGuids.has(v.guid as string)) return true;
       const timestamp = parseBunnyTitleTimestamp(v.title as string);
-      return Boolean(timestamp && matchesSchedule(timestamp.date, timestamp.timeSlot, schedules));
+      return Boolean(timestamp && matchesRecordingSchedule(timestamp.date, timestamp.timeSlot, schedules));
     })
     .map((v) => ({
       guid: v.guid as string,

@@ -72,7 +72,6 @@ type Candidate = {
   distance?: number;
   coasting?: boolean;
 };
-type ShirtTone = "light" | "dark" | "unreadable";
 
 /**
  * Apply the identity board's map to one segment: every part of an identity
@@ -178,7 +177,7 @@ function nearestDetectionFrame(
   return bestCount >= 2 ? bestFrame : null;
 }
 
-function captionForTrack(track: ClaimTrack, frame: number, bundle: ClaimBundle, shirtTone: ShirtTone) {
+function captionForTrack(track: ClaimTrack, frame: number, bundle: ClaimBundle) {
   let before: ClaimBox | undefined;
   let after: ClaimBox | undefined;
   for (const box of track.boxes) {
@@ -203,8 +202,7 @@ function captionForTrack(track: ClaimTrack, frame: number, bundle: ClaimBundle, 
         : (afterCenter.y < beforeCenter.y ? " up" : " down");
     }
   }
-  const shirt = shirtTone === "unreadable" ? "shirt unclear" : `${shirtTone} shirt`;
-  return `${movement}${direction}, ${shirt}`;
+  return `${movement}${direction}`;
 }
 
 
@@ -350,8 +348,8 @@ export default function ClaimMatchPage() {
   const [segmentLoading, setSegmentLoading] = useState(false);
   const [segmentError, setSegmentError] = useState("");
   const [segmentRetryToken, setSegmentRetryToken] = useState(0);
-  const [shirtToneByTrack, setShirtToneByTrack] = useState<Record<string, ShirtTone>>({});
   const [videoReadyTick, setVideoReadyTick] = useState(0);
+  const snappedAnchorRef = useRef<string | null>(null);
   const anchorAnswerNonceRef = useRef(0);
   const undoneClientIdsRef = useRef(new Set<string>());
   const restoredRecordingRef = useRef<number | null>(null);
@@ -618,17 +616,19 @@ export default function ClaimMatchPage() {
     else video.pause();
   }, [playing]);
 
-  const candidateStage = stage === "find" || stage === "picker";
-  const candidateFrame = useMemo(() => {
-    if (!bundle || !candidateStage) return currentFrame;
-    return nearestDetectionFrame(bundle, bundle.tracks, currentFrame) ?? currentFrame;
-  }, [bundle, candidateStage, currentFrame]);
+  const candidateFrame = currentFrame;
 
   useEffect(() => {
-    if (!bundle || !candidateStage || candidateFrame === currentFrame) return;
-    const seconds = frameToTrackingSeconds(candidateFrame, bundle);
-    seekTracking(seconds);
-  }, [bundle, candidateFrame, candidateStage, currentFrame, seekTracking]);
+    if (stage !== "picker" || !currentAnchor || !bundle) {
+      if (stage !== "picker") snappedAnchorRef.current = null;
+      return;
+    }
+    if (snappedAnchorRef.current === currentAnchor.id) return;
+    snappedAnchorRef.current = currentAnchor.id;
+    const anchorFrame = trackingSecondsToFrame(currentAnchor.momentSeconds, bundle);
+    const detectionFrame = nearestDetectionFrame(bundle, bundle.tracks, anchorFrame);
+    if (detectionFrame !== null) seekTracking(frameToTrackingSeconds(detectionFrame, bundle));
+  }, [bundle, currentAnchor, seekTracking, stage]);
 
   const candidates = useMemo<Candidate[]>(() => {
     if (!bundle) return [];
@@ -651,7 +651,7 @@ export default function ClaimMatchPage() {
       .sort((a, b) => a.distance - b.distance)
       .map(({ track, box, distance }) => ({
         id: track.id,
-        label: captionForTrack(track, candidateFrame, bundle, shirtToneByTrack[track.id] || "unreadable"),
+         label: captionForTrack(track, candidateFrame, bundle),
         box,
         distance,
         coasting: Boolean((box as { interpolated?: boolean }).interpolated),
@@ -660,41 +660,7 @@ export default function ClaimMatchPage() {
         ...candidate,
         overlap: all.some((other) => other.id !== candidate.id && boxesOverlap(candidate.box, other.box)),
       }));
-  }, [bundle, candidateFrame, shirtToneByTrack]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !bundle || !candidates.length || video.readyState < 2) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = 320;
-    canvas.height = Math.max(1, Math.round(canvas.width * bundle.height / bundle.width));
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    try {
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const nextTones: Record<string, ShirtTone> = {};
-      for (const candidate of candidates) {
-        const sx = Math.max(0, Math.floor(candidate.box.x / bundle.width * canvas.width));
-        const sy = Math.max(0, Math.floor((candidate.box.y + candidate.box.h * 0.18) / bundle.height * canvas.height));
-        const sw = Math.max(1, Math.floor(candidate.box.w / bundle.width * canvas.width));
-        const sh = Math.max(1, Math.floor(candidate.box.h * 0.38 / bundle.height * canvas.height));
-        const pixels = context.getImageData(sx, sy, Math.min(sw, canvas.width - sx), Math.min(sh, canvas.height - sy)).data;
-        let luminance = 0;
-        let samples = 0;
-        for (let index = 0; index < pixels.length; index += 16) {
-          luminance += pixels[index] * 0.2126 + pixels[index + 1] * 0.7152 + pixels[index + 2] * 0.0722;
-          samples += 1;
-        }
-        nextTones[candidate.id] = samples ? (luminance / samples >= 132 ? "light" : "dark") : "unreadable";
-      }
-      setShirtToneByTrack((previous) => {
-        const changed = Object.entries(nextTones).some(([id, tone]) => previous[id] !== tone);
-        return changed ? { ...previous, ...nextTones } : previous;
-      });
-    } catch {
-      // Canvas can be unavailable for a cross-origin recording; captions stay honest.
-    }
-  }, [bundle, candidates, videoReadyTick]);
+  }, [bundle, candidateFrame]);
 
   useEffect(() => {
     if (!response || restoredRecordingRef.current === activeRecordingId) return;
@@ -775,6 +741,9 @@ export default function ClaimMatchPage() {
       }),
     );
     setQueuedCount(result.remaining.length);
+    if (result.discarded.length > 0) {
+      setNotice(`${result.discarded.length} queued answer${result.discarded.length === 1 ? "" : "s"} could not be applied and was removed`);
+    }
     if (result.changed) {
       await context.queryClient.invalidateQueries({ queryKey: context.responseQueryKey });
       if (result.succeeded.some((action) => action.recordingId === context.activeRecordingId)) {
@@ -991,10 +960,10 @@ export default function ClaimMatchPage() {
     }
     onCorrection({
       id: chosen.track.id,
-      label: captionForTrack(chosen.track, currentFrame, bundle, shirtToneByTrack[chosen.track.id] || "unreadable"),
+      label: captionForTrack(chosen.track, currentFrame, bundle),
       box: chosen.box,
     });
-  }, [bundle, currentFrame, onCorrection, shirtToneByTrack]);
+  }, [bundle, currentFrame, onCorrection]);
 
   /*
    * The old continuous-following correction path is deliberately not used.
@@ -1150,7 +1119,6 @@ export default function ClaimMatchPage() {
       setSegmentCache({});
       setSegmentLoading(false);
       setSegmentError("");
-      setShirtToneByTrack({});
       setVideoReadyTick(0);
       anchorAnswerNonceRef.current = 0;
       restoredRecordingRef.current = null;
