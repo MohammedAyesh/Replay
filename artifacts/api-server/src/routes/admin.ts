@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { eq, count, and, desc, sql } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable } from "@workspace/db";
+import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable } from "@workspace/db";
 import {
   UpdateAdParams,
   UpdateAdBody,
@@ -842,7 +842,28 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
     .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
     .orderBy(fieldsTable.name, recordingsTable.date);
 
-  res.json(rows.map((r) => ({ ...r, score: r.score ?? null })));
+  const bundles = await db
+    .select({ recordingId: recordingTrackingBundlesTable.recordingId, manifest: recordingTrackingBundlesTable.manifest })
+    .from(recordingTrackingBundlesTable);
+  const bundleByRecording = new Map(bundles.map((bundle) => [bundle.recordingId, bundle.manifest]));
+  res.json(rows.map((r) => {
+    const manifest = bundleByRecording.get(r.id);
+    const provenance = manifest?.provenance ?? {};
+    const hasIdentityMap = Boolean(manifest?.identities?.length);
+    const identityMapMatchesBundle = hasIdentityMap
+      && typeof provenance.bundleFingerprint === "string"
+      && provenance.bundleFingerprint === provenance.identityMapBundleFingerprint;
+    return {
+      ...r,
+      score: r.score ?? null,
+      hasTrackingBundle: Boolean(manifest),
+      trackingSegmentCount: manifest?.segmentCount ?? null,
+      trackingFrameCoverage: manifest ? `${manifest.segments[0]?.startFrame ?? 0}-${manifest.segments.at(-1)?.endFrame ?? 0}` : null,
+      trackingVideoStartSeconds: manifest?.videoStartSeconds ?? null,
+      hasIdentityMap,
+      identityMapMatchesBundle,
+    };
+  }));
 });
 
 router.patch("/admin/recordings/:id", async (req, res): Promise<void> => {

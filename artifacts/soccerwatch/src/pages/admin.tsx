@@ -117,6 +117,8 @@ interface AdminRecording {
   trackingSegmentCount?: number | null;
   trackingFrameCoverage?: string | null;
   trackingVideoStartSeconds?: number | null;
+  hasIdentityMap?: boolean;
+  identityMapMatchesBundle?: boolean;
 }
 
 interface AdminBanner {
@@ -4169,7 +4171,10 @@ function CalendarMonth({
 }
 
 function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
+  const [, setLocation] = useLocation();
   const [hasBundle, setHasBundle] = useState(Boolean(recording.hasTrackingBundle));
+  const [hasIdentityMap, setHasIdentityMap] = useState(Boolean(recording.hasIdentityMap));
+  const [identityMapMatchesBundle, setIdentityMapMatchesBundle] = useState(Boolean(recording.identityMapMatchesBundle));
   const [busy, setBusy] = useState(false);
   const [savingStart, setSavingStart] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -4218,6 +4223,8 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         }) as typeof result;
       }
       setHasBundle(true);
+      setHasIdentityMap(false);
+      setIdentityMapMatchesBundle(false);
       setMessage(
         `Ready · ${result.segmentCount} segments · ${result.trackCount} tracks · `
         + `starts ${result.videoStartSeconds ?? 0}s into the video · ${result.frameCoverage}`,
@@ -4275,6 +4282,14 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
               ? `${recording.trackingSegmentCount ?? "—"} segments · ${recording.trackingFrameCoverage ?? "coverage unavailable"}`
               : "No tracking bundle")}
           </p>
+           {hasBundle && (
+             <p className={cn(
+               "mt-0.5 text-[10px]",
+               !hasIdentityMap ? "text-zinc-500" : identityMapMatchesBundle ? "text-emerald-400" : "text-amber-400",
+             )}>
+               {!hasIdentityMap ? "No identity map" : identityMapMatchesBundle ? "Identity map saved" : "Identity map needs review"}
+             </p>
+           )}
         </div>
       </div>
       <input
@@ -4326,6 +4341,17 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
           {busy ? "Saving…" : hasBundle ? "Replace bundle" : "Upload bundle"}
         </button>
+        {hasBundle && (
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-lg border border-primary/40 px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
+            data-testid={`button-open-identity-board-${recording.id}`}
+            onClick={() => setLocation(`/admin/recordings/${recording.id}/identities`)}
+          >
+            <LinkIcon className="h-3.5 w-3.5" />
+            Identity board
+          </button>
+        )}
         {hasBundle && (
           <button
             type="button"

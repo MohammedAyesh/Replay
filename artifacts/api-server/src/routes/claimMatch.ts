@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import multer from "multer";
 import { unzipSync, strFromU8 } from "fflate";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync as nodeGunzipSync } from "node:zlib";
 import { z } from "zod";
 import {
@@ -45,6 +45,7 @@ const router: IRouter = Router();
 
 /** identity board result: pieces of tracks that are one person */
 const IdentityMapBody = z.object({
+  bundleFingerprint: z.string().min(1),
   identities: z.array(z.object({
     id: z.string().min(1),
     name: z.string().nullish(),
@@ -53,7 +54,7 @@ const IdentityMapBody = z.object({
       fromFrame: z.number().int().min(0),
       toFrame: z.number().int().min(0),
     })).min(1),
-  })).max(200),
+  })),
 });
 const bundleUpload = multer({
   storage: multer.memoryStorage(),
@@ -363,6 +364,41 @@ export function summarizeTrackingSegments(segments: TrackingSegmentPayload[]): T
       events: segment.events,
     })),
   };
+}
+
+/**
+ * A bundle fingerprint is the identity-board version anchor. It intentionally
+ * excludes object paths and identity edits, but includes every track id and
+ * frame range, so replacing the tracking data invalidates an old map.
+ */
+export function trackingBundleFingerprint(
+  manifest: Pick<TrackingManifest, "version" | "width" | "height" | "frameRate" | "frameCount" | "duration">,
+  segments: Array<{
+    segmentIndex: number;
+    startFrame: number;
+    endFrame: number;
+    tracks: Array<{ id: string; startFrame: number; endFrame: number }>;
+  }>,
+): string {
+  const payload = {
+    version: manifest.version,
+    width: manifest.width,
+    height: manifest.height,
+    frameRate: manifest.frameRate,
+    frameCount: manifest.frameCount,
+    duration: manifest.duration,
+    segments: segments.map((segment) => ({
+      segmentIndex: segment.segmentIndex,
+      startFrame: segment.startFrame,
+      endFrame: segment.endFrame,
+      tracks: segment.tracks.map((track) => ({
+        id: track.id,
+        startFrame: track.startFrame,
+        endFrame: track.endFrame,
+      })).sort((a, b) => a.id.localeCompare(b.id)),
+    })).sort((a, b) => a.segmentIndex - b.segmentIndex),
+  };
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 function entryNamesForSegment(
@@ -879,6 +915,23 @@ async function getClaimStateSegments(
   return readBundleSegments(bundle.id);
 }
 
+async function manifestWithBundleFingerprint(
+  bundle: typeof recordingTrackingBundlesTable.$inferSelect,
+): Promise<TrackingManifest> {
+  const existing = bundle.manifest.provenance?.bundleFingerprint;
+  if (typeof existing === "string" && existing.length > 0) return bundle.manifest;
+  const segments = bundle.manifest.summary?.segments?.length
+    ? bundle.manifest.summary.segments
+    : await readBundleSegments(bundle.id);
+  return {
+    ...bundle.manifest,
+    provenance: {
+      ...(bundle.manifest.provenance ?? {}),
+      bundleFingerprint: trackingBundleFingerprint(bundle.manifest, segments),
+    },
+  };
+}
+
 // The demo deliberately resolves to the first real uploaded bundle. It never
 // manufactures a recording or synthetic player metrics, so Mohammed's sample
 // can be opened through one stable URL after an admin uploads it.
@@ -1287,8 +1340,9 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       eq(claimMatchCorrectionsTable.recordingId, params.data.id),
     ))
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
+  const manifest = await manifestWithBundleFingerprint(row.bundle);
   const segments = await getClaimStateSegments(row.bundle);
-  const derived = deriveClaimState(row.bundle.manifest, segments, corrections);
+  const derived = deriveClaimState(manifest, segments, corrections);
 
   res.json(GetClaimMatchResponse.parse({
     recording: toRecording(row.recording, row.fieldName ?? null),
@@ -1296,7 +1350,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     // Default to 0 rather than failing the response, but that default is a
     // guess and it is almost always wrong on a recording longer than the
     // tracked window.
-    manifest: { ...row.bundle.manifest, videoStartSeconds: row.bundle.manifest.videoStartSeconds ?? 0 },
+    manifest: { ...manifest, videoStartSeconds: manifest.videoStartSeconds ?? 0 },
     progress: progressWithDerived(progress ?? null, params.data.id, derived),
     corrections: corrections.map(toCorrection),
   }));
@@ -1766,8 +1820,14 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
         spritePaths[segment.segmentIndex] = storedSprites.objectPath;
       }
     }
+    const bundleFingerprint = trackingBundleFingerprint(upload.manifest, upload.segments);
     const manifest: TrackingManifest = {
       ...upload.manifest,
+       provenance: {
+         ...(upload.manifest.provenance ?? {}),
+         bundleFingerprint,
+         identityMapBundleFingerprint: undefined,
+       },
       summary: summarizeTrackingSegments(upload.segments),
       videoStartSeconds: Math.max(0, upload.manifest.videoStartSeconds ?? 0),
       segmentCount: storedSegments.length,
@@ -1990,12 +2050,38 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
-  const manifest: TrackingManifest = { ...row.bundle.manifest, identities: body.data.identities };
+  const currentFingerprint = row.bundle.manifest.summary?.segments?.length
+    ? trackingBundleFingerprint(row.bundle.manifest, row.bundle.manifest.summary.segments)
+    : trackingBundleFingerprint(row.bundle.manifest, await readBundleSegments(row.bundle.id));
+  if (body.data.bundleFingerprint !== currentFingerprint) {
+    res.status(409).json({
+      error: "This identity map was built from a different tracking bundle. Reload the identity board before saving.",
+      currentBundleFingerprint: currentFingerprint,
+    });
+    return;
+  }
+  const storedFingerprint = row.bundle.manifest.provenance?.bundleFingerprint;
+  if (typeof storedFingerprint === "string" && storedFingerprint !== currentFingerprint) {
+    res.status(409).json({
+      error: "The tracking bundle changed while this identity map was open. Reload the identity board before saving.",
+      currentBundleFingerprint: currentFingerprint,
+    });
+    return;
+  }
+  const manifest: TrackingManifest = {
+    ...row.bundle.manifest,
+    identities: body.data.identities,
+    provenance: {
+      ...(row.bundle.manifest.provenance ?? {}),
+      bundleFingerprint: currentFingerprint,
+      identityMapBundleFingerprint: currentFingerprint,
+    },
+  };
   await db
     .update(recordingTrackingBundlesTable)
     .set({ manifest, updatedAt: new Date() })
     .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
-  res.json({ recordingId, identities: body.data.identities.length });
+  res.json({ recordingId, identities: body.data.identities.length, bundleFingerprint: currentFingerprint });
 });
 
 export default router;

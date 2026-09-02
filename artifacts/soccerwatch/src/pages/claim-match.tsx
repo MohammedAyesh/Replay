@@ -60,6 +60,7 @@ import {
   nearestAnchorIndex,
   nextUnansweredAnchor,
 } from "@/lib/claim-match-anchors";
+import { applyClaimIdentities, identityMapMatchesBundle } from "@/lib/claim-match-identities";
 
 type Stage = "find" | "picker" | "done";
 const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2] as const;
@@ -73,46 +74,13 @@ type Candidate = {
   coasting?: boolean;
 };
 
-/**
- * Apply the identity board's map to one segment: every part of an identity
- * that lives in this segment becomes one track under the identity's id, so a
- * player follows one long track across segment boundaries. Tracks the board
- * never touched are kept as they are. Crossings are re-pointed.
- */
-function applyIdentities(
-  segment: TrackingSegment,
-  identities: ClaimMatchResponse["manifest"]["identities"] | undefined,
-): Pick<TrackingSegment, "tracks" | "crossings"> {
-  if (!identities || identities.length === 0) return segment;
-  const byId = new Map(segment.tracks.map((track) => [track.id, track] as const));
-  const rename = new Map<string, string>();
-  const merged: TrackingSegment["tracks"] = [];
-  const consumed = new Set<string>();
-  for (const identity of identities) {
-    const boxes: ClaimBox[] = [];
-    for (const part of identity.parts) {
-      const track = byId.get(part.trackId);
-      if (!track) continue;
-      consumed.add(track.id);
-      rename.set(track.id, identity.id);
-      for (const box of track.boxes) if (box.frame >= part.fromFrame && box.frame <= part.toFrame) boxes.push(box);
-    }
-    if (!boxes.length) continue;
-    boxes.sort((a, b) => a.frame - b.frame);
-    merged.push({ id: identity.id, label: identity.name ?? null, startFrame: boxes[0].frame, endFrame: boxes[boxes.length - 1].frame, boxes });
-  }
-  const tracks = [...merged, ...segment.tracks.filter((track) => !consumed.has(track.id))];
-  const crossings = segment.crossings
-    .map((crossing) => ({ ...crossing, trackId: rename.get(crossing.trackId) ?? crossing.trackId, otherTrackId: rename.get(crossing.otherTrackId) ?? crossing.otherTrackId }))
-    .filter((crossing) => crossing.trackId !== crossing.otherTrackId);
-  return { tracks, crossings };
-}
-
 function segmentAsBundle(
   manifest: ClaimMatchResponse["manifest"],
   segment: TrackingSegment,
 ) {
-  const applied = applyIdentities(segment, manifest.identities);
+  const applied = identityMapMatchesBundle(manifest)
+    ? applyClaimIdentities(segment, manifest.identities)
+    : { tracks: segment.tracks, crossings: segment.crossings };
   const totalDuration = Math.max(
     manifest.duration,
     ...manifest.segments.map((range) => range.endSeconds),
@@ -367,6 +335,11 @@ export default function ClaimMatchPage() {
   const recording = response?.recording;
   const manifest = response?.manifest;
   const serverProgress = response?.progress;
+  useEffect(() => {
+    if (manifest && manifest.identities?.length && !identityMapMatchesBundle(manifest)) {
+      setNotice("This recording's identity map belongs to an older tracking bundle, so it was not applied. An admin must reload the Identity Board and save it again.");
+    }
+  }, [manifest]);
   const allCorrections = useMemo(() => {
     const remote = response?.corrections || [];
     const remoteIds = new Set(remote.map((item) => item.clientId));
