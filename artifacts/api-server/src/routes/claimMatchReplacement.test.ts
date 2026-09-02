@@ -441,7 +441,7 @@ describe("Claim Match tracking bundle replacement", () => {
       .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId))).toHaveLength(2);
   });
 
-  it("previews and confirms identity-map edits that reassign an existing claimant", async () => {
+  it("allows regrouping when the claimant has no recorded vouched fragment", async () => {
     const upload = makeUpload();
     const stateSegment = {
       version: 1,
@@ -503,7 +503,7 @@ describe("Claim Match tracking bundle replacement", () => {
       .from(recordingTrackingBundlesTable)
       .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
     const binding = await syncIdentityBinding(claimantAId, recordingId, bundle, derived);
-    expect(binding?.personParts).toEqual(['["piece-a",0,1]']);
+    expect(binding?.vouchedFragments).toEqual([]);
 
     mockedGetLocalUserId.mockResolvedValue(adminId);
     const reassignedMap = {
@@ -513,8 +513,8 @@ describe("Claim Match tracking bundle replacement", () => {
     const preview = await request(app)
       .put(`/api/admin/recordings/${recordingId}/identities`)
       .send(reassignedMap);
-    expect(preview.status).toBe(409);
-    expect(preview.body).toMatchObject({ invalidatedClaims: 1, requiresConfirmation: true });
+    expect(preview.status).toBe(200);
+    expect(preview.body).toMatchObject({ lockedClaims: 0, lockedFragments: 0, requiresRelease: false });
     expect((await db
       .select({ state: claimMatchIdentityBindingsTable.state })
       .from(claimMatchIdentityBindingsTable)
@@ -522,13 +522,149 @@ describe("Claim Match tracking bundle replacement", () => {
 
     const saved = await request(app)
       .put(`/api/admin/recordings/${recordingId}/identities`)
-      .send({ ...reassignedMap, confirmInvalidations: true });
+      .send(reassignedMap);
     expect(saved.status).toBe(200);
-    expect(saved.body.invalidatedClaims).toBe(1);
+    expect(saved.body.lockedClaims).toBe(0);
     expect((await db
       .select({ state: claimMatchIdentityBindingsTable.state })
       .from(claimMatchIdentityBindingsTable)
-      .where(eq(claimMatchIdentityBindingsTable.id, binding!.id)))[0].state).toBe("needs_resolution");
+       .where(eq(claimMatchIdentityBindingsTable.id, binding!.id)))[0].state).toBe("confirmed");
+  });
+
+  it("automatically splits one inferred row for disjoint human-vouched fragments", async () => {
+    await db.delete(claimMatchIdentityBindingsTable).where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    const [bundle] = await db
+      .select()
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const manifest = {
+      ...(bindingManifest as object),
+      provenance: { bundleFingerprint: "fragment-test", identityMapBundleFingerprint: "fragment-test" },
+      identities: [{
+        id: "person-a",
+        parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }],
+      }],
+    } as never;
+    const fullSegments = [{
+      ...(bindingSegments[0] as object),
+      tracks: [{
+        id: "piece-a",
+        startFrame: 0,
+        endFrame: 99,
+        boxes: [
+          ...Array.from({ length: 40 }, (_, frame) => ({ frame, x: 10, y: 10, w: 10, h: 10 })),
+          ...Array.from({ length: 40 }, (_, index) => ({ frame: index + 60, x: 10, y: 10, w: 10, h: 10 })),
+        ],
+      }],
+    }] as never;
+    await db
+      .update(recordingTrackingBundlesTable)
+      .set({ manifest })
+      .where(eq(recordingTrackingBundlesTable.id, bundle.id));
+    const firstDerived = deriveClaimState(manifest, bindingSegments, [
+      bindingCorrection(1, claimantAId),
+    ] as never, fullSegments);
+    const first = await syncIdentityBinding(claimantAId, recordingId, { ...bundle, manifest }, firstDerived);
+    expect(first?.state).toBe("confirmed");
+    expect(first?.vouchedFragments).toEqual([{ trackId: "piece-a", fromFrame: 0, toFrame: 39 }]);
+
+    const secondDerived = deriveClaimState(manifest, bindingSegments, [
+      bindingCorrection(7, claimantBId),
+    ] as never, fullSegments);
+    const second = await syncIdentityBinding(claimantBId, recordingId, { ...bundle, manifest }, secondDerived);
+    expect(second?.state).toBe("confirmed");
+    expect(second?.personId).not.toBe("person-a");
+
+    const bindings = await db
+      .select({ userId: claimMatchIdentityBindingsTable.userId, personId: claimMatchIdentityBindingsTable.personId, state: claimMatchIdentityBindingsTable.state, vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    expect(bindings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: claimantAId, state: "confirmed", vouchedFragments: [{ trackId: "piece-a", fromFrame: 0, toFrame: 39 }] }),
+      expect.objectContaining({ userId: claimantBId, state: "confirmed", vouchedFragments: [{ trackId: "piece-a", fromFrame: 60, toFrame: 99 }] }),
+    ]));
+    const savedManifest = await currentManifest();
+    expect(savedManifest.identities?.some((identity) => identity.id === "person-a:inferred")).toBe(true);
+  });
+
+  it("keeps overlapping human-vouched fragments as a dispute", async () => {
+    await db.delete(claimMatchIdentityBindingsTable).where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    const [bundle] = await db
+      .select()
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const manifest = {
+      ...(bindingManifest as object),
+      provenance: { bundleFingerprint: "fragment-test", identityMapBundleFingerprint: "fragment-test" },
+      identities: [{
+        id: "person-a",
+        parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }],
+      }],
+    } as never;
+    const fullSegments = [{
+      ...(bindingSegments[0] as object),
+      tracks: [{
+        id: "piece-a",
+        startFrame: 0,
+        endFrame: 99,
+        boxes: Array.from({ length: 100 }, (_, frame) => ({ frame, x: 10, y: 10, w: 10, h: 10 })),
+      }],
+    }] as never;
+    await db.update(recordingTrackingBundlesTable).set({ manifest }).where(eq(recordingTrackingBundlesTable.id, bundle.id));
+    const first = await syncIdentityBinding(
+      claimantAId,
+      recordingId,
+      { ...bundle, manifest },
+      deriveClaimState(manifest, bindingSegments, [bindingCorrection(1, claimantAId)] as never, fullSegments),
+    );
+    const second = await syncIdentityBinding(
+      claimantBId,
+      recordingId,
+      { ...bundle, manifest },
+      deriveClaimState(manifest, bindingSegments, [bindingCorrection(2, claimantBId)] as never, fullSegments),
+    );
+    expect(first?.state).toBe("confirmed");
+    expect(second?.state).toBe("disputed");
+  });
+
+  it("releases a vouched fragment only through the admin release action", async () => {
+    await db.delete(claimMatchIdentityBindingsTable).where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    const [bundle] = await db
+      .select()
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const manifest = {
+      ...(bindingManifest as object),
+      provenance: { bundleFingerprint: "fragment-test", identityMapBundleFingerprint: "fragment-test" },
+      identities: [{
+        id: "person-a",
+        parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }],
+      }],
+    } as never;
+    const fullSegments = [{
+      ...(bindingSegments[0] as object),
+      tracks: [{
+        id: "piece-a",
+        startFrame: 0,
+        endFrame: 99,
+        boxes: Array.from({ length: 100 }, (_, frame) => ({ frame, x: 10, y: 10, w: 10, h: 10 })),
+      }],
+    }] as never;
+    const binding = await syncIdentityBinding(
+      claimantAId,
+      recordingId,
+      { ...bundle, manifest },
+      deriveClaimState(manifest, bindingSegments, [bindingCorrection(1, claimantAId)] as never, fullSegments),
+    );
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    const response = await request(app).post(`/api/admin/claim-match/bindings/${binding!.id}/release`);
+    expect(response.status).toBe(200);
+    expect(response.body.state).toBe("released");
+    const [released] = await db
+      .select({ state: claimMatchIdentityBindingsTable.state, vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.id, binding!.id));
+    expect(released).toEqual({ state: "released", vouchedFragments: [] });
   });
 
   it("returns a useful ZIP constraint error without exposing storage internals", async () => {

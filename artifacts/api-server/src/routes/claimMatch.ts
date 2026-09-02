@@ -1029,6 +1029,7 @@ function toIdentityBinding(row: ClaimIdentityBindingRow | null) {
     supportCount: row.supportCount,
     acceptedAnswerCount: row.acceptedAnswerCount,
     supportPercent: row.supportPercent,
+    vouchedFragments: canonicalVouchedFragments(row.vouchedFragments),
     state: row.state as ClaimIdentityBindingState,
     resolvedAt: row.resolvedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
@@ -1305,6 +1306,9 @@ async function materializeClaimMoments(
 type DerivedClaimState = {
   coverageSeconds: number;
   coveragePercent: number;
+  humanVouchedSeconds: number;
+  inferredSeconds: number;
+  vouchedFragments: ClaimVouchedFragment[];
   answeredAnchorCount: number;
   acceptedAnchorCount: number;
   unresolvedMoments: number[];
@@ -1345,6 +1349,12 @@ type UnavailablePlayerMetric = {
   value: null;
   available: false;
   unavailableReason: "ball_tracking_and_possession_attribution_unavailable";
+};
+
+export type ClaimVouchedFragment = {
+  trackId: string;
+  fromFrame: number;
+  toFrame: number;
 };
 
 function unavailablePlayerMetric(): UnavailablePlayerMetric {
@@ -1406,6 +1416,64 @@ function personPartsForResolution(manifest: TrackingManifest, personId: string):
   return identity ? canonicalIdentityParts(identity.parts) : [];
 }
 
+function canonicalVouchedFragments(
+  fragments: ClaimVouchedFragment[] | null | undefined,
+): ClaimVouchedFragment[] {
+  const unique = new Map<string, ClaimVouchedFragment>();
+  for (const fragment of fragments ?? []) {
+    const fromFrame = Math.max(0, Math.round(fragment.fromFrame));
+    const toFrame = Math.max(fromFrame, Math.round(fragment.toFrame));
+    const normalized = { trackId: fragment.trackId, fromFrame, toFrame };
+    unique.set(JSON.stringify([normalized.trackId, normalized.fromFrame, normalized.toFrame]), normalized);
+  }
+  return [...unique.values()].sort((a, b) =>
+    a.trackId.localeCompare(b.trackId) || a.fromFrame - b.fromFrame || a.toFrame - b.toFrame);
+}
+
+function fragmentOverlap(a: ClaimVouchedFragment, b: ClaimVouchedFragment): boolean {
+  return a.trackId === b.trackId && a.fromFrame <= b.toFrame && b.fromFrame <= a.toFrame;
+}
+
+export function vouchedFragmentsOverlap(
+  left: ClaimVouchedFragment[] | null | undefined,
+  right: ClaimVouchedFragment[] | null | undefined,
+): boolean {
+  return canonicalVouchedFragments(left).some((a) =>
+    canonicalVouchedFragments(right).some((b) => fragmentOverlap(a, b)));
+}
+
+/**
+ * A map update is safe when every frame that a player directly vouched for
+ * still belongs to the same identity row. Unvouched parts are intentionally
+ * ignored, so regrouping can continue around the protected fragments.
+ */
+export function identityMapMovesVouchedFragment(
+  binding: Pick<ClaimIdentityBindingRow, "personId" | "vouchedFragments">,
+  incomingIdentities: TrackingIdentity[],
+): boolean {
+  return canonicalVouchedFragments(binding.vouchedFragments).some((fragment) => {
+    const overlappingParts = incomingIdentities.flatMap((identity) =>
+      identity.parts
+        .filter((part) =>
+          part.trackId === fragment.trackId
+          && part.fromFrame <= fragment.toFrame
+          && part.toFrame >= fragment.fromFrame)
+        .map((part) => ({ ...part, identityId: identity.id })));
+    if (overlappingParts.some((part) => part.identityId !== binding.personId)) return true;
+    const ownerParts = overlappingParts
+      .filter((part) => part.identityId === binding.personId)
+      .sort((a, b) => a.fromFrame - b.fromFrame);
+    let coveredThrough = fragment.fromFrame - 1;
+    for (const part of ownerParts) {
+      if (part.fromFrame > coveredThrough + 1) return true;
+      coveredThrough = Math.max(coveredThrough, Math.min(fragment.toFrame, part.toFrame));
+      if (coveredThrough >= fragment.toFrame) return false;
+    }
+    return true;
+  });
+}
+
+/** @deprecated Use identityMapMovesVouchedFragment; person rows are no longer frozen. */
 export function identityMapInvalidatesBinding(
   binding: Pick<ClaimIdentityBindingRow, "personId" | "personParts">,
   incomingIdentities: TrackingIdentity[],
@@ -1420,12 +1488,18 @@ export function identityMapInvalidatesBinding(
 function resolvePersonForTrack(
   manifest: TrackingManifest,
   chosenTrackId: string,
+  momentSeconds?: number,
 ): { personId: string; resolutionMethod: ClaimIdentityResolutionMethod } {
   const identities = usableIdentityMap(manifest);
   const direct = identities.find((identity) => identity.id === chosenTrackId);
   if (direct) return { personId: direct.id, resolutionMethod: "identity-map" };
+  const frame = momentSeconds === undefined
+    ? undefined
+    : Math.max(0, Math.round(momentSeconds * Math.max(manifest.frameRate, 0.001)));
   const mapped = identities.find((identity) =>
-    identity.parts.some((part) => part.trackId === chosenTrackId),
+    identity.parts.some((part) =>
+      part.trackId === chosenTrackId
+      && (frame === undefined || (frame >= part.fromFrame && frame <= part.toFrame))),
   );
   if (mapped) return { personId: mapped.id, resolutionMethod: "identity-map" };
   return { personId: chosenTrackId, resolutionMethod: "track-fallback" };
@@ -1462,7 +1536,7 @@ export function resolveClaimIdentity(
     resolutionMethod: ClaimIdentityResolutionMethod;
   }>();
   for (const row of usableAnswers) {
-    const resolved = resolvePersonForTrack(manifest, row.chosenTrackId);
+    const resolved = resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds);
     const previous = candidates.get(resolved.personId);
     candidates.set(resolved.personId, {
       count: (previous?.count ?? 0) + 1,
@@ -1483,7 +1557,7 @@ export function resolveClaimIdentity(
 
   const [personId, support] = winner;
   const conflictMoments = usableAnswers
-    .filter((row) => resolvePersonForTrack(manifest, row.chosenTrackId).personId !== personId)
+     .filter((row) => resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds).personId !== personId)
     .map((row) => row.momentSeconds)
     .sort((a, b) => a - b);
   return {
@@ -1551,6 +1625,117 @@ function trackIntervalsForId(
     }
   }
   return intervals;
+}
+
+function boxForFrame(
+  boxes: TrackingSegmentPayload["tracks"][number]["boxes"],
+  frame: number,
+): number {
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  boxes.forEach((box, index) => {
+    const distance = Math.abs(box.frame - frame);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+/**
+ * Capture the actual uninterrupted detection run containing an accepted
+ * answer. Track start/end summaries are not sufficient here: a track may
+ * disappear for several frames and return later.
+ */
+export function vouchedFragmentForAnswer(
+  manifest: TrackingManifest,
+  fullSegments: TrackingSegmentPayload[],
+  answer: Pick<typeof claimMatchCorrectionsTable.$inferSelect, "momentSeconds" | "chosenTrackId">,
+): ClaimVouchedFragment | null {
+  const frameRate = Math.max(manifest.frameRate, 0.001);
+  const targetFrame = Math.max(0, Math.round(answer.momentSeconds * frameRate));
+  const identities = usableIdentityMap(manifest);
+  const directTrack = fullSegments
+    .flatMap((segment) => segment.tracks)
+    .find((track) => track.id === answer.chosenTrackId);
+  const identity = identities.find((item) => item.id === answer.chosenTrackId);
+  const possibleParts = identity?.parts.filter((part) =>
+    targetFrame >= part.fromFrame && targetFrame <= part.toFrame) ?? [];
+
+  let selectedTrack: TrackingSegmentPayload["tracks"][number] | undefined = directTrack;
+  let selectedPart: TrackingIdentity["parts"][number] | undefined;
+  if (!selectedTrack && possibleParts.length > 0) {
+    for (const part of possibleParts) {
+      const track = fullSegments
+        .flatMap((segment) => segment.tracks)
+        .find((candidate) =>
+          candidate.id === part.trackId
+          && candidate.boxes.some((box) => box.frame >= part.fromFrame && box.frame <= part.toFrame));
+      if (track) {
+        selectedTrack = track;
+        selectedPart = part;
+        break;
+      }
+    }
+  }
+  if (!selectedTrack) {
+    // A browser can answer with an identity id even when the frame is just
+    // outside a persisted part due to rounding. Fall back to the closest
+    // source track that contributes to that identity.
+    const parts = identity?.parts ?? [];
+    for (const part of parts) {
+      const track = fullSegments.flatMap((segment) => segment.tracks).find((candidate) => candidate.id === part.trackId);
+      if (track) {
+        selectedTrack = track;
+        selectedPart = part;
+        break;
+      }
+    }
+  }
+  if (!selectedTrack) return null;
+
+  const boxes = [...selectedTrack.boxes]
+    .filter((box) => !selectedPart || (box.frame >= selectedPart.fromFrame && box.frame <= selectedPart.toFrame))
+    .sort((a, b) => a.frame - b.frame);
+  const index = boxForFrame(boxes, targetFrame);
+  if (index < 0) return null;
+
+  let start = index;
+  let end = index;
+  while (start > 0 && boxes[start].frame - boxes[start - 1].frame <= 1) start -= 1;
+  while (end + 1 < boxes.length && boxes[end + 1].frame - boxes[end].frame <= 1) end += 1;
+  return {
+    trackId: selectedTrack.id,
+    fromFrame: boxes[start].frame,
+    toFrame: boxes[end].frame,
+  };
+}
+
+function unionFragmentSeconds(
+  manifest: TrackingManifest,
+  fragments: ClaimVouchedFragment[],
+): number {
+  const frameRate = Math.max(manifest.frameRate, 0.001);
+  const intervals = canonicalVouchedFragments(fragments)
+    .map((fragment) => ({
+      start: Math.max(0, fragment.fromFrame / frameRate),
+      end: Math.min(manifest.duration, (fragment.toFrame + 1) / frameRate),
+    }))
+    .filter((interval) => interval.end > interval.start)
+    .sort((a, b) => a.start - b.start);
+  let total = 0;
+  let end = 0;
+  for (const interval of intervals) {
+    if (interval.start > end) {
+      total += interval.end - interval.start;
+      end = interval.end;
+    } else if (interval.end > end) {
+      total += interval.end - end;
+      end = interval.end;
+    }
+  }
+  return Math.round(total * 100) / 100;
 }
 
 type PositionSample = { frame: number; x: number; y: number };
@@ -1740,6 +1925,8 @@ function buildPlayerMetrics(
   trackedSegments: number,
   totalSegments: number,
   matchedEvents: number,
+  humanVouchedSeconds: number,
+  inferredSeconds: number,
 ) {
   const base = {
     confirmedSeconds: Math.round(coveredSeconds * 100) / 100,
@@ -1882,12 +2069,12 @@ export function deriveClaimState(
   const resolvedPersonId = identityResolution?.personId ?? null;
   const acceptedForPerson = accepted.filter((row) =>
     resolvedPersonId !== null
-    && resolvePersonForTrack(manifest, row.chosenTrackId).personId === resolvedPersonId,
+    && resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds).personId === resolvedPersonId,
   );
   const acceptedAnchorCount = anchorAnswers.filter((row) =>
     isAcceptedClaimAnswer(row)
     && resolvedPersonId !== null
-    && resolvePersonForTrack(manifest, row.chosenTrackId).personId === resolvedPersonId,
+    && resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds).personId === resolvedPersonId,
   ).length;
   const intervals = acceptedForPerson.flatMap((row) => {
     const resolved = resolvePersonForTrack(manifest, row.chosenTrackId);
@@ -1912,6 +2099,13 @@ export function deriveClaimState(
     }
   }
   const coveragePercent = Math.min(100, Math.round((coveredSeconds / Math.max(manifest.duration, 0.001)) * 10000) / 100);
+  const vouchedFragments = fullSegments
+    ? acceptedForPerson
+      .map((row) => vouchedFragmentForAnswer(manifest, fullSegments, row))
+      .filter((fragment): fragment is ClaimVouchedFragment => fragment !== null)
+    : [];
+  const humanVouchedSeconds = unionFragmentSeconds(manifest, vouchedFragments);
+  const inferredSeconds = Math.max(0, Math.round((coveredSeconds - humanVouchedSeconds) * 100) / 100);
   const unresolvedMoments = anchorAnswers
     .filter((row) => row.answerMethod === "anchor-no" || row.answerMethod === "anchor-skip")
     .map((row) => row.momentSeconds)
@@ -1928,7 +2122,7 @@ export function deriveClaimState(
   );
   const acceptedTrackIds = new Set<string>();
   for (const row of acceptedForPerson) {
-    const personId = resolvePersonForTrack(manifest, row.chosenTrackId).personId;
+    const personId = resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds).personId;
     acceptedTrackIds.add(personId);
     const identity = usableIdentityMap(manifest).find((item) => item.id === personId);
     for (const part of identity?.parts ?? []) acceptedTrackIds.add(part.trackId);
@@ -1954,11 +2148,16 @@ export function deriveClaimState(
     trackedSegments,
     segments.length,
     matchedEvents,
+    humanVouchedSeconds,
+    inferredSeconds,
   );
   const { adminPlayerStats, ...playerStats } = playerMetrics;
   return {
     coverageSeconds: Math.round(coveredSeconds * 100) / 100,
     coveragePercent,
+    humanVouchedSeconds,
+    inferredSeconds,
+    vouchedFragments: canonicalVouchedFragments(vouchedFragments),
     answeredAnchorCount: anchorAnswers.length,
     acceptedAnchorCount,
     unresolvedMoments: Array.from(new Set(unresolvedMoments)).slice(0, 50),
@@ -1983,6 +2182,7 @@ function progressWithDerived(
   recordingId: number,
   derived: DerivedClaimState,
   binding: ClaimIdentityBindingRow | null,
+  takenFragments: Array<ClaimVouchedFragment & { ownedByCurrentUser: boolean }> = [],
 ) {
   const completed = shouldKeepClaimCompleted(
     Boolean(row?.completed),
@@ -2001,6 +2201,10 @@ function progressWithDerived(
     claimedPercent: derived.coveragePercent,
     coverageSeconds: derived.coverageSeconds,
     coveragePercent: derived.coveragePercent,
+    humanVouchedSeconds: derived.humanVouchedSeconds,
+    inferredSeconds: derived.inferredSeconds,
+    vouchedFragments: derived.vouchedFragments,
+    takenFragments,
     answeredAnchorCount: derived.answeredAnchorCount,
     acceptedAnchorCount: derived.acceptedAnchorCount,
     unresolvedMoments: derived.unresolvedMoments,
@@ -2028,11 +2232,127 @@ async function getClaimCorrections(userId: number, recordingId: number) {
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
 }
 
+async function getTakenClaimFragments(recordingId: number, userId: number) {
+  const bindings = await db
+    .select({
+      userId: claimMatchIdentityBindingsTable.userId,
+      state: claimMatchIdentityBindingsTable.state,
+      vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments,
+    })
+    .from(claimMatchIdentityBindingsTable)
+    .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+  return bindings
+    .filter((binding) =>
+      ["pending", "confirmed", "disputed", "needs_resolution"].includes(binding.state)
+      && (binding.vouchedFragments?.length ?? 0) > 0)
+    .flatMap((binding) => canonicalVouchedFragments(binding.vouchedFragments).map((fragment) => ({
+      ...fragment,
+      ownedByCurrentUser: binding.userId === userId,
+    })));
+}
+
 function isBindingUniqueViolation(error: unknown): boolean {
   return typeof error === "object"
     && error !== null
     && "code" in error
     && (error as { code?: string }).code === "23505";
+}
+
+function fragmentIdentityId(basePersonId: string, fragments: ClaimVouchedFragment[]): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify(canonicalVouchedFragments(fragments)))
+    .digest("hex")
+    .slice(0, 16);
+  return `claim:${basePersonId}:${digest}`;
+}
+
+function subtractVouchedFragments(
+  parts: TrackingIdentity["parts"],
+  claimed: ClaimVouchedFragment[],
+): TrackingIdentity["parts"] {
+  const result: TrackingIdentity["parts"] = [];
+  for (const part of parts) {
+    let ranges: Array<{ fromFrame: number; toFrame: number }> = [{
+      fromFrame: part.fromFrame,
+      toFrame: part.toFrame,
+    }];
+    for (const fragment of claimed.filter((item) => item.trackId === part.trackId)) {
+      const next: typeof ranges = [];
+      for (const range of ranges) {
+        if (fragment.toFrame < range.fromFrame || fragment.fromFrame > range.toFrame) {
+          next.push(range);
+          continue;
+        }
+        if (range.fromFrame < fragment.fromFrame) {
+          next.push({ fromFrame: range.fromFrame, toFrame: fragment.fromFrame - 1 });
+        }
+        if (fragment.toFrame < range.toFrame) {
+          next.push({ fromFrame: fragment.toFrame + 1, toFrame: range.toFrame });
+        }
+      }
+      ranges = next;
+    }
+    result.push(...ranges.map((range) => ({ trackId: part.trackId, ...range })));
+  }
+  return result;
+}
+
+async function splitDisjointClaimantIdentity(
+  bundle: typeof recordingTrackingBundlesTable.$inferSelect,
+  owner: ClaimIdentityBindingRow,
+  claimantFragments: ClaimVouchedFragment[],
+): Promise<{ ownerPersonId: string; claimantPersonId: string }> {
+  const ownerFragments = canonicalVouchedFragments(owner.vouchedFragments);
+  const currentFragments = canonicalVouchedFragments(claimantFragments);
+  const basePersonId = owner.personId;
+  const ownerPersonId = fragmentIdentityId(basePersonId, ownerFragments);
+  const claimantPersonId = fragmentIdentityId(basePersonId, currentFragments);
+  const identities = usableIdentityMap(bundle.manifest);
+  const baseIdentity = identities.find((identity) => identity.id === basePersonId);
+  const allClaimed = [...ownerFragments, ...currentFragments];
+  const inferredParts = subtractVouchedFragments(baseIdentity?.parts ?? [], allClaimed);
+  const nextIdentities = identities.filter((identity) => identity.id !== basePersonId);
+  nextIdentities.push(
+    {
+      id: ownerPersonId,
+      name: baseIdentity?.name ?? "Claimed fragment",
+      parts: ownerFragments.map((fragment) => ({
+        trackId: fragment.trackId,
+        fromFrame: fragment.fromFrame,
+        toFrame: fragment.toFrame,
+      })),
+    },
+    {
+      id: claimantPersonId,
+      name: baseIdentity?.name ?? "Claimed fragment",
+      parts: currentFragments.map((fragment) => ({
+        trackId: fragment.trackId,
+        fromFrame: fragment.fromFrame,
+        toFrame: fragment.toFrame,
+      })),
+    },
+  );
+  if (inferredParts.length > 0) {
+    nextIdentities.push({
+      id: `${basePersonId}:inferred`,
+      name: baseIdentity?.name ?? "Inferred remainder",
+      parts: inferredParts,
+    });
+  }
+  await db
+    .update(recordingTrackingBundlesTable)
+    .set({
+      manifest: {
+        ...bundle.manifest,
+        identities: nextIdentities,
+      },
+    })
+    .where(eq(recordingTrackingBundlesTable.id, bundle.id));
+  await db
+    .update(claimMatchIdentityBindingsTable)
+    .set({ personId: ownerPersonId, updatedAt: new Date() })
+    .where(eq(claimMatchIdentityBindingsTable.id, owner.id));
+  return { ownerPersonId, claimantPersonId };
 }
 
 async function identityBindingsTableExists(): Promise<boolean> {
@@ -2097,6 +2417,10 @@ export async function syncIdentityBinding(
     return released ?? existing;
   }
 
+  const vouchedFragments = canonicalVouchedFragments(
+    derived.vouchedFragments.length > 0 ? derived.vouchedFragments : existing?.vouchedFragments,
+  );
+
   const [owner] = await db
     .select()
     .from(claimMatchIdentityBindingsTable)
@@ -2105,20 +2429,38 @@ export async function syncIdentityBinding(
       eq(claimMatchIdentityBindingsTable.personId, resolution.personId),
       eq(claimMatchIdentityBindingsTable.state, "confirmed"),
     ));
+  let resolvedPersonId = resolution.personId;
+  if (
+    owner
+    && owner.userId !== userId
+    && vouchedFragments.length > 0
+    && owner.vouchedFragments.length > 0
+    && !vouchedFragmentsOverlap(owner.vouchedFragments, vouchedFragments)
+  ) {
+    // The database keeps one confirmed binding per (recording, person). When
+    // two people vouch for disjoint pieces of an inferred row, split that row
+    // into fragment identities first. The unvouched remainder is left as a
+    // normal inferred row and remains regroupable.
+    const split = await splitDisjointClaimantIdentity(bundle, owner, vouchedFragments);
+    resolvedPersonId = split.claimantPersonId;
+  }
   const state: ClaimIdentityBindingState = resolution.conflictMoments.length > 0
     ? "pending"
-    : owner && owner.userId !== userId
+    : owner && owner.userId !== userId && resolvedPersonId === resolution.personId
       ? "disputed"
       : "confirmed";
   const values = {
     userId,
     recordingId,
-    personId: resolution.personId,
+    personId: resolvedPersonId,
     trackingBundleId: bundle.id,
     bundleFingerprint: typeof bundle.manifest.provenance?.bundleFingerprint === "string"
       ? bundle.manifest.provenance.bundleFingerprint
       : "legacy",
+    // Kept only for backwards-compatible reads of old rows. It is not used
+    // for protection; vouchedFragments is the lock unit.
     personParts: personPartsForResolution(bundle.manifest, resolution.personId),
+    vouchedFragments,
     resolutionMethod: resolution.resolutionMethod,
     supportCount: resolution.supportCount,
     acceptedAnswerCount: resolution.acceptedAnswerCount,
@@ -2351,6 +2693,56 @@ router.patch("/admin/claim-match/disputes/:id", async (req, res): Promise<void> 
   res.json(await disputeResponse(updated ?? dispute));
 });
 
+router.get("/admin/recordings/:id/claim-match/bindings", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const recordingId = parseId(req.params.id);
+  if (!recordingId) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const bindings = await db
+    .select()
+    .from(claimMatchIdentityBindingsTable)
+    .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+  res.json(bindings.map(toIdentityBinding));
+});
+
+/**
+ * Explicit escape hatch for an administrator. Releasing a binding clears its
+ * fragment locks, allowing the next identity-map save to regroup those source
+ * frames normally. It does not delete the claimant's answers or audit row.
+ */
+router.post("/admin/claim-match/bindings/:id/release", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const bindingId = parseId(req.params.id);
+  if (!bindingId) {
+    res.status(400).json({ error: "Invalid binding id" });
+    return;
+  }
+  const [released] = await db
+    .update(claimMatchIdentityBindingsTable)
+    .set({
+      state: "released",
+      vouchedFragments: [],
+      updatedAt: new Date(),
+    })
+    .where(eq(claimMatchIdentityBindingsTable.id, bindingId))
+    .returning();
+  if (!released) {
+    res.status(404).json({ error: "Identity binding not found" });
+    return;
+  }
+  res.json(toIdentityBinding(released));
+});
+
 router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
@@ -2385,12 +2777,13 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const manifest = await manifestWithBundleFingerprint(row.bundle);
   const segments = await getClaimStateSegments(row.bundle);
   let derived = deriveClaimState(manifest, segments, corrections);
-  if (progress?.completed || derived.completed) {
-    // Keep normal progress reads on the compact summary. Only a completed
-    // claim needs the full boxes for its position heatmap and distance.
+  if (corrections.some(isAcceptedClaimAnswer) || progress?.completed || derived.completed) {
+    // Vouched fragments are exact detection runs, so a claim read must use
+    // full boxes whenever the user has accepted an identity answer.
     derived = deriveClaimState(manifest, segments, corrections, await readBundleSegments(row.bundle.id));
   }
   const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
+  const takenFragments = await getTakenClaimFragments(params.data.id, userId);
   const canAward = completionAllowed(derived, binding);
   const earnedClips = canAward
     ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
@@ -2408,7 +2801,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     // guess and it is almost always wrong on a recording longer than the
     // tracked window.
     manifest: { ...manifestForClient(manifest), videoStartSeconds: manifest.videoStartSeconds ?? 0 },
-    progress: progressWithDerived(progress ?? null, params.data.id, derived, binding),
+    progress: progressWithDerived(progress ?? null, params.data.id, derived, binding, takenFragments),
     corrections: corrections.map(toCorrection),
   }));
 });
@@ -2474,10 +2867,11 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const corrections = await getClaimCorrections(userId, params.data.id);
   const manifest = await manifestWithBundleFingerprint(row.bundle);
   let derived = deriveClaimState(manifest, segments, corrections);
-  if (derived.completed) {
+  if (corrections.some(isAcceptedClaimAnswer) || derived.completed) {
     derived = deriveClaimState(manifest, segments, corrections, await readBundleSegments(row.bundle.id));
   }
   const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived, true);
+  const takenFragments = await getTakenClaimFragments(params.data.id, userId);
   const isCompleted = completionAllowed(derived, binding);
   const earnedClips = isCompleted
     ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
@@ -2546,6 +2940,7 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       ? { ...responseDerived, completed: true }
       : responseDerived,
     binding,
+    takenFragments,
   ));
 });
 
@@ -2613,7 +3008,12 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     })
     .returning();
   const allCorrections = await getClaimCorrections(userId, params.data.id);
-  const derived = deriveClaimState(manifest, segments, allCorrections);
+  const derived = deriveClaimState(
+    manifest,
+    segments,
+    allCorrections,
+    await readBundleSegments(row.bundle.id),
+  );
   const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
   const isCompleted = completionAllowed(derived, binding);
   const [existingProgress] = await db
@@ -2718,7 +3118,12 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
         .then((rows) => rows[0] ?? null),
     ]);
     const manifest = await manifestWithBundleFingerprint(bundleRow.bundle);
-    const derived = deriveClaimState(manifest, segments, corrections);
+    const derived = deriveClaimState(
+      manifest,
+      segments,
+      corrections,
+      await readBundleSegments(bundleRow.bundle.id),
+    );
     const binding = await syncIdentityBinding(userId, correction.recordingId, bundleRow.bundle, derived);
     const isCompleted = completionAllowed(derived, binding);
     const stickyCompleted = shouldKeepClaimCompleted(
@@ -3215,9 +3620,9 @@ router.get("/recordings/:id/claim-match/sprites/:segmentIndex", async (req, res)
  * PUT /admin/recordings/:id/identities
  * The identity board's result: which track pieces are one person. Stored on
  * the manifest (jsonb, no migration); the claim page merges tracks from it at
- * load time, so identity survives segment boundaries. Re-saving the map for an
- * already-claimed bundle compares each binding's piece snapshot and can require
- * affected claimants to review their identity again.
+ * load time, so identity survives segment boundaries. A re-save may regroup
+ * unvouched pieces, but it cannot move a human-vouched source fragment. An
+ * administrator must explicitly release that fragment first.
  */
 router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
@@ -3262,33 +3667,38 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     .select({
       id: claimMatchIdentityBindingsTable.id,
       personId: claimMatchIdentityBindingsTable.personId,
-      personParts: claimMatchIdentityBindingsTable.personParts,
+      vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments,
       state: claimMatchIdentityBindingsTable.state,
     })
     .from(claimMatchIdentityBindingsTable)
     .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
-  const invalidatedBindings = existingBindings.filter((binding) =>
-    binding.state !== "needs_resolution"
-    && identityMapInvalidatesBinding(binding, body.data.identities),
+  const lockedBindings = existingBindings.filter((binding) =>
+    binding.state !== "released"
+    && identityMapMovesVouchedFragment(binding, body.data.identities),
   );
   const preview = req.query.preview === "true" || req.query.preview === "1";
-  const invalidationSummary = {
-    invalidatedClaims: invalidatedBindings.length,
-    requiresConfirmation: invalidatedBindings.length > 0,
+  const lockSummary = {
+    lockedClaims: lockedBindings.length,
+    lockedFragments: lockedBindings.reduce(
+      (count, binding) => count + (binding.vouchedFragments?.length ?? 0),
+      0,
+    ),
+    requiresRelease: lockedBindings.length > 0,
   };
   if (preview) {
     res.json({
       recordingId,
       identities: body.data.identities.length,
       bundleFingerprint: currentFingerprint,
-      ...invalidationSummary,
+      ...lockSummary,
     });
     return;
   }
-  if (invalidatedBindings.length > 0 && body.data.confirmInvalidations !== true) {
+  if (lockedBindings.length > 0) {
     res.status(409).json({
-      error: `This edit will require ${invalidatedBindings.length} existing claim${invalidatedBindings.length === 1 ? "" : "s"} to be reviewed again.`,
-      ...invalidationSummary,
+      error: "This edit moves a human-vouched fragment. Release the affected claim fragment before regrouping it.",
+      ...lockSummary,
+      lockedBindingIds: lockedBindings.map((binding) => binding.id),
     });
     return;
   }
@@ -3306,21 +3716,12 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
       .update(recordingTrackingBundlesTable)
       .set({ manifest, updatedAt: new Date() })
       .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
-    if (invalidatedBindings.length > 0) {
-      await tx
-        .update(claimMatchIdentityBindingsTable)
-        .set({ state: "needs_resolution", updatedAt: new Date() })
-        .where(inArray(
-          claimMatchIdentityBindingsTable.id,
-          invalidatedBindings.map((binding) => binding.id),
-        ));
-    }
   });
   res.json({
     recordingId,
     identities: body.data.identities.length,
     bundleFingerprint: currentFingerprint,
-    ...invalidationSummary,
+    ...lockSummary,
   });
 });
 

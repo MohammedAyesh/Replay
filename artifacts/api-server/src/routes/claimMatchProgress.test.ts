@@ -12,6 +12,9 @@ import {
   parseUploadedBundleDetailed,
   parseZipBundleDetailed,
   summarizeTrackingSegments,
+  identityMapMovesVouchedFragment,
+  vouchedFragmentForAnswer,
+  vouchedFragmentsOverlap,
 } from "./claimMatch";
 
 const manifest = {
@@ -151,6 +154,66 @@ describe("claim match server-derived progress", () => {
 
     expect(knownClaimTrackIds(identityManifest, segments).has("player-1")).toBe(true);
     expect(knownClaimTrackIds(identityManifest, segments).has("mohammed")).toBe(true);
+  });
+
+  it("captures only the contiguous detection run containing an accepted answer", () => {
+    const full = [{
+      ...(segments[0] as object),
+      tracks: [{
+        id: "piece-a",
+        startFrame: 0,
+        endFrame: 20,
+        boxes: [
+          { frame: 0, x: 0, y: 0, w: 10, h: 10 },
+          { frame: 1, x: 0, y: 0, w: 10, h: 10 },
+          { frame: 2, x: 0, y: 0, w: 10, h: 10 },
+          // A real detection gap separates two independently vouched fragments.
+          { frame: 6, x: 0, y: 0, w: 10, h: 10 },
+          { frame: 7, x: 0, y: 0, w: 10, h: 10 },
+        ],
+      }],
+    }];
+    expect(vouchedFragmentForAnswer(manifest, full as never, {
+      momentSeconds: 1,
+      chosenTrackId: "piece-a",
+    })).toEqual({ trackId: "piece-a", fromFrame: 0, toFrame: 2 });
+    expect(vouchedFragmentForAnswer(manifest, full as never, {
+      momentSeconds: 6,
+      chosenTrackId: "piece-a",
+    })).toEqual({ trackId: "piece-a", fromFrame: 6, toFrame: 7 });
+  });
+
+  it("locks vouched fragments while allowing an unvouched remainder to regroup", () => {
+    const binding = {
+      personId: "person-a",
+      vouchedFragments: [{ trackId: "piece-a", fromFrame: 10, toFrame: 20 }],
+    };
+    expect(identityMapMovesVouchedFragment(binding as never, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 20 }],
+    }])).toBe(false);
+    expect(identityMapMovesVouchedFragment(binding as never, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 10, toFrame: 15 }],
+    }])).toBe(true);
+    expect(identityMapMovesVouchedFragment(binding as never, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 10, toFrame: 20 }],
+      }, {
+        id: "person-b",
+        parts: [{ trackId: "piece-a", fromFrame: 21, toFrame: 99 }],
+      }])).toBe(false);
+  });
+
+  it("distinguishes disjoint claimant fragments from a true overlap", () => {
+    expect(vouchedFragmentsOverlap(
+      [{ trackId: "piece-a", fromFrame: 0, toFrame: 10 }],
+      [{ trackId: "piece-a", fromFrame: 11, toFrame: 20 }],
+    )).toBe(false);
+    expect(vouchedFragmentsOverlap(
+      [{ trackId: "piece-a", fromFrame: 0, toFrame: 10 }],
+      [{ trackId: "piece-a", fromFrame: 10, toFrame: 20 }],
+    )).toBe(true);
   });
 
   it("merges overlapping accepted track spans and reaches completion from coverage", () => {

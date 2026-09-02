@@ -42,6 +42,8 @@ export * from './claimPlayerStatsHeatmapCellsItem';
 export * from './claimPlayerStatsHeatmapCoordinateSpace';
 export * from './claimProgress';
 export * from './claimProgressInput';
+export * from './claimTakenFragment';
+export * from './claimVouchedFragment';
 export * from './clip';
 export * from './createAcademyInput';
 export * from './createAdInput';

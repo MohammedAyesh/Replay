@@ -35,6 +35,7 @@ import type {
   BunnyVideo,
   ClaimCorrection,
   ClaimCorrectionInput,
+  ClaimIdentityBinding,
   ClaimMatchClipsResponse,
   ClaimMatchDemoResetResponse,
   ClaimMatchDispute,
@@ -1514,6 +1515,76 @@ export const useResolveClaimMatchDispute = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getResolveClaimMatchDisputeMutationOptions(options));
+    }
+
+export const getReleaseClaimMatchBindingUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/claim-match/bindings/${id}/release`
+}
+
+/**
+ * @summary Release a human-vouched fragment so it can be regrouped
+ */
+export const releaseClaimMatchBinding = async (id: number, options?: RequestInit): Promise<ClaimIdentityBinding> => {
+
+  return customFetch<ClaimIdentityBinding>(getReleaseClaimMatchBindingUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getReleaseClaimMatchBindingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseClaimMatchBinding>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof releaseClaimMatchBinding>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['releaseClaimMatchBinding'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof releaseClaimMatchBinding>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  releaseClaimMatchBinding(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReleaseClaimMatchBindingMutationResult = NonNullable<Awaited<ReturnType<typeof releaseClaimMatchBinding>>>
+
+    export type ReleaseClaimMatchBindingMutationError = ErrorType<void>
+
+    /**
+ * @summary Release a human-vouched fragment so it can be regrouped
+ */
+export const useReleaseClaimMatchBinding = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseClaimMatchBinding>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof releaseClaimMatchBinding>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getReleaseClaimMatchBindingMutationOptions(options));
     }
 
 export const getCreateClaimMatchCorrectionUrl = (id: number,) => {

@@ -277,6 +277,19 @@ export const claimMatchIdentityBindingsTable = pgTable(
       .notNull()
       .$type<string[]>()
       .default([]),
+    /**
+     * Contiguous source-track fragments directly vouched for by accepted
+     * answers. Unlike personParts, this is deliberately not a snapshot of the
+     * whole inferred identity.
+     */
+    vouchedFragments: jsonb("vouched_fragments")
+      .notNull()
+      .$type<Array<{
+        trackId: string;
+        fromFrame: number;
+        toFrame: number;
+      }>>()
+      .default([]),
     resolutionMethod: text("resolution_method").notNull(),
     supportCount: integer("support_count").notNull().default(0),
     acceptedAnswerCount: integer("accepted_answer_count").notNull().default(0),

@@ -407,6 +407,58 @@ paths:
         "404":
           description: Dispute not found
 
+  /admin/claim-match/bindings/{id}/release:
+    post:
+      operationId: releaseClaimMatchBinding
+      tags: [admin]
+      summary: Release a human-vouched fragment so it can be regrouped
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Binding released
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimIdentityBinding"
+        "403":
+          description: Admin required
+        "404":
+          description: Identity binding not found
+
+  /admin/recordings/{id}/claim-match/bindings:
+    get:
+      operationId: listClaimMatchBindings
+      tags: [admin]
+      summary: List claim identity bindings and their human-vouched fragments
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Claim identity bindings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClaimIdentityBinding"
+        "403":
+          description: Admin required
+        "400":
+          description: Invalid recording id
+
   /recordings/{id}/claim-match/corrections:
     post:
       operationId: createClaimMatchCorrection
@@ -2581,7 +2633,7 @@ components:
 
     ClaimProgress:
       type: object
-      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
+      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, humanVouchedSeconds, inferredSeconds, vouchedFragments, takenFragments, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
       properties:
         recordingId:
           type: integer
@@ -2607,6 +2659,23 @@ components:
           minimum: 0
           maximum: 100
           description: coverageSeconds divided by the tracked match duration.
+        humanVouchedSeconds:
+          type: number
+          minimum: 0
+          description: Union of contiguous tracking fragments directly accepted by this claimant.
+        inferredSeconds:
+          type: number
+          minimum: 0
+          description: Attributed tracking time supplied by the identity grouping rather than a direct answer.
+        vouchedFragments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimVouchedFragment"
+        takenFragments:
+          type: array
+          description: Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant.
+          items:
+            $ref: "#/components/schemas/ClaimTakenFragment"
         answeredAnchorCount:
           type: integer
           minimum: 0
@@ -2745,7 +2814,7 @@ components:
 
     ClaimIdentityBinding:
       type: object
-      required: [id, personId, trackingBundleId, bundleFingerprint, resolutionMethod, supportCount, acceptedAnswerCount, supportPercent, state, resolvedAt, updatedAt]
+      required: [id, personId, trackingBundleId, bundleFingerprint, resolutionMethod, supportCount, acceptedAnswerCount, supportPercent, vouchedFragments, state, resolvedAt, updatedAt]
       properties:
         id:
           type: integer
@@ -2768,6 +2837,10 @@ components:
           type: number
           minimum: 0
           maximum: 100
+        vouchedFragments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimVouchedFragment"
         state:
           type: string
           enum: [pending, confirmed, disputed, needs_resolution, released, rejected]
@@ -2777,6 +2850,28 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    ClaimVouchedFragment:
+      type: object
+      required: [trackId, fromFrame, toFrame]
+      properties:
+        trackId:
+          type: string
+        fromFrame:
+          type: integer
+          minimum: 0
+        toFrame:
+          type: integer
+          minimum: 0
+
+    ClaimTakenFragment:
+      allOf:
+        - $ref: "#/components/schemas/ClaimVouchedFragment"
+        - type: object
+          required: [ownedByCurrentUser]
+          properties:
+            ownedByCurrentUser:
+              type: boolean
 
     ClaimedMatchHistoryItem:
       type: object

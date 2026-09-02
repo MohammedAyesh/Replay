@@ -877,6 +877,18 @@ export interface AdminRecordingPlayerMetricsResponse {
   players: AdminPlayerMetrics[];
 }
 
+export interface ClaimVouchedFragment {
+  trackId: string;
+  /** @minimum 0 */
+  fromFrame: number;
+  /** @minimum 0 */
+  toFrame: number;
+}
+
+export type ClaimTakenFragment = ClaimVouchedFragment & {
+  ownedByCurrentUser: boolean;
+};
+
 export type ClaimIdentityBindingResolutionMethod = typeof ClaimIdentityBindingResolutionMethod[keyof typeof ClaimIdentityBindingResolutionMethod];
 
 
@@ -912,6 +924,7 @@ export interface ClaimIdentityBinding {
      * @maximum 100
      */
   supportPercent: number;
+  vouchedFragments: ClaimVouchedFragment[];
   state: ClaimIdentityBindingState;
   /** @nullable */
   resolvedAt: string | null;
@@ -938,6 +951,19 @@ export interface ClaimProgress {
      * @maximum 100
      */
   coveragePercent: number;
+  /**
+     * Union of contiguous tracking fragments directly accepted by this claimant.
+     * @minimum 0
+     */
+  humanVouchedSeconds: number;
+  /**
+     * Attributed tracking time supplied by the identity grouping rather than a direct answer.
+     * @minimum 0
+     */
+  inferredSeconds: number;
+  vouchedFragments: ClaimVouchedFragment[];
+  /** Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant. */
+  takenFragments: ClaimTakenFragment[];
   /** @minimum 0 */
   answeredAnchorCount: number;
   /** @minimum 0 */

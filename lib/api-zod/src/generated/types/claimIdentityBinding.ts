@@ -7,6 +7,7 @@
  */
 import type { ClaimIdentityBindingResolutionMethod } from './claimIdentityBindingResolutionMethod';
 import type { ClaimIdentityBindingState } from './claimIdentityBindingState';
+import type { ClaimVouchedFragment } from './claimVouchedFragment';
 
 export interface ClaimIdentityBinding {
   id: number;
@@ -23,6 +24,7 @@ export interface ClaimIdentityBinding {
      * @maximum 100
      */
   supportPercent: number;
+  vouchedFragments: ClaimVouchedFragment[];
   state: ClaimIdentityBindingState;
   /** @nullable */
   resolvedAt: Date | null;

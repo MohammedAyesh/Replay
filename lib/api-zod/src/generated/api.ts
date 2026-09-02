@@ -309,6 +309,18 @@ export const getClaimMatchResponseProgressCoverageSecondsMin = 0;
 export const getClaimMatchResponseProgressCoveragePercentMin = 0;
 export const getClaimMatchResponseProgressCoveragePercentMax = 100;
 
+export const getClaimMatchResponseProgressHumanVouchedSecondsMin = 0;
+
+export const getClaimMatchResponseProgressInferredSecondsMin = 0;
+
+export const getClaimMatchResponseProgressVouchedFragmentsItemFromFrameMin = 0;
+
+export const getClaimMatchResponseProgressVouchedFragmentsItemToFrameMin = 0;
+
+export const getClaimMatchResponseProgressTakenFragmentsItemOneFromFrameMin = 0;
+
+export const getClaimMatchResponseProgressTakenFragmentsItemOneToFrameMin = 0;
+
 export const getClaimMatchResponseProgressAnsweredAnchorCountMin = 0;
 
 export const getClaimMatchResponseProgressAcceptedAnchorCountMin = 0;
@@ -323,6 +335,10 @@ export const getClaimMatchResponseProgressIdentityBindingOneAcceptedAnswerCountM
 
 export const getClaimMatchResponseProgressIdentityBindingOneSupportPercentMin = 0;
 export const getClaimMatchResponseProgressIdentityBindingOneSupportPercentMax = 100;
+
+export const getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemFromFrameMin = 0;
+
+export const getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemToFrameMin = 0;
 
 export const getClaimMatchResponseProgressPlayerStatsConfirmedSecondsMin = 0;
 
@@ -420,6 +436,20 @@ export const GetClaimMatchResponse = zod.object({
   "claimedPercent": zod.number().describe('Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage.'),
   "coverageSeconds": zod.number().min(getClaimMatchResponseProgressCoverageSecondsMin).describe('Union of the accepted track spans, in tracking seconds.'),
   "coveragePercent": zod.number().min(getClaimMatchResponseProgressCoveragePercentMin).max(getClaimMatchResponseProgressCoveragePercentMax).describe('coverageSeconds divided by the tracked match duration.'),
+  "humanVouchedSeconds": zod.number().min(getClaimMatchResponseProgressHumanVouchedSecondsMin).describe('Union of contiguous tracking fragments directly accepted by this claimant.'),
+  "inferredSeconds": zod.number().min(getClaimMatchResponseProgressInferredSecondsMin).describe('Attributed tracking time supplied by the identity grouping rather than a direct answer.'),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(getClaimMatchResponseProgressVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchResponseProgressVouchedFragmentsItemToFrameMin)
+})),
+  "takenFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(getClaimMatchResponseProgressTakenFragmentsItemOneFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchResponseProgressTakenFragmentsItemOneToFrameMin)
+}).and(zod.object({
+  "ownedByCurrentUser": zod.boolean()
+}))).describe('Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant.'),
   "answeredAnchorCount": zod.number().min(getClaimMatchResponseProgressAnsweredAnchorCountMin),
   "acceptedAnchorCount": zod.number().min(getClaimMatchResponseProgressAcceptedAnchorCountMin),
   "unresolvedMoments": zod.array(zod.number().min(getClaimMatchResponseProgressUnresolvedMomentsItemMin)).describe('Anchor moments answered as not me or skipped.'),
@@ -433,6 +463,11 @@ export const GetClaimMatchResponse = zod.object({
   "supportCount": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneSupportCountMin),
   "acceptedAnswerCount": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneAcceptedAnswerCountMin),
   "supportPercent": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneSupportPercentMin).max(getClaimMatchResponseProgressIdentityBindingOneSupportPercentMax),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemToFrameMin)
+})),
   "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
   "resolvedAt": zod.coerce.date().nullable(),
   "updatedAt": zod.coerce.date()
@@ -547,6 +582,18 @@ export const updateClaimMatchProgressResponseCoverageSecondsMin = 0;
 export const updateClaimMatchProgressResponseCoveragePercentMin = 0;
 export const updateClaimMatchProgressResponseCoveragePercentMax = 100;
 
+export const updateClaimMatchProgressResponseHumanVouchedSecondsMin = 0;
+
+export const updateClaimMatchProgressResponseInferredSecondsMin = 0;
+
+export const updateClaimMatchProgressResponseVouchedFragmentsItemFromFrameMin = 0;
+
+export const updateClaimMatchProgressResponseVouchedFragmentsItemToFrameMin = 0;
+
+export const updateClaimMatchProgressResponseTakenFragmentsItemOneFromFrameMin = 0;
+
+export const updateClaimMatchProgressResponseTakenFragmentsItemOneToFrameMin = 0;
+
 export const updateClaimMatchProgressResponseAnsweredAnchorCountMin = 0;
 
 export const updateClaimMatchProgressResponseAcceptedAnchorCountMin = 0;
@@ -561,6 +608,10 @@ export const updateClaimMatchProgressResponseIdentityBindingOneAcceptedAnswerCou
 
 export const updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMin = 0;
 export const updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMax = 100;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemFromFrameMin = 0;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemToFrameMin = 0;
 
 export const updateClaimMatchProgressResponsePlayerStatsConfirmedSecondsMin = 0;
 
@@ -602,6 +653,20 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "claimedPercent": zod.number().describe('Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage.'),
   "coverageSeconds": zod.number().min(updateClaimMatchProgressResponseCoverageSecondsMin).describe('Union of the accepted track spans, in tracking seconds.'),
   "coveragePercent": zod.number().min(updateClaimMatchProgressResponseCoveragePercentMin).max(updateClaimMatchProgressResponseCoveragePercentMax).describe('coverageSeconds divided by the tracked match duration.'),
+  "humanVouchedSeconds": zod.number().min(updateClaimMatchProgressResponseHumanVouchedSecondsMin).describe('Union of contiguous tracking fragments directly accepted by this claimant.'),
+  "inferredSeconds": zod.number().min(updateClaimMatchProgressResponseInferredSecondsMin).describe('Attributed tracking time supplied by the identity grouping rather than a direct answer.'),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(updateClaimMatchProgressResponseVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(updateClaimMatchProgressResponseVouchedFragmentsItemToFrameMin)
+})),
+  "takenFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(updateClaimMatchProgressResponseTakenFragmentsItemOneFromFrameMin),
+  "toFrame": zod.number().min(updateClaimMatchProgressResponseTakenFragmentsItemOneToFrameMin)
+}).and(zod.object({
+  "ownedByCurrentUser": zod.boolean()
+}))).describe('Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant.'),
   "answeredAnchorCount": zod.number().min(updateClaimMatchProgressResponseAnsweredAnchorCountMin),
   "acceptedAnchorCount": zod.number().min(updateClaimMatchProgressResponseAcceptedAnchorCountMin),
   "unresolvedMoments": zod.array(zod.number().min(updateClaimMatchProgressResponseUnresolvedMomentsItemMin)).describe('Anchor moments answered as not me or skipped.'),
@@ -615,6 +680,11 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "supportCount": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneSupportCountMin),
   "acceptedAnswerCount": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneAcceptedAnswerCountMin),
   "supportPercent": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMin).max(updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMax),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemToFrameMin)
+})),
   "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
   "resolvedAt": zod.coerce.date().nullable(),
   "updatedAt": zod.coerce.date()
@@ -755,6 +825,46 @@ export const ResolveClaimMatchDisputeResponse = zod.object({
   "currentOwnerUserId": zod.number().nullable(),
   "currentOwnerName": zod.string().nullable(),
   "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Release a human-vouched fragment so it can be regrouped
+ */
+export const ReleaseClaimMatchBindingParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const releaseClaimMatchBindingResponseSupportCountMin = 0;
+
+export const releaseClaimMatchBindingResponseAcceptedAnswerCountMin = 0;
+
+export const releaseClaimMatchBindingResponseSupportPercentMin = 0;
+export const releaseClaimMatchBindingResponseSupportPercentMax = 100;
+
+export const releaseClaimMatchBindingResponseVouchedFragmentsItemFromFrameMin = 0;
+
+export const releaseClaimMatchBindingResponseVouchedFragmentsItemToFrameMin = 0;
+
+
+
+export const ReleaseClaimMatchBindingResponse = zod.object({
+  "id": zod.number(),
+  "personId": zod.string(),
+  "trackingBundleId": zod.number(),
+  "bundleFingerprint": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportCount": zod.number().min(releaseClaimMatchBindingResponseSupportCountMin),
+  "acceptedAnswerCount": zod.number().min(releaseClaimMatchBindingResponseAcceptedAnswerCountMin),
+  "supportPercent": zod.number().min(releaseClaimMatchBindingResponseSupportPercentMin).max(releaseClaimMatchBindingResponseSupportPercentMax),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(releaseClaimMatchBindingResponseVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(releaseClaimMatchBindingResponseVouchedFragmentsItemToFrameMin)
+})),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "resolvedAt": zod.coerce.date().nullable(),
   "updatedAt": zod.coerce.date()
 })
 

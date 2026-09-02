@@ -73,6 +73,7 @@ type Candidate = {
   overlap?: boolean;
   distance?: number;
   coasting?: boolean;
+  taken?: boolean;
 };
 
 function segmentAsBundle(
@@ -147,6 +148,29 @@ function detectionAtFrame(track: ClaimTrack, frame: number, tolerance = 2): Clai
     return nearest;
   }, null);
   return box;
+}
+
+function candidateMatchesTakenFragment(
+  candidateId: string,
+  frame: number,
+  rawSegment: TrackingSegment,
+  manifest: ClaimMatchResponse["manifest"],
+  fragment: ClaimMatchResponse["progress"]["takenFragments"][number],
+): boolean {
+  const rawTrack = rawSegment.tracks.find((track) => track.id === candidateId);
+  if (rawTrack) {
+    return rawTrack.id === fragment.trackId
+      && rawTrack.boxes.some((box) => box.frame === frame)
+      && frame >= fragment.fromFrame
+      && frame <= fragment.toFrame;
+  }
+  const identity = manifest.identities?.find((item) => item.id === candidateId);
+  return Boolean(identity?.parts.some((part) =>
+    part.trackId === fragment.trackId
+    && frame >= part.fromFrame
+    && frame <= part.toFrame
+    && rawSegment.tracks.some((track) =>
+      track.id === part.trackId && track.boxes.some((box) => box.frame === frame))));
 }
 
 function boxCenter(box: ClaimBox) {
@@ -644,7 +668,7 @@ export default function ClaimMatchPage() {
   }, [bundle, currentAnchor, seekTracking, stage]);
 
   const candidates = useMemo<Candidate[]>(() => {
-    if (!bundle) return [];
+    if (!bundle || !activeSegment || !manifest) return [];
     const anchor = { x: bundle.width / 2, y: bundle.height / 2 };
     const ranked = bundle.tracks
       .map((track) => {
@@ -672,8 +696,11 @@ export default function ClaimMatchPage() {
       .map((candidate, index, all) => ({
         ...candidate,
         overlap: all.some((other) => other.id !== candidate.id && boxesOverlap(candidate.box, other.box)),
+        taken: serverProgress?.takenFragments.some((fragment) =>
+          !fragment.ownedByCurrentUser
+          && candidateMatchesTakenFragment(candidate.id, candidateFrame, activeSegment, manifest, fragment)) ?? false,
       }));
-  }, [bundle, candidateFrame]);
+  }, [activeSegment, bundle, candidateFrame, manifest, serverProgress?.takenFragments]);
 
   useEffect(() => {
     if (!response || restoredRecordingRef.current === activeRecordingId) return;
@@ -902,6 +929,10 @@ export default function ClaimMatchPage() {
 
   const onCorrection = useCallback((chosen: Candidate) => {
     if (!bundle || !anchorMode) return;
+    if (chosen.taken) {
+      setNotice("That fragment is already vouched for by another claimant");
+      return;
+    }
     recordAnchorAnswer("yes", chosen.id);
   }, [anchorMode, bundle, recordAnchorAnswer]);
 
@@ -1164,6 +1195,7 @@ export default function ClaimMatchPage() {
           <div><span>Match coverage</span><b>{Math.round(progressValue)}%</b></div>
           <small>
             {serverProgress?.coverageSeconds?.toFixed(1) ?? "0.0"} attributed seconds
+            {serverProgress ? ` · ${serverProgress.humanVouchedSeconds.toFixed(1)} vouched` : ""}
             {serverProgress?.answeredAnchorCount ? ` · ${serverProgress.answeredAnchorCount} moments answered` : ""}
             {serverProgress?.unresolvedMoments?.length ? ` · ${serverProgress.unresolvedMoments.length} unresolved` : ""}
           </small>
@@ -1225,8 +1257,8 @@ export default function ClaimMatchPage() {
                 )}
                 <div className="candidate-list">
                   {currentAnchor && candidates.map((candidate, index) => (
-                    <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-candidate-${index + 1}`} onClick={() => selectCandidate(candidate)}>
-                      <span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>Player {index + 1}</b><small>{candidate.label}</small></span><ChevronRight size={16} />
+                    <button type="button" key={candidate.id} className={`candidate-row ${candidate.taken ? "is-taken" : ""}`} data-testid={`button-candidate-${index + 1}`} onClick={() => selectCandidate(candidate)} aria-disabled={candidate.taken}>
+                      <span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>Player {index + 1}{candidate.taken ? " · Already vouched" : ""}</b><small>{candidate.taken ? "Unavailable at this time · choose an untouched fragment" : candidate.label}</small></span>{candidate.taken ? <LockKeyhole size={16} /> : <ChevronRight size={16} />}
                     </button>
                   ))}
                 </div>
@@ -1242,13 +1274,18 @@ export default function ClaimMatchPage() {
           <div className="claim-panel claim-panel-complete" data-testid="panel-done">
             <div className="complete-graphic"><span className="complete-ring"><Check size={24} /></span><span className="complete-spark spark-a" /><span className="complete-spark spark-b" /><span className="complete-spark spark-c" /></div>
             <h2>Done. That’s all yours.</h2>
-             <p>You confirmed <b>{Math.round(progressValue)}%</b> coverage of this match. The percentage reflects attributed player time, not how many screens you visited.</p>
+             <p>You reached <b>{Math.round(progressValue)}%</b> attributed coverage of this match. Directly vouched time and identity-grouped time are shown separately below.</p>
              {playerStats && (
                 <div className="claim-player-summary" data-testid="claim-player-stats">
                   <div className="claim-summary-metric">
-                    <span><Clock3 size={13} /> Minutes played</span>
-                    <b>{playerStats.minutesPlayed.toFixed(1)}</b>
-                    <small>confirmed player time</small>
+                    <span><Check size={13} /> Human-vouched time</span>
+                    <b>{((serverProgress?.humanVouchedSeconds ?? 0) / 60).toFixed(1)} min</b>
+                    <small>directly accepted contiguous fragments</small>
+                  </div>
+                  <div className="claim-summary-metric">
+                    <span><Sparkles size={13} /> Inferred time</span>
+                    <b>{((serverProgress?.inferredSeconds ?? 0) / 60).toFixed(1)} min</b>
+                    <small>identity grouping, not direct confirmation</small>
                   </div>
                   <div className="claim-summary-metric">
                     <span><MapPinned size={13} /> Total distance</span>
@@ -1258,7 +1295,7 @@ export default function ClaimMatchPage() {
                    <div className="claim-summary-metric">
                      <span><Clock3 size={13} /> Average speed</span>
                      <b>{playerStats.averageSpeedMetresPerSecond === null ? "Unavailable" : `${playerStats.averageSpeedMetresPerSecond.toFixed(2)} m/s`}</b>
-                     <small>{playerStats.averageSpeedMetresPerSecond === null ? "No pitch model in this recording" : "distance ÷ confirmed time present"}</small>
+                     <small>{playerStats.averageSpeedMetresPerSecond === null ? "No pitch model in this recording" : "distance ÷ attributed time present"}</small>
                    </div>
                   <div className="claim-heatmap-card">
                     <div className="claim-heatmap-heading">
