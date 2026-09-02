@@ -469,6 +469,8 @@ export const GetClaimMatchResponse = zod.object({
   "toFrame": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemToFrameMin)
 })),
   "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "claimantName": zod.string().optional().describe('Claimant name. Returned only by the admin binding-list endpoint.'),
+  "claimedAt": zod.coerce.date().optional().describe('When the claimant created this binding. Returned only by the admin binding-list endpoint.'),
   "resolvedAt": zod.coerce.date().nullable(),
   "updatedAt": zod.coerce.date()
 }),zod.null()]),
@@ -686,6 +688,8 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "toFrame": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemToFrameMin)
 })),
   "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "claimantName": zod.string().optional().describe('Claimant name. Returned only by the admin binding-list endpoint.'),
+  "claimedAt": zod.coerce.date().optional().describe('When the claimant created this binding. Returned only by the admin binding-list endpoint.'),
   "resolvedAt": zod.coerce.date().nullable(),
   "updatedAt": zod.coerce.date()
 }),zod.null()]),
@@ -864,9 +868,54 @@ export const ReleaseClaimMatchBindingResponse = zod.object({
   "toFrame": zod.number().min(releaseClaimMatchBindingResponseVouchedFragmentsItemToFrameMin)
 })),
   "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "claimantName": zod.string().optional().describe('Claimant name. Returned only by the admin binding-list endpoint.'),
+  "claimedAt": zod.coerce.date().optional().describe('When the claimant created this binding. Returned only by the admin binding-list endpoint.'),
   "resolvedAt": zod.coerce.date().nullable(),
   "updatedAt": zod.coerce.date()
 })
+
+
+/**
+ * @summary List claim identity bindings and their human-vouched fragments
+ */
+export const ListClaimMatchBindingsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const listClaimMatchBindingsResponseSupportCountMin = 0;
+
+export const listClaimMatchBindingsResponseAcceptedAnswerCountMin = 0;
+
+export const listClaimMatchBindingsResponseSupportPercentMin = 0;
+export const listClaimMatchBindingsResponseSupportPercentMax = 100;
+
+export const listClaimMatchBindingsResponseVouchedFragmentsItemFromFrameMin = 0;
+
+export const listClaimMatchBindingsResponseVouchedFragmentsItemToFrameMin = 0;
+
+
+
+export const ListClaimMatchBindingsResponseItem = zod.object({
+  "id": zod.number(),
+  "personId": zod.string(),
+  "trackingBundleId": zod.number(),
+  "bundleFingerprint": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportCount": zod.number().min(listClaimMatchBindingsResponseSupportCountMin),
+  "acceptedAnswerCount": zod.number().min(listClaimMatchBindingsResponseAcceptedAnswerCountMin),
+  "supportPercent": zod.number().min(listClaimMatchBindingsResponseSupportPercentMin).max(listClaimMatchBindingsResponseSupportPercentMax),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(listClaimMatchBindingsResponseVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(listClaimMatchBindingsResponseVouchedFragmentsItemToFrameMin)
+})),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "claimantName": zod.string().optional().describe('Claimant name. Returned only by the admin binding-list endpoint.'),
+  "claimedAt": zod.coerce.date().optional().describe('When the claimant created this binding. Returned only by the admin binding-list endpoint.'),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListClaimMatchBindingsResponse = zod.array(ListClaimMatchBindingsResponseItem)
 
 
 /**

@@ -656,7 +656,21 @@ describe("Claim Match tracking bundle replacement", () => {
       { ...bundle, manifest },
       deriveClaimState(manifest, bindingSegments, [bindingCorrection(1, claimantAId)] as never, fullSegments),
     );
+    mockedGetLocalUserId.mockResolvedValue(claimantAId);
+    const forbiddenList = await request(app).get(`/api/admin/recordings/${recordingId}/claim-match/bindings`);
+    expect(forbiddenList.status).toBe(403);
+
     mockedGetLocalUserId.mockResolvedValue(adminId);
+    const listed = await request(app).get(`/api/admin/recordings/${recordingId}/claim-match/bindings`);
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: binding!.id,
+        claimantName: expect.stringContaining("Claimant A"),
+        claimedAt: expect.any(String),
+      }),
+    ]));
+
     const response = await request(app).post(`/api/admin/claim-match/bindings/${binding!.id}/release`);
     expect(response.status).toBe(200);
     expect(response.body.state).toBe("released");

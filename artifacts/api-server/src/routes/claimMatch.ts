@@ -2705,10 +2705,18 @@ router.get("/admin/recordings/:id/claim-match/bindings", async (req, res): Promi
     return;
   }
   const bindings = await db
-    .select()
+    .select({
+      binding: claimMatchIdentityBindingsTable,
+      claimantName: usersTable.name,
+    })
     .from(claimMatchIdentityBindingsTable)
+    .innerJoin(usersTable, eq(usersTable.id, claimMatchIdentityBindingsTable.userId))
     .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
-  res.json(bindings.map(toIdentityBinding));
+  res.json(bindings.map(({ binding, claimantName }) => ({
+    ...toIdentityBinding(binding),
+    claimantName: claimantName ?? `User ${binding.userId}`,
+    claimedAt: binding.createdAt.toISOString(),
+  })));
 });
 
 /**

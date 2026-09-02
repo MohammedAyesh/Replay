@@ -1587,6 +1587,83 @@ export const useReleaseClaimMatchBinding = <TError = ErrorType<void>,
       return useMutation(getReleaseClaimMatchBindingMutationOptions(options));
     }
 
+export const getListClaimMatchBindingsUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/claim-match/bindings`
+}
+
+/**
+ * @summary List claim identity bindings and their human-vouched fragments
+ */
+export const listClaimMatchBindings = async (id: number, options?: RequestInit): Promise<ClaimIdentityBinding[]> => {
+
+  return customFetch<ClaimIdentityBinding[]>(getListClaimMatchBindingsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListClaimMatchBindingsQueryKey = (id: number,) => {
+    return [
+    `/api/admin/recordings/${id}/claim-match/bindings`
+    ] as const;
+    }
+
+
+export const getListClaimMatchBindingsQueryOptions = <TData = Awaited<ReturnType<typeof listClaimMatchBindings>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchBindings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListClaimMatchBindingsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listClaimMatchBindings>>> = ({ signal }) => listClaimMatchBindings(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchBindings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListClaimMatchBindingsQueryResult = NonNullable<Awaited<ReturnType<typeof listClaimMatchBindings>>>
+export type ListClaimMatchBindingsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List claim identity bindings and their human-vouched fragments
+ */
+
+export function useListClaimMatchBindings<TData = Awaited<ReturnType<typeof listClaimMatchBindings>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchBindings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListClaimMatchBindingsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getCreateClaimMatchCorrectionUrl = (id: number,) => {
 
 

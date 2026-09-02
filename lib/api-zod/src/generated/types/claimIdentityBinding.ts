@@ -26,6 +26,10 @@ export interface ClaimIdentityBinding {
   supportPercent: number;
   vouchedFragments: ClaimVouchedFragment[];
   state: ClaimIdentityBindingState;
+  /** Claimant name. Returned only by the admin binding-list endpoint. */
+  claimantName?: string;
+  /** When the claimant created this binding. Returned only by the admin binding-list endpoint. */
+  claimedAt?: Date;
   /** @nullable */
   resolvedAt: Date | null;
   updatedAt: Date;

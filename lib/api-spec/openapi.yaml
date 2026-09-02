@@ -2844,6 +2844,13 @@ components:
         state:
           type: string
           enum: [pending, confirmed, disputed, needs_resolution, released, rejected]
+        claimantName:
+          type: string
+          description: Claimant name. Returned only by the admin binding-list endpoint.
+        claimedAt:
+          type: string
+          format: date-time
+          description: When the claimant created this binding. Returned only by the admin binding-list endpoint.
         resolvedAt:
           type: ["string", "null"]
           format: date-time
