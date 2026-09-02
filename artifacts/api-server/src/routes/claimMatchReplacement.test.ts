@@ -9,6 +9,7 @@ import {
   recordingsTable,
   recordingTrackingBundlesTable,
   recordingTrackingSegmentsTable,
+  claimMatchIdentityBindingsTable,
   usersTable,
   type TrackingManifest,
 } from "@workspace/db";
@@ -29,6 +30,9 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import claimMatchRouter, {
+  completionAllowed,
+  deriveClaimState,
+  syncIdentityBinding,
   storeUploadBundle,
   type UploadBundle,
 } from "./claimMatch";
@@ -44,6 +48,51 @@ let app: Express;
 let adminId: number;
 let recordingId: number;
 let fieldId: number;
+let claimantAId: number;
+let claimantBId: number;
+
+const bindingManifest = {
+  version: 1,
+  label: "binding test",
+  width: 100,
+  height: 100,
+  frameRate: 1,
+  frameCount: 100,
+  duration: 100,
+  matchOffset: 0,
+  segmentCount: 1,
+  segments: [{ index: 0, name: "only", startFrame: 0, endFrame: 99, startSeconds: 0, endSeconds: 100 }],
+} as never;
+
+const bindingSegments = [{
+  segmentIndex: 0,
+  name: "only",
+  startFrame: 0,
+  endFrame: 99,
+  startSeconds: 0,
+  endSeconds: 100,
+  tracks: [{ id: "player-one", startFrame: 0, endFrame: 99, boxes: [] }],
+  crossings: [],
+  inPlaySpans: [],
+  events: [],
+}] as never;
+
+function bindingCorrection(id: number, userId: number) {
+  return {
+    id,
+    userId,
+    recordingId,
+    clientId: `binding-${id}`,
+    momentSeconds: id * 10,
+    rejectedTrackId: null,
+    chosenTrackId: "player-one",
+    answerMethod: "anchor-yes",
+    questionCount: 1,
+    undone: false,
+    createdAt: new Date(1_000 + id),
+    updatedAt: new Date(1_000 + id),
+  };
+}
 
 function makeUpload(): UploadBundle {
   const segment = (index: number): UploadBundle["segments"][number] => ({
@@ -142,6 +191,28 @@ beforeAll(async () => {
     })
     .returning({ id: usersTable.id });
   adminId = admin.id;
+  const [claimantA] = await db
+    .insert(usersTable)
+    .values({
+      name: `Claimant A ${TEST_TAG}`,
+      email: `claimant-a-${TEST_TAG}@test.local`,
+      isGuest: false,
+      profileComplete: false,
+      isAdmin: false,
+    })
+    .returning({ id: usersTable.id });
+  claimantAId = claimantA.id;
+  const [claimantB] = await db
+    .insert(usersTable)
+    .values({
+      name: `Claimant B ${TEST_TAG}`,
+      email: `claimant-b-${TEST_TAG}@test.local`,
+      isGuest: false,
+      profileComplete: false,
+      isAdmin: false,
+    })
+    .returning({ id: usersTable.id });
+  claimantBId = claimantB.id;
   const [recording] = await db
     .insert(recordingsTable)
     .values({
@@ -177,6 +248,8 @@ afterAll(async () => {
   await db.delete(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
   await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
   await db.delete(usersTable).where(eq(usersTable.id, adminId));
+  await db.delete(usersTable).where(eq(usersTable.id, claimantAId));
+  await db.delete(usersTable).where(eq(usersTable.id, claimantBId));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
 });
 
@@ -289,6 +362,80 @@ describe("Claim Match tracking bundle replacement", () => {
     expect(mockedDeleteClaimSegment).toHaveBeenCalledWith("/objects/old-sprites-0");
     expect(mockedDeleteClaimSegment).not.toHaveBeenCalledWith("/objects/new-segment-0");
     expect((await currentManifest()).segments[0].objectPath).toBe("/objects/new-segment-0");
+  });
+
+  it("keeps one owner, disputes a second claimant, and transfers ownership atomically", async () => {
+    const [bundle] = await db
+      .select()
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const firstAnswers = [
+      bindingCorrection(1, claimantAId),
+      bindingCorrection(2, claimantAId),
+      bindingCorrection(3, claimantAId),
+    ];
+    const derived = deriveClaimState(bindingManifest, bindingSegments, firstAnswers as never);
+
+    const first = await syncIdentityBinding(claimantAId, recordingId, bundle, derived);
+    expect(first?.state).toBe("confirmed");
+    const second = await syncIdentityBinding(
+      claimantBId,
+      recordingId,
+      bundle,
+      deriveClaimState(bindingManifest, bindingSegments, [
+        bindingCorrection(4, claimantBId),
+        bindingCorrection(5, claimantBId),
+        bindingCorrection(6, claimantBId),
+      ] as never),
+    );
+    expect(second?.state).toBe("disputed");
+    expect(completionAllowed(derived, second ?? null)).toBe(false);
+
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    const transferred = await request(app)
+      .patch(`/api/admin/claim-match/disputes/${second!.id}`)
+      .send({ winnerUserId: claimantBId });
+    expect(transferred.status).toBe(200);
+
+    const bindings = await db
+      .select({
+        userId: claimMatchIdentityBindingsTable.userId,
+        state: claimMatchIdentityBindingsTable.state,
+      })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    expect(bindings).toEqual(expect.arrayContaining([
+      { userId: claimantAId, state: "released" },
+      { userId: claimantBId, state: "confirmed" },
+    ]));
+    expect(bindings.filter((row) => row.state === "confirmed")).toHaveLength(1);
+  });
+
+  it("turns simultaneous claims for one person into one confirmation and one dispute", async () => {
+    await db
+      .delete(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    const [bundle] = await db
+      .select()
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const results = await Promise.all([
+      syncIdentityBinding(claimantAId, recordingId, bundle, deriveClaimState(
+        bindingManifest,
+        bindingSegments,
+        [bindingCorrection(7, claimantAId), bindingCorrection(8, claimantAId), bindingCorrection(9, claimantAId)] as never,
+      )),
+      syncIdentityBinding(claimantBId, recordingId, bundle, deriveClaimState(
+        bindingManifest,
+        bindingSegments,
+        [bindingCorrection(10, claimantBId), bindingCorrection(11, claimantBId), bindingCorrection(12, claimantBId)] as never,
+      )),
+    ]);
+    expect(results.map((result) => result?.state).sort()).toEqual(["confirmed", "disputed"]);
+    expect(await db
+      .select()
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId))).toHaveLength(2);
   });
 
   it("returns a useful ZIP constraint error without exposing storage internals", async () => {

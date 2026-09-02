@@ -1464,7 +1464,10 @@ export function resolveClaimIdentity(
     personId,
     resolutionMethod: support.resolutionMethod,
     supportCount: support.count,
-    acceptedAnswerCount: usableAnswers.length,
+    // This count describes the resolved person, not every accepted answer
+    // that happened to be submitted while resolving the claim. Conflicting
+    // answers remain visible through conflictMoments and supportPercent.
+    acceptedAnswerCount: support.count,
     supportPercent: Math.round((support.count / usableAnswers.length) * 10000) / 100,
     conflictMoments: [...new Set(conflictMoments)].slice(0, 50),
   };
@@ -1954,9 +1957,11 @@ function progressWithDerived(
   derived: DerivedClaimState,
   binding: ClaimIdentityBindingRow | null,
 ) {
-  const bindingAllowsCompletion = binding?.state === "confirmed";
-  const completed = derived.conflictMoments.length === 0
-    && (bindingAllowsCompletion ? Boolean(row?.completed) || derived.completed : false);
+  const completed = shouldKeepClaimCompleted(
+    Boolean(row?.completed),
+    derived.conflictMoments.length === 0 && derived.completed,
+    binding?.state ?? null,
+  );
   const storedClipsById = new Map((row?.earnedClips ?? []).map((clip) => [clip.id, clip]));
   const earnedClips = derived.earnedClips.map((clip) => ({
     ...clip,
@@ -1978,7 +1983,9 @@ function progressWithDerived(
     correctionCount: derived.correctionCount,
     completed,
     earnedClips,
-    completionReason: completed ? "coverage-threshold" : derived.completionReason,
+    completionReason: derived.conflictMoments.length > 0
+      ? "identity-conflicts"
+      : completed ? "coverage-threshold" : derived.completionReason,
     playerStats: derived.playerStats,
   };
 }
@@ -2010,11 +2017,22 @@ async function identityBindingsTableExists(): Promise<boolean> {
   }
 }
 
-function completionAllowed(
+export function completionAllowed(
   derived: DerivedClaimState,
   binding: ClaimIdentityBindingRow | null,
 ): boolean {
   return derived.completed && binding?.state === "confirmed";
+}
+
+export function shouldKeepClaimCompleted(
+  existingCompleted: boolean,
+  derivedCompleted: boolean,
+  bindingState: string | null,
+): boolean {
+  if (existingCompleted) {
+    return bindingState === "confirmed" || bindingState === "pending";
+  }
+  return derivedCompleted && bindingState === "confirmed";
 }
 
 /**
@@ -2022,7 +2040,7 @@ function completionAllowed(
  * intentionally called on reads as well as writes: an admin transfer and a
  * bundle replacement must be reflected without waiting for another answer.
  */
-async function syncIdentityBinding(
+export async function syncIdentityBinding(
   userId: number,
   recordingId: number,
   bundle: typeof recordingTrackingBundlesTable.$inferSelect,
@@ -2235,7 +2253,7 @@ router.get("/admin/claim-match/disputes", async (req, res): Promise<void> => {
   const rows = await db
     .select()
     .from(claimMatchIdentityBindingsTable)
-    .where(eq(claimMatchIdentityBindingsTable.state, "disputed"))
+    .where(inArray(claimMatchIdentityBindingsTable.state, ["disputed", "pending"]))
     .orderBy(desc(claimMatchIdentityBindingsTable.createdAt));
   res.json(await Promise.all(rows.map(disputeResponse)));
 });
@@ -2438,9 +2456,23 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const responseDerived = {
     ...derived,
     completed: isCompleted,
-    completionReason: isCompleted ? "coverage-threshold" : derived.completionReason,
+    completionReason: derived.conflictMoments.length > 0
+      ? "identity-conflicts"
+      : isCompleted ? "coverage-threshold" : derived.completionReason,
     earnedClips,
   };
+  const [existingProgress] = await db
+    .select({ completed: claimMatchProgressTable.completed })
+    .from(claimMatchProgressTable)
+    .where(and(
+      eq(claimMatchProgressTable.userId, userId),
+      eq(claimMatchProgressTable.recordingId, params.data.id),
+    ));
+  const stickyCompleted = shouldKeepClaimCompleted(
+    existingProgress?.completed ?? false,
+    isCompleted,
+    binding?.state ?? null,
+  );
   const [saved] = await db
     .insert(claimMatchProgressTable)
     .values({
@@ -2453,7 +2485,7 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       claimedPercent: derived.coveragePercent,
       clipsUnlocked: earnedClips.length,
       correctionCount: derived.correctionCount,
-      completed: isCompleted,
+      completed: stickyCompleted,
       earnedClips,
     })
     .onConflictDoUpdate({
@@ -2465,8 +2497,8 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
         claimedPercent: derived.coveragePercent,
          clipsUnlocked: earnedClips.length,
         correctionCount: derived.correctionCount,
-         completed: sql`CASE WHEN ${derived.conflictMoments.length === 0 && binding?.state === "confirmed"} THEN ${claimMatchProgressTable.completed} OR ${isCompleted} ELSE ${isCompleted} END`,
-         stage: sql`CASE WHEN ${derived.conflictMoments.length === 0 && binding?.state === "confirmed"} AND (${claimMatchProgressTable.completed} OR ${isCompleted}) THEN 'done' ELSE ${nextStage} END`,
+         completed: sql`${claimMatchProgressTable.completed} OR ${stickyCompleted}`,
+         stage: sql`CASE WHEN (${claimMatchProgressTable.completed} OR ${stickyCompleted}) THEN 'done' ELSE ${nextStage} END`,
         earnedClips,
         updatedAt: new Date(),
       },
@@ -2477,7 +2509,7 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     saved,
     params.data.id,
     responseCompleted && !responseDerived.completed
-      ? { ...responseDerived, completed: true, completionReason: "coverage-threshold" }
+      ? { ...responseDerived, completed: true }
       : responseDerived,
     binding,
   ));
@@ -2550,10 +2582,22 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
   const derived = deriveClaimState(manifest, segments, allCorrections);
   const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
   const isCompleted = completionAllowed(derived, binding);
+  const [existingProgress] = await db
+    .select({ completed: claimMatchProgressTable.completed })
+    .from(claimMatchProgressTable)
+    .where(and(
+      eq(claimMatchProgressTable.userId, userId),
+      eq(claimMatchProgressTable.recordingId, params.data.id),
+    ));
+  const stickyCompleted = shouldKeepClaimCompleted(
+    existingProgress?.completed ?? false,
+    isCompleted,
+    binding?.state ?? null,
+  );
   const earnedClips = isCompleted
     ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
     : [];
-  const nextStage = isCompleted
+  const nextStage = stickyCompleted
     ? "done"
     : body.data.answerMethod.startsWith("anchor-")
       ? "picker"
@@ -2582,8 +2626,8 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
         claimedPercent: derived.coveragePercent,
          clipsUnlocked: earnedClips.length,
         correctionCount: derived.correctionCount,
-         completed: isCompleted,
-         stage: nextStage,
+          completed: sql`${claimMatchProgressTable.completed} OR ${stickyCompleted}`,
+          stage: sql`CASE WHEN (${claimMatchProgressTable.completed} OR ${stickyCompleted}) THEN 'done' ELSE ${nextStage} END`,
         earnedClips,
         updatedAt: new Date(),
       },
@@ -2643,6 +2687,11 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
     const derived = deriveClaimState(manifest, segments, corrections);
     const binding = await syncIdentityBinding(userId, correction.recordingId, bundleRow.bundle, derived);
     const isCompleted = completionAllowed(derived, binding);
+    const stickyCompleted = shouldKeepClaimCompleted(
+      existingProgress?.completed ?? false,
+      isCompleted,
+      binding?.state ?? null,
+    );
     const storedClipsById = new Map((existingProgress?.earnedClips ?? []).map((clip) => [clip.id, clip]));
     const earnedClips = isCompleted
       ? await materializeClaimMoments(
@@ -2663,9 +2712,9 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
         claimedPercent: derived.coveragePercent,
         clipsUnlocked: earnedClips.length,
         correctionCount: derived.correctionCount,
-        completed: isCompleted,
+        completed: stickyCompleted,
         earnedClips,
-        stage: isCompleted ? "done" : "picker",
+        stage: stickyCompleted ? "done" : "picker",
         updatedAt: new Date(),
       })
       .where(and(
@@ -2901,6 +2950,19 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       } else {
         logger.warn({ recordingId }, "Claim identity binding table is not migrated yet");
       }
+      // Track IDs are bundle-relative. A completed progress row from the
+      // previous bundle cannot be carried across replacement, otherwise the
+      // sticky-completion rule would bypass fresh identity review.
+      await tx
+        .update(claimMatchProgressTable)
+        .set({
+          completed: false,
+          stage: "picker",
+          clipsUnlocked: 0,
+          earnedClips: [],
+          updatedAt: new Date(),
+        })
+        .where(eq(claimMatchProgressTable.recordingId, recordingId));
       return [bundle];
     });
     if (previousBundle?.manifest.pitchModel || manifest.pitchModel) {

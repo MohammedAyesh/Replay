@@ -4,6 +4,7 @@ import {
   completionSurvivesConcurrentProgress,
   deriveClaimState,
   resolveClaimIdentity,
+  shouldKeepClaimCompleted,
   isAcceptedClaimAnswer,
   knownClaimTrackIds,
   parseUploadedBundleDetailed,
@@ -195,6 +196,32 @@ describe("claim match server-derived progress", () => {
     expect(result.completionReason).toBe("identity-conflicts");
   });
 
+  it("blocks completion for an identity conflict even after the winning person clears every threshold", () => {
+    const longManifest = {
+      version: 1, label: "long test", width: 1920, height: 1080, frameRate: 1,
+      frameCount: 180, duration: 180, matchOffset: 0, segmentCount: 2,
+      segments: [
+        { index: 0, name: "first", startFrame: 0, endFrame: 89, startSeconds: 0, endSeconds: 90 },
+        { index: 1, name: "second", startFrame: 90, endFrame: 179, startSeconds: 90, endSeconds: 180 },
+      ],
+    } as never;
+    const longSegments = [
+      { segmentIndex: 0, name: "first", startFrame: 0, endFrame: 89, startSeconds: 0, endSeconds: 90, tracks: [{ id: "winner", startFrame: 0, endFrame: 89, boxes: [] }, { id: "other", startFrame: 0, endFrame: 89, boxes: [] }], crossings: [], inPlaySpans: [], events: [] },
+      { segmentIndex: 1, name: "second", startFrame: 90, endFrame: 179, startSeconds: 90, endSeconds: 180, tracks: [{ id: "winner", startFrame: 90, endFrame: 179, boxes: [] }, { id: "other", startFrame: 90, endFrame: 179, boxes: [] }], crossings: [], inPlaySpans: [], events: [] },
+    ];
+    const result = deriveClaimState(longManifest, longSegments as never, [
+      correction("isolated-1", "anchor-yes", "winner", 10),
+      correction("isolated-2", "anchor-yes", "winner", 50),
+      correction("isolated-3", "anchor-yes", "winner", 100),
+      correction("isolated-4", "anchor-yes", "other", 150),
+    ] as never);
+    expect(result.coveragePercent).toBe(100);
+    expect(result.acceptedAnchorCount).toBe(3);
+    expect(result.identityResolution?.acceptedAnswerCount).toBe(3);
+    expect(result.completed).toBe(false);
+    expect(result.completionReason).toBe("identity-conflicts");
+  });
+
   it("resolves track parts to a valid identity map", () => {
     const identityManifest = {
       version: 1,
@@ -222,6 +249,21 @@ describe("claim match server-derived progress", () => {
       resolutionMethod: "identity-map",
       supportCount: 2,
       acceptedAnswerCount: 2,
+    });
+  });
+
+  it("ignores an identity map whose fingerprint does not match the bundle", () => {
+    const staleManifest = {
+      version: 1, label: "stale map", width: 1920, height: 1080, frameRate: 1,
+      frameCount: 100, duration: 100, matchOffset: 0, segmentCount: 2, segments: [],
+      provenance: { bundleFingerprint: "bundle-new", identityMapBundleFingerprint: "bundle-old" },
+      identities: [{ id: "person-a", parts: [{ trackId: "player-1", fromFrame: 0, toFrame: 99 }] }],
+    } as never;
+    expect(resolveClaimIdentity(staleManifest, segments, [
+      correction("stale-map", "anchor-yes", "player-1", 10),
+    ] as never)).toMatchObject({
+      personId: "player-1",
+      resolutionMethod: "track-fallback",
     });
   });
 
@@ -258,6 +300,33 @@ describe("claim match server-derived progress", () => {
     expect(result.unresolvedMoments).toEqual([]);
     expect(result.acceptedAnchorCount).toBe(1);
     expect(result.coverageSeconds).toBe(100);
+  });
+
+  it("keeps a completed claim completed while surfacing a later identity conflict", () => {
+    const conflictSegments = (segments as unknown as Array<{
+      startFrame: number;
+      endFrame: number;
+      tracks: Array<Record<string, unknown>>;
+    }>).map((segment) => ({
+      ...segment,
+      tracks: [
+        ...segment.tracks,
+        { id: "player-2", startFrame: segment.startFrame, endFrame: segment.endFrame, boxes: [] },
+      ],
+    }));
+    const result = deriveClaimState(manifest, conflictSegments as never, [
+      correction("complete-1", "anchor-yes", "player-1", 10),
+      correction("complete-2", "anchor-yes", "player-1", 50),
+      correction("complete-3", "anchor-yes", "player-1", 90),
+      correction("late-conflict", "anchor-yes", "player-2", 80),
+    ] as never);
+    expect(result.completed).toBe(false);
+    expect(result.completionReason).toBe("identity-conflicts");
+    expect(result.conflictMoments).toEqual([80]);
+    expect(completionSurvivesConcurrentProgress(true, result.completed)).toBe(true);
+    expect(shouldKeepClaimCompleted(true, false, "pending")).toBe(true);
+    expect(shouldKeepClaimCompleted(true, false, "disputed")).toBe(false);
+    expect(shouldKeepClaimCompleted(true, false, "needs_resolution")).toBe(false);
   });
 
   it("reports supported player results from accepted tracking intervals", () => {
