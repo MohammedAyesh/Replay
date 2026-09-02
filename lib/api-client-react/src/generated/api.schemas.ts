@@ -609,6 +609,17 @@ export interface TrackingPitchModel {
   grid: TrackingPitchModelGridPoint[][];
 }
 
+export interface TrackingPitchModelSummary {
+  /** @minimum 2 */
+  gridRows: number;
+  /** @minimum 2 */
+  gridColumns: number;
+  /** @exclusiveMinimum 0 */
+  pitchWidthMetres: number;
+  /** @exclusiveMinimum 0 */
+  pitchHeightMetres: number;
+}
+
 /**
  * How the tracking bundle was produced.
  */
@@ -670,6 +681,20 @@ export interface TrackingBundle {
   events: TrackingEvent[];
 }
 
+export interface AdminTrackingBundlePatchBody {
+  /** @minimum 0 */
+  videoStartSeconds?: number;
+  pitchModel?: TrackingPitchModel | null;
+}
+
+export interface AdminTrackingBundlePatchResponse {
+  recordingId: number;
+  /** @minimum 0 */
+  videoStartSeconds: number;
+  pitchModel: TrackingPitchModelSummary | null;
+  updatedAt: string;
+}
+
 export interface TrackingBundleSummary {
   recordingId: number;
   label: string;
@@ -679,6 +704,7 @@ export interface TrackingBundleSummary {
   segmentCount: number;
   frameCoverage: string;
   segmentRanges?: TrackingSegmentManifest[];
+  pitchModel?: TrackingPitchModelSummary | null;
   uploadedAt: string;
 }
 

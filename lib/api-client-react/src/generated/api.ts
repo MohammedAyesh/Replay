@@ -26,6 +26,8 @@ import type {
   AdStats,
   AddAcademyRecordingInput,
   AdminAdEntry,
+  AdminTrackingBundlePatchBody,
+  AdminTrackingBundlePatchResponse,
   AuthResponse,
   Banner,
   BunnyCollection,
@@ -1582,6 +1584,77 @@ export const useUndoClaimMatchCorrection = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getUndoClaimMatchCorrectionMutationOptions(options));
+    }
+
+export const getUpdateTrackingBundleUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/tracking-bundle`
+}
+
+/**
+ * @summary Update tracking-bundle metadata and pitch calibration
+ */
+export const updateTrackingBundle = async (id: number,
+    adminTrackingBundlePatchBody: AdminTrackingBundlePatchBody, options?: RequestInit): Promise<AdminTrackingBundlePatchResponse> => {
+
+  return customFetch<AdminTrackingBundlePatchResponse>(getUpdateTrackingBundleUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminTrackingBundlePatchBody)
+  }
+);}
+
+
+
+
+export const getUpdateTrackingBundleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTrackingBundle>>, TError,{id: number;data: BodyType<AdminTrackingBundlePatchBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTrackingBundle>>, TError,{id: number;data: BodyType<AdminTrackingBundlePatchBody>}, TContext> => {
+
+const mutationKey = ['updateTrackingBundle'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTrackingBundle>>, {id: number;data: BodyType<AdminTrackingBundlePatchBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateTrackingBundle(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTrackingBundleMutationResult = NonNullable<Awaited<ReturnType<typeof updateTrackingBundle>>>
+    export type UpdateTrackingBundleMutationBody = BodyType<AdminTrackingBundlePatchBody>
+    export type UpdateTrackingBundleMutationError = ErrorType<void>
+
+    /**
+ * @summary Update tracking-bundle metadata and pitch calibration
+ */
+export const useUpdateTrackingBundle = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTrackingBundle>>, TError,{id: number;data: BodyType<AdminTrackingBundlePatchBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateTrackingBundle>>,
+        TError,
+        {id: number;data: BodyType<AdminTrackingBundlePatchBody>},
+        TContext
+      > => {
+      return useMutation(getUpdateTrackingBundleMutationOptions(options));
     }
 
 export const getReplaceTrackingBundleUrl = (id: number,) => {

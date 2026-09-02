@@ -13,6 +13,8 @@ import {
   GetClaimMatchSegmentResponse,
   ListClaimMatchClipsResponse,
   ReplaceTrackingBundleBody,
+  UpdateTrackingBundleBody,
+  UpdateTrackingBundleResponse,
   UpdateClaimMatchProgressBody,
 } from "@workspace/api-zod";
 import {
@@ -186,6 +188,17 @@ function parsePitchModel(input: unknown): { model?: TrackingPitchModel; error?: 
     grid.push(row);
   }
   return { model: { pitchWidthMetres, pitchHeightMetres, grid } };
+}
+
+function pitchModelSummary(model: TrackingPitchModel | undefined) {
+  return model
+    ? {
+        gridRows: model.grid.length,
+        gridColumns: model.grid[0]?.length ?? 0,
+        pitchWidthMetres: model.pitchWidthMetres,
+        pitchHeightMetres: model.pitchHeightMetres,
+      }
+    : null;
 }
 
 /**
@@ -2173,6 +2186,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       frameCoverage: `0-${manifest.frameCount - 1} (${manifest.frameCount} frames)`,
       videoStartSeconds: manifest.videoStartSeconds,
       segmentRanges: manifest.segments,
+      pitchModel: pitchModelSummary(manifest.pitchModel),
       uploadedAt: saved.updatedAt.toISOString(),
     };
   } catch (error) {
@@ -2196,9 +2210,14 @@ router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<
     res.status(400).json({ error: "Invalid recording id" });
     return;
   }
-  const startSeconds = firstNumber((req.body as UnknownRecord | undefined)?.videoStartSeconds);
-  if (startSeconds === undefined || startSeconds < 0) {
-    res.status(400).json({ error: "videoStartSeconds must be a non-negative number" });
+  const body = UpdateTrackingBundleBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const hasPitchModel = Object.prototype.hasOwnProperty.call(req.body, "pitchModel");
+  if (body.data.videoStartSeconds === undefined && !hasPitchModel) {
+    res.status(400).json({ error: "Provide videoStartSeconds or pitchModel" });
     return;
   }
   const [existing] = await db
@@ -2209,20 +2228,40 @@ router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<
     res.status(404).json({ error: "Tracking bundle not found" });
     return;
   }
+  let pitchModel = existing.manifest.pitchModel;
+  if (hasPitchModel) {
+    if (body.data.pitchModel === null) {
+      pitchModel = undefined;
+    } else {
+      const parsedPitchModel = parsePitchModel(body.data.pitchModel);
+      if (parsedPitchModel.error || !parsedPitchModel.model) {
+        res.status(400).json({ error: parsedPitchModel.error ?? "Invalid pitch model" });
+        return;
+      }
+      pitchModel = parsedPitchModel.model;
+    }
+  }
   const manifest: TrackingManifest = {
     ...existing.manifest,
-    videoStartSeconds: startSeconds,
+    ...(body.data.videoStartSeconds === undefined
+      ? {}
+      : { videoStartSeconds: body.data.videoStartSeconds }),
   };
+  if (hasPitchModel) {
+    if (pitchModel) manifest.pitchModel = pitchModel;
+    else delete manifest.pitchModel;
+  }
   const [saved] = await db
     .update(recordingTrackingBundlesTable)
     .set({ manifest, updatedAt: new Date(), uploadedBy: adminId })
     .where(eq(recordingTrackingBundlesTable.id, existing.id))
     .returning({ updatedAt: recordingTrackingBundlesTable.updatedAt });
-  res.json({
+  res.json(UpdateTrackingBundleResponse.parse({
     recordingId,
-    videoStartSeconds: manifest.videoStartSeconds,
+    videoStartSeconds: manifest.videoStartSeconds ?? 0,
+    pitchModel: pitchModelSummary(manifest.pitchModel),
     updatedAt: saved?.updatedAt?.toISOString() ?? new Date().toISOString(),
-  });
+  }));
 });
 
 router.put("/admin/recordings/:id/tracking-bundle", bundleUploadSingle, async (req, res): Promise<void> => {

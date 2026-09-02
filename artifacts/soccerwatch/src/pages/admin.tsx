@@ -8,7 +8,7 @@ import {
   GraduationCap, Video, Check, Radio, Square, AlertTriangle,
   Play, Clock, CheckCircle2, XCircle, Loader2, ExternalLink as LinkIcon,
   CalendarDays, ChevronLeft, ChevronRight,
-  Download,
+  Download, Upload,
 } from "lucide-react";
 import Hls from "hls.js";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
@@ -117,6 +117,12 @@ interface AdminRecording {
   trackingSegmentCount?: number | null;
   trackingFrameCoverage?: string | null;
   trackingVideoStartSeconds?: number | null;
+  trackingPitchModel?: {
+    gridRows: number;
+    gridColumns: number;
+    pitchWidthMetres: number;
+    pitchHeightMetres: number;
+  } | null;
   hasIdentityMap?: boolean;
   identityMapMatchesBundle?: boolean;
 }
@@ -4182,7 +4188,10 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
     recording.hasTrackingBundle ? String(recording.trackingVideoStartSeconds ?? 0) : "",
   );
   const [verifying, setVerifying] = useState(false);
+  const [pitchModel, setPitchModel] = useState(recording.trackingPitchModel ?? null);
+  const [pitchBusy, setPitchBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const pitchInputRef = useRef<HTMLInputElement | null>(null);
 
   const upload = async (file: File) => {
     setBusy(true);
@@ -4194,6 +4203,7 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         segmentCount: number;
         frameCoverage: string;
         videoStartSeconds?: number;
+        pitchModel?: NonNullable<AdminRecording["trackingPitchModel"]> | null;
       };
       // Where the tracked window starts inside THIS recording. It belongs to
       // the pairing, not to the bundle: the same tracking can be attached to a
@@ -4225,6 +4235,7 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
       setHasBundle(true);
       setHasIdentityMap(false);
       setIdentityMapMatchesBundle(false);
+      setPitchModel(result.pitchModel ?? null);
       setMessage(
         `Ready · ${result.segmentCount} segments · ${result.trackCount} tracks · `
         + `starts ${result.videoStartSeconds ?? 0}s into the video · ${result.frameCoverage}`,
@@ -4266,6 +4277,52 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
     }
   };
 
+  const uploadPitchModel = async (file: File) => {
+    setPitchBusy(true);
+    setMessage(null);
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const source = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        && ("pitchModel" in parsed || "pitch_model" in parsed)
+        ? (parsed as { pitchModel?: unknown; pitch_model?: unknown }).pitchModel
+          ?? (parsed as { pitch_model?: unknown }).pitch_model
+        : parsed;
+      const result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
+        method: "PATCH",
+        body: JSON.stringify({ pitchModel: source }),
+      }) as { pitchModel: NonNullable<AdminRecording["trackingPitchModel"]> | null };
+      setPitchModel(result.pitchModel);
+      setMessage(result.pitchModel
+        ? `Pitch model saved · ${result.pitchModel.gridRows}×${result.pitchModel.gridColumns} grid · ${result.pitchModel.pitchWidthMetres}×${result.pitchModel.pitchHeightMetres} m`
+        : "Pitch model removed · distance unavailable");
+    } catch (error) {
+      setMessage(error instanceof SyntaxError
+        ? "That pitch model file is not valid JSON"
+        : "Pitch model upload failed — check dimensions and grid points");
+    } finally {
+      setPitchBusy(false);
+      if (pitchInputRef.current) pitchInputRef.current.value = "";
+    }
+  };
+
+  const removePitchModel = async () => {
+    if (!window.confirm("Remove the pitch model? Distance will become unavailable for this recording.")) return;
+    setPitchBusy(true);
+    setMessage(null);
+    try {
+      await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
+        method: "PATCH",
+        body: JSON.stringify({ pitchModel: null }),
+      });
+      setPitchModel(null);
+      setMessage("Pitch model removed · distance unavailable");
+    } catch {
+      setMessage("Could not remove the pitch model");
+    } finally {
+      setPitchBusy(false);
+    }
+  };
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
@@ -4290,6 +4347,16 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
                {!hasIdentityMap ? "No identity map" : identityMapMatchesBundle ? "Identity map saved" : "Identity map needs review"}
              </p>
            )}
+           {hasBundle && (
+             <p
+               className={cn("mt-0.5 text-[10px]", pitchModel ? "text-emerald-400" : "text-zinc-500")}
+               data-testid={`tracking-pitch-model-${recording.id}`}
+             >
+               {pitchModel
+                 ? `Pitch model attached · ${pitchModel.gridRows}×${pitchModel.gridColumns} grid · ${pitchModel.pitchWidthMetres}×${pitchModel.pitchHeightMetres} m`
+                 : "No pitch model · distance unavailable"}
+             </p>
+           )}
         </div>
       </div>
       <input
@@ -4303,6 +4370,19 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
           if (file) void upload(file);
         }}
       />
+       {hasBundle && (
+         <input
+           ref={pitchInputRef}
+           type="file"
+           accept=".json,application/json"
+           className="hidden"
+           data-testid={`input-pitch-model-${recording.id}`}
+           onChange={(event) => {
+             const file = event.target.files?.[0];
+             if (file) void uploadPitchModel(file);
+           }}
+         />
+       )}
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-[10px] text-zinc-500">
           starts
@@ -4331,6 +4411,31 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
             </button>
           )}
         </label>
+         {hasBundle && (
+           <>
+             <button
+               type="button"
+               className="flex items-center gap-1 rounded-lg border border-primary/40 px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+               disabled={busy || savingStart || pitchBusy}
+               data-testid={`button-upload-pitch-model-${recording.id}`}
+               onClick={() => pitchInputRef.current?.click()}
+             >
+               {pitchBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+               {pitchModel ? "Replace pitch model" : "Upload pitch model"}
+             </button>
+             {pitchModel && (
+               <button
+                 type="button"
+                 className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-400 transition-colors hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+                 disabled={busy || savingStart || pitchBusy}
+                 data-testid={`button-remove-pitch-model-${recording.id}`}
+                 onClick={() => void removePitchModel()}
+               >
+                 Remove model
+               </button>
+             )}
+           </>
+         )}
         <button
           type="button"
           className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"

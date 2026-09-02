@@ -461,6 +461,35 @@ paths:
           description: Correction not found
 
   /admin/recordings/{id}/tracking-bundle:
+    patch:
+      operationId: updateTrackingBundle
+      tags: [admin]
+      summary: Update tracking-bundle metadata and pitch calibration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminTrackingBundlePatchBody"
+      responses:
+        "200":
+          description: Tracking-bundle metadata stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTrackingBundlePatchResponse"
+        "400":
+          description: Invalid tracking-bundle metadata or pitch model
+        "403":
+          description: Forbidden
+        "404":
+          description: Tracking bundle not found
     put:
       operationId: replaceTrackingBundle
       tags: [admin]
@@ -2092,6 +2121,23 @@ components:
             items:
               $ref: "#/components/schemas/TrackingPitchModelGridPoint"
 
+    TrackingPitchModelSummary:
+      type: object
+      required: [gridRows, gridColumns, pitchWidthMetres, pitchHeightMetres]
+      properties:
+        gridRows:
+          type: integer
+          minimum: 2
+        gridColumns:
+          type: integer
+          minimum: 2
+        pitchWidthMetres:
+          type: number
+          exclusiveMinimum: 0
+        pitchHeightMetres:
+          type: number
+          exclusiveMinimum: 0
+
     TrackingManifest:
       type: object
       required: [version, label, width, height, frameRate, frameCount, duration, matchOffset, segmentCount, segments]
@@ -2195,6 +2241,35 @@ components:
           items:
             $ref: "#/components/schemas/TrackingEvent"
 
+    AdminTrackingBundlePatchBody:
+      type: object
+      minProperties: 1
+      properties:
+        videoStartSeconds:
+          type: number
+          minimum: 0
+        pitchModel:
+          oneOf:
+            - $ref: "#/components/schemas/TrackingPitchModel"
+            - type: "null"
+
+    AdminTrackingBundlePatchResponse:
+      type: object
+      required: [recordingId, videoStartSeconds, pitchModel, updatedAt]
+      properties:
+        recordingId:
+          type: integer
+        videoStartSeconds:
+          type: number
+          minimum: 0
+        pitchModel:
+          oneOf:
+            - $ref: "#/components/schemas/TrackingPitchModelSummary"
+            - type: "null"
+        updatedAt:
+          type: string
+          format: date-time
+
     TrackingBundleSummary:
       type: object
       required: [recordingId, label, duration, segmentCount, frameCoverage, trackCount, crossingCount, uploadedAt]
@@ -2217,6 +2292,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TrackingSegmentManifest"
+        pitchModel:
+          oneOf:
+            - $ref: "#/components/schemas/TrackingPitchModelSummary"
+            - type: "null"
         uploadedAt:
           type: string
 

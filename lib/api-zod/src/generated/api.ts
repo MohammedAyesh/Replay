@@ -751,6 +751,62 @@ export const UndoClaimMatchCorrectionResponse = zod.object({
 
 
 /**
+ * @summary Update tracking-bundle metadata and pitch calibration
+ */
+export const UpdateTrackingBundleParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const updateTrackingBundleBodyVideoStartSecondsMin = 0;
+
+export const updateTrackingBundleBodyPitchModelOnePitchWidthMetresExclusiveMin = 0;
+
+export const updateTrackingBundleBodyPitchModelOnePitchHeightMetresExclusiveMin = 0;
+
+export const updateTrackingBundleBodyPitchModelOneGridItemMin = 2;
+
+export const updateTrackingBundleBodyPitchModelOneGridMin = 2;
+
+
+
+export const UpdateTrackingBundleBody = zod.object({
+  "videoStartSeconds": zod.number().min(updateTrackingBundleBodyVideoStartSecondsMin).optional(),
+  "pitchModel": zod.union([zod.object({
+  "pitchWidthMetres": zod.number().gt(updateTrackingBundleBodyPitchModelOnePitchWidthMetresExclusiveMin).describe('Real pitch width represented by the model, in metres.'),
+  "pitchHeightMetres": zod.number().gt(updateTrackingBundleBodyPitchModelOnePitchHeightMetresExclusiveMin).describe('Real pitch height represented by the model, in metres.'),
+  "grid": zod.array(zod.array(zod.object({
+  "x": zod.number().describe('Pitch position in metres on the horizontal axis.'),
+  "y": zod.number().describe('Pitch position in metres on the vertical axis.')
+})).min(updateTrackingBundleBodyPitchModelOneGridItemMin)).min(updateTrackingBundleBodyPitchModelOneGridMin).describe('Rectangular row-major calibration grid. Rows map from image top to bottom and columns map from image left to right. Values are pitch coordinates in metres and are bilinearly interpolated.\n')
+}),zod.null()]).optional()
+})
+
+export const updateTrackingBundleResponseVideoStartSecondsMin = 0;
+
+export const updateTrackingBundleResponsePitchModelOneGridRowsMin = 2;
+
+export const updateTrackingBundleResponsePitchModelOneGridColumnsMin = 2;
+
+export const updateTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin = 0;
+
+export const updateTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin = 0;
+
+
+
+export const UpdateTrackingBundleResponse = zod.object({
+  "recordingId": zod.number(),
+  "videoStartSeconds": zod.number().min(updateTrackingBundleResponseVideoStartSecondsMin),
+  "pitchModel": zod.union([zod.object({
+  "gridRows": zod.number().min(updateTrackingBundleResponsePitchModelOneGridRowsMin),
+  "gridColumns": zod.number().min(updateTrackingBundleResponsePitchModelOneGridColumnsMin),
+  "pitchWidthMetres": zod.number().gt(updateTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin),
+  "pitchHeightMetres": zod.number().gt(updateTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin)
+}),zod.null()]),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Upload or replace a recording tracking bundle
  */
 export const ReplaceTrackingBundleParams = zod.object({
@@ -838,6 +894,14 @@ export const replaceTrackingBundleResponseSegmentRangesItemStartSecondsMin = 0;
 
 export const replaceTrackingBundleResponseSegmentRangesItemEndSecondsMin = 0;
 
+export const replaceTrackingBundleResponsePitchModelOneGridRowsMin = 2;
+
+export const replaceTrackingBundleResponsePitchModelOneGridColumnsMin = 2;
+
+export const replaceTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin = 0;
+
+export const replaceTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin = 0;
+
 
 
 export const ReplaceTrackingBundleResponse = zod.object({
@@ -858,6 +922,12 @@ export const ReplaceTrackingBundleResponse = zod.object({
   "objectPath": zod.string(),
   "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
 })).optional(),
+  "pitchModel": zod.union([zod.object({
+  "gridRows": zod.number().min(replaceTrackingBundleResponsePitchModelOneGridRowsMin),
+  "gridColumns": zod.number().min(replaceTrackingBundleResponsePitchModelOneGridColumnsMin),
+  "pitchWidthMetres": zod.number().gt(replaceTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin),
+  "pitchHeightMetres": zod.number().gt(replaceTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin)
+}),zod.null()]).optional(),
   "uploadedAt": zod.string()
 })
 

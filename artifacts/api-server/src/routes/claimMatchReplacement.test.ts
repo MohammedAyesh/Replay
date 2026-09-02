@@ -156,6 +156,7 @@ beforeAll(async () => {
     .returning({ id: recordingsTable.id });
   recordingId = recording.id;
   app = express();
+  app.use(express.json());
   app.use("/api", claimMatchRouter);
 });
 
@@ -180,6 +181,54 @@ afterAll(async () => {
 });
 
 describe("Claim Match tracking bundle replacement", () => {
+  it("attaches, validates, and removes a pitch model without replacing segment objects", async () => {
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    const pitchModel = {
+      pitchWidthMetres: 105,
+      pitchHeightMetres: 68,
+      // The grid layout is normalized image space; these pitch coordinates are
+      // intentionally independent of the bundle's 1920x1080 dimensions.
+      grid: [
+        [{ x: 0, y: 0 }, { x: 105, y: 0 }],
+        [{ x: 0, y: 68 }, { x: 105, y: 68 }],
+      ],
+    };
+
+    const attached = await request(app)
+      .patch(`/api/admin/recordings/${recordingId}/tracking-bundle`)
+      .send({ pitchModel });
+
+    expect(attached.status).toBe(200);
+    expect(attached.body.pitchModel).toEqual({
+      gridRows: 2,
+      gridColumns: 2,
+      pitchWidthMetres: 105,
+      pitchHeightMetres: 68,
+    });
+    expect((await currentManifest()).pitchModel).toEqual(pitchModel);
+
+    const invalid = await request(app)
+      .patch(`/api/admin/recordings/${recordingId}/tracking-bundle`)
+      .send({
+        pitchModel: {
+          pitchWidthMetres: 105,
+          pitchHeightMetres: 68,
+          grid: [[{ x: 0, y: 0 }, { x: 105, y: 0 }], [{ x: 0, y: 68 }]],
+        },
+      });
+
+    expect(invalid.status).toBe(400);
+    expect((await currentManifest()).pitchModel).toEqual(pitchModel);
+
+    const removed = await request(app)
+      .patch(`/api/admin/recordings/${recordingId}/tracking-bundle`)
+      .send({ pitchModel: null });
+
+    expect(removed.status).toBe(200);
+    expect(removed.body.pitchModel).toBeNull();
+    expect((await currentManifest()).pitchModel).toBeUndefined();
+  });
+
   it("cleans already-written objects and preserves the previous bundle after a later write fails", async () => {
     let writeCount = 0;
     mockedWriteClaimSegment.mockImplementation(async () => {
