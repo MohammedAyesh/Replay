@@ -51,6 +51,7 @@ import type {
   EngagementResult,
   FeedClip,
   Field,
+  FieldRecording,
   FollowResult,
   HealthStatus,
   ImpressionInput,
@@ -931,9 +932,9 @@ export const getGetFieldRecordingsUrl = (id: number,) => {
 /**
  * @summary Get recordings for a field
  */
-export const getFieldRecordings = async (id: number, options?: RequestInit): Promise<Recording[]> => {
+export const getFieldRecordings = async (id: number, options?: RequestInit): Promise<FieldRecording[]> => {
 
-  return customFetch<Recording[]>(getGetFieldRecordingsUrl(id),
+  return customFetch<FieldRecording[]>(getGetFieldRecordingsUrl(id),
   {
     ...options,
     method: 'GET'

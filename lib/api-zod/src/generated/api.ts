@@ -235,7 +235,10 @@ export const GetFieldRecordingsResponseItem = zod.object({
   "score": zod.string().nullish(),
   "videoUrl": zod.string().optional(),
   "highlightMoment": zod.string().nullish(),
-  "fieldName": zod.string().nullish()
+  "fieldName": zod.string().nullish(),
+  "hasTracking": zod.boolean().describe('Whether this recording has an uploaded tracking bundle.'),
+  "viewerHasClaim": zod.boolean().describe('Whether the signed-in viewer has an identity claim for this recording.'),
+  "viewerClaimState": zod.union([zod.literal('in_progress'),zod.literal('pending'),zod.literal('confirmed'),zod.literal('disputed'),zod.literal('needs_resolution'),zod.literal('released'),zod.literal('rejected'),zod.literal(null)]).nullable().describe('The signed-in viewer\'s progress or claim state, or null when they have not started or are not signed in.')
 })
 export const GetFieldRecordingsResponse = zod.array(GetFieldRecordingsResponseItem)
 

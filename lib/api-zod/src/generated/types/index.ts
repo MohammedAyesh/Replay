@@ -55,6 +55,8 @@ export * from './engagementResult';
 export * from './feedClip';
 export * from './feedClipVisibility';
 export * from './field';
+export * from './fieldRecording';
+export * from './fieldRecordingViewerClaimState';
 export * from './followResult';
 export * from './healthStatus';
 export * from './impressionInput';

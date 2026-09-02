@@ -243,7 +243,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Recording"
+                  $ref: "#/components/schemas/FieldRecording"
 
   /recordings/{id}:
     get:
@@ -1544,6 +1544,41 @@ components:
           type: ["string", "null"]
         fieldName:
           type: ["string", "null"]
+
+    FieldRecording:
+      type: object
+      required: [id, fieldId, court, date, timeSlot, duration, hasTracking, viewerHasClaim, viewerClaimState]
+      properties:
+        id:
+          type: integer
+        fieldId:
+          type: integer
+        court:
+          type: string
+        date:
+          type: string
+        timeSlot:
+          type: string
+        duration:
+          type: string
+        score:
+          type: ["string", "null"]
+        videoUrl:
+          type: string
+        highlightMoment:
+          type: ["string", "null"]
+        fieldName:
+          type: ["string", "null"]
+        hasTracking:
+          type: boolean
+          description: Whether this recording has an uploaded tracking bundle.
+        viewerHasClaim:
+          type: boolean
+          description: Whether the signed-in viewer has an identity claim for this recording.
+        viewerClaimState:
+          type: ["string", "null"]
+          enum: [in_progress, pending, confirmed, disputed, needs_resolution, released, rejected, null]
+          description: The signed-in viewer's progress or claim state, or null when they have not started or are not signed in.
 
     PublicProfile:
       type: object

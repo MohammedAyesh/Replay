@@ -106,6 +106,48 @@ export interface Recording {
   fieldName?: string | null;
 }
 
+/**
+ * The signed-in viewer's progress or claim state, or null when they have not started or are not signed in.
+ * @nullable
+ */
+export type FieldRecordingViewerClaimState = typeof FieldRecordingViewerClaimState[keyof typeof FieldRecordingViewerClaimState] | null;
+
+
+export const FieldRecordingViewerClaimState = {
+  in_progress: 'in_progress',
+  pending: 'pending',
+  confirmed: 'confirmed',
+  disputed: 'disputed',
+  needs_resolution: 'needs_resolution',
+  released: 'released',
+  rejected: 'rejected',
+} as const;
+
+export interface FieldRecording {
+  id: number;
+  fieldId: number;
+  court: string;
+  date: string;
+  timeSlot: string;
+  duration: string;
+  /** @nullable */
+  score?: string | null;
+  videoUrl?: string;
+  /** @nullable */
+  highlightMoment?: string | null;
+  /** @nullable */
+  fieldName?: string | null;
+  /** Whether this recording has an uploaded tracking bundle. */
+  hasTracking: boolean;
+  /** Whether the signed-in viewer has an identity claim for this recording. */
+  viewerHasClaim: boolean;
+  /**
+     * The signed-in viewer's progress or claim state, or null when they have not started or are not signed in.
+     * @nullable
+     */
+  viewerClaimState: FieldRecordingViewerClaimState;
+}
+
 export interface PublicProfile {
   id: number;
   name: string;
