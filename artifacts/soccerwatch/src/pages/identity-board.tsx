@@ -510,15 +510,39 @@ export default function IdentityBoard() {
     setRows(next);
     setSaving(true);
     try {
-      const res = await fetch(`${basePath}/api/admin/recordings/${recordingId}/identities`, {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bundleFingerprint: String(manifest?.provenance?.bundleFingerprint ?? ""),
-          identities: next.map((row) => ({ id: row.id, name: row.name || null, parts: row.parts })),
-        }),
-      });
+      const saveMap = (confirmInvalidations: boolean) => fetch(
+        `${basePath}/api/admin/recordings/${recordingId}/identities`,
+        {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bundleFingerprint: String(manifest?.provenance?.bundleFingerprint ?? ""),
+            confirmInvalidations,
+            identities: next.map((row) => ({ id: row.id, name: row.name || null, parts: row.parts })),
+          }),
+        },
+      );
+      let res = await saveMap(false);
+      if (res.status === 409) {
+        const body = await res.json().catch(() => null) as {
+          error?: string;
+          invalidatedClaims?: number;
+          requiresConfirmation?: boolean;
+        } | null;
+        if (body?.requiresConfirmation && typeof body.invalidatedClaims === "number") {
+          const confirmed = window.confirm(
+            `${body.invalidatedClaims} existing claim${body.invalidatedClaims === 1 ? "" : "s"} will need identity review again. Save this map and invalidate them?`,
+          );
+          if (!confirmed) {
+            flashMessage("Identity map was not saved; existing claims were left unchanged.");
+            return;
+          }
+          res = await saveMap(true);
+        } else {
+          throw new Error(body?.error || "save -> 409");
+        }
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => null) as { error?: string } | null;
         throw new Error(body?.error || `save -> ${res.status}`);

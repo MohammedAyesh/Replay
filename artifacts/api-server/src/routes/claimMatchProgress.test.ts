@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import {
+  completionAllowed,
   completionSurvivesConcurrentProgress,
   deriveClaimState,
+  identityMapInvalidatesBinding,
   resolveClaimIdentity,
   shouldKeepClaimCompleted,
   isAcceptedClaimAnswer,
@@ -192,8 +194,9 @@ describe("claim match server-derived progress", () => {
     expect(result.coveragePercent).toBe(100);
     expect(result.conflictMoments).toEqual([90]);
     expect(result.acceptedAnchorCount).toBe(2);
-    expect(result.completed).toBe(false);
+    expect(result.completed).toBe(true);
     expect(result.completionReason).toBe("identity-conflicts");
+    expect(completionAllowed(result, { state: "confirmed" } as never)).toBe(false);
   });
 
   it("blocks completion for an identity conflict even after the winning person clears every threshold", () => {
@@ -218,8 +221,9 @@ describe("claim match server-derived progress", () => {
     expect(result.coveragePercent).toBe(100);
     expect(result.acceptedAnchorCount).toBe(3);
     expect(result.identityResolution?.acceptedAnswerCount).toBe(3);
-    expect(result.completed).toBe(false);
+    expect(result.completed).toBe(true);
     expect(result.completionReason).toBe("identity-conflicts");
+    expect(completionAllowed(result, { state: "confirmed" } as never)).toBe(false);
   });
 
   it("resolves track parts to a valid identity map", () => {
@@ -250,6 +254,54 @@ describe("claim match server-derived progress", () => {
       supportCount: 2,
       acceptedAnswerCount: 2,
     });
+  });
+
+  it("invalidates a binding when a surviving identifier receives a different piece", () => {
+    const originalParts = [{
+      trackId: "piece-a",
+      fromFrame: 0,
+      toFrame: 49,
+    }];
+    const binding = {
+      personId: "person-a",
+      personParts: ['["piece-a",0,49]'],
+    };
+    expect(identityMapInvalidatesBinding(binding, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 49 }],
+    }])).toBe(false);
+    expect(identityMapInvalidatesBinding(binding, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-b", fromFrame: 0, toFrame: 49 }],
+    }])).toBe(true);
+    expect(identityMapInvalidatesBinding(binding, [{
+      id: "person-b",
+      parts: originalParts,
+    }])).toBe(true);
+  });
+
+  it("treats evenly split accepted answers as unresolved instead of choosing a winner", () => {
+    const tieSegments = (segments as unknown as Array<{
+      startFrame: number;
+      endFrame: number;
+      tracks: Array<Record<string, unknown>>;
+    }>).map((segment) => ({
+      ...segment,
+      tracks: [
+        ...segment.tracks,
+        { id: "player-2", startFrame: segment.startFrame, endFrame: segment.endFrame, boxes: [] },
+      ],
+    }));
+    const answers = [
+      correction("tie-1", "anchor-yes", "player-1", 10),
+      correction("tie-2", "anchor-yes", "player-2", 50),
+    ];
+    expect(resolveClaimIdentity(manifest, tieSegments as never, answers as never)).toBeNull();
+    const result = deriveClaimState(manifest, tieSegments as never, answers as never);
+    expect(result.identityResolution).toBeNull();
+    expect(result.coveragePercent).toBe(0);
+    expect(result.completed).toBe(false);
+    expect(result.completionReason).toBe("identity-unresolved");
   });
 
   it("ignores an identity map whose fingerprint does not match the bundle", () => {
@@ -320,13 +372,14 @@ describe("claim match server-derived progress", () => {
       correction("complete-3", "anchor-yes", "player-1", 90),
       correction("late-conflict", "anchor-yes", "player-2", 80),
     ] as never);
-    expect(result.completed).toBe(false);
+    expect(result.completed).toBe(true);
     expect(result.completionReason).toBe("identity-conflicts");
     expect(result.conflictMoments).toEqual([80]);
+    expect(completionAllowed(result, { state: "confirmed" } as never)).toBe(false);
     expect(completionSurvivesConcurrentProgress(true, result.completed)).toBe(true);
-    expect(shouldKeepClaimCompleted(true, false, "pending")).toBe(true);
-    expect(shouldKeepClaimCompleted(true, false, "disputed")).toBe(false);
-    expect(shouldKeepClaimCompleted(true, false, "needs_resolution")).toBe(false);
+    expect(shouldKeepClaimCompleted(true, result.completed, "pending")).toBe(true);
+    expect(shouldKeepClaimCompleted(true, result.completed, "disputed")).toBe(false);
+    expect(shouldKeepClaimCompleted(true, result.completed, "needs_resolution")).toBe(false);
   });
 
   it("reports supported player results from accepted tracking intervals", () => {

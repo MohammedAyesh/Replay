@@ -34,12 +34,14 @@ import claimMatchRouter, {
   deriveClaimState,
   syncIdentityBinding,
   storeUploadBundle,
+  trackingBundleFingerprint,
   type UploadBundle,
 } from "./claimMatch";
-import { deleteClaimSegment, writeClaimSegment } from "../lib/claimMatchStorage";
+import { deleteClaimSegment, readClaimSegment, writeClaimSegment } from "../lib/claimMatchStorage";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 
 const mockedDeleteClaimSegment = vi.mocked(deleteClaimSegment);
+const mockedReadClaimSegment = vi.mocked(readClaimSegment);
 const mockedWriteClaimSegment = vi.mocked(writeClaimSegment);
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 const TEST_TAG = `claim-replace-${Date.now()}`;
@@ -71,7 +73,7 @@ const bindingSegments = [{
   endFrame: 99,
   startSeconds: 0,
   endSeconds: 100,
-  tracks: [{ id: "player-one", startFrame: 0, endFrame: 99, boxes: [] }],
+  tracks: [{ id: "piece-a", startFrame: 0, endFrame: 99, boxes: [] }],
   crossings: [],
   inPlaySpans: [],
   events: [],
@@ -85,7 +87,7 @@ function bindingCorrection(id: number, userId: number) {
     clientId: `binding-${id}`,
     momentSeconds: id * 10,
     rejectedTrackId: null,
-    chosenTrackId: "player-one",
+    chosenTrackId: "piece-a",
     answerMethod: "anchor-yes",
     questionCount: 1,
     undone: false,
@@ -236,6 +238,7 @@ beforeEach(async () => {
   await insertPreviousBundle();
   mockedDeleteClaimSegment.mockReset();
   mockedDeleteClaimSegment.mockResolvedValue(undefined);
+  mockedReadClaimSegment.mockReset();
   mockedWriteClaimSegment.mockReset();
   mockedGetLocalUserId.mockReset();
 });
@@ -436,6 +439,96 @@ describe("Claim Match tracking bundle replacement", () => {
       .select()
       .from(claimMatchIdentityBindingsTable)
       .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId))).toHaveLength(2);
+  });
+
+  it("previews and confirms identity-map edits that reassign an existing claimant", async () => {
+    const upload = makeUpload();
+    const stateSegment = {
+      version: 1,
+      segmentIndex: 0,
+      name: "only",
+      startFrame: 0,
+      endFrame: 1,
+      startSeconds: 0,
+      endSeconds: 0.08,
+      tracks: [{ id: "piece-a", startFrame: 0, endFrame: 1, boxes: [] }],
+      crossings: [],
+      inPlaySpans: [],
+      events: [],
+    };
+    mockedReadClaimSegment.mockResolvedValue(Buffer.from(JSON.stringify(stateSegment)));
+    const stateSegments = [{
+      segmentIndex: 0,
+      startFrame: 0,
+      endFrame: 1,
+      startSeconds: 0,
+      endSeconds: 0.08,
+      tracks: [{ id: "piece-a", startFrame: 0, endFrame: 1 }],
+      events: [],
+    }];
+    const fingerprint = trackingBundleFingerprint(upload.manifest, stateSegments);
+    const originalIdentities = [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 1 }],
+    }];
+    await db
+      .update(recordingTrackingBundlesTable)
+      .set({
+        manifest: {
+          ...upload.manifest,
+          summary: { segments: stateSegments } as never,
+          identities: originalIdentities,
+          provenance: {
+            bundleFingerprint: fingerprint,
+            identityMapBundleFingerprint: fingerprint,
+          },
+        },
+      })
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const originalManifest = {
+      ...(bindingManifest as object),
+      provenance: {
+        bundleFingerprint: fingerprint,
+        identityMapBundleFingerprint: fingerprint,
+      },
+      identities: originalIdentities,
+    };
+    const derived = deriveClaimState(originalManifest as never, bindingSegments, [
+      bindingCorrection(13, claimantAId),
+      bindingCorrection(14, claimantAId),
+      bindingCorrection(15, claimantAId),
+    ] as never);
+    const [bundle] = await db
+      .select()
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const binding = await syncIdentityBinding(claimantAId, recordingId, bundle, derived);
+    expect(binding?.personParts).toEqual(['["piece-a",0,1]']);
+
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    const reassignedMap = {
+      bundleFingerprint: fingerprint,
+      identities: [{ id: "person-a", parts: [{ trackId: "piece-b", fromFrame: 0, toFrame: 1 }] }],
+    };
+    const preview = await request(app)
+      .put(`/api/admin/recordings/${recordingId}/identities`)
+      .send(reassignedMap);
+    expect(preview.status).toBe(409);
+    expect(preview.body).toMatchObject({ invalidatedClaims: 1, requiresConfirmation: true });
+    expect((await db
+      .select({ state: claimMatchIdentityBindingsTable.state })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.id, binding!.id)))[0].state).toBe("confirmed");
+
+    const saved = await request(app)
+      .put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({ ...reassignedMap, confirmInvalidations: true });
+    expect(saved.status).toBe(200);
+    expect(saved.body.invalidatedClaims).toBe(1);
+    expect((await db
+      .select({ state: claimMatchIdentityBindingsTable.state })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.id, binding!.id)))[0].state).toBe("needs_resolution");
   });
 
   it("returns a useful ZIP constraint error without exposing storage internals", async () => {

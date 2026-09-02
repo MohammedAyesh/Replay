@@ -55,6 +55,7 @@ const router: IRouter = Router();
 /** identity board result: pieces of tracks that are one person */
 const IdentityMapBody = z.object({
   bundleFingerprint: z.string().min(1),
+  confirmInvalidations: z.boolean().optional(),
   identities: z.array(z.object({
     id: z.string().min(1),
     name: z.string().nullish(),
@@ -1394,6 +1395,28 @@ function usableIdentityMap(manifest: TrackingManifest): TrackingIdentity[] {
   return identities;
 }
 
+function canonicalIdentityParts(parts: TrackingIdentity["parts"]): string[] {
+  return parts
+    .map((part) => JSON.stringify([part.trackId, part.fromFrame, part.toFrame]))
+    .sort();
+}
+
+function personPartsForResolution(manifest: TrackingManifest, personId: string): string[] {
+  const identity = usableIdentityMap(manifest).find((item) => item.id === personId);
+  return identity ? canonicalIdentityParts(identity.parts) : [];
+}
+
+export function identityMapInvalidatesBinding(
+  binding: Pick<ClaimIdentityBindingRow, "personId" | "personParts">,
+  incomingIdentities: TrackingIdentity[],
+): boolean {
+  const identity = incomingIdentities.find((item) => item.id === binding.personId);
+  if (!identity) return true;
+  const incomingParts = canonicalIdentityParts(identity.parts);
+  return incomingParts.length !== binding.personParts.length
+    || incomingParts.some((part, index) => part !== binding.personParts[index]);
+}
+
 function resolvePersonForTrack(
   manifest: TrackingManifest,
   chosenTrackId: string,
@@ -1447,13 +1470,16 @@ export function resolveClaimIdentity(
       resolutionMethod: previous?.resolutionMethod ?? resolved.resolutionMethod,
     });
   }
-  const winner = [...candidates.entries()]
+  // A tie is not evidence. Do not let deterministic ordering turn equal
+  // support into a person assignment; the user must answer again.
+  const rankedCandidates = [...candidates.entries()]
     .sort(([personA, a], [personB, b]) =>
       b.count - a.count
       || b.latestCreatedAt - a.latestCreatedAt
       || personA.localeCompare(personB),
-    )[0];
-  if (!winner) return null;
+    );
+  const winner = rankedCandidates[0];
+  if (!winner || rankedCandidates[1]?.[1].count === winner[1].count) return null;
 
   const [personId, support] = winner;
   const conflictMoments = usableAnswers
@@ -1893,8 +1919,7 @@ export function deriveClaimState(
   const conflictMoments = identityResolution?.conflictMoments ?? [];
   const requiredAnchors = manifest.duration < 120 ? 1 : 3;
   const requiredCoverage = manifest.duration < 120 ? 55 : 60;
-  const completed = conflictMoments.length === 0
-    && identityResolution !== null
+  const completed = identityResolution !== null
     && acceptedAnchorCount >= requiredAnchors
     && coveragePercent >= requiredCoverage;
   const earnedClips = acceptedForPerson.reduce(
@@ -1944,7 +1969,9 @@ export function deriveClaimState(
     completed,
     completionReason: conflictMoments.length > 0
       ? "identity-conflicts"
-      : completed ? "coverage-threshold" : "keep-confirming",
+      : identityResolution === null && accepted.length > 0
+        ? "identity-unresolved"
+        : completed ? "coverage-threshold" : "keep-confirming",
     earnedClips,
     playerStats,
     adminPlayerStats,
@@ -2021,7 +2048,9 @@ export function completionAllowed(
   derived: DerivedClaimState,
   binding: ClaimIdentityBindingRow | null,
 ): boolean {
-  return derived.completed && binding?.state === "confirmed";
+  return derived.completed
+    && derived.conflictMoments.length === 0
+    && binding?.state === "confirmed";
 }
 
 export function shouldKeepClaimCompleted(
@@ -2045,6 +2074,7 @@ export async function syncIdentityBinding(
   recordingId: number,
   bundle: typeof recordingTrackingBundlesTable.$inferSelect,
   derived: DerivedClaimState,
+  allowNeedsResolutionRecovery = false,
 ): Promise<ClaimIdentityBindingRow | null> {
   const [existing] = await db
     .select()
@@ -2053,6 +2083,9 @@ export async function syncIdentityBinding(
       eq(claimMatchIdentityBindingsTable.userId, userId),
       eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
     ));
+  if (existing?.state === "needs_resolution" && !allowNeedsResolutionRecovery) {
+    return existing;
+  }
   const resolution = derived.identityResolution;
   if (!resolution) {
     if (!existing || existing.state === "needs_resolution") return existing ?? null;
@@ -2085,6 +2118,7 @@ export async function syncIdentityBinding(
     bundleFingerprint: typeof bundle.manifest.provenance?.bundleFingerprint === "string"
       ? bundle.manifest.provenance.bundleFingerprint
       : "legacy",
+    personParts: personPartsForResolution(bundle.manifest, resolution.personId),
     resolutionMethod: resolution.resolutionMethod,
     supportCount: resolution.supportCount,
     acceptedAnswerCount: resolution.acceptedAnswerCount,
@@ -2443,7 +2477,7 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   if (derived.completed) {
     derived = deriveClaimState(manifest, segments, corrections, await readBundleSegments(row.bundle.id));
   }
-  const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
+  const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived, true);
   const isCompleted = completionAllowed(derived, binding);
   const earnedClips = isCompleted
     ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
@@ -3181,8 +3215,9 @@ router.get("/recordings/:id/claim-match/sprites/:segmentIndex", async (req, res)
  * PUT /admin/recordings/:id/identities
  * The identity board's result: which track pieces are one person. Stored on
  * the manifest (jsonb, no migration); the claim page merges tracks from it at
- * load time, so identity survives segment boundaries and re-uploads of the
- * same bundle keep it as long as track ids are stable.
+ * load time, so identity survives segment boundaries. Re-saving the map for an
+ * already-claimed bundle compares each binding's piece snapshot and can require
+ * affected claimants to review their identity again.
  */
 router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
@@ -3223,6 +3258,40 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     });
     return;
   }
+  const existingBindings = await db
+    .select({
+      id: claimMatchIdentityBindingsTable.id,
+      personId: claimMatchIdentityBindingsTable.personId,
+      personParts: claimMatchIdentityBindingsTable.personParts,
+      state: claimMatchIdentityBindingsTable.state,
+    })
+    .from(claimMatchIdentityBindingsTable)
+    .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+  const invalidatedBindings = existingBindings.filter((binding) =>
+    binding.state !== "needs_resolution"
+    && identityMapInvalidatesBinding(binding, body.data.identities),
+  );
+  const preview = req.query.preview === "true" || req.query.preview === "1";
+  const invalidationSummary = {
+    invalidatedClaims: invalidatedBindings.length,
+    requiresConfirmation: invalidatedBindings.length > 0,
+  };
+  if (preview) {
+    res.json({
+      recordingId,
+      identities: body.data.identities.length,
+      bundleFingerprint: currentFingerprint,
+      ...invalidationSummary,
+    });
+    return;
+  }
+  if (invalidatedBindings.length > 0 && body.data.confirmInvalidations !== true) {
+    res.status(409).json({
+      error: `This edit will require ${invalidatedBindings.length} existing claim${invalidatedBindings.length === 1 ? "" : "s"} to be reviewed again.`,
+      ...invalidationSummary,
+    });
+    return;
+  }
   const manifest: TrackingManifest = {
     ...row.bundle.manifest,
     identities: body.data.identities,
@@ -3232,12 +3301,27 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
       identityMapBundleFingerprint: currentFingerprint,
     },
   };
-  await db
-    .update(recordingTrackingBundlesTable)
-    .set({ manifest, updatedAt: new Date() })
-    .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
-  await markBindingsNeedsResolution(recordingId);
-  res.json({ recordingId, identities: body.data.identities.length, bundleFingerprint: currentFingerprint });
+  await db.transaction(async (tx) => {
+    await tx
+      .update(recordingTrackingBundlesTable)
+      .set({ manifest, updatedAt: new Date() })
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    if (invalidatedBindings.length > 0) {
+      await tx
+        .update(claimMatchIdentityBindingsTable)
+        .set({ state: "needs_resolution", updatedAt: new Date() })
+        .where(inArray(
+          claimMatchIdentityBindingsTable.id,
+          invalidatedBindings.map((binding) => binding.id),
+        ));
+    }
+  });
+  res.json({
+    recordingId,
+    identities: body.data.identities.length,
+    bundleFingerprint: currentFingerprint,
+    ...invalidationSummary,
+  });
 });
 
 export default router;

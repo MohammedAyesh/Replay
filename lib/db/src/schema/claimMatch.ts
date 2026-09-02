@@ -272,6 +272,11 @@ export const claimMatchIdentityBindingsTable = pgTable(
       .notNull()
       .references(() => recordingTrackingBundlesTable.id, { onDelete: "cascade" }),
     bundleFingerprint: text("bundle_fingerprint").notNull(),
+    /** Canonical snapshot of the identity-map pieces used when this binding was resolved. */
+    personParts: jsonb("person_parts")
+      .notNull()
+      .$type<string[]>()
+      .default([]),
     resolutionMethod: text("resolution_method").notNull(),
     supportCount: integer("support_count").notNull().default(0),
     acceptedAnswerCount: integer("accepted_answer_count").notNull().default(0),

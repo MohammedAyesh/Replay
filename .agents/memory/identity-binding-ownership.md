@@ -7,4 +7,4 @@ The claim system must resolve each user’s answers to one person within one tra
 
 **Why:** Track IDs are not stable across recordings or replacement uploads, and silently accepting competing claims would award private player data and clips to the wrong account.
 
-**How to apply:** Enforce uniqueness at the database layer for user/recording and confirmed recording/person, preserve disputed history, make reads recalculate binding state rather than trusting client completion flags, and distinguish post-completion conflict review from bundle replacement (which clears completion).
+**How to apply:** Enforce uniqueness at the database layer for user/recording and confirmed recording/person, snapshot canonical identity-map pieces on each binding, require admin confirmation before a changed map invalidates claims, preserve disputed history, make reads recalculate binding state rather than trusting client completion flags, and distinguish post-completion conflict review from bundle replacement (which clears completion).
