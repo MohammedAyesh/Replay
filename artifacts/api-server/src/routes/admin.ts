@@ -862,6 +862,9 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
       trackingVideoStartSeconds: manifest?.videoStartSeconds ?? null,
       trackingPitchModel: manifest?.pitchModel
         ? {
+            calibrationId: manifest.pitchModel.calibrationId,
+            fittedAt: manifest.pitchModel.fittedAt,
+            calibratedAspectRatio: manifest.pitchModel.calibratedAspectRatio,
             gridRows: manifest.pitchModel.grid.length,
             gridColumns: manifest.pitchModel.grid[0]?.length ?? 0,
             pitchWidthMetres: manifest.pitchModel.pitchWidthMetres,

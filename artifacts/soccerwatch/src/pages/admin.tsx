@@ -118,6 +118,9 @@ interface AdminRecording {
   trackingFrameCoverage?: string | null;
   trackingVideoStartSeconds?: number | null;
   trackingPitchModel?: {
+    calibrationId: string | null;
+    fittedAt: string | null;
+    calibratedAspectRatio?: number | null;
     gridRows: number;
     gridColumns: number;
     pitchWidthMetres: number;
@@ -125,6 +128,37 @@ interface AdminRecording {
   } | null;
   hasIdentityMap?: boolean;
   identityMapMatchesBundle?: boolean;
+}
+
+interface AdminRecordingPlayerMetric {
+  userId: number;
+  displayName: string;
+  email: string;
+  playerStats: {
+    minutesPlayed: number;
+    distanceMetres: number | null;
+    averageSpeedMetresPerSecond: number | null;
+  };
+  topSpeedMetresPerSecond: number | null;
+  topSpeedUsableTimeFraction: number | null;
+}
+
+function calibrationDateLabel(value: string | null | undefined): string {
+  return value ? value.slice(0, 10) : "unknown date";
+}
+
+function calibrationLabel(model: AdminRecording["trackingPitchModel"]): string {
+  if (!model) return "No valid pitch model";
+  if (!model.calibrationId || !model.fittedAt || typeof model.calibratedAspectRatio !== "number") {
+    return "Legacy pitch model · reattach required";
+  }
+  return `Calibration ${model.calibrationId} · fitted ${calibrationDateLabel(model.fittedAt)}`;
+}
+
+function calibrationAspectLabel(model: AdminRecording["trackingPitchModel"]): string {
+  return typeof model?.calibratedAspectRatio === "number"
+    ? `${model.calibratedAspectRatio.toFixed(4)} aspect`
+    : "aspect ratio unavailable";
 }
 
 interface AdminBanner {
@@ -4190,6 +4224,8 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
   const [verifying, setVerifying] = useState(false);
   const [pitchModel, setPitchModel] = useState(recording.trackingPitchModel ?? null);
   const [pitchBusy, setPitchBusy] = useState(false);
+  const [playerMetrics, setPlayerMetrics] = useState<AdminRecordingPlayerMetric[] | null>(null);
+  const [loadingPlayerMetrics, setLoadingPlayerMetrics] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const pitchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -4236,6 +4272,7 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
       setHasIdentityMap(false);
       setIdentityMapMatchesBundle(false);
       setPitchModel(result.pitchModel ?? null);
+      setPlayerMetrics(null);
       setMessage(
         `Ready · ${result.segmentCount} segments · ${result.trackCount} tracks · `
         + `starts ${result.videoStartSeconds ?? 0}s into the video · ${result.frameCoverage}`,
@@ -4292,8 +4329,9 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         body: JSON.stringify({ pitchModel: source }),
       }) as { pitchModel: NonNullable<AdminRecording["trackingPitchModel"]> | null };
       setPitchModel(result.pitchModel);
+      setPlayerMetrics(null);
       setMessage(result.pitchModel
-        ? `Pitch model saved · ${result.pitchModel.gridRows}×${result.pitchModel.gridColumns} grid · ${result.pitchModel.pitchWidthMetres}×${result.pitchModel.pitchHeightMetres} m`
+        ? `Pitch model saved · ${calibrationLabel(result.pitchModel)} · ${result.pitchModel.gridRows}×${result.pitchModel.gridColumns} grid · ${result.pitchModel.pitchWidthMetres}×${result.pitchModel.pitchHeightMetres} m`
         : "Pitch model removed · distance unavailable");
     } catch (error) {
       setMessage(error instanceof SyntaxError
@@ -4315,11 +4353,26 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         body: JSON.stringify({ pitchModel: null }),
       });
       setPitchModel(null);
+      setPlayerMetrics(null);
       setMessage("Pitch model removed · distance unavailable");
     } catch {
       setMessage("Could not remove the pitch model");
     } finally {
       setPitchBusy(false);
+    }
+  };
+
+  const loadPlayerMetrics = async () => {
+    setLoadingPlayerMetrics(true);
+    try {
+      const result = await apiFetch(`/admin/recordings/${recording.id}/player-metrics`) as {
+        players: AdminRecordingPlayerMetric[];
+      };
+      setPlayerMetrics(result.players);
+    } catch {
+      setMessage("Could not load player metrics");
+    } finally {
+      setLoadingPlayerMetrics(false);
     }
   };
 
@@ -4353,8 +4406,8 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
                data-testid={`tracking-pitch-model-${recording.id}`}
              >
                {pitchModel
-                 ? `Pitch model attached · ${pitchModel.gridRows}×${pitchModel.gridColumns} grid · ${pitchModel.pitchWidthMetres}×${pitchModel.pitchHeightMetres} m`
-                 : "No pitch model · distance unavailable"}
+                  ? `${calibrationLabel(pitchModel)} · ${calibrationAspectLabel(pitchModel)} · ${pitchModel.gridRows}×${pitchModel.gridColumns} grid · ${pitchModel.pitchWidthMetres}×${pitchModel.pitchHeightMetres} m${pitchModel.calibrationId && pitchModel.fittedAt && typeof pitchModel.calibratedAspectRatio === "number" ? "" : " · distance unavailable"}`
+                  : "No pitch model · distance unavailable"}
              </p>
            )}
         </div>
@@ -4467,7 +4520,52 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
             {verifying ? "Hide check" : "Check alignment"}
           </button>
         )}
+         {hasBundle && (
+           <button
+             type="button"
+             className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+             disabled={loadingPlayerMetrics}
+             data-testid={`button-load-player-metrics-${recording.id}`}
+             onClick={() => void loadPlayerMetrics()}
+           >
+             {loadingPlayerMetrics ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+             {loadingPlayerMetrics ? "Loading metrics…" : playerMetrics ? "Refresh player metrics" : "Player metrics"}
+           </button>
+         )}
       </div>
+       {playerMetrics && (
+         <div className="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-3" data-testid={`admin-player-metrics-${recording.id}`}>
+           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+             <p className="text-xs font-semibold text-zinc-200">Claimed player metrics</p>
+             <p className="text-[10px] text-zinc-500">
+               {pitchModel && pitchModel.calibrationId && pitchModel.fittedAt && typeof pitchModel.calibratedAspectRatio === "number"
+                 ? `${calibrationLabel(pitchModel)} · ${calibrationAspectLabel(pitchModel)}`
+                 : "No valid pitch model · distance and speed unavailable"}
+             </p>
+           </div>
+           {playerMetrics.length === 0 ? (
+             <p className="text-[10px] text-zinc-500">No player claims have been recorded for this bundle.</p>
+           ) : (
+             <div className="grid gap-2 md:grid-cols-2">
+               {playerMetrics.map((metric) => (
+                 <div key={metric.userId} className="rounded border border-zinc-800 px-2.5 py-2">
+                   <p className="truncate text-xs font-medium text-zinc-200">{metric.displayName}</p>
+                   <p className="truncate text-[10px] text-zinc-500">{metric.email}</p>
+                   <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-zinc-400">
+                     <span>Minutes <b className="text-zinc-200">{metric.playerStats.minutesPlayed.toFixed(1)}</b></span>
+                     <span>Distance <b className="text-zinc-200">{metric.playerStats.distanceMetres === null ? "Unavailable" : `${metric.playerStats.distanceMetres.toLocaleString()} m`}</b></span>
+                     <span>Average speed <b className="text-zinc-200">{metric.playerStats.averageSpeedMetresPerSecond === null ? "Unavailable" : `${metric.playerStats.averageSpeedMetresPerSecond.toFixed(2)} m/s`}</b></span>
+                     <span>Top speed <b className="text-amber-300">{metric.topSpeedMetresPerSecond === null ? "Unavailable" : `${metric.topSpeedMetresPerSecond.toFixed(2)} m/s`}</b></span>
+                   </div>
+                   <p className="mt-1 text-[9px] text-amber-400/80">
+                     Top speed unvalidated · usable time {metric.topSpeedUsableTimeFraction === null ? "—" : `${Math.round(metric.topSpeedUsableTimeFraction * 100)}%`}
+                   </p>
+                 </div>
+               ))}
+             </div>
+           )}
+         </div>
+       )}
       {verifying && <TrackingAlignmentCheck recordingId={recording.id} />}
     </div>
   );

@@ -9,6 +9,18 @@ import type { TrackingPitchModelGridPoint } from './trackingPitchModelGridPoint'
 
 export interface TrackingPitchModel {
   /**
+     * Immutable identifier for the calibration fit that produced this model.
+     * @minLength 1
+     */
+  calibrationId: string;
+  /** Date and time at which this calibration was fitted. */
+  fittedAt: Date;
+  /**
+     * Image width divided by image height used when fitting this model.
+     * @exclusiveMinimum 0
+     */
+  calibratedAspectRatio: number;
+  /**
      * Real pitch width represented by the model, in metres.
      * @exclusiveMinimum 0
      */

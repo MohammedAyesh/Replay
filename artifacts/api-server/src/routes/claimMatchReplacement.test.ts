@@ -184,6 +184,9 @@ describe("Claim Match tracking bundle replacement", () => {
   it("attaches, validates, and removes a pitch model without replacing segment objects", async () => {
     mockedGetLocalUserId.mockResolvedValue(adminId);
     const pitchModel = {
+      calibrationId: "replacement-calibration",
+      fittedAt: "2026-01-15T12:00:00.000Z",
+      calibratedAspectRatio: 1920 / 1080,
       pitchWidthMetres: 105,
       pitchHeightMetres: 68,
       // The grid layout is normalized image space; these pitch coordinates are
@@ -200,11 +203,26 @@ describe("Claim Match tracking bundle replacement", () => {
 
     expect(attached.status).toBe(200);
     expect(attached.body.pitchModel).toEqual({
+      calibrationId: "replacement-calibration",
+      fittedAt: "2026-01-15T12:00:00.000Z",
+      calibratedAspectRatio: 1920 / 1080,
       gridRows: 2,
       gridColumns: 2,
       pitchWidthMetres: 105,
       pitchHeightMetres: 68,
     });
+    expect((await currentManifest()).pitchModel).toEqual(pitchModel);
+
+    const framingMismatch = await request(app)
+      .patch(`/api/admin/recordings/${recordingId}/tracking-bundle`)
+      .send({
+        pitchModel: {
+          ...pitchModel,
+          calibratedAspectRatio: 2,
+        },
+      });
+    expect(framingMismatch.status).toBe(400);
+    expect(framingMismatch.body.error).toMatch(/aspect ratio/i);
     expect((await currentManifest()).pitchModel).toEqual(pitchModel);
 
     const invalid = await request(app)

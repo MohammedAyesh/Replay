@@ -563,6 +563,9 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-summary-metric b { color: var(--claim-green); font-family: var(--app-font-display); font-size: 19px; line-height: 1; }
 .claim-summary-metric small { color: var(--claim-dim); font-family: var(--app-font-mono); font-size: 8px; line-height: 1.25; }
 .claim-heatmap-card { grid-column: 1 / -1; display: grid; gap: 9px; padding: 11px; border: 1px solid rgba(212,255,79,.16); background: rgba(212,255,79,.045); }
+.claim-unavailable-metrics { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.claim-summary-metric-unavailable { border-color: rgba(255,255,255,.1); background: rgba(255,255,255,.025); }
+.claim-summary-metric-unavailable b { color: var(--claim-muted); font-size: 13px; }
 .claim-heatmap-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .claim-heatmap-heading small { color: var(--claim-dim); font-family: var(--app-font-mono); font-size: 8px; text-transform: uppercase; }
 .claim-heatmap { position: relative; display: grid; grid-template-columns: repeat(12, 1fr); grid-template-rows: repeat(8, 1fr); aspect-ratio: 12 / 8; overflow: hidden; border: 1px solid rgba(196,224,184,.18); background: #13201d; }

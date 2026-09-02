@@ -26,6 +26,7 @@ import type {
   AdStats,
   AddAcademyRecordingInput,
   AdminAdEntry,
+  AdminRecordingPlayerMetricsResponse,
   AdminTrackingBundlePatchBody,
   AdminTrackingBundlePatchResponse,
   AuthResponse,
@@ -1727,6 +1728,83 @@ export const useReplaceTrackingBundle = <TError = ErrorType<void>,
       > => {
       return useMutation(getReplaceTrackingBundleMutationOptions(options));
     }
+
+export const getGetAdminRecordingPlayerMetricsUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/player-metrics`
+}
+
+/**
+ * @summary Get claim player metrics including unvalidated top speed
+ */
+export const getAdminRecordingPlayerMetrics = async (id: number, options?: RequestInit): Promise<AdminRecordingPlayerMetricsResponse> => {
+
+  return customFetch<AdminRecordingPlayerMetricsResponse>(getGetAdminRecordingPlayerMetricsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminRecordingPlayerMetricsQueryKey = (id: number,) => {
+    return [
+    `/api/admin/recordings/${id}/player-metrics`
+    ] as const;
+    }
+
+
+export const getGetAdminRecordingPlayerMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminRecordingPlayerMetricsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>> = ({ signal }) => getAdminRecordingPlayerMetrics(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminRecordingPlayerMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>>
+export type GetAdminRecordingPlayerMetricsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get claim player metrics including unvalidated top speed
+ */
+
+export function useGetAdminRecordingPlayerMetrics<TData = Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminRecordingPlayerMetricsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getListAcademiesUrl = () => {
 

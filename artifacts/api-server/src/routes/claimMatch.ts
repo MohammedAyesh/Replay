@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import multer from "multer";
 import { unzipSync, strFromU8 } from "fflate";
 import { createHash, randomUUID } from "node:crypto";
@@ -15,6 +15,7 @@ import {
   ReplaceTrackingBundleBody,
   UpdateTrackingBundleBody,
   UpdateTrackingBundleResponse,
+  GetAdminRecordingPlayerMetricsResponse,
   UpdateClaimMatchProgressBody,
 } from "@workspace/api-zod";
 import {
@@ -90,6 +91,7 @@ const MAX_TRACKS_PER_SEGMENT = 10_000;
 const MAX_BOXES_PER_SEGMENT = 2_000_000;
 const MAX_CROSSINGS_PER_SEGMENT = 250_000;
 const MAX_EVENTS_PER_SEGMENT = 250_000;
+const PITCH_ASPECT_RATIO_TOLERANCE = 0.01;
 
 function parseId(value: string | string[]): number | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -136,15 +138,44 @@ function firstNumber(...values: unknown[]): number | undefined {
 }
 
 function firstString(...values: unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === "string" && value.trim() !== "");
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") return value;
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  }
+  return undefined;
 }
 
 function parsePitchModel(input: unknown): { model?: TrackingPitchModel; error?: string } {
   if (input === undefined || input === null) return {};
   const source = asRecord(input);
+  const calibrationId = firstString(source.calibrationId, source.calibrationIdentifier, source.calibration_id);
+  const fittedAt = firstString(
+    source.fittedAt,
+    source.fitDate,
+    source.fittedDate,
+    source.fitted_at,
+    source.fit_date,
+    source.calibratedAt,
+    source.calibrated_at,
+  );
+  const calibratedAspectRatio = firstNumber(
+    source.calibratedAspectRatio,
+    source.calibrationAspectRatio,
+    source.aspectRatio,
+    source.sourceAspectRatio,
+    source.calibrated_aspect_ratio,
+    source.aspect_ratio,
+  );
   const pitchWidthMetres = firstNumber(source.pitchWidthMetres);
   const pitchHeightMetres = firstNumber(source.pitchHeightMetres);
   const rawGrid = source.grid;
+  if (!calibrationId) return { error: "Pitch model calibrationId is required" };
+  if (!fittedAt || Number.isNaN(Date.parse(fittedAt))) {
+    return { error: "Pitch model fittedAt must be a valid date-time" };
+  }
+  if (calibratedAspectRatio === undefined || calibratedAspectRatio <= 0) {
+    return { error: "Pitch model calibratedAspectRatio must be a positive number" };
+  }
   if (
     pitchWidthMetres === undefined
     || pitchHeightMetres === undefined
@@ -187,18 +218,67 @@ function parsePitchModel(input: unknown): { model?: TrackingPitchModel; error?: 
     }
     grid.push(row);
   }
-  return { model: { pitchWidthMetres, pitchHeightMetres, grid } };
+  return {
+    model: {
+      calibrationId,
+      fittedAt: new Date(fittedAt).toISOString(),
+      calibratedAspectRatio,
+      pitchWidthMetres,
+      pitchHeightMetres,
+      grid,
+    },
+  };
 }
 
 function pitchModelSummary(model: TrackingPitchModel | undefined) {
-  return model
+  const stored = model as (TrackingPitchModel & {
+    calibrationId?: string;
+    fittedAt?: string;
+    calibratedAspectRatio?: number;
+  }) | undefined;
+  return stored
     ? {
-        gridRows: model.grid.length,
-        gridColumns: model.grid[0]?.length ?? 0,
-        pitchWidthMetres: model.pitchWidthMetres,
-        pitchHeightMetres: model.pitchHeightMetres,
+        calibrationId: stored.calibrationId ?? null,
+        fittedAt: stored.fittedAt ?? null,
+        calibratedAspectRatio: stored.calibratedAspectRatio ?? null,
+        gridRows: stored.grid.length,
+        gridColumns: stored.grid[0]?.length ?? 0,
+        pitchWidthMetres: stored.pitchWidthMetres,
+        pitchHeightMetres: stored.pitchHeightMetres,
       }
     : null;
+}
+
+function pitchModelFramingError(
+  model: TrackingPitchModel,
+  width: number,
+  height: number,
+): string | undefined {
+  const bundleAspectRatio = width / height;
+  const relativeDifference = Math.abs(bundleAspectRatio - model.calibratedAspectRatio)
+    / model.calibratedAspectRatio;
+  if (relativeDifference <= PITCH_ASPECT_RATIO_TOLERANCE) return undefined;
+  return `Pitch model aspect ratio ${model.calibratedAspectRatio.toFixed(4)} does not match bundle aspect ratio ${bundleAspectRatio.toFixed(4)}; the model was fitted for a different crop`;
+}
+
+function validatePitchModelForManifest(
+  model: TrackingPitchModel | undefined,
+  width: number,
+  height: number,
+): string | undefined {
+  if (!model) return undefined;
+  const parsed = parsePitchModel(model);
+  if (parsed.error || !parsed.model) return parsed.error ?? "Invalid pitch model";
+  return pitchModelFramingError(parsed.model, width, height);
+}
+
+function manifestForClient(manifest: TrackingManifest): TrackingManifest {
+  if (!manifest.pitchModel || !validatePitchModelForManifest(manifest.pitchModel, manifest.width, manifest.height)) {
+    return manifest;
+  }
+  const safeManifest = { ...manifest };
+  delete safeManifest.pitchModel;
+  return safeManifest;
 }
 
 /**
@@ -474,7 +554,7 @@ function entryNamesForSegment(
   const declared = firstString(entry.file, entry.path);
   const candidates = [declared, `segments/${name}.json`, `segments/${name}.json.gz`, `segment-${String(index + 1).padStart(2, "0")}.json`, `${name}.json`]
     .filter((value): value is string => Boolean(value));
-  return candidates;
+  return [...new Set(candidates)];
 }
 
 class BundleParseError extends Error {
@@ -533,8 +613,6 @@ function unzipBundleEntries(buffer: Buffer): Record<string, Uint8Array> {
 export function parseUploadedBundleDetailed(input: unknown): { upload: UploadBundle | null; error: string | null } {
   const source = asRecord(input);
   const rawMetadata = asRecord(source.manifest ?? input);
-  const pitchModel = parsePitchModel(rawMetadata.pitchModel ?? rawMetadata.pitch_model);
-  if (pitchModel.error) return { upload: null, error: pitchModel.error };
   const nestedMetadata = asRecord(rawMetadata.metadata ?? rawMetadata.video);
   const dimensions = asRecord(rawMetadata.dimensions ?? nestedMetadata.dimensions);
   const suppliedFrameRate = firstNumber(
@@ -559,6 +637,17 @@ export function parseUploadedBundleDetailed(input: unknown): { upload: UploadBun
   if (suppliedFrameRate === undefined) return { upload: null, error: "Manifest frame rate is required" };
   if (suppliedWidth === undefined) return { upload: null, error: "Manifest width is required" };
   if (suppliedHeight === undefined) return { upload: null, error: "Manifest height is required" };
+  const pitchModel = parsePitchModel(
+    rawMetadata.pitchModel
+      ?? rawMetadata.pitch_model
+      ?? nestedMetadata.pitchModel
+      ?? nestedMetadata.pitch_model,
+  );
+  if (pitchModel.error) return { upload: null, error: pitchModel.error };
+  if (pitchModel.model) {
+    const framingError = pitchModelFramingError(pitchModel.model, suppliedWidth, suppliedHeight);
+    if (framingError) return { upload: null, error: framingError };
+  }
   const rawSegments = Array.isArray(rawMetadata.segments) ? rawMetadata.segments : [];
   if (rawSegments.length > 0) {
     const segments: TrackingSegmentPayload[] = [];
@@ -677,14 +766,18 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
     return { upload: null, error: "The manifest is not valid JSON" };
   }
   const rawManifest = asRecord(manifest);
-  const pitchModel = parsePitchModel(rawManifest.pitchModel ?? rawManifest.pitch_model);
-  if (pitchModel.error) return { upload: null, error: pitchModel.error };
   const zipFrameRate = firstNumber(rawManifest.frameRate, rawManifest.fps, rawManifest.videoFps);
   const zipWidth = firstNumber(rawManifest.width, rawManifest.videoWidth);
   const zipHeight = firstNumber(rawManifest.height, rawManifest.videoHeight);
   if (zipFrameRate === undefined) return { upload: null, error: "Manifest frame rate is required" };
   if (zipWidth === undefined) return { upload: null, error: "Manifest width is required" };
   if (zipHeight === undefined) return { upload: null, error: "Manifest height is required" };
+  const pitchModel = parsePitchModel(rawManifest.pitchModel ?? rawManifest.pitch_model);
+  if (pitchModel.error) return { upload: null, error: pitchModel.error };
+  if (pitchModel.model) {
+    const framingError = pitchModelFramingError(pitchModel.model, zipWidth, zipHeight);
+    if (framingError) return { upload: null, error: framingError };
+  }
   const rawSegments = Array.isArray(rawManifest.segments) ? rawManifest.segments : [];
   if (rawSegments.length === 0) {
     return { upload: null, error: "The manifest must list at least one segment" };
@@ -903,6 +996,15 @@ function toProgress(row: typeof claimMatchProgressTable.$inferSelect | null, rec
       matchedEvents: 0,
       heatmap: { coordinateSpace: "camera" as const, cells: [] },
       distanceMetres: null,
+      averageSpeedMetresPerSecond: null,
+      touches: unavailablePlayerMetric(),
+      passes: unavailablePlayerMetric(),
+      shots: unavailablePlayerMetric(),
+      dribbles: unavailablePlayerMetric(),
+    },
+    adminPlayerStats: {
+      topSpeedMetresPerSecond: null,
+      topSpeedUsableTimeFraction: null,
     },
     updatedAt: row?.updatedAt.toISOString() ?? new Date().toISOString(),
   };
@@ -1181,8 +1283,31 @@ type DerivedClaimState = {
       cells: Array<{ x: number; y: number; weight: number }>;
     };
     distanceMetres: number | null;
+    averageSpeedMetresPerSecond: number | null;
+    touches: UnavailablePlayerMetric;
+    passes: UnavailablePlayerMetric;
+    shots: UnavailablePlayerMetric;
+    dribbles: UnavailablePlayerMetric;
+  };
+  adminPlayerStats: {
+    topSpeedMetresPerSecond: number | null;
+    topSpeedUsableTimeFraction: number | null;
   };
 };
+
+type UnavailablePlayerMetric = {
+  value: null;
+  available: false;
+  unavailableReason: "ball_tracking_and_possession_attribution_unavailable";
+};
+
+function unavailablePlayerMetric(): UnavailablePlayerMetric {
+  return {
+    value: null,
+    available: false,
+    unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+  };
+}
 
 const EMPTY_ANCHOR_TRACK = "__none__";
 
@@ -1302,7 +1427,8 @@ function hasUsablePitchModel(manifest: TrackingManifest): boolean {
   const model = manifest.pitchModel;
   if (!model || model.grid.length < 2 || model.grid[0].length < 2) return false;
   const columns = model.grid[0].length;
-  return model.grid.every((row) => row.length === columns && row.length >= 2);
+  if (!model.grid.every((row) => row.length === columns && row.length >= 2)) return false;
+  return !validatePitchModelForManifest(model, manifest.width, manifest.height);
 }
 
 function acceptedPositionSamples(
@@ -1359,6 +1485,86 @@ function acceptedPositionSamples(
   return sampled;
 }
 
+type SpeedSummary = {
+  topSpeedMetresPerSecond: number | null;
+  topSpeedUsableTimeFraction: number | null;
+};
+
+function topSpeedSummary(
+  manifest: TrackingManifest,
+  mapped: MappedPosition[],
+  coveredSeconds: number,
+): SpeedSummary {
+  if (!hasUsablePitchModel(manifest) || mapped.length < 2) {
+    return { topSpeedMetresPerSecond: null, topSpeedUsableTimeFraction: coveredSeconds > 0 ? 0 : null };
+  }
+
+  const maxDirectGapSeconds = Math.max(0.2, 3 / Math.max(manifest.frameRate, 0.001));
+  const intervals = mapped.slice(1).map((current, index) => {
+    const previous = mapped[index];
+    const seconds = (current.frame - previous.frame) / Math.max(manifest.frameRate, 0.001);
+    const distance = Math.hypot(current.pitchX - previous.pitchX, current.pitchY - previous.pitchY);
+    const speed = seconds > 0 ? distance / seconds : Number.POSITIVE_INFINITY;
+    const valid = seconds > 0
+      && seconds <= maxDirectGapSeconds
+      && speed <= 11
+      // Image-space y increases toward the camera, so the far third is ny < 1/3.
+      && previous.ny >= 1 / 3
+      && current.ny >= 1 / 3;
+    return { seconds, distance, speed, valid };
+  });
+
+  // A rejected sample invalidates its surrounding speed window. This prevents
+  // an erroneous spike from being clipped into an apparently plausible sprint.
+  for (let index = 0; index < intervals.length; index++) {
+    if (!intervals[index].valid) {
+      if (intervals[index - 1]) intervals[index - 1].valid = false;
+      if (intervals[index + 1]) intervals[index + 1].valid = false;
+    }
+  }
+  for (let index = 1; index < intervals.length; index++) {
+    const previous = intervals[index - 1];
+    const current = intervals[index];
+    if (!previous.valid || !current.valid) continue;
+    const elapsed = Math.max((previous.seconds + current.seconds) / 2, 0.001);
+    if (Math.abs(current.speed - previous.speed) / elapsed > 10) {
+      previous.valid = false;
+      current.valid = false;
+      if (intervals[index - 2]) intervals[index - 2].valid = false;
+      if (intervals[index + 1]) intervals[index + 1].valid = false;
+    }
+  }
+
+  const usableSeconds = intervals.reduce(
+    (total, interval) => total + (interval.valid ? interval.seconds : 0),
+    0,
+  );
+  let topSpeed: number | null = null;
+  for (let start = 0; start < intervals.length; start++) {
+    if (!intervals[start].valid) continue;
+    let elapsed = 0;
+    let distance = 0;
+    for (let end = start; end < intervals.length && intervals[end].valid; end++) {
+      const interval = intervals[end];
+      if (elapsed + interval.seconds >= 1) {
+        const remaining = 1 - elapsed;
+        distance += interval.distance * (remaining / interval.seconds);
+        const average = distance;
+        topSpeed = topSpeed === null ? average : Math.max(topSpeed, average);
+        break;
+      }
+      elapsed += interval.seconds;
+      distance += interval.distance;
+    }
+  }
+  return {
+    topSpeedMetresPerSecond: topSpeed === null ? null : Math.round(topSpeed * 100) / 100,
+    topSpeedUsableTimeFraction: coveredSeconds > 0
+      ? Math.min(1, Math.max(0, Math.round((usableSeconds / coveredSeconds) * 10_000) / 10_000))
+      : null,
+  };
+}
+
 function buildPlayerMetrics(
   manifest: TrackingManifest,
   fullSegments: TrackingSegmentPayload[] | undefined,
@@ -1387,7 +1593,16 @@ function buildPlayerMetrics(
     return {
       ...base,
       heatmap: { coordinateSpace, cells: [] },
-      distanceMetres: usablePitchModel ? 0 : null,
+      distanceMetres: null,
+      averageSpeedMetresPerSecond: null,
+      touches: unavailablePlayerMetric(),
+      passes: unavailablePlayerMetric(),
+      shots: unavailablePlayerMetric(),
+      dribbles: unavailablePlayerMetric(),
+      adminPlayerStats: {
+        topSpeedMetresPerSecond: null,
+        topSpeedUsableTimeFraction: null,
+      },
     };
   }
 
@@ -1470,7 +1685,23 @@ function buildPlayerMetrics(
     }
     distanceMetres = Math.round(distanceMetres);
   }
-  return { ...base, heatmap, distanceMetres };
+  const averageSpeedMetresPerSecond = distanceMetres === null
+    ? null
+    : coveredSeconds > 0
+      ? Math.round((distanceMetres / coveredSeconds) * 100) / 100
+      : 0;
+  const speedSummary = topSpeedSummary(manifest, mapped, coveredSeconds);
+  return {
+    ...base,
+    heatmap,
+    distanceMetres,
+    averageSpeedMetresPerSecond,
+    touches: unavailablePlayerMetric(),
+    passes: unavailablePlayerMetric(),
+    shots: unavailablePlayerMetric(),
+    dribbles: unavailablePlayerMetric(),
+    adminPlayerStats: speedSummary,
+  };
 }
 
 export function deriveClaimState(
@@ -1530,6 +1761,19 @@ export function deriveClaimState(
       event.time >= interval.startSeconds && event.time <= interval.endSeconds,
     ))
     .length;
+  const playerMetrics = buildPlayerMetrics(
+    manifest,
+    fullSegments,
+    accepted,
+    coveredSeconds,
+    coveragePercent,
+    anchorAnswers.length,
+    acceptedAnchorCount,
+    trackedSegments,
+    segments.length,
+    matchedEvents,
+  );
+  const { adminPlayerStats, ...playerStats } = playerMetrics;
   return {
     coverageSeconds: Math.round(coveredSeconds * 100) / 100,
     coveragePercent,
@@ -1541,20 +1785,8 @@ export function deriveClaimState(
     completed,
     completionReason: completed ? "coverage-threshold" : "keep-confirming",
     earnedClips,
-    playerStats: {
-      ...buildPlayerMetrics(
-        manifest,
-        fullSegments,
-        accepted,
-        coveredSeconds,
-        coveragePercent,
-        anchorAnswers.length,
-        acceptedAnchorCount,
-        trackedSegments,
-        segments.length,
-        matchedEvents,
-      ),
-    },
+    playerStats,
+    adminPlayerStats,
   };
 }
 
@@ -1598,6 +1830,67 @@ async function getClaimCorrections(userId: number, recordingId: number) {
     ))
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
 }
+
+router.get("/admin/recordings/:id/player-metrics", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const recordingId = parseId(req.params.id);
+  if (!recordingId) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const row = await getRecordingBundle(recordingId);
+  if (!row?.bundle?.manifest) {
+    res.status(404).json({ error: "Recording or tracking bundle not found" });
+    return;
+  }
+  const [corrections, fullSegments] = await Promise.all([
+    db
+      .select()
+      .from(claimMatchCorrectionsTable)
+      .where(eq(claimMatchCorrectionsTable.recordingId, recordingId))
+      .orderBy(desc(claimMatchCorrectionsTable.createdAt)),
+    readBundleSegments(row.bundle.id),
+  ]);
+  const correctionsByUser = new Map<number, typeof corrections>();
+  for (const correction of corrections) {
+    const existing = correctionsByUser.get(correction.userId) ?? [];
+    existing.push(correction);
+    correctionsByUser.set(correction.userId, existing);
+  }
+  const userIds = [...correctionsByUser.keys()];
+  const users = userIds.length
+    ? await db
+      .select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+      .from(usersTable)
+      .where(inArray(usersTable.id, userIds))
+    : [];
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const manifest = await manifestWithBundleFingerprint(row.bundle);
+  const segments = await getClaimStateSegments(row.bundle);
+  const players = [...correctionsByUser.entries()]
+    .map(([userId, userCorrections]) => {
+      const derived = deriveClaimState(manifest, segments, userCorrections, fullSegments);
+      const user = usersById.get(userId);
+      return {
+        userId,
+        displayName: user?.name ?? `User ${userId}`,
+        email: user?.email ?? "unknown",
+        playerStats: derived.playerStats,
+        ...derived.adminPlayerStats,
+      };
+    })
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  res.json(GetAdminRecordingPlayerMetricsResponse.parse({
+    recordingId,
+    pitchModel: pitchModelSummary(manifest.pitchModel),
+    players,
+  }));
+});
 
 function formatMoment(seconds: number): string {
   const mins = Math.floor(seconds / 60);
@@ -1651,7 +1944,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     // Default to 0 rather than failing the response, but that default is a
     // guess and it is almost always wrong on a recording longer than the
     // tracked window.
-    manifest: { ...manifest, videoStartSeconds: manifest.videoStartSeconds ?? 0 },
+    manifest: { ...manifestForClient(manifest), videoStartSeconds: manifest.videoStartSeconds ?? 0 },
     progress: progressWithDerived(progress ?? null, params.data.id, derived),
     corrections: corrections.map(toCorrection),
   }));
@@ -1988,8 +2281,8 @@ export function validateUploadBundle(upload: UploadBundle): string | null {
     return "Manifest video start must be between 0 and 10800 seconds";
   }
   if (manifest.pitchModel) {
-    const pitchModel = parsePitchModel(manifest.pitchModel);
-    if (pitchModel.error) return pitchModel.error;
+    const pitchModelError = validatePitchModelForManifest(manifest.pitchModel, manifest.width, manifest.height);
+    if (pitchModelError) return pitchModelError;
   }
   if (segments.length > MAX_BUNDLE_SEGMENTS) {
     return `The bundle contains too many segments (maximum ${MAX_BUNDLE_SEGMENTS})`;
@@ -2175,6 +2468,19 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       })));
       return [bundle];
     });
+    if (previousBundle?.manifest.pitchModel || manifest.pitchModel) {
+      const previousModel = previousBundle?.manifest.pitchModel;
+      const nextModel = manifest.pitchModel;
+      logger.info({
+        recordingId,
+        adminId,
+        previousCalibrationId: previousModel?.calibrationId ?? null,
+        nextCalibrationId: nextModel?.calibrationId ?? null,
+        previousFittedAt: previousModel?.fittedAt ?? null,
+        nextFittedAt: nextModel?.fittedAt ?? null,
+        action: previousModel && nextModel ? "replace" : nextModel ? "attach" : "remove",
+      }, "Tracking bundle pitch model changed during bundle upload");
+    }
     await cleanupClaimObjects(previousObjectPaths, "successful replacement");
     return {
       recordingId,
@@ -2238,6 +2544,15 @@ router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<
         res.status(400).json({ error: parsedPitchModel.error ?? "Invalid pitch model" });
         return;
       }
+      const framingError = pitchModelFramingError(
+        parsedPitchModel.model,
+        existing.manifest.width,
+        existing.manifest.height,
+      );
+      if (framingError) {
+        res.status(400).json({ error: framingError });
+        return;
+      }
       pitchModel = parsedPitchModel.model;
     }
   }
@@ -2256,6 +2571,15 @@ router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<
     .set({ manifest, updatedAt: new Date(), uploadedBy: adminId })
     .where(eq(recordingTrackingBundlesTable.id, existing.id))
     .returning({ updatedAt: recordingTrackingBundlesTable.updatedAt });
+  if (hasPitchModel) {
+    logger.info({
+      recordingId,
+      adminId,
+      previousCalibrationId: existing.manifest.pitchModel?.calibrationId ?? null,
+      nextCalibrationId: manifest.pitchModel?.calibrationId ?? null,
+      action: pitchModel ? "attach" : "remove",
+    }, "Admin changed tracking bundle pitch model");
+  }
   res.json(UpdateTrackingBundleResponse.parse({
     recordingId,
     videoStartSeconds: manifest.videoStartSeconds ?? 0,

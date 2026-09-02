@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { strToU8, zipSync } from "fflate";
 import {
   completionSurvivesConcurrentProgress,
   deriveClaimState,
   isAcceptedClaimAnswer,
   knownClaimTrackIds,
+  parseUploadedBundleDetailed,
+  parseZipBundleDetailed,
   summarizeTrackingSegments,
 } from "./claimMatch";
 
@@ -75,6 +78,63 @@ function correction(
 }
 
 describe("claim match server-derived progress", () => {
+  it("canonicalizes calibration aliases and guards JSON and ZIP framing", () => {
+    const segment = {
+      index: 0,
+      name: "only",
+      startFrame: 0,
+      endFrame: 1,
+      startSeconds: 0,
+      endSeconds: 0.08,
+      file: "segments/only.json",
+    };
+    const model = {
+      calibrationIdentifier: "calibration-alias",
+      fitDate: "2026-02-03T04:05:06.000Z",
+      aspectRatio: 16 / 9,
+      pitchWidthMetres: 105,
+      pitchHeightMetres: 68,
+      grid: [
+        [{ x: 0, y: 0 }, { x: 105, y: 0 }],
+        [{ x: 0, y: 68 }, { x: 105, y: 68 }],
+      ],
+    };
+    const manifestInput = {
+      version: 1,
+      label: "framing test",
+      width: 1920,
+      height: 1080,
+      frameRate: 25,
+      frameCount: 2,
+      duration: 0.08,
+      matchOffset: 0,
+      segmentCount: 1,
+      pitchModel: model,
+      segments: [segment],
+    };
+    const segmentInput = { tracks: [], crossings: [], inPlaySpans: [], events: [] };
+    const json = parseUploadedBundleDetailed({ ...manifestInput, segments: [{ ...segment, ...segmentInput }] });
+    expect(json.error).toBeNull();
+    expect(json.upload?.manifest.pitchModel).toMatchObject({
+      calibrationId: "calibration-alias",
+      fittedAt: "2026-02-03T04:05:06.000Z",
+      calibratedAspectRatio: 16 / 9,
+    });
+    const zip = parseZipBundleDetailed(Buffer.from(zipSync({
+      "manifest.json": strToU8(JSON.stringify(manifestInput)),
+      "segments/only.json": strToU8(JSON.stringify(segmentInput)),
+    })));
+    expect(zip.error).toBeNull();
+    expect(zip.upload?.manifest.pitchModel?.calibrationId).toBe("calibration-alias");
+
+    const mismatch = parseUploadedBundleDetailed({
+      ...manifestInput,
+      pitchModel: { ...model, aspectRatio: 2 },
+      segments: [{ ...segment, ...segmentInput }],
+    });
+    expect(mismatch.error).toMatch(/aspect ratio/i);
+  });
+
   it("accepts canonical identity ids when validating browser corrections", () => {
     const identityManifest = {
       ...(manifest as object),
@@ -176,6 +236,27 @@ describe("claim match server-derived progress", () => {
       matchedEvents: 2,
       heatmap: { coordinateSpace: "camera", cells: [] },
       distanceMetres: null,
+      averageSpeedMetresPerSecond: null,
+      touches: {
+        value: null,
+        available: false,
+        unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+      },
+      passes: {
+        value: null,
+        available: false,
+        unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+      },
+      shots: {
+        value: null,
+        available: false,
+        unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+      },
+      dribbles: {
+        value: null,
+        available: false,
+        unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+      },
     });
   });
 
@@ -189,6 +270,9 @@ describe("claim match server-derived progress", () => {
       segmentCount: 1,
       segments: [{ index: 0, name: "only", startFrame: 0, endFrame: 3, startSeconds: 0, endSeconds: 4 }],
       pitchModel: {
+        calibrationId: "test-calibration",
+        fittedAt: "2026-01-01T00:00:00.000Z",
+        calibratedAspectRatio: 1,
         pitchWidthMetres: 10,
         pitchHeightMetres: 10,
         grid: [
@@ -232,6 +316,70 @@ describe("claim match server-derived progress", () => {
     expect(result.playerStats.distanceMetres).toBeGreaterThan(0);
     expect(result.playerStats.heatmap.coordinateSpace).toBe("pitch");
     expect(result.playerStats.heatmap.cells.some((cell) => cell.y > 0.8)).toBe(true);
+  });
+
+  it("uses confirmed time for average speed and keeps top speed admin-only and guarded", () => {
+    const speedManifest = {
+      ...(manifest as object),
+      width: 100,
+      height: 100,
+      frameRate: 10,
+      frameCount: 30,
+      duration: 3,
+      segmentCount: 1,
+      segments: [{ index: 0, name: "only", startFrame: 0, endFrame: 29, startSeconds: 0, endSeconds: 3 }],
+      pitchModel: {
+        calibrationId: "speed-calibration",
+        fittedAt: "2026-02-03T04:05:06.000Z",
+        calibratedAspectRatio: 1,
+        pitchWidthMetres: 20,
+        pitchHeightMetres: 10,
+        grid: [
+          [{ x: 0, y: 0 }, { x: 20, y: 0 }],
+          [{ x: 0, y: 10 }, { x: 20, y: 10 }],
+        ],
+      },
+    } as never;
+    const speedSummarySegment = {
+      segmentIndex: 0,
+      name: "only",
+      startFrame: 0,
+      endFrame: 29,
+      startSeconds: 0,
+      endSeconds: 3,
+      tracks: [{ id: "player-1", startFrame: 0, endFrame: 29 }],
+      events: [],
+    };
+    const summary = [speedSummarySegment] as never;
+    const full = [{
+      ...speedSummarySegment,
+      version: 1,
+      tracks: [{
+        id: "player-1",
+        startFrame: 0,
+        endFrame: 29,
+        boxes: Array.from({ length: 30 }, (_, frame) => ({
+          frame,
+          x: 10 + frame * 2.5,
+          y: 70,
+          w: 1,
+          h: 20,
+        })),
+      }],
+      crossings: [],
+      inPlaySpans: [],
+    }] as never;
+    const result = deriveClaimState(speedManifest, summary, [
+      correction("speed-1", "anchor-yes", "player-1", 1),
+    ] as never, full);
+
+    expect(result.playerStats.averageSpeedMetresPerSecond).toBeCloseTo(
+      (result.playerStats.distanceMetres ?? 0) / result.playerStats.confirmedSeconds,
+      2,
+    );
+    expect(result.playerStats).not.toHaveProperty("topSpeedMetresPerSecond");
+    expect(result.adminPlayerStats.topSpeedMetresPerSecond).toBeCloseTo(5, 0);
+    expect(result.adminPlayerStats.topSpeedUsableTimeFraction).toBeGreaterThan(0.9);
   });
 
   it("does not let an older progress save clear a completed claim", () => {

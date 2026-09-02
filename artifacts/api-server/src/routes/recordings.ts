@@ -23,6 +23,9 @@ function toAdminRecording(
     frameCount?: number;
     videoStartSeconds?: number;
     pitchModel?: {
+      calibrationId?: string;
+      fittedAt?: string;
+      calibratedAspectRatio?: number;
       pitchWidthMetres: number;
       pitchHeightMetres: number;
       grid: Array<Array<unknown>>;
@@ -47,6 +50,9 @@ function toAdminRecording(
     trackingVideoStartSeconds: trackingManifest?.videoStartSeconds ?? 0,
     trackingPitchModel: trackingManifest?.pitchModel
       ? {
+          calibrationId: trackingManifest.pitchModel.calibrationId,
+          fittedAt: trackingManifest.pitchModel.fittedAt,
+          calibratedAspectRatio: trackingManifest.pitchModel.calibratedAspectRatio,
           gridRows: trackingManifest.pitchModel.grid.length,
           gridColumns: trackingManifest.pitchModel.grid[0]?.length ?? 0,
           pitchWidthMetres: trackingManifest.pitchModel.pitchWidthMetres,

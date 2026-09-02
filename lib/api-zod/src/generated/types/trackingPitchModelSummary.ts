@@ -7,6 +7,12 @@
  */
 
 export interface TrackingPitchModelSummary {
+  /** @nullable */
+  calibrationId: string | null;
+  /** @nullable */
+  fittedAt: Date | null;
+  /** @nullable */
+  calibratedAspectRatio: number | null;
   /** @minimum 2 */
   gridRows: number;
   /** @minimum 2 */

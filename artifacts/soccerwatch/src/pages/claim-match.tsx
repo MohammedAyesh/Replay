@@ -1102,11 +1102,14 @@ export default function ClaimMatchPage() {
             playerStats: {
               ...current.progress.playerStats,
               confirmedSeconds: 0,
+               minutesPlayed: 0,
               coveragePercent: 0,
               answeredMoments: 0,
               acceptedMoments: 0,
               trackedSegments: 0,
               matchedEvents: 0,
+               distanceMetres: null,
+               averageSpeedMetresPerSecond: null,
             },
             updatedAt: new Date().toISOString(),
           },
@@ -1227,6 +1230,11 @@ export default function ClaimMatchPage() {
                     <b>{playerStats.distanceMetres === null ? "Unavailable" : `${playerStats.distanceMetres.toLocaleString()} m`}</b>
                     <small>{playerStats.distanceMetres === null ? "No pitch model in this recording" : "smoothed pitch estimate"}</small>
                   </div>
+                   <div className="claim-summary-metric">
+                     <span><Clock3 size={13} /> Average speed</span>
+                     <b>{playerStats.averageSpeedMetresPerSecond === null ? "Unavailable" : `${playerStats.averageSpeedMetresPerSecond.toFixed(2)} m/s`}</b>
+                     <small>{playerStats.averageSpeedMetresPerSecond === null ? "No pitch model in this recording" : "distance ÷ confirmed time present"}</small>
+                   </div>
                   <div className="claim-heatmap-card">
                     <div className="claim-heatmap-heading">
                       <span><MapPinned size={13} /> Position heatmap</span>
@@ -1234,6 +1242,20 @@ export default function ClaimMatchPage() {
                     </div>
                     <PlayerHeatmap heatmap={playerStats.heatmap} />
                   </div>
+                   <div className="claim-unavailable-metrics">
+                     {[
+                       { label: "Touches", metric: playerStats.touches },
+                       { label: "Passes", metric: playerStats.passes },
+                       { label: "Shots", metric: playerStats.shots },
+                       { label: "Dribbles", metric: playerStats.dribbles },
+                     ].map(({ label }) => (
+                       <div className="claim-summary-metric claim-summary-metric-unavailable" key={label}>
+                         <span>{label}</span>
+                         <b>Not yet available</b>
+                         <small>Ball tracking and possession attribution unavailable</small>
+                       </div>
+                     ))}
+                   </div>
                </div>
              )}
               <p className="claim-stats-note">Distance is approximate and derived from camera tracking. It is shown only when this recording includes a pitch model; we never estimate metres from player height in pixels.</p>

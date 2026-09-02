@@ -528,6 +528,29 @@ paths:
         "404":
           description: Recording not found
 
+  /admin/recordings/{id}/player-metrics:
+    get:
+      operationId: getAdminRecordingPlayerMetrics
+      tags: [admin]
+      summary: Get claim player metrics including unvalidated top speed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Player metrics for claims on this recording
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRecordingPlayerMetricsResponse"
+        "403":
+          description: Forbidden
+        "404":
+          description: Recording or tracking bundle not found
+
   /academies:
     get:
       operationId: listAcademies
@@ -2098,8 +2121,20 @@ components:
 
     TrackingPitchModel:
       type: object
-      required: [pitchWidthMetres, pitchHeightMetres, grid]
+      required: [calibrationId, fittedAt, calibratedAspectRatio, pitchWidthMetres, pitchHeightMetres, grid]
       properties:
+        calibrationId:
+          type: string
+          minLength: 1
+          description: Immutable identifier for the calibration fit that produced this model.
+        fittedAt:
+          type: string
+          format: date-time
+          description: Date and time at which this calibration was fitted.
+        calibratedAspectRatio:
+          type: number
+          exclusiveMinimum: 0
+          description: Image width divided by image height used when fitting this model.
         pitchWidthMetres:
           type: number
           exclusiveMinimum: 0
@@ -2123,8 +2158,15 @@ components:
 
     TrackingPitchModelSummary:
       type: object
-      required: [gridRows, gridColumns, pitchWidthMetres, pitchHeightMetres]
+      required: [calibrationId, fittedAt, calibratedAspectRatio, gridRows, gridColumns, pitchWidthMetres, pitchHeightMetres]
       properties:
+        calibrationId:
+          type: ["string", "null"]
+        fittedAt:
+          type: ["string", "null"]
+          format: date-time
+        calibratedAspectRatio:
+          type: ["number", "null"]
         gridRows:
           type: integer
           minimum: 2
@@ -2344,7 +2386,7 @@ components:
 
     ClaimPlayerStats:
       type: object
-      required: [confirmedSeconds, minutesPlayed, coveragePercent, answeredMoments, acceptedMoments, trackedSegments, totalSegments, matchedEvents, heatmap, distanceMetres]
+      required: [confirmedSeconds, minutesPlayed, coveragePercent, answeredMoments, acceptedMoments, trackedSegments, totalSegments, matchedEvents, heatmap, distanceMetres, averageSpeedMetresPerSecond, touches, passes, shots, dribbles]
       properties:
         confirmedSeconds:
           type: number
@@ -2408,6 +2450,67 @@ components:
           type: ["number", "null"]
           minimum: 0
           description: Smoothed camera-derived distance in metres, or null without a pitch model.
+        averageSpeedMetresPerSecond:
+          type: ["number", "null"]
+          minimum: 0
+          description: Total calibrated distance divided by confirmed time present, or null without a pitch model.
+        touches:
+          $ref: "#/components/schemas/UnavailablePlayerMetric"
+        passes:
+          $ref: "#/components/schemas/UnavailablePlayerMetric"
+        shots:
+          $ref: "#/components/schemas/UnavailablePlayerMetric"
+        dribbles:
+          $ref: "#/components/schemas/UnavailablePlayerMetric"
+
+    UnavailablePlayerMetric:
+      type: object
+      required: [value, available, unavailableReason]
+      properties:
+        value:
+          type: ["number", "null"]
+        available:
+          type: boolean
+        unavailableReason:
+          type: string
+          description: Machine-readable reason when the metric is unavailable.
+
+    AdminPlayerMetrics:
+      type: object
+      required: [userId, displayName, email, playerStats, topSpeedMetresPerSecond, topSpeedUsableTimeFraction]
+      properties:
+        userId:
+          type: integer
+        displayName:
+          type: string
+        email:
+          type: string
+        playerStats:
+          $ref: "#/components/schemas/ClaimPlayerStats"
+        topSpeedMetresPerSecond:
+          type: ["number", "null"]
+          minimum: 0
+          description: Highest valid rolling one-second speed in metres per second; intentionally unvalidated.
+        topSpeedUsableTimeFraction:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 1
+          description: Fraction of confirmed player time remaining after top-speed exclusions.
+
+    AdminRecordingPlayerMetricsResponse:
+      type: object
+      required: [recordingId, pitchModel, players]
+      properties:
+        recordingId:
+          type: integer
+        pitchModel:
+          oneOf:
+            - $ref: "#/components/schemas/TrackingPitchModelSummary"
+            - type: "null"
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminPlayerMetrics"
 
     ClaimProgress:
       type: object

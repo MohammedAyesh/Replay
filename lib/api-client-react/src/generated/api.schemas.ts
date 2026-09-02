@@ -592,6 +592,18 @@ export interface TrackingPitchModelGridPoint {
 
 export interface TrackingPitchModel {
   /**
+     * Immutable identifier for the calibration fit that produced this model.
+     * @minLength 1
+     */
+  calibrationId: string;
+  /** Date and time at which this calibration was fitted. */
+  fittedAt: string;
+  /**
+     * Image width divided by image height used when fitting this model.
+     * @exclusiveMinimum 0
+     */
+  calibratedAspectRatio: number;
+  /**
      * Real pitch width represented by the model, in metres.
      * @exclusiveMinimum 0
      */
@@ -610,6 +622,12 @@ export interface TrackingPitchModel {
 }
 
 export interface TrackingPitchModelSummary {
+  /** @nullable */
+  calibrationId: string | null;
+  /** @nullable */
+  fittedAt: string | null;
+  /** @nullable */
+  calibratedAspectRatio: number | null;
   /** @minimum 2 */
   gridRows: number;
   /** @minimum 2 */
@@ -764,6 +782,14 @@ export type ClaimPlayerStatsHeatmap = {
   cells: ClaimPlayerStatsHeatmapCellsItem[];
 };
 
+export interface UnavailablePlayerMetric {
+  /** @nullable */
+  value: number | null;
+  available: boolean;
+  /** Machine-readable reason when the metric is unavailable. */
+  unavailableReason: string;
+}
+
 export interface ClaimPlayerStats {
   /**
      * Union of the player's accepted tracking intervals, in seconds.
@@ -813,6 +839,42 @@ export interface ClaimPlayerStats {
      * @nullable
      */
   distanceMetres: number | null;
+  /**
+     * Total calibrated distance divided by confirmed time present, or null without a pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  averageSpeedMetresPerSecond: number | null;
+  touches: UnavailablePlayerMetric;
+  passes: UnavailablePlayerMetric;
+  shots: UnavailablePlayerMetric;
+  dribbles: UnavailablePlayerMetric;
+}
+
+export interface AdminPlayerMetrics {
+  userId: number;
+  displayName: string;
+  email: string;
+  playerStats: ClaimPlayerStats;
+  /**
+     * Highest valid rolling one-second speed in metres per second; intentionally unvalidated.
+     * @minimum 0
+     * @nullable
+     */
+  topSpeedMetresPerSecond: number | null;
+  /**
+     * Fraction of confirmed player time remaining after top-speed exclusions.
+     * @minimum 0
+     * @maximum 1
+     * @nullable
+     */
+  topSpeedUsableTimeFraction: number | null;
+}
+
+export interface AdminRecordingPlayerMetricsResponse {
+  recordingId: number;
+  pitchModel: TrackingPitchModelSummary | null;
+  players: AdminPlayerMetrics[];
 }
 
 export interface ClaimProgress {

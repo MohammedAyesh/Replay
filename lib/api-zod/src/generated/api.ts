@@ -289,6 +289,9 @@ export const getClaimMatchResponseManifestSegmentsItemStartSecondsMin = 0;
 
 export const getClaimMatchResponseManifestSegmentsItemEndSecondsMin = 0;
 
+
+export const getClaimMatchResponseManifestPitchModelCalibratedAspectRatioExclusiveMin = 0;
+
 export const getClaimMatchResponseManifestPitchModelPitchWidthMetresExclusiveMin = 0;
 
 export const getClaimMatchResponseManifestPitchModelPitchHeightMetresExclusiveMin = 0;
@@ -339,6 +342,8 @@ export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemWeightMin =
 
 export const getClaimMatchResponseProgressPlayerStatsDistanceMetresMin = 0;
 
+export const getClaimMatchResponseProgressPlayerStatsAverageSpeedMetresPerSecondMin = 0;
+
 
 
 export const GetClaimMatchResponse = zod.object({
@@ -376,6 +381,9 @@ export const GetClaimMatchResponse = zod.object({
   "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
 })),
   "pitchModel": zod.object({
+  "calibrationId": zod.string().min(1).describe('Immutable identifier for the calibration fit that produced this model.'),
+  "fittedAt": zod.coerce.date().describe('Date and time at which this calibration was fitted.'),
+  "calibratedAspectRatio": zod.number().gt(getClaimMatchResponseManifestPitchModelCalibratedAspectRatioExclusiveMin).describe('Image width divided by image height used when fitting this model.'),
   "pitchWidthMetres": zod.number().gt(getClaimMatchResponseManifestPitchModelPitchWidthMetresExclusiveMin).describe('Real pitch width represented by the model, in metres.'),
   "pitchHeightMetres": zod.number().gt(getClaimMatchResponseManifestPitchModelPitchHeightMetresExclusiveMin).describe('Real pitch height represented by the model, in metres.'),
   "grid": zod.array(zod.array(zod.object({
@@ -435,7 +443,28 @@ export const GetClaimMatchResponse = zod.object({
   "weight": zod.number().min(getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemWeightMin)
 }))
 }),
-  "distanceMetres": zod.number().min(getClaimMatchResponseProgressPlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.')
+  "distanceMetres": zod.number().min(getClaimMatchResponseProgressPlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.'),
+  "averageSpeedMetresPerSecond": zod.number().min(getClaimMatchResponseProgressPlayerStatsAverageSpeedMetresPerSecondMin).nullable().describe('Total calibrated distance divided by confirmed time present, or null without a pitch model.'),
+  "touches": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "passes": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "shots": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "dribbles": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+})
 }),
   "updatedAt": zod.string()
 }),
@@ -528,6 +557,8 @@ export const updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemWeightMi
 
 export const updateClaimMatchProgressResponsePlayerStatsDistanceMetresMin = 0;
 
+export const updateClaimMatchProgressResponsePlayerStatsAverageSpeedMetresPerSecondMin = 0;
+
 
 
 export const UpdateClaimMatchProgressResponse = zod.object({
@@ -571,7 +602,28 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "weight": zod.number().min(updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemWeightMin)
 }))
 }),
-  "distanceMetres": zod.number().min(updateClaimMatchProgressResponsePlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.')
+  "distanceMetres": zod.number().min(updateClaimMatchProgressResponsePlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.'),
+  "averageSpeedMetresPerSecond": zod.number().min(updateClaimMatchProgressResponsePlayerStatsAverageSpeedMetresPerSecondMin).nullable().describe('Total calibrated distance divided by confirmed time present, or null without a pitch model.'),
+  "touches": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "passes": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "shots": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "dribbles": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+})
 }),
   "updatedAt": zod.string()
 })
@@ -759,6 +811,9 @@ export const UpdateTrackingBundleParams = zod.object({
 
 export const updateTrackingBundleBodyVideoStartSecondsMin = 0;
 
+
+export const updateTrackingBundleBodyPitchModelOneCalibratedAspectRatioExclusiveMin = 0;
+
 export const updateTrackingBundleBodyPitchModelOnePitchWidthMetresExclusiveMin = 0;
 
 export const updateTrackingBundleBodyPitchModelOnePitchHeightMetresExclusiveMin = 0;
@@ -772,6 +827,9 @@ export const updateTrackingBundleBodyPitchModelOneGridMin = 2;
 export const UpdateTrackingBundleBody = zod.object({
   "videoStartSeconds": zod.number().min(updateTrackingBundleBodyVideoStartSecondsMin).optional(),
   "pitchModel": zod.union([zod.object({
+  "calibrationId": zod.string().min(1).describe('Immutable identifier for the calibration fit that produced this model.'),
+  "fittedAt": zod.coerce.date().describe('Date and time at which this calibration was fitted.'),
+  "calibratedAspectRatio": zod.number().gt(updateTrackingBundleBodyPitchModelOneCalibratedAspectRatioExclusiveMin).describe('Image width divided by image height used when fitting this model.'),
   "pitchWidthMetres": zod.number().gt(updateTrackingBundleBodyPitchModelOnePitchWidthMetresExclusiveMin).describe('Real pitch width represented by the model, in metres.'),
   "pitchHeightMetres": zod.number().gt(updateTrackingBundleBodyPitchModelOnePitchHeightMetresExclusiveMin).describe('Real pitch height represented by the model, in metres.'),
   "grid": zod.array(zod.array(zod.object({
@@ -797,6 +855,9 @@ export const UpdateTrackingBundleResponse = zod.object({
   "recordingId": zod.number(),
   "videoStartSeconds": zod.number().min(updateTrackingBundleResponseVideoStartSecondsMin),
   "pitchModel": zod.union([zod.object({
+  "calibrationId": zod.string().nullable(),
+  "fittedAt": zod.coerce.date().nullable(),
+  "calibratedAspectRatio": zod.number().nullable(),
   "gridRows": zod.number().min(updateTrackingBundleResponsePitchModelOneGridRowsMin),
   "gridColumns": zod.number().min(updateTrackingBundleResponsePitchModelOneGridColumnsMin),
   "pitchWidthMetres": zod.number().gt(updateTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin),
@@ -923,12 +984,127 @@ export const ReplaceTrackingBundleResponse = zod.object({
   "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
 })).optional(),
   "pitchModel": zod.union([zod.object({
+  "calibrationId": zod.string().nullable(),
+  "fittedAt": zod.coerce.date().nullable(),
+  "calibratedAspectRatio": zod.number().nullable(),
   "gridRows": zod.number().min(replaceTrackingBundleResponsePitchModelOneGridRowsMin),
   "gridColumns": zod.number().min(replaceTrackingBundleResponsePitchModelOneGridColumnsMin),
   "pitchWidthMetres": zod.number().gt(replaceTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin),
   "pitchHeightMetres": zod.number().gt(replaceTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin)
 }),zod.null()]).optional(),
   "uploadedAt": zod.string()
+})
+
+
+/**
+ * @summary Get claim player metrics including unvalidated top speed
+ */
+export const GetAdminRecordingPlayerMetricsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const getAdminRecordingPlayerMetricsResponsePitchModelOneGridRowsMin = 2;
+
+export const getAdminRecordingPlayerMetricsResponsePitchModelOneGridColumnsMin = 2;
+
+export const getAdminRecordingPlayerMetricsResponsePitchModelOnePitchWidthMetresExclusiveMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePitchModelOnePitchHeightMetresExclusiveMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsConfirmedSecondsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsMinutesPlayedMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsCoveragePercentMin = 0;
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsCoveragePercentMax = 100;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAnsweredMomentsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAcceptedMomentsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsTrackedSegmentsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsTotalSegmentsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsMatchedEventsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemXMin = 0;
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemXMax = 1;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemYMin = 0;
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemYMax = 1;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemWeightMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsDistanceMetresMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAverageSpeedMetresPerSecondMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedMetresPerSecondMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedUsableTimeFractionMin = 0;
+export const getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedUsableTimeFractionMax = 1;
+
+
+
+export const GetAdminRecordingPlayerMetricsResponse = zod.object({
+  "recordingId": zod.number(),
+  "pitchModel": zod.union([zod.object({
+  "calibrationId": zod.string().nullable(),
+  "fittedAt": zod.coerce.date().nullable(),
+  "calibratedAspectRatio": zod.number().nullable(),
+  "gridRows": zod.number().min(getAdminRecordingPlayerMetricsResponsePitchModelOneGridRowsMin),
+  "gridColumns": zod.number().min(getAdminRecordingPlayerMetricsResponsePitchModelOneGridColumnsMin),
+  "pitchWidthMetres": zod.number().gt(getAdminRecordingPlayerMetricsResponsePitchModelOnePitchWidthMetresExclusiveMin),
+  "pitchHeightMetres": zod.number().gt(getAdminRecordingPlayerMetricsResponsePitchModelOnePitchHeightMetresExclusiveMin)
+}),zod.null()]),
+  "players": zod.array(zod.object({
+  "userId": zod.number(),
+  "displayName": zod.string(),
+  "email": zod.string(),
+  "playerStats": zod.object({
+  "confirmedSeconds": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsConfirmedSecondsMin).describe('Union of the player\'s accepted tracking intervals, in seconds.'),
+  "minutesPlayed": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsMinutesPlayedMin).describe('Confirmed player presence in minutes.'),
+  "coveragePercent": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsCoveragePercentMin).max(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsCoveragePercentMax).describe('Percentage of the tracked match covered by accepted player intervals.'),
+  "answeredMoments": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAnsweredMomentsMin).describe('Identity checkpoint moments answered by the player.'),
+  "acceptedMoments": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAcceptedMomentsMin).describe('Identity checkpoint moments accepted as the player.'),
+  "trackedSegments": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsTrackedSegmentsMin).describe('Tracking segments containing an accepted interval for the player.'),
+  "totalSegments": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsTotalSegmentsMin).describe('Total tracking segments in the uploaded match bundle.'),
+  "matchedEvents": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsMatchedEventsMin).describe('Match events that occurred during an accepted player interval.'),
+  "heatmap": zod.object({
+  "coordinateSpace": zod.enum(['pitch', 'camera']).describe('Pitch-normalized coordinates when calibrated, otherwise image coordinates.'),
+  "cells": zod.array(zod.object({
+  "x": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemXMin).max(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemXMax),
+  "y": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemYMin).max(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemYMax),
+  "weight": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemWeightMin)
+}))
+}),
+  "distanceMetres": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.'),
+  "averageSpeedMetresPerSecond": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAverageSpeedMetresPerSecondMin).nullable().describe('Total calibrated distance divided by confirmed time present, or null without a pitch model.'),
+  "touches": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "passes": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "shots": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "dribbles": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+})
+}),
+  "topSpeedMetresPerSecond": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedMetresPerSecondMin).nullable().describe('Highest valid rolling one-second speed in metres per second; intentionally unvalidated.'),
+  "topSpeedUsableTimeFraction": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedUsableTimeFractionMin).max(getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedUsableTimeFractionMax).nullable().describe('Fraction of confirmed player time remaining after top-speed exclusions.')
+}))
 })
 
 

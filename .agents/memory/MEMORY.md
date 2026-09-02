@@ -22,3 +22,4 @@
 - [Claim Match bundle summaries](claim-match-bundle-summary.md) — derive state from compact ranges/events; reserve full segment reads for legacy manifests.
 - [Claim Match queue rejections](claim-match-queue-rejections.md) — discard permanent invalid offline actions but stop and retain transient failures.
 - [Calibrated player metrics](calibrated-player-metrics.md) — distance requires pitch calibration, bottom-centre positions, and smoothing; never estimate metres from pixels.
+- [Calibration metadata and guarded speed metrics](calibration-metadata-and-speed.md) — bundle-owned metadata and conservative admin-only top-speed rules prevent misleading numbers.

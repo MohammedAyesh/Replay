@@ -103,6 +103,9 @@ export type TrackingManifest = {
 };
 
 export type TrackingPitchModel = {
+  calibrationId: string;
+  fittedAt: string;
+  calibratedAspectRatio: number;
   pitchWidthMetres: number;
   pitchHeightMetres: number;
   grid: Array<Array<{ x: number; y: number }>>;
