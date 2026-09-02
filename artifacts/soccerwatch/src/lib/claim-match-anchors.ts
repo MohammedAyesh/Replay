@@ -1,4 +1,5 @@
 export type AnchorAnswer = "yes" | "no" | "skip";
+export const CLAIM_ANCHOR_MATCH_TOLERANCE_SECONDS = 1;
 
 export type CoverageInterval = {
   startSeconds: number;
@@ -71,16 +72,36 @@ export function buildClaimAnchors(
   }
   return selected
     .sort((a, b) => a - b)
-    .map((momentSeconds, index) => ({
-      id: `anchor-${index + 1}`,
+    .map((momentSeconds, index, moments) => ({
+      // The tracking timestamp is the identity of an anchor. This remains
+      // stable when segments load in a different order or the anchor list is
+      // rebuilt after a refetch.
+      id: `anchor-${Math.round(momentSeconds * 1000)}${index > 0 && moments[index - 1] === momentSeconds ? `-${index}` : ""}`,
       momentSeconds,
     }));
+}
+
+export function nearestAnchorIndex(
+  anchors: ClaimAnchor[],
+  momentSeconds: number,
+  toleranceSeconds = CLAIM_ANCHOR_MATCH_TOLERANCE_SECONDS,
+): number {
+  let nearest = -1;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  anchors.forEach((anchor, index) => {
+    const distance = Math.abs(anchor.momentSeconds - momentSeconds);
+    if (distance <= toleranceSeconds && distance < nearestDistance) {
+      nearest = index;
+      nearestDistance = distance;
+    }
+  });
+  return nearest;
 }
 
 export function nextUnansweredAnchor(
   anchors: ClaimAnchor[],
   answeredMoments: number[],
-  toleranceSeconds = 0.5,
+  toleranceSeconds = CLAIM_ANCHOR_MATCH_TOLERANCE_SECONDS,
 ): number {
   return anchors.findIndex(
     (anchor) => !answeredMoments.some(

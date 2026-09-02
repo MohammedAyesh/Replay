@@ -44,22 +44,6 @@ export interface ClaimBundle {
   events: Array<{ type: string; time: number; label?: string | null; clipId?: string | null }>;
 }
 
-export type NarrowingAnswer = "yes" | "no" | "not-sure";
-
-export interface NarrowingState {
-  lowerSeconds: number;
-  upperSeconds: number;
-  crossings: number[];
-  questionCount: number;
-}
-
-export interface NarrowingQuestion {
-  kind: "question" | "picker" | "complete";
-  momentSeconds: number;
-  dotCount: number;
-  crossingCount: number;
-}
-
 /**
  * THREE CLOCKS, and conflating any two of them puts every box on empty grass.
  *
@@ -102,109 +86,8 @@ export function trackingToDisplay(seconds: number, bundle: ClaimBundle): number 
   return Math.max(0, seconds + (bundle.matchOffset || 0));
 }
 
-export function crossingsForWindow(
-  bundle: ClaimBundle,
-  trackId: string,
-  lowerSeconds: number,
-  upperSeconds: number,
-): number[] {
-  const crossings = bundle.crossings
-    .filter((crossing) => crossing.trackId === trackId)
-    .map((crossing) => frameToTrackingSeconds(crossing.frame, bundle))
-    .filter((seconds) => seconds > lowerSeconds && seconds < upperSeconds)
-    .sort((a, b) => a - b);
-  return groupDenseCrossings(crossings);
-}
-
-/**
- * A run of crossings inside a few seconds is one hard passage, not a reason
- * to interrupt the viewer several times.
- */
-export function groupDenseCrossings(crossings: number[], maxGapSeconds = 4): number[] {
-  if (crossings.length < 2) return [...crossings];
-  const groups: number[][] = [[crossings[0]]];
-  for (const crossing of crossings.slice(1)) {
-    const group = groups[groups.length - 1];
-    if (crossing - group[group.length - 1] <= maxGapSeconds) group.push(crossing);
-    else groups.push([crossing]);
-  }
-  return groups.map((group) => group[Math.floor(group.length / 2)]);
-}
-
-export function startNarrowing(
-  crossings: number[],
-  confirmedFromSeconds: number,
-  observedAtSeconds: number,
-): NarrowingState {
-  return {
-    lowerSeconds: confirmedFromSeconds,
-    upperSeconds: observedAtSeconds,
-    crossings: groupDenseCrossings(
-      crossings
-        .filter((seconds) => seconds > confirmedFromSeconds && seconds < observedAtSeconds)
-        .sort((a, b) => a - b),
-    ),
-    questionCount: 0,
-  };
-}
-
-export function nextNarrowingQuestion(state: NarrowingState): NarrowingQuestion {
-  if (state.crossings.length === 0) {
-    return {
-      kind: "complete",
-      momentSeconds: state.upperSeconds,
-      dotCount: state.questionCount,
-      crossingCount: 0,
-    };
-  }
-  if (state.crossings.length === 1 || state.questionCount >= 3) {
-    return {
-      kind: "picker",
-      momentSeconds: Math.min(state.upperSeconds, state.crossings[0] + 0.75),
-      dotCount: state.questionCount,
-      crossingCount: state.crossings.length,
-    };
-  }
-  const middleIndex = Math.floor(state.crossings.length / 2);
-  return {
-    kind: "question",
-    momentSeconds: state.crossings[middleIndex],
-    dotCount: state.questionCount,
-    crossingCount: state.crossings.length,
-  };
-}
-
-export function answerNarrowing(
-  state: NarrowingState,
-  answer: NarrowingAnswer,
-  momentSeconds: number,
-): NarrowingState {
-  if (answer === "not-sure") return state;
-  const remaining = answer === "yes"
-    ? state.crossings.filter((crossing) => crossing > momentSeconds)
-    : state.crossings.filter((crossing) => crossing <= momentSeconds);
-  return {
-    lowerSeconds: answer === "yes" ? momentSeconds : state.lowerSeconds,
-    upperSeconds: answer === "yes" ? state.upperSeconds : momentSeconds,
-    crossings: remaining,
-    questionCount: state.questionCount + 1,
-  };
-}
-
 export function isInPlay(seconds: number, spans: ClaimInPlaySpan[]): boolean {
   return spans.some((span) => seconds >= span.start && seconds <= span.end);
-}
-
-export function skipToClearPassage(
-  currentSeconds: number,
-  spans: ClaimInPlaySpan[],
-  duration: number,
-): number {
-  const target = Math.min(duration, currentSeconds + 30);
-  const containing = spans.find((span) => target >= span.start && target <= span.end);
-  if (containing) return Math.min(duration, Math.max(target, containing.start));
-  const next = spans.find((span) => span.start >= target);
-  return Math.min(duration, next?.start ?? target);
 }
 
 /**
@@ -269,51 +152,6 @@ export function positionAtFrame(
   };
 }
 
-/** metres per pixel at a box, taking a standing player as 1.75 m */
-export function metresPerPixel(box: ClaimBox): number {
-  return 1.75 / Math.max(box.h, 1);
-}
-
-export interface Continuation {
-  track: ClaimTrack;
-  gapSeconds: number;
-  distanceMetres: number;
-  impliedSpeed: number;
-}
-
-/**
- * Tracks that could be the same player carrying on after `track` ends: they
- * start after it ends (so they never coexist - a hard constraint), within
- * `windowSeconds`, and within what a person can cover at `maxSpeed` m/s.
- * Sorted nearest first. Exactly one result is a silent stitch; several is a
- * question for the player; none means the picker.
- */
-export function continuationsFor(
-  bundle: ClaimBundle,
-  track: ClaimTrack,
-  windowSeconds = 3,
-  maxSpeed = 8,
-): Continuation[] {
-  const last = track.boxes[track.boxes.length - 1];
-  if (!last) return [];
-  const cx = last.x + last.w / 2;
-  const cy = last.y + last.h;
-  const mpp = metresPerPixel(last);
-  const out: Continuation[] = [];
-  for (const other of bundle.tracks) {
-    if (other.id === track.id || other.startFrame <= track.endFrame) continue;
-    const gapSeconds = (other.startFrame - track.endFrame) / bundle.frameRate;
-    if (gapSeconds > windowSeconds) continue;
-    const first = other.boxes[0];
-    if (!first) continue;
-    const distanceMetres = Math.hypot(first.x + first.w / 2 - cx, first.y + first.h - cy) * mpp;
-    const impliedSpeed = distanceMetres / Math.max(gapSeconds, 0.05);
-    if (impliedSpeed > maxSpeed) continue;
-    out.push({ track: other, gapSeconds, distanceMetres, impliedSpeed });
-  }
-  return out.sort((a, b) => a.distanceMetres - b.distanceMetres);
-}
-
 export function boxContainsPoint(box: ClaimBox, x: number, y: number): boolean {
   return x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
 }
@@ -337,24 +175,6 @@ export function findHitTracks(
     .filter((candidate): candidate is { track: ClaimTrack; box: ClaimBox } =>
       candidate.box !== null && boxContainsPoint(candidate.box, x, y),
     );
-}
-
-export function laterSeparatedFrame(
-  bundle: ClaimBundle,
-  trackIds: string[],
-  startingFrame: number,
-  lookAheadSeconds = 4,
-): number | null {
-  const tracks = trackIds
-    .map((id) => bundle.tracks.find((track) => track.id === id))
-    .filter((track): track is ClaimTrack => Boolean(track));
-  if (tracks.length < 2) return null;
-  const endFrame = Math.min(bundle.frameCount - 1, startingFrame + Math.round(lookAheadSeconds * bundle.frameRate));
-  for (let frame = startingFrame + 1; frame <= endFrame; frame++) {
-    const boxes = tracks.map((track) => boxAtFrame(track, frame));
-    if (boxes.every(Boolean) && !boxesOverlap(boxes[0]!, boxes[1]!)) return frame;
-  }
-  return null;
 }
 
 export function formatClaimTime(seconds: number): string {

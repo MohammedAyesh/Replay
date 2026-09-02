@@ -180,17 +180,14 @@ export function ClaimStage({
   videoUrl,
   bundle,
   candidates,
-  activeTrackId,
-  followBox,
   showBoxes,
-  followKey,
+  viewKey,
   currentTime,
   duration,
   playing,
   muted,
   slow,
   playbackRate,
-  forcedPlaybackRate,
   goalTimes,
   videoRef,
   onToggle,
@@ -209,19 +206,15 @@ export function ClaimStage({
   videoUrl?: string;
   bundle: ClaimBundle;
   candidates: StageCandidate[];
-  activeTrackId: string | null;
-  /** box of the followed player at the current frame, drives auto-follow */
-  followBox: ClaimBox | null;
   showBoxes: boolean;
-  /** changes whenever the thing being followed changes; resets a manual pan */
-  followKey: string;
+  /** changes when the selected review view changes; resets a manual pan */
+  viewKey: string;
   currentTime: number;
   duration: number;
   playing: boolean;
   muted: boolean;
   slow: boolean;
   playbackRate: number;
-  forcedPlaybackRate?: number | null;
   goalTimes: number[];
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onToggle: (forcePlaying?: boolean) => void;
@@ -242,7 +235,6 @@ export function ClaimStage({
   const frameBoxRef = useRef<HTMLDivElement | null>(null);
   const layerRef = useRef<HTMLDivElement | null>(null);
   const minimapFrameRef = useRef<HTMLDivElement | null>(null);
-  const minimapDotRef = useRef<HTMLDivElement | null>(null);
 
   const playbackUrl = browserSafeVideoUrl(videoUrl);
   const [videoCachePhase, setVideoCachePhase] = useState<"idle" | "preparing" | "ready" | "caching" | "cached" | "unavailable">(
@@ -308,9 +300,7 @@ export function ClaimStage({
   const manualRef = useRef(false);
   const [manual, setManual] = useState(false);
   const [zoom, setZoom] = useState(FOLLOW_ZOOM);
-  const followBoxRef = useRef<ClaimBox | null>(followBox);
   const candidatesRef = useRef(candidates);
-  followBoxRef.current = followBox;
   candidatesRef.current = candidates;
   const onTimeUpdateRef = useRef(onTimeUpdate);
   onTimeUpdateRef.current = onTimeUpdate;
@@ -329,20 +319,12 @@ export function ClaimStage({
 
   /** Where the frame wants to be, from the tracking data, when nobody is dragging. */
   const computeTarget = useCallback((): { cx: number; cy: number; zoom: number } | null => {
-    const box = followBoxRef.current;
-    if (box) {
-      return {
-        cx: (box.x + box.w / 2) / bundle.width,
-        cy: (box.y + box.h * 0.45) / bundle.height,
-        zoom: zoomRef.current,
-      };
-    }
     const boxes = candidatesRef.current.map((c) => c.box);
     if (boxes.length) return frameContaining(boxes, bundle, srcAspectRef.current, MIN_ZOOM);
     return null;
   }, [bundle]);
 
-  useEffect(() => { setManualPan(false); }, [followKey, setManualPan]);
+  useEffect(() => { setManualPan(false); }, [viewKey, setManualPan]);
 
   // The follow loop. Eases origin/zoom towards the target and writes the frame
   // to the video and the overlay layer only when it actually changed.
@@ -395,15 +377,6 @@ export function ClaimStage({
           mm.style.top = `${f.y * 100}%`;
           mm.style.width = `${f.w * 100}%`;
           mm.style.height = `${f.h * 100}%`;
-        }
-      }
-      const dot = minimapDotRef.current;
-      const box = followBoxRef.current;
-      if (dot) {
-        dot.style.display = box ? "block" : "none";
-        if (box) {
-          dot.style.left = `${((box.x + box.w / 2) / bundle.width) * 100}%`;
-          dot.style.top = `${((box.y + box.h / 2) / bundle.height) * 100}%`;
         }
       }
     };
@@ -519,8 +492,8 @@ export function ClaimStage({
   const shownTime = scrub ?? currentTime;
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.playbackRate = forcedPlaybackRate ?? (slow ? 0.5 : playbackRate);
-  }, [forcedPlaybackRate, playbackRate, slow, videoRef]);
+    if (videoRef.current) videoRef.current.playbackRate = slow ? 0.5 : playbackRate;
+  }, [playbackRate, slow, videoRef]);
 
   const onLoadedMetadata = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
     const v = e.currentTarget;
@@ -575,7 +548,7 @@ export function ClaimStage({
             {showBoxes && candidates.map((candidate, index) => (
               <div
                 key={candidate.id}
-                className={`claim-track-box ${candidate.id === activeTrackId ? "is-active" : ""} ${candidate.overlap ? "is-overlap" : ""} ${candidate.coasting ? "is-coasting" : ""}`}
+                className={`claim-track-box ${candidate.overlap ? "is-overlap" : ""} ${candidate.coasting ? "is-coasting" : ""}`}
                 style={{
                   left: `${(candidate.box.x / bundle.width) * 100}%`,
                   top: `${(candidate.box.y / bundle.height) * 100}%`,
@@ -584,7 +557,7 @@ export function ClaimStage({
                 }}
                 data-testid={`overlay-track-${candidate.id}`}
               >
-                <span>{candidate.id === activeTrackId ? `${index + 1} / ${candidate.label}` : index + 1}</span>
+                <span>{index + 1} / {candidate.label}</span>
               </div>
             ))}
           </div>
@@ -610,7 +583,6 @@ export function ClaimStage({
           )}
           <div className="claim-minimap" style={{ width: minimapW, height: minimapH }} aria-hidden="true">
             <div ref={minimapFrameRef} className="claim-minimap-frame" />
-            <div ref={minimapDotRef} className="claim-minimap-dot" />
           </div>
         </div>
       </div>
