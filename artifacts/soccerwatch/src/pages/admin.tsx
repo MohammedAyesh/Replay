@@ -31,7 +31,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,6 +128,23 @@ interface AdminRecording {
   } | null;
   hasIdentityMap?: boolean;
   identityMapMatchesBundle?: boolean;
+}
+
+interface ClaimDispute {
+  id: number;
+  recordingId: number;
+  recordingLabel: string;
+  claimantUserId: number;
+  claimantName: string;
+  claimantEmail: string;
+  personId: string;
+  supportCount: number;
+  acceptedAnswerCount: number;
+  supportPercent: number;
+  state: string;
+  currentOwnerUserId: number | null;
+  currentOwnerName: string | null;
+  createdAt: string;
 }
 
 interface AdminRecordingPlayerMetric {
@@ -394,6 +411,79 @@ async function apiFetch(path: string, opts?: RequestInit) {
 }
 
 // ─── Clips Tab ────────────────────────────────────────────────────────────────
+
+function ClaimDisputesTab() {
+  const [disputes, setDisputes] = useState<ClaimDispute[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setDisputes(await apiFetch("/admin/claim-match/disputes"));
+    } catch {
+      setNotice("Could not load claim disputes.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const resolve = async (dispute: ClaimDispute, winnerUserId: number) => {
+    setWorking(dispute.id);
+    setNotice(null);
+    try {
+      await apiFetch(`/admin/claim-match/disputes/${dispute.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ winnerUserId }),
+      });
+      setNotice("Claim transferred and the previous owner was released.");
+      await load();
+    } catch {
+      setNotice("Could not resolve this dispute.");
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-white text-sm font-semibold">Claim disputes</h2>
+        <p className="text-zinc-500 text-xs mt-1">A disputed claimant is never confirmed or awarded clips until you choose the owner.</p>
+      </div>
+      {notice && <div className="rounded-xl bg-amber-500/10 px-3 py-2 text-sm text-amber-300">{notice}</div>}
+      {loading ? <div className="py-16 text-center text-zinc-500">Loading…</div> : disputes.length === 0 ? (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-10 text-center text-sm text-zinc-500">No disputes waiting for review.</div>
+      ) : disputes.map((dispute) => (
+        <div key={dispute.id} className="rounded-xl border border-amber-500/20 bg-zinc-900 p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-white">{dispute.recordingLabel}</p>
+              <p className="mt-1 text-xs text-zinc-400">Person {dispute.personId} · {Math.round(dispute.supportPercent)}% support from {dispute.acceptedAnswerCount} accepted answers</p>
+            </div>
+          </div>
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            <div className="rounded-lg bg-zinc-800/70 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">Current owner</p>
+              <p className="mt-1 text-zinc-200">{dispute.currentOwnerName ?? "Unassigned"}</p>
+              {dispute.currentOwnerUserId && <button disabled={working === dispute.id} onClick={() => void resolve(dispute, dispute.currentOwnerUserId!)} className="mt-2 text-xs font-semibold text-primary hover:underline">Keep current owner</button>}
+            </div>
+            <div className="rounded-lg bg-zinc-800/70 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">Pending claimant</p>
+              <p className="mt-1 text-zinc-200">{dispute.claimantName}</p>
+              <p className="text-xs text-zinc-500">{dispute.claimantEmail}</p>
+              <button disabled={working === dispute.id} onClick={() => void resolve(dispute, dispute.claimantUserId)} className="mt-2 text-xs font-semibold text-primary hover:underline">Transfer to claimant</button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ClipsTab() {
   const [clips, setClips] = useState<AdminClip[]>([]);
@@ -5123,6 +5213,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "live", label: "Live Control" },
   { id: "var", label: "VAR" },
   { id: "matches", label: "Matches" },
+  { id: "claim-disputes", label: "Claim Disputes" },
 ];
 
 export default function Admin() {
@@ -5178,6 +5269,7 @@ export default function Admin() {
         {tab === "live" && <LiveTab />}
         {tab === "var" && <VarTab />}
         {tab === "matches" && <MatchesTab />}
+        {tab === "claim-disputes" && <ClaimDisputesTab />}
       </div>
     </div>
   );

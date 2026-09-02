@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ClaimEarnedClip } from './claimEarnedClip';
+import type { ClaimIdentityBinding } from './claimIdentityBinding';
 import type { ClaimPlayerStats } from './claimPlayerStats';
 
 export interface ClaimProgress {
@@ -37,6 +38,12 @@ export interface ClaimProgress {
      * @items.minimum 0
      */
   unresolvedMoments: number[];
+  /**
+     * Accepted moments attributed to a different person than the current winner.
+     * @items.minimum 0
+     */
+  conflictMoments: number[];
+  identityBinding: ClaimIdentityBinding | null;
   clipsUnlocked: number;
   correctionCount: number;
   completed: boolean;

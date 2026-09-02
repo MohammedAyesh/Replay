@@ -877,6 +877,47 @@ export interface AdminRecordingPlayerMetricsResponse {
   players: AdminPlayerMetrics[];
 }
 
+export type ClaimIdentityBindingResolutionMethod = typeof ClaimIdentityBindingResolutionMethod[keyof typeof ClaimIdentityBindingResolutionMethod];
+
+
+export const ClaimIdentityBindingResolutionMethod = {
+  'identity-map': 'identity-map',
+  'track-fallback': 'track-fallback',
+} as const;
+
+export type ClaimIdentityBindingState = typeof ClaimIdentityBindingState[keyof typeof ClaimIdentityBindingState];
+
+
+export const ClaimIdentityBindingState = {
+  pending: 'pending',
+  confirmed: 'confirmed',
+  disputed: 'disputed',
+  needs_resolution: 'needs_resolution',
+  released: 'released',
+  rejected: 'rejected',
+} as const;
+
+export interface ClaimIdentityBinding {
+  id: number;
+  personId: string;
+  trackingBundleId: number;
+  bundleFingerprint: string;
+  resolutionMethod: ClaimIdentityBindingResolutionMethod;
+  /** @minimum 0 */
+  supportCount: number;
+  /** @minimum 0 */
+  acceptedAnswerCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  supportPercent: number;
+  state: ClaimIdentityBindingState;
+  /** @nullable */
+  resolvedAt: string | null;
+  updatedAt: string;
+}
+
 export interface ClaimProgress {
   recordingId: number;
   /** @nullable */
@@ -906,6 +947,12 @@ export interface ClaimProgress {
      * @items.minimum 0
      */
   unresolvedMoments: number[];
+  /**
+     * Accepted moments attributed to a different person than the current winner.
+     * @items.minimum 0
+     */
+  conflictMoments: number[];
+  identityBinding: ClaimIdentityBinding | null;
   clipsUnlocked: number;
   correctionCount: number;
   completed: boolean;
@@ -971,6 +1018,67 @@ export interface ClaimMatchClipGroup {
 }
 
 export type ClaimMatchClipsResponse = ClaimMatchClipGroup[];
+
+export type ClaimedMatchHistoryItemState = typeof ClaimedMatchHistoryItemState[keyof typeof ClaimedMatchHistoryItemState];
+
+
+export const ClaimedMatchHistoryItemState = {
+  pending: 'pending',
+  confirmed: 'confirmed',
+  disputed: 'disputed',
+  needs_resolution: 'needs_resolution',
+  released: 'released',
+  rejected: 'rejected',
+} as const;
+
+export type ClaimedMatchHistoryItemResolutionMethod = typeof ClaimedMatchHistoryItemResolutionMethod[keyof typeof ClaimedMatchHistoryItemResolutionMethod];
+
+
+export const ClaimedMatchHistoryItemResolutionMethod = {
+  'identity-map': 'identity-map',
+  'track-fallback': 'track-fallback',
+} as const;
+
+export interface ClaimedMatchHistoryItem {
+  recordingId: number;
+  recordingLabel: string;
+  fieldName: string;
+  date: string;
+  state: ClaimedMatchHistoryItemState;
+  personId: string;
+  resolutionMethod: ClaimedMatchHistoryItemResolutionMethod;
+  supportPercent: number;
+  claimedAt: string;
+}
+
+export type ClaimedMatchHistoryResponse = ClaimedMatchHistoryItem[];
+
+export interface ClaimMatchDispute {
+  id: number;
+  recordingId: number;
+  recordingLabel: string;
+  claimantUserId: number;
+  claimantName: string;
+  claimantEmail: string;
+  personId: string;
+  resolutionMethod: string;
+  supportCount: number;
+  acceptedAnswerCount: number;
+  supportPercent: number;
+  state: string;
+  /** @nullable */
+  currentOwnerUserId: number | null;
+  /** @nullable */
+  currentOwnerName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ClaimMatchDisputesResponse = ClaimMatchDispute[];
+
+export interface ResolveClaimMatchDisputeInput {
+  winnerUserId: number;
+}
 
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */

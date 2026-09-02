@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useLocation } from "wouter";
-import { useGetMe, useGetAccountStats, useUpdateProfile, getGetAccountStatsQueryKey, getGetMeQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
+import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdateProfile, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -37,6 +37,7 @@ export default function Account() {
   const { data: user } = useGetMe({ query: { enabled: !isGuest, queryKey: getGetMeQueryKey() } });
   const displayUser = user ?? authUser;
   const { data: stats } = useGetAccountStats({ query: { enabled: !isGuest, queryKey: getGetAccountStatsQueryKey() } });
+  const { data: claimedMatches } = useGetAccountClaimedMatches({ query: { enabled: !isGuest, queryKey: getGetAccountClaimedMatchesQueryKey() } });
 
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
   const [isEditOpen, setIsEditOpen] = React.useState(false);
@@ -165,6 +166,45 @@ export default function Account() {
               <StatCard label={t.account.likesGiven} value={stats?.likesGiven ?? 0} />
               <StatCard label={t.account.fields} value={stats?.fieldsVisited ?? 0} />
             </div>
+          </div>
+        )}
+
+        {!isGuest && (
+          <div className="mx-4 mb-4 rounded-[22px] border border-border bg-card p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="font-display text-base font-bold text-foreground">Claimed matches</h2>
+                <p className="text-xs text-muted-foreground">Your player identity is kept separate for each recording.</p>
+              </div>
+              <span className="rounded-full bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
+                {claimedMatches?.filter((match) => match.state === "confirmed").length ?? 0}
+              </span>
+            </div>
+            {claimedMatches?.length ? (
+              <div className="space-y-2">
+                {claimedMatches.map((match) => (
+                  <Link
+                    key={`${match.recordingId}-${match.personId}`}
+                    href={`/claim-match/${match.recordingId}`}
+                    className="flex items-center justify-between rounded-xl border border-border/70 bg-background/60 px-3 py-2.5 transition-colors hover:bg-muted/40"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">{match.recordingLabel}</p>
+                      <p className="text-xs text-muted-foreground">{match.date} · {Math.round(match.supportPercent)}% support</p>
+                    </div>
+                    <span className={`ms-3 shrink-0 text-[10px] font-bold uppercase tracking-wide ${
+                      match.state === "confirmed" ? "text-emerald-500" :
+                        match.state === "disputed" ? "text-amber-500" :
+                          match.state === "needs_resolution" ? "text-orange-500" : "text-muted-foreground"
+                    }`}>
+                      {match.state.replace("_", " ")}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-xl bg-muted/30 px-3 py-3 text-sm text-muted-foreground">No claimed matches yet.</p>
+            )}
           </div>
         )}
 

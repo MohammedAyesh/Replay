@@ -37,9 +37,12 @@ import type {
   ClaimCorrectionInput,
   ClaimMatchClipsResponse,
   ClaimMatchDemoResetResponse,
+  ClaimMatchDispute,
+  ClaimMatchDisputesResponse,
   ClaimMatchResponse,
   ClaimProgress,
   ClaimProgressInput,
+  ClaimedMatchHistoryResponse,
   Clip,
   CreateAcademyInput,
   CreateAdInput,
@@ -59,6 +62,7 @@ import type {
   PublicProfile,
   Recording,
   ReplaceTrackingBundleBodyTwo,
+  ResolveClaimMatchDisputeInput,
   TrackingBundle,
   TrackingBundleSummary,
   TrackingSegment,
@@ -1363,6 +1367,154 @@ export function useListClaimMatchClips<TData = Awaited<ReturnType<typeof listCla
 
 
 
+
+export const getListClaimMatchDisputesUrl = () => {
+
+
+
+
+  return `/api/admin/claim-match/disputes`
+}
+
+/**
+ * @summary List claim identity disputes awaiting admin review
+ */
+export const listClaimMatchDisputes = async ( options?: RequestInit): Promise<ClaimMatchDisputesResponse> => {
+
+  return customFetch<ClaimMatchDisputesResponse>(getListClaimMatchDisputesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListClaimMatchDisputesQueryKey = () => {
+    return [
+    `/api/admin/claim-match/disputes`
+    ] as const;
+    }
+
+
+export const getListClaimMatchDisputesQueryOptions = <TData = Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListClaimMatchDisputesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listClaimMatchDisputes>>> = ({ signal }) => listClaimMatchDisputes({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListClaimMatchDisputesQueryResult = NonNullable<Awaited<ReturnType<typeof listClaimMatchDisputes>>>
+export type ListClaimMatchDisputesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List claim identity disputes awaiting admin review
+ */
+
+export function useListClaimMatchDisputes<TData = Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListClaimMatchDisputesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getResolveClaimMatchDisputeUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/claim-match/disputes/${id}`
+}
+
+/**
+ * @summary Transfer a disputed person to one claimant
+ */
+export const resolveClaimMatchDispute = async (id: number,
+    resolveClaimMatchDisputeInput: ResolveClaimMatchDisputeInput, options?: RequestInit): Promise<ClaimMatchDispute> => {
+
+  return customFetch<ClaimMatchDispute>(getResolveClaimMatchDisputeUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(resolveClaimMatchDisputeInput)
+  }
+);}
+
+
+
+
+export const getResolveClaimMatchDisputeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveClaimMatchDispute>>, TError,{id: number;data: BodyType<ResolveClaimMatchDisputeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveClaimMatchDispute>>, TError,{id: number;data: BodyType<ResolveClaimMatchDisputeInput>}, TContext> => {
+
+const mutationKey = ['resolveClaimMatchDispute'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveClaimMatchDispute>>, {id: number;data: BodyType<ResolveClaimMatchDisputeInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  resolveClaimMatchDispute(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveClaimMatchDisputeMutationResult = NonNullable<Awaited<ReturnType<typeof resolveClaimMatchDispute>>>
+    export type ResolveClaimMatchDisputeMutationBody = BodyType<ResolveClaimMatchDisputeInput>
+    export type ResolveClaimMatchDisputeMutationError = ErrorType<void>
+
+    /**
+ * @summary Transfer a disputed person to one claimant
+ */
+export const useResolveClaimMatchDispute = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveClaimMatchDispute>>, TError,{id: number;data: BodyType<ResolveClaimMatchDisputeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resolveClaimMatchDispute>>,
+        TError,
+        {id: number;data: BodyType<ResolveClaimMatchDisputeInput>},
+        TContext
+      > => {
+      return useMutation(getResolveClaimMatchDisputeMutationOptions(options));
+    }
 
 export const getCreateClaimMatchCorrectionUrl = (id: number,) => {
 
@@ -3550,6 +3702,83 @@ export function useGetAccountStats<TData = Awaited<ReturnType<typeof getAccountS
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAccountStatsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAccountClaimedMatchesUrl = () => {
+
+
+
+
+  return `/api/account/claimed-matches`
+}
+
+/**
+ * @summary List the current player's claimed match history
+ */
+export const getAccountClaimedMatches = async ( options?: RequestInit): Promise<ClaimedMatchHistoryResponse> => {
+
+  return customFetch<ClaimedMatchHistoryResponse>(getGetAccountClaimedMatchesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountClaimedMatchesQueryKey = () => {
+    return [
+    `/api/account/claimed-matches`
+    ] as const;
+    }
+
+
+export const getGetAccountClaimedMatchesQueryOptions = <TData = Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountClaimedMatchesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountClaimedMatches>>> = ({ signal }) => getAccountClaimedMatches({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountClaimedMatchesQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountClaimedMatches>>>
+export type GetAccountClaimedMatchesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List the current player's claimed match history
+ */
+
+export function useGetAccountClaimedMatches<TData = Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountClaimedMatchesQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

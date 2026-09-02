@@ -357,6 +357,56 @@ paths:
         "401":
           description: Authenticated account required
 
+  /admin/claim-match/disputes:
+    get:
+      operationId: listClaimMatchDisputes
+      tags: [admin]
+      summary: List claim identity disputes awaiting admin review
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Claim disputes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimMatchDisputesResponse"
+        "403":
+          description: Admin required
+
+  /admin/claim-match/disputes/{id}:
+    patch:
+      operationId: resolveClaimMatchDispute
+      tags: [admin]
+      summary: Transfer a disputed person to one claimant
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveClaimMatchDisputeInput"
+      responses:
+        "200":
+          description: Dispute resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimMatchDispute"
+        "400":
+          description: Invalid dispute decision
+        "403":
+          description: Admin required
+        "404":
+          description: Dispute not found
+
   /recordings/{id}/claim-match/corrections:
     post:
       operationId: createClaimMatchCorrection
@@ -1013,6 +1063,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccountStats"
+
+  /account/claimed-matches:
+    get:
+      operationId: getAccountClaimedMatches
+      tags: [account]
+      summary: List the current player's claimed match history
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Claimed match history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimedMatchHistoryResponse"
+        "401":
+          description: Unauthenticated
 
   /account/locale:
     patch:
@@ -2514,7 +2581,7 @@ components:
 
     ClaimProgress:
       type: object
-      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
+      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
       properties:
         recordingId:
           type: integer
@@ -2552,6 +2619,16 @@ components:
           items:
             type: number
             minimum: 0
+        conflictMoments:
+          type: array
+          description: Accepted moments attributed to a different person than the current winner.
+          items:
+            type: number
+            minimum: 0
+        identityBinding:
+          oneOf:
+            - $ref: "#/components/schemas/ClaimIdentityBinding"
+            - type: "null"
         clipsUnlocked:
           type: integer
         correctionCount:
@@ -2665,6 +2742,123 @@ components:
       type: array
       items:
         $ref: "#/components/schemas/ClaimMatchClipGroup"
+
+    ClaimIdentityBinding:
+      type: object
+      required: [id, personId, trackingBundleId, bundleFingerprint, resolutionMethod, supportCount, acceptedAnswerCount, supportPercent, state, resolvedAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        personId:
+          type: string
+        trackingBundleId:
+          type: integer
+        bundleFingerprint:
+          type: string
+        resolutionMethod:
+          type: string
+          enum: [identity-map, track-fallback]
+        supportCount:
+          type: integer
+          minimum: 0
+        acceptedAnswerCount:
+          type: integer
+          minimum: 0
+        supportPercent:
+          type: number
+          minimum: 0
+          maximum: 100
+        state:
+          type: string
+          enum: [pending, confirmed, disputed, needs_resolution, released, rejected]
+        resolvedAt:
+          type: ["string", "null"]
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ClaimedMatchHistoryItem:
+      type: object
+      required: [recordingId, recordingLabel, fieldName, date, state, personId, resolutionMethod, supportPercent, claimedAt]
+      properties:
+        recordingId:
+          type: integer
+        recordingLabel:
+          type: string
+        fieldName:
+          type: string
+        date:
+          type: string
+        state:
+          type: string
+          enum: [pending, confirmed, disputed, needs_resolution, released, rejected]
+        personId:
+          type: string
+        resolutionMethod:
+          type: string
+          enum: [identity-map, track-fallback]
+        supportPercent:
+          type: number
+        claimedAt:
+          type: string
+          format: date-time
+
+    ClaimedMatchHistoryResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/ClaimedMatchHistoryItem"
+
+    ClaimMatchDispute:
+      type: object
+      required: [id, recordingId, recordingLabel, claimantUserId, claimantName, claimantEmail, personId, resolutionMethod, supportCount, acceptedAnswerCount, supportPercent, state, currentOwnerUserId, currentOwnerName, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        recordingId:
+          type: integer
+        recordingLabel:
+          type: string
+        claimantUserId:
+          type: integer
+        claimantName:
+          type: string
+        claimantEmail:
+          type: string
+        personId:
+          type: string
+        resolutionMethod:
+          type: string
+        supportCount:
+          type: integer
+        acceptedAnswerCount:
+          type: integer
+        supportPercent:
+          type: number
+        state:
+          type: string
+        currentOwnerUserId:
+          type: ["integer", "null"]
+        currentOwnerName:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ClaimMatchDisputesResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/ClaimMatchDispute"
+
+    ResolveClaimMatchDisputeInput:
+      type: object
+      required: [winnerUserId]
+      properties:
+        winnerUserId:
+          type: integer
 
   securitySchemes:
     clerkSession:

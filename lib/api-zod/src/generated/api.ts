@@ -315,6 +315,15 @@ export const getClaimMatchResponseProgressAcceptedAnchorCountMin = 0;
 
 export const getClaimMatchResponseProgressUnresolvedMomentsItemMin = 0;
 
+export const getClaimMatchResponseProgressConflictMomentsItemMin = 0;
+
+export const getClaimMatchResponseProgressIdentityBindingOneSupportCountMin = 0;
+
+export const getClaimMatchResponseProgressIdentityBindingOneAcceptedAnswerCountMin = 0;
+
+export const getClaimMatchResponseProgressIdentityBindingOneSupportPercentMin = 0;
+export const getClaimMatchResponseProgressIdentityBindingOneSupportPercentMax = 100;
+
 export const getClaimMatchResponseProgressPlayerStatsConfirmedSecondsMin = 0;
 
 export const getClaimMatchResponseProgressPlayerStatsMinutesPlayedMin = 0;
@@ -414,6 +423,20 @@ export const GetClaimMatchResponse = zod.object({
   "answeredAnchorCount": zod.number().min(getClaimMatchResponseProgressAnsweredAnchorCountMin),
   "acceptedAnchorCount": zod.number().min(getClaimMatchResponseProgressAcceptedAnchorCountMin),
   "unresolvedMoments": zod.array(zod.number().min(getClaimMatchResponseProgressUnresolvedMomentsItemMin)).describe('Anchor moments answered as not me or skipped.'),
+  "conflictMoments": zod.array(zod.number().min(getClaimMatchResponseProgressConflictMomentsItemMin)).describe('Accepted moments attributed to a different person than the current winner.'),
+  "identityBinding": zod.union([zod.object({
+  "id": zod.number(),
+  "personId": zod.string(),
+  "trackingBundleId": zod.number(),
+  "bundleFingerprint": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportCount": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneSupportCountMin),
+  "acceptedAnswerCount": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneAcceptedAnswerCountMin),
+  "supportPercent": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneSupportPercentMin).max(getClaimMatchResponseProgressIdentityBindingOneSupportPercentMax),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date()
+}),zod.null()]),
   "clipsUnlocked": zod.number(),
   "correctionCount": zod.number(),
   "completed": zod.boolean(),
@@ -530,6 +553,15 @@ export const updateClaimMatchProgressResponseAcceptedAnchorCountMin = 0;
 
 export const updateClaimMatchProgressResponseUnresolvedMomentsItemMin = 0;
 
+export const updateClaimMatchProgressResponseConflictMomentsItemMin = 0;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneSupportCountMin = 0;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneAcceptedAnswerCountMin = 0;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMin = 0;
+export const updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMax = 100;
+
 export const updateClaimMatchProgressResponsePlayerStatsConfirmedSecondsMin = 0;
 
 export const updateClaimMatchProgressResponsePlayerStatsMinutesPlayedMin = 0;
@@ -573,6 +605,20 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "answeredAnchorCount": zod.number().min(updateClaimMatchProgressResponseAnsweredAnchorCountMin),
   "acceptedAnchorCount": zod.number().min(updateClaimMatchProgressResponseAcceptedAnchorCountMin),
   "unresolvedMoments": zod.array(zod.number().min(updateClaimMatchProgressResponseUnresolvedMomentsItemMin)).describe('Anchor moments answered as not me or skipped.'),
+  "conflictMoments": zod.array(zod.number().min(updateClaimMatchProgressResponseConflictMomentsItemMin)).describe('Accepted moments attributed to a different person than the current winner.'),
+  "identityBinding": zod.union([zod.object({
+  "id": zod.number(),
+  "personId": zod.string(),
+  "trackingBundleId": zod.number(),
+  "bundleFingerprint": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportCount": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneSupportCountMin),
+  "acceptedAnswerCount": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneAcceptedAnswerCountMin),
+  "supportPercent": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMin).max(updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMax),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date()
+}),zod.null()]),
   "clipsUnlocked": zod.number(),
   "correctionCount": zod.number(),
   "completed": zod.boolean(),
@@ -656,6 +702,61 @@ export const ListClaimMatchClipsResponseItem = zod.object({
 }))
 })
 export const ListClaimMatchClipsResponse = zod.array(ListClaimMatchClipsResponseItem)
+
+
+/**
+ * @summary List claim identity disputes awaiting admin review
+ */
+export const ListClaimMatchDisputesResponseItem = zod.object({
+  "id": zod.number(),
+  "recordingId": zod.number(),
+  "recordingLabel": zod.string(),
+  "claimantUserId": zod.number(),
+  "claimantName": zod.string(),
+  "claimantEmail": zod.string(),
+  "personId": zod.string(),
+  "resolutionMethod": zod.string(),
+  "supportCount": zod.number(),
+  "acceptedAnswerCount": zod.number(),
+  "supportPercent": zod.number(),
+  "state": zod.string(),
+  "currentOwnerUserId": zod.number().nullable(),
+  "currentOwnerName": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListClaimMatchDisputesResponse = zod.array(ListClaimMatchDisputesResponseItem)
+
+
+/**
+ * @summary Transfer a disputed person to one claimant
+ */
+export const ResolveClaimMatchDisputeParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ResolveClaimMatchDisputeBody = zod.object({
+  "winnerUserId": zod.number()
+})
+
+export const ResolveClaimMatchDisputeResponse = zod.object({
+  "id": zod.number(),
+  "recordingId": zod.number(),
+  "recordingLabel": zod.string(),
+  "claimantUserId": zod.number(),
+  "claimantName": zod.string(),
+  "claimantEmail": zod.string(),
+  "personId": zod.string(),
+  "resolutionMethod": zod.string(),
+  "supportCount": zod.number(),
+  "acceptedAnswerCount": zod.number(),
+  "supportPercent": zod.number(),
+  "state": zod.string(),
+  "currentOwnerUserId": zod.number().nullable(),
+  "currentOwnerName": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
 
 
 /**
@@ -1650,6 +1751,23 @@ export const GetAccountStatsResponse = zod.object({
   "likesGiven": zod.number(),
   "fieldsVisited": zod.number()
 })
+
+
+/**
+ * @summary List the current player's claimed match history
+ */
+export const GetAccountClaimedMatchesResponseItem = zod.object({
+  "recordingId": zod.number(),
+  "recordingLabel": zod.string(),
+  "fieldName": zod.string(),
+  "date": zod.string(),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "personId": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportPercent": zod.number(),
+  "claimedAt": zod.coerce.date()
+})
+export const GetAccountClaimedMatchesResponse = zod.array(GetAccountClaimedMatchesResponseItem)
 
 
 /**

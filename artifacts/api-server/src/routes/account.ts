@@ -1,10 +1,40 @@
 import { Router, type IRouter } from "express";
-import { eq, sql } from "drizzle-orm";
-import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable } from "@workspace/db";
+import { desc, eq, sql } from "drizzle-orm";
+import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable, fieldsTable, claimMatchIdentityBindingsTable } from "@workspace/db";
 import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody, UpdateLocaleBody, UpdateLocaleResponse, UpdateConsentsBody, UpdateConsentsResponse } from "@workspace/api-zod";
 import { getLocalUserId, getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
+
+router.get("/account/claimed-matches", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req);
+    return;
+  }
+  const rows = await db
+    .select({
+      binding: claimMatchIdentityBindingsTable,
+      recording: recordingsTable,
+      fieldName: fieldsTable.name,
+    })
+    .from(claimMatchIdentityBindingsTable)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, claimMatchIdentityBindingsTable.recordingId))
+    .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .where(eq(claimMatchIdentityBindingsTable.userId, userId))
+    .orderBy(desc(claimMatchIdentityBindingsTable.updatedAt));
+  res.json(rows.map(({ binding, recording, fieldName }) => ({
+    recordingId: recording.id,
+    recordingLabel: `${fieldName ?? "Match"} · ${recording.court}`,
+    fieldName: fieldName ?? "Match",
+    date: recording.date,
+    state: binding.state,
+    personId: binding.personId,
+    resolutionMethod: binding.resolutionMethod,
+    supportPercent: binding.supportPercent,
+    claimedAt: binding.resolvedAt?.toISOString() ?? binding.createdAt.toISOString(),
+  })));
+});
 
 router.patch("/account/consents", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);

@@ -3,6 +3,7 @@ import { strToU8, zipSync } from "fflate";
 import {
   completionSurvivesConcurrentProgress,
   deriveClaimState,
+  resolveClaimIdentity,
   isAcceptedClaimAnswer,
   knownClaimTrackIds,
   parseUploadedBundleDetailed,
@@ -173,6 +174,55 @@ describe("claim match server-derived progress", () => {
     expect(fromSummary.coveragePercent).toBe(100);
     expect(fromSummary.completed).toBe(true);
     expect(fromSummary.playerStats.totalSegments).toBe(2);
+  });
+
+  it("attributes coverage to one best-supported person and exposes other people as conflicts", () => {
+    const threePeople = [
+      { segmentIndex: 0, name: "first", startFrame: 0, endFrame: 59, startSeconds: 0, endSeconds: 60, version: 1, tracks: [{ id: "player-1", startFrame: 0, endFrame: 59, boxes: [] }, { id: "player-2", startFrame: 0, endFrame: 59, boxes: [] }], crossings: [], inPlaySpans: [], events: [] },
+      { segmentIndex: 1, name: "second", startFrame: 40, endFrame: 99, startSeconds: 40, endSeconds: 100, version: 1, tracks: [{ id: "player-1", startFrame: 40, endFrame: 99, boxes: [] }, { id: "player-3", startFrame: 40, endFrame: 99, boxes: [] }], crossings: [], inPlaySpans: [], events: [] },
+    ];
+    const result = deriveClaimState(manifest, threePeople as never, [
+      correction("three-1", "anchor-yes", "player-1", 10),
+      correction("three-2", "anchor-yes", "player-1", 50),
+      correction("three-3", "anchor-yes", "player-2", 90),
+    ] as never);
+    expect(result.identityResolution?.personId).toBe("player-1");
+    expect(result.identityResolution?.resolutionMethod).toBe("track-fallback");
+    expect(result.coveragePercent).toBe(100);
+    expect(result.conflictMoments).toEqual([90]);
+    expect(result.acceptedAnchorCount).toBe(2);
+    expect(result.completed).toBe(false);
+    expect(result.completionReason).toBe("identity-conflicts");
+  });
+
+  it("resolves track parts to a valid identity map", () => {
+    const identityManifest = {
+      version: 1,
+      label: "test",
+      width: 1920,
+      height: 1080,
+      frameRate: 1,
+      frameCount: 100,
+      duration: 100,
+      matchOffset: 0,
+      segmentCount: 2,
+      segments: [],
+      provenance: { bundleFingerprint: "bundle-a", identityMapBundleFingerprint: "bundle-a" },
+      identities: [{
+        id: "person-a",
+        parts: [{ trackId: "player-1", fromFrame: 0, toFrame: 99 }],
+      }],
+    } as never;
+    const result = resolveClaimIdentity(identityManifest, segments, [
+      correction("map-1", "anchor-yes", "player-1", 10),
+      correction("map-2", "anchor-yes", "person-a", 50),
+    ] as never);
+    expect(result).toMatchObject({
+      personId: "person-a",
+      resolutionMethod: "identity-map",
+      supportCount: 2,
+      acceptedAnswerCount: 2,
+    });
   });
 
   it("persists no and skip answers without treating them as accepted coverage", () => {

@@ -27,11 +27,16 @@ import {
   recordingTrackingSegmentsTable,
   claimMatchProgressTable,
   claimMatchCorrectionsTable,
+  claimMatchIdentityBindingsTable,
   type TrackingManifest,
   type TrackingPitchModel,
   type TrackingSegmentPayload,
   type TrackingBundleSummary,
   type ClaimEarnedClip,
+  type ClaimIdentityBindingRow,
+  type ClaimIdentityBindingState,
+  type ClaimIdentityResolutionMethod,
+  type TrackingIdentity,
 } from "@workspace/db";
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
@@ -980,6 +985,8 @@ function toProgress(row: typeof claimMatchProgressTable.$inferSelect | null, rec
     answeredAnchorCount: 0,
     acceptedAnchorCount: 0,
     unresolvedMoments: [],
+    conflictMoments: [],
+    identityBinding: null,
     clipsUnlocked: row?.clipsUnlocked ?? 0,
     correctionCount: row?.correctionCount ?? 0,
     completed: row?.completed ?? false,
@@ -1007,6 +1014,23 @@ function toProgress(row: typeof claimMatchProgressTable.$inferSelect | null, rec
       topSpeedUsableTimeFraction: null,
     },
     updatedAt: row?.updatedAt.toISOString() ?? new Date().toISOString(),
+  };
+}
+
+function toIdentityBinding(row: ClaimIdentityBindingRow | null) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    personId: row.personId,
+    trackingBundleId: row.trackingBundleId,
+    bundleFingerprint: row.bundleFingerprint,
+    resolutionMethod: row.resolutionMethod as ClaimIdentityResolutionMethod,
+    supportCount: row.supportCount,
+    acceptedAnswerCount: row.acceptedAnswerCount,
+    supportPercent: row.supportPercent,
+    state: row.state as ClaimIdentityBindingState,
+    resolvedAt: row.resolvedAt?.toISOString() ?? null,
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -1151,6 +1175,12 @@ router.post("/claim-match/demo/reset", async (req, res): Promise<void> => {
         eq(claimMatchProgressTable.userId, userId),
         eq(claimMatchProgressTable.recordingId, recordingId),
       ));
+    await tx
+      .delete(claimMatchIdentityBindingsTable)
+      .where(and(
+        eq(claimMatchIdentityBindingsTable.userId, userId),
+        eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+      ));
   });
 
   res.json({ recordingId, reset: true });
@@ -1166,6 +1196,7 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
   const rows = await db
     .select({
       progress: claimMatchProgressTable,
+      bindingState: claimMatchIdentityBindingsTable.state,
       recording: recordingsTable,
       fieldName: fieldsTable.name,
       bundleManifest: recordingTrackingBundlesTable.manifest,
@@ -1177,6 +1208,13 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
       recordingTrackingBundlesTable,
       eq(recordingTrackingBundlesTable.recordingId, claimMatchProgressTable.recordingId),
     )
+    .leftJoin(
+      claimMatchIdentityBindingsTable,
+      and(
+        eq(claimMatchIdentityBindingsTable.userId, userId),
+        eq(claimMatchIdentityBindingsTable.recordingId, claimMatchProgressTable.recordingId),
+      ),
+    )
     .where(eq(claimMatchProgressTable.userId, userId))
     .orderBy(desc(claimMatchProgressTable.updatedAt));
 
@@ -1184,7 +1222,8 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
     await isRecordingVisible(row.recording) ? row : null
   )))).filter((row): row is (typeof rows)[number] => row !== null);
 
-  const groups = (await Promise.all(visibleRows.map(async ({ progress, recording, fieldName, bundleManifest }) => {
+  const groups = (await Promise.all(visibleRows.map(async ({ progress, bindingState, recording, fieldName, bundleManifest }) => {
+    if (bindingState !== "confirmed") return null;
     const clips = bundleManifest
       ? await materializeClaimMoments(userId, recording, bundleManifest, progress.earnedClips ?? [])
       : progress.earnedClips ?? [];
@@ -1202,7 +1241,7 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
       clips,
     };
   })))
-    .filter((group) => group.clips.length > 0);
+    .filter((group): group is NonNullable<typeof group> => group !== null && group.clips.length > 0);
 
   res.json(ListClaimMatchClipsResponse.parse(groups));
 });
@@ -1213,10 +1252,14 @@ function getMomentClips(
   segments: ClaimStateSegment[],
   momentSeconds: number,
   existing: ClaimEarnedClip[],
+  playerIntervals: Array<{ startSeconds: number; endSeconds: number }> = [],
 ): ClaimEarnedClip[] {
   const newClips = segments.flatMap((segment) => segment.events)
     .filter((event) => ["goal", "shot", "kickoff", "second-half", "second_half"].includes(event.type.toLowerCase()))
     .filter((event) => Math.abs(event.time - momentSeconds) <= 12)
+    .filter((event) => playerIntervals.length === 0 || playerIntervals.some((interval) =>
+      event.time >= interval.startSeconds && event.time <= interval.endSeconds,
+    ))
     .map((event) => ({
       id: event.clipId ?? `claim-${event.type}-${Math.round(event.time)}`,
       title: event.label ?? `${event.type.replace(/[-_]/g, " ")} at ${formatMoment(event.time)}`,
@@ -1264,6 +1307,8 @@ type DerivedClaimState = {
   answeredAnchorCount: number;
   acceptedAnchorCount: number;
   unresolvedMoments: number[];
+  conflictMoments: number[];
+  identityResolution: ResolvedClaimIdentity | null;
   clipsUnlocked: number;
   correctionCount: number;
   completed: boolean;
@@ -1335,6 +1380,96 @@ export function knownClaimTrackIds(
   ]);
 }
 
+function usableIdentityMap(manifest: TrackingManifest): TrackingIdentity[] {
+  const identities = manifest.identities;
+  const provenance = manifest.provenance;
+  if (!identities?.length) return [];
+  if (
+    typeof provenance?.bundleFingerprint !== "string"
+    || typeof provenance.identityMapBundleFingerprint !== "string"
+    || provenance.bundleFingerprint !== provenance.identityMapBundleFingerprint
+  ) {
+    return [];
+  }
+  return identities;
+}
+
+function resolvePersonForTrack(
+  manifest: TrackingManifest,
+  chosenTrackId: string,
+): { personId: string; resolutionMethod: ClaimIdentityResolutionMethod } {
+  const identities = usableIdentityMap(manifest);
+  const direct = identities.find((identity) => identity.id === chosenTrackId);
+  if (direct) return { personId: direct.id, resolutionMethod: "identity-map" };
+  const mapped = identities.find((identity) =>
+    identity.parts.some((part) => part.trackId === chosenTrackId),
+  );
+  if (mapped) return { personId: mapped.id, resolutionMethod: "identity-map" };
+  return { personId: chosenTrackId, resolutionMethod: "track-fallback" };
+}
+
+export type ResolvedClaimIdentity = {
+  personId: string;
+  resolutionMethod: ClaimIdentityResolutionMethod;
+  supportCount: number;
+  acceptedAnswerCount: number;
+  supportPercent: number;
+  conflictMoments: number[];
+};
+
+export function resolveClaimIdentity(
+  manifest: TrackingManifest,
+  segments: ClaimStateSegment[],
+  accepted: typeof claimMatchCorrectionsTable.$inferSelect[],
+): ResolvedClaimIdentity | null {
+  const knownTrackIds = new Set(segments.flatMap((segment) => segment.tracks.map((track) => track.id)));
+  const identities = usableIdentityMap(manifest);
+  for (const identity of identities) {
+    knownTrackIds.add(identity.id);
+  }
+  const usableAnswers = accepted.filter((row) =>
+    knownTrackIds.has(row.chosenTrackId)
+    || trackIntervalsForId(manifest, segments, row.chosenTrackId).length > 0,
+  );
+  if (usableAnswers.length === 0) return null;
+
+  const candidates = new Map<string, {
+    count: number;
+    latestCreatedAt: number;
+    resolutionMethod: ClaimIdentityResolutionMethod;
+  }>();
+  for (const row of usableAnswers) {
+    const resolved = resolvePersonForTrack(manifest, row.chosenTrackId);
+    const previous = candidates.get(resolved.personId);
+    candidates.set(resolved.personId, {
+      count: (previous?.count ?? 0) + 1,
+      latestCreatedAt: Math.max(previous?.latestCreatedAt ?? 0, row.createdAt.getTime()),
+      resolutionMethod: previous?.resolutionMethod ?? resolved.resolutionMethod,
+    });
+  }
+  const winner = [...candidates.entries()]
+    .sort(([personA, a], [personB, b]) =>
+      b.count - a.count
+      || b.latestCreatedAt - a.latestCreatedAt
+      || personA.localeCompare(personB),
+    )[0];
+  if (!winner) return null;
+
+  const [personId, support] = winner;
+  const conflictMoments = usableAnswers
+    .filter((row) => resolvePersonForTrack(manifest, row.chosenTrackId).personId !== personId)
+    .map((row) => row.momentSeconds)
+    .sort((a, b) => a - b);
+  return {
+    personId,
+    resolutionMethod: support.resolutionMethod,
+    supportCount: support.count,
+    acceptedAnswerCount: usableAnswers.length,
+    supportPercent: Math.round((support.count / usableAnswers.length) * 10000) / 100,
+    conflictMoments: [...new Set(conflictMoments)].slice(0, 50),
+  };
+}
+
 function latestAnchorAnswers(
   rows: typeof claimMatchCorrectionsTable.$inferSelect[],
 ): typeof claimMatchCorrectionsTable.$inferSelect[] {
@@ -1369,7 +1504,7 @@ function trackIntervalsForId(
       });
     }
   }
-  const identity = manifest.identities?.find((item) => item.id === trackId);
+  const identity = usableIdentityMap(manifest).find((item) => item.id === trackId);
   if (identity) {
     for (const part of identity.parts) {
       for (const segment of segments) {
@@ -1714,8 +1849,21 @@ export function deriveClaimState(
   const anchorAnswers = latestAnchorAnswers(corrections);
   const nonAnchorAnswers = active.filter((row) => !row.answerMethod.startsWith("anchor-"));
   const accepted = [...nonAnchorAnswers, ...anchorAnswers].filter(isAcceptedClaimAnswer);
-  const acceptedAnchorCount = anchorAnswers.filter(isAcceptedClaimAnswer).length;
-  const intervals = accepted.flatMap((row) => trackIntervalsForId(manifest, segments, row.chosenTrackId));
+  const identityResolution = resolveClaimIdentity(manifest, segments, accepted);
+  const resolvedPersonId = identityResolution?.personId ?? null;
+  const acceptedForPerson = accepted.filter((row) =>
+    resolvedPersonId !== null
+    && resolvePersonForTrack(manifest, row.chosenTrackId).personId === resolvedPersonId,
+  );
+  const acceptedAnchorCount = anchorAnswers.filter((row) =>
+    isAcceptedClaimAnswer(row)
+    && resolvedPersonId !== null
+    && resolvePersonForTrack(manifest, row.chosenTrackId).personId === resolvedPersonId,
+  ).length;
+  const intervals = acceptedForPerson.flatMap((row) => {
+    const resolved = resolvePersonForTrack(manifest, row.chosenTrackId);
+    return trackIntervalsForId(manifest, segments, resolved.personId);
+  });
   const sorted = intervals
     .map((interval) => ({
       startSeconds: Math.max(0, Math.min(manifest.duration, interval.startSeconds)),
@@ -1739,18 +1887,24 @@ export function deriveClaimState(
     .filter((row) => row.answerMethod === "anchor-no" || row.answerMethod === "anchor-skip")
     .map((row) => row.momentSeconds)
     .sort((a, b) => a - b);
+  const conflictMoments = identityResolution?.conflictMoments ?? [];
   const requiredAnchors = manifest.duration < 120 ? 1 : 3;
   const requiredCoverage = manifest.duration < 120 ? 55 : 60;
-  const completed = acceptedAnchorCount >= requiredAnchors && coveragePercent >= requiredCoverage;
-  const earnedClips = accepted.reduce(
-    (all, row) => getMomentClips(segments, row.momentSeconds, all),
+  const completed = conflictMoments.length === 0
+    && identityResolution !== null
+    && acceptedAnchorCount >= requiredAnchors
+    && coveragePercent >= requiredCoverage;
+  const earnedClips = acceptedForPerson.reduce(
+    (all, row) => getMomentClips(segments, row.momentSeconds, all, sorted),
     [] as ClaimEarnedClip[],
   );
   const acceptedTrackIds = new Set<string>();
-  for (const row of accepted) {
-    acceptedTrackIds.add(row.chosenTrackId);
-    const identity = manifest.identities?.find((item) => item.id === row.chosenTrackId);
+  for (const row of acceptedForPerson) {
+    const personId = resolvePersonForTrack(manifest, row.chosenTrackId).personId;
+    acceptedTrackIds.add(personId);
+    const identity = usableIdentityMap(manifest).find((item) => item.id === personId);
     for (const part of identity?.parts ?? []) acceptedTrackIds.add(part.trackId);
+    if (!identity) acceptedTrackIds.add(row.chosenTrackId);
   }
   const trackedSegments = segments.filter((segment) =>
     segment.tracks.some((track) => acceptedTrackIds.has(track.id)),
@@ -1764,7 +1918,7 @@ export function deriveClaimState(
   const playerMetrics = buildPlayerMetrics(
     manifest,
     fullSegments,
-    accepted,
+    acceptedForPerson,
     coveredSeconds,
     coveragePercent,
     anchorAnswers.length,
@@ -1780,10 +1934,14 @@ export function deriveClaimState(
     answeredAnchorCount: anchorAnswers.length,
     acceptedAnchorCount,
     unresolvedMoments: Array.from(new Set(unresolvedMoments)).slice(0, 50),
+    conflictMoments,
+    identityResolution,
     clipsUnlocked: earnedClips.length,
     correctionCount: active.length,
     completed,
-    completionReason: completed ? "coverage-threshold" : "keep-confirming",
+    completionReason: conflictMoments.length > 0
+      ? "identity-conflicts"
+      : completed ? "coverage-threshold" : "keep-confirming",
     earnedClips,
     playerStats,
     adminPlayerStats,
@@ -1794,8 +1952,11 @@ function progressWithDerived(
   row: typeof claimMatchProgressTable.$inferSelect | null,
   recordingId: number,
   derived: DerivedClaimState,
+  binding: ClaimIdentityBindingRow | null,
 ) {
-  const completed = Boolean(row?.completed) || derived.completed;
+  const bindingAllowsCompletion = binding?.state === "confirmed";
+  const completed = derived.conflictMoments.length === 0
+    && (bindingAllowsCompletion ? Boolean(row?.completed) || derived.completed : false);
   const storedClipsById = new Map((row?.earnedClips ?? []).map((clip) => [clip.id, clip]));
   const earnedClips = derived.earnedClips.map((clip) => ({
     ...clip,
@@ -1811,6 +1972,8 @@ function progressWithDerived(
     answeredAnchorCount: derived.answeredAnchorCount,
     acceptedAnchorCount: derived.acceptedAnchorCount,
     unresolvedMoments: derived.unresolvedMoments,
+    conflictMoments: derived.conflictMoments,
+    identityBinding: toIdentityBinding(binding),
     clipsUnlocked: earnedClips.length,
     correctionCount: derived.correctionCount,
     completed,
@@ -1829,6 +1992,129 @@ async function getClaimCorrections(userId: number, recordingId: number) {
       eq(claimMatchCorrectionsTable.recordingId, recordingId),
     ))
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
+}
+
+function isBindingUniqueViolation(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: string }).code === "23505";
+}
+
+async function identityBindingsTableExists(): Promise<boolean> {
+  try {
+    const result = await db.execute(sql`select to_regclass('public.claim_match_identity_bindings') as name`);
+    return Boolean((result.rows[0] as { name?: string | null } | undefined)?.name);
+  } catch {
+    return false;
+  }
+}
+
+function completionAllowed(
+  derived: DerivedClaimState,
+  binding: ClaimIdentityBindingRow | null,
+): boolean {
+  return derived.completed && binding?.state === "confirmed";
+}
+
+/**
+ * Turn the current answer set into the user's one recording binding. This is
+ * intentionally called on reads as well as writes: an admin transfer and a
+ * bundle replacement must be reflected without waiting for another answer.
+ */
+async function syncIdentityBinding(
+  userId: number,
+  recordingId: number,
+  bundle: typeof recordingTrackingBundlesTable.$inferSelect,
+  derived: DerivedClaimState,
+): Promise<ClaimIdentityBindingRow | null> {
+  const [existing] = await db
+    .select()
+    .from(claimMatchIdentityBindingsTable)
+    .where(and(
+      eq(claimMatchIdentityBindingsTable.userId, userId),
+      eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+    ));
+  const resolution = derived.identityResolution;
+  if (!resolution) {
+    if (!existing || existing.state === "needs_resolution") return existing ?? null;
+    const [released] = await db
+      .update(claimMatchIdentityBindingsTable)
+      .set({ state: "released", updatedAt: new Date() })
+      .where(eq(claimMatchIdentityBindingsTable.id, existing.id))
+      .returning();
+    return released ?? existing;
+  }
+
+  const [owner] = await db
+    .select()
+    .from(claimMatchIdentityBindingsTable)
+    .where(and(
+      eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+      eq(claimMatchIdentityBindingsTable.personId, resolution.personId),
+      eq(claimMatchIdentityBindingsTable.state, "confirmed"),
+    ));
+  const state: ClaimIdentityBindingState = resolution.conflictMoments.length > 0
+    ? "pending"
+    : owner && owner.userId !== userId
+      ? "disputed"
+      : "confirmed";
+  const values = {
+    userId,
+    recordingId,
+    personId: resolution.personId,
+    trackingBundleId: bundle.id,
+    bundleFingerprint: typeof bundle.manifest.provenance?.bundleFingerprint === "string"
+      ? bundle.manifest.provenance.bundleFingerprint
+      : "legacy",
+    resolutionMethod: resolution.resolutionMethod,
+    supportCount: resolution.supportCount,
+    acceptedAnswerCount: resolution.acceptedAnswerCount,
+    supportPercent: resolution.supportPercent,
+    state,
+    resolvedAt: new Date(),
+    updatedAt: new Date(),
+  };
+  try {
+    const [saved] = await db
+      .insert(claimMatchIdentityBindingsTable)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [claimMatchIdentityBindingsTable.userId, claimMatchIdentityBindingsTable.recordingId],
+        set: values,
+      })
+      .returning();
+    return saved ?? existing ?? null;
+  } catch (error) {
+    // Two claimants can resolve the same person at the same time. The
+    // confirmed-person partial index makes only one winner possible; the
+    // loser is retained as a visible dispute instead of getting a 500.
+    if (!isBindingUniqueViolation(error) || state !== "confirmed") throw error;
+    const [saved] = await db
+      .insert(claimMatchIdentityBindingsTable)
+      .values({ ...values, state: "disputed" })
+      .onConflictDoUpdate({
+        target: [claimMatchIdentityBindingsTable.userId, claimMatchIdentityBindingsTable.recordingId],
+        set: { ...values, state: "disputed" },
+      })
+      .returning();
+    return saved ?? existing ?? null;
+  }
+}
+
+async function markBindingsNeedsResolution(recordingId: number): Promise<void> {
+  try {
+    await db
+      .update(claimMatchIdentityBindingsTable)
+      .set({ state: "needs_resolution", updatedAt: new Date() })
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+  } catch (error) {
+    // Keep bundle replacement usable while an older development database is
+    // waiting for migration 0018. New claim reads still fail explicitly if
+    // they require the missing binding table.
+    if ((error as { code?: string })?.code !== "42P01") throw error;
+    logger.warn({ recordingId }, "Claim identity binding table is not migrated yet");
+  }
 }
 
 router.get("/admin/recordings/:id/player-metrics", async (req, res): Promise<void> => {
@@ -1898,6 +2184,121 @@ function formatMoment(seconds: number): string {
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
+async function disputeResponse(binding: ClaimIdentityBindingRow) {
+  const [recordingRow] = await db
+    .select({
+      recording: recordingsTable,
+      fieldName: fieldsTable.name,
+    })
+    .from(recordingsTable)
+    .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .where(eq(recordingsTable.id, binding.recordingId));
+  const [claimant] = await db
+    .select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+    .from(usersTable)
+    .where(eq(usersTable.id, binding.userId));
+  const [owner] = await db
+    .select({ id: usersTable.id, name: usersTable.name })
+    .from(claimMatchIdentityBindingsTable)
+    .innerJoin(usersTable, eq(usersTable.id, claimMatchIdentityBindingsTable.userId))
+    .where(and(
+      eq(claimMatchIdentityBindingsTable.recordingId, binding.recordingId),
+      eq(claimMatchIdentityBindingsTable.personId, binding.personId),
+      eq(claimMatchIdentityBindingsTable.state, "confirmed"),
+    ));
+  return {
+    id: binding.id,
+    recordingId: binding.recordingId,
+    recordingLabel: `${recordingRow?.fieldName ?? "Match"} · ${recordingRow?.recording.court ?? ""}`.trim(),
+    claimantUserId: binding.userId,
+    claimantName: claimant?.name ?? `User ${binding.userId}`,
+    claimantEmail: claimant?.email ?? "",
+    personId: binding.personId,
+    resolutionMethod: binding.resolutionMethod,
+    supportCount: binding.supportCount,
+    acceptedAnswerCount: binding.acceptedAnswerCount,
+    supportPercent: binding.supportPercent,
+    state: binding.state,
+    currentOwnerUserId: owner?.id ?? null,
+    currentOwnerName: owner?.name ?? null,
+    createdAt: binding.createdAt.toISOString(),
+    updatedAt: binding.updatedAt.toISOString(),
+  };
+}
+
+router.get("/admin/claim-match/disputes", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const rows = await db
+    .select()
+    .from(claimMatchIdentityBindingsTable)
+    .where(eq(claimMatchIdentityBindingsTable.state, "disputed"))
+    .orderBy(desc(claimMatchIdentityBindingsTable.createdAt));
+  res.json(await Promise.all(rows.map(disputeResponse)));
+});
+
+router.patch("/admin/claim-match/disputes/:id", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const disputeId = parseId(req.params.id);
+  const parsed = z.object({ winnerUserId: z.number().int().positive() }).safeParse(req.body);
+  if (!disputeId || !parsed.success) {
+    res.status(400).json({ error: "A valid winnerUserId is required" });
+    return;
+  }
+  const [dispute] = await db
+    .select()
+    .from(claimMatchIdentityBindingsTable)
+    .where(eq(claimMatchIdentityBindingsTable.id, disputeId));
+  if (!dispute || dispute.state !== "disputed") {
+    res.status(404).json({ error: "Dispute not found" });
+    return;
+  }
+  const [owner] = await db
+    .select()
+    .from(claimMatchIdentityBindingsTable)
+    .where(and(
+      eq(claimMatchIdentityBindingsTable.recordingId, dispute.recordingId),
+      eq(claimMatchIdentityBindingsTable.personId, dispute.personId),
+      eq(claimMatchIdentityBindingsTable.state, "confirmed"),
+    ));
+  if (parsed.data.winnerUserId !== dispute.userId && parsed.data.winnerUserId !== owner?.userId) {
+    res.status(400).json({ error: "Winner must be the claimant or current owner" });
+    return;
+  }
+  await db.transaction(async (tx) => {
+    await tx
+      .update(claimMatchIdentityBindingsTable)
+      .set({ state: "rejected", updatedAt: new Date() })
+      .where(and(
+        eq(claimMatchIdentityBindingsTable.recordingId, dispute.recordingId),
+        eq(claimMatchIdentityBindingsTable.personId, dispute.personId),
+        eq(claimMatchIdentityBindingsTable.state, "disputed"),
+      ));
+    if (owner && owner.userId !== parsed.data.winnerUserId) {
+      await tx
+        .update(claimMatchIdentityBindingsTable)
+        .set({ state: "released", updatedAt: new Date() })
+        .where(eq(claimMatchIdentityBindingsTable.id, owner.id));
+    }
+    await tx
+      .update(claimMatchIdentityBindingsTable)
+      .set({ state: "confirmed", updatedAt: new Date() })
+      .where(eq(claimMatchIdentityBindingsTable.id, parsed.data.winnerUserId === dispute.userId ? dispute.id : owner!.id));
+  });
+  const [updated] = await db
+    .select()
+    .from(claimMatchIdentityBindingsTable)
+    .where(eq(claimMatchIdentityBindingsTable.id, parsed.data.winnerUserId === dispute.userId ? dispute.id : owner!.id));
+  res.json(await disputeResponse(updated ?? dispute));
+});
+
 router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
@@ -1937,6 +2338,16 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     // claim needs the full boxes for its position heatmap and distance.
     derived = deriveClaimState(manifest, segments, corrections, await readBundleSegments(row.bundle.id));
   }
+  const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
+  const canAward = completionAllowed(derived, binding);
+  const earnedClips = canAward
+    ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
+    : [];
+  if (canAward && earnedClips.length !== derived.earnedClips.length) {
+    derived = { ...derived, earnedClips };
+  } else if (!canAward) {
+    derived = { ...derived, earnedClips: [] };
+  }
 
   res.json(GetClaimMatchResponse.parse({
     recording: toRecording(row.recording, row.fieldName ?? null),
@@ -1945,7 +2356,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     // guess and it is almost always wrong on a recording longer than the
     // tracked window.
     manifest: { ...manifestForClient(manifest), videoStartSeconds: manifest.videoStartSeconds ?? 0 },
-    progress: progressWithDerived(progress ?? null, params.data.id, derived),
+    progress: progressWithDerived(progress ?? null, params.data.id, derived, binding),
     corrections: corrections.map(toCorrection),
   }));
 });
@@ -2009,21 +2420,27 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   }
   const segments = await getClaimStateSegments(row.bundle);
   const corrections = await getClaimCorrections(userId, params.data.id);
-  let derived = deriveClaimState(row.bundle.manifest, segments, corrections);
+  const manifest = await manifestWithBundleFingerprint(row.bundle);
+  let derived = deriveClaimState(manifest, segments, corrections);
   if (derived.completed) {
-    derived = deriveClaimState(row.bundle.manifest, segments, corrections, await readBundleSegments(row.bundle.id));
+    derived = deriveClaimState(manifest, segments, corrections, await readBundleSegments(row.bundle.id));
   }
-  const earnedClips = await materializeClaimMoments(
-    userId,
-    row.recording,
-    row.bundle.manifest,
-    derived.earnedClips,
-  );
-  const nextStage = derived.completed
+  const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
+  const isCompleted = completionAllowed(derived, binding);
+  const earnedClips = isCompleted
+    ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
+    : [];
+  const nextStage = isCompleted
     ? "done"
     : body.data.stage === "done"
       ? "picker"
       : body.data.stage;
+  const responseDerived = {
+    ...derived,
+    completed: isCompleted,
+    completionReason: isCompleted ? "coverage-threshold" : derived.completionReason,
+    earnedClips,
+  };
   const [saved] = await db
     .insert(claimMatchProgressTable)
     .values({
@@ -2034,9 +2451,9 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       confirmedFromSeconds: body.data.confirmedFromSeconds,
       currentPositionSeconds: body.data.currentPositionSeconds,
       claimedPercent: derived.coveragePercent,
-      clipsUnlocked: derived.clipsUnlocked,
+      clipsUnlocked: earnedClips.length,
       correctionCount: derived.correctionCount,
-      completed: derived.completed,
+      completed: isCompleted,
       earnedClips,
     })
     .onConflictDoUpdate({
@@ -2046,20 +2463,24 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
         confirmedFromSeconds: body.data.confirmedFromSeconds,
         currentPositionSeconds: body.data.currentPositionSeconds,
         claimedPercent: derived.coveragePercent,
-        clipsUnlocked: derived.clipsUnlocked,
+         clipsUnlocked: earnedClips.length,
         correctionCount: derived.correctionCount,
-        completed: sql`${claimMatchProgressTable.completed} OR ${derived.completed}`,
-        stage: sql`CASE WHEN ${claimMatchProgressTable.completed} OR ${derived.completed} THEN 'done' ELSE ${nextStage} END`,
+         completed: sql`CASE WHEN ${derived.conflictMoments.length === 0 && binding?.state === "confirmed"} THEN ${claimMatchProgressTable.completed} OR ${isCompleted} ELSE ${isCompleted} END`,
+         stage: sql`CASE WHEN ${derived.conflictMoments.length === 0 && binding?.state === "confirmed"} AND (${claimMatchProgressTable.completed} OR ${isCompleted}) THEN 'done' ELSE ${nextStage} END`,
         earnedClips,
         updatedAt: new Date(),
       },
     })
     .returning();
-  const responseCompleted = completionSurvivesConcurrentProgress(saved.completed, derived.completed);
-  const responseDerived = responseCompleted && !derived.completed
-    ? { ...derived, completed: true, completionReason: "coverage-threshold", earnedClips }
-    : { ...derived, earnedClips };
-  res.json(progressWithDerived(saved, params.data.id, responseDerived));
+  const responseCompleted = completionSurvivesConcurrentProgress(saved.completed, isCompleted);
+  res.json(progressWithDerived(
+    saved,
+    params.data.id,
+    responseCompleted && !responseDerived.completed
+      ? { ...responseDerived, completed: true, completionReason: "coverage-threshold" }
+      : responseDerived,
+    binding,
+  ));
 });
 
 router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise<void> => {
@@ -2084,7 +2505,8 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     return;
   }
   const segments = await getClaimStateSegments(row.bundle);
-  const trackIds = knownClaimTrackIds(row.bundle.manifest, segments);
+  const manifest = await manifestWithBundleFingerprint(row.bundle);
+  const trackIds = knownClaimTrackIds(manifest, segments);
   const isAnchorNoAnswer = body.data.answerMethod === "anchor-no" || body.data.answerMethod === "anchor-skip";
   if (
     (isAnchorNoAnswer
@@ -2125,14 +2547,13 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     })
     .returning();
   const allCorrections = await getClaimCorrections(userId, params.data.id);
-  const derived = deriveClaimState(row.bundle.manifest, segments, allCorrections);
-  const earnedClips = await materializeClaimMoments(
-    userId,
-    row.recording,
-    row.bundle.manifest,
-    derived.earnedClips,
-  );
-  const nextStage = derived.completed
+  const derived = deriveClaimState(manifest, segments, allCorrections);
+  const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
+  const isCompleted = completionAllowed(derived, binding);
+  const earnedClips = isCompleted
+    ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
+    : [];
+  const nextStage = isCompleted
     ? "done"
     : body.data.answerMethod.startsWith("anchor-")
       ? "picker"
@@ -2147,9 +2568,9 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
       confirmedFromSeconds: body.data.momentSeconds,
       currentPositionSeconds: body.data.momentSeconds,
       claimedPercent: derived.coveragePercent,
-      clipsUnlocked: derived.clipsUnlocked,
+       clipsUnlocked: earnedClips.length,
       correctionCount: derived.correctionCount,
-      completed: derived.completed,
+       completed: isCompleted,
       earnedClips,
     })
     .onConflictDoUpdate({
@@ -2159,10 +2580,10 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
         confirmedFromSeconds: body.data.momentSeconds,
         currentPositionSeconds: body.data.momentSeconds,
         claimedPercent: derived.coveragePercent,
-        clipsUnlocked: derived.clipsUnlocked,
+         clipsUnlocked: earnedClips.length,
         correctionCount: derived.correctionCount,
-        completed: sql`${claimMatchProgressTable.completed} OR ${derived.completed}`,
-        stage: sql`CASE WHEN ${claimMatchProgressTable.completed} OR ${derived.completed} THEN 'done' ELSE ${nextStage} END`,
+         completed: isCompleted,
+         stage: nextStage,
         earnedClips,
         updatedAt: new Date(),
       },
@@ -2218,28 +2639,33 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
         ))
         .then((rows) => rows[0] ?? null),
     ]);
-    const derived = deriveClaimState(bundleRow.bundle.manifest, segments, corrections);
+    const manifest = await manifestWithBundleFingerprint(bundleRow.bundle);
+    const derived = deriveClaimState(manifest, segments, corrections);
+    const binding = await syncIdentityBinding(userId, correction.recordingId, bundleRow.bundle, derived);
+    const isCompleted = completionAllowed(derived, binding);
     const storedClipsById = new Map((existingProgress?.earnedClips ?? []).map((clip) => [clip.id, clip]));
-    const earnedClips = await materializeClaimMoments(
-      userId,
-      bundleRow.recording,
-      bundleRow.bundle.manifest,
-      derived.earnedClips.map((clip) => ({
-        ...clip,
-        ...(storedClipsById.get(clip.id)?.userClipId
-          ? { userClipId: storedClipsById.get(clip.id)?.userClipId }
-          : {}),
-      })),
-    );
+    const earnedClips = isCompleted
+      ? await materializeClaimMoments(
+        userId,
+        bundleRow.recording,
+        manifest,
+        derived.earnedClips.map((clip) => ({
+          ...clip,
+          ...(storedClipsById.get(clip.id)?.userClipId
+            ? { userClipId: storedClipsById.get(clip.id)?.userClipId }
+            : {}),
+        })),
+      )
+      : [];
     await db
       .update(claimMatchProgressTable)
       .set({
         claimedPercent: derived.coveragePercent,
-        clipsUnlocked: derived.clipsUnlocked,
+        clipsUnlocked: earnedClips.length,
         correctionCount: derived.correctionCount,
-        completed: sql`${claimMatchProgressTable.completed} OR ${derived.completed}`,
+        completed: isCompleted,
         earnedClips,
-        stage: sql`CASE WHEN ${claimMatchProgressTable.completed} OR ${derived.completed} THEN 'done' ELSE 'picker' END`,
+        stage: isCompleted ? "done" : "picker",
         updatedAt: new Date(),
       })
       .where(and(
@@ -2443,6 +2869,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
         ...(spritePaths[segment.segmentIndex] ? { spritesPath: spritePaths[segment.segmentIndex] } : {}),
       })),
     };
+    const bindingsTableExists = await identityBindingsTableExists();
     const [saved] = await db.transaction(async (tx) => {
       const [bundle] = await tx
         .insert(recordingTrackingBundlesTable)
@@ -2466,6 +2893,14 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
         trackCount: segment.tracks.length,
         crossingCount: segment.crossings.length,
       })));
+      if (bindingsTableExists) {
+        await tx
+          .update(claimMatchIdentityBindingsTable)
+          .set({ state: "needs_resolution", updatedAt: new Date() })
+          .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+      } else {
+        logger.warn({ recordingId }, "Claim identity binding table is not migrated yet");
+      }
       return [bundle];
     });
     if (previousBundle?.manifest.pitchModel || manifest.pitchModel) {
@@ -2739,6 +3174,7 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     .update(recordingTrackingBundlesTable)
     .set({ manifest, updatedAt: new Date() })
     .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+  await markBindingsNeedsResolution(recordingId);
   res.json({ recordingId, identities: body.data.identities.length, bundleFingerprint: currentFingerprint });
 });
 

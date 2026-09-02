@@ -23,3 +23,4 @@
 - [Claim Match queue rejections](claim-match-queue-rejections.md) — discard permanent invalid offline actions but stop and retain transient failures.
 - [Calibrated player metrics](calibrated-player-metrics.md) — distance requires pitch calibration, bottom-centre positions, and smoothing; never estimate metres from pixels.
 - [Calibration metadata and guarded speed metrics](calibration-metadata-and-speed.md) — bundle-owned metadata and conservative admin-only top-speed rules prevent misleading numbers.
+- [Claim identity ownership](identity-binding-ownership.md) — only confirmed per-recording bindings can complete claims or award clips; competing claimants remain admin-reviewable disputes.

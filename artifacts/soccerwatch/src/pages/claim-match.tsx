@@ -410,13 +410,20 @@ export default function ClaimMatchPage() {
     ? claimAnchors.find((anchor) => anchor.id === activeAnchorId) ?? null
     : claimAnchors[nextAnchorIndex] ?? null;
   const unresolvedAnchorReviews = useMemo(
-    () => (serverProgress?.unresolvedMoments ?? [])
+    () => [...new Set([
+      ...(serverProgress?.unresolvedMoments ?? []),
+      ...(serverProgress?.conflictMoments ?? []),
+    ])]
       .map((momentSeconds) => {
         const index = nearestAnchorIndex(claimAnchors, momentSeconds);
-        return { momentSeconds, index };
+        return {
+          momentSeconds,
+          index,
+          conflict: (serverProgress?.conflictMoments ?? []).includes(momentSeconds),
+        };
       })
       .filter((item) => item.index >= 0),
-    [claimAnchors, serverProgress?.unresolvedMoments],
+    [claimAnchors, serverProgress?.conflictMoments, serverProgress?.unresolvedMoments],
   );
   const hasData = Boolean(response && recording && manifest && serverProgress);
   const currentFrame = bundle ? trackingSecondsToFrame(currentTime, bundle) : 0;
@@ -1162,6 +1169,24 @@ export default function ClaimMatchPage() {
           </small>
            {completionSyncPending && <small className="claim-completion-sync" role="status">Checking the saved result…</small>}
         </div>
+        {serverProgress?.identityBinding?.state === "disputed" && (
+          <div className="claim-panel claim-panel-warning" role="alert">
+            <b>This player is already claimed by another account.</b>
+            <span>Your answers are saved, but this claim is pending admin review. It will not unlock clips until the review is resolved.</span>
+          </div>
+        )}
+        {serverProgress?.identityBinding?.state === "needs_resolution" && (
+          <div className="claim-panel claim-panel-warning" role="status">
+            <b>The tracking data changed.</b>
+            <span>Your previous answers were kept for history, but please review the moments again before this match can be claimed.</span>
+          </div>
+        )}
+        {(serverProgress?.conflictMoments?.length ?? 0) > 0 && (
+          <div className="claim-panel claim-panel-warning" role="alert">
+            <b>Some answers point to a different player.</b>
+            <span>Review the highlighted moments and choose the same person throughout the match.</span>
+          </div>
+        )}
         {isDemo && (
           <div className="claim-demo-reset" data-testid="claim-demo-reset">
             <button
@@ -1272,7 +1297,7 @@ export default function ClaimMatchPage() {
                        onClick={() => openAnchorReview(item.index)}
                      >
                        <span className="candidate-number">{index + 1}</span>
-                       <span><b>Moment {formatTime(item.momentSeconds)}</b><small>Not visible or skipped</small></span>
+                        <span><b>Moment {formatTime(item.momentSeconds)}</b><small>{item.conflict ? "Different player selected" : "Not visible or skipped"}</small></span>
                        <ChevronRight size={16} />
                      </button>
                    ))}
