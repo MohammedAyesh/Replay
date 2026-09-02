@@ -167,13 +167,71 @@ describe("claim match server-derived progress", () => {
 
     expect(result.playerStats).toEqual({
       confirmedSeconds: 100,
+      minutesPlayed: 1.67,
       coveragePercent: 100,
       answeredMoments: 1,
       acceptedMoments: 1,
       trackedSegments: 2,
       totalSegments: 2,
       matchedEvents: 2,
+      heatmap: { coordinateSpace: "camera", cells: [] },
+      distanceMetres: null,
     });
+  });
+
+  it("uses the bottom centre and pitch interpolation for completed player metrics", () => {
+    const pitchManifest = {
+      ...(manifest as object),
+      width: 100,
+      height: 100,
+      duration: 4,
+      frameCount: 4,
+      segmentCount: 1,
+      segments: [{ index: 0, name: "only", startFrame: 0, endFrame: 3, startSeconds: 0, endSeconds: 4 }],
+      pitchModel: {
+        pitchWidthMetres: 10,
+        pitchHeightMetres: 10,
+        grid: [
+          [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+          [{ x: 0, y: 10 }, { x: 10, y: 10 }],
+        ],
+      },
+    } as never;
+    const summarySegment = {
+      segmentIndex: 0,
+      name: "only",
+      startFrame: 0,
+      endFrame: 3,
+      startSeconds: 0,
+      endSeconds: 4,
+      tracks: [{ id: "player-1", startFrame: 0, endFrame: 3 }],
+      events: [],
+    };
+    const summary = [summarySegment] as never;
+    const full = [{
+      ...summarySegment,
+      version: 1,
+      tracks: [{
+        id: "player-1",
+        startFrame: 0,
+        endFrame: 3,
+        boxes: [
+          { frame: 0, x: 0, y: 90, w: 1, h: 10 },
+          { frame: 1, x: 49.5, y: 90, w: 1, h: 10 },
+          { frame: 2, x: 99, y: 90, w: 1, h: 10 },
+        ],
+      }],
+      crossings: [],
+      inPlaySpans: [],
+    }] as never;
+    const result = deriveClaimState(pitchManifest, summary, [
+      correction("pitch-1", "anchor-yes", "player-1", 1),
+    ] as never, full);
+
+    expect(result.playerStats.minutesPlayed).toBeCloseTo(4 / 60, 2);
+    expect(result.playerStats.distanceMetres).toBeGreaterThan(0);
+    expect(result.playerStats.heatmap.coordinateSpace).toBe("pitch");
+    expect(result.playerStats.heatmap.cells.some((cell) => cell.y > 0.8)).toBe(true);
   });
 
   it("does not let an older progress save clear a completed claim", () => {

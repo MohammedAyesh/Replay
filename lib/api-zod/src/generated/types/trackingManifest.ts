@@ -7,6 +7,7 @@
  */
 import type { TrackingIdentity } from './trackingIdentity';
 import type { TrackingManifestProvenance } from './trackingManifestProvenance';
+import type { TrackingPitchModel } from './trackingPitchModel';
 import type { TrackingSegmentManifest } from './trackingSegmentManifest';
 
 export interface TrackingManifest {
@@ -33,6 +34,8 @@ export interface TrackingManifest {
   /** @minimum 1 */
   segmentCount: number;
   segments: TrackingSegmentManifest[];
+  /** Optional camera-to-pitch calibration for distance metrics. */
+  pitchModel?: TrackingPitchModel;
   /** The identity board's result - pieces of tracks that are one person. Optional. */
   identities?: TrackingIdentity[];
   /** How the tracking bundle was produced. */

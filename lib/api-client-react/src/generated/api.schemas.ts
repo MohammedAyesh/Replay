@@ -583,6 +583,32 @@ export interface TrackingIdentity {
   parts: TrackingIdentityPart[];
 }
 
+export interface TrackingPitchModelGridPoint {
+  /** Pitch position in metres on the horizontal axis. */
+  x: number;
+  /** Pitch position in metres on the vertical axis. */
+  y: number;
+}
+
+export interface TrackingPitchModel {
+  /**
+     * Real pitch width represented by the model, in metres.
+     * @exclusiveMinimum 0
+     */
+  pitchWidthMetres: number;
+  /**
+     * Real pitch height represented by the model, in metres.
+     * @exclusiveMinimum 0
+     */
+  pitchHeightMetres: number;
+  /**
+     * Rectangular row-major calibration grid. Rows map from image top to bottom and columns map from image left to right. Values are pitch coordinates in metres and are bilinearly interpolated.
+     * @minItems 2
+     * @items.minItems 2
+     */
+  grid: TrackingPitchModelGridPoint[][];
+}
+
 /**
  * How the tracking bundle was produced.
  */
@@ -612,6 +638,8 @@ export interface TrackingManifest {
   /** @minimum 1 */
   segmentCount: number;
   segments: TrackingSegmentManifest[];
+  /** Optional camera-to-pitch calibration for distance metrics. */
+  pitchModel?: TrackingPitchModel;
   /** The identity board's result - pieces of tracks that are one person. Optional. */
   identities?: TrackingIdentity[];
   /** How the tracking bundle was produced. */
@@ -678,12 +706,49 @@ export interface ClaimCorrection {
   createdAt: string;
 }
 
+/**
+ * Pitch-normalized coordinates when calibrated, otherwise image coordinates.
+ */
+export type ClaimPlayerStatsHeatmapCoordinateSpace = typeof ClaimPlayerStatsHeatmapCoordinateSpace[keyof typeof ClaimPlayerStatsHeatmapCoordinateSpace];
+
+
+export const ClaimPlayerStatsHeatmapCoordinateSpace = {
+  pitch: 'pitch',
+  camera: 'camera',
+} as const;
+
+export type ClaimPlayerStatsHeatmapCellsItem = {
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  x: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  y: number;
+  /** @minimum 0 */
+  weight: number;
+};
+
+export type ClaimPlayerStatsHeatmap = {
+  /** Pitch-normalized coordinates when calibrated, otherwise image coordinates. */
+  coordinateSpace: ClaimPlayerStatsHeatmapCoordinateSpace;
+  cells: ClaimPlayerStatsHeatmapCellsItem[];
+};
+
 export interface ClaimPlayerStats {
   /**
      * Union of the player's accepted tracking intervals, in seconds.
      * @minimum 0
      */
   confirmedSeconds: number;
+  /**
+     * Confirmed player presence in minutes.
+     * @minimum 0
+     */
+  minutesPlayed: number;
   /**
      * Percentage of the tracked match covered by accepted player intervals.
      * @minimum 0
@@ -715,6 +780,13 @@ export interface ClaimPlayerStats {
      * @minimum 0
      */
   matchedEvents: number;
+  heatmap: ClaimPlayerStatsHeatmap;
+  /**
+     * Smoothed camera-derived distance in metres, or null without a pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  distanceMetres: number | null;
 }
 
 export interface ClaimProgress {

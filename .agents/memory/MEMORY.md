@@ -21,3 +21,4 @@
 - [Signup media consent](signup-media-consent.md) — collect recording consent inline during Clerk signup; social-media consent is separate and optional, with no post-signup gate.
 - [Claim Match bundle summaries](claim-match-bundle-summary.md) — derive state from compact ranges/events; reserve full segment reads for legacy manifests.
 - [Claim Match queue rejections](claim-match-queue-rejections.md) — discard permanent invalid offline actions but stop and retain transient failures.
+- [Calibrated player metrics](calibrated-player-metrics.md) — distance requires pitch calibration, bottom-centre positions, and smoothing; never estimate metres from pixels.

@@ -84,6 +84,12 @@ export type TrackingManifest = {
     spritesPath?: string;
   }>;
   /**
+   * Optional camera-to-pitch calibration. Grid rows run from the top of the
+   * image to the bottom and columns from left to right; each point is a pitch
+   * position in metres at that image-grid location.
+   */
+  pitchModel?: TrackingPitchModel;
+  /**
    * The identity board's result: pieces of tracks that are one person.
    * Track ids are segment-namespaced ("s2:t41"); frames are absolute. Optional,
    * set by PUT /admin/recordings/:id/identities. The claim page merges tracks
@@ -94,6 +100,12 @@ export type TrackingManifest = {
   provenance?: Record<string, unknown>;
   /** Small server-side index used for coverage and completion calculations. */
   summary?: TrackingBundleSummary;
+};
+
+export type TrackingPitchModel = {
+  pitchWidthMetres: number;
+  pitchHeightMetres: number;
+  grid: Array<Array<{ x: number; y: number }>>;
 };
 
 export type TrackingIdentity = {

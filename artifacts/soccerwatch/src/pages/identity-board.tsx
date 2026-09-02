@@ -422,8 +422,14 @@ export default function IdentityBoard() {
   const commit = useCallback((next: Row[], message: string, sameAdd: string[] = [], differentAdd: string[] = []) => {
     const nextSame = new Set(same);
     const nextDifferent = new Set(different);
-    sameAdd.forEach((key) => nextSame.add(key));
-    differentAdd.forEach((key) => nextDifferent.add(key));
+    sameAdd.forEach((key) => {
+      nextSame.add(key);
+      nextDifferent.delete(key);
+    });
+    differentAdd.forEach((key) => {
+      nextDifferent.add(key);
+      nextSame.delete(key);
+    });
     setHistory((historyEntries) => [...historyEntries.slice(-30), { rows, same: new Set(same), different: new Set(different) }]);
     const recomputed = buildRows(tracks, fps, next.flatMap((row) => row.parts), nextSame, nextDifferent, next);
     setSame(nextSame);
@@ -483,7 +489,7 @@ export default function IdentityBoard() {
   const recompute = useCallback((message = "Recomputed grouping from the current constraints") => {
     const next = buildRows(tracks, fps, rows.flatMap((row) => row.parts), same, different, rows);
     const before = new Map(rows.flatMap((row) => row.parts.map((part) => [partKey(part), row.id] as const)));
-    const moved = next.flatMap((row) => row.parts).filter((part) => before.get(partKey(part)) !== rowIdForPart(rows, part)).length;
+    const moved = next.flatMap((row) => row.parts).filter((part) => before.get(partKey(part)) !== rowIdForPart(next, part)).length;
     setRows(next);
     flashMessage(`${message}${moved ? ` · ${moved} piece${moved === 1 ? "" : "s"} moved` : ""}`);
   }, [different, flashMessage, fps, rows, same, tracks]);

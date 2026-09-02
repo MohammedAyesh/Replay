@@ -2056,6 +2056,42 @@ components:
           items:
             $ref: "#/components/schemas/TrackingIdentityPart"
 
+    TrackingPitchModelGridPoint:
+      type: object
+      required: [x, y]
+      properties:
+        x:
+          type: number
+          description: Pitch position in metres on the horizontal axis.
+        y:
+          type: number
+          description: Pitch position in metres on the vertical axis.
+
+    TrackingPitchModel:
+      type: object
+      required: [pitchWidthMetres, pitchHeightMetres, grid]
+      properties:
+        pitchWidthMetres:
+          type: number
+          exclusiveMinimum: 0
+          description: Real pitch width represented by the model, in metres.
+        pitchHeightMetres:
+          type: number
+          exclusiveMinimum: 0
+          description: Real pitch height represented by the model, in metres.
+        grid:
+          type: array
+          minItems: 2
+          description: >
+            Rectangular row-major calibration grid. Rows map from image top to
+            bottom and columns map from image left to right. Values are pitch
+            coordinates in metres and are bilinearly interpolated.
+          items:
+            type: array
+            minItems: 2
+            items:
+              $ref: "#/components/schemas/TrackingPitchModelGridPoint"
+
     TrackingManifest:
       type: object
       required: [version, label, width, height, frameRate, frameCount, duration, matchOffset, segmentCount, segments]
@@ -2102,6 +2138,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TrackingSegmentManifest"
+        pitchModel:
+          $ref: "#/components/schemas/TrackingPitchModel"
+          description: Optional camera-to-pitch calibration for distance metrics.
         identities:
           type: array
           description: The identity board's result - pieces of tracks that are one person. Optional.
@@ -2226,12 +2265,16 @@ components:
 
     ClaimPlayerStats:
       type: object
-      required: [confirmedSeconds, coveragePercent, answeredMoments, acceptedMoments, trackedSegments, totalSegments, matchedEvents]
+      required: [confirmedSeconds, minutesPlayed, coveragePercent, answeredMoments, acceptedMoments, trackedSegments, totalSegments, matchedEvents, heatmap, distanceMetres]
       properties:
         confirmedSeconds:
           type: number
           minimum: 0
           description: Union of the player's accepted tracking intervals, in seconds.
+        minutesPlayed:
+          type: number
+          minimum: 0
+          description: Confirmed player presence in minutes.
         coveragePercent:
           type: number
           minimum: 0
@@ -2257,6 +2300,35 @@ components:
           type: integer
           minimum: 0
           description: Match events that occurred during an accepted player interval.
+        heatmap:
+          type: object
+          required: [coordinateSpace, cells]
+          properties:
+            coordinateSpace:
+              type: string
+              enum: [pitch, camera]
+              description: Pitch-normalized coordinates when calibrated, otherwise image coordinates.
+            cells:
+              type: array
+              items:
+                type: object
+                required: [x, y, weight]
+                properties:
+                  x:
+                    type: number
+                    minimum: 0
+                    maximum: 1
+                  y:
+                    type: number
+                    minimum: 0
+                    maximum: 1
+                  weight:
+                    type: number
+                    minimum: 0
+        distanceMetres:
+          type: ["number", "null"]
+          minimum: 0
+          description: Smoothed camera-derived distance in metres, or null without a pitch model.
 
     ClaimProgress:
       type: object

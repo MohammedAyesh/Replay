@@ -8,6 +8,7 @@ import {
   FastForward,
   LocateFixed,
   LockKeyhole,
+  MapPinned,
   Play,
   RotateCcw,
   ScanSearch,
@@ -24,7 +25,7 @@ import {
   useUpdateClaimMatchProgress,
   useResetClaimMatchDemo,
 } from "@workspace/api-client-react";
-import type { ClaimCorrection, ClaimMatchResponse, TrackingSegment } from "@workspace/api-client-react";
+import type { ClaimCorrection, ClaimMatchResponse, ClaimPlayerStats, TrackingSegment } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { ClaimStage } from "@/components/ClaimStage";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -105,6 +106,38 @@ function segmentAsBundle(
 function formatTime(seconds: number) {
   const safe = Math.max(0, Math.floor(seconds));
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function PlayerHeatmap({ heatmap }: Pick<ClaimPlayerStats, "heatmap">) {
+  const cells = new Map(
+    heatmap.cells.map((cell) => [
+      `${Math.min(11, Math.floor(cell.x * 12))}:${Math.min(7, Math.floor(cell.y * 8))}`,
+      cell.weight,
+    ]),
+  );
+  const maxWeight = Math.max(...cells.values(), 0);
+  return (
+    <div className="claim-heatmap" data-testid="claim-player-heatmap" aria-label={`Player position heatmap in ${heatmap.coordinateSpace === "pitch" ? "pitch" : "camera"} coordinates`}>
+      {Array.from({ length: 96 }, (_, index) => {
+        const column = index % 12;
+        const row = Math.floor(index / 12);
+        const weight = cells.get(`${column}:${row}`) ?? 0;
+        const intensity = maxWeight > 0 ? weight / maxWeight : 0;
+        return (
+          <span
+            key={`${column}-${row}`}
+            className="claim-heatmap-cell"
+            style={{ opacity: intensity ? 0.12 + intensity * 0.88 : 0.08 }}
+            title={weight ? `${Math.round(weight * 100)}% of confirmed time` : undefined}
+          />
+        );
+      })}
+      <span className="claim-heatmap-line claim-heatmap-line-mid" />
+      <span className="claim-heatmap-circle" />
+      <span className="claim-heatmap-goal claim-heatmap-goal-left" />
+      <span className="claim-heatmap-goal claim-heatmap-goal-right" />
+    </div>
+  );
 }
 
 function detectionAtFrame(track: ClaimTrack, frame: number, tolerance = 2): ClaimBox | null {
@@ -1183,15 +1216,27 @@ export default function ClaimMatchPage() {
             <h2>Done. That’s all yours.</h2>
              <p>You confirmed <b>{Math.round(progressValue)}%</b> coverage of this match. The percentage reflects attributed player time, not how many screens you visited.</p>
              {playerStats && (
-               <div className="claim-player-stats" data-testid="claim-player-stats">
-                 <div><span>Confirmed time</span><b>{formatTime(playerStats.confirmedSeconds)}</b></div>
-                 <div><span>Match coverage</span><b>{Math.round(playerStats.coveragePercent)}%</b></div>
-                 <div><span>Identity moments</span><b>{playerStats.acceptedMoments}/{playerStats.answeredMoments}</b></div>
-                 <div><span>Sections tracked</span><b>{playerStats.trackedSegments}/{playerStats.totalSegments}</b></div>
-                 <div><span>Match moments</span><b>{playerStats.matchedEvents}</b></div>
+                <div className="claim-player-summary" data-testid="claim-player-stats">
+                  <div className="claim-summary-metric">
+                    <span><Clock3 size={13} /> Minutes played</span>
+                    <b>{playerStats.minutesPlayed.toFixed(1)}</b>
+                    <small>confirmed player time</small>
+                  </div>
+                  <div className="claim-summary-metric">
+                    <span><MapPinned size={13} /> Total distance</span>
+                    <b>{playerStats.distanceMetres === null ? "Unavailable" : `${playerStats.distanceMetres.toLocaleString()} m`}</b>
+                    <small>{playerStats.distanceMetres === null ? "No pitch model in this recording" : "smoothed pitch estimate"}</small>
+                  </div>
+                  <div className="claim-heatmap-card">
+                    <div className="claim-heatmap-heading">
+                      <span><MapPinned size={13} /> Position heatmap</span>
+                      <small>{playerStats.heatmap.coordinateSpace === "pitch" ? "pitch view" : "camera view"}</small>
+                    </div>
+                    <PlayerHeatmap heatmap={playerStats.heatmap} />
+                  </div>
                </div>
              )}
-             <p className="claim-stats-note">These are the supported tracking results for this match. Distance, top speed, touches, goals, and assists are not estimated without calibrated field and event data.</p>
+              <p className="claim-stats-note">Distance is approximate and derived from camera tracking. It is shown only when this recording includes a pitch model; we never estimate metres from player height in pixels.</p>
              {unresolvedAnchorReviews.length ? (
                <div className="claim-unresolved-review" data-testid="unresolved-anchor-list">
                  <div className="claim-unresolved-heading"><b>{unresolvedAnchorReviews.length} moments need another look</b><span>Review one without restarting your claim.</span></div>

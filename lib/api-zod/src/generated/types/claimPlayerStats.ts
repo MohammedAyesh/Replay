@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { ClaimPlayerStatsHeatmap } from './claimPlayerStatsHeatmap';
 
 export interface ClaimPlayerStats {
   /**
@@ -12,6 +13,11 @@ export interface ClaimPlayerStats {
      * @minimum 0
      */
   confirmedSeconds: number;
+  /**
+     * Confirmed player presence in minutes.
+     * @minimum 0
+     */
+  minutesPlayed: number;
   /**
      * Percentage of the tracked match covered by accepted player intervals.
      * @minimum 0
@@ -43,4 +49,11 @@ export interface ClaimPlayerStats {
      * @minimum 0
      */
   matchedEvents: number;
+  heatmap: ClaimPlayerStatsHeatmap;
+  /**
+     * Smoothed camera-derived distance in metres, or null without a pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  distanceMetres: number | null;
 }

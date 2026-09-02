@@ -289,6 +289,14 @@ export const getClaimMatchResponseManifestSegmentsItemStartSecondsMin = 0;
 
 export const getClaimMatchResponseManifestSegmentsItemEndSecondsMin = 0;
 
+export const getClaimMatchResponseManifestPitchModelPitchWidthMetresExclusiveMin = 0;
+
+export const getClaimMatchResponseManifestPitchModelPitchHeightMetresExclusiveMin = 0;
+
+export const getClaimMatchResponseManifestPitchModelGridItemMin = 2;
+
+export const getClaimMatchResponseManifestPitchModelGridMin = 2;
+
 export const getClaimMatchResponseManifestIdentitiesItemPartsItemFromFrameMin = 0;
 
 export const getClaimMatchResponseManifestIdentitiesItemPartsItemToFrameMin = 0;
@@ -306,6 +314,8 @@ export const getClaimMatchResponseProgressUnresolvedMomentsItemMin = 0;
 
 export const getClaimMatchResponseProgressPlayerStatsConfirmedSecondsMin = 0;
 
+export const getClaimMatchResponseProgressPlayerStatsMinutesPlayedMin = 0;
+
 export const getClaimMatchResponseProgressPlayerStatsCoveragePercentMin = 0;
 export const getClaimMatchResponseProgressPlayerStatsCoveragePercentMax = 100;
 
@@ -318,6 +328,16 @@ export const getClaimMatchResponseProgressPlayerStatsTrackedSegmentsMin = 0;
 export const getClaimMatchResponseProgressPlayerStatsTotalSegmentsMin = 0;
 
 export const getClaimMatchResponseProgressPlayerStatsMatchedEventsMin = 0;
+
+export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemXMin = 0;
+export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemXMax = 1;
+
+export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemYMin = 0;
+export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemYMax = 1;
+
+export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemWeightMin = 0;
+
+export const getClaimMatchResponseProgressPlayerStatsDistanceMetresMin = 0;
 
 
 
@@ -355,6 +375,14 @@ export const GetClaimMatchResponse = zod.object({
   "objectPath": zod.string(),
   "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
 })),
+  "pitchModel": zod.object({
+  "pitchWidthMetres": zod.number().gt(getClaimMatchResponseManifestPitchModelPitchWidthMetresExclusiveMin).describe('Real pitch width represented by the model, in metres.'),
+  "pitchHeightMetres": zod.number().gt(getClaimMatchResponseManifestPitchModelPitchHeightMetresExclusiveMin).describe('Real pitch height represented by the model, in metres.'),
+  "grid": zod.array(zod.array(zod.object({
+  "x": zod.number().describe('Pitch position in metres on the horizontal axis.'),
+  "y": zod.number().describe('Pitch position in metres on the vertical axis.')
+})).min(getClaimMatchResponseManifestPitchModelGridItemMin)).min(getClaimMatchResponseManifestPitchModelGridMin).describe('Rectangular row-major calibration grid. Rows map from image top to bottom and columns map from image left to right. Values are pitch coordinates in metres and are bilinearly interpolated.\n')
+}).optional().describe('Optional camera-to-pitch calibration for distance metrics.'),
   "identities": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string().nullish(),
@@ -392,12 +420,22 @@ export const GetClaimMatchResponse = zod.object({
 })),
   "playerStats": zod.object({
   "confirmedSeconds": zod.number().min(getClaimMatchResponseProgressPlayerStatsConfirmedSecondsMin).describe('Union of the player\'s accepted tracking intervals, in seconds.'),
+  "minutesPlayed": zod.number().min(getClaimMatchResponseProgressPlayerStatsMinutesPlayedMin).describe('Confirmed player presence in minutes.'),
   "coveragePercent": zod.number().min(getClaimMatchResponseProgressPlayerStatsCoveragePercentMin).max(getClaimMatchResponseProgressPlayerStatsCoveragePercentMax).describe('Percentage of the tracked match covered by accepted player intervals.'),
   "answeredMoments": zod.number().min(getClaimMatchResponseProgressPlayerStatsAnsweredMomentsMin).describe('Identity checkpoint moments answered by the player.'),
   "acceptedMoments": zod.number().min(getClaimMatchResponseProgressPlayerStatsAcceptedMomentsMin).describe('Identity checkpoint moments accepted as the player.'),
   "trackedSegments": zod.number().min(getClaimMatchResponseProgressPlayerStatsTrackedSegmentsMin).describe('Tracking segments containing an accepted interval for the player.'),
   "totalSegments": zod.number().min(getClaimMatchResponseProgressPlayerStatsTotalSegmentsMin).describe('Total tracking segments in the uploaded match bundle.'),
-  "matchedEvents": zod.number().min(getClaimMatchResponseProgressPlayerStatsMatchedEventsMin).describe('Match events that occurred during an accepted player interval.')
+  "matchedEvents": zod.number().min(getClaimMatchResponseProgressPlayerStatsMatchedEventsMin).describe('Match events that occurred during an accepted player interval.'),
+  "heatmap": zod.object({
+  "coordinateSpace": zod.enum(['pitch', 'camera']).describe('Pitch-normalized coordinates when calibrated, otherwise image coordinates.'),
+  "cells": zod.array(zod.object({
+  "x": zod.number().min(getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemXMin).max(getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemXMax),
+  "y": zod.number().min(getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemYMin).max(getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemYMax),
+  "weight": zod.number().min(getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemWeightMin)
+}))
+}),
+  "distanceMetres": zod.number().min(getClaimMatchResponseProgressPlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.')
 }),
   "updatedAt": zod.string()
 }),
@@ -465,6 +503,8 @@ export const updateClaimMatchProgressResponseUnresolvedMomentsItemMin = 0;
 
 export const updateClaimMatchProgressResponsePlayerStatsConfirmedSecondsMin = 0;
 
+export const updateClaimMatchProgressResponsePlayerStatsMinutesPlayedMin = 0;
+
 export const updateClaimMatchProgressResponsePlayerStatsCoveragePercentMin = 0;
 export const updateClaimMatchProgressResponsePlayerStatsCoveragePercentMax = 100;
 
@@ -477,6 +517,16 @@ export const updateClaimMatchProgressResponsePlayerStatsTrackedSegmentsMin = 0;
 export const updateClaimMatchProgressResponsePlayerStatsTotalSegmentsMin = 0;
 
 export const updateClaimMatchProgressResponsePlayerStatsMatchedEventsMin = 0;
+
+export const updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemXMin = 0;
+export const updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemXMax = 1;
+
+export const updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemYMin = 0;
+export const updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemYMax = 1;
+
+export const updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemWeightMin = 0;
+
+export const updateClaimMatchProgressResponsePlayerStatsDistanceMetresMin = 0;
 
 
 
@@ -506,12 +556,22 @@ export const UpdateClaimMatchProgressResponse = zod.object({
 })),
   "playerStats": zod.object({
   "confirmedSeconds": zod.number().min(updateClaimMatchProgressResponsePlayerStatsConfirmedSecondsMin).describe('Union of the player\'s accepted tracking intervals, in seconds.'),
+  "minutesPlayed": zod.number().min(updateClaimMatchProgressResponsePlayerStatsMinutesPlayedMin).describe('Confirmed player presence in minutes.'),
   "coveragePercent": zod.number().min(updateClaimMatchProgressResponsePlayerStatsCoveragePercentMin).max(updateClaimMatchProgressResponsePlayerStatsCoveragePercentMax).describe('Percentage of the tracked match covered by accepted player intervals.'),
   "answeredMoments": zod.number().min(updateClaimMatchProgressResponsePlayerStatsAnsweredMomentsMin).describe('Identity checkpoint moments answered by the player.'),
   "acceptedMoments": zod.number().min(updateClaimMatchProgressResponsePlayerStatsAcceptedMomentsMin).describe('Identity checkpoint moments accepted as the player.'),
   "trackedSegments": zod.number().min(updateClaimMatchProgressResponsePlayerStatsTrackedSegmentsMin).describe('Tracking segments containing an accepted interval for the player.'),
   "totalSegments": zod.number().min(updateClaimMatchProgressResponsePlayerStatsTotalSegmentsMin).describe('Total tracking segments in the uploaded match bundle.'),
-  "matchedEvents": zod.number().min(updateClaimMatchProgressResponsePlayerStatsMatchedEventsMin).describe('Match events that occurred during an accepted player interval.')
+  "matchedEvents": zod.number().min(updateClaimMatchProgressResponsePlayerStatsMatchedEventsMin).describe('Match events that occurred during an accepted player interval.'),
+  "heatmap": zod.object({
+  "coordinateSpace": zod.enum(['pitch', 'camera']).describe('Pitch-normalized coordinates when calibrated, otherwise image coordinates.'),
+  "cells": zod.array(zod.object({
+  "x": zod.number().min(updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemXMin).max(updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemXMax),
+  "y": zod.number().min(updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemYMin).max(updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemYMax),
+  "weight": zod.number().min(updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemWeightMin)
+}))
+}),
+  "distanceMetres": zod.number().min(updateClaimMatchProgressResponsePlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.')
 }),
   "updatedAt": zod.string()
 })
