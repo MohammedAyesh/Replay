@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ClaimPlayerStatsHeatmap } from './claimPlayerStatsHeatmap';
+import type { UnavailablePlayerMetric } from './unavailablePlayerMetric';
 
 export interface ClaimPlayerStats {
   /**
@@ -56,4 +57,14 @@ export interface ClaimPlayerStats {
      * @nullable
      */
   distanceMetres: number | null;
+  /**
+     * Total calibrated distance divided by confirmed time present, or null without a pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  averageSpeedMetresPerSecond: number | null;
+  touches: UnavailablePlayerMetric;
+  passes: UnavailablePlayerMetric;
+  shots: UnavailablePlayerMetric;
+  dribbles: UnavailablePlayerMetric;
 }

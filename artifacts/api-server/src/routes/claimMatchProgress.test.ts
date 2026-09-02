@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { strToU8, zipSync } from "fflate";
 import {
+  completionAllowed,
   completionSurvivesConcurrentProgress,
   deriveClaimState,
+  identityMapInvalidatesBinding,
+  resolveClaimIdentity,
+  shouldKeepClaimCompleted,
   isAcceptedClaimAnswer,
   knownClaimTrackIds,
+  parseUploadedBundleDetailed,
+  parseZipBundleDetailed,
   summarizeTrackingSegments,
+  identityMapMovesVouchedFragment,
+  vouchedFragmentForAnswer,
+  vouchedFragmentsOverlap,
 } from "./claimMatch";
 
 const manifest = {
@@ -75,6 +85,63 @@ function correction(
 }
 
 describe("claim match server-derived progress", () => {
+  it("canonicalizes calibration aliases and guards JSON and ZIP framing", () => {
+    const segment = {
+      index: 0,
+      name: "only",
+      startFrame: 0,
+      endFrame: 1,
+      startSeconds: 0,
+      endSeconds: 0.08,
+      file: "segments/only.json",
+    };
+    const model = {
+      calibrationIdentifier: "calibration-alias",
+      fitDate: "2026-02-03T04:05:06.000Z",
+      aspectRatio: 16 / 9,
+      pitchWidthMetres: 105,
+      pitchHeightMetres: 68,
+      grid: [
+        [{ x: 0, y: 0 }, { x: 105, y: 0 }],
+        [{ x: 0, y: 68 }, { x: 105, y: 68 }],
+      ],
+    };
+    const manifestInput = {
+      version: 1,
+      label: "framing test",
+      width: 1920,
+      height: 1080,
+      frameRate: 25,
+      frameCount: 2,
+      duration: 0.08,
+      matchOffset: 0,
+      segmentCount: 1,
+      pitchModel: model,
+      segments: [segment],
+    };
+    const segmentInput = { tracks: [], crossings: [], inPlaySpans: [], events: [] };
+    const json = parseUploadedBundleDetailed({ ...manifestInput, segments: [{ ...segment, ...segmentInput }] });
+    expect(json.error).toBeNull();
+    expect(json.upload?.manifest.pitchModel).toMatchObject({
+      calibrationId: "calibration-alias",
+      fittedAt: "2026-02-03T04:05:06.000Z",
+      calibratedAspectRatio: 16 / 9,
+    });
+    const zip = parseZipBundleDetailed(Buffer.from(zipSync({
+      "manifest.json": strToU8(JSON.stringify(manifestInput)),
+      "segments/only.json": strToU8(JSON.stringify(segmentInput)),
+    })));
+    expect(zip.error).toBeNull();
+    expect(zip.upload?.manifest.pitchModel?.calibrationId).toBe("calibration-alias");
+
+    const mismatch = parseUploadedBundleDetailed({
+      ...manifestInput,
+      pitchModel: { ...model, aspectRatio: 2 },
+      segments: [{ ...segment, ...segmentInput }],
+    });
+    expect(mismatch.error).toMatch(/aspect ratio/i);
+  });
+
   it("accepts canonical identity ids when validating browser corrections", () => {
     const identityManifest = {
       ...(manifest as object),
@@ -87,6 +154,66 @@ describe("claim match server-derived progress", () => {
 
     expect(knownClaimTrackIds(identityManifest, segments).has("player-1")).toBe(true);
     expect(knownClaimTrackIds(identityManifest, segments).has("mohammed")).toBe(true);
+  });
+
+  it("captures only the contiguous detection run containing an accepted answer", () => {
+    const full = [{
+      ...(segments[0] as object),
+      tracks: [{
+        id: "piece-a",
+        startFrame: 0,
+        endFrame: 20,
+        boxes: [
+          { frame: 0, x: 0, y: 0, w: 10, h: 10 },
+          { frame: 1, x: 0, y: 0, w: 10, h: 10 },
+          { frame: 2, x: 0, y: 0, w: 10, h: 10 },
+          // A real detection gap separates two independently vouched fragments.
+          { frame: 6, x: 0, y: 0, w: 10, h: 10 },
+          { frame: 7, x: 0, y: 0, w: 10, h: 10 },
+        ],
+      }],
+    }];
+    expect(vouchedFragmentForAnswer(manifest, full as never, {
+      momentSeconds: 1,
+      chosenTrackId: "piece-a",
+    })).toEqual({ trackId: "piece-a", fromFrame: 0, toFrame: 2 });
+    expect(vouchedFragmentForAnswer(manifest, full as never, {
+      momentSeconds: 6,
+      chosenTrackId: "piece-a",
+    })).toEqual({ trackId: "piece-a", fromFrame: 6, toFrame: 7 });
+  });
+
+  it("locks vouched fragments while allowing an unvouched remainder to regroup", () => {
+    const binding = {
+      personId: "person-a",
+      vouchedFragments: [{ trackId: "piece-a", fromFrame: 10, toFrame: 20 }],
+    };
+    expect(identityMapMovesVouchedFragment(binding as never, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 20 }],
+    }])).toBe(false);
+    expect(identityMapMovesVouchedFragment(binding as never, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 10, toFrame: 15 }],
+    }])).toBe(true);
+    expect(identityMapMovesVouchedFragment(binding as never, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 10, toFrame: 20 }],
+      }, {
+        id: "person-b",
+        parts: [{ trackId: "piece-a", fromFrame: 21, toFrame: 99 }],
+      }])).toBe(false);
+  });
+
+  it("distinguishes disjoint claimant fragments from a true overlap", () => {
+    expect(vouchedFragmentsOverlap(
+      [{ trackId: "piece-a", fromFrame: 0, toFrame: 10 }],
+      [{ trackId: "piece-a", fromFrame: 11, toFrame: 20 }],
+    )).toBe(false);
+    expect(vouchedFragmentsOverlap(
+      [{ trackId: "piece-a", fromFrame: 0, toFrame: 10 }],
+      [{ trackId: "piece-a", fromFrame: 10, toFrame: 20 }],
+    )).toBe(true);
   });
 
   it("merges overlapping accepted track spans and reaches completion from coverage", () => {
@@ -113,6 +240,146 @@ describe("claim match server-derived progress", () => {
     expect(fromSummary.coveragePercent).toBe(100);
     expect(fromSummary.completed).toBe(true);
     expect(fromSummary.playerStats.totalSegments).toBe(2);
+  });
+
+  it("attributes coverage to one best-supported person and exposes other people as conflicts", () => {
+    const threePeople = [
+      { segmentIndex: 0, name: "first", startFrame: 0, endFrame: 59, startSeconds: 0, endSeconds: 60, version: 1, tracks: [{ id: "player-1", startFrame: 0, endFrame: 59, boxes: [] }, { id: "player-2", startFrame: 0, endFrame: 59, boxes: [] }], crossings: [], inPlaySpans: [], events: [] },
+      { segmentIndex: 1, name: "second", startFrame: 40, endFrame: 99, startSeconds: 40, endSeconds: 100, version: 1, tracks: [{ id: "player-1", startFrame: 40, endFrame: 99, boxes: [] }, { id: "player-3", startFrame: 40, endFrame: 99, boxes: [] }], crossings: [], inPlaySpans: [], events: [] },
+    ];
+    const result = deriveClaimState(manifest, threePeople as never, [
+      correction("three-1", "anchor-yes", "player-1", 10),
+      correction("three-2", "anchor-yes", "player-1", 50),
+      correction("three-3", "anchor-yes", "player-2", 90),
+    ] as never);
+    expect(result.identityResolution?.personId).toBe("player-1");
+    expect(result.identityResolution?.resolutionMethod).toBe("track-fallback");
+    expect(result.coveragePercent).toBe(100);
+    expect(result.conflictMoments).toEqual([90]);
+    expect(result.acceptedAnchorCount).toBe(2);
+    expect(result.completed).toBe(true);
+    expect(result.completionReason).toBe("identity-conflicts");
+    expect(completionAllowed(result, { state: "confirmed" } as never)).toBe(false);
+  });
+
+  it("blocks completion for an identity conflict even after the winning person clears every threshold", () => {
+    const longManifest = {
+      version: 1, label: "long test", width: 1920, height: 1080, frameRate: 1,
+      frameCount: 180, duration: 180, matchOffset: 0, segmentCount: 2,
+      segments: [
+        { index: 0, name: "first", startFrame: 0, endFrame: 89, startSeconds: 0, endSeconds: 90 },
+        { index: 1, name: "second", startFrame: 90, endFrame: 179, startSeconds: 90, endSeconds: 180 },
+      ],
+    } as never;
+    const longSegments = [
+      { segmentIndex: 0, name: "first", startFrame: 0, endFrame: 89, startSeconds: 0, endSeconds: 90, tracks: [{ id: "winner", startFrame: 0, endFrame: 89, boxes: [] }, { id: "other", startFrame: 0, endFrame: 89, boxes: [] }], crossings: [], inPlaySpans: [], events: [] },
+      { segmentIndex: 1, name: "second", startFrame: 90, endFrame: 179, startSeconds: 90, endSeconds: 180, tracks: [{ id: "winner", startFrame: 90, endFrame: 179, boxes: [] }, { id: "other", startFrame: 90, endFrame: 179, boxes: [] }], crossings: [], inPlaySpans: [], events: [] },
+    ];
+    const result = deriveClaimState(longManifest, longSegments as never, [
+      correction("isolated-1", "anchor-yes", "winner", 10),
+      correction("isolated-2", "anchor-yes", "winner", 50),
+      correction("isolated-3", "anchor-yes", "winner", 100),
+      correction("isolated-4", "anchor-yes", "other", 150),
+    ] as never);
+    expect(result.coveragePercent).toBe(100);
+    expect(result.acceptedAnchorCount).toBe(3);
+    expect(result.identityResolution?.acceptedAnswerCount).toBe(3);
+    expect(result.completed).toBe(true);
+    expect(result.completionReason).toBe("identity-conflicts");
+    expect(completionAllowed(result, { state: "confirmed" } as never)).toBe(false);
+  });
+
+  it("resolves track parts to a valid identity map", () => {
+    const identityManifest = {
+      version: 1,
+      label: "test",
+      width: 1920,
+      height: 1080,
+      frameRate: 1,
+      frameCount: 100,
+      duration: 100,
+      matchOffset: 0,
+      segmentCount: 2,
+      segments: [],
+      provenance: { bundleFingerprint: "bundle-a", identityMapBundleFingerprint: "bundle-a" },
+      identities: [{
+        id: "person-a",
+        parts: [{ trackId: "player-1", fromFrame: 0, toFrame: 99 }],
+      }],
+    } as never;
+    const result = resolveClaimIdentity(identityManifest, segments, [
+      correction("map-1", "anchor-yes", "player-1", 10),
+      correction("map-2", "anchor-yes", "person-a", 50),
+    ] as never);
+    expect(result).toMatchObject({
+      personId: "person-a",
+      resolutionMethod: "identity-map",
+      supportCount: 2,
+      acceptedAnswerCount: 2,
+    });
+  });
+
+  it("invalidates a binding when a surviving identifier receives a different piece", () => {
+    const originalParts = [{
+      trackId: "piece-a",
+      fromFrame: 0,
+      toFrame: 49,
+    }];
+    const binding = {
+      personId: "person-a",
+      personParts: ['["piece-a",0,49]'],
+    };
+    expect(identityMapInvalidatesBinding(binding, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 49 }],
+    }])).toBe(false);
+    expect(identityMapInvalidatesBinding(binding, [{
+      id: "person-a",
+      parts: [{ trackId: "piece-b", fromFrame: 0, toFrame: 49 }],
+    }])).toBe(true);
+    expect(identityMapInvalidatesBinding(binding, [{
+      id: "person-b",
+      parts: originalParts,
+    }])).toBe(true);
+  });
+
+  it("treats evenly split accepted answers as unresolved instead of choosing a winner", () => {
+    const tieSegments = (segments as unknown as Array<{
+      startFrame: number;
+      endFrame: number;
+      tracks: Array<Record<string, unknown>>;
+    }>).map((segment) => ({
+      ...segment,
+      tracks: [
+        ...segment.tracks,
+        { id: "player-2", startFrame: segment.startFrame, endFrame: segment.endFrame, boxes: [] },
+      ],
+    }));
+    const answers = [
+      correction("tie-1", "anchor-yes", "player-1", 10),
+      correction("tie-2", "anchor-yes", "player-2", 50),
+    ];
+    expect(resolveClaimIdentity(manifest, tieSegments as never, answers as never)).toBeNull();
+    const result = deriveClaimState(manifest, tieSegments as never, answers as never);
+    expect(result.identityResolution).toBeNull();
+    expect(result.coveragePercent).toBe(0);
+    expect(result.completed).toBe(false);
+    expect(result.completionReason).toBe("identity-unresolved");
+  });
+
+  it("ignores an identity map whose fingerprint does not match the bundle", () => {
+    const staleManifest = {
+      version: 1, label: "stale map", width: 1920, height: 1080, frameRate: 1,
+      frameCount: 100, duration: 100, matchOffset: 0, segmentCount: 2, segments: [],
+      provenance: { bundleFingerprint: "bundle-new", identityMapBundleFingerprint: "bundle-old" },
+      identities: [{ id: "person-a", parts: [{ trackId: "player-1", fromFrame: 0, toFrame: 99 }] }],
+    } as never;
+    expect(resolveClaimIdentity(staleManifest, segments, [
+      correction("stale-map", "anchor-yes", "player-1", 10),
+    ] as never)).toMatchObject({
+      personId: "player-1",
+      resolutionMethod: "track-fallback",
+    });
   });
 
   it("persists no and skip answers without treating them as accepted coverage", () => {
@@ -150,6 +417,34 @@ describe("claim match server-derived progress", () => {
     expect(result.coverageSeconds).toBe(100);
   });
 
+  it("keeps a completed claim completed while surfacing a later identity conflict", () => {
+    const conflictSegments = (segments as unknown as Array<{
+      startFrame: number;
+      endFrame: number;
+      tracks: Array<Record<string, unknown>>;
+    }>).map((segment) => ({
+      ...segment,
+      tracks: [
+        ...segment.tracks,
+        { id: "player-2", startFrame: segment.startFrame, endFrame: segment.endFrame, boxes: [] },
+      ],
+    }));
+    const result = deriveClaimState(manifest, conflictSegments as never, [
+      correction("complete-1", "anchor-yes", "player-1", 10),
+      correction("complete-2", "anchor-yes", "player-1", 50),
+      correction("complete-3", "anchor-yes", "player-1", 90),
+      correction("late-conflict", "anchor-yes", "player-2", 80),
+    ] as never);
+    expect(result.completed).toBe(true);
+    expect(result.completionReason).toBe("identity-conflicts");
+    expect(result.conflictMoments).toEqual([80]);
+    expect(completionAllowed(result, { state: "confirmed" } as never)).toBe(false);
+    expect(completionSurvivesConcurrentProgress(true, result.completed)).toBe(true);
+    expect(shouldKeepClaimCompleted(true, result.completed, "pending")).toBe(true);
+    expect(shouldKeepClaimCompleted(true, result.completed, "disputed")).toBe(false);
+    expect(shouldKeepClaimCompleted(true, result.completed, "needs_resolution")).toBe(false);
+  });
+
   it("reports supported player results from accepted tracking intervals", () => {
     const firstSegment = segments[0] as unknown as Record<string, unknown>;
     const result = deriveClaimState(manifest, [
@@ -176,6 +471,27 @@ describe("claim match server-derived progress", () => {
       matchedEvents: 2,
       heatmap: { coordinateSpace: "camera", cells: [] },
       distanceMetres: null,
+      averageSpeedMetresPerSecond: null,
+      touches: {
+        value: null,
+        available: false,
+        unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+      },
+      passes: {
+        value: null,
+        available: false,
+        unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+      },
+      shots: {
+        value: null,
+        available: false,
+        unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+      },
+      dribbles: {
+        value: null,
+        available: false,
+        unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
+      },
     });
   });
 
@@ -189,6 +505,9 @@ describe("claim match server-derived progress", () => {
       segmentCount: 1,
       segments: [{ index: 0, name: "only", startFrame: 0, endFrame: 3, startSeconds: 0, endSeconds: 4 }],
       pitchModel: {
+        calibrationId: "test-calibration",
+        fittedAt: "2026-01-01T00:00:00.000Z",
+        calibratedAspectRatio: 1,
         pitchWidthMetres: 10,
         pitchHeightMetres: 10,
         grid: [
@@ -232,6 +551,70 @@ describe("claim match server-derived progress", () => {
     expect(result.playerStats.distanceMetres).toBeGreaterThan(0);
     expect(result.playerStats.heatmap.coordinateSpace).toBe("pitch");
     expect(result.playerStats.heatmap.cells.some((cell) => cell.y > 0.8)).toBe(true);
+  });
+
+  it("uses confirmed time for average speed and keeps top speed admin-only and guarded", () => {
+    const speedManifest = {
+      ...(manifest as object),
+      width: 100,
+      height: 100,
+      frameRate: 10,
+      frameCount: 30,
+      duration: 3,
+      segmentCount: 1,
+      segments: [{ index: 0, name: "only", startFrame: 0, endFrame: 29, startSeconds: 0, endSeconds: 3 }],
+      pitchModel: {
+        calibrationId: "speed-calibration",
+        fittedAt: "2026-02-03T04:05:06.000Z",
+        calibratedAspectRatio: 1,
+        pitchWidthMetres: 20,
+        pitchHeightMetres: 10,
+        grid: [
+          [{ x: 0, y: 0 }, { x: 20, y: 0 }],
+          [{ x: 0, y: 10 }, { x: 20, y: 10 }],
+        ],
+      },
+    } as never;
+    const speedSummarySegment = {
+      segmentIndex: 0,
+      name: "only",
+      startFrame: 0,
+      endFrame: 29,
+      startSeconds: 0,
+      endSeconds: 3,
+      tracks: [{ id: "player-1", startFrame: 0, endFrame: 29 }],
+      events: [],
+    };
+    const summary = [speedSummarySegment] as never;
+    const full = [{
+      ...speedSummarySegment,
+      version: 1,
+      tracks: [{
+        id: "player-1",
+        startFrame: 0,
+        endFrame: 29,
+        boxes: Array.from({ length: 30 }, (_, frame) => ({
+          frame,
+          x: 10 + frame * 2.5,
+          y: 70,
+          w: 1,
+          h: 20,
+        })),
+      }],
+      crossings: [],
+      inPlaySpans: [],
+    }] as never;
+    const result = deriveClaimState(speedManifest, summary, [
+      correction("speed-1", "anchor-yes", "player-1", 1),
+    ] as never, full);
+
+    expect(result.playerStats.averageSpeedMetresPerSecond).toBeCloseTo(
+      (result.playerStats.distanceMetres ?? 0) / result.playerStats.confirmedSeconds,
+      2,
+    );
+    expect(result.playerStats).not.toHaveProperty("topSpeedMetresPerSecond");
+    expect(result.adminPlayerStats.topSpeedMetresPerSecond).toBeCloseTo(5, 0);
+    expect(result.adminPlayerStats.topSpeedUsableTimeFraction).toBeGreaterThan(0.9);
   });
 
   it("does not let an older progress save clear a completed claim", () => {

@@ -26,17 +26,24 @@ import type {
   AdStats,
   AddAcademyRecordingInput,
   AdminAdEntry,
+  AdminRecordingPlayerMetricsResponse,
+  AdminTrackingBundlePatchBody,
+  AdminTrackingBundlePatchResponse,
   AuthResponse,
   Banner,
   BunnyCollection,
   BunnyVideo,
   ClaimCorrection,
   ClaimCorrectionInput,
+  ClaimIdentityBinding,
   ClaimMatchClipsResponse,
   ClaimMatchDemoResetResponse,
+  ClaimMatchDispute,
+  ClaimMatchDisputesResponse,
   ClaimMatchResponse,
   ClaimProgress,
   ClaimProgressInput,
+  ClaimedMatchHistoryResponse,
   Clip,
   CreateAcademyInput,
   CreateAdInput,
@@ -44,6 +51,7 @@ import type {
   EngagementResult,
   FeedClip,
   Field,
+  FieldRecording,
   FollowResult,
   HealthStatus,
   ImpressionInput,
@@ -56,6 +64,7 @@ import type {
   PublicProfile,
   Recording,
   ReplaceTrackingBundleBodyTwo,
+  ResolveClaimMatchDisputeInput,
   TrackingBundle,
   TrackingBundleSummary,
   TrackingSegment,
@@ -923,9 +932,9 @@ export const getGetFieldRecordingsUrl = (id: number,) => {
 /**
  * @summary Get recordings for a field
  */
-export const getFieldRecordings = async (id: number, options?: RequestInit): Promise<Recording[]> => {
+export const getFieldRecordings = async (id: number, options?: RequestInit): Promise<FieldRecording[]> => {
 
-  return customFetch<Recording[]>(getGetFieldRecordingsUrl(id),
+  return customFetch<FieldRecording[]>(getGetFieldRecordingsUrl(id),
   {
     ...options,
     method: 'GET'
@@ -1361,6 +1370,301 @@ export function useListClaimMatchClips<TData = Awaited<ReturnType<typeof listCla
 
 
 
+export const getListClaimMatchDisputesUrl = () => {
+
+
+
+
+  return `/api/admin/claim-match/disputes`
+}
+
+/**
+ * @summary List claim identity disputes awaiting admin review
+ */
+export const listClaimMatchDisputes = async ( options?: RequestInit): Promise<ClaimMatchDisputesResponse> => {
+
+  return customFetch<ClaimMatchDisputesResponse>(getListClaimMatchDisputesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListClaimMatchDisputesQueryKey = () => {
+    return [
+    `/api/admin/claim-match/disputes`
+    ] as const;
+    }
+
+
+export const getListClaimMatchDisputesQueryOptions = <TData = Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListClaimMatchDisputesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listClaimMatchDisputes>>> = ({ signal }) => listClaimMatchDisputes({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListClaimMatchDisputesQueryResult = NonNullable<Awaited<ReturnType<typeof listClaimMatchDisputes>>>
+export type ListClaimMatchDisputesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List claim identity disputes awaiting admin review
+ */
+
+export function useListClaimMatchDisputes<TData = Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchDisputes>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListClaimMatchDisputesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getResolveClaimMatchDisputeUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/claim-match/disputes/${id}`
+}
+
+/**
+ * @summary Transfer a disputed person to one claimant
+ */
+export const resolveClaimMatchDispute = async (id: number,
+    resolveClaimMatchDisputeInput: ResolveClaimMatchDisputeInput, options?: RequestInit): Promise<ClaimMatchDispute> => {
+
+  return customFetch<ClaimMatchDispute>(getResolveClaimMatchDisputeUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(resolveClaimMatchDisputeInput)
+  }
+);}
+
+
+
+
+export const getResolveClaimMatchDisputeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveClaimMatchDispute>>, TError,{id: number;data: BodyType<ResolveClaimMatchDisputeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveClaimMatchDispute>>, TError,{id: number;data: BodyType<ResolveClaimMatchDisputeInput>}, TContext> => {
+
+const mutationKey = ['resolveClaimMatchDispute'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveClaimMatchDispute>>, {id: number;data: BodyType<ResolveClaimMatchDisputeInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  resolveClaimMatchDispute(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveClaimMatchDisputeMutationResult = NonNullable<Awaited<ReturnType<typeof resolveClaimMatchDispute>>>
+    export type ResolveClaimMatchDisputeMutationBody = BodyType<ResolveClaimMatchDisputeInput>
+    export type ResolveClaimMatchDisputeMutationError = ErrorType<void>
+
+    /**
+ * @summary Transfer a disputed person to one claimant
+ */
+export const useResolveClaimMatchDispute = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveClaimMatchDispute>>, TError,{id: number;data: BodyType<ResolveClaimMatchDisputeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resolveClaimMatchDispute>>,
+        TError,
+        {id: number;data: BodyType<ResolveClaimMatchDisputeInput>},
+        TContext
+      > => {
+      return useMutation(getResolveClaimMatchDisputeMutationOptions(options));
+    }
+
+export const getReleaseClaimMatchBindingUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/claim-match/bindings/${id}/release`
+}
+
+/**
+ * @summary Release a human-vouched fragment so it can be regrouped
+ */
+export const releaseClaimMatchBinding = async (id: number, options?: RequestInit): Promise<ClaimIdentityBinding> => {
+
+  return customFetch<ClaimIdentityBinding>(getReleaseClaimMatchBindingUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getReleaseClaimMatchBindingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseClaimMatchBinding>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof releaseClaimMatchBinding>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['releaseClaimMatchBinding'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof releaseClaimMatchBinding>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  releaseClaimMatchBinding(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReleaseClaimMatchBindingMutationResult = NonNullable<Awaited<ReturnType<typeof releaseClaimMatchBinding>>>
+
+    export type ReleaseClaimMatchBindingMutationError = ErrorType<void>
+
+    /**
+ * @summary Release a human-vouched fragment so it can be regrouped
+ */
+export const useReleaseClaimMatchBinding = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseClaimMatchBinding>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof releaseClaimMatchBinding>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getReleaseClaimMatchBindingMutationOptions(options));
+    }
+
+export const getListClaimMatchBindingsUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/claim-match/bindings`
+}
+
+/**
+ * @summary List claim identity bindings and their human-vouched fragments
+ */
+export const listClaimMatchBindings = async (id: number, options?: RequestInit): Promise<ClaimIdentityBinding[]> => {
+
+  return customFetch<ClaimIdentityBinding[]>(getListClaimMatchBindingsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListClaimMatchBindingsQueryKey = (id: number,) => {
+    return [
+    `/api/admin/recordings/${id}/claim-match/bindings`
+    ] as const;
+    }
+
+
+export const getListClaimMatchBindingsQueryOptions = <TData = Awaited<ReturnType<typeof listClaimMatchBindings>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchBindings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListClaimMatchBindingsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listClaimMatchBindings>>> = ({ signal }) => listClaimMatchBindings(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchBindings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListClaimMatchBindingsQueryResult = NonNullable<Awaited<ReturnType<typeof listClaimMatchBindings>>>
+export type ListClaimMatchBindingsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List claim identity bindings and their human-vouched fragments
+ */
+
+export function useListClaimMatchBindings<TData = Awaited<ReturnType<typeof listClaimMatchBindings>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listClaimMatchBindings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListClaimMatchBindingsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getCreateClaimMatchCorrectionUrl = (id: number,) => {
 
 
@@ -1584,6 +1888,77 @@ export const useUndoClaimMatchCorrection = <TError = ErrorType<void>,
       return useMutation(getUndoClaimMatchCorrectionMutationOptions(options));
     }
 
+export const getUpdateTrackingBundleUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/tracking-bundle`
+}
+
+/**
+ * @summary Update tracking-bundle metadata and pitch calibration
+ */
+export const updateTrackingBundle = async (id: number,
+    adminTrackingBundlePatchBody: AdminTrackingBundlePatchBody, options?: RequestInit): Promise<AdminTrackingBundlePatchResponse> => {
+
+  return customFetch<AdminTrackingBundlePatchResponse>(getUpdateTrackingBundleUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminTrackingBundlePatchBody)
+  }
+);}
+
+
+
+
+export const getUpdateTrackingBundleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTrackingBundle>>, TError,{id: number;data: BodyType<AdminTrackingBundlePatchBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTrackingBundle>>, TError,{id: number;data: BodyType<AdminTrackingBundlePatchBody>}, TContext> => {
+
+const mutationKey = ['updateTrackingBundle'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTrackingBundle>>, {id: number;data: BodyType<AdminTrackingBundlePatchBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateTrackingBundle(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTrackingBundleMutationResult = NonNullable<Awaited<ReturnType<typeof updateTrackingBundle>>>
+    export type UpdateTrackingBundleMutationBody = BodyType<AdminTrackingBundlePatchBody>
+    export type UpdateTrackingBundleMutationError = ErrorType<void>
+
+    /**
+ * @summary Update tracking-bundle metadata and pitch calibration
+ */
+export const useUpdateTrackingBundle = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTrackingBundle>>, TError,{id: number;data: BodyType<AdminTrackingBundlePatchBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateTrackingBundle>>,
+        TError,
+        {id: number;data: BodyType<AdminTrackingBundlePatchBody>},
+        TContext
+      > => {
+      return useMutation(getUpdateTrackingBundleMutationOptions(options));
+    }
+
 export const getReplaceTrackingBundleUrl = (id: number,) => {
 
 
@@ -1654,6 +2029,83 @@ export const useReplaceTrackingBundle = <TError = ErrorType<void>,
       > => {
       return useMutation(getReplaceTrackingBundleMutationOptions(options));
     }
+
+export const getGetAdminRecordingPlayerMetricsUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/player-metrics`
+}
+
+/**
+ * @summary Get claim player metrics including unvalidated top speed
+ */
+export const getAdminRecordingPlayerMetrics = async (id: number, options?: RequestInit): Promise<AdminRecordingPlayerMetricsResponse> => {
+
+  return customFetch<AdminRecordingPlayerMetricsResponse>(getGetAdminRecordingPlayerMetricsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminRecordingPlayerMetricsQueryKey = (id: number,) => {
+    return [
+    `/api/admin/recordings/${id}/player-metrics`
+    ] as const;
+    }
+
+
+export const getGetAdminRecordingPlayerMetricsQueryOptions = <TData = Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminRecordingPlayerMetricsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>> = ({ signal }) => getAdminRecordingPlayerMetrics(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminRecordingPlayerMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>>
+export type GetAdminRecordingPlayerMetricsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get claim player metrics including unvalidated top speed
+ */
+
+export function useGetAdminRecordingPlayerMetrics<TData = Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminRecordingPlayerMetrics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminRecordingPlayerMetricsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getListAcademiesUrl = () => {
 
@@ -3399,6 +3851,83 @@ export function useGetAccountStats<TData = Awaited<ReturnType<typeof getAccountS
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAccountStatsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAccountClaimedMatchesUrl = () => {
+
+
+
+
+  return `/api/account/claimed-matches`
+}
+
+/**
+ * @summary List the current player's claimed match history
+ */
+export const getAccountClaimedMatches = async ( options?: RequestInit): Promise<ClaimedMatchHistoryResponse> => {
+
+  return customFetch<ClaimedMatchHistoryResponse>(getGetAccountClaimedMatchesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountClaimedMatchesQueryKey = () => {
+    return [
+    `/api/account/claimed-matches`
+    ] as const;
+    }
+
+
+export const getGetAccountClaimedMatchesQueryOptions = <TData = Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountClaimedMatchesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountClaimedMatches>>> = ({ signal }) => getAccountClaimedMatches({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountClaimedMatchesQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountClaimedMatches>>>
+export type GetAccountClaimedMatchesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List the current player's claimed match history
+ */
+
+export function useGetAccountClaimedMatches<TData = Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountClaimedMatches>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountClaimedMatchesQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

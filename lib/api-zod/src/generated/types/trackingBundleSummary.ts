@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { TrackingPitchModelSummary } from './trackingPitchModelSummary';
 import type { TrackingSegmentManifest } from './trackingSegmentManifest';
 
 export interface TrackingBundleSummary {
@@ -16,5 +17,6 @@ export interface TrackingBundleSummary {
   segmentCount: number;
   frameCoverage: string;
   segmentRanges?: TrackingSegmentManifest[];
+  pitchModel?: TrackingPitchModelSummary | null;
   uploadedAt: string;
 }

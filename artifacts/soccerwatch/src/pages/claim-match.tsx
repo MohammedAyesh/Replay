@@ -73,6 +73,7 @@ type Candidate = {
   overlap?: boolean;
   distance?: number;
   coasting?: boolean;
+  taken?: boolean;
 };
 
 function segmentAsBundle(
@@ -147,6 +148,29 @@ function detectionAtFrame(track: ClaimTrack, frame: number, tolerance = 2): Clai
     return nearest;
   }, null);
   return box;
+}
+
+function candidateMatchesTakenFragment(
+  candidateId: string,
+  frame: number,
+  rawSegment: TrackingSegment,
+  manifest: ClaimMatchResponse["manifest"],
+  fragment: ClaimMatchResponse["progress"]["takenFragments"][number],
+): boolean {
+  const rawTrack = rawSegment.tracks.find((track) => track.id === candidateId);
+  if (rawTrack) {
+    return rawTrack.id === fragment.trackId
+      && rawTrack.boxes.some((box) => box.frame === frame)
+      && frame >= fragment.fromFrame
+      && frame <= fragment.toFrame;
+  }
+  const identity = manifest.identities?.find((item) => item.id === candidateId);
+  return Boolean(identity?.parts.some((part) =>
+    part.trackId === fragment.trackId
+    && frame >= part.fromFrame
+    && frame <= part.toFrame
+    && rawSegment.tracks.some((track) =>
+      track.id === part.trackId && track.boxes.some((box) => box.frame === frame))));
 }
 
 function boxCenter(box: ClaimBox) {
@@ -410,13 +434,20 @@ export default function ClaimMatchPage() {
     ? claimAnchors.find((anchor) => anchor.id === activeAnchorId) ?? null
     : claimAnchors[nextAnchorIndex] ?? null;
   const unresolvedAnchorReviews = useMemo(
-    () => (serverProgress?.unresolvedMoments ?? [])
+    () => [...new Set([
+      ...(serverProgress?.unresolvedMoments ?? []),
+      ...(serverProgress?.conflictMoments ?? []),
+    ])]
       .map((momentSeconds) => {
         const index = nearestAnchorIndex(claimAnchors, momentSeconds);
-        return { momentSeconds, index };
+        return {
+          momentSeconds,
+          index,
+          conflict: (serverProgress?.conflictMoments ?? []).includes(momentSeconds),
+        };
       })
       .filter((item) => item.index >= 0),
-    [claimAnchors, serverProgress?.unresolvedMoments],
+    [claimAnchors, serverProgress?.conflictMoments, serverProgress?.unresolvedMoments],
   );
   const hasData = Boolean(response && recording && manifest && serverProgress);
   const currentFrame = bundle ? trackingSecondsToFrame(currentTime, bundle) : 0;
@@ -637,7 +668,7 @@ export default function ClaimMatchPage() {
   }, [bundle, currentAnchor, seekTracking, stage]);
 
   const candidates = useMemo<Candidate[]>(() => {
-    if (!bundle) return [];
+    if (!bundle || !activeSegment || !manifest) return [];
     const anchor = { x: bundle.width / 2, y: bundle.height / 2 };
     const ranked = bundle.tracks
       .map((track) => {
@@ -665,8 +696,11 @@ export default function ClaimMatchPage() {
       .map((candidate, index, all) => ({
         ...candidate,
         overlap: all.some((other) => other.id !== candidate.id && boxesOverlap(candidate.box, other.box)),
+        taken: serverProgress?.takenFragments.some((fragment) =>
+          !fragment.ownedByCurrentUser
+          && candidateMatchesTakenFragment(candidate.id, candidateFrame, activeSegment, manifest, fragment)) ?? false,
       }));
-  }, [bundle, candidateFrame]);
+  }, [activeSegment, bundle, candidateFrame, manifest, serverProgress?.takenFragments]);
 
   useEffect(() => {
     if (!response || restoredRecordingRef.current === activeRecordingId) return;
@@ -895,6 +929,10 @@ export default function ClaimMatchPage() {
 
   const onCorrection = useCallback((chosen: Candidate) => {
     if (!bundle || !anchorMode) return;
+    if (chosen.taken) {
+      setNotice("That fragment is already vouched for by another claimant");
+      return;
+    }
     recordAnchorAnswer("yes", chosen.id);
   }, [anchorMode, bundle, recordAnchorAnswer]);
 
@@ -1102,11 +1140,14 @@ export default function ClaimMatchPage() {
             playerStats: {
               ...current.progress.playerStats,
               confirmedSeconds: 0,
+               minutesPlayed: 0,
               coveragePercent: 0,
               answeredMoments: 0,
               acceptedMoments: 0,
               trackedSegments: 0,
               matchedEvents: 0,
+               distanceMetres: null,
+               averageSpeedMetresPerSecond: null,
             },
             updatedAt: new Date().toISOString(),
           },
@@ -1154,11 +1195,30 @@ export default function ClaimMatchPage() {
           <div><span>Match coverage</span><b>{Math.round(progressValue)}%</b></div>
           <small>
             {serverProgress?.coverageSeconds?.toFixed(1) ?? "0.0"} attributed seconds
+            {serverProgress ? ` · ${serverProgress.humanVouchedSeconds.toFixed(1)} vouched` : ""}
             {serverProgress?.answeredAnchorCount ? ` · ${serverProgress.answeredAnchorCount} moments answered` : ""}
             {serverProgress?.unresolvedMoments?.length ? ` · ${serverProgress.unresolvedMoments.length} unresolved` : ""}
           </small>
            {completionSyncPending && <small className="claim-completion-sync" role="status">Checking the saved result…</small>}
         </div>
+        {serverProgress?.identityBinding?.state === "disputed" && (
+          <div className="claim-panel claim-panel-warning" role="alert">
+            <b>This player is already claimed by another account.</b>
+            <span>Your answers are saved, but this claim is pending admin review. It will not unlock clips until the review is resolved.</span>
+          </div>
+        )}
+        {serverProgress?.identityBinding?.state === "needs_resolution" && (
+          <div className="claim-panel claim-panel-warning" role="status">
+            <b>The tracking data changed.</b>
+            <span>Your previous answers were kept for history, but please review the moments again before this match can be claimed.</span>
+          </div>
+        )}
+        {(serverProgress?.conflictMoments?.length ?? 0) > 0 && (
+          <div className="claim-panel claim-panel-warning" role="alert">
+            <b>Some answers point to a different player.</b>
+            <span>Review the highlighted moments and choose the same person throughout the match.</span>
+          </div>
+        )}
         {isDemo && (
           <div className="claim-demo-reset" data-testid="claim-demo-reset">
             <button
@@ -1197,8 +1257,8 @@ export default function ClaimMatchPage() {
                 )}
                 <div className="candidate-list">
                   {currentAnchor && candidates.map((candidate, index) => (
-                    <button type="button" key={candidate.id} className="candidate-row" data-testid={`button-candidate-${index + 1}`} onClick={() => selectCandidate(candidate)}>
-                      <span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>Player {index + 1}</b><small>{candidate.label}</small></span><ChevronRight size={16} />
+                    <button type="button" key={candidate.id} className={`candidate-row ${candidate.taken ? "is-taken" : ""}`} data-testid={`button-candidate-${index + 1}`} onClick={() => selectCandidate(candidate)} aria-disabled={candidate.taken}>
+                      <span className="candidate-number">{index + 1}</span><CandidateThumb videoRef={videoRef} box={candidate.box} bundle={bundle} tick={videoReadyTick} /><span className="candidate-copy"><b>Player {index + 1}{candidate.taken ? " · Already vouched" : ""}</b><small>{candidate.taken ? "Unavailable at this time · choose an untouched fragment" : candidate.label}</small></span>{candidate.taken ? <LockKeyhole size={16} /> : <ChevronRight size={16} />}
                     </button>
                   ))}
                 </div>
@@ -1214,19 +1274,29 @@ export default function ClaimMatchPage() {
           <div className="claim-panel claim-panel-complete" data-testid="panel-done">
             <div className="complete-graphic"><span className="complete-ring"><Check size={24} /></span><span className="complete-spark spark-a" /><span className="complete-spark spark-b" /><span className="complete-spark spark-c" /></div>
             <h2>Done. That’s all yours.</h2>
-             <p>You confirmed <b>{Math.round(progressValue)}%</b> coverage of this match. The percentage reflects attributed player time, not how many screens you visited.</p>
+             <p>You reached <b>{Math.round(progressValue)}%</b> attributed coverage of this match. Directly vouched time and identity-grouped time are shown separately below.</p>
              {playerStats && (
                 <div className="claim-player-summary" data-testid="claim-player-stats">
                   <div className="claim-summary-metric">
-                    <span><Clock3 size={13} /> Minutes played</span>
-                    <b>{playerStats.minutesPlayed.toFixed(1)}</b>
-                    <small>confirmed player time</small>
+                    <span><Check size={13} /> Human-vouched time</span>
+                    <b>{((serverProgress?.humanVouchedSeconds ?? 0) / 60).toFixed(1)} min</b>
+                    <small>directly accepted contiguous fragments</small>
+                  </div>
+                  <div className="claim-summary-metric">
+                    <span><Sparkles size={13} /> Inferred time</span>
+                    <b>{((serverProgress?.inferredSeconds ?? 0) / 60).toFixed(1)} min</b>
+                    <small>identity grouping, not direct confirmation</small>
                   </div>
                   <div className="claim-summary-metric">
                     <span><MapPinned size={13} /> Total distance</span>
                     <b>{playerStats.distanceMetres === null ? "Unavailable" : `${playerStats.distanceMetres.toLocaleString()} m`}</b>
                     <small>{playerStats.distanceMetres === null ? "No pitch model in this recording" : "smoothed pitch estimate"}</small>
                   </div>
+                   <div className="claim-summary-metric">
+                     <span><Clock3 size={13} /> Average speed</span>
+                     <b>{playerStats.averageSpeedMetresPerSecond === null ? "Unavailable" : `${playerStats.averageSpeedMetresPerSecond.toFixed(2)} m/s`}</b>
+                     <small>{playerStats.averageSpeedMetresPerSecond === null ? "No pitch model in this recording" : "distance ÷ attributed time present"}</small>
+                   </div>
                   <div className="claim-heatmap-card">
                     <div className="claim-heatmap-heading">
                       <span><MapPinned size={13} /> Position heatmap</span>
@@ -1234,6 +1304,20 @@ export default function ClaimMatchPage() {
                     </div>
                     <PlayerHeatmap heatmap={playerStats.heatmap} />
                   </div>
+                   <div className="claim-unavailable-metrics">
+                     {[
+                       { label: "Touches", metric: playerStats.touches },
+                       { label: "Passes", metric: playerStats.passes },
+                       { label: "Shots", metric: playerStats.shots },
+                       { label: "Dribbles", metric: playerStats.dribbles },
+                     ].map(({ label }) => (
+                       <div className="claim-summary-metric claim-summary-metric-unavailable" key={label}>
+                         <span>{label}</span>
+                         <b>Not yet available</b>
+                         <small>Ball tracking and possession attribution unavailable</small>
+                       </div>
+                     ))}
+                   </div>
                </div>
              )}
               <p className="claim-stats-note">Distance is approximate and derived from camera tracking. It is shown only when this recording includes a pitch model; we never estimate metres from player height in pixels.</p>
@@ -1250,7 +1334,7 @@ export default function ClaimMatchPage() {
                        onClick={() => openAnchorReview(item.index)}
                      >
                        <span className="candidate-number">{index + 1}</span>
-                       <span><b>Moment {formatTime(item.momentSeconds)}</b><small>Not visible or skipped</small></span>
+                        <span><b>Moment {formatTime(item.momentSeconds)}</b><small>{item.conflict ? "Different player selected" : "Not visible or skipped"}</small></span>
                        <ChevronRight size={16} />
                      </button>
                    ))}

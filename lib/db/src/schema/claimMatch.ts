@@ -9,6 +9,7 @@ import {
   boolean,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { recordingsTable } from "./recordings";
 import { usersTable } from "./users";
 
@@ -103,6 +104,9 @@ export type TrackingManifest = {
 };
 
 export type TrackingPitchModel = {
+  calibrationId: string;
+  fittedAt: string;
+  calibratedAspectRatio: number;
   pitchWidthMetres: number;
   pitchHeightMetres: number;
   grid: Array<Array<{ x: number; y: number }>>;
@@ -238,7 +242,76 @@ export const claimMatchCorrectionsTable = pgTable(
   }),
 );
 
+export type ClaimIdentityBindingState =
+  | "pending"
+  | "confirmed"
+  | "disputed"
+  | "needs_resolution"
+  | "released"
+  | "rejected";
+
+export type ClaimIdentityResolutionMethod = "identity-map" | "track-fallback";
+
+/**
+ * One current claim per account and recording. Historical resolution details
+ * remain on the row while state controls whether the person is currently
+ * owned, awaiting review, or must be resolved again after a bundle change.
+ */
+export const claimMatchIdentityBindingsTable = pgTable(
+  "claim_match_identity_bindings",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    recordingId: integer("recording_id")
+      .notNull()
+      .references(() => recordingsTable.id, { onDelete: "cascade" }),
+    personId: text("person_id").notNull(),
+    trackingBundleId: integer("tracking_bundle_id")
+      .notNull()
+      .references(() => recordingTrackingBundlesTable.id, { onDelete: "cascade" }),
+    bundleFingerprint: text("bundle_fingerprint").notNull(),
+    /** Canonical snapshot of the identity-map pieces used when this binding was resolved. */
+    personParts: jsonb("person_parts")
+      .notNull()
+      .$type<string[]>()
+      .default([]),
+    /**
+     * Contiguous source-track fragments directly vouched for by accepted
+     * answers. Unlike personParts, this is deliberately not a snapshot of the
+     * whole inferred identity.
+     */
+    vouchedFragments: jsonb("vouched_fragments")
+      .notNull()
+      .$type<Array<{
+        trackId: string;
+        fromFrame: number;
+        toFrame: number;
+      }>>()
+      .default([]),
+    resolutionMethod: text("resolution_method").notNull(),
+    supportCount: integer("support_count").notNull().default(0),
+    acceptedAnswerCount: integer("accepted_answer_count").notNull().default(0),
+    supportPercent: doublePrecision("support_percent").notNull().default(0),
+    state: text("state").notNull().default("pending"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userRecordingUnique: uniqueIndex("claim_match_identity_bindings_user_recording_unique").on(
+      table.userId,
+      table.recordingId,
+    ),
+    confirmedPersonRecordingUnique: uniqueIndex("claim_match_identity_bindings_confirmed_person_recording_unique")
+      .on(table.recordingId, table.personId)
+      .where(sql`${table.state} = 'confirmed'`),
+  }),
+);
+
 export type TrackingBundleRow = typeof recordingTrackingBundlesTable.$inferSelect;
 export type TrackingSegmentRow = typeof recordingTrackingSegmentsTable.$inferSelect;
 export type ClaimMatchProgressRow = typeof claimMatchProgressTable.$inferSelect;
 export type ClaimMatchCorrectionRow = typeof claimMatchCorrectionsTable.$inferSelect;
+export type ClaimIdentityBindingRow = typeof claimMatchIdentityBindingsTable.$inferSelect;

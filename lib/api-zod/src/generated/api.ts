@@ -235,7 +235,10 @@ export const GetFieldRecordingsResponseItem = zod.object({
   "score": zod.string().nullish(),
   "videoUrl": zod.string().optional(),
   "highlightMoment": zod.string().nullish(),
-  "fieldName": zod.string().nullish()
+  "fieldName": zod.string().nullish(),
+  "hasTracking": zod.boolean().describe('Whether this recording has an uploaded tracking bundle.'),
+  "viewerHasClaim": zod.boolean().describe('Whether the signed-in viewer has an identity claim for this recording.'),
+  "viewerClaimState": zod.union([zod.literal('in_progress'),zod.literal('pending'),zod.literal('confirmed'),zod.literal('disputed'),zod.literal('needs_resolution'),zod.literal('released'),zod.literal('rejected'),zod.literal(null)]).nullable().describe('The signed-in viewer\'s progress or claim state, or null when they have not started or are not signed in.')
 })
 export const GetFieldRecordingsResponse = zod.array(GetFieldRecordingsResponseItem)
 
@@ -289,6 +292,9 @@ export const getClaimMatchResponseManifestSegmentsItemStartSecondsMin = 0;
 
 export const getClaimMatchResponseManifestSegmentsItemEndSecondsMin = 0;
 
+
+export const getClaimMatchResponseManifestPitchModelCalibratedAspectRatioExclusiveMin = 0;
+
 export const getClaimMatchResponseManifestPitchModelPitchWidthMetresExclusiveMin = 0;
 
 export const getClaimMatchResponseManifestPitchModelPitchHeightMetresExclusiveMin = 0;
@@ -306,11 +312,36 @@ export const getClaimMatchResponseProgressCoverageSecondsMin = 0;
 export const getClaimMatchResponseProgressCoveragePercentMin = 0;
 export const getClaimMatchResponseProgressCoveragePercentMax = 100;
 
+export const getClaimMatchResponseProgressHumanVouchedSecondsMin = 0;
+
+export const getClaimMatchResponseProgressInferredSecondsMin = 0;
+
+export const getClaimMatchResponseProgressVouchedFragmentsItemFromFrameMin = 0;
+
+export const getClaimMatchResponseProgressVouchedFragmentsItemToFrameMin = 0;
+
+export const getClaimMatchResponseProgressTakenFragmentsItemOneFromFrameMin = 0;
+
+export const getClaimMatchResponseProgressTakenFragmentsItemOneToFrameMin = 0;
+
 export const getClaimMatchResponseProgressAnsweredAnchorCountMin = 0;
 
 export const getClaimMatchResponseProgressAcceptedAnchorCountMin = 0;
 
 export const getClaimMatchResponseProgressUnresolvedMomentsItemMin = 0;
+
+export const getClaimMatchResponseProgressConflictMomentsItemMin = 0;
+
+export const getClaimMatchResponseProgressIdentityBindingOneSupportCountMin = 0;
+
+export const getClaimMatchResponseProgressIdentityBindingOneAcceptedAnswerCountMin = 0;
+
+export const getClaimMatchResponseProgressIdentityBindingOneSupportPercentMin = 0;
+export const getClaimMatchResponseProgressIdentityBindingOneSupportPercentMax = 100;
+
+export const getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemFromFrameMin = 0;
+
+export const getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemToFrameMin = 0;
 
 export const getClaimMatchResponseProgressPlayerStatsConfirmedSecondsMin = 0;
 
@@ -338,6 +369,8 @@ export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemYMax = 1;
 export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemWeightMin = 0;
 
 export const getClaimMatchResponseProgressPlayerStatsDistanceMetresMin = 0;
+
+export const getClaimMatchResponseProgressPlayerStatsAverageSpeedMetresPerSecondMin = 0;
 
 
 
@@ -376,6 +409,9 @@ export const GetClaimMatchResponse = zod.object({
   "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
 })),
   "pitchModel": zod.object({
+  "calibrationId": zod.string().min(1).describe('Immutable identifier for the calibration fit that produced this model.'),
+  "fittedAt": zod.coerce.date().describe('Date and time at which this calibration was fitted.'),
+  "calibratedAspectRatio": zod.number().gt(getClaimMatchResponseManifestPitchModelCalibratedAspectRatioExclusiveMin).describe('Image width divided by image height used when fitting this model.'),
   "pitchWidthMetres": zod.number().gt(getClaimMatchResponseManifestPitchModelPitchWidthMetresExclusiveMin).describe('Real pitch width represented by the model, in metres.'),
   "pitchHeightMetres": zod.number().gt(getClaimMatchResponseManifestPitchModelPitchHeightMetresExclusiveMin).describe('Real pitch height represented by the model, in metres.'),
   "grid": zod.array(zod.array(zod.object({
@@ -403,9 +439,44 @@ export const GetClaimMatchResponse = zod.object({
   "claimedPercent": zod.number().describe('Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage.'),
   "coverageSeconds": zod.number().min(getClaimMatchResponseProgressCoverageSecondsMin).describe('Union of the accepted track spans, in tracking seconds.'),
   "coveragePercent": zod.number().min(getClaimMatchResponseProgressCoveragePercentMin).max(getClaimMatchResponseProgressCoveragePercentMax).describe('coverageSeconds divided by the tracked match duration.'),
+  "humanVouchedSeconds": zod.number().min(getClaimMatchResponseProgressHumanVouchedSecondsMin).describe('Union of contiguous tracking fragments directly accepted by this claimant.'),
+  "inferredSeconds": zod.number().min(getClaimMatchResponseProgressInferredSecondsMin).describe('Attributed tracking time supplied by the identity grouping rather than a direct answer.'),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(getClaimMatchResponseProgressVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchResponseProgressVouchedFragmentsItemToFrameMin)
+})),
+  "takenFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(getClaimMatchResponseProgressTakenFragmentsItemOneFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchResponseProgressTakenFragmentsItemOneToFrameMin)
+}).and(zod.object({
+  "ownedByCurrentUser": zod.boolean()
+}))).describe('Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant.'),
   "answeredAnchorCount": zod.number().min(getClaimMatchResponseProgressAnsweredAnchorCountMin),
   "acceptedAnchorCount": zod.number().min(getClaimMatchResponseProgressAcceptedAnchorCountMin),
   "unresolvedMoments": zod.array(zod.number().min(getClaimMatchResponseProgressUnresolvedMomentsItemMin)).describe('Anchor moments answered as not me or skipped.'),
+  "conflictMoments": zod.array(zod.number().min(getClaimMatchResponseProgressConflictMomentsItemMin)).describe('Accepted moments attributed to a different person than the current winner.'),
+  "identityBinding": zod.union([zod.object({
+  "id": zod.number(),
+  "personId": zod.string(),
+  "trackingBundleId": zod.number(),
+  "bundleFingerprint": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportCount": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneSupportCountMin),
+  "acceptedAnswerCount": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneAcceptedAnswerCountMin),
+  "supportPercent": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneSupportPercentMin).max(getClaimMatchResponseProgressIdentityBindingOneSupportPercentMax),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneVouchedFragmentsItemToFrameMin)
+})),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "claimantName": zod.string().optional().describe('Claimant name. Returned only by the admin binding-list endpoint.'),
+  "claimedAt": zod.coerce.date().optional().describe('When the claimant created this binding. Returned only by the admin binding-list endpoint.'),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date()
+}),zod.null()]),
   "clipsUnlocked": zod.number(),
   "correctionCount": zod.number(),
   "completed": zod.boolean(),
@@ -435,7 +506,28 @@ export const GetClaimMatchResponse = zod.object({
   "weight": zod.number().min(getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemWeightMin)
 }))
 }),
-  "distanceMetres": zod.number().min(getClaimMatchResponseProgressPlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.')
+  "distanceMetres": zod.number().min(getClaimMatchResponseProgressPlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.'),
+  "averageSpeedMetresPerSecond": zod.number().min(getClaimMatchResponseProgressPlayerStatsAverageSpeedMetresPerSecondMin).nullable().describe('Total calibrated distance divided by confirmed time present, or null without a pitch model.'),
+  "touches": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "passes": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "shots": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "dribbles": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+})
 }),
   "updatedAt": zod.string()
 }),
@@ -495,11 +587,36 @@ export const updateClaimMatchProgressResponseCoverageSecondsMin = 0;
 export const updateClaimMatchProgressResponseCoveragePercentMin = 0;
 export const updateClaimMatchProgressResponseCoveragePercentMax = 100;
 
+export const updateClaimMatchProgressResponseHumanVouchedSecondsMin = 0;
+
+export const updateClaimMatchProgressResponseInferredSecondsMin = 0;
+
+export const updateClaimMatchProgressResponseVouchedFragmentsItemFromFrameMin = 0;
+
+export const updateClaimMatchProgressResponseVouchedFragmentsItemToFrameMin = 0;
+
+export const updateClaimMatchProgressResponseTakenFragmentsItemOneFromFrameMin = 0;
+
+export const updateClaimMatchProgressResponseTakenFragmentsItemOneToFrameMin = 0;
+
 export const updateClaimMatchProgressResponseAnsweredAnchorCountMin = 0;
 
 export const updateClaimMatchProgressResponseAcceptedAnchorCountMin = 0;
 
 export const updateClaimMatchProgressResponseUnresolvedMomentsItemMin = 0;
+
+export const updateClaimMatchProgressResponseConflictMomentsItemMin = 0;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneSupportCountMin = 0;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneAcceptedAnswerCountMin = 0;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMin = 0;
+export const updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMax = 100;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemFromFrameMin = 0;
+
+export const updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemToFrameMin = 0;
 
 export const updateClaimMatchProgressResponsePlayerStatsConfirmedSecondsMin = 0;
 
@@ -528,6 +645,8 @@ export const updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemWeightMi
 
 export const updateClaimMatchProgressResponsePlayerStatsDistanceMetresMin = 0;
 
+export const updateClaimMatchProgressResponsePlayerStatsAverageSpeedMetresPerSecondMin = 0;
+
 
 
 export const UpdateClaimMatchProgressResponse = zod.object({
@@ -539,9 +658,44 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "claimedPercent": zod.number().describe('Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage.'),
   "coverageSeconds": zod.number().min(updateClaimMatchProgressResponseCoverageSecondsMin).describe('Union of the accepted track spans, in tracking seconds.'),
   "coveragePercent": zod.number().min(updateClaimMatchProgressResponseCoveragePercentMin).max(updateClaimMatchProgressResponseCoveragePercentMax).describe('coverageSeconds divided by the tracked match duration.'),
+  "humanVouchedSeconds": zod.number().min(updateClaimMatchProgressResponseHumanVouchedSecondsMin).describe('Union of contiguous tracking fragments directly accepted by this claimant.'),
+  "inferredSeconds": zod.number().min(updateClaimMatchProgressResponseInferredSecondsMin).describe('Attributed tracking time supplied by the identity grouping rather than a direct answer.'),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(updateClaimMatchProgressResponseVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(updateClaimMatchProgressResponseVouchedFragmentsItemToFrameMin)
+})),
+  "takenFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(updateClaimMatchProgressResponseTakenFragmentsItemOneFromFrameMin),
+  "toFrame": zod.number().min(updateClaimMatchProgressResponseTakenFragmentsItemOneToFrameMin)
+}).and(zod.object({
+  "ownedByCurrentUser": zod.boolean()
+}))).describe('Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant.'),
   "answeredAnchorCount": zod.number().min(updateClaimMatchProgressResponseAnsweredAnchorCountMin),
   "acceptedAnchorCount": zod.number().min(updateClaimMatchProgressResponseAcceptedAnchorCountMin),
   "unresolvedMoments": zod.array(zod.number().min(updateClaimMatchProgressResponseUnresolvedMomentsItemMin)).describe('Anchor moments answered as not me or skipped.'),
+  "conflictMoments": zod.array(zod.number().min(updateClaimMatchProgressResponseConflictMomentsItemMin)).describe('Accepted moments attributed to a different person than the current winner.'),
+  "identityBinding": zod.union([zod.object({
+  "id": zod.number(),
+  "personId": zod.string(),
+  "trackingBundleId": zod.number(),
+  "bundleFingerprint": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportCount": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneSupportCountMin),
+  "acceptedAnswerCount": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneAcceptedAnswerCountMin),
+  "supportPercent": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMin).max(updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMax),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneVouchedFragmentsItemToFrameMin)
+})),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "claimantName": zod.string().optional().describe('Claimant name. Returned only by the admin binding-list endpoint.'),
+  "claimedAt": zod.coerce.date().optional().describe('When the claimant created this binding. Returned only by the admin binding-list endpoint.'),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date()
+}),zod.null()]),
   "clipsUnlocked": zod.number(),
   "correctionCount": zod.number(),
   "completed": zod.boolean(),
@@ -571,7 +725,28 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "weight": zod.number().min(updateClaimMatchProgressResponsePlayerStatsHeatmapCellsItemWeightMin)
 }))
 }),
-  "distanceMetres": zod.number().min(updateClaimMatchProgressResponsePlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.')
+  "distanceMetres": zod.number().min(updateClaimMatchProgressResponsePlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.'),
+  "averageSpeedMetresPerSecond": zod.number().min(updateClaimMatchProgressResponsePlayerStatsAverageSpeedMetresPerSecondMin).nullable().describe('Total calibrated distance divided by confirmed time present, or null without a pitch model.'),
+  "touches": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "passes": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "shots": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "dribbles": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+})
 }),
   "updatedAt": zod.string()
 })
@@ -604,6 +779,146 @@ export const ListClaimMatchClipsResponseItem = zod.object({
 }))
 })
 export const ListClaimMatchClipsResponse = zod.array(ListClaimMatchClipsResponseItem)
+
+
+/**
+ * @summary List claim identity disputes awaiting admin review
+ */
+export const ListClaimMatchDisputesResponseItem = zod.object({
+  "id": zod.number(),
+  "recordingId": zod.number(),
+  "recordingLabel": zod.string(),
+  "claimantUserId": zod.number(),
+  "claimantName": zod.string(),
+  "claimantEmail": zod.string(),
+  "personId": zod.string(),
+  "resolutionMethod": zod.string(),
+  "supportCount": zod.number(),
+  "acceptedAnswerCount": zod.number(),
+  "supportPercent": zod.number(),
+  "state": zod.string(),
+  "currentOwnerUserId": zod.number().nullable(),
+  "currentOwnerName": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListClaimMatchDisputesResponse = zod.array(ListClaimMatchDisputesResponseItem)
+
+
+/**
+ * @summary Transfer a disputed person to one claimant
+ */
+export const ResolveClaimMatchDisputeParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ResolveClaimMatchDisputeBody = zod.object({
+  "winnerUserId": zod.number()
+})
+
+export const ResolveClaimMatchDisputeResponse = zod.object({
+  "id": zod.number(),
+  "recordingId": zod.number(),
+  "recordingLabel": zod.string(),
+  "claimantUserId": zod.number(),
+  "claimantName": zod.string(),
+  "claimantEmail": zod.string(),
+  "personId": zod.string(),
+  "resolutionMethod": zod.string(),
+  "supportCount": zod.number(),
+  "acceptedAnswerCount": zod.number(),
+  "supportPercent": zod.number(),
+  "state": zod.string(),
+  "currentOwnerUserId": zod.number().nullable(),
+  "currentOwnerName": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Release a human-vouched fragment so it can be regrouped
+ */
+export const ReleaseClaimMatchBindingParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const releaseClaimMatchBindingResponseSupportCountMin = 0;
+
+export const releaseClaimMatchBindingResponseAcceptedAnswerCountMin = 0;
+
+export const releaseClaimMatchBindingResponseSupportPercentMin = 0;
+export const releaseClaimMatchBindingResponseSupportPercentMax = 100;
+
+export const releaseClaimMatchBindingResponseVouchedFragmentsItemFromFrameMin = 0;
+
+export const releaseClaimMatchBindingResponseVouchedFragmentsItemToFrameMin = 0;
+
+
+
+export const ReleaseClaimMatchBindingResponse = zod.object({
+  "id": zod.number(),
+  "personId": zod.string(),
+  "trackingBundleId": zod.number(),
+  "bundleFingerprint": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportCount": zod.number().min(releaseClaimMatchBindingResponseSupportCountMin),
+  "acceptedAnswerCount": zod.number().min(releaseClaimMatchBindingResponseAcceptedAnswerCountMin),
+  "supportPercent": zod.number().min(releaseClaimMatchBindingResponseSupportPercentMin).max(releaseClaimMatchBindingResponseSupportPercentMax),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(releaseClaimMatchBindingResponseVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(releaseClaimMatchBindingResponseVouchedFragmentsItemToFrameMin)
+})),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "claimantName": zod.string().optional().describe('Claimant name. Returned only by the admin binding-list endpoint.'),
+  "claimedAt": zod.coerce.date().optional().describe('When the claimant created this binding. Returned only by the admin binding-list endpoint.'),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary List claim identity bindings and their human-vouched fragments
+ */
+export const ListClaimMatchBindingsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const listClaimMatchBindingsResponseSupportCountMin = 0;
+
+export const listClaimMatchBindingsResponseAcceptedAnswerCountMin = 0;
+
+export const listClaimMatchBindingsResponseSupportPercentMin = 0;
+export const listClaimMatchBindingsResponseSupportPercentMax = 100;
+
+export const listClaimMatchBindingsResponseVouchedFragmentsItemFromFrameMin = 0;
+
+export const listClaimMatchBindingsResponseVouchedFragmentsItemToFrameMin = 0;
+
+
+
+export const ListClaimMatchBindingsResponseItem = zod.object({
+  "id": zod.number(),
+  "personId": zod.string(),
+  "trackingBundleId": zod.number(),
+  "bundleFingerprint": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportCount": zod.number().min(listClaimMatchBindingsResponseSupportCountMin),
+  "acceptedAnswerCount": zod.number().min(listClaimMatchBindingsResponseAcceptedAnswerCountMin),
+  "supportPercent": zod.number().min(listClaimMatchBindingsResponseSupportPercentMin).max(listClaimMatchBindingsResponseSupportPercentMax),
+  "vouchedFragments": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(listClaimMatchBindingsResponseVouchedFragmentsItemFromFrameMin),
+  "toFrame": zod.number().min(listClaimMatchBindingsResponseVouchedFragmentsItemToFrameMin)
+})),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "claimantName": zod.string().optional().describe('Claimant name. Returned only by the admin binding-list endpoint.'),
+  "claimedAt": zod.coerce.date().optional().describe('When the claimant created this binding. Returned only by the admin binding-list endpoint.'),
+  "resolvedAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListClaimMatchBindingsResponse = zod.array(ListClaimMatchBindingsResponseItem)
 
 
 /**
@@ -751,6 +1066,71 @@ export const UndoClaimMatchCorrectionResponse = zod.object({
 
 
 /**
+ * @summary Update tracking-bundle metadata and pitch calibration
+ */
+export const UpdateTrackingBundleParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const updateTrackingBundleBodyVideoStartSecondsMin = 0;
+
+
+export const updateTrackingBundleBodyPitchModelOneCalibratedAspectRatioExclusiveMin = 0;
+
+export const updateTrackingBundleBodyPitchModelOnePitchWidthMetresExclusiveMin = 0;
+
+export const updateTrackingBundleBodyPitchModelOnePitchHeightMetresExclusiveMin = 0;
+
+export const updateTrackingBundleBodyPitchModelOneGridItemMin = 2;
+
+export const updateTrackingBundleBodyPitchModelOneGridMin = 2;
+
+
+
+export const UpdateTrackingBundleBody = zod.object({
+  "videoStartSeconds": zod.number().min(updateTrackingBundleBodyVideoStartSecondsMin).optional(),
+  "pitchModel": zod.union([zod.object({
+  "calibrationId": zod.string().min(1).describe('Immutable identifier for the calibration fit that produced this model.'),
+  "fittedAt": zod.coerce.date().describe('Date and time at which this calibration was fitted.'),
+  "calibratedAspectRatio": zod.number().gt(updateTrackingBundleBodyPitchModelOneCalibratedAspectRatioExclusiveMin).describe('Image width divided by image height used when fitting this model.'),
+  "pitchWidthMetres": zod.number().gt(updateTrackingBundleBodyPitchModelOnePitchWidthMetresExclusiveMin).describe('Real pitch width represented by the model, in metres.'),
+  "pitchHeightMetres": zod.number().gt(updateTrackingBundleBodyPitchModelOnePitchHeightMetresExclusiveMin).describe('Real pitch height represented by the model, in metres.'),
+  "grid": zod.array(zod.array(zod.object({
+  "x": zod.number().describe('Pitch position in metres on the horizontal axis.'),
+  "y": zod.number().describe('Pitch position in metres on the vertical axis.')
+})).min(updateTrackingBundleBodyPitchModelOneGridItemMin)).min(updateTrackingBundleBodyPitchModelOneGridMin).describe('Rectangular row-major calibration grid. Rows map from image top to bottom and columns map from image left to right. Values are pitch coordinates in metres and are bilinearly interpolated.\n')
+}),zod.null()]).optional()
+})
+
+export const updateTrackingBundleResponseVideoStartSecondsMin = 0;
+
+export const updateTrackingBundleResponsePitchModelOneGridRowsMin = 2;
+
+export const updateTrackingBundleResponsePitchModelOneGridColumnsMin = 2;
+
+export const updateTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin = 0;
+
+export const updateTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin = 0;
+
+
+
+export const UpdateTrackingBundleResponse = zod.object({
+  "recordingId": zod.number(),
+  "videoStartSeconds": zod.number().min(updateTrackingBundleResponseVideoStartSecondsMin),
+  "pitchModel": zod.union([zod.object({
+  "calibrationId": zod.string().nullable(),
+  "fittedAt": zod.coerce.date().nullable(),
+  "calibratedAspectRatio": zod.number().nullable(),
+  "gridRows": zod.number().min(updateTrackingBundleResponsePitchModelOneGridRowsMin),
+  "gridColumns": zod.number().min(updateTrackingBundleResponsePitchModelOneGridColumnsMin),
+  "pitchWidthMetres": zod.number().gt(updateTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin),
+  "pitchHeightMetres": zod.number().gt(updateTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin)
+}),zod.null()]),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Upload or replace a recording tracking bundle
  */
 export const ReplaceTrackingBundleParams = zod.object({
@@ -838,6 +1218,14 @@ export const replaceTrackingBundleResponseSegmentRangesItemStartSecondsMin = 0;
 
 export const replaceTrackingBundleResponseSegmentRangesItemEndSecondsMin = 0;
 
+export const replaceTrackingBundleResponsePitchModelOneGridRowsMin = 2;
+
+export const replaceTrackingBundleResponsePitchModelOneGridColumnsMin = 2;
+
+export const replaceTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin = 0;
+
+export const replaceTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin = 0;
+
 
 
 export const ReplaceTrackingBundleResponse = zod.object({
@@ -858,7 +1246,128 @@ export const ReplaceTrackingBundleResponse = zod.object({
   "objectPath": zod.string(),
   "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
 })).optional(),
+  "pitchModel": zod.union([zod.object({
+  "calibrationId": zod.string().nullable(),
+  "fittedAt": zod.coerce.date().nullable(),
+  "calibratedAspectRatio": zod.number().nullable(),
+  "gridRows": zod.number().min(replaceTrackingBundleResponsePitchModelOneGridRowsMin),
+  "gridColumns": zod.number().min(replaceTrackingBundleResponsePitchModelOneGridColumnsMin),
+  "pitchWidthMetres": zod.number().gt(replaceTrackingBundleResponsePitchModelOnePitchWidthMetresExclusiveMin),
+  "pitchHeightMetres": zod.number().gt(replaceTrackingBundleResponsePitchModelOnePitchHeightMetresExclusiveMin)
+}),zod.null()]).optional(),
   "uploadedAt": zod.string()
+})
+
+
+/**
+ * @summary Get claim player metrics including unvalidated top speed
+ */
+export const GetAdminRecordingPlayerMetricsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const getAdminRecordingPlayerMetricsResponsePitchModelOneGridRowsMin = 2;
+
+export const getAdminRecordingPlayerMetricsResponsePitchModelOneGridColumnsMin = 2;
+
+export const getAdminRecordingPlayerMetricsResponsePitchModelOnePitchWidthMetresExclusiveMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePitchModelOnePitchHeightMetresExclusiveMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsConfirmedSecondsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsMinutesPlayedMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsCoveragePercentMin = 0;
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsCoveragePercentMax = 100;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAnsweredMomentsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAcceptedMomentsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsTrackedSegmentsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsTotalSegmentsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsMatchedEventsMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemXMin = 0;
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemXMax = 1;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemYMin = 0;
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemYMax = 1;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemWeightMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsDistanceMetresMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAverageSpeedMetresPerSecondMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedMetresPerSecondMin = 0;
+
+export const getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedUsableTimeFractionMin = 0;
+export const getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedUsableTimeFractionMax = 1;
+
+
+
+export const GetAdminRecordingPlayerMetricsResponse = zod.object({
+  "recordingId": zod.number(),
+  "pitchModel": zod.union([zod.object({
+  "calibrationId": zod.string().nullable(),
+  "fittedAt": zod.coerce.date().nullable(),
+  "calibratedAspectRatio": zod.number().nullable(),
+  "gridRows": zod.number().min(getAdminRecordingPlayerMetricsResponsePitchModelOneGridRowsMin),
+  "gridColumns": zod.number().min(getAdminRecordingPlayerMetricsResponsePitchModelOneGridColumnsMin),
+  "pitchWidthMetres": zod.number().gt(getAdminRecordingPlayerMetricsResponsePitchModelOnePitchWidthMetresExclusiveMin),
+  "pitchHeightMetres": zod.number().gt(getAdminRecordingPlayerMetricsResponsePitchModelOnePitchHeightMetresExclusiveMin)
+}),zod.null()]),
+  "players": zod.array(zod.object({
+  "userId": zod.number(),
+  "displayName": zod.string(),
+  "email": zod.string(),
+  "playerStats": zod.object({
+  "confirmedSeconds": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsConfirmedSecondsMin).describe('Union of the player\'s accepted tracking intervals, in seconds.'),
+  "minutesPlayed": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsMinutesPlayedMin).describe('Confirmed player presence in minutes.'),
+  "coveragePercent": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsCoveragePercentMin).max(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsCoveragePercentMax).describe('Percentage of the tracked match covered by accepted player intervals.'),
+  "answeredMoments": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAnsweredMomentsMin).describe('Identity checkpoint moments answered by the player.'),
+  "acceptedMoments": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAcceptedMomentsMin).describe('Identity checkpoint moments accepted as the player.'),
+  "trackedSegments": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsTrackedSegmentsMin).describe('Tracking segments containing an accepted interval for the player.'),
+  "totalSegments": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsTotalSegmentsMin).describe('Total tracking segments in the uploaded match bundle.'),
+  "matchedEvents": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsMatchedEventsMin).describe('Match events that occurred during an accepted player interval.'),
+  "heatmap": zod.object({
+  "coordinateSpace": zod.enum(['pitch', 'camera']).describe('Pitch-normalized coordinates when calibrated, otherwise image coordinates.'),
+  "cells": zod.array(zod.object({
+  "x": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemXMin).max(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemXMax),
+  "y": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemYMin).max(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemYMax),
+  "weight": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsHeatmapCellsItemWeightMin)
+}))
+}),
+  "distanceMetres": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsDistanceMetresMin).nullable().describe('Smoothed camera-derived distance in metres, or null without a pitch model.'),
+  "averageSpeedMetresPerSecond": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemPlayerStatsAverageSpeedMetresPerSecondMin).nullable().describe('Total calibrated distance divided by confirmed time present, or null without a pitch model.'),
+  "touches": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "passes": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "shots": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+}),
+  "dribbles": zod.object({
+  "value": zod.number().nullable(),
+  "available": zod.boolean(),
+  "unavailableReason": zod.string().describe('Machine-readable reason when the metric is unavailable.')
+})
+}),
+  "topSpeedMetresPerSecond": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedMetresPerSecondMin).nullable().describe('Highest valid rolling one-second speed in metres per second; intentionally unvalidated.'),
+  "topSpeedUsableTimeFraction": zod.number().min(getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedUsableTimeFractionMin).max(getAdminRecordingPlayerMetricsResponsePlayersItemTopSpeedUsableTimeFractionMax).nullable().describe('Fraction of confirmed player time remaining after top-speed exclusions.')
+}))
 })
 
 
@@ -1404,6 +1913,23 @@ export const GetAccountStatsResponse = zod.object({
   "likesGiven": zod.number(),
   "fieldsVisited": zod.number()
 })
+
+
+/**
+ * @summary List the current player's claimed match history
+ */
+export const GetAccountClaimedMatchesResponseItem = zod.object({
+  "recordingId": zod.number(),
+  "recordingLabel": zod.string(),
+  "fieldName": zod.string(),
+  "date": zod.string(),
+  "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
+  "personId": zod.string(),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "supportPercent": zod.number(),
+  "claimedAt": zod.coerce.date()
+})
+export const GetAccountClaimedMatchesResponse = zod.array(GetAccountClaimedMatchesResponseItem)
 
 
 /**

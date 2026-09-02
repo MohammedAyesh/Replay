@@ -22,6 +22,14 @@ function toAdminRecording(
     segmentCount?: number;
     frameCount?: number;
     videoStartSeconds?: number;
+    pitchModel?: {
+      calibrationId?: string;
+      fittedAt?: string;
+      calibratedAspectRatio?: number;
+      pitchWidthMetres: number;
+      pitchHeightMetres: number;
+      grid: Array<Array<unknown>>;
+    };
   } | null = null,
 ) {
   return {
@@ -40,6 +48,17 @@ function toAdminRecording(
       ? `0-${Math.max(0, (trackingManifest.frameCount ?? 1) - 1)} (${trackingManifest.frameCount ?? 0} frames)`
       : null,
     trackingVideoStartSeconds: trackingManifest?.videoStartSeconds ?? 0,
+    trackingPitchModel: trackingManifest?.pitchModel
+      ? {
+          calibrationId: trackingManifest.pitchModel.calibrationId,
+          fittedAt: trackingManifest.pitchModel.fittedAt,
+          calibratedAspectRatio: trackingManifest.pitchModel.calibratedAspectRatio,
+          gridRows: trackingManifest.pitchModel.grid.length,
+          gridColumns: trackingManifest.pitchModel.grid[0]?.length ?? 0,
+          pitchWidthMetres: trackingManifest.pitchModel.pitchWidthMetres,
+          pitchHeightMetres: trackingManifest.pitchModel.pitchHeightMetres,
+        }
+      : null,
   };
 }
 
