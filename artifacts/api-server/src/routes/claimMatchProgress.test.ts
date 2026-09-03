@@ -363,8 +363,10 @@ describe("claim match server-derived progress", () => {
     const result = deriveClaimState(manifest, tieSegments as never, answers as never);
     expect(result.identityResolution).toBeNull();
     expect(result.coveragePercent).toBe(0);
+    expect(result.conflictMoments).toEqual([10, 50]);
     expect(result.completed).toBe(false);
     expect(result.completionReason).toBe("identity-unresolved");
+    expect(completionAllowed(result, { state: "confirmed" } as never)).toBe(false);
   });
 
   it("ignores an identity map whose fingerprint does not match the bundle", () => {

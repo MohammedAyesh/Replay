@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildClaimAnchors,
+  claimAnswerMoment,
   claimCompletionThreshold,
   coverageSeconds,
   mergeCoverageIntervals,
@@ -50,6 +51,12 @@ describe("claim match anchors", () => {
 
     expect(nearestAnchorIndex(anchors, 20.999)).toBe(0);
     expect(nearestAnchorIndex(anchors, 21.001)).toBe(-1);
+  });
+
+  it("keeps an answer at the checkpoint when no nearby detection exists", () => {
+    expect(claimAnswerMoment(37.5, null)).toBe(37.5);
+    expect(claimAnswerMoment(37.5, 0)).toBe(37.5);
+    expect(claimAnswerMoment(37.5, 39.5)).toBe(39.5);
   });
 
   it("uses a reachable threshold for short and long recordings", () => {

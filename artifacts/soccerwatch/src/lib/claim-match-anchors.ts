@@ -1,5 +1,6 @@
 export type AnchorAnswer = "yes" | "no" | "skip";
 export const CLAIM_ANCHOR_MATCH_TOLERANCE_SECONDS = 1;
+export const CLAIM_DETECTION_SNAP_MAX_SECONDS = 4;
 
 export type CoverageInterval = {
   startSeconds: number;
@@ -10,6 +11,27 @@ export type ClaimAnchor = {
   id: string;
   momentSeconds: number;
 };
+
+/**
+ * Keep an answer attached to its checkpoint when the player cannot be
+ * meaningfully snapped to a nearby detection. A missing detection is not
+ * permission to use the beginning of the recording (or any other fallback
+ * frame).
+ */
+export function claimAnswerMoment(
+  checkpointSeconds: number,
+  nearestDetectionSeconds: number | null,
+  maxSnapSeconds = CLAIM_DETECTION_SNAP_MAX_SECONDS,
+): number {
+  if (
+    nearestDetectionSeconds === null
+    || !Number.isFinite(nearestDetectionSeconds)
+    || Math.abs(nearestDetectionSeconds - checkpointSeconds) > maxSnapSeconds
+  ) {
+    return checkpointSeconds;
+  }
+  return nearestDetectionSeconds;
+}
 
 export function mergeCoverageIntervals(
   intervals: CoverageInterval[],

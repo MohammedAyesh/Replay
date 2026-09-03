@@ -27,6 +27,7 @@ import {
 } from "@workspace/api-client-react";
 import type { ClaimCorrection, ClaimMatchResponse, ClaimPlayerStats, TrackingSegment } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
+import { useTranslation } from "@/i18n";
 import { ClaimStage } from "@/components/ClaimStage";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import {
@@ -58,6 +59,7 @@ import {
 } from "@/lib/claim-match-segments";
 import {
   buildClaimAnchors,
+  claimAnswerMoment,
   nearestAnchorIndex,
   nextUnansweredAnchor,
 } from "@/lib/claim-match-anchors";
@@ -308,6 +310,7 @@ export default function ClaimMatchPage() {
   const params = useParams<{ id?: string }>();
   const [, setLocation] = useLocation();
   const { user, isLoading: authLoading, isGuest } = useAuth();
+  const { t } = useTranslation();
   const isDemo = !params.id || params.id === "demo";
   const recordingId = isDemo ? 0 : Number(params.id);
   const queryKey = useMemo(() => getGetClaimMatchQueryKey(recordingId), [recordingId]);
@@ -664,7 +667,11 @@ export default function ClaimMatchPage() {
     snappedAnchorRef.current = currentAnchor.id;
     const anchorFrame = trackingSecondsToFrame(currentAnchor.momentSeconds, bundle);
     const detectionFrame = nearestDetectionFrame(bundle, bundle.tracks, anchorFrame);
-    if (detectionFrame !== null) seekTracking(frameToTrackingSeconds(detectionFrame, bundle));
+    if (detectionFrame !== null) {
+      seekTracking(frameToTrackingSeconds(detectionFrame, bundle));
+    } else {
+      seekTracking(currentAnchor.momentSeconds);
+    }
   }, [bundle, currentAnchor, seekTracking, stage]);
 
   const candidates = useMemo<Candidate[]>(() => {
@@ -710,6 +717,7 @@ export default function ClaimMatchPage() {
       .map((item) => item.momentSeconds);
     const savedAnchorIndex = nextUnansweredAnchor(claimAnchors, savedAnchorMoments);
     const unresolvedIndex = (response.progress.unresolvedMoments ?? [])
+      .concat(response.progress.conflictMoments ?? [])
       .map((moment) => nearestAnchorIndex(claimAnchors, moment))
       .find((index) => index >= 0) ?? -1;
     const reviewIndex = savedAnchorIndex >= 0 ? savedAnchorIndex : unresolvedIndex >= 0 ? unresolvedIndex : 0;
@@ -810,10 +818,15 @@ export default function ClaimMatchPage() {
     chosenTrackId: string = EMPTY_ANCHOR_TRACK,
   ) => {
     if (!anchorMode || !currentAnchor || !bundle) return;
-    // The answer belongs to the frame the player actually saw. candidateFrame
-    // is the nearest usable detection frame, so exports and later matching do
-    // not drift from the nominal anchor timestamp.
-    const momentSeconds = frameToTrackingSeconds(candidateFrame, bundle);
+    // Prefer a nearby usable detection so exports stay aligned with what was
+    // shown, but never let a missing detection move the answer to frame zero
+    // or another unrelated part of the match.
+    const anchorFrame = trackingSecondsToFrame(currentAnchor.momentSeconds, bundle);
+    const detectionFrame = nearestDetectionFrame(bundle, bundle.tracks, anchorFrame);
+    const nearestDetectionSeconds = detectionFrame === null
+      ? null
+      : frameToTrackingSeconds(detectionFrame, bundle);
+    const momentSeconds = claimAnswerMoment(currentAnchor.momentSeconds, nearestDetectionSeconds);
     const answerMethod = `anchor-${answer}`;
     const nextIndex = nextUnansweredAnchor(
       claimAnchors,
@@ -872,6 +885,7 @@ export default function ClaimMatchPage() {
             .map((item) => item.momentSeconds) ?? [];
           const nextServerIndex = nextUnansweredAnchor(claimAnchors, latestMoments);
           const unresolvedIndex = (latest?.progress.unresolvedMoments ?? [])
+            .concat(latest?.progress.conflictMoments ?? [])
             .map((moment) => nearestAnchorIndex(claimAnchors, moment))
             .find((index) => index >= 0) ?? -1;
           const reviewIndex = nextServerIndex >= 0 ? nextServerIndex : unresolvedIndex;
@@ -1132,6 +1146,7 @@ export default function ClaimMatchPage() {
             answeredAnchorCount: 0,
             acceptedAnchorCount: 0,
             unresolvedMoments: [],
+            conflictMoments: [],
             clipsUnlocked: 0,
             correctionCount: 0,
             completed: false,
@@ -1215,8 +1230,17 @@ export default function ClaimMatchPage() {
         )}
         {(serverProgress?.conflictMoments?.length ?? 0) > 0 && (
           <div className="claim-panel claim-panel-warning" role="alert">
-            <b>Some answers point to a different player.</b>
-            <span>Review the highlighted moments and choose the same person throughout the match.</span>
+            {serverProgress.completionReason === "identity-unresolved" ? (
+              <>
+                <b>{t.fieldDetail.claimYourMatch.identityUnresolvedTitle}</b>
+                <span>{t.fieldDetail.claimYourMatch.identityUnresolvedDesc}</span>
+              </>
+            ) : (
+              <>
+                <b>Some answers point to a different player.</b>
+                <span>Review the highlighted moments and choose the same person throughout the match.</span>
+              </>
+            )}
           </div>
         )}
         {isDemo && (

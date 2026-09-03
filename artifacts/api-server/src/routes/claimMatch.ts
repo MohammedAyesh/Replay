@@ -1514,11 +1514,22 @@ export type ResolvedClaimIdentity = {
   conflictMoments: number[];
 };
 
-export function resolveClaimIdentity(
+type IdentityCandidateSupport = {
+  count: number;
+  latestCreatedAt: number;
+  resolutionMethod: ClaimIdentityResolutionMethod;
+};
+
+type ClaimIdentityEvidence = {
+  usableAnswers: typeof claimMatchCorrectionsTable.$inferSelect[];
+  rankedCandidates: Array<[string, IdentityCandidateSupport]>;
+};
+
+function claimIdentityEvidence(
   manifest: TrackingManifest,
   segments: ClaimStateSegment[],
   accepted: typeof claimMatchCorrectionsTable.$inferSelect[],
-): ResolvedClaimIdentity | null {
+): ClaimIdentityEvidence {
   const knownTrackIds = new Set(segments.flatMap((segment) => segment.tracks.map((track) => track.id)));
   const identities = usableIdentityMap(manifest);
   for (const identity of identities) {
@@ -1528,13 +1539,7 @@ export function resolveClaimIdentity(
     knownTrackIds.has(row.chosenTrackId)
     || trackIntervalsForId(manifest, segments, row.chosenTrackId).length > 0,
   );
-  if (usableAnswers.length === 0) return null;
-
-  const candidates = new Map<string, {
-    count: number;
-    latestCreatedAt: number;
-    resolutionMethod: ClaimIdentityResolutionMethod;
-  }>();
+  const candidates = new Map<string, IdentityCandidateSupport>();
   for (const row of usableAnswers) {
     const resolved = resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds);
     const previous = candidates.get(resolved.personId);
@@ -1544,14 +1549,33 @@ export function resolveClaimIdentity(
       resolutionMethod: previous?.resolutionMethod ?? resolved.resolutionMethod,
     });
   }
-  // A tie is not evidence. Do not let deterministic ordering turn equal
-  // support into a person assignment; the user must answer again.
   const rankedCandidates = [...candidates.entries()]
     .sort(([personA, a], [personB, b]) =>
       b.count - a.count
       || b.latestCreatedAt - a.latestCreatedAt
       || personA.localeCompare(personB),
     );
+  return { usableAnswers, rankedCandidates };
+}
+
+function ambiguousClaimMoments(evidence: ClaimIdentityEvidence): number[] {
+  const winner = evidence.rankedCandidates[0];
+  if (!winner || evidence.rankedCandidates[1]?.[1].count !== winner[1].count) return [];
+  return [...new Set(evidence.usableAnswers.map((row) => row.momentSeconds))]
+    .sort((a, b) => a - b)
+    .slice(0, 50);
+}
+
+export function resolveClaimIdentity(
+  manifest: TrackingManifest,
+  segments: ClaimStateSegment[],
+  accepted: typeof claimMatchCorrectionsTable.$inferSelect[],
+): ResolvedClaimIdentity | null {
+  const { usableAnswers, rankedCandidates } = claimIdentityEvidence(manifest, segments, accepted);
+  if (usableAnswers.length === 0) return null;
+
+  // A tie is not evidence. Do not let deterministic ordering turn equal
+  // support into a person assignment; the user must answer again.
   const winner = rankedCandidates[0];
   if (!winner || rankedCandidates[1]?.[1].count === winner[1].count) return null;
 
@@ -2065,6 +2089,7 @@ export function deriveClaimState(
   const anchorAnswers = latestAnchorAnswers(corrections);
   const nonAnchorAnswers = active.filter((row) => !row.answerMethod.startsWith("anchor-"));
   const accepted = [...nonAnchorAnswers, ...anchorAnswers].filter(isAcceptedClaimAnswer);
+  const identityEvidence = claimIdentityEvidence(manifest, segments, accepted);
   const identityResolution = resolveClaimIdentity(manifest, segments, accepted);
   const resolvedPersonId = identityResolution?.personId ?? null;
   const acceptedForPerson = accepted.filter((row) =>
@@ -2110,7 +2135,7 @@ export function deriveClaimState(
     .filter((row) => row.answerMethod === "anchor-no" || row.answerMethod === "anchor-skip")
     .map((row) => row.momentSeconds)
     .sort((a, b) => a - b);
-  const conflictMoments = identityResolution?.conflictMoments ?? [];
+  const conflictMoments = identityResolution?.conflictMoments ?? ambiguousClaimMoments(identityEvidence);
   const requiredAnchors = manifest.duration < 120 ? 1 : 3;
   const requiredCoverage = manifest.duration < 120 ? 55 : 60;
   const completed = identityResolution !== null
@@ -2166,10 +2191,10 @@ export function deriveClaimState(
     clipsUnlocked: earnedClips.length,
     correctionCount: active.length,
     completed,
-    completionReason: conflictMoments.length > 0
-      ? "identity-conflicts"
-      : identityResolution === null && accepted.length > 0
+    completionReason: identityResolution === null && accepted.length > 0
         ? "identity-unresolved"
+        : conflictMoments.length > 0
+          ? "identity-conflicts"
         : completed ? "coverage-threshold" : "keep-confirming",
     earnedClips,
     playerStats,
@@ -2214,9 +2239,11 @@ function progressWithDerived(
     correctionCount: derived.correctionCount,
     completed,
     earnedClips,
-    completionReason: derived.conflictMoments.length > 0
-      ? "identity-conflicts"
-      : completed ? "coverage-threshold" : derived.completionReason,
+    completionReason: derived.identityResolution === null
+      ? derived.completionReason
+      : derived.conflictMoments.length > 0
+        ? "identity-conflicts"
+        : completed ? "coverage-threshold" : derived.completionReason,
     playerStats: derived.playerStats,
   };
 }
@@ -2892,9 +2919,11 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const responseDerived = {
     ...derived,
     completed: isCompleted,
-    completionReason: derived.conflictMoments.length > 0
-      ? "identity-conflicts"
-      : isCompleted ? "coverage-threshold" : derived.completionReason,
+    completionReason: derived.identityResolution === null
+      ? derived.completionReason
+      : derived.conflictMoments.length > 0
+        ? "identity-conflicts"
+        : isCompleted ? "coverage-threshold" : derived.completionReason,
     earnedClips,
   };
   const [existingProgress] = await db
