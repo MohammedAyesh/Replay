@@ -1319,6 +1319,27 @@ paths:
         "404":
           description: Not found
 
+  /users/{id}/stats:
+    get:
+      operationId: getPublicPlayerStats
+      tags: [users]
+      summary: Get confirmed cross-match player stats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Confirmed public player stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicPlayerStats"
+        "404":
+          description: Player not found
+
   /users/{id}/follow:
     post:
       operationId: followUser
@@ -1672,6 +1693,99 @@ components:
           type: integer
         isFollowing:
           type: boolean
+
+    PublicPlayerStats:
+      type: object
+      required: [matches, totals, excludedClaimCount]
+      properties:
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicPlayerMatchStats"
+        totals:
+          $ref: "#/components/schemas/PublicPlayerStatsTotals"
+        excludedClaimCount:
+          type: integer
+          minimum: 0
+          description: Claims awaiting review because they are disputed or need resolution.
+
+    PublicPlayerStatsTotals:
+      type: object
+      required: [totalMatchesClaimed, totalMinutesPlayed, totalDistanceMetres, totalHumanVouchedSeconds, totalInferredSeconds, totalOffPitchSeconds]
+      properties:
+        totalMatchesClaimed:
+          type: integer
+          minimum: 0
+        totalMinutesPlayed:
+          type: number
+          minimum: 0
+        totalDistanceMetres:
+          type: ["number", "null"]
+          minimum: 0
+          description: Sum of calibrated distances, or null when any claimed recording has no pitch model.
+        totalHumanVouchedSeconds:
+          type: number
+          minimum: 0
+        totalInferredSeconds:
+          type: number
+          minimum: 0
+        totalOffPitchSeconds:
+          type: number
+          minimum: 0
+
+    PublicPlayerMatchStats:
+      type: object
+      required: [recordingId, title, date, minutesPlayed, distanceMetres, humanVouchedSeconds, inferredSeconds, offPitchSeconds, heatmap]
+      properties:
+        recordingId:
+          type: integer
+        title:
+          type: string
+        date:
+          type: string
+        minutesPlayed:
+          type: number
+          minimum: 0
+        distanceMetres:
+          type: ["number", "null"]
+          minimum: 0
+          description: Calibrated distance, or null when this recording has no pitch model.
+        humanVouchedSeconds:
+          type: number
+          minimum: 0
+        inferredSeconds:
+          type: number
+          minimum: 0
+        offPitchSeconds:
+          type: number
+          minimum: 0
+        heatmap:
+          $ref: "#/components/schemas/PublicPlayerHeatmap"
+
+    PublicPlayerHeatmap:
+      type: object
+      required: [coordinateSpace, cells]
+      properties:
+        coordinateSpace:
+          type: string
+          enum: [pitch, camera]
+        cells:
+          type: array
+          items:
+            type: object
+            required: [x, y, weight]
+            properties:
+              x:
+                type: number
+                minimum: 0
+                maximum: 1
+              y:
+                type: number
+                minimum: 0
+                maximum: 1
+              weight:
+                type: number
+                minimum: 0
 
     FollowResult:
       type: object

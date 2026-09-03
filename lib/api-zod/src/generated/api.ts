@@ -2114,6 +2114,78 @@ export const GetUserProfileResponse = zod.object({
 
 
 /**
+ * @summary Get confirmed cross-match player stats
+ */
+export const GetPublicPlayerStatsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const getPublicPlayerStatsResponseMatchesItemMinutesPlayedMin = 0;
+
+export const getPublicPlayerStatsResponseMatchesItemDistanceMetresMin = 0;
+
+export const getPublicPlayerStatsResponseMatchesItemHumanVouchedSecondsMin = 0;
+
+export const getPublicPlayerStatsResponseMatchesItemInferredSecondsMin = 0;
+
+export const getPublicPlayerStatsResponseMatchesItemOffPitchSecondsMin = 0;
+
+export const getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemXMin = 0;
+export const getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemXMax = 1;
+
+export const getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemYMin = 0;
+export const getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemYMax = 1;
+
+export const getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemWeightMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsTotalMatchesClaimedMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsTotalMinutesPlayedMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsTotalDistanceMetresMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsTotalHumanVouchedSecondsMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsTotalInferredSecondsMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsTotalOffPitchSecondsMin = 0;
+
+export const getPublicPlayerStatsResponseExcludedClaimCountMin = 0;
+
+
+
+export const GetPublicPlayerStatsResponse = zod.object({
+  "matches": zod.array(zod.object({
+  "recordingId": zod.number(),
+  "title": zod.string(),
+  "date": zod.string(),
+  "minutesPlayed": zod.number().min(getPublicPlayerStatsResponseMatchesItemMinutesPlayedMin),
+  "distanceMetres": zod.number().min(getPublicPlayerStatsResponseMatchesItemDistanceMetresMin).nullable().describe('Calibrated distance, or null when this recording has no pitch model.'),
+  "humanVouchedSeconds": zod.number().min(getPublicPlayerStatsResponseMatchesItemHumanVouchedSecondsMin),
+  "inferredSeconds": zod.number().min(getPublicPlayerStatsResponseMatchesItemInferredSecondsMin),
+  "offPitchSeconds": zod.number().min(getPublicPlayerStatsResponseMatchesItemOffPitchSecondsMin),
+  "heatmap": zod.object({
+  "coordinateSpace": zod.enum(['pitch', 'camera']),
+  "cells": zod.array(zod.object({
+  "x": zod.number().min(getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemXMin).max(getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemXMax),
+  "y": zod.number().min(getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemYMin).max(getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemYMax),
+  "weight": zod.number().min(getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemWeightMin)
+}))
+})
+})),
+  "totals": zod.object({
+  "totalMatchesClaimed": zod.number().min(getPublicPlayerStatsResponseTotalsTotalMatchesClaimedMin),
+  "totalMinutesPlayed": zod.number().min(getPublicPlayerStatsResponseTotalsTotalMinutesPlayedMin),
+  "totalDistanceMetres": zod.number().min(getPublicPlayerStatsResponseTotalsTotalDistanceMetresMin).nullable().describe('Sum of calibrated distances, or null when any claimed recording has no pitch model.'),
+  "totalHumanVouchedSeconds": zod.number().min(getPublicPlayerStatsResponseTotalsTotalHumanVouchedSecondsMin),
+  "totalInferredSeconds": zod.number().min(getPublicPlayerStatsResponseTotalsTotalInferredSecondsMin),
+  "totalOffPitchSeconds": zod.number().min(getPublicPlayerStatsResponseTotalsTotalOffPitchSecondsMin)
+}),
+  "excludedClaimCount": zod.number().min(getPublicPlayerStatsResponseExcludedClaimCountMin).describe('Claims awaiting review because they are disputed or need resolution.')
+})
+
+
+/**
  * @summary Follow a user
  */
 export const FollowUserParams = zod.object({

@@ -64,6 +64,7 @@ import type {
   MediaConsentInput,
   PatchAdInput,
   ProfileInput,
+  PublicPlayerStats,
   PublicProfile,
   Recording,
   ReplaceTrackingBundleBodyTwo,
@@ -4509,6 +4510,83 @@ export function useGetUserProfile<TData = Awaited<ReturnType<typeof getUserProfi
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetUserProfileQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPublicPlayerStatsUrl = (id: number,) => {
+
+
+
+
+  return `/api/users/${id}/stats`
+}
+
+/**
+ * @summary Get confirmed cross-match player stats
+ */
+export const getPublicPlayerStats = async (id: number, options?: RequestInit): Promise<PublicPlayerStats> => {
+
+  return customFetch<PublicPlayerStats>(getGetPublicPlayerStatsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPublicPlayerStatsQueryKey = (id: number,) => {
+    return [
+    `/api/users/${id}/stats`
+    ] as const;
+    }
+
+
+export const getGetPublicPlayerStatsQueryOptions = <TData = Awaited<ReturnType<typeof getPublicPlayerStats>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicPlayerStats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPublicPlayerStatsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicPlayerStats>>> = ({ signal }) => getPublicPlayerStats(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicPlayerStats>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPublicPlayerStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicPlayerStats>>>
+export type GetPublicPlayerStatsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get confirmed cross-match player stats
+ */
+
+export function useGetPublicPlayerStats<TData = Awaited<ReturnType<typeof getPublicPlayerStats>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicPlayerStats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPublicPlayerStatsQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

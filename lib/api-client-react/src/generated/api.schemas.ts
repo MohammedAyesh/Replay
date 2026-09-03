@@ -161,6 +161,84 @@ export interface PublicProfile {
   isFollowing: boolean;
 }
 
+export type PublicPlayerHeatmapCoordinateSpace = typeof PublicPlayerHeatmapCoordinateSpace[keyof typeof PublicPlayerHeatmapCoordinateSpace];
+
+
+export const PublicPlayerHeatmapCoordinateSpace = {
+  pitch: 'pitch',
+  camera: 'camera',
+} as const;
+
+export type PublicPlayerHeatmapCellsItem = {
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  x: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  y: number;
+  /** @minimum 0 */
+  weight: number;
+};
+
+export interface PublicPlayerHeatmap {
+  coordinateSpace: PublicPlayerHeatmapCoordinateSpace;
+  cells: PublicPlayerHeatmapCellsItem[];
+}
+
+export interface PublicPlayerMatchStats {
+  recordingId: number;
+  title: string;
+  date: string;
+  /** @minimum 0 */
+  minutesPlayed: number;
+  /**
+     * Calibrated distance, or null when this recording has no pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  distanceMetres: number | null;
+  /** @minimum 0 */
+  humanVouchedSeconds: number;
+  /** @minimum 0 */
+  inferredSeconds: number;
+  /** @minimum 0 */
+  offPitchSeconds: number;
+  heatmap: PublicPlayerHeatmap;
+}
+
+export interface PublicPlayerStatsTotals {
+  /** @minimum 0 */
+  totalMatchesClaimed: number;
+  /** @minimum 0 */
+  totalMinutesPlayed: number;
+  /**
+     * Sum of calibrated distances, or null when any claimed recording has no pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  totalDistanceMetres: number | null;
+  /** @minimum 0 */
+  totalHumanVouchedSeconds: number;
+  /** @minimum 0 */
+  totalInferredSeconds: number;
+  /** @minimum 0 */
+  totalOffPitchSeconds: number;
+}
+
+export interface PublicPlayerStats {
+  matches: PublicPlayerMatchStats[];
+  totals: PublicPlayerStatsTotals;
+  /**
+     * Claims awaiting review because they are disputed or need resolution.
+     * @minimum 0
+     */
+  excludedClaimCount: number;
+}
+
 export interface FollowResult {
   following: boolean;
   followerCount: number;

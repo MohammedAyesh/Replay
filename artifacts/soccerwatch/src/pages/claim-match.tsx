@@ -1628,6 +1628,16 @@ export default function ClaimMatchPage() {
              ) : <p className="claim-muted">Every reviewed moment is resolved. You can return to the match whenever you want.</p>}
              <div className="earned-count"><Sparkles size={18} /><b>{clipsUnlocked} earned clips</b><span>ready in My Clips</span></div>
             <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-done-view-clips" onClick={() => setLocation("/my-clips")}>View your clips <ChevronRight size={17} /></button>
+            {user?.id && (
+              <button
+                type="button"
+                className="claim-button claim-button-secondary claim-button-wide"
+                data-testid="button-done-view-stats"
+                onClick={() => setLocation(`/players/${user.id}`)}
+              >
+                {t.profile.viewStats} <ChevronRight size={17} />
+              </button>
+            )}
              <button type="button" className="claim-text-button" data-testid="button-done-back-match" onClick={() => setLocation("/home")}>Return to your matches <ArrowLeft size={14} /></button>
           </div>
         )}
