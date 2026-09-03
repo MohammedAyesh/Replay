@@ -111,23 +111,67 @@ function frameContaining(
 function useBunnyHls(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   url: string | undefined,
+  startVideoTime: number,
   onCacheUpdate: (update: VideoCacheUpdate) => void,
 ) {
   const [videoError, setVideoError] = useState("");
+  const startVideoTimeRef = useRef(startVideoTime);
+  startVideoTimeRef.current = startVideoTime;
   useEffect(() => {
     const video = videoRef.current;
     setVideoError("");
     if (!video || !url) return;
     let hls: Hls | null = null;
     let retryTimer: number | null = null;
+    let decodeTimer: number | null = null;
     let networkRetries = 0;
+    let mediaRecoveryAttempted = false;
+    let nativeMetadataHandler: (() => void) | null = null;
     const unsubscribeCache = subscribeToVideoCache(onCacheUpdate);
+    const clearDecodeTimer = () => {
+      if (decodeTimer) window.clearTimeout(decodeTimer);
+      decodeTimer = null;
+    };
+    const confirmDecodedFrame = () => {
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) return false;
+      clearDecodeTimer();
+      mediaRecoveryAttempted = false;
+      setVideoError("");
+      return true;
+    };
+    const watchForDecodedFrame = () => {
+      clearDecodeTimer();
+      decodeTimer = window.setTimeout(() => {
+        if (confirmDecodedFrame() || !hls) return;
+        if (!mediaRecoveryAttempted) {
+          mediaRecoveryAttempted = true;
+          setVideoError("Recovering the video picture…");
+          hls.recoverMediaError();
+          hls.startLoad(video.currentTime || startVideoTimeRef.current);
+          watchForDecodedFrame();
+          return;
+        }
+        setVideoError("Video data loaded, but this browser could not decode the picture. Reload the page to try again.");
+      }, 4_000);
+    };
     const startPlayback = () => {
       if (url.includes(".m3u8") && Hls.isSupported()) {
-        hls = new Hls({ enableWorker: false, maxBufferLength: 30, backBufferLength: 60 });
-        hls.loadSource(url);
+        hls = new Hls({
+          enableWorker: false,
+          maxBufferLength: 30,
+          backBufferLength: 60,
+          startPosition: Math.max(0, startVideoTimeRef.current),
+        });
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(url));
         hls.attachMedia(video);
-        hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setVideoError(""); });
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          const target = Math.max(0, startVideoTimeRef.current);
+          if (Math.abs(video.currentTime - target) > 0.25) video.currentTime = target;
+        });
+        hls.on(Hls.Events.FRAG_BUFFERED, () => {
+          networkRetries = 0;
+          if (!confirmDecodedFrame()) watchForDecodedFrame();
+        });
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (!data.fatal || !hls) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -143,6 +187,10 @@ function useBunnyHls(
         });
       } else {
         video.src = url;
+        nativeMetadataHandler = () => {
+          video.currentTime = Math.max(0, startVideoTimeRef.current);
+        };
+        video.addEventListener("loadedmetadata", nativeMetadataHandler, { once: true });
         video.onerror = () => setVideoError("The recording could not be played.");
       }
     };
@@ -150,6 +198,8 @@ function useBunnyHls(
     return () => {
       unsubscribeCache();
       if (retryTimer) window.clearTimeout(retryTimer);
+      clearDecodeTimer();
+      if (nativeMetadataHandler) video.removeEventListener("loadedmetadata", nativeMetadataHandler);
       video.onerror = null;
       if (hls) hls.destroy();
       video.removeAttribute("src");
@@ -246,6 +296,7 @@ export function ClaimStage({
   const minimapFrameRef = useRef<HTMLDivElement | null>(null);
 
   const playbackUrl = browserSafeVideoUrl(videoUrl);
+  const startVideoTime = Math.max(0, currentTime + (bundle.videoStartSeconds || 0));
   const [videoCachePhase, setVideoCachePhase] = useState<"idle" | "preparing" | "ready" | "caching" | "cached" | "unavailable">(
     playbackUrl?.includes(".m3u8") ? "idle" : "ready",
   );
@@ -262,7 +313,7 @@ export function ClaimStage({
       if (update.detail) setCacheError(update.detail);
     }
   }, []);
-  const videoError = useBunnyHls(videoRef, playbackUrl, handleCacheUpdate);
+  const videoError = useBunnyHls(videoRef, playbackUrl, startVideoTime, handleCacheUpdate);
   useEffect(() => {
     cacheStartedForRef.current = null;
     setCachedResourceCount(0);

@@ -26,3 +26,15 @@ For claim-match resume, keep the saved tracking position separate from the live
 playhead and apply it once per recording/media source after the video is ready.
 Do not put an unguarded `video.currentTime = currentTime` effect on the live
 playhead, or normal playback and manual seeks will be repeatedly overridden.
+
+When tracking frame zero starts partway through a long recording, initialize
+HLS.js with that absolute video time as `startPosition`, register
+`MEDIA_ATTACHED` before attaching the element, and load the source from that
+event. Do not rely only on a later React effect to jump from segment zero.
+
+**Why:** Loading from the start of a long recording can leave the Claim player
+with buffered bytes and overlays but no frame from the tracked window.
+
+**How to apply:** Convert the initial tracking position to absolute video time
+before creating HLS.js; still keep the loaded-metadata seek as a guarded
+fallback.
