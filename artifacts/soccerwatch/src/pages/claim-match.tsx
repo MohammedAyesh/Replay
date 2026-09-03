@@ -1551,11 +1551,10 @@ export default function ClaimMatchPage() {
         {stage === "find" && (
           <div className="claim-panel claim-panel-find" data-testid="panel-find-yourself">
             <span className="claim-context"><ScanSearch size={16} /> IDENTITY CHECKPOINTS</span>
-            <h2>Find your moments</h2>
-            <p>We’ll show you a few clear moments from different parts of the match. Pick yourself when you see you — no need to follow one continuous trail.</p>
-            <div className="claim-prompt-card"><div className="prompt-icon"><LocateFixed size={19} /></div><div><b>{claimAnchors.length} moments to check</b><span>Your answers build coverage across the match.</span></div></div>
-            <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-start-following" onClick={handlePrimaryAction} disabled={!claimAnchors.length}>Show the first moment <ChevronRight size={17} /></button>
-            <button type="button" className="claim-text-button" data-testid="button-skip-find" onClick={startAnchorReview}>Start identity review <ArrowLeft size={14} /></button>
+            <h2>First, identify yourself</h2>
+            <p>Before we calculate your moments, we’ll show you clear checkpoints from different parts of the match. Choose the same player each time you see yourself.</p>
+            <div className="claim-prompt-card"><div className="prompt-icon"><LocateFixed size={19} /></div><div><b>{claimAnchors.length} identity checks</b><span>Your choices confirm your player before coverage and clips are calculated.</span></div></div>
+            <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-start-following" onClick={handlePrimaryAction} disabled={!claimAnchors.length}>Start identity check <ChevronRight size={17} /></button>
           </div>
         )}
         {stage === "picker" && (
