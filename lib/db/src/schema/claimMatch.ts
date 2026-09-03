@@ -23,6 +23,18 @@ export type ClaimEarnedClip = {
   userClipId?: number;
 };
 
+export type ClaimMatchComputedPlayerStats = {
+  minutesPlayed: number;
+  distanceMetres: number | null;
+  humanVouchedSeconds: number;
+  inferredSeconds: number;
+  offPitchSeconds: number;
+  heatmap: {
+    coordinateSpace: "pitch" | "camera";
+    cells: Array<{ x: number; y: number; weight: number }>;
+  };
+};
+
 export type TrackingSegmentPayload = {
   version: number;
   segmentIndex: number;
@@ -234,6 +246,7 @@ export const claimMatchCorrectionsTable = pgTable(
     questionCount: integer("question_count").notNull().default(0),
     undone: boolean("undone").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     clientUnique: uniqueIndex("claim_match_corrections_client_unique").on(
@@ -326,6 +339,9 @@ export const claimMatchIdentityBindingsTable = pgTable(
         toFrame: number;
       }>>()
       .default([]),
+    computedStats: jsonb("computed_stats").$type<ClaimMatchComputedPlayerStats>(),
+    statsComputedAt: timestamp("stats_computed_at", { withTimezone: true }),
+    statsInputFingerprint: text("stats_input_fingerprint"),
     resolutionMethod: text("resolution_method").notNull(),
     supportCount: integer("support_count").notNull().default(0),
     acceptedAnswerCount: integer("accepted_answer_count").notNull().default(0),

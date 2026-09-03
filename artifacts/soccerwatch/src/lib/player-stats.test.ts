@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { aggregatePitchHeatmaps, formatDistance, shouldShowPerMatchHeatmaps } from "./player-stats";
+import {
+  aggregatePitchHeatmaps,
+  formatDistance,
+  shouldShowEmptyStatsCta,
+  shouldShowPerMatchHeatmaps,
+} from "./player-stats";
 
 const pitch = (weight: number) => ({
   coordinateSpace: "pitch" as const,
@@ -27,5 +32,11 @@ describe("player stats heatmaps", () => {
   it("renders unavailable instead of zero when distance has no pitch model", () => {
     expect(formatDistance(null, "Unavailable")).toBe("Unavailable");
     expect(formatDistance(0, "Unavailable")).toBe("0 m");
+  });
+
+  it("shows the empty-state claim CTA only to the profile owner", () => {
+    expect(shouldShowEmptyStatsCta(18, 18, false)).toBe(true);
+    expect(shouldShowEmptyStatsCta(18, 23, false)).toBe(false);
+    expect(shouldShowEmptyStatsCta(18, 18, true)).toBe(false);
   });
 });

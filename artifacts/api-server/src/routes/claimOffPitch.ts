@@ -323,7 +323,7 @@ router.post("/recordings/:id/claim-match/off-pitch", async (req, res): Promise<v
       for (const correction of correctionConflicts) {
         await tx
           .update(claimMatchCorrectionsTable)
-          .set({ undone: true })
+          .set({ undone: true, updatedAt: new Date() })
           .where(and(
             eq(claimMatchCorrectionsTable.id, correction.id),
             eq(claimMatchCorrectionsTable.userId, userId),

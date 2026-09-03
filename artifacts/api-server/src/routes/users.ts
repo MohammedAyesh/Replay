@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and, asc, desc, inArray, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import {
   db,
   usersTable,
@@ -14,6 +15,7 @@ import {
   claimMatchOffPitchSpansTable,
   type TrackingManifest,
   type TrackingSegmentPayload,
+  type ClaimMatchComputedPlayerStats,
 } from "@workspace/db";
 import { GetPublicPlayerStatsResponse } from "@workspace/api-zod";
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
@@ -106,6 +108,61 @@ function roundStat(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function timestampForFingerprint(value: Date | string | null | undefined): string {
+  if (value instanceof Date) return value.toISOString();
+  return typeof value === "string" ? value : "";
+}
+
+async function publicStatsInputFingerprint(
+  userId: number,
+  recordingId: number,
+  bundleFingerprint: string,
+): Promise<string> {
+  const [correctionMeta, offPitchMeta] = await Promise.all([
+    db
+      .select({
+        count: sql<number>`count(*)`,
+        latestAt: sql<Date | null>`max(${claimMatchCorrectionsTable.updatedAt})`,
+      })
+      .from(claimMatchCorrectionsTable)
+      .where(and(
+        eq(claimMatchCorrectionsTable.userId, userId),
+        eq(claimMatchCorrectionsTable.recordingId, recordingId),
+      )),
+    db
+      .select({
+        count: sql<number>`count(*)`,
+        latestAt: sql<Date | null>`max(${claimMatchOffPitchSpansTable.createdAt})`,
+      })
+      .from(claimMatchOffPitchSpansTable)
+      .where(and(
+        eq(claimMatchOffPitchSpansTable.userId, userId),
+        eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
+      )),
+  ]);
+  const input = [
+    bundleFingerprint,
+    Number(correctionMeta[0]?.count ?? 0),
+    timestampForFingerprint(correctionMeta[0]?.latestAt),
+    Number(offPitchMeta[0]?.count ?? 0),
+    timestampForFingerprint(offPitchMeta[0]?.latestAt),
+  ];
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+function isComputedPlayerStats(value: unknown): value is ClaimMatchComputedPlayerStats {
+  if (!value || typeof value !== "object") return false;
+  const stats = value as Partial<ClaimMatchComputedPlayerStats>;
+  return typeof stats.minutesPlayed === "number"
+    && (stats.distanceMetres === null || typeof stats.distanceMetres === "number")
+    && typeof stats.humanVouchedSeconds === "number"
+    && typeof stats.inferredSeconds === "number"
+    && typeof stats.offPitchSeconds === "number"
+    && !!stats.heatmap
+    && (stats.heatmap.coordinateSpace === "pitch" || stats.heatmap.coordinateSpace === "camera")
+    && Array.isArray(stats.heatmap.cells);
+}
+
 router.get("/users/:id/stats", async (req, res): Promise<void> => {
   const targetId = parseInt(req.params.id, 10);
   if (isNaN(targetId)) {
@@ -172,47 +229,74 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
 
     if (!row?.bundle?.manifest || !(await isRecordingVisible(row.recording))) continue;
 
-    const [corrections, offPitchRows, fullSegments] = await Promise.all([
-      db
-        .select()
-        .from(claimMatchCorrectionsTable)
-        .where(and(
-          eq(claimMatchCorrectionsTable.userId, targetId),
-          eq(claimMatchCorrectionsTable.recordingId, binding.recordingId),
-        ))
-        .orderBy(desc(claimMatchCorrectionsTable.createdAt)),
-      db
-        .select()
-        .from(claimMatchOffPitchSpansTable)
-        .where(and(
-          eq(claimMatchOffPitchSpansTable.userId, targetId),
-          eq(claimMatchOffPitchSpansTable.recordingId, binding.recordingId),
-        )),
-      readFullBundleSegments(binding.trackingBundleId),
-    ]);
-
-    const manifest = row.bundle.manifest as TrackingManifest;
-    const stateSegments = manifest.summary?.segments?.length
-      ? manifest.summary.segments
-      : fullSegments;
-    const derived = deriveClaimState(
-      manifest,
-      stateSegments,
-      corrections,
-      fullSegments,
-      normaliseOffPitchSpans(offPitchRows, manifest.duration),
+    const bundleFingerprint = binding.bundleFingerprint || "legacy";
+    const inputFingerprint = await publicStatsInputFingerprint(
+      targetId,
+      binding.recordingId,
+      bundleFingerprint,
     );
+    let computedStats = binding.computedStats;
+    const hasFreshStats = binding.statsInputFingerprint === inputFingerprint
+      && isComputedPlayerStats(computedStats);
 
+    if (!hasFreshStats) {
+      const [corrections, offPitchRows, fullSegments] = await Promise.all([
+        db
+          .select()
+          .from(claimMatchCorrectionsTable)
+          .where(and(
+            eq(claimMatchCorrectionsTable.userId, targetId),
+            eq(claimMatchCorrectionsTable.recordingId, binding.recordingId),
+          ))
+          .orderBy(desc(claimMatchCorrectionsTable.createdAt)),
+        db
+          .select()
+          .from(claimMatchOffPitchSpansTable)
+          .where(and(
+            eq(claimMatchOffPitchSpansTable.userId, targetId),
+            eq(claimMatchOffPitchSpansTable.recordingId, binding.recordingId),
+          )),
+        readFullBundleSegments(binding.trackingBundleId),
+      ]);
+      const manifest = row.bundle.manifest as TrackingManifest;
+      const stateSegments = manifest.summary?.segments?.length
+        ? manifest.summary.segments
+        : fullSegments;
+      const derived = deriveClaimState(
+        manifest,
+        stateSegments,
+        corrections,
+        fullSegments,
+        normaliseOffPitchSpans(offPitchRows, manifest.duration),
+      );
+      computedStats = {
+        minutesPlayed: derived.playerStats.minutesPlayed,
+        distanceMetres: derived.playerStats.distanceMetres,
+        humanVouchedSeconds: roundStat(derived.humanVouchedSeconds),
+        inferredSeconds: roundStat(derived.inferredSeconds),
+        offPitchSeconds: roundStat(derived.offPitchSeconds),
+        heatmap: derived.playerStats.heatmap,
+      };
+      await db
+        .update(claimMatchIdentityBindingsTable)
+        .set({
+          computedStats,
+          statsComputedAt: new Date(),
+          statsInputFingerprint: inputFingerprint,
+        })
+        .where(eq(claimMatchIdentityBindingsTable.id, binding.id));
+    }
+    if (!isComputedPlayerStats(computedStats)) continue;
     matches.push({
       recordingId: binding.recordingId,
       title: row.fieldName ? `${row.fieldName} · ${row.recording.court}` : row.recording.court,
       date: row.recording.date,
-      minutesPlayed: derived.playerStats.minutesPlayed,
-      distanceMetres: derived.playerStats.distanceMetres,
-      humanVouchedSeconds: roundStat(derived.humanVouchedSeconds),
-      inferredSeconds: roundStat(derived.inferredSeconds),
-      offPitchSeconds: roundStat(derived.offPitchSeconds),
-      heatmap: derived.playerStats.heatmap,
+      minutesPlayed: computedStats.minutesPlayed,
+      distanceMetres: computedStats.distanceMetres,
+      humanVouchedSeconds: computedStats.humanVouchedSeconds,
+      inferredSeconds: computedStats.inferredSeconds,
+      offPitchSeconds: computedStats.offPitchSeconds,
+      heatmap: computedStats.heatmap,
     });
   }
 

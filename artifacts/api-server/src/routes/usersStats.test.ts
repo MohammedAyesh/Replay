@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 const segment = {
   version: 1,
@@ -47,6 +47,9 @@ import {
   recordingsTable,
   usersTable,
 } from "@workspace/db";
+import { readClaimSegment } from "../lib/claimMatchStorage";
+
+const readClaimSegmentMock = vi.mocked(readClaimSegment);
 
 let app: Express;
 let userId: number;
@@ -54,8 +57,10 @@ let emptyUserId: number;
 let fieldId: number;
 let recordingId: number;
 let disputedRecordingId: number;
+let invisibleRecordingId: number;
 let bundleId: number;
 let disputedBundleId: number;
+let invisibleBundleId: number;
 
 const manifest = {
   version: 1,
@@ -149,6 +154,17 @@ beforeAll(async () => {
   }).returning({ id: recordingsTable.id });
   disputedRecordingId = disputedRecording.id;
 
+  const [invisibleRecording] = await db.insert(recordingsTable).values({
+    fieldId,
+    court: "3",
+    date: "2026-09-04",
+    timeSlot: "12:00",
+    duration: "00:00:10",
+    videoUrl: "https://example.test/invisible.m3u8",
+    isVisible: true,
+  }).returning({ id: recordingsTable.id });
+  invisibleRecordingId = invisibleRecording.id;
+
   const [bundle] = await db.insert(recordingTrackingBundlesTable).values({
     recordingId,
     uploadedBy: userId,
@@ -161,6 +177,12 @@ beforeAll(async () => {
     manifest: { ...manifest, label: "disputed stats test" },
   }).returning({ id: recordingTrackingBundlesTable.id });
   disputedBundleId = disputedBundle.id;
+  const [invisibleBundle] = await db.insert(recordingTrackingBundlesTable).values({
+    recordingId: invisibleRecordingId,
+    uploadedBy: userId,
+    manifest: { ...manifest, label: "invisible stats test" },
+  }).returning({ id: recordingTrackingBundlesTable.id });
+  invisibleBundleId = invisibleBundle.id;
 
   await db.insert(recordingTrackingSegmentsTable).values({
     bundleId,
@@ -223,6 +245,30 @@ beforeAll(async () => {
     supportPercent: 100,
     state: "disputed",
   });
+  await db.insert(claimMatchIdentityBindingsTable).values({
+    userId,
+    recordingId: invisibleRecordingId,
+    personId: "invisible-player",
+    trackingBundleId: invisibleBundleId,
+    bundleFingerprint: "invisible-fingerprint",
+    personParts: ["invisible-player"],
+    vouchedFragments: [],
+    resolutionMethod: "track-fallback",
+    supportCount: 1,
+    acceptedAnswerCount: 1,
+    supportPercent: 100,
+    state: "confirmed",
+    computedStats: {
+      minutesPlayed: 99,
+      distanceMetres: 123,
+      humanVouchedSeconds: 99,
+      inferredSeconds: 0,
+      offPitchSeconds: 0,
+      heatmap: { coordinateSpace: "camera", cells: [] },
+    },
+    statsComputedAt: new Date(),
+    statsInputFingerprint: "already-cached",
+  });
 });
 
 afterAll(async () => {
@@ -232,8 +278,10 @@ afterAll(async () => {
   await db.delete(recordingTrackingSegmentsTable).where(eq(recordingTrackingSegmentsTable.bundleId, bundleId));
   await db.delete(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, bundleId));
   await db.delete(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, disputedBundleId));
+  await db.delete(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, invisibleBundleId));
   await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
   await db.delete(recordingsTable).where(eq(recordingsTable.id, disputedRecordingId));
+  await db.delete(recordingsTable).where(eq(recordingsTable.id, invisibleRecordingId));
   await db.delete(recordingSchedulesTable).where(eq(recordingSchedulesTable.fieldId, fieldId));
   await db.delete(usersTable).where(eq(usersTable.id, userId));
   await db.delete(usersTable).where(eq(usersTable.id, emptyUserId));
@@ -257,6 +305,80 @@ describe("public player stats", () => {
       offPitchSeconds: 5,
       heatmap: { coordinateSpace: "camera" },
     });
+    expect(response.body.matches.map((match: { recordingId: number }) => match.recordingId))
+      .not.toContain(invisibleRecordingId);
+  });
+
+  it("serves the second request from the binding cache without object-storage reads", async () => {
+    await db
+      .update(claimMatchIdentityBindingsTable)
+      .set({
+        computedStats: null,
+        statsComputedAt: null,
+        statsInputFingerprint: null,
+      })
+      .where(and(
+        eq(claimMatchIdentityBindingsTable.userId, userId),
+        eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+      ));
+    readClaimSegmentMock.mockClear();
+    const first = await request(app).get(`/api/users/${userId}/stats`);
+    const readsAfterFirst = readClaimSegmentMock.mock.calls.length;
+    const second = await request(app).get(`/api/users/${userId}/stats`);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(readsAfterFirst).toBeGreaterThan(0);
+    expect(readClaimSegmentMock).toHaveBeenCalledTimes(readsAfterFirst);
+    expect(second.body).toEqual(first.body);
+  });
+
+  it("recomputes after an off-pitch period changes the fingerprint", async () => {
+    const before = await request(app).get(`/api/users/${userId}/stats`);
+    const [visibleSpan] = await db
+      .select()
+      .from(claimMatchOffPitchSpansTable)
+      .where(eq(claimMatchOffPitchSpansTable.recordingId, recordingId));
+    await db.insert(claimMatchOffPitchSpansTable).values({
+      userId,
+      recordingId,
+      clientId: "stats-off-pitch-extra",
+      fromSeconds: 5,
+      toSeconds: 7,
+    });
+    const after = await request(app).get(`/api/users/${userId}/stats`);
+
+    expect(after.body.matches[0].minutesPlayed).toBeLessThan(before.body.matches[0].minutesPlayed);
+    expect(after.body.matches[0].offPitchSeconds).toBe(7);
+    expect(visibleSpan).toBeDefined();
+  });
+
+  it("recomputes after a correction is undone", async () => {
+    await db
+      .delete(claimMatchOffPitchSpansTable)
+      .where(and(
+        eq(claimMatchOffPitchSpansTable.userId, userId),
+        eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
+        eq(claimMatchOffPitchSpansTable.clientId, "stats-off-pitch-extra"),
+      ));
+    await db
+      .update(claimMatchCorrectionsTable)
+      .set({ undone: false, updatedAt: new Date() })
+      .where(eq(claimMatchCorrectionsTable.clientId, "stats-answer"));
+    const before = await request(app).get(`/api/users/${userId}/stats`);
+    const [correction] = await db
+      .select()
+      .from(claimMatchCorrectionsTable)
+      .where(eq(claimMatchCorrectionsTable.clientId, "stats-answer"));
+    await db
+      .update(claimMatchCorrectionsTable)
+      .set({ undone: true, updatedAt: new Date() })
+      .where(eq(claimMatchCorrectionsTable.id, correction.id));
+    const after = await request(app).get(`/api/users/${userId}/stats`);
+
+    expect(before.body.matches[0].minutesPlayed).toBeGreaterThan(0);
+    expect(after.body.matches[0].minutesPlayed).toBe(0);
+    expect(after.body.matches[0].humanVouchedSeconds).toBe(0);
   });
 
   it("returns no zero-stat rows when the player has no confirmed claims", async () => {

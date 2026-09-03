@@ -3233,7 +3233,7 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
   if (!correction.undone) {
     await db
       .update(claimMatchCorrectionsTable)
-      .set({ undone: true })
+      .set({ undone: true, updatedAt: new Date() })
       .where(eq(claimMatchCorrectionsTable.id, correctionId));
   }
   {

@@ -41,3 +41,11 @@ export function shouldShowPerMatchHeatmaps(
 export function formatDistance(value: number | null, unavailableLabel: string): string {
   return value === null ? unavailableLabel : `${Math.round(value).toLocaleString()} m`;
 }
+
+export function shouldShowEmptyStatsCta(
+  profileId: number,
+  viewerId: number | null | undefined,
+  isGuest: boolean,
+): boolean {
+  return !isGuest && viewerId === profileId;
+}

@@ -17,7 +17,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { aggregatePitchHeatmaps, formatDistance, shouldShowPerMatchHeatmaps } from "@/lib/player-stats";
+import {
+  aggregatePitchHeatmaps,
+  formatDistance,
+  shouldShowEmptyStatsCta,
+  shouldShowPerMatchHeatmaps,
+} from "@/lib/player-stats";
 
 function getInitials(name: string): string {
   return name
@@ -219,6 +224,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
           loading={statsLoading}
           error={statsError}
           locale={locale}
+          canClaim={shouldShowEmptyStatsCta(profile.id, user?.id, isGuest)}
         />
       </div>
     </div>
@@ -230,11 +236,13 @@ function PlayerStatsSection({
   loading,
   error,
   locale,
+  canClaim,
 }: {
   stats: PublicPlayerStats | undefined;
   loading: boolean;
   error: boolean;
   locale: "en" | "ar";
+  canClaim: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -282,10 +290,16 @@ function PlayerStatsSection({
           </div>
         )}
         <div className="player-stats-empty">
-          <MapPinned className="w-6 h-6 text-muted-foreground" />
-          <h3>{t.profile.noConfirmedTitle}</h3>
-          <p>{t.profile.noConfirmedDesc}</p>
-          <Link href="/claim-match/demo" className="player-stats-cta">{t.profile.viewClaimFlow}</Link>
+          {canClaim ? (
+            <>
+              <MapPinned className="w-6 h-6 text-muted-foreground" />
+              <h3>{t.profile.noConfirmedTitle}</h3>
+              <p>{t.profile.noConfirmedDesc}</p>
+              <Link href="/claim-match/demo" className="player-stats-cta">{t.profile.viewClaimFlow}</Link>
+            </>
+          ) : (
+            <p className="player-stats-neutral-empty">{t.profile.noConfirmedOther}</p>
+          )}
         </div>
         <UnavailableMetricTiles />
       </section>
