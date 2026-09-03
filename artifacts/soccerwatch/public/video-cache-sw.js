@@ -1,4 +1,8 @@
-const CACHE_PREFIX = "replay-video-v1-";
+// Bump this whenever the proxy/media response contract changes. A prior
+// generation could contain placeholder/error bodies that were returned with a
+// successful HTTP status and would otherwise be replayed forever.
+const CACHE_PREFIX = "replay-video-v2-";
+const RETIRED_CACHE_PREFIXES = ["replay-video-v1-"];
 const writableScopeByClient = new Map();
 
 function hashScope(scope) {
@@ -107,7 +111,19 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil((async () => {
+    try {
+      await Promise.all(
+        (await caches.keys())
+          .filter((name) => RETIRED_CACHE_PREFIXES.some((prefix) => name.startsWith(prefix)))
+          .map((name) => caches.delete(name)),
+      );
+    } catch {
+      // Cache cleanup is best effort; a storage failure must not prevent the
+      // new worker from taking control and falling back to the network.
+    }
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("message", (event) => {
