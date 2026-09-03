@@ -1208,9 +1208,9 @@ export default function ClaimMatchPage() {
   const handleSeek = (value: number) => {
     seekTracking(value);
   };
-  const handleVideoReady = useCallback(() => {
+  const handleVideoReady = () => {
     setVideoReadyTick((value) => value + 1);
-  }, []);
+  };
   const cyclePlaybackRate = () => {
     setPlaybackRate((current) => {
       const currentIndex = PLAYBACK_SPEEDS.indexOf(current as (typeof PLAYBACK_SPEEDS)[number]);
