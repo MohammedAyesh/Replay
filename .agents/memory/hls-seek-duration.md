@@ -21,3 +21,8 @@ across watch/player/my-clips.
 `loadedmetadata`/`durationchange` on the video element (they reliably carry duration);
 keep MANIFEST_PARSED only as an extra trigger. Same pattern applies to local blob
 (mp4/webm) sources.
+
+For claim-match resume, keep the saved tracking position separate from the live
+playhead and apply it once per recording/media source after the video is ready.
+Do not put an unguarded `video.currentTime = currentTime` effect on the live
+playhead, or normal playback and manual seeks will be repeatedly overridden.

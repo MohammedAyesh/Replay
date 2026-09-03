@@ -440,6 +440,8 @@ export default function ClaimMatchPage() {
   const offPitchNonceRef = useRef(0);
   const undoneClientIdsRef = useRef(new Set<string>());
   const restoredRecordingRef = useRef<number | null>(null);
+  const resumeTrackingTimeRef = useRef<number | null>(null);
+  const videoRestoreKeyRef = useRef<string | null>(null);
 
   const response = isDemo ? demoQuery.data : claimQuery.data;
   const activeRecordingId = isDemo ? response?.recording.id || 0 : recordingId;
@@ -541,6 +543,26 @@ export default function ClaimMatchPage() {
       : videoSeconds,
     [bundle],
   );
+
+  // The saved tracking position can be restored before HLS has attached to the
+  // video element. Keep it separate from the live playhead and apply it once
+  // when the media element is ready, rather than re-seeking on every timeupdate.
+  useEffect(() => {
+    videoRestoreKeyRef.current = null;
+  }, [activeRecordingId, recording?.videoUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const resumeTrackingTime = resumeTrackingTimeRef.current;
+    if (!video || !bundle || resumeTrackingTime === null || video.readyState < 1) return;
+    const restoreKey = `${activeRecordingId}:${recording?.videoUrl ?? ""}`;
+    if (videoRestoreKeyRef.current === restoreKey) return;
+    const targetVideoTime = toVideoTime(resumeTrackingTime);
+    if (!Number.isFinite(targetVideoTime)) return;
+    video.currentTime = targetVideoTime;
+    videoRestoreKeyRef.current = restoreKey;
+  }, [activeRecordingId, bundle, currentTime, recording?.videoUrl, toVideoTime, videoReadyTick]);
+
   /** The only way this page moves the playhead. Tracking seconds in. */
   const seekTracking = useCallback((trackingSeconds: number) => {
     const next = bundle ? clampToTracked(trackingSeconds, bundle) : Math.max(0, trackingSeconds);
@@ -788,6 +810,9 @@ export default function ClaimMatchPage() {
       || response.progress.stage === "picker"
       || unresolvedIndex >= 0;
     const resumeReview = !response.progress.completed && claimAnchors.length > 0 && hasSavedAnchorState;
+    resumeTrackingTimeRef.current = resumeReview
+      ? claimAnchors[reviewIndex].momentSeconds
+      : response.progress.currentPositionSeconds || 0;
     setAnchorMode(resumeReview);
     setActiveAnchorId(resumeReview ? claimAnchors[reviewIndex].id : null);
     setStage(response.progress.completed ? "done" : resumeReview ? "picker" : "find");
@@ -1183,6 +1208,9 @@ export default function ClaimMatchPage() {
   const handleSeek = (value: number) => {
     seekTracking(value);
   };
+  const handleVideoReady = useCallback(() => {
+    setVideoReadyTick((value) => value + 1);
+  }, []);
   const cyclePlaybackRate = () => {
     setPlaybackRate((current) => {
       const currentIndex = PLAYBACK_SPEEDS.indexOf(current as (typeof PLAYBACK_SPEEDS)[number]);
@@ -1368,6 +1396,8 @@ export default function ClaimMatchPage() {
       setSegmentLoading(false);
       setSegmentError("");
       setVideoReadyTick(0);
+      resumeTrackingTimeRef.current = 0;
+      videoRestoreKeyRef.current = null;
       anchorAnswerNonceRef.current = 0;
       restoredRecordingRef.current = null;
       lastSavedPosition.current = 0;
@@ -1674,7 +1704,7 @@ export default function ClaimMatchPage() {
         onToggleMute={() => setMuted((value) => !value)}
         onTap={onVideoTap}
         onTimeUpdate={(value) => setCurrentTime(fromVideoTime(value))}
-        onVideoReady={() => setVideoReadyTick((value) => value + 1)}
+        onVideoReady={handleVideoReady}
         topLeft={(
           <>
             <button type="button" className="claim-back" data-testid="button-back-claim" onClick={handleBack}><ArrowLeft size={17} /><span>Leave claim</span></button>
