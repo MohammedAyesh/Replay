@@ -16,6 +16,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 import { getLocalAccountUserId } from "../lib/clerkUserBridge";
 import {
   db,
+  claimMatchCorrectionsTable,
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   fieldsTable,
@@ -105,11 +106,13 @@ beforeAll(async () => {
 beforeEach(async () => {
   mockedGetLocalAccountUserId.mockResolvedValue(userId);
   await db.delete(claimMatchOffPitchSpansTable).where(eq(claimMatchOffPitchSpansTable.recordingId, recordingId));
+  await db.delete(claimMatchCorrectionsTable).where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
   await db.delete(claimMatchIdentityBindingsTable).where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
 });
 
 afterAll(async () => {
   await db.delete(claimMatchOffPitchSpansTable).where(eq(claimMatchOffPitchSpansTable.recordingId, recordingId));
+  await db.delete(claimMatchCorrectionsTable).where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
   await db.delete(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
   await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
   await db.delete(usersTable).where(eq(usersTable.id, otherUserId));
@@ -185,7 +188,34 @@ describe("claim match off-pitch endpoints", () => {
     expect(replay.body).toEqual(first.body);
   });
 
-  it("requires explicit confirmation for a vouched-fragment conflict and supports deletion", async () => {
+  it("does not compare against another user's vouched fragment", async () => {
+    await db.insert(claimMatchIdentityBindingsTable).values({
+      userId: otherUserId,
+      recordingId,
+      trackingBundleId: bundleId,
+      bundleFingerprint: "other-user",
+      personId: "other-player",
+      personParts: [],
+      vouchedFragments: [{ trackId: "other-player", fromFrame: 20, toFrame: 30 }],
+      resolutionMethod: "track-fallback",
+      state: "confirmed",
+      resolvedAt: new Date(),
+    });
+    mockedGetLocalAccountUserId.mockResolvedValue(userId);
+    await request(app)
+      .post(`/api/recordings/${recordingId}/claim-match/off-pitch`)
+      .send({ clientId: "different-player", fromSeconds: 20, toSeconds: 30 })
+      .expect(201);
+    const [otherBinding] = await db
+      .select({ vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.userId, otherUserId));
+    expect(otherBinding?.vouchedFragments).toEqual([
+      { trackId: "other-player", fromFrame: 20, toFrame: 30 },
+    ]);
+  });
+
+  it("reports only the user's overlapping range without identity metadata", async () => {
     await db.insert(claimMatchIdentityBindingsTable).values({
       userId,
       recordingId,
@@ -202,17 +232,167 @@ describe("claim match off-pitch endpoints", () => {
       resolvedAt: new Date(),
     });
     const path = `/api/recordings/${recordingId}/claim-match/off-pitch`;
-    await request(app)
+    const response = await request(app)
       .post(path)
       .send({ clientId: "conflict-client", fromSeconds: 25, toSeconds: 35 })
       .expect(409);
+    expect(response.body.conflicts).toEqual([{ fromSeconds: 25, toSeconds: 31 }]);
+    expect(JSON.stringify(response.body)).not.toContain("userId");
+    expect(JSON.stringify(response.body)).not.toContain("personId");
+    expect(JSON.stringify(response.body)).not.toContain("bindingId");
+    const [notWritten] = await db
+      .select()
+      .from(claimMatchOffPitchSpansTable)
+      .where(eq(claimMatchOffPitchSpansTable.clientId, "conflict-client"));
+    expect(notWritten).toBeUndefined();
+  });
+
+  it("trims the user's vouched fragment when the conflict is confirmed", async () => {
+    await db.insert(claimMatchIdentityBindingsTable).values({
+      userId,
+      recordingId,
+      trackingBundleId: bundleId,
+      bundleFingerprint: "trim",
+      personId: "player-1",
+      personParts: [],
+      vouchedFragments: [{ trackId: "player-1", fromFrame: 20, toFrame: 30 }],
+      resolutionMethod: "track-fallback",
+      state: "confirmed",
+      resolvedAt: new Date(),
+    });
+    const path = `/api/recordings/${recordingId}/claim-match/off-pitch`;
     await request(app)
       .post(path)
       .send({ clientId: "conflict-client", fromSeconds: 25, toSeconds: 35, confirmConflict: true })
       .expect(201);
+    const [binding] = await db
+      .select({
+        state: claimMatchIdentityBindingsTable.state,
+        vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments,
+      })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.userId, userId));
+    expect(binding).toEqual({
+      state: "confirmed",
+      vouchedFragments: [{ trackId: "player-1", fromFrame: 20, toFrame: 24 }],
+    });
+  });
+
+  it("splits a vouched fragment that straddles the confirmed period", async () => {
+    await db.insert(claimMatchIdentityBindingsTable).values({
+      userId,
+      recordingId,
+      trackingBundleId: bundleId,
+      bundleFingerprint: "split",
+      personId: "player-1",
+      personParts: [],
+      vouchedFragments: [{ trackId: "player-1", fromFrame: 10, toFrame: 40 }],
+      resolutionMethod: "track-fallback",
+      state: "confirmed",
+      resolvedAt: new Date(),
+    });
     await request(app)
-      .delete(`${path}/conflict-client`)
-      .expect(200, { deleted: true, clientId: "conflict-client" });
+      .post(`/api/recordings/${recordingId}/claim-match/off-pitch`)
+      .send({ clientId: "split-client", fromSeconds: 20, toSeconds: 30, confirmConflict: true })
+      .expect(201);
+    const [binding] = await db
+      .select({ vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.userId, userId));
+    expect(binding?.vouchedFragments).toEqual([
+      { trackId: "player-1", fromFrame: 10, toFrame: 19 },
+      { trackId: "player-1", fromFrame: 30, toFrame: 40 },
+    ]);
+  });
+
+  it("releases a binding when its only vouched fragment is removed", async () => {
+    await db.insert(claimMatchIdentityBindingsTable).values({
+      userId,
+      recordingId,
+      trackingBundleId: bundleId,
+      bundleFingerprint: "release",
+      personId: "player-1",
+      personParts: [],
+      vouchedFragments: [{ trackId: "player-1", fromFrame: 20, toFrame: 30 }],
+      resolutionMethod: "track-fallback",
+      state: "confirmed",
+      resolvedAt: new Date(),
+    });
+    await request(app)
+      .post(`/api/recordings/${recordingId}/claim-match/off-pitch`)
+      .send({ clientId: "release-client", fromSeconds: 15, toSeconds: 35, confirmConflict: true })
+      .expect(201);
+    const [binding] = await db
+      .select({
+        state: claimMatchIdentityBindingsTable.state,
+        vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments,
+      })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.userId, userId));
+    expect(binding).toEqual({ state: "released", vouchedFragments: [] });
+  });
+
+  it("reports and undoes only the user's accepted corrections inside the period", async () => {
+    const correctionValues = [
+      {
+        userId,
+        clientId: "inside-correction",
+        momentSeconds: 25,
+        chosenTrackId: "player-1",
+      },
+      {
+        userId,
+        clientId: "outside-correction",
+        momentSeconds: 50,
+        chosenTrackId: "player-1",
+      },
+      {
+        userId: otherUserId,
+        clientId: "other-correction",
+        momentSeconds: 25,
+        chosenTrackId: "other-player",
+      },
+    ];
+    await db.insert(claimMatchCorrectionsTable).values(correctionValues.map((value) => ({
+      ...value,
+      recordingId,
+      rejectedTrackId: null,
+      answerMethod: "anchor-yes",
+      questionCount: 1,
+    })));
+    const path = `/api/recordings/${recordingId}/claim-match/off-pitch`;
+    const warning = await request(app)
+      .post(path)
+      .send({ clientId: "correction-client", fromSeconds: 20, toSeconds: 30 })
+      .expect(409);
+    expect(warning.body.correctionCount).toBe(1);
+    await request(app)
+      .post(path)
+      .send({ clientId: "correction-client", fromSeconds: 20, toSeconds: 30, confirmConflict: true })
+      .expect(201);
+    const corrections = await db
+      .select({
+        userId: claimMatchCorrectionsTable.userId,
+        clientId: claimMatchCorrectionsTable.clientId,
+        undone: claimMatchCorrectionsTable.undone,
+      })
+      .from(claimMatchCorrectionsTable)
+      .where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
+    expect(corrections).toEqual(expect.arrayContaining([
+      { userId, clientId: "inside-correction", undone: true },
+      { userId, clientId: "outside-correction", undone: false },
+      { userId: otherUserId, clientId: "other-correction", undone: false },
+    ]));
+  });
+
+  it("supports deletion after a confirmed conflict", async () => {
+    await request(app)
+      .post(`/api/recordings/${recordingId}/claim-match/off-pitch`)
+      .send({ clientId: "delete-client", fromSeconds: 10, toSeconds: 20 })
+      .expect(201);
+    await request(app)
+      .delete(`/api/recordings/${recordingId}/claim-match/off-pitch/delete-client`)
+      .expect(200, { deleted: true, clientId: "delete-client" });
     const [remaining] = await db
       .select()
       .from(claimMatchOffPitchSpansTable)

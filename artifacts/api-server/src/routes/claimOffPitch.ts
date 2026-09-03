@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   db,
+  claimMatchCorrectionsTable,
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   recordingTrackingBundlesTable,
@@ -119,6 +120,53 @@ function parseId(value: string | string[]): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+type VouchedFragment = {
+  trackId: string;
+  fromFrame: number;
+  toFrame: number;
+};
+
+type BindingConflict = {
+  bindingId: number;
+  fragment: VouchedFragment;
+  fromSeconds: number;
+  toSeconds: number;
+};
+
+function isAcceptedCorrection(
+  correction: typeof claimMatchCorrectionsTable.$inferSelect,
+): boolean {
+  return !correction.undone
+    && correction.chosenTrackId !== "__none__"
+    && correction.answerMethod !== "anchor-no"
+    && correction.answerMethod !== "anchor-skip";
+}
+
+function fragmentSeconds(fragment: VouchedFragment, frameRate: number): OffPitchSpan {
+  return {
+    fromSeconds: fragment.fromFrame / frameRate,
+    toSeconds: (fragment.toFrame + 1) / frameRate,
+  };
+}
+
+function trimVouchedFragment(
+  fragment: VouchedFragment,
+  excluded: OffPitchSpan,
+  frameRate: number,
+): VouchedFragment[] {
+  const source = fragmentSeconds(fragment, frameRate);
+  if (offPitchConflicts([source], excluded).length === 0) return [fragment];
+  const epsilon = 1e-8;
+  return subtractSpans([source], [excluded])
+    .map((span) => ({
+      trackId: fragment.trackId,
+      // Round outward so a boundary frame is never silently discarded.
+      fromFrame: Math.max(fragment.fromFrame, Math.floor(span.fromSeconds * frameRate + epsilon)),
+      toFrame: Math.min(fragment.toFrame, Math.ceil(span.toSeconds * frameRate - epsilon) - 1),
+    }))
+    .filter((piece) => piece.toFrame >= piece.fromFrame);
+}
+
 async function requireAccountUser(req: Parameters<typeof getLocalAccountUserId>[0]): Promise<number | null> {
   const userId = await getLocalAccountUserId(req);
   if (!userId) return null;
@@ -195,45 +243,97 @@ router.post("/recordings/:id/claim-match/off-pitch", async (req, res): Promise<v
   const bindings = await db
     .select({
       id: claimMatchIdentityBindingsTable.id,
-      userId: claimMatchIdentityBindingsTable.userId,
-      personId: claimMatchIdentityBindingsTable.personId,
       vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments,
     })
     .from(claimMatchIdentityBindingsTable)
-    .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
-  const conflicts = bindings.flatMap((binding) => {
-    const owned = (binding.vouchedFragments ?? []).map((fragment) => ({
-      fromSeconds: fragment.fromFrame / Math.max(bundle.manifest.frameRate, 0.001),
-      toSeconds: (fragment.toFrame + 1) / Math.max(bundle.manifest.frameRate, 0.001),
+    .where(and(
+      eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+      eq(claimMatchIdentityBindingsTable.userId, userId),
+    ));
+  const frameRate = Math.max(bundle.manifest.frameRate, 0.001);
+  const bindingConflicts: BindingConflict[] = bindings.flatMap((binding) =>
+    (binding.vouchedFragments ?? []).flatMap((fragment) => {
+      const owned = fragmentSeconds(fragment, frameRate);
+      return offPitchConflicts([owned], candidate).map((span) => ({
+        bindingId: binding.id,
+        fragment,
+        fromSeconds: Math.max(span.fromSeconds, candidate.fromSeconds),
+        toSeconds: Math.min(span.toSeconds, candidate.toSeconds),
+      }));
     }));
-    return offPitchConflicts(owned, candidate).map((span) => ({
-      bindingId: binding.id,
-      userId: binding.userId,
-      personId: binding.personId,
-      fromSeconds: span.fromSeconds,
-      toSeconds: span.toSeconds,
-    }));
-  });
-  if (conflicts.length > 0 && !body.data.confirmConflict) {
+  const corrections = await db
+    .select()
+    .from(claimMatchCorrectionsTable)
+    .where(and(
+      eq(claimMatchCorrectionsTable.userId, userId),
+      eq(claimMatchCorrectionsTable.recordingId, recordingId),
+      eq(claimMatchCorrectionsTable.undone, false),
+    ));
+  const correctionConflicts = corrections.filter((correction) =>
+    isAcceptedCorrection(correction)
+    && correction.momentSeconds >= candidate.fromSeconds
+    && correction.momentSeconds < candidate.toSeconds);
+  const hasConflicts = bindingConflicts.length > 0 || correctionConflicts.length > 0;
+  if (hasConflicts && !body.data.confirmConflict) {
     res.status(409).json({
       error: "off-pitch-conflict",
-      message: "This period overlaps vouched identity fragments. Confirm the conflict explicitly before saving it.",
-      conflicts,
+      message: "This period overlaps your vouched identity fragments or accepted answers. Confirm the conflict explicitly before saving it.",
+      conflicts: bindingConflicts.map(({ fromSeconds, toSeconds }) => ({ fromSeconds, toSeconds })),
+      correctionCount: correctionConflicts.length,
       requiresExplicitConflictRelease: true,
     });
     return;
   }
 
-  const [created] = await db
-    .insert(claimMatchOffPitchSpansTable)
-    .values({
-      userId,
-      recordingId,
-      clientId: body.data.clientId,
-      fromSeconds: candidate.fromSeconds,
-      toSeconds: candidate.toSeconds,
-    })
-    .returning();
+  const [created] = await db.transaction(async (tx) => {
+    const [saved] = await tx
+      .insert(claimMatchOffPitchSpansTable)
+      .values({
+        userId,
+        recordingId,
+        clientId: body.data.clientId,
+        fromSeconds: candidate.fromSeconds,
+        toSeconds: candidate.toSeconds,
+      })
+      .returning();
+
+    if (body.data.confirmConflict) {
+      for (const binding of bindings) {
+        const currentFragments = (binding.vouchedFragments ?? []) as VouchedFragment[];
+        const trimmedFragments = currentFragments.flatMap((fragment) =>
+          trimVouchedFragment(fragment, candidate, frameRate));
+        if (trimmedFragments.length === currentFragments.length
+          && trimmedFragments.every((fragment, index) =>
+            JSON.stringify(fragment) === JSON.stringify(currentFragments[index]))) {
+          continue;
+        }
+        await tx
+          .update(claimMatchIdentityBindingsTable)
+          .set({
+            vouchedFragments: trimmedFragments,
+            state: trimmedFragments.length === 0 ? "released" : undefined,
+            updatedAt: new Date(),
+          })
+          .where(and(
+            eq(claimMatchIdentityBindingsTable.id, binding.id),
+            eq(claimMatchIdentityBindingsTable.userId, userId),
+            eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+          ));
+      }
+      for (const correction of correctionConflicts) {
+        await tx
+          .update(claimMatchCorrectionsTable)
+          .set({ undone: true })
+          .where(and(
+            eq(claimMatchCorrectionsTable.id, correction.id),
+            eq(claimMatchCorrectionsTable.userId, userId),
+            eq(claimMatchCorrectionsTable.recordingId, recordingId),
+            eq(claimMatchCorrectionsTable.undone, false),
+          ));
+      }
+    }
+    return [saved];
+  });
   res.status(201).json(toResponse(created));
 });
 
