@@ -29,6 +29,18 @@ const undoAction: ClaimQueueAction = {
   createdAt: 3,
 };
 
+const offPitchCreateAction: ClaimQueueAction = {
+  id: "offpitch-create-1",
+  kind: "offPitchCreate",
+  recordingId: 1,
+  payload: {
+    clientId: "offpitch-client-1",
+    fromSeconds: 10,
+    toSeconds: 20,
+  },
+  createdAt: 4,
+};
+
 function queueFixture(actions: ClaimQueueAction[]) {
   const pending = [...actions];
   const removed: string[] = [];
@@ -171,5 +183,30 @@ describe("Claim Match queue flushing", () => {
     });
 
     expect(calls).toBe(2);
+  });
+
+  it("keeps a queued off-pitch conflict for the page to confirm", async () => {
+    const fixture = queueFixture([offPitchCreateAction]);
+    const conflict = Object.assign(new Error("conflict"), {
+      status: 409,
+      data: {
+        error: "off-pitch-conflict",
+        conflicts: [{ fromSeconds: 10, toSeconds: 15 }],
+        correctionCount: 2,
+      },
+    });
+
+    const result = await flushClaimQueue({
+      ...fixture,
+      syncAction: async () => {
+        throw conflict;
+      },
+    });
+
+    expect(result.remaining).toEqual([offPitchCreateAction]);
+    expect(result.discarded).toEqual([]);
+    expect(result.succeeded).toEqual([]);
+    expect(result.stoppedOnFailure).toBe(true);
+    expect(fixture.removed).toEqual([]);
   });
 });

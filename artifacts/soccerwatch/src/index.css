@@ -452,6 +452,13 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-offpitch-list { display: grid; gap: 5px; }
 .claim-offpitch-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 5px; border-top: 1px solid rgba(255,131,95,.14); color: var(--claim-muted); font-family: var(--app-font-mono); font-size: 9px; }
 .claim-offpitch-row .claim-text-button { margin: 0; padding: 2px; font-size: 9px; }
+.claim-inline-confirmation { display: grid; gap: 8px; margin: -5px 0 16px; padding: 14px; border-color: rgba(255,131,95,.42); background: rgba(255,131,95,.1); }
+.claim-inline-confirmation b { color: var(--claim-ink); font-size: 13px; }
+.claim-inline-confirmation span, .claim-inline-confirmation strong { color: var(--claim-muted); font-size: 11px; line-height: 1.5; }
+.claim-inline-confirmation strong { color: #ffb09d; font-weight: 600; }
+.claim-inline-confirmation small { color: var(--claim-ink); font-family: var(--app-font-mono); font-size: 10px; }
+.claim-confirmation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 3px; }
+.claim-confirmation-actions .claim-button { min-height: 34px; padding: 0 11px; font-size: 10px; }
 .claim-demo-reset { display: grid; justify-items: center; gap: 4px; margin: -8px 0 14px; }
 .claim-demo-reset .claim-text-button { margin: 0; }
 .claim-demo-reset .claim-error-text { color: #ff927c; font-size: 10px; }
