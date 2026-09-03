@@ -166,6 +166,10 @@ function useBunnyHls(
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           const target = Math.max(0, startVideoTimeRef.current);
+          // startPosition is used by hls.js when it first starts loading, but
+          // explicitly restarting here also covers an instance that attached
+          // while the element was paused or had already requested fragment 0.
+          hls?.startLoad(target);
           if (Math.abs(video.currentTime - target) > 0.25) video.currentTime = target;
         });
         hls.on(Hls.Events.FRAG_BUFFERED, () => {
