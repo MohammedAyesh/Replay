@@ -378,6 +378,7 @@
 .claim-clock:last-child { text-align: right; }
 .claim-seek-track { position: relative; flex: 1; display: flex; align-items: center; }
 .claim-seek-track input { width: 100%; height: 3px; accent-color: var(--claim-green); }
+.claim-seek-offpitch { position: absolute; z-index: 0; top: 50%; height: 9px; transform: translateY(-50%); border-radius: 999px; background: rgba(255,131,95,.62); pointer-events: none; }
 .claim-seek-goal { position: absolute; top: 50%; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; transform: translateY(-50%); background: var(--claim-orange); pointer-events: none; }
 .claim-tools-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .claim-zoom { display: flex; flex: 1 1 200px; align-items: center; gap: 8px; min-width: 160px; max-width: 320px; padding: 6px 10px; border-radius: 999px; color: rgba(255,255,255,.7); background: rgba(0,0,0,.5); font-family: var(--app-font-mono); font-size: 9px; text-transform: uppercase; }
@@ -441,6 +442,16 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-coverage-summary b { color: var(--claim-green); font-family: var(--app-font-display); font-size: 20px; letter-spacing: 0; }
 .claim-coverage-summary small { color: var(--claim-muted); font-size: 9px; line-height: 1.4; }
 .claim-coverage-summary .claim-completion-sync { color: var(--claim-green); }
+.claim-offpitch-tools { display: grid; gap: 9px; margin: -5px 0 16px; padding: 11px; border: 1px solid rgba(255,131,95,.22); background: rgba(255,131,95,.06); }
+.claim-offpitch-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--claim-ink); font-size: 10px; }
+.claim-offpitch-heading span { display: inline-flex; align-items: center; gap: 6px; }
+.claim-offpitch-heading svg { color: var(--claim-orange); }
+.claim-offpitch-heading small { color: var(--claim-muted); font-size: 9px; }
+.claim-offpitch-actions { display: flex; align-items: center; gap: 9px; }
+.claim-offpitch-actions .claim-button { min-height: 32px; padding: 0 11px; font-size: 10px; }
+.claim-offpitch-list { display: grid; gap: 5px; }
+.claim-offpitch-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 5px; border-top: 1px solid rgba(255,131,95,.14); color: var(--claim-muted); font-family: var(--app-font-mono); font-size: 9px; }
+.claim-offpitch-row .claim-text-button { margin: 0; padding: 2px; font-size: 9px; }
 .claim-demo-reset { display: grid; justify-items: center; gap: 4px; margin: -8px 0 14px; }
 .claim-demo-reset .claim-text-button { margin: 0; }
 .claim-demo-reset .claim-error-text { color: #ff927c; font-size: 10px; }

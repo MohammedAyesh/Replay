@@ -60,6 +60,11 @@ export type StageCandidate = {
   taken?: boolean;
 };
 
+export type ClaimOffPitchStageSpan = {
+  fromSeconds: number;
+  toSeconds: number;
+};
+
 type Frame = { x: number; y: number; w: number; h: number };
 
 /** cropFrame.applyFrameToVideo, for any element that must share the video's transform. */
@@ -191,6 +196,7 @@ export function ClaimStage({
   slow,
   playbackRate,
   goalTimes,
+   offPitchSpans,
   videoRef,
   onToggle,
   onSeek,
@@ -218,6 +224,7 @@ export function ClaimStage({
   slow: boolean;
   playbackRate: number;
   goalTimes: number[];
+  offPitchSpans?: ClaimOffPitchStageSpan[];
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onToggle: (forcePlaying?: boolean) => void;
   onSeek: (trackingSeconds: number) => void;
@@ -594,6 +601,17 @@ export function ClaimStage({
         <div className="claim-seek-row">
           <span className="claim-clock">{formatClock(shownTime)}</span>
           <div className="claim-seek-track">
+            {(offPitchSpans ?? []).map((span) => (
+              <span
+                key={`${span.fromSeconds}-${span.toSeconds}`}
+                className="claim-seek-offpitch"
+                style={{
+                  left: `${(span.fromSeconds / Math.max(duration, 0.001)) * 100}%`,
+                  width: `${((span.toSeconds - span.fromSeconds) / Math.max(duration, 0.001)) * 100}%`,
+                }}
+                title="Declared off-pitch period"
+              />
+            ))}
             {goalTimes.map((t) => <span key={t} className="claim-seek-goal" style={{ left: `${(t / duration) * 100}%` }} />)}
             <input
               type="range"

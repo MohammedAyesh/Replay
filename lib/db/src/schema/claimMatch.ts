@@ -142,6 +142,8 @@ export const recordingTrackingBundlesTable = pgTable(
       .notNull()
       .references(() => recordingsTable.id, { onDelete: "cascade" }),
     manifest: jsonb("manifest").notNull().$type<TrackingManifest>(),
+    /** Legacy bundle payload retained so a direct development schema push cannot delete old data. */
+    payload: jsonb("payload").$type<unknown>(),
     uploadedBy: integer("uploaded_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),
@@ -242,6 +244,40 @@ export const claimMatchCorrectionsTable = pgTable(
   }),
 );
 
+export const claimMatchOffPitchSpansTable = pgTable(
+  "claim_match_off_pitch_spans",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    recordingId: integer("recording_id")
+      .notNull()
+      .references(() => recordingsTable.id, { onDelete: "cascade" }),
+    clientId: text("client_id").notNull(),
+    /**
+     * Exact tracking-time seconds from the start of the tracking window,
+     * not wall-clock time and not the source video's time.
+     */
+    fromSeconds: doublePrecision("from_seconds")
+      .notNull(),
+    /**
+     * Exact tracking-time seconds from the start of the tracking window,
+     * not wall-clock time and not the source video's time.
+     */
+    toSeconds: doublePrecision("to_seconds")
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    clientUnique: uniqueIndex("claim_match_off_pitch_spans_user_recording_client_unique").on(
+      table.userId,
+      table.recordingId,
+      table.clientId,
+    ),
+  }),
+);
+
 export type ClaimIdentityBindingState =
   | "pending"
   | "confirmed"
@@ -314,4 +350,5 @@ export type TrackingBundleRow = typeof recordingTrackingBundlesTable.$inferSelec
 export type TrackingSegmentRow = typeof recordingTrackingSegmentsTable.$inferSelect;
 export type ClaimMatchProgressRow = typeof claimMatchProgressTable.$inferSelect;
 export type ClaimMatchCorrectionRow = typeof claimMatchCorrectionsTable.$inferSelect;
+export type ClaimMatchOffPitchSpanRow = typeof claimMatchOffPitchSpansTable.$inferSelect;
 export type ClaimIdentityBindingRow = typeof claimMatchIdentityBindingsTable.$inferSelect;

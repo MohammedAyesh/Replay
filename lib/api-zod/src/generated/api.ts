@@ -312,6 +312,8 @@ export const getClaimMatchResponseProgressCoverageSecondsMin = 0;
 export const getClaimMatchResponseProgressCoveragePercentMin = 0;
 export const getClaimMatchResponseProgressCoveragePercentMax = 100;
 
+export const getClaimMatchResponseProgressOffPitchSecondsMin = 0;
+
 export const getClaimMatchResponseProgressHumanVouchedSecondsMin = 0;
 
 export const getClaimMatchResponseProgressInferredSecondsMin = 0;
@@ -371,6 +373,8 @@ export const getClaimMatchResponseProgressPlayerStatsHeatmapCellsItemWeightMin =
 export const getClaimMatchResponseProgressPlayerStatsDistanceMetresMin = 0;
 
 export const getClaimMatchResponseProgressPlayerStatsAverageSpeedMetresPerSecondMin = 0;
+
+export const getClaimMatchResponseOffPitchSecondsMin = 0;
 
 
 
@@ -438,7 +442,8 @@ export const GetClaimMatchResponse = zod.object({
   "currentPositionSeconds": zod.number(),
   "claimedPercent": zod.number().describe('Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage.'),
   "coverageSeconds": zod.number().min(getClaimMatchResponseProgressCoverageSecondsMin).describe('Union of the accepted track spans, in tracking seconds.'),
-  "coveragePercent": zod.number().min(getClaimMatchResponseProgressCoveragePercentMin).max(getClaimMatchResponseProgressCoveragePercentMax).describe('coverageSeconds divided by the tracked match duration.'),
+  "coveragePercent": zod.number().min(getClaimMatchResponseProgressCoveragePercentMin).max(getClaimMatchResponseProgressCoveragePercentMax).describe('coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.'),
+  "offPitchSeconds": zod.number().min(getClaimMatchResponseProgressOffPitchSecondsMin).describe('Union of this claimant\'s declared off-pitch periods in tracking seconds.'),
   "humanVouchedSeconds": zod.number().min(getClaimMatchResponseProgressHumanVouchedSecondsMin).describe('Union of contiguous tracking fragments directly accepted by this claimant.'),
   "inferredSeconds": zod.number().min(getClaimMatchResponseProgressInferredSecondsMin).describe('Attributed tracking time supplied by the identity grouping rather than a direct answer.'),
   "vouchedFragments": zod.array(zod.object({
@@ -542,7 +547,15 @@ export const GetClaimMatchResponse = zod.object({
   "questionCount": zod.number(),
   "undone": zod.boolean(),
   "createdAt": zod.string()
-}))
+})),
+  "offPitchSpans": zod.array(zod.object({
+  "id": zod.number(),
+  "clientId": zod.string(),
+  "fromSeconds": zod.number(),
+  "toSeconds": zod.number(),
+  "createdAt": zod.string()
+})),
+  "offPitchSeconds": zod.number().min(getClaimMatchResponseOffPitchSecondsMin)
 })
 
 
@@ -586,6 +599,8 @@ export const updateClaimMatchProgressResponseCoverageSecondsMin = 0;
 
 export const updateClaimMatchProgressResponseCoveragePercentMin = 0;
 export const updateClaimMatchProgressResponseCoveragePercentMax = 100;
+
+export const updateClaimMatchProgressResponseOffPitchSecondsMin = 0;
 
 export const updateClaimMatchProgressResponseHumanVouchedSecondsMin = 0;
 
@@ -657,7 +672,8 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "currentPositionSeconds": zod.number(),
   "claimedPercent": zod.number().describe('Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage.'),
   "coverageSeconds": zod.number().min(updateClaimMatchProgressResponseCoverageSecondsMin).describe('Union of the accepted track spans, in tracking seconds.'),
-  "coveragePercent": zod.number().min(updateClaimMatchProgressResponseCoveragePercentMin).max(updateClaimMatchProgressResponseCoveragePercentMax).describe('coverageSeconds divided by the tracked match duration.'),
+  "coveragePercent": zod.number().min(updateClaimMatchProgressResponseCoveragePercentMin).max(updateClaimMatchProgressResponseCoveragePercentMax).describe('coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.'),
+  "offPitchSeconds": zod.number().min(updateClaimMatchProgressResponseOffPitchSecondsMin).describe('Union of this claimant\'s declared off-pitch periods in tracking seconds.'),
   "humanVouchedSeconds": zod.number().min(updateClaimMatchProgressResponseHumanVouchedSecondsMin).describe('Union of contiguous tracking fragments directly accepted by this claimant.'),
   "inferredSeconds": zod.number().min(updateClaimMatchProgressResponseInferredSecondsMin).describe('Attributed tracking time supplied by the identity grouping rather than a direct answer.'),
   "vouchedFragments": zod.array(zod.object({
@@ -1062,6 +1078,50 @@ export const UndoClaimMatchCorrectionResponse = zod.object({
   "questionCount": zod.number(),
   "undone": zod.boolean(),
   "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Declare a tracking-time period with no playable pitch action
+ */
+export const CreateClaimMatchOffPitchSpanParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+export const createClaimMatchOffPitchSpanBodyFromSecondsMin = 0;
+
+export const createClaimMatchOffPitchSpanBodyToSecondsMin = 0;
+
+
+
+export const CreateClaimMatchOffPitchSpanBody = zod.object({
+  "clientId": zod.string().min(1),
+  "fromSeconds": zod.number().min(createClaimMatchOffPitchSpanBodyFromSecondsMin).describe('Exact tracking-time seconds from the start of the tracking window.'),
+  "toSeconds": zod.number().min(createClaimMatchOffPitchSpanBodyToSecondsMin).describe('Exact tracking-time seconds from the start of the tracking window.'),
+  "confirmConflict": zod.boolean().optional().describe('Explicitly acknowledge overlap with vouched identity fragments.')
+})
+
+export const CreateClaimMatchOffPitchSpanResponse = zod.object({
+  "id": zod.number(),
+  "clientId": zod.string(),
+  "fromSeconds": zod.number(),
+  "toSeconds": zod.number(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Delete an off-pitch period by client id
+ */
+export const DeleteClaimMatchOffPitchSpanParams = zod.object({
+  "id": zod.coerce.number(),
+  "clientId": zod.coerce.string()
+})
+
+export const DeleteClaimMatchOffPitchSpanResponse = zod.object({
+  "deleted": zod.boolean(),
+  "clientId": zod.string()
 })
 
 

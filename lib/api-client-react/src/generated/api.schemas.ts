@@ -992,11 +992,16 @@ export interface ClaimProgress {
      */
   coverageSeconds: number;
   /**
-     * coverageSeconds divided by the tracked match duration.
+     * coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.
      * @minimum 0
      * @maximum 100
      */
   coveragePercent: number;
+  /**
+     * Union of this claimant's declared off-pitch periods in tracking seconds.
+     * @minimum 0
+     */
+  offPitchSeconds: number;
   /**
      * Union of contiguous tracking fragments directly accepted by this claimant.
      * @minimum 0
@@ -1068,11 +1073,44 @@ export interface ClaimCorrectionInput {
   questionCount: number;
 }
 
+export interface ClaimOffPitchInput {
+  /** @minLength 1 */
+  clientId: string;
+  /**
+     * Exact tracking-time seconds from the start of the tracking window.
+     * @minimum 0
+     */
+  fromSeconds: number;
+  /**
+     * Exact tracking-time seconds from the start of the tracking window.
+     * @minimum 0
+     */
+  toSeconds: number;
+  /** Explicitly acknowledge overlap with vouched identity fragments. */
+  confirmConflict?: boolean;
+}
+
+export interface ClaimOffPitchSpan {
+  id: number;
+  clientId: string;
+  fromSeconds: number;
+  toSeconds: number;
+  createdAt: string;
+}
+
+export interface ClaimOffPitchDeleteResponse {
+  deleted: boolean;
+  clientId: string;
+}
+
 export interface ClaimMatchResponse {
   recording: Recording;
   manifest: TrackingManifest;
   progress: ClaimProgress;
   corrections: ClaimCorrection[];
+  offPitchSpans: ClaimOffPitchSpan[];
+  /** @minimum 0 */
+  offPitchSeconds: number;
 }
 
 export interface ClaimMatchDemoResetResponse {

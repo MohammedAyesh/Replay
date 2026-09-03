@@ -16,6 +16,7 @@ import {
   vouchedFragmentForAnswer,
   vouchedFragmentsOverlap,
 } from "./claimMatch";
+import { type OffPitchSpan } from "./claimOffPitch";
 
 const manifest = {
   version: 1,
@@ -85,6 +86,38 @@ function correction(
 }
 
 describe("claim match server-derived progress", () => {
+  it("subtracts declared off-pitch time from coverage and attribution", () => {
+    const fullSegments = [{
+      ...(segments as unknown as Array<Record<string, unknown>>)[0],
+      tracks: [{
+        id: "player-1",
+        startFrame: 0,
+        endFrame: 99,
+        boxes: Array.from(
+          { length: 100 },
+          (_, index) => ({
+            frame: index,
+            x: 100,
+            y: 100,
+            w: 40,
+            h: 80,
+          }),
+        ),
+      }],
+    }];
+    const result = deriveClaimState(
+      manifest,
+      segments,
+      [correction("off-pitch", "anchor-yes", "player-1", 75)] as never,
+      fullSegments as never,
+      [{ fromSeconds: 0, toSeconds: 50 }] satisfies OffPitchSpan[],
+    );
+    expect(result.offPitchSeconds).toBe(50);
+    expect(result.coverageSeconds).toBe(50);
+    expect(result.coveragePercent).toBe(100);
+    expect(result.humanVouchedSeconds).toBe(50);
+  });
+
   it("canonicalizes calibration aliases and guards JSON and ZIP framing", () => {
     const segment = {
       index: 0,

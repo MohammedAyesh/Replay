@@ -41,6 +41,9 @@ import type {
   ClaimMatchDispute,
   ClaimMatchDisputesResponse,
   ClaimMatchResponse,
+  ClaimOffPitchDeleteResponse,
+  ClaimOffPitchInput,
+  ClaimOffPitchSpan,
   ClaimProgress,
   ClaimProgressInput,
   ClaimedMatchHistoryResponse,
@@ -1886,6 +1889,149 @@ export const useUndoClaimMatchCorrection = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getUndoClaimMatchCorrectionMutationOptions(options));
+    }
+
+export const getCreateClaimMatchOffPitchSpanUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/off-pitch`
+}
+
+/**
+ * @summary Declare a tracking-time period with no playable pitch action
+ */
+export const createClaimMatchOffPitchSpan = async (id: number,
+    claimOffPitchInput: ClaimOffPitchInput, options?: RequestInit): Promise<ClaimOffPitchSpan> => {
+
+  return customFetch<ClaimOffPitchSpan>(getCreateClaimMatchOffPitchSpanUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimOffPitchInput)
+  }
+);}
+
+
+
+
+export const getCreateClaimMatchOffPitchSpanMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>, TError,{id: number;data: BodyType<ClaimOffPitchInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>, TError,{id: number;data: BodyType<ClaimOffPitchInput>}, TContext> => {
+
+const mutationKey = ['createClaimMatchOffPitchSpan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>, {id: number;data: BodyType<ClaimOffPitchInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  createClaimMatchOffPitchSpan(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateClaimMatchOffPitchSpanMutationResult = NonNullable<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>>
+    export type CreateClaimMatchOffPitchSpanMutationBody = BodyType<ClaimOffPitchInput>
+    export type CreateClaimMatchOffPitchSpanMutationError = ErrorType<void>
+
+    /**
+ * @summary Declare a tracking-time period with no playable pitch action
+ */
+export const useCreateClaimMatchOffPitchSpan = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>, TError,{id: number;data: BodyType<ClaimOffPitchInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>,
+        TError,
+        {id: number;data: BodyType<ClaimOffPitchInput>},
+        TContext
+      > => {
+      return useMutation(getCreateClaimMatchOffPitchSpanMutationOptions(options));
+    }
+
+export const getDeleteClaimMatchOffPitchSpanUrl = (id: number,
+    clientId: string,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/off-pitch/${clientId}`
+}
+
+/**
+ * @summary Delete an off-pitch period by client id
+ */
+export const deleteClaimMatchOffPitchSpan = async (id: number,
+    clientId: string, options?: RequestInit): Promise<ClaimOffPitchDeleteResponse> => {
+
+  return customFetch<ClaimOffPitchDeleteResponse>(getDeleteClaimMatchOffPitchSpanUrl(id,clientId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteClaimMatchOffPitchSpanMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>, TError,{id: number;clientId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>, TError,{id: number;clientId: string}, TContext> => {
+
+const mutationKey = ['deleteClaimMatchOffPitchSpan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>, {id: number;clientId: string}> = (props) => {
+          const {id,clientId} = props ?? {};
+
+          return  deleteClaimMatchOffPitchSpan(id,clientId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteClaimMatchOffPitchSpanMutationResult = NonNullable<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>>
+
+    export type DeleteClaimMatchOffPitchSpanMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete an off-pitch period by client id
+ */
+export const useDeleteClaimMatchOffPitchSpan = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>, TError,{id: number;clientId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>,
+        TError,
+        {id: number;clientId: string},
+        TContext
+      > => {
+      return useMutation(getDeleteClaimMatchOffPitchSpanMutationOptions(options));
     }
 
 export const getUpdateTrackingBundleUrl = (id: number,) => {

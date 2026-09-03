@@ -78,6 +78,14 @@ type Candidate = {
   taken?: boolean;
 };
 
+type ClaimOffPitchSpan = {
+  id: number;
+  clientId: string;
+  fromSeconds: number;
+  toSeconds: number;
+  createdAt: string;
+};
+
 function segmentAsBundle(
   manifest: ClaimMatchResponse["manifest"],
   segment: TrackingSegment,
@@ -377,6 +385,8 @@ export default function ClaimMatchPage() {
   const [segmentError, setSegmentError] = useState("");
   const [segmentRetryToken, setSegmentRetryToken] = useState(0);
   const [videoReadyTick, setVideoReadyTick] = useState(0);
+  const [offPitchStart, setOffPitchStart] = useState<number | null>(null);
+  const [offPitchSaving, setOffPitchSaving] = useState(false);
   const snappedAnchorRef = useRef<string | null>(null);
   const anchorAnswerNonceRef = useRef(0);
   const undoneClientIdsRef = useRef(new Set<string>());
@@ -395,6 +405,7 @@ export default function ClaimMatchPage() {
   const recording = response?.recording;
   const manifest = response?.manifest;
   const serverProgress = response?.progress;
+  const offPitchSpans = (response?.offPitchSpans ?? []) as ClaimOffPitchSpan[];
   useEffect(() => {
     if (manifest && manifest.identities?.length && !identityMapMatchesBundle(manifest)) {
       setNotice("This recording's identity map belongs to an older tracking bundle, so it was not applied. An admin must reload the Identity Board and save it again.");
@@ -423,8 +434,8 @@ export default function ClaimMatchPage() {
   const claimAnchors = useMemo(
     // Anchor ids are derived from their stable tracking times, never from the
     // currently loaded segment's array position.
-    () => buildClaimAnchors(duration, [], duration < 120 ? 4 : 8),
-    [duration],
+    () => buildClaimAnchors(duration, [], duration < 120 ? 4 : 8, offPitchSpans),
+    [duration, offPitchSpans],
   );
   const answeredAnchorMoments = useMemo(
     () => allCorrections
@@ -1113,6 +1124,65 @@ export default function ClaimMatchPage() {
     }
   };
 
+  const saveOffPitchSpan = async (fromSeconds: number, toSeconds: number) => {
+    if (offPitchSaving || toSeconds <= fromSeconds) return;
+    const payload = {
+      clientId: `offpitch-${activeRecordingId}-${Date.now()}`,
+      fromSeconds,
+      toSeconds,
+    };
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+    setOffPitchSaving(true);
+    setNotice(t.fieldDetail.claimYourMatch.offPitchTitle);
+    try {
+      const send = async (confirmConflict = false) => fetch(
+        `${basePath}/api/recordings/${activeRecordingId}/claim-match/off-pitch`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ ...payload, ...(confirmConflict ? { confirmConflict: true } : {}) }),
+        },
+      );
+      let result = await send();
+      if (result.status === 409) {
+        const conflict = await result.json() as { message?: string };
+        if (!window.confirm(conflict.message || t.fieldDetail.claimYourMatch.offPitchConflict)) {
+          setNotice(t.fieldDetail.claimYourMatch.offPitchCancel);
+          return;
+        }
+        result = await send(true);
+      }
+      if (!result.ok) throw new Error(String(result.status));
+      setOffPitchStart(null);
+      await queryClient.invalidateQueries({ queryKey: responseQueryKey, refetchType: "active" });
+      setNotice(t.fieldDetail.claimYourMatch.offPitchSaved);
+    } catch {
+      setNotice(t.fieldDetail.claimYourMatch.offPitchSaveFailed);
+    } finally {
+      setOffPitchSaving(false);
+    }
+  };
+
+  const removeOffPitchSpan = async (span: ClaimOffPitchSpan) => {
+    if (offPitchSaving) return;
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+    setOffPitchSaving(true);
+    try {
+      const result = await fetch(
+        `${basePath}/api/recordings/${activeRecordingId}/claim-match/off-pitch/${encodeURIComponent(span.clientId)}`,
+        { method: "DELETE", credentials: "include", headers: { Accept: "application/json" } },
+      );
+      if (!result.ok) throw new Error(String(result.status));
+      await queryClient.invalidateQueries({ queryKey: responseQueryKey, refetchType: "active" });
+      setNotice(t.fieldDetail.claimYourMatch.offPitchRemoved);
+    } catch {
+      setNotice(t.fieldDetail.claimYourMatch.offPitchRemoveFailed);
+    } finally {
+      setOffPitchSaving(false);
+    }
+  };
+
   const handleResetDemo = async () => {
     if (!isDemo || resettingDemo) return;
     const confirmed = window.confirm(
@@ -1216,6 +1286,46 @@ export default function ClaimMatchPage() {
           </small>
            {completionSyncPending && <small className="claim-completion-sync" role="status">Checking the saved result…</small>}
         </div>
+         <div className="claim-offpitch-tools" data-testid="claim-offpitch-tools">
+           <div className="claim-offpitch-heading">
+             <span><Clock3 size={15} /> {t.fieldDetail.claimYourMatch.offPitchTitle}</span>
+             <small>{t.fieldDetail.claimYourMatch.offPitchDesc}</small>
+           </div>
+           <div className="claim-offpitch-actions">
+             <button
+               type="button"
+               className="claim-button claim-button-secondary"
+               data-testid="button-offpitch-toggle"
+               disabled={offPitchSaving}
+               onClick={() => {
+                 if (offPitchStart === null) {
+                   setOffPitchStart(currentTime);
+                   setNotice(t.fieldDetail.claimYourMatch.offPitchChooseEnd);
+                 } else {
+                   void saveOffPitchSpan(offPitchStart, currentTime);
+                 }
+               }}
+             >
+               {offPitchStart === null ? t.fieldDetail.claimYourMatch.offPitchStart : t.fieldDetail.claimYourMatch.offPitchEnd}
+             </button>
+             {offPitchStart !== null && (
+               <button type="button" className="claim-text-button" data-testid="button-offpitch-cancel" onClick={() => {
+                 setOffPitchStart(null);
+                 setNotice(t.fieldDetail.claimYourMatch.offPitchCancel);
+               }}>{t.fieldDetail.claimYourMatch.offPitchCancel}</button>
+             )}
+           </div>
+           {offPitchSpans.length > 0 && (
+             <div className="claim-offpitch-list">
+               {offPitchSpans.map((span) => (
+                 <div className="claim-offpitch-row" key={span.clientId}>
+                   <span>{formatTime(span.fromSeconds)} – {formatTime(span.toSeconds)}</span>
+                   <button type="button" className="claim-text-button" onClick={() => void removeOffPitchSpan(span)} disabled={offPitchSaving}>{t.fieldDetail.claimYourMatch.offPitchRemove}</button>
+                 </div>
+               ))}
+             </div>
+           )}
+         </div>
         {serverProgress?.identityBinding?.state === "disputed" && (
           <div className="claim-panel claim-panel-warning" role="alert">
             <b>This player is already claimed by another account.</b>
@@ -1393,6 +1503,7 @@ export default function ClaimMatchPage() {
         slow={slow}
         playbackRate={playbackRate}
         goalTimes={goalTimes}
+         offPitchSpans={offPitchSpans}
         videoRef={videoRef}
         onToggle={handlePlay}
         onSeek={handleSeek}

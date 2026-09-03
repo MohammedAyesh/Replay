@@ -12,6 +12,11 @@ export type ClaimAnchor = {
   momentSeconds: number;
 };
 
+type ExcludedSpan = {
+  fromSeconds: number;
+  toSeconds: number;
+};
+
 /**
  * Keep an answer attached to its checkpoint when the player cannot be
  * meaningfully snapped to a nearby detection. A missing detection is not
@@ -74,9 +79,12 @@ export function buildClaimAnchors(
   duration: number,
   eventTimes: number[] = [],
   desiredCount = 8,
+  excludedSpans: ExcludedSpan[] = [],
 ): ClaimAnchor[] {
   const safeDuration = Math.max(1, duration);
   const minGap = Math.max(8, safeDuration / Math.max(desiredCount * 2, 1));
+  const isExcluded = (moment: number) => excludedSpans.some((span) =>
+    moment >= span.fromSeconds && moment < span.toSeconds);
   const candidates = [
     ...eventTimes,
     ...Array.from(
@@ -85,6 +93,7 @@ export function buildClaimAnchors(
     ),
   ]
     .map((momentSeconds) => Math.max(0, Math.min(safeDuration, momentSeconds)))
+    .filter((momentSeconds) => !isExcluded(momentSeconds))
     .sort((a, b) => a - b);
   const selected: number[] = [];
   for (const moment of candidates) {

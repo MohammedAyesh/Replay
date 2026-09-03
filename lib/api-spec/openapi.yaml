@@ -562,6 +562,78 @@ paths:
         "404":
           description: Correction not found
 
+  /recordings/{id}/claim-match/off-pitch:
+    post:
+      operationId: createClaimMatchOffPitchSpan
+      tags: [claimMatch]
+      summary: Declare a tracking-time period with no playable pitch action
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimOffPitchInput"
+      responses:
+        "201":
+          description: Off-pitch period recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimOffPitchSpan"
+        "200":
+          description: Idempotent replay of an existing period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimOffPitchSpan"
+        "400":
+          description: Invalid tracking-time period
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Recording or tracking bundle not found
+        "409":
+          description: The period overlaps vouched identity fragments and requires explicit confirmation
+  /recordings/{id}/claim-match/off-pitch/{clientId}:
+    delete:
+      operationId: deleteClaimMatchOffPitchSpan
+      tags: [claimMatch]
+      summary: Delete an off-pitch period by client id
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Off-pitch period deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimOffPitchDeleteResponse"
+        "400":
+          description: Invalid recording or client id
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Off-pitch period not found
+
   /admin/recordings/{id}/tracking-bundle:
     patch:
       operationId: updateTrackingBundle
@@ -2668,7 +2740,7 @@ components:
 
     ClaimProgress:
       type: object
-      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, humanVouchedSeconds, inferredSeconds, vouchedFragments, takenFragments, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
+      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, offPitchSeconds, humanVouchedSeconds, inferredSeconds, vouchedFragments, takenFragments, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
       properties:
         recordingId:
           type: integer
@@ -2693,7 +2765,11 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: coverageSeconds divided by the tracked match duration.
+          description: coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.
+        offPitchSeconds:
+          type: number
+          minimum: 0
+          description: Union of this claimant's declared off-pitch periods in tracking seconds.
         humanVouchedSeconds:
           type: number
           minimum: 0
@@ -2800,9 +2876,52 @@ components:
           type: integer
           minimum: 0
 
+    ClaimOffPitchInput:
+      type: object
+      required: [clientId, fromSeconds, toSeconds]
+      properties:
+        clientId:
+          type: string
+          minLength: 1
+        fromSeconds:
+          type: number
+          minimum: 0
+          description: Exact tracking-time seconds from the start of the tracking window.
+        toSeconds:
+          type: number
+          minimum: 0
+          description: Exact tracking-time seconds from the start of the tracking window.
+        confirmConflict:
+          type: boolean
+          description: Explicitly acknowledge overlap with vouched identity fragments.
+
+    ClaimOffPitchSpan:
+      type: object
+      required: [id, clientId, fromSeconds, toSeconds, createdAt]
+      properties:
+        id:
+          type: integer
+        clientId:
+          type: string
+        fromSeconds:
+          type: number
+        toSeconds:
+          type: number
+        createdAt:
+          type: string
+
+    ClaimOffPitchDeleteResponse:
+      type: object
+      required: [deleted, clientId]
+      properties:
+        deleted:
+          type: boolean
+        clientId:
+          type: string
+
     ClaimMatchResponse:
       type: object
-      required: [recording, manifest, progress, corrections]
+      required: [recording, manifest, progress, corrections, offPitchSpans, offPitchSeconds]
       properties:
         recording:
           $ref: "#/components/schemas/Recording"
@@ -2814,6 +2933,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ClaimCorrection"
+        offPitchSpans:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimOffPitchSpan"
+        offPitchSeconds:
+          type: number
+          minimum: 0
 
     ClaimMatchDemoResetResponse:
       type: object

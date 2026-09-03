@@ -28,6 +28,7 @@ import {
   claimMatchProgressTable,
   claimMatchCorrectionsTable,
   claimMatchIdentityBindingsTable,
+  claimMatchOffPitchSpansTable,
   type TrackingManifest,
   type TrackingPitchModel,
   type TrackingSegmentPayload,
@@ -49,6 +50,12 @@ import {
   writeClaimSegment,
 } from "../lib/claimMatchStorage";
 import { isRecordingVisible } from "../lib/recordingVisibility";
+import {
+  normaliseOffPitchSpans,
+  subtractSpans,
+  totalSeconds,
+  type OffPitchSpan,
+} from "./claimOffPitch";
 
 const router: IRouter = Router();
 
@@ -983,6 +990,7 @@ function toProgress(row: typeof claimMatchProgressTable.$inferSelect | null, rec
     claimedPercent: row?.claimedPercent ?? 0,
     coverageSeconds: 0,
     coveragePercent: row?.claimedPercent ?? 0,
+    offPitchSeconds: 0,
     answeredAnchorCount: 0,
     acceptedAnchorCount: 0,
     unresolvedMoments: [],
@@ -1183,6 +1191,12 @@ router.post("/claim-match/demo/reset", async (req, res): Promise<void> => {
         eq(claimMatchIdentityBindingsTable.userId, userId),
         eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
       ));
+    await tx
+      .delete(claimMatchOffPitchSpansTable)
+      .where(and(
+        eq(claimMatchOffPitchSpansTable.userId, userId),
+        eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
+      ));
   });
 
   res.json({ recordingId, reset: true });
@@ -1306,6 +1320,7 @@ async function materializeClaimMoments(
 type DerivedClaimState = {
   coverageSeconds: number;
   coveragePercent: number;
+  offPitchSeconds: number;
   humanVouchedSeconds: number;
   inferredSeconds: number;
   vouchedFragments: ClaimVouchedFragment[];
@@ -1951,6 +1966,7 @@ function buildPlayerMetrics(
   matchedEvents: number,
   humanVouchedSeconds: number,
   inferredSeconds: number,
+  offPitchSpans: OffPitchSpan[],
 ) {
   const base = {
     confirmedSeconds: Math.round(coveredSeconds * 100) / 100,
@@ -1981,7 +1997,11 @@ function buildPlayerMetrics(
     };
   }
 
-  const raw = acceptedPositionSamples(manifest, fullSegments, accepted);
+  const raw = acceptedPositionSamples(manifest, fullSegments, accepted)
+    .filter((sample) => !offPitchSpans.some((span) => {
+      const seconds = sample.frame / Math.max(manifest.frameRate, 0.001);
+      return seconds >= span.fromSeconds && seconds < span.toSeconds;
+    }));
   const mapped: MappedPosition[] = [];
   for (const sample of raw) {
     const pitch = interpolatePitchPosition(sample.x, sample.y, manifest);
@@ -2084,10 +2104,16 @@ export function deriveClaimState(
   segments: ClaimStateSegment[],
   corrections: typeof claimMatchCorrectionsTable.$inferSelect[],
   fullSegments?: TrackingSegmentPayload[],
+  declaredOffPitchSpans: OffPitchSpan[] = [],
 ): DerivedClaimState {
+  const offPitchSpans = normaliseOffPitchSpans(declaredOffPitchSpans, manifest.duration);
+  const offPitchSeconds = totalSeconds(offPitchSpans);
+  const isOffPitch = (seconds: number) => offPitchSpans.some((span) =>
+    seconds >= span.fromSeconds && seconds < span.toSeconds);
   const active = corrections.filter((row) => !row.undone);
-  const anchorAnswers = latestAnchorAnswers(corrections);
-  const nonAnchorAnswers = active.filter((row) => !row.answerMethod.startsWith("anchor-"));
+  const anchorAnswers = latestAnchorAnswers(corrections).filter((row) => !isOffPitch(row.momentSeconds));
+  const nonAnchorAnswers = active.filter((row) =>
+    !row.answerMethod.startsWith("anchor-") && !isOffPitch(row.momentSeconds));
   const accepted = [...nonAnchorAnswers, ...anchorAnswers].filter(isAcceptedClaimAnswer);
   const identityEvidence = claimIdentityEvidence(manifest, segments, accepted);
   const identityResolution = resolveClaimIdentity(manifest, segments, accepted);
@@ -2112,24 +2138,28 @@ export function deriveClaimState(
     }))
     .filter((interval) => interval.endSeconds > interval.startSeconds)
     .sort((a, b) => a.startSeconds - b.startSeconds);
-  let coveredSeconds = 0;
-  let end = 0;
-  for (const interval of sorted) {
-    if (interval.startSeconds > end) {
-      coveredSeconds += interval.endSeconds - interval.startSeconds;
-      end = interval.endSeconds;
-    } else if (interval.endSeconds > end) {
-      coveredSeconds += interval.endSeconds - end;
-      end = interval.endSeconds;
-    }
-  }
-  const coveragePercent = Math.min(100, Math.round((coveredSeconds / Math.max(manifest.duration, 0.001)) * 10000) / 100);
+  const attributed = subtractSpans(
+    normaliseOffPitchSpans(sorted.map((interval) => ({
+      fromSeconds: interval.startSeconds,
+      toSeconds: interval.endSeconds,
+    })), manifest.duration),
+    offPitchSpans,
+  );
+  const coveredSeconds = totalSeconds(attributed);
+  const coverageDenominator = Math.max(manifest.duration - offPitchSeconds, 1);
+  const coveragePercent = Math.min(100, Math.round((coveredSeconds / coverageDenominator) * 10000) / 100);
   const vouchedFragments = fullSegments
     ? acceptedForPerson
       .map((row) => vouchedFragmentForAnswer(manifest, fullSegments, row))
       .filter((fragment): fragment is ClaimVouchedFragment => fragment !== null)
     : [];
-  const humanVouchedSeconds = unionFragmentSeconds(manifest, vouchedFragments);
+  const humanVouchedSeconds = totalSeconds(subtractSpans(
+    canonicalVouchedFragments(vouchedFragments).map((fragment) => ({
+      fromSeconds: Math.max(0, fragment.fromFrame / Math.max(manifest.frameRate, 0.001)),
+      toSeconds: Math.min(manifest.duration, (fragment.toFrame + 1) / Math.max(manifest.frameRate, 0.001)),
+    })),
+    offPitchSpans,
+  ));
   const inferredSeconds = Math.max(0, Math.round((coveredSeconds - humanVouchedSeconds) * 100) / 100);
   const unresolvedMoments = anchorAnswers
     .filter((row) => row.answerMethod === "anchor-no" || row.answerMethod === "anchor-skip")
@@ -2141,8 +2171,12 @@ export function deriveClaimState(
   const completed = identityResolution !== null
     && acceptedAnchorCount >= requiredAnchors
     && coveragePercent >= requiredCoverage;
+  const attributedIntervals = attributed.map((interval) => ({
+    startSeconds: interval.fromSeconds,
+    endSeconds: interval.toSeconds,
+  }));
   const earnedClips = acceptedForPerson.reduce(
-    (all, row) => getMomentClips(segments, row.momentSeconds, all, sorted),
+    (all, row) => getMomentClips(segments, row.momentSeconds, all, attributedIntervals),
     [] as ClaimEarnedClip[],
   );
   const acceptedTrackIds = new Set<string>();
@@ -2158,7 +2192,7 @@ export function deriveClaimState(
   ).length;
   const matchedEvents = segments
     .flatMap((segment) => segment.events)
-    .filter((event) => sorted.some((interval) =>
+    .filter((event) => attributedIntervals.some((interval) =>
       event.time >= interval.startSeconds && event.time <= interval.endSeconds,
     ))
     .length;
@@ -2175,11 +2209,13 @@ export function deriveClaimState(
     matchedEvents,
     humanVouchedSeconds,
     inferredSeconds,
+    offPitchSpans,
   );
   const { adminPlayerStats, ...playerStats } = playerMetrics;
   return {
     coverageSeconds: Math.round(coveredSeconds * 100) / 100,
     coveragePercent,
+    offPitchSeconds,
     humanVouchedSeconds,
     inferredSeconds,
     vouchedFragments: canonicalVouchedFragments(vouchedFragments),
@@ -2226,6 +2262,7 @@ function progressWithDerived(
     claimedPercent: derived.coveragePercent,
     coverageSeconds: derived.coverageSeconds,
     coveragePercent: derived.coveragePercent,
+    offPitchSeconds: derived.offPitchSeconds,
     humanVouchedSeconds: derived.humanVouchedSeconds,
     inferredSeconds: derived.inferredSeconds,
     vouchedFragments: derived.vouchedFragments,
@@ -2257,6 +2294,27 @@ async function getClaimCorrections(userId: number, recordingId: number) {
       eq(claimMatchCorrectionsTable.recordingId, recordingId),
     ))
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
+}
+
+async function getClaimOffPitchSpans(userId: number, recordingId: number) {
+  return db
+    .select()
+    .from(claimMatchOffPitchSpansTable)
+    .where(and(
+      eq(claimMatchOffPitchSpansTable.userId, userId),
+      eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
+    ))
+    .orderBy(asc(claimMatchOffPitchSpansTable.fromSeconds), asc(claimMatchOffPitchSpansTable.createdAt));
+}
+
+function toOffPitchSpan(row: typeof claimMatchOffPitchSpansTable.$inferSelect) {
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    fromSeconds: row.fromSeconds,
+    toSeconds: row.toSeconds,
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 async function getTakenClaimFragments(recordingId: number, userId: number) {
@@ -2554,13 +2612,17 @@ router.get("/admin/recordings/:id/player-metrics", async (req, res): Promise<voi
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
-  const [corrections, fullSegments] = await Promise.all([
+  const [corrections, fullSegments, offPitchRows] = await Promise.all([
     db
       .select()
       .from(claimMatchCorrectionsTable)
       .where(eq(claimMatchCorrectionsTable.recordingId, recordingId))
       .orderBy(desc(claimMatchCorrectionsTable.createdAt)),
     readBundleSegments(row.bundle.id),
+    db
+      .select()
+      .from(claimMatchOffPitchSpansTable)
+      .where(eq(claimMatchOffPitchSpansTable.recordingId, recordingId)),
   ]);
   const correctionsByUser = new Map<number, typeof corrections>();
   for (const correction of corrections) {
@@ -2578,9 +2640,21 @@ router.get("/admin/recordings/:id/player-metrics", async (req, res): Promise<voi
   const usersById = new Map(users.map((user) => [user.id, user]));
   const manifest = await manifestWithBundleFingerprint(row.bundle);
   const segments = await getClaimStateSegments(row.bundle);
+  const offPitchByUser = new Map<number, OffPitchSpan[]>();
+  for (const row of offPitchRows) {
+    const existing = offPitchByUser.get(row.userId) ?? [];
+    existing.push(row);
+    offPitchByUser.set(row.userId, existing);
+  }
   const players = [...correctionsByUser.entries()]
     .map(([userId, userCorrections]) => {
-      const derived = deriveClaimState(manifest, segments, userCorrections, fullSegments);
+      const derived = deriveClaimState(
+        manifest,
+        segments,
+        userCorrections,
+        fullSegments,
+        normaliseOffPitchSpans(offPitchByUser.get(userId) ?? [], manifest.duration),
+      );
       const user = usersById.get(userId);
       return {
         userId,
@@ -2809,13 +2883,21 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       eq(claimMatchCorrectionsTable.recordingId, params.data.id),
     ))
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
+  const storedOffPitchSpans = await getClaimOffPitchSpans(userId, params.data.id);
   const manifest = await manifestWithBundleFingerprint(row.bundle);
   const segments = await getClaimStateSegments(row.bundle);
-  let derived = deriveClaimState(manifest, segments, corrections);
+  const offPitchSpans = normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration);
+  let derived = deriveClaimState(manifest, segments, corrections, undefined, offPitchSpans);
   if (corrections.some(isAcceptedClaimAnswer) || progress?.completed || derived.completed) {
     // Vouched fragments are exact detection runs, so a claim read must use
     // full boxes whenever the user has accepted an identity answer.
-    derived = deriveClaimState(manifest, segments, corrections, await readBundleSegments(row.bundle.id));
+    derived = deriveClaimState(
+      manifest,
+      segments,
+      corrections,
+      await readBundleSegments(row.bundle.id),
+      offPitchSpans,
+    );
   }
   const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
   const takenFragments = await getTakenClaimFragments(params.data.id, userId);
@@ -2838,6 +2920,8 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     manifest: { ...manifestForClient(manifest), videoStartSeconds: manifest.videoStartSeconds ?? 0 },
     progress: progressWithDerived(progress ?? null, params.data.id, derived, binding, takenFragments),
     corrections: corrections.map(toCorrection),
+    offPitchSpans: storedOffPitchSpans.map(toOffPitchSpan),
+    offPitchSeconds: derived.offPitchSeconds,
   }));
 });
 
@@ -2901,9 +2985,17 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const segments = await getClaimStateSegments(row.bundle);
   const corrections = await getClaimCorrections(userId, params.data.id);
   const manifest = await manifestWithBundleFingerprint(row.bundle);
-  let derived = deriveClaimState(manifest, segments, corrections);
+  const storedOffPitchSpans = await getClaimOffPitchSpans(userId, params.data.id);
+  const offPitchSpans = normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration);
+  let derived = deriveClaimState(manifest, segments, corrections, undefined, offPitchSpans);
   if (corrections.some(isAcceptedClaimAnswer) || derived.completed) {
-    derived = deriveClaimState(manifest, segments, corrections, await readBundleSegments(row.bundle.id));
+    derived = deriveClaimState(
+      manifest,
+      segments,
+      corrections,
+      await readBundleSegments(row.bundle.id),
+      offPitchSpans,
+    );
   }
   const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived, true);
   const takenFragments = await getTakenClaimFragments(params.data.id, userId);
@@ -3004,6 +3096,8 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
   }
   const segments = await getClaimStateSegments(row.bundle);
   const manifest = await manifestWithBundleFingerprint(row.bundle);
+  const storedOffPitchSpans = await getClaimOffPitchSpans(userId, params.data.id);
+  const offPitchSpans = normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration);
   const trackIds = knownClaimTrackIds(manifest, segments);
   const isAnchorNoAnswer = body.data.answerMethod === "anchor-no" || body.data.answerMethod === "anchor-skip";
   if (
@@ -3050,6 +3144,7 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     segments,
     allCorrections,
     await readBundleSegments(row.bundle.id),
+    offPitchSpans,
   );
   const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
   const isCompleted = completionAllowed(derived, binding);
@@ -3155,11 +3250,13 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
         .then((rows) => rows[0] ?? null),
     ]);
     const manifest = await manifestWithBundleFingerprint(bundleRow.bundle);
+    const storedOffPitchSpans = await getClaimOffPitchSpans(userId, correction.recordingId);
     const derived = deriveClaimState(
       manifest,
       segments,
       corrections,
       await readBundleSegments(bundleRow.bundle.id),
+      normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration),
     );
     const binding = await syncIdentityBinding(userId, correction.recordingId, bundleRow.bundle, derived);
     const isCompleted = completionAllowed(derived, binding);
