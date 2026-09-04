@@ -185,7 +185,7 @@ async function proxyStorageObject(
 }
 
 /** The share card itself. No auth, no interstitial, no JavaScript required. */
-router.get("/s/:id/:token", async (req, res): Promise<void> => {
+router.get(["/s/:id/:token", "/api/s/:id/:token"], async (req, res): Promise<void> => {
   const clip = await resolveSharedClip(req);
   if (!clip) { res.status(404).type("text/plain").send("Not found"); return; }
 
@@ -214,7 +214,7 @@ router.get("/s/:id/:token", async (req, res): Promise<void> => {
   res.type("text/html").send(html);
 });
 
-router.get("/s/:id/:token/poster.jpg", async (req, res): Promise<void> => {
+router.get(["/s/:id/:token/poster.jpg", "/api/s/:id/:token/poster.jpg"], async (req, res): Promise<void> => {
   const clip = await resolveSharedClip(req);
   if (!clip) { res.status(404).end(); return; }
   const posterPath = await ensureClipPoster(clip);
@@ -222,7 +222,7 @@ router.get("/s/:id/:token/poster.jpg", async (req, res): Promise<void> => {
   await proxyStorageObject(req, res, posterPath, "image/jpeg", 31536000);
 });
 
-router.get("/s/:id/:token/clip.mp4", async (req, res): Promise<void> => {
+router.get(["/s/:id/:token/clip.mp4", "/api/s/:id/:token/clip.mp4"], async (req, res): Promise<void> => {
   const clip = await resolveSharedClip(req);
   if (!clip || !clip.exportedUrl) { res.status(404).end(); return; }
   // exportedUrl is a CDN URL over the same storage zone; the storage path is

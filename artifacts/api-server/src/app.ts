@@ -103,10 +103,15 @@ app.use("/api", (_req, res, next) => {
   next();
 });
 
-// Share cards live at the site root, not under /api, and deliberately outside
-// the no-store block above: they are public, cacheable, and fetched by crawlers
-// that will never send a cookie. Mounted before the API so /s/... never falls
-// through to it.
+// Share cards are public, cacheable, and fetched by crawlers that never send a
+// cookie, so they sit outside the no-store block above and set their own
+// Cache-Control.
+//
+// Mounted before the API, and the router answers on both /s/... and /api/s/...
+// because the front router that fronts this app and the SPA on one origin
+// decides by path prefix: where only /api reaches this process, a bare /s link
+// silently lands on the SPA and the crawler gets the generic card. Which form
+// the emitted links take is SHARE_PATH_PREFIX — see lib/shareCard.ts.
 app.use(shareRouter);
 
 app.use("/api", router);

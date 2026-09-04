@@ -197,6 +197,39 @@ describe("what is not reachable", () => {
   });
 });
 
+describe("path prefixes", () => {
+  // The router in front of this app and the SPA decides by path prefix. Where
+  // only /api reaches this process, a bare /s link lands on the SPA and the
+  // crawler quietly gets the generic card, so both forms have to answer.
+  it("answers on /api/s/... as well as /s/...", async () => {
+    const tok = shareToken(readyClipId);
+    const viaApi = await request(app).get(`/api/s/${readyClipId}/${tok}`);
+    expect(viaApi.status).toBe(200);
+    expect(viaApi.text).toContain("og:image:width");
+
+    const poster = await request(app).get(`/api/s/${readyClipId}/${tok}/poster.jpg`);
+    expect(poster.status).toBe(200);
+    expect(poster.headers["content-type"]).toBe("image/jpeg");
+
+    const mp4 = await request(app).get(`/api/s/${readyClipId}/${tok}/clip.mp4`).set("Range", "bytes=0-9");
+    expect(mp4.status).toBe(206);
+  }, 180_000);
+
+  it("emits whichever form SHARE_PATH_PREFIX selects", async () => {
+    const saved = process.env.SHARE_PATH_PREFIX;
+    process.env.SHARE_PATH_PREFIX = "/api/s";
+    vi.resetModules();
+    try {
+      const { shareCardPath: prefixed } = await import("../lib/shareCard");
+      expect(prefixed(readyClipId)).toBe(`/api/s/${readyClipId}/${shareToken(readyClipId)}`);
+    } finally {
+      if (saved === undefined) delete process.env.SHARE_PATH_PREFIX;
+      else process.env.SHARE_PATH_PREFIX = saved;
+      vi.resetModules();
+    }
+  });
+});
+
 describe("the assets", () => {
   it("serves the poster as a real JPEG of the declared size", async () => {
     const res = await request(app).get(`${cardUrl(readyClipId)}/poster.jpg`).buffer(true)

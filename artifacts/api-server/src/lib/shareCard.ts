@@ -57,8 +57,26 @@ export function verifyShareToken(clipId: number, presented: string): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
+/**
+ * Path prefix the share card is served under.
+ *
+ * `/s` is the right-looking link and is what the API mounts by default. But this
+ * app and the API are served under one origin by a router in front of them
+ * (Replit's `router = "application"`, API on 8080, SPA on 8081), and that router
+ * decides by path prefix — so on a deployment where only `/api` reaches the API,
+ * a bare `/s/...` link lands on the SPA and the crawler gets the generic card
+ * with nothing to indicate anything went wrong.
+ *
+ * The router mounts the share routes at BOTH paths; this variable only decides
+ * which form the emitted links take. Set `SHARE_PATH_PREFIX=/api/s` where the
+ * front router does not pass `/s` through. Verify with a real request to
+ * `https://<host>/s/<id>/<token>` before trusting the short form: the failure is
+ * silent and shows up as share cards that never got better.
+ */
+export const SHARE_PATH_PREFIX = (process.env.SHARE_PATH_PREFIX || "/s").replace(/\/$/, "");
+
 export function shareCardPath(clipId: number): string {
-  return `/s/${clipId}/${shareToken(clipId)}`;
+  return `${SHARE_PATH_PREFIX}/${clipId}/${shareToken(clipId)}`;
 }
 
 export function escapeHtml(value: string): string {
