@@ -1,8 +1,10 @@
 <#
   analysis-worker.ps1 - the GPU workstation's half of the analysis queue.
 
-    powershell -ExecutionPolicy Bypass -File C:\Users\Public\replay-ops\analysis-worker.ps1 `
-      -ApiBase https://<the app> -WorkerKey <ANALYSIS_WORKER_KEY>
+    powershell -ExecutionPolicy Bypass -File C:\Users\Public\replay-ops\analysis-worker.ps1
+
+  reading REPLAY_API_BASE and ANALYSIS_WORKER_KEY from the environment, or with
+  -ApiBase and -WorkerKey if you would rather pass them.
 
   Leave the window open. It asks the app whether there is anything to analyse,
   runs the existing pipeline over whatever it is given, uploads the result, and
@@ -33,9 +35,13 @@
   gives it back to the queue after fifteen minutes, and the next run picks it up
   - resuming inside .\match if it is the same recording.
 #>
+# Both of these default to the environment, so the usual way to run this is with
+# no arguments at all. That is not only convenience: a key passed on the command
+# line ends up in PSReadLine's history file in plain text, where it long outlives
+# the window it was typed in.
 param(
-  [Parameter(Mandatory=$true)][string]$ApiBase,
-  [Parameter(Mandatory=$true)][string]$WorkerKey,
+  [string]$ApiBase = $env:REPLAY_API_BASE,
+  [string]$WorkerKey = $env:ANALYSIS_WORKER_KEY,
   [string]$WorkerId = $env:COMPUTERNAME,
   [int]$PollSeconds = 60,
   [int]$HeartbeatSeconds = 30,
@@ -45,7 +51,20 @@ param(
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 Set-Location $Root
-$VERSION = "analysis-worker/1"
+$VERSION = "analysis-worker/2"
+
+if (-not $ApiBase) {
+  Write-Host "No app URL. Either set REPLAY_API_BASE or pass -ApiBase https://replayjo.com" -ForegroundColor Red
+  Write-Host "  [Environment]::SetEnvironmentVariable('REPLAY_API_BASE','https://replayjo.com','User')" -ForegroundColor DarkGray
+  Write-Host "  ...then open a NEW window - this one will not see it." -ForegroundColor DarkGray
+  exit 1
+}
+if (-not $WorkerKey) {
+  Write-Host "No worker key. Either set ANALYSIS_WORKER_KEY or pass -WorkerKey <key>" -ForegroundColor Red
+  Write-Host "  [Environment]::SetEnvironmentVariable('ANALYSIS_WORKER_KEY',(Read-Host 'key'),'User')" -ForegroundColor DarkGray
+  Write-Host "  ...then open a NEW window - this one will not see it." -ForegroundColor DarkGray
+  exit 1
+}
 $ApiBase = $ApiBase.TrimEnd("/")
 $WORK = Join-Path $Root "match"
 $MARKER = Join-Path $WORK "_current.txt"
