@@ -13,7 +13,14 @@ import {
   SCOPE_SPECIFICITY,
   type ScopeType,
 } from "../lib/settingsResolver";
-import { explainAllSettings, explainSetting, invalidateSettingsCache } from "../lib/settings";
+import {
+  explainAllSettings,
+  explainSetting,
+  invalidateSettingsCache,
+  isMissingRelationError,
+  isSettingsSchemaReady,
+  loadRules,
+} from "../lib/settings";
 
 const router: IRouter = Router();
 
@@ -183,12 +190,31 @@ router.get("/admin/settings/registry", async (req, res): Promise<void> => {
   });
 });
 
+/**
+ * The remedy for a settings table that does not exist yet.
+ *
+ * Deploying the code and running the schema push are separate acts, and between
+ * them this endpoint used to answer 500 — which tells an admin nothing except
+ * that the page is broken. It is a specific, fixable condition, so it says so
+ * and says what to run. The push is deliberately interactive-only (see
+ * lib/db/scripts/push-wrapper.sh), which is why this cannot just fix itself.
+ */
+const SCHEMA_MISSING_MESSAGE =
+  "The settings tables have not been created in this database yet. " +
+  "Open a Shell tab and run: pnpm --filter @workspace/db run push";
+
 /** Every rule, newest first. */
 router.get("/admin/settings/rules", async (req, res): Promise<void> => {
   if (!(await requireAdmin(req))) { unauthenticatedResponse(res, req); return; }
-  const rows = await db.select().from(settingsRulesTable);
-  rows.sort((a, b) => b.id - a.id);
-  res.json({ rules: rows });
+  try {
+    const rows = await db.select().from(settingsRulesTable);
+    rows.sort((a, b) => b.id - a.id);
+    res.json({ rules: rows, schemaReady: true });
+  } catch (err) {
+    if (!isMissingRelationError(err)) throw err;
+    logger.warn("settings_rules is missing — the admin settings tab will prompt for a schema push");
+    res.json({ rules: [], schemaReady: false, message: SCHEMA_MISSING_MESSAGE });
+  }
 });
 
 router.post("/admin/settings/rules", async (req, res): Promise<void> => {
@@ -198,10 +224,17 @@ router.post("/admin/settings/rules", async (req, res): Promise<void> => {
   const parsed = validateRule(req.body ?? {});
   if (!parsed.ok) { res.status(400).json({ error: parsed.error }); return; }
 
-  const [row] = await db
-    .insert(settingsRulesTable)
-    .values({ ...parsed.value, createdBy: adminId })
-    .returning();
+  let row: typeof settingsRulesTable.$inferSelect;
+  try {
+    [row] = await db
+      .insert(settingsRulesTable)
+      .values({ ...parsed.value, createdBy: adminId })
+      .returning();
+  } catch (err) {
+    if (!isMissingRelationError(err)) throw err;
+    res.status(503).json({ error: SCHEMA_MISSING_MESSAGE });
+    return;
+  }
   invalidateSettingsCache();
   logger.info({ adminId, ruleId: row.id, key: row.key, scopeType: row.scopeType, scopeId: row.scopeId, value: row.value },
     "Settings rule created");
@@ -277,11 +310,20 @@ router.get("/admin/settings/preview", async (req, res): Promise<void> => {
 
   if (typeof req.query.key === "string" && req.query.key) {
     if (!getSetting(req.query.key)) { res.status(400).json({ error: "Unknown setting" }); return; }
-    res.json({ context: ctx, resolution: await explainSetting(req.query.key, ctx) });
+    const resolution = await explainSetting(req.query.key, ctx);
+    res.json({ context: ctx, resolution, schemaReady: isSettingsSchemaReady() });
     return;
   }
 
-  res.json({ context: ctx, settings: await explainAllSettings(ctx) });
+  const settings = await explainAllSettings(ctx);
+  // Reported after resolving, because that is what actually attempts the read.
+  const schemaReady = isSettingsSchemaReady();
+  res.json({
+    context: ctx,
+    settings,
+    schemaReady,
+    ...(schemaReady ? {} : { message: SCHEMA_MISSING_MESSAGE }),
+  });
 });
 
 export default router;

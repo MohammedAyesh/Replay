@@ -33,6 +33,30 @@ const CACHE_TTL_MS = Math.max(
 let cache: { rules: SettingRule[]; loadedAt: number } | null = null;
 let inflight: Promise<SettingRule[]> | null = null;
 
+/**
+ * Has the settings table been created yet?
+ *
+ * Deploying the code and running the schema push are two separate acts, and
+ * between them every settings read hits a table that does not exist. That window
+ * is not an error state to hide — it is a specific, fixable condition with a
+ * specific remedy, and the admin looking at a blank page deserves to be told
+ * which one it is rather than shown a 500.
+ */
+let schemaMissing = false;
+
+export function isSettingsSchemaReady(): boolean {
+  return !schemaMissing;
+}
+
+/** Postgres 42P01: relation does not exist. */
+export function isMissingRelationError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code
+    ?? ((err as { cause?: { code?: string } })?.cause)?.code;
+  if (code === "42P01") return true;
+  const message = String((err as Error)?.message ?? "");
+  return /relation .* does not exist/i.test(message);
+}
+
 /** Drop the cache. Called by every write path so an admin change is immediate. */
 export function invalidateSettingsCache(): void {
   cache = null;
@@ -66,9 +90,21 @@ export async function loadRules(): Promise<SettingRule[]> {
     try {
       const rows = await db.select().from(settingsRulesTable);
       const rules = rows.map(toRule);
+      schemaMissing = false;
       cache = { rules, loadedAt: Date.now() };
       return rules;
     } catch (err) {
+      if (isMissingRelationError(err)) {
+        // Not an outage — the schema push has not been run in this environment.
+        // Every key still resolves to its shipped default, so the product works;
+        // it just cannot be configured yet.
+        schemaMissing = true;
+        logger.warn(
+          "settings_rules does not exist yet — every setting is resolving to its shipped default. " +
+          "Run the database schema push to enable configuration.",
+        );
+        return [];
+      }
       // A settings table that cannot be read must not take the product down: every
       // key has a shipped default, so an empty rule set is a safe answer. It is
       // also the honest one — we do not know of any override.

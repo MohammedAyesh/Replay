@@ -139,6 +139,7 @@ export default function SettingsTab() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [draft, setDraft] = useState<ReturnType<typeof emptyDraft> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [schemaNotice, setSchemaNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -155,6 +156,13 @@ export default function SettingsTab() {
       ]);
       setEntries(preview.settings);
       setRules(ruleList.rules);
+      // Distinguish "not configured yet" from "broken". The first has a remedy
+      // and the admin can act on it; a bare failure gives them nothing.
+      setSchemaNotice(
+        ruleList.schemaReady === false || preview.schemaReady === false
+          ? (ruleList.message ?? preview.message ?? null)
+          : null,
+      );
     } catch (err) {
       setError((err as Error).message);
     }
@@ -272,6 +280,17 @@ export default function SettingsTab() {
               onChange={(e) => setContext({ ...context, at: e.target.value })} /></div>
         </div>
       </div>
+
+      {schemaNotice && (
+        <div className="rounded border border-amber-800/60 bg-amber-950/30 px-3 py-2.5">
+          <p className="text-amber-300 text-sm font-semibold">Settings storage is not set up yet</p>
+          <p className="text-amber-200/70 text-xs mt-1">{schemaNotice}</p>
+          <p className="text-amber-200/50 text-xs mt-1.5">
+            Everything below still shows the value each setting ships with, and those
+            are what the product is using. Rules cannot be saved until the tables exist.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="rounded border border-red-900/60 bg-red-950/40 text-red-300 text-sm px-3 py-2">{error}</div>

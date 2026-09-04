@@ -14,7 +14,7 @@ import request from "supertest";
 import express, { type Express } from "express";
 import { db, usersTable, settingsRulesTable } from "@workspace/db";
 import { inArray } from "drizzle-orm";
-import { invalidateSettingsCache } from "../lib/settings";
+import { invalidateSettingsCache, isMissingRelationError } from "../lib/settings";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(),
@@ -218,4 +218,100 @@ describe("the preview — why does this person get this value", () => {
     asAdmin();
     expect((await request(app).get("/api/admin/settings/preview?at=lunchtime")).status).toBe(400);
   });
+});
+
+/**
+ * The window between deploying the code and running the schema push.
+ *
+ * It used to answer 500, which tells an admin only that the page is broken. It
+ * is a specific condition with a specific remedy, and the push is deliberately
+ * interactive-only, so the API cannot fix it — it can only say so.
+ *
+ * The missing table is SIMULATED rather than dropped. An earlier version of
+ * these tests really did `DROP TABLE settings_rules CASCADE`, which takes an
+ * exclusive lock on a database the other suites are using concurrently — and it
+ * duly made an unrelated claim-match concurrency test fail intermittently. A
+ * test that breaks its neighbours is not worth the fidelity it buys.
+ */
+describe("before the schema push has been run", () => {
+  const missingRelation = () => {
+    const err = new Error(`relation "settings_rules" does not exist`) as Error & { code: string };
+    err.code = "42P01";
+    return err;
+  };
+
+  /**
+   * Fail only reads of settings_rules, exactly as a missing table would.
+   *
+   * Narrow on purpose: a blanket spy on db.select also breaks the admin check,
+   * so the route 500s before reaching the code under test and the test passes
+   * for the wrong reason.
+   */
+  const withMissingTable = async (fn: () => Promise<void>) => {
+    invalidateSettingsCache();
+    const realSelect = db.select.bind(db);
+    const selectSpy = vi.spyOn(db, "select").mockImplementation(((...args: unknown[]) => {
+      const builder = (realSelect as (...a: unknown[]) => unknown)(...args) as { from: (t: unknown) => unknown };
+      const realFrom = builder.from.bind(builder);
+      builder.from = (table: unknown) => {
+        if (table === settingsRulesTable) throw missingRelation();
+        return realFrom(table);
+      };
+      return builder;
+    }) as never);
+    const realInsert = db.insert.bind(db);
+    const insertSpy = vi.spyOn(db, "insert").mockImplementation(((table: unknown) => {
+      if (table === settingsRulesTable) throw missingRelation();
+      return (realInsert as (t: unknown) => unknown)(table);
+    }) as never);
+    try {
+      await fn();
+    } finally {
+      selectSpy.mockRestore();
+      insertSpy.mockRestore();
+      invalidateSettingsCache();
+    }
+  };
+
+  it("lists no rules and names the command to run, instead of a 500", async () => {
+    asAdmin();
+    await withMissingTable(async () => {
+      const res = await request(app).get("/api/admin/settings/rules");
+      expect(res.status).toBe(200);
+      expect(res.body.rules).toEqual([]);
+      expect(res.body.schemaReady).toBe(false);
+      expect(res.body.message).toMatch(/pnpm --filter @workspace\/db run push/);
+    });
+  }, 30_000);
+
+  it("refuses to save a rule with an explanation rather than a crash", async () => {
+    asAdmin();
+    await withMissingTable(async () => {
+      const res = await post({ key: "downloads.limit", value: 2 });
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/Shell tab/);
+    });
+  }, 30_000);
+
+  it("recognises the Postgres missing-relation error by code and by message", () => {
+    // Two shapes, because drizzle sometimes surfaces the driver error directly
+    // and sometimes wraps it.
+    expect(isMissingRelationError(missingRelation())).toBe(true);
+    expect(isMissingRelationError({ cause: { code: "42P01" } })).toBe(true);
+    expect(isMissingRelationError(new Error('relation "settings_rules" does not exist'))).toBe(true);
+    // And must not swallow anything else — a connection failure is a real outage
+    // and has to keep surfacing as one.
+    expect(isMissingRelationError(new Error("connection refused"))).toBe(false);
+    expect(isMissingRelationError({ code: "42703" })).toBe(false);
+  });
+
+  it("goes back to normal once the table is there again", async () => {
+    asAdmin();
+    await withMissingTable(async () => {
+      expect((await request(app).get("/api/admin/settings/rules")).body.schemaReady).toBe(false);
+    });
+    const res = await request(app).get("/api/admin/settings/rules");
+    expect(res.status).toBe(200);
+    expect(res.body.schemaReady).toBe(true);
+  }, 30_000);
 });
