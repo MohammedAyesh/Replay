@@ -102,9 +102,17 @@ beforeAll(async () => {
   app.use(express.json());
   app.use("/api", userClipsRouter);
 
+  // Deliberately not on the free plan.
+  //
+  // This file is about the proxy and the ownership check, and it downloads more
+  // distinct clips than the free tier's rolling allowance permits. Leaving the
+  // owner on "free" made it pass only by accident of which requests happened to
+  // repeat a clip — one more download here and it would have started failing on
+  // a 402 that has nothing to do with what it is testing. The allowance has its
+  // own end-to-end coverage in userClipsQuota.test.ts.
   const [owner] = await db
     .insert(usersTable)
-    .values({ name: "Owner", email: `owner_${TAG}@test.local`, isGuest: false, profileComplete: false })
+    .values({ name: "Owner", email: `owner_${TAG}@test.local`, isGuest: false, profileComplete: false, plan: "pro" })
     .returning({ id: usersTable.id });
   const [stranger] = await db
     .insert(usersTable)
