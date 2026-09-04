@@ -2636,6 +2636,8 @@ function HlsPlayer({ url, className }: { url: string; className?: string }) {
     if (Hls.isSupported()) {
       const hls = new Hls({ liveSyncDurationCount: 3 });
       hlsRef.current = hls;
+      // Intentional omission: admin preview checks encode quality at full
+      // source resolution rather than ordinary viewer playback.
       hls.loadSource(url);
       hls.attachMedia(el);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {

@@ -21,6 +21,7 @@
 import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import Hls from "hls.js";
 import { RotateCcw } from "lucide-react";
+import { installPlaybackQualityCeiling } from "@/lib/playbackQuality";
 
 /** Non-recoverable: the only error that survives a successful fragment load. */
 const FATAL_ERROR = "This camera is currently unavailable.";
@@ -80,6 +81,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           maxMaxBufferLength: 60,
           backBufferLength: 90,
         });
+        installPlaybackQualityCeiling(hls);
         hls.loadSource(url);
         hls.attachMedia(el);
 

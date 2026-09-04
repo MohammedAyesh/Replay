@@ -17,6 +17,7 @@ import {
   interpolateFrame,
   normalizePath,
 } from "@/lib/cropFrame";
+import { installPlaybackQualityCeiling } from "@/lib/playbackQuality";
 
 /** How long to wait for the branding intro to actually start before skipping it. */
 const INTRO_START_TIMEOUT_MS = 4000;
@@ -213,6 +214,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
       if (Hls.isSupported()) {
         const hls = new Hls({ enableWorker: false });
         hlsRef.current = hls;
+        installPlaybackQualityCeiling(hls);
         hls.loadSource(src);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, seekToStartAndPlay);

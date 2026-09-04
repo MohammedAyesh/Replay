@@ -33,6 +33,7 @@ import {
   type AspectRatio,
   type CropKeyframe,
 } from "@/lib/cropFrame";
+import { installPlaybackQualityCeiling } from "@/lib/playbackQuality";
 
 type ClipMode = "idle" | "recording" | "review";
 
@@ -632,6 +633,7 @@ function VideoPlayer({
     if (Hls.isSupported()) {
       const hls = new Hls(isLive ? { enableWorker: false, liveSyncDurationCount: 3 } : { enableWorker: false });
       hlsRef.current = hls;
+      installPlaybackQualityCeiling(hls);
       hls.loadSource(playbackUrl);
       hls.attachMedia(el);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {

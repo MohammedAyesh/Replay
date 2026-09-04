@@ -35,6 +35,7 @@ import {
   type AspectRatio,
   type CropKeyframe,
 } from "@/lib/cropFrame";
+import { installPlaybackQualityCeiling } from "@/lib/playbackQuality";
 
 type ClipMode = "idle" | "recording" | "review";
 
@@ -1221,6 +1222,7 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
       hlsRef.current = hls;
+      installPlaybackQualityCeiling(hls);
       hls.loadSource(proxiedUrl);
       hls.attachMedia(el);
       hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));

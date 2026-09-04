@@ -48,6 +48,7 @@ import {
   subscribeToVideoCache,
   type VideoCacheUpdate,
 } from "@/lib/video-cache";
+import { installPlaybackQualityCeiling } from "@/lib/playbackQuality";
 
 export type StageCandidate = {
   id: string;
@@ -162,6 +163,7 @@ function useBunnyHls(
           backBufferLength: 60,
           startPosition: Math.max(0, startVideoTimeRef.current),
         });
+        installPlaybackQualityCeiling(hls);
         hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(url));
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {

@@ -26,6 +26,7 @@ import {
   interpolateFrame,
   normalizePath,
 } from "@/lib/cropFrame";
+import { installPlaybackQualityCeiling } from "@/lib/playbackQuality";
 
 function getInitials(name: string): string {
   return name
@@ -308,6 +309,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
         if (Hls.isSupported()) {
           const hls = new Hls({ enableWorker: false });
           hlsRef.current = hls;
+          installPlaybackQualityCeiling(hls);
           hls.loadSource(src);
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, seekToStart);
@@ -399,6 +401,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       if (Hls.isSupported()) {
         const hls = new Hls({ enableWorker: false });
         adHlsRef.current = hls;
+        installPlaybackQualityCeiling(hls);
         hls.loadSource(src);
         hls.attachMedia(adVideo);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
