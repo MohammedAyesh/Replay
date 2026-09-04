@@ -142,6 +142,22 @@ export const recordingTrackingBundlesTable = pgTable(
       .notNull()
       .references(() => recordingsTable.id, { onDelete: "cascade" }),
     manifest: jsonb("manifest").notNull().$type<TrackingManifest>(),
+    /**
+     * The pre-manifest bundle format, kept only so that a schema push cannot
+     * delete it.
+     *
+     * Nothing reads this. It was written before the bundle was split into a
+     * manifest plus per-segment objects, and it was dropped from the schema at
+     * some point without the column being emptied first - which turned every
+     * subsequent `drizzle-kit push` into an offer to delete a tracking bundle.
+     * A bundle is roughly six GPU-hours, so the column earns its place in the
+     * file purely by making that prompt go away.
+     *
+     * Safe to delete for real once `select count(*) from
+     * recording_tracking_bundles where payload is not null` returns 0 on every
+     * database, production included.
+     */
+    payload: jsonb("payload").$type<unknown>(),
     uploadedBy: integer("uploaded_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),
