@@ -5,9 +5,23 @@ import fs from "fs";
 import os from "os";
 import { logger } from "./logger";
 import { BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_HOSTNAME } from "./bunny";
+import {
+  EXPORT_SOURCE_WIDTH,
+  EXPORT_SOURCE_HEIGHT,
+  EXPORT_SOURCE_LABEL,
+} from "./exportSource";
 
-const SRC_W = 3840;
-const SRC_H = 1080;
+/**
+ * Source geometry every crop calculation below is scaled against.
+ *
+ * These are re-exported from exportSource so the constant the crop maths uses
+ * and the constant the source-pinning logic verifies against are the same two
+ * numbers. See exportSource.ts for why they are 3840x1080 and not 4096x1152,
+ * and why handing this file a different rendition is a silent-corruption bug
+ * rather than a visible failure.
+ */
+const SRC_W = EXPORT_SOURCE_WIDTH;
+const SRC_H = EXPORT_SOURCE_HEIGHT;
 
 /**
  * Longest selection we will render, in seconds of source footage.
@@ -509,7 +523,7 @@ function buildZoompanFilter(options: {
  * every frame position the pan visits (computed across ALL keyframes, not just
  * kfs[0]), and the crop then runs entirely inside that canvas.
  */
-function buildCropCommands(
+export function buildCropCommands(
   keyframes: KF[],
   clipDuration: number,
   is9to16: boolean,
@@ -721,6 +735,62 @@ async function probeHasAudio(url: string, referer?: string): Promise<boolean> {
   } catch (err) {
     logger.warn({ err, url }, "ffprobe audio check failed — assuming no audio track");
     return false;
+  }
+}
+
+/**
+ * Decoded frame dimensions of the first video stream, straight from ffprobe.
+ *
+ * Deliberately not tolerant: any failure to read a width and a height is
+ * propagated, because "I could not tell what geometry this is" and "this is the
+ * wrong geometry" carry the same risk to the crop maths.
+ */
+export async function probeVideoDimensions(
+  filePath: string,
+): Promise<{ width: number; height: number }> {
+  const out = await run("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height",
+    "-of", "csv=p=0:s=x",
+    filePath,
+  ]);
+  const [w, h] = out.trim().split("x").map((n) => Number.parseInt(n, 10));
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    throw new Error(
+      `Could not read video dimensions from ${filePath} — ffprobe returned "${out.trim()}"`,
+    );
+  }
+  return { width: w, height: h };
+}
+
+/**
+ * Assert that a decoded frame is the geometry every crop keyframe is scaled
+ * against, and throw rather than proceed if it is not.
+ *
+ * This is the backstop behind exportSource's URL-level pinning. Pinning stops
+ * the exporter *asking* for the wrong rendition; this stops a wrong rendition
+ * being *encoded from* if it ever arrives by some other route — a CDN serving a
+ * stale variant under the right name, a re-encode upstream, a hand-passed URL,
+ * a future caller that forgets. Both layers are cheap; only one of them
+ * survives someone editing the other.
+ *
+ * Failing here costs one clip. Not failing here costs every clip rendered
+ * between the day the ladder changed and the day a human noticed the framing
+ * was wrong — and nothing in the pipeline would have raised its hand.
+ */
+export function assertExportSourceGeometry(
+  dims: { width: number; height: number },
+  context: string,
+): void {
+  if (dims.width !== SRC_W || dims.height !== SRC_H) {
+    throw new Error(
+      `Refusing to export from ${context}: decoded frame is ${dims.width}x${dims.height}, ` +
+        `expected ${EXPORT_SOURCE_LABEL}. ` +
+        `Every crop keyframe is stored as a fraction and multiplied by ${SRC_W}x${SRC_H}, ` +
+        `so rendering from any other geometry produces a silently mis-framed clip. ` +
+        `This is a hard stop by design — do not "fix" it by relaxing the check.`,
+    );
   }
 }
 
@@ -1098,7 +1168,19 @@ export async function bufferRemoteClip(options: {
       );
     }
 
-    logger.info({ bufferPath, bufferedDuration, requestedWindow, startSec }, "bufferRemoteClip complete");
+    // Geometry gate. The buffer pass applies no scaling filter, so the buffered
+    // file carries whatever geometry the CDN actually served — which makes this
+    // the last point where a wrong rendition is still cheap to reject, and the
+    // first point where we have a decoded frame to measure rather than a URL to
+    // trust. renderClip runs immediately after this and treats every keyframe
+    // as a fraction of SRC_W x SRC_H, so anything else must not reach it.
+    const dims = await probeVideoDimensions(bufferPath);
+    assertExportSourceGeometry(dims, `buffered source ${remoteUrl}`);
+
+    logger.info(
+      { bufferPath, bufferedDuration, requestedWindow, startSec, ...dims },
+      "bufferRemoteClip complete",
+    );
     return { bufferPath, bufferedDuration, adjustedOffsetSec };
   } catch (err) {
     cleanupTempFile(bufferPath);

@@ -15,7 +15,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBufferedWindow } from "../lib/ffmpegExport";
-import { normalizeExportWindow, selectExportSource } from "./userClips";
+import { normalizeExportWindow, selectExportSource, ExportSourceUnavailableError } from "./userClips";
 
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
@@ -177,35 +177,36 @@ describe("clip export window and source selection", () => {
     });
   });
 
-  it("prefers a HEAD-verified direct MP4 when the fallback exists", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(null, { status: 206 }),
-    );
-    try {
-      const source = await selectExportSource({
-        videoId: "video-id",
-        hasMP4Fallback: true,
-        availableResolutions: "1080p,2160p",
-        referer: "https://cdn.example/",
-      });
-      expect(source).toEqual({
-        url: expect.stringContaining("/video-id/play_2160p.mp4"),
-        path: "HEAD-verified direct MP4",
-        maxHeight: 2160,
-      });
-      expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining("/video-id/play_2160p.mp4"),
-        expect.objectContaining({ method: "HEAD" }),
-      );
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
+  // Source-rendition pinning moved to lib/exportSource.ts and is covered in
+  // depth by src/lib/exportSource.test.ts, which drives it with the real master
+  // playlists recorded from library 694315. The cases below only assert the
+  // contract this module depends on: a resolution-matched variant, and a throw
+  // rather than a fallback.
+  const MASTER_TWO_RUNGS = [
+    "#EXTM3U",
+    "#EXT-X-VERSION:3",
+    '#EXT-X-STREAM-INF:BANDWIDTH=7749701,CODECS="avc1.640020",RESOLUTION=1920x540',
+    "1080p/video.m3u8",
+    '#EXT-X-STREAM-INF:BANDWIDTH=27036736,CODECS="avc1.640032",RESOLUTION=3840x1080',
+    "2160p/video.m3u8",
+    "",
+  ].join("\n");
 
-  it("uses the highest verified HLS variant when direct MP4 is unavailable", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response("#EXTM3U\n#EXT-X-TARGETDURATION:4\n", { status: 200 }),
-    );
+  function mockCdn(routes: Record<string, { status?: number; body: string }>) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation((async (input: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      for (const [suffix, r] of Object.entries(routes)) {
+        if (url.endsWith(suffix)) return new Response(r.body, { status: r.status ?? 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as any);
+  }
+
+  it("resolves the variant that declares 3840x1080, not the first one listed", async () => {
+    const fetchSpy = mockCdn({
+      "/playlist.m3u8": { body: MASTER_TWO_RUNGS },
+      "/2160p/video.m3u8": { body: "#EXTM3U\n#EXT-X-TARGETDURATION:4\n" },
+    });
     try {
       const source = await selectExportSource({
         videoId: "video-id",
@@ -213,32 +214,25 @@ describe("clip export window and source selection", () => {
         availableResolutions: "1080p,2160p",
         referer: "https://cdn.example/",
       });
-      expect(source).toEqual({
-        url: expect.stringContaining("/video-id/2160p/video.m3u8"),
-        path: "verified HLS variant playlist",
-        maxHeight: 2160,
-      });
+      expect(source.url).toContain("/video-id/2160p/video.m3u8");
+      expect([source.width, source.height]).toEqual([3840, 1080]);
+      expect(source.path).toBe("resolution-matched HLS variant");
     } finally {
       fetchSpy.mockRestore();
     }
   });
 
-  it("falls back to the master playlist when the explicit variant fails", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response("not found", { status: 404 }),
-    );
+  it("throws rather than falling back to the master playlist", async () => {
+    const fetchSpy = mockCdn({ "/playlist.m3u8": { body: MASTER_TWO_RUNGS } });
     try {
-      const source = await selectExportSource({
-        videoId: "video-id",
-        hasMP4Fallback: false,
-        availableResolutions: "1080p,2160p",
-        referer: "https://cdn.example/",
-      });
-      expect(source).toEqual({
-        url: expect.stringContaining("/video-id/playlist.m3u8"),
-        path: "master-playlist fallback",
-        maxHeight: 2160,
-      });
+      await expect(
+        selectExportSource({
+          videoId: "video-id",
+          hasMP4Fallback: false,
+          availableResolutions: "1080p,2160p",
+          referer: "https://cdn.example/",
+        }),
+      ).rejects.toBeInstanceOf(ExportSourceUnavailableError);
     } finally {
       fetchSpy.mockRestore();
     }

@@ -22,11 +22,9 @@ import {
 } from "@workspace/api-zod";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import {
-  getBunnyPlaybackUrl,
   getBunnyThumbnailUrl,
   getBunnyProxiedPlaybackUrl,
   getBunnyProxiedThumbnailUrl,
-  getBunnyDirectMp4Url,
   getBunnyVideoInfo,
   isBunnyConfigured,
   isBunnyStorageConfigured,
@@ -37,6 +35,7 @@ import {
 } from "../lib/bunny";
 import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
+import { selectExportSource as resolveExportSource } from "../lib/exportSource";
 import { logger } from "../lib/logger";
 import { introPlaybackPath } from "./clipIntro";
 
@@ -334,7 +333,7 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
       logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
 
       const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
-      const source = await selectExportSource({
+      const source = await resolveExportSource({
         videoId,
         hasMP4Fallback,
         availableResolutions,
@@ -347,9 +346,14 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
           videoId,
           sourcePath: source.path,
           remoteUrl,
-          maxHeight: source.maxHeight ?? null,
+          // Declared geometry of the chosen variant, and the rendition folder
+          // it happened to live in. The geometry is the contract; the label is
+          // only there to make a ladder change readable in the logs.
+          sourceWidth: source.width,
+          sourceHeight: source.height,
+          renditionLabel: source.renditionLabel,
         },
-        `Selected export source: ${source.path}`,
+        `Selected export source: ${source.path} (${source.width}x${source.height})`,
       );
 
       // Compute a bounded, ordered source window before buffering. Persisted clip
@@ -437,88 +441,21 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
   });
 }
 
-type ExportSourcePath =
-  | "HEAD-verified direct MP4"
-  | "verified HLS variant playlist"
-  | "master-playlist fallback";
-
-export async function selectExportSource(options: {
-  videoId: string;
-  hasMP4Fallback: boolean;
-  availableResolutions: string;
-  referer: string;
-}): Promise<{ url: string; path: ExportSourcePath; maxHeight: number | null }> {
-  const { videoId, hasMP4Fallback, availableResolutions, referer } = options;
-  const heights = availableResolutions
-    .split(",")
-    .map((resolution) => Number.parseInt(resolution.trim().replace(/p$/i, ""), 10))
-    .filter((height) => Number.isFinite(height) && height > 0)
-    .sort((a, b) => b - a);
-  const maxHeight = heights[0] ?? null;
-
-  if (hasMP4Fallback && maxHeight !== null) {
-    const directUrl = getBunnyDirectMp4Url(videoId, maxHeight);
-    try {
-      const response = await fetch(directUrl, {
-        method: "HEAD",
-        headers: { Referer: referer },
-      });
-      if (response.status === 200 || response.status === 206) {
-        return {
-          url: directUrl,
-          path: "HEAD-verified direct MP4",
-          maxHeight,
-        };
-      }
-      logger.warn(
-        { videoId, directUrl, status: response.status, maxHeight },
-        "Direct MP4 source check failed; trying explicit HLS variant",
-      );
-    } catch (err) {
-      logger.warn(
-        { err, videoId, directUrl, maxHeight },
-        "Direct MP4 source check errored; trying explicit HLS variant",
-      );
-    }
-  }
-
-  if (maxHeight !== null) {
-    const variantUrl = `https://${BUNNY_CDN_HOSTNAME}/${videoId}/${maxHeight}p/video.m3u8`;
-    try {
-      const response = await fetch(variantUrl, {
-        headers: { Referer: referer },
-      });
-      const playlist = await response.text();
-      if (response.ok && playlist.trim().length > 0) {
-        return {
-          url: variantUrl,
-          path: "verified HLS variant playlist",
-          maxHeight,
-        };
-      }
-      logger.warn(
-        { videoId, variantUrl, status: response.status, maxHeight },
-        "Explicit HLS variant check failed; falling back to master playlist",
-      );
-    } catch (err) {
-      logger.warn(
-        { err, videoId, variantUrl, maxHeight },
-        "Explicit HLS variant check errored; falling back to master playlist",
-      );
-    }
-  }
-
-  const masterUrl = getBunnyPlaybackUrl(videoId);
-  logger.warn(
-    { videoId, masterUrl, maxHeight },
-    "Explicit export source selection failed; relying on FFmpeg default stream selection",
-  );
-  return {
-    url: masterUrl,
-    path: "master-playlist fallback",
-    maxHeight,
-  };
-}
+/**
+ * Source-rendition pinning lives in lib/exportSource.ts, which has no database
+ * imports so it can be unit-tested on its own. Re-exported here because this
+ * module is the historical import site.
+ *
+ * The behaviour changed: there is no longer a master-playlist fallback. See
+ * exportSource.ts for why letting ABR choose the rendition silently corrupts
+ * every crop calculation.
+ */
+export {
+  selectExportSource,
+  ExportSourceUnavailableError,
+  EXPORT_SOURCE_LABEL,
+} from "../lib/exportSource";
+export type { ExportSource, ExportSourcePath, HlsVariant } from "../lib/exportSource";
 
 router.post("/user-clips", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
