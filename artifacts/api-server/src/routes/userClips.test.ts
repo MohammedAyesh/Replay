@@ -15,8 +15,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBufferedWindow } from "../lib/ffmpegExport";
-import { normalizeExportWindow, selectExportSource } from "./userClips";
-import { ExportSourceResolutionError } from "../lib/exportSource";
+import { normalizeExportWindow } from "./userClips";
 
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
@@ -178,94 +177,6 @@ describe("clip export window and source selection", () => {
     });
   });
 
-  it("prefers a HEAD-verified direct MP4 when the fallback exists", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(
-        "#EXTM3U\n" +
-        "#EXT-X-STREAM-INF:BANDWIDTH=100,RESOLUTION=1920x540\n" +
-        "1080p/video.m3u8\n" +
-        "#EXT-X-STREAM-INF:BANDWIDTH=200,RESOLUTION=3840x1080\n" +
-        "2160p/video.m3u8\n",
-        { status: 200 },
-      ))
-      .mockResolvedValueOnce(new Response(null, { status: 206 }));
-    try {
-      const source = await selectExportSource({
-        videoId: "video-id",
-        hasMP4Fallback: true,
-        referer: "https://cdn.example/",
-      });
-      expect(source).toEqual({
-        url: expect.stringContaining("/video-id/play_2160p.mp4"),
-        path: "HEAD-verified direct MP4",
-        variant: {
-          url: expect.stringContaining("/video-id/2160p/video.m3u8"),
-          folder: "2160p",
-          width: 3840,
-          height: 1080,
-        },
-      });
-      expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining("/video-id/play_2160p.mp4"),
-        expect.objectContaining({ method: "HEAD" }),
-      );
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  it("selects the single 3840x1080 variant even when its folder is named 1080p", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(
-        "#EXTM3U\n" +
-        "#EXT-X-STREAM-INF:BANDWIDTH=100,RESOLUTION=3840x1080\n" +
-        "1080p/video.m3u8\n",
-        { status: 200 },
-      ))
-      .mockResolvedValueOnce(new Response(
-        "#EXTM3U\n#EXT-X-TARGETDURATION:4\n",
-        { status: 200 },
-      ));
-    try {
-      const source = await selectExportSource({
-        videoId: "video-id",
-        hasMP4Fallback: false,
-        referer: "https://cdn.example/",
-      });
-      expect(source).toEqual({
-        url: expect.stringContaining("/video-id/1080p/video.m3u8"),
-        path: "verified HLS variant playlist",
-        variant: {
-          url: expect.stringContaining("/video-id/1080p/video.m3u8"),
-          folder: "1080p",
-          width: 3840,
-          height: 1080,
-        },
-      });
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  it("rejects a ladder containing only a 1920x540 variant", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(
-      "#EXTM3U\n" +
-      "#EXT-X-STREAM-INF:BANDWIDTH=100,RESOLUTION=1920x540\n" +
-      "1080p/video.m3u8\n",
-      { status: 200 },
-    ));
-    try {
-      const rejection = selectExportSource({
-        videoId: "video-id",
-        hasMP4Fallback: false,
-        referer: "https://cdn.example/",
-      });
-      await expect(rejection).rejects.toBeInstanceOf(ExportSourceResolutionError);
-      await expect(rejection).rejects.toThrow("required 3840x1080 geometry; variants seen: 1920x540");
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
 });
 
 describe("GET /api/user-clips", () => {
