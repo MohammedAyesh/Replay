@@ -8,6 +8,7 @@ import {
   recordingsTable,
   usersTable,
   recordingTrackingBundlesTable,
+  recordingTrackingSegmentsTable,
   claimMatchProgressTable,
   claimMatchIdentityBindingsTable,
 } from "@workspace/db";
@@ -81,6 +82,15 @@ beforeAll(async () => {
         videoUrl: "https://example.test/progress.m3u8",
         isVisible: true,
       },
+      {
+        fieldId,
+        court: "4",
+        date: "2026-09-04",
+        timeSlot: "13:00",
+        duration: "00:30:00",
+        videoUrl: "https://example.test/empty-bundle.m3u8",
+        isVisible: true,
+      },
     ])
     .returning({ id: recordingsTable.id });
   recordingIds = recordings.map((recording) => recording.id);
@@ -108,6 +118,26 @@ beforeAll(async () => {
     )
     .returning({ id: recordingTrackingBundlesTable.id });
   bundleIds = bundles.map((bundle) => bundle.id);
+
+  // Bundles 0 and 1 get a real stored segment; the last one deliberately gets
+  // none. A manifest that claims segments but has nothing stored is exactly the
+  // shape a half-uploaded or malformed zip leaves behind, and it must not offer
+  // the claim entry point.
+  await db.insert(recordingTrackingSegmentsTable).values(
+    bundleIds.slice(0, 2).map((bundleId) => ({
+      bundleId,
+      segmentIndex: 0,
+      name: "segment-000",
+      startFrame: 0,
+      endFrame: 749,
+      startSeconds: 0,
+      endSeconds: 30,
+      objectPath: `tracking/${bundleId}/segment-000.json.gz`,
+      compressedBytes: 1024,
+      trackCount: 4,
+      crossingCount: 0,
+    })),
+  );
 
   await db.insert(claimMatchIdentityBindingsTable).values({
     userId: viewerId,
@@ -139,6 +169,9 @@ afterAll(async () => {
   await db.delete(claimMatchIdentityBindingsTable).where(eq(claimMatchIdentityBindingsTable.userId, viewerId));
   await db.delete(claimMatchProgressTable).where(eq(claimMatchProgressTable.userId, viewerId));
   if (bundleIds.length) {
+    await db
+      .delete(recordingTrackingSegmentsTable)
+      .where(inArray(recordingTrackingSegmentsTable.bundleId, bundleIds));
     await db.delete(recordingTrackingBundlesTable).where(inArray(recordingTrackingBundlesTable.id, bundleIds));
   }
   if (recordingIds.length) {
@@ -152,7 +185,7 @@ describe("GET /api/fields/:id/recordings", () => {
   it("returns tracking availability and the viewer's own claim state", async () => {
     const response = await request(app).get(`/api/fields/${fieldId}/recordings`).expect(200);
 
-    expect(response.body).toHaveLength(3);
+    expect(response.body).toHaveLength(4);
     expect(response.body.find((recording: { id: number }) => recording.id === recordingIds[0]))
       .toMatchObject({
         hasTracking: false,
@@ -171,6 +204,15 @@ describe("GET /api/fields/:id/recordings", () => {
         viewerHasClaim: false,
         viewerClaimState: "in_progress",
       });
+  });
+
+  it("does not report tracking for a bundle that stored no segments", async () => {
+    const response = await request(app).get(`/api/fields/${fieldId}/recordings`).expect(200);
+    const emptyBundle = response.body.find(
+      (recording: { id: number }) => recording.id === recordingIds[3],
+    );
+
+    expect(emptyBundle).toMatchObject({ hasTracking: false });
   });
 
   it("does not expose viewer claim state to a guest", async () => {
