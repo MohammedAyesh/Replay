@@ -22,11 +22,9 @@ import {
 } from "@workspace/api-zod";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import {
-  getBunnyPlaybackUrl,
   getBunnyThumbnailUrl,
   getBunnyProxiedPlaybackUrl,
   getBunnyProxiedThumbnailUrl,
-  getBunnyDirectMp4Url,
   getBunnyVideoInfo,
   isBunnyConfigured,
   isBunnyStorageConfigured,
@@ -39,6 +37,14 @@ import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
 import { logger } from "../lib/logger";
 import { introPlaybackPath } from "./clipIntro";
+import { selectExportSource } from "../lib/exportSource";
+
+export {
+  selectExportSource,
+  ExportSourceResolutionError,
+  REQUIRED_SOURCE_WIDTH,
+  REQUIRED_SOURCE_HEIGHT,
+} from "../lib/exportSource";
 
 const router: IRouter = Router();
 
@@ -329,7 +335,6 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
       const {
         duration: totalDuration,
         hasMP4Fallback,
-        availableResolutions,
       } = await getBunnyVideoInfo(videoId);
       logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
 
@@ -337,7 +342,6 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
       const source = await selectExportSource({
         videoId,
         hasMP4Fallback,
-        availableResolutions,
         referer,
       });
       const remoteUrl = source.url;
@@ -347,7 +351,8 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
           videoId,
           sourcePath: source.path,
           remoteUrl,
-          maxHeight: source.maxHeight ?? null,
+          sourceGeometry: `${source.variant.width}x${source.variant.height}`,
+          sourceFolder: source.variant.folder,
         },
         `Selected export source: ${source.path}`,
       );
@@ -435,89 +440,6 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
       if (tmpPath) cleanupTempFile(tmpPath);
     }
   });
-}
-
-type ExportSourcePath =
-  | "HEAD-verified direct MP4"
-  | "verified HLS variant playlist"
-  | "master-playlist fallback";
-
-export async function selectExportSource(options: {
-  videoId: string;
-  hasMP4Fallback: boolean;
-  availableResolutions: string;
-  referer: string;
-}): Promise<{ url: string; path: ExportSourcePath; maxHeight: number | null }> {
-  const { videoId, hasMP4Fallback, availableResolutions, referer } = options;
-  const heights = availableResolutions
-    .split(",")
-    .map((resolution) => Number.parseInt(resolution.trim().replace(/p$/i, ""), 10))
-    .filter((height) => Number.isFinite(height) && height > 0)
-    .sort((a, b) => b - a);
-  const maxHeight = heights[0] ?? null;
-
-  if (hasMP4Fallback && maxHeight !== null) {
-    const directUrl = getBunnyDirectMp4Url(videoId, maxHeight);
-    try {
-      const response = await fetch(directUrl, {
-        method: "HEAD",
-        headers: { Referer: referer },
-      });
-      if (response.status === 200 || response.status === 206) {
-        return {
-          url: directUrl,
-          path: "HEAD-verified direct MP4",
-          maxHeight,
-        };
-      }
-      logger.warn(
-        { videoId, directUrl, status: response.status, maxHeight },
-        "Direct MP4 source check failed; trying explicit HLS variant",
-      );
-    } catch (err) {
-      logger.warn(
-        { err, videoId, directUrl, maxHeight },
-        "Direct MP4 source check errored; trying explicit HLS variant",
-      );
-    }
-  }
-
-  if (maxHeight !== null) {
-    const variantUrl = `https://${BUNNY_CDN_HOSTNAME}/${videoId}/${maxHeight}p/video.m3u8`;
-    try {
-      const response = await fetch(variantUrl, {
-        headers: { Referer: referer },
-      });
-      const playlist = await response.text();
-      if (response.ok && playlist.trim().length > 0) {
-        return {
-          url: variantUrl,
-          path: "verified HLS variant playlist",
-          maxHeight,
-        };
-      }
-      logger.warn(
-        { videoId, variantUrl, status: response.status, maxHeight },
-        "Explicit HLS variant check failed; falling back to master playlist",
-      );
-    } catch (err) {
-      logger.warn(
-        { err, videoId, variantUrl, maxHeight },
-        "Explicit HLS variant check errored; falling back to master playlist",
-      );
-    }
-  }
-
-  const masterUrl = getBunnyPlaybackUrl(videoId);
-  logger.warn(
-    { videoId, masterUrl, maxHeight },
-    "Explicit export source selection failed; relying on FFmpeg default stream selection",
-  );
-  return {
-    url: masterUrl,
-    path: "master-playlist fallback",
-    maxHeight,
-  };
 }
 
 router.post("/user-clips", async (req, res): Promise<void> => {

@@ -5,9 +5,13 @@ import fs from "fs";
 import os from "os";
 import { logger } from "./logger";
 import { BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_HOSTNAME } from "./bunny";
+import {
+  REQUIRED_SOURCE_HEIGHT,
+  REQUIRED_SOURCE_WIDTH,
+} from "./exportSource";
 
-const SRC_W = 3840;
-const SRC_H = 1080;
+const SRC_W = REQUIRED_SOURCE_WIDTH;
+const SRC_H = REQUIRED_SOURCE_HEIGHT;
 
 /**
  * Longest selection we will render, in seconds of source footage.
@@ -672,6 +676,50 @@ function run(bin: string, args: string[], timeoutMs = SUBPROCESS_TIMEOUT_MS): Pr
   });
 }
 
+export class BufferedSourceDimensionsError extends Error {
+  readonly actualWidth: number | null;
+  readonly actualHeight: number | null;
+
+  constructor(actualWidth: number | null, actualHeight: number | null, detail: string) {
+    super(
+      `Buffered export source dimensions could not be verified as ${SRC_W}x${SRC_H}: ${detail}. ` +
+      `Crop keyframes are scaled to ${SRC_W}x${SRC_H}, so any other geometry silently mis-frames the clip; ` +
+      `relaxing this check is not the fix.`,
+    );
+    this.name = "BufferedSourceDimensionsError";
+    this.actualWidth = actualWidth;
+    this.actualHeight = actualHeight;
+  }
+}
+
+export async function verifyBufferedSourceDimensions(bufferPath: string): Promise<void> {
+  let dimensions: string;
+  try {
+    dimensions = await run("ffprobe", [
+      "-v", "error",
+      "-select_streams", "v:0",
+      "-read_intervals", "%+#1",
+      "-show_frames",
+      "-show_entries", "frame=width,height",
+      "-of", "csv=p=0:s=x",
+      bufferPath,
+    ]);
+  } catch (err) {
+    throw new BufferedSourceDimensionsError(null, null, "ffprobe could not read decoded video dimensions");
+  }
+
+  const match = dimensions.trim().match(/^(\d+)x(\d+)$/);
+  const actualWidth = match ? Number.parseInt(match[1], 10) : null;
+  const actualHeight = match ? Number.parseInt(match[2], 10) : null;
+  if (actualWidth !== SRC_W || actualHeight !== SRC_H) {
+    throw new BufferedSourceDimensionsError(
+      actualWidth,
+      actualHeight,
+      match ? `decoded file is ${actualWidth}x${actualHeight}` : `ffprobe returned "${dimensions.trim() || "no dimensions"}"`,
+    );
+  }
+}
+
 /**
  * Bunny Storage (storage.bunnycdn.com) is an authenticated origin — a plain GET
  * returns 401 without an AccessKey. Intro videos are uploaded there and the URL
@@ -1066,6 +1114,8 @@ export async function bufferRemoteClip(options: {
       // a stalled CDN fetch does not hold a render slot for 30 minutes.
       BUFFER_TIMEOUT_MS,
     );
+
+    await verifyBufferedSourceDimensions(bufferPath);
 
     // Because setpts=PTS-STARTPTS normalises timestamps to 0, the buffer's
     // playback timeline is 0-based and corresponds directly to source time
