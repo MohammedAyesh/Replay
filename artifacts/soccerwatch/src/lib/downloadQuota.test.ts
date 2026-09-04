@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  formatQuotaLabel, formatQueueLabel, formatResetDate, isQuotaExhausted,
+  formatQuotaLabel, formatQueueLabel, formatResetDate, isQuotaExhausted, reconcileExportState,
   type DownloadQuota,
 } from "./downloadQuota";
 
@@ -78,5 +78,49 @@ describe("queue position", () => {
     // Null means the API restarted and is no longer tracking this clip.
     expect(formatQueueLabel(null, "Step 1/3")).toBe("Step 1/3");
     expect(formatQueueLabel(undefined)).toBe("Preparing");
+  });
+});
+
+describe("reconciling with the server on reopen", () => {
+  it("resumes polling for a render that is still running", () => {
+    // The bug: closing the clip and coming back showed the idle Download button
+    // while the server was still rendering, so tapping it queued a second copy.
+    expect(reconcileExportState({ status: "pending", queuePosition: 2 })).toEqual({
+      state: "polling",
+      url: null,
+      label: "3rd in the render queue",
+      resume: true,
+    });
+  });
+
+  it("says Preparing rather than an error when the server is not tracking a position", () => {
+    // Null position is normal — an API restart, or the moment before the job is
+    // enqueued. It is not a failure, and must not read like one.
+    expect(reconcileExportState({ status: "pending", queuePosition: null })).toMatchObject({
+      state: "polling",
+      label: "Preparing",
+      resume: true,
+    });
+  });
+
+  it("comes back ready, without re-downloading, when the render finished while away", () => {
+    expect(reconcileExportState({ status: "done", url: "https://cdn/clip.mp4" })).toEqual({
+      state: "ready",
+      url: "https://cdn/clip.mp4",
+      label: null,
+      resume: false,
+    });
+  });
+
+  it("treats done-without-a-url as not ready", () => {
+    expect(reconcileExportState({ status: "done", url: null }).state).toBe("idle");
+  });
+
+  it("returns the button to idle after a failed render", () => {
+    expect(reconcileExportState({ status: "error" })).toMatchObject({ state: "idle", resume: false });
+  });
+
+  it("does not blank a live button when the status call itself fails", () => {
+    expect(reconcileExportState(null)).toEqual({ state: "idle", url: null, label: null, resume: false });
   });
 });

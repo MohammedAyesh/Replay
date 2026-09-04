@@ -105,3 +105,55 @@ function ordinal(n: number): string {
   const v = n % 100;
   return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
 }
+
+/**
+ * What the server says about an export, and what the player should do about it.
+ */
+export interface ExportStatusResponse {
+  status: string;
+  url?: string | null;
+  progress?: string | null;
+  queuePosition?: number | null;
+}
+
+export interface ExportReconciliation {
+  state: "idle" | "polling" | "ready";
+  url: string | null;
+  /** Button label while polling; null when the state carries its own. */
+  label: string | null;
+  /** Start the polling loop. Never delivers the file — see pollUntilSettled. */
+  resume: boolean;
+}
+
+/**
+ * Decide the player's export state from the server's answer.
+ *
+ * This exists as a function rather than as branches inside an effect because it
+ * is the part that was wrong: the player used to seed its state from the cached
+ * list row (`exportStatus === "done" ? ready : idle`), so a clip whose render
+ * was still running came back showing the idle Download button with no spinner.
+ * The render lives on the server and outlives the component; the component has
+ * to ask, not assume.
+ *
+ * A null answer means the question could not be asked — offline, a transient
+ * failure. That returns "idle" with `resume: false`, and the caller is expected
+ * to leave whatever it already had rather than blanking a live button.
+ */
+export function reconcileExportState(status: ExportStatusResponse | null): ExportReconciliation {
+  if (!status) return { state: "idle", url: null, label: null, resume: false };
+
+  if (status.status === "done" && status.url) {
+    return { state: "ready", url: status.url, label: null, resume: false };
+  }
+  if (status.status === "pending") {
+    return {
+      state: "polling",
+      url: null,
+      label: formatQueueLabel(status.queuePosition, null),
+      resume: true,
+    };
+  }
+  // "error" and "idle" both land here: the render is not running, so the button
+  // goes back to something the user can press.
+  return { state: "idle", url: null, label: null, resume: false };
+}

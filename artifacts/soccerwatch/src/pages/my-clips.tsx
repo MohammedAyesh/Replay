@@ -28,6 +28,8 @@ import {
   formatQuotaLabel,
   formatQueueLabel,
   isQuotaExhausted,
+  reconcileExportState,
+  type ExportStatusResponse,
   type DownloadQuota,
 } from "@/lib/downloadQuota";
 
@@ -547,6 +549,96 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     setTimeout(refreshQuota, 1200);
   }, [clip, toast, t, onDownloaded, quota, locale, refreshQuota]);
 
+  /**
+   * Poll until this clip's export settles.
+   *
+   * Shared by two callers that differ in exactly one respect: `deliverWhenDone`.
+   * A render the user just asked for should hand them the file the moment it is
+   * ready. A render they merely came back and found already running must not —
+   * otherwise reopening a clip silently downloads it and spends one of their
+   * five downloads without them touching anything.
+   */
+  const pollUntilSettled = useCallback(async (deliverWhenDone: boolean) => {
+    // The server renders at most MAX_CONCURRENT_RENDERS clips at a time and
+    // queues the rest, and a single -preset slow -crf 16 pass on the shared VPS
+    // can take several minutes on its own. The old 3-minute budget reported
+    // "Export failed" while the render was still waiting its turn.
+    const maxAttempts = 600; // 20 minutes at 2 s
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise<void>((r) => setTimeout(r, 2000));
+      if (!pollingRef.current) return; // player closed
+
+      const statusRes = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
+      if (!statusRes.ok) throw new Error("Status check failed");
+      const status = await statusRes.json() as {
+        status: string; url?: string; progress?: string | null;
+        queuePosition?: number | null;
+      };
+
+      const stepLabels: Record<string, string> = {
+        fetching: "Step 1/3",
+        encoding: "Step 2/3",
+        uploading: "Step 3/3",
+      };
+      const step = status.progress ? stepLabels[status.progress] ?? "Step 1/3" : null;
+      setExportStepLabel(formatQueueLabel(status.queuePosition, step));
+
+      if (status.status === "done" && status.url) {
+        setExportedUrl(status.url);
+        pollingRef.current = false;
+        setExportState("ready");
+        if (deliverWhenDone) await deliverViaProxy();
+        return;
+      }
+      if (status.status === "error") throw new Error("Server render failed");
+      // still pending — keep polling
+    }
+    throw new Error("Export timed out");
+  }, [clip.id, deliverViaProxy]);
+
+  /**
+   * Reconcile with the server when the player opens.
+   *
+   * The export runs on the server and outlives this component; the polling loop
+   * does not. Closing a clip mid-render and coming back mounted a fresh
+   * component whose state was seeded from `clip.exportStatus` on the *cached*
+   * list row — so a render still in progress showed the idle Download button
+   * with no spinner, and tapping it queued a second copy of the same clip. The
+   * seed is a guess; this asks what is actually happening and picks the loop
+   * back up.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
+        if (!res.ok || cancelled) return;
+        const status = await res.json() as ExportStatusResponse;
+        if (cancelled) return;
+
+        const next = reconcileExportState(status);
+        if (next.state === "ready" && next.url) {
+          setExportedUrl(next.url);
+          setExportState("ready");
+          return;
+        }
+        if (next.resume) {
+          setExportState("polling");
+          if (next.label) setExportStepLabel(next.label);
+          pollingRef.current = true;
+          void pollUntilSettled(false).catch(() => {
+            pollingRef.current = false;
+            setExportState("idle");
+          });
+        }
+      } catch {
+        // Offline or a transient failure: leave the seeded state as it was
+        // rather than blanking a button the user may be about to press.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clip.id, pollUntilSettled]);
+
   const handleExport = useCallback(async () => {
     if (exportState === "polling") return;
 
@@ -610,49 +702,10 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         return;
       }
 
-      // status === "pending" — poll until done.
-      //
-      // The server renders at most MAX_CONCURRENT_RENDERS clips at a time and
-      // queues the rest, and a single -preset slow -crf 16 pass on the shared
-      // VPS can take several minutes on its own. The old 3-minute budget meant
-      // a queued export reported "Export failed" to the user while it was still
-      // waiting its turn, and then completed anyway.
-      const maxAttempts = 600; // 20 minutes at 2 s
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise<void>((r) => setTimeout(r, 2000));
-        if (!pollingRef.current) return; // player closed
-
-        const statusRes = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
-        if (!statusRes.ok) throw new Error("Status check failed");
-        const status = await statusRes.json() as {
-          status: string; url?: string; progress?: string | null;
-          queuePosition?: number | null;
-        };
-
-        // Map the backend's fixed three-stage progress to a simple user-facing step.
-        const stepLabels: Record<string, string> = {
-          fetching: "Step 1/3",
-          encoding: "Step 2/3",
-          uploading: "Step 3/3",
-        };
-        const step = status.progress ? stepLabels[status.progress] ?? "Step 1/3" : null;
-        // A queued render used to be indistinguishable from a stalled one, so
-        // people tapped again and queued a second copy of the same clip. The
-        // position is the whole fix.
-        setExportStepLabel(formatQueueLabel(status.queuePosition, step));
-
-        if (status.status === "done" && status.url) {
-          setExportedUrl(status.url);
-          pollingRef.current = false;
-          setExportState("ready");
-          await deliverViaProxy();
-          return;
-        }
-        if (status.status === "error") throw new Error("Server render failed");
-        // still pending — keep polling
-      }
-
-      throw new Error("Export timed out");
+      // status === "pending" — poll until done, and hand them the file when it
+      // lands, because they asked for it just now.
+      await pollUntilSettled(true);
+      return;
     } catch {
       pollingRef.current = false;
       setExportState("error");
