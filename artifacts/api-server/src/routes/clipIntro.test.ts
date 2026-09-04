@@ -13,7 +13,20 @@ import crypto from "crypto";
 import { db, academiesTable, clipSettingsTable, fieldsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
-const KEY = process.env.BUNNY_STORAGE_API_KEY ?? "";
+/**
+ * The key is supplied here rather than read from the environment.
+ *
+ * It used to be `process.env.BUNNY_STORAGE_API_KEY ?? ""`, which meant that on
+ * any machine without that secret the route attached no key, the stand-in
+ * origin answered 401, and all three tests failed with "expected 502 to be
+ * 200" - a message that says nothing about the missing variable. A test whose
+ * premise is "the proxy attaches the key" should carry its own key.
+ *
+ * It has to be set before ../lib/bunny is first imported, which is why it is at
+ * the top of the file and not inside beforeAll.
+ */
+const KEY = "clip-intro-test-storage-key";
+process.env.BUNNY_STORAGE_API_KEY = KEY;
 const INTRO_BYTES = crypto.randomBytes(64 * 1024);
 
 let origin: http.Server;

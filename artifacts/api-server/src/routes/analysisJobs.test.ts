@@ -10,7 +10,8 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
-import { and, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
+import { strToU8, zipSync } from "fflate";
 import {
   db,
   usersTable,
@@ -18,7 +19,21 @@ import {
   recordingsTable,
   analysisJobsTable,
   analysisWorkersTable,
+  recordingTrackingBundlesTable,
+  recordingTrackingSegmentsTable,
 } from "@workspace/db";
+
+// The bundle store is Replit object storage; there is none here. Everything
+// this file cares about happens before and after the bytes are written.
+vi.mock("../lib/claimMatchStorage", () => ({
+  deleteClaimSegment: vi.fn(),
+  readClaimSegment: vi.fn(),
+  readCompressedClaimSegment: vi.fn(),
+  writeClaimSegment: vi.fn(async (relativePath: string) => ({
+    objectPath: `/objects/claim-match/${relativePath}`,
+    compressedBytes: 128,
+  })),
+}));
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(),
@@ -29,6 +44,43 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 import { getLocalUserId } from "../lib/clerkUserBridge";
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
+
+/** The smallest bundle the validator accepts: one segment, frames 0..1. */
+function bundleZip(videoStartSeconds = 0): Buffer {
+  const segment = {
+    version: 1,
+    segmentIndex: 0,
+    name: "one",
+    startFrame: 0,
+    endFrame: 1,
+    startSeconds: 0,
+    endSeconds: 0.08,
+    tracks: [],
+    crossings: [],
+    inPlaySpans: [],
+    events: [],
+  };
+  const manifest = {
+    version: 1,
+    label: "worker upload",
+    width: 3840,
+    height: 1080,
+    frameRate: 25,
+    frameCount: 2,
+    duration: 0.08,
+    matchOffset: 0,
+    videoStartSeconds,
+    segmentCount: 1,
+    segments: [{
+      index: 0, name: "one", startFrame: 0, endFrame: 1,
+      startSeconds: 0, endSeconds: 0.08, objectPath: "",
+    }],
+  };
+  return Buffer.from(zipSync({
+    "manifest.json": strToU8(JSON.stringify(manifest)),
+    "segments/one.json": strToU8(JSON.stringify(segment)),
+  }));
+}
 
 const TAG = `an_${Date.now()}`;
 const KEY = "test-worker-key-0123456789";
@@ -76,6 +128,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await db.delete(recordingTrackingBundlesTable)
+    .where(inArray(recordingTrackingBundlesTable.recordingId, [recA, recB, recNoVideo]));
   await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.recordingId, [recA, recB, recNoVideo]));
   await db.delete(analysisWorkersTable)
     .where(inArray(analysisWorkersTable.id, ["w1", "w2", "w0", "w3", "w4", "w5", "w6", "w7"]));
@@ -86,6 +140,8 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await db.delete(recordingTrackingBundlesTable)
+    .where(inArray(recordingTrackingBundlesTable.recordingId, [recA, recB, recNoVideo]));
   await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.recordingId, [recA, recB, recNoVideo]));
   await db.delete(analysisWorkersTable)
     .where(inArray(analysisWorkersTable.id, ["w1", "w2", "w0", "w3", "w4", "w5", "w6", "w7"]));
@@ -292,6 +348,87 @@ describe("finishing", () => {
     expect(res.body.status).toBe("queued");
     expect(res.body.attempts).toBe(0);
     expect(res.body.error).toBeNull();
+  });
+});
+
+describe("the bundle the worker sends back", () => {
+  async function claimAJob() {
+    await queueJob().expect(201);
+    const claim = await asWorker("/api/worker/analysis/claim").expect(200);
+    return claim.body.job.id as number;
+  }
+
+  /**
+   * These exercise the exact multipart shape analysis-worker.ps1 builds with
+   * curl - field names included - because that is the one part of the worker
+   * that cannot be run from here, and a mismatched field name would only show
+   * up six GPU-hours into a real job.
+   */
+  it("stores a bundle against the named source recording", async () => {
+    const id = await claimAJob();
+    const res = await request(app).put(`/api/worker/analysis/${id}/bundle`)
+      .set("x-worker-key", KEY)
+      .field("workerId", "w1")
+      .field("recordingId", String(recB))
+      .field("videoStartSeconds", "0")
+      .attach("bundle", bundleZip(), "idbundle.zip");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, recordingId: recB });
+    expect(res.body.remaining).toEqual([recA]);
+
+    const [row] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, id));
+    expect(row.bundleRecordingIds).toEqual([recB]);
+  });
+
+  it("takes the kick-off from the form, not from whatever the bundle carried", async () => {
+    // The same tracking can be attached to a differently trimmed video, so the
+    // pairing owns this number. Getting it wrong draws every box against the
+    // wrong part of the match and looks like broken tracking.
+    const id = await claimAJob();
+    await request(app).put(`/api/worker/analysis/${id}/bundle`)
+      .set("x-worker-key", KEY)
+      .field("workerId", "w1")
+      .field("recordingId", String(recA))
+      .field("videoStartSeconds", "1080")
+      .attach("bundle", bundleZip(0), "idbundle.zip")
+      .expect(200);
+
+    const [bundle] = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recA));
+    expect(bundle.manifest.videoStartSeconds).toBe(1080);
+  });
+
+  it("refuses a recording that is not part of the job", async () => {
+    const id = await claimAJob();
+    const res = await request(app).put(`/api/worker/analysis/${id}/bundle`)
+      .set("x-worker-key", KEY)
+      .field("workerId", "w1")
+      .field("recordingId", String(recNoVideo))
+      .attach("bundle", bundleZip(), "idbundle.zip");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("source recordings");
+  });
+
+  it("completes once a bundle has landed, and the segments are there to claim", async () => {
+    const id = await claimAJob();
+    await request(app).put(`/api/worker/analysis/${id}/bundle`)
+      .set("x-worker-key", KEY)
+      .field("workerId", "w1")
+      .field("recordingId", String(recA))
+      .field("videoStartSeconds", "60")
+      .attach("bundle", bundleZip(), "idbundle.zip")
+      .expect(200);
+
+    const done = await asWorker(`/api/worker/analysis/${id}/complete`).expect(200);
+    expect(done.body.job.status).toBe("succeeded");
+
+    // The point of the whole exercise: a stored segment row, which is what
+    // makes the recording claimable rather than merely bundled.
+    const [bundle] = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recA));
+    const segments = await db.select().from(recordingTrackingSegmentsTable)
+      .where(eq(recordingTrackingSegmentsTable.bundleId, bundle.id));
+    expect(segments).toHaveLength(1);
   });
 });
 
