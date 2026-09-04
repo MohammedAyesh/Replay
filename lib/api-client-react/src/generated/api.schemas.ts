@@ -443,6 +443,11 @@ export interface EngagementResult {
   score: number;
 }
 
+export interface ShareLinkResult {
+  shareUrl: string;
+  posterUrl: string;
+}
+
 export type ProfileInputPosition = typeof ProfileInputPosition[keyof typeof ProfileInputPosition];
 
 

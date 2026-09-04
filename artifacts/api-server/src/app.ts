@@ -10,6 +10,7 @@ import {
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
 import router from "./routes";
+import shareRouter from "./routes/share";
 import { logger } from "./lib/logger";
 import { COOKIE_SECRET } from "./lib/cookies";
 
@@ -90,6 +91,11 @@ app.use(cookieParser(COOKIE_SECRET));
 // authenticated admin upload to carry a real bundle.
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// Public share pages and their media proxies are deliberately outside /api:
+// crawlers do not send cookies, and these immutable media responses must not
+// inherit the authenticated API's no-store cache policy.
+app.use(shareRouter);
 
 // Most /api responses are per-user and cookie-authenticated. Without an
 // explicit directive a shared cache (CDN / proxy edge) may store one user's

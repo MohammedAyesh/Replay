@@ -26,3 +26,4 @@
 - [Calibration metadata and guarded speed metrics](calibration-metadata-and-speed.md) — bundle-owned metadata and conservative admin-only top-speed rules prevent misleading numbers.
 - [Claim identity ownership](identity-binding-ownership.md) — confirmed bindings own exact vouched fragments; unvouched regrouping is allowed, disjoint claims split, and overlaps remain disputes.
 - [Export rendition geometry](export-rendition-geometry.md) — select Bunny variants by declared 3840×1080 pixels, never folder labels or adaptive master fallback.
+- [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.

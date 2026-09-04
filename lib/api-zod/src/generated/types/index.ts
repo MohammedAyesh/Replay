@@ -82,6 +82,7 @@ export * from './publicProfile';
 export * from './recording';
 export * from './replaceTrackingBundleBodyTwo';
 export * from './resolveClaimMatchDisputeInput';
+export * from './shareLinkResult';
 export * from './socialLikeUser';
 export * from './trackingBox';
 export * from './trackingBundle';

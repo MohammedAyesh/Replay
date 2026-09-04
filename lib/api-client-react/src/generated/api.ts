@@ -69,6 +69,7 @@ import type {
   Recording,
   ReplaceTrackingBundleBodyTwo,
   ResolveClaimMatchDisputeInput,
+  ShareLinkResult,
   TrackingBundle,
   TrackingBundleSummary,
   TrackingSegment,
@@ -3414,6 +3415,83 @@ export const useRecordShare = <TError = ErrorType<void>,
       > => {
       return useMutation(getRecordShareMutationOptions(options));
     }
+
+export const getGetUserClipShareLinkUrl = (id: number,) => {
+
+
+
+
+  return `/api/user-clips/${id}/share-link`
+}
+
+/**
+ * @summary Get the public share and poster URLs for a clip
+ */
+export const getUserClipShareLink = async (id: number, options?: RequestInit): Promise<ShareLinkResult> => {
+
+  return customFetch<ShareLinkResult>(getGetUserClipShareLinkUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUserClipShareLinkQueryKey = (id: number,) => {
+    return [
+    `/api/user-clips/${id}/share-link`
+    ] as const;
+    }
+
+
+export const getGetUserClipShareLinkQueryOptions = <TData = Awaited<ReturnType<typeof getUserClipShareLink>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserClipShareLink>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUserClipShareLinkQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUserClipShareLink>>> = ({ signal }) => getUserClipShareLink(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUserClipShareLink>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetUserClipShareLinkQueryResult = NonNullable<Awaited<ReturnType<typeof getUserClipShareLink>>>
+export type GetUserClipShareLinkQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the public share and poster URLs for a clip
+ */
+
+export function useGetUserClipShareLink<TData = Awaited<ReturnType<typeof getUserClipShareLink>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserClipShareLink>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetUserClipShareLinkQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetFeedUrl = () => {
 

@@ -111,6 +111,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const { setFullscreenVideo } = useFullscreenVideo();
   const keyframes = clip.cropPath ?? [];
 
+
   // Notify layout that a fullscreen video is active — suppresses orientation lock
   useEffect(() => {
     setFullscreenVideo(true);
@@ -502,7 +503,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
    * rather than plays the file. Cookies are sent automatically by navigation, so
    * session auth still works without credentials: "include".
    */
-  const deliverViaProxy = useCallback(() => {
+  const deliverViaProxy = useCallback(async () => {
     const filename = `${clip.title || "clip"}.mp4`;
     const a = document.createElement("a");
     a.href = `/api/user-clips/${clip.id}/download`;

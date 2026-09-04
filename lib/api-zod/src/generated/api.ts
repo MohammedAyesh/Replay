@@ -1784,6 +1784,19 @@ export const RecordShareResponse = zod.object({
 
 
 /**
+ * @summary Get the public share and poster URLs for a clip
+ */
+export const GetUserClipShareLinkParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetUserClipShareLinkResponse = zod.object({
+  "shareUrl": zod.string().url(),
+  "posterUrl": zod.string().url()
+})
+
+
+/**
  * @summary Get the shared user clip feed, visibility-filtered, ordered by engagement score
  */
 export const GetFeedResponseItem = zod.object({

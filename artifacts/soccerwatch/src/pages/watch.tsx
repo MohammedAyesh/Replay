@@ -539,7 +539,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     );
   };
 
-  const handleShare = () => {
+  const handleShare = async () => {
     // Track share on backend
     recordShareMutation.mutate(
       { id: clip.id },
@@ -554,13 +554,30 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       }
     );
 
+    let shareUrl = `${window.location.origin}/watch?clip=${clip.id}`;
+    try {
+      const linkResponse = await fetch(`/api/user-clips/${clip.id}/share-link`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (linkResponse.ok) {
+        const link = await linkResponse.json() as { shareUrl?: string };
+        if (link.shareUrl) shareUrl = link.shareUrl;
+      }
+    } catch {
+      // The watch URL remains a useful fallback if link generation is unavailable.
+    }
+
     // Native share if available
     if (navigator.share) {
-      navigator.share({ title: clip.title, text: `Check out this clip by ${clip.creatorName}!` }).catch(() => {});
+      navigator.share({
+        title: clip.title,
+        text: `Check out this clip by ${clip.creatorName}!`,
+        url: shareUrl,
+      }).catch(() => {});
     } else {
       // Fallback: copy link to clipboard
-      const url = `${window.location.origin}/watch?clip=${clip.id}`;
-      navigator.clipboard.writeText(url).catch(() => {});
+      navigator.clipboard.writeText(shareUrl).catch(() => {});
       toast({ title: "Link copied!", className: "bg-primary text-white border-none" });
     }
   };

@@ -41,6 +41,10 @@ export const userClipsTable = pgTable("user_clips", {
   exportStatus: text("export_status"),
   /** Bunny Storage CDN URL of the rendered MP4 once exportStatus = 'done' */
   exportedUrl: text("exported_url"),
+  /** Bunny Storage zone-relative path of the generated 1200x630 share poster. */
+  posterStoragePath: text("poster_storage_path"),
+  /** Source/export second used to generate the share poster. */
+  posterTime: numeric("poster_time", { precision: 10, scale: 3 }),
 });
 
 export type UserClipRow = typeof userClipsTable.$inferSelect;

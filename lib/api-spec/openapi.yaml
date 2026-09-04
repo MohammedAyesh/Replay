@@ -1062,6 +1062,29 @@ paths:
         "404":
           description: Not found
 
+  /user-clips/{id}/share-link:
+    get:
+      operationId: getUserClipShareLink
+      tags: [clips]
+      summary: Get the public share and poster URLs for a clip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Public share URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareLinkResult"
+        "401":
+          description: Unauthenticated
+        "404":
+          description: Not found
+
   /feed:
     get:
       operationId: getFeed
@@ -2045,6 +2068,18 @@ components:
           type: integer
         score:
           type: number
+
+    ShareLinkResult:
+      type: object
+      required: [shareUrl, posterUrl]
+      properties:
+        shareUrl:
+          type: string
+          format: uri
+        posterUrl:
+          type: string
+          format: uri
+
 
     ProfileInput:
       type: object

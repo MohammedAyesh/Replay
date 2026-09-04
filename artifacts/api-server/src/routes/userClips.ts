@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, and, desc, inArray, count, sql, like } from "drizzle-orm";
+import { eq, and, desc, inArray, count, sql, like, or } from "drizzle-orm";
 import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable, recordingsTable, academyRecordingsTable } from "@workspace/db";
 import {
   CreateUserClipBody,
@@ -38,6 +38,8 @@ import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExpo
 import { logger } from "../lib/logger";
 import { introPlaybackPath } from "./clipIntro";
 import { selectExportSource } from "../lib/exportSource";
+import { ensureClipPoster } from "../lib/clipPoster";
+import { absoluteClipShareUrl, clipSharePath } from "../lib/shareLinks";
 
 export {
   selectExportSource,
@@ -125,6 +127,7 @@ async function getExportAccessibleClip(req: Parameters<typeof getLocalUserId>[0]
     .where(eq(usersTable.id, userId));
   return user?.isAdmin ? clip : null;
 }
+
 
 /**
  * Live-stream clips are saved with a synthetic videoId like "live:camera2".
@@ -836,6 +839,10 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
     return;
   }
 
+  // The share response must not wait for a seek against the recording. A
+  // crawler can request the page immediately after this response returns.
+  if (!clip.isHidden) void ensureClipPoster(clip);
+
   // Atomic increment — see the view handler above.
   const [updatedShare] = await db
     .update(userClipsTable)
@@ -854,6 +861,47 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
       score: newScore,
     })
   );
+});
+
+/**
+ * GET /user-clips/:id/share-link
+ * Return the public, HMAC-protected share URL and its poster proxy URL.
+ */
+router.get("/user-clips/:id/share-link", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const clipId = Number.parseInt(raw, 10);
+  if (!Number.isInteger(clipId) || clipId <= 0) {
+    res.status(400).json({ error: "Invalid clip id" });
+    return;
+  }
+
+  const [clip] = await db
+    .select({
+      id: userClipsTable.id,
+      userId: userClipsTable.userId,
+      visibility: userClipsTable.visibility,
+      isHidden: userClipsTable.isHidden,
+    })
+    .from(userClipsTable)
+    .where(and(
+      eq(userClipsTable.id, clipId),
+      eq(userClipsTable.isHidden, false),
+      or(
+        ...(userId ? [eq(userClipsTable.userId, userId)] : []),
+        eq(userClipsTable.visibility, "public"),
+      ),
+    ));
+  if (!clip) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
+
+  const shareUrl = absoluteClipShareUrl(req, clip.id);
+  res.json({
+    shareUrl,
+    posterUrl: `${shareUrl}/poster`,
+  });
 });
 
 router.get("/feed", async (req, res): Promise<void> => {

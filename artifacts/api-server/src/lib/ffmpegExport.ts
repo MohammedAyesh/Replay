@@ -67,7 +67,8 @@ const MAX_INTRO_SECONDS = Math.max(
   parseInt(process.env.MAX_INTRO_SECONDS ?? "30", 10) || 30,
 );
 
-type KF = { t: number; x: number; y: number; w: number; h: number };
+export type CropKeyframe = { t: number; x: number; y: number; w: number; h: number };
+type KF = CropKeyframe;
 
 export interface FfmpegExportOptions {
   /** URL passed to FFmpeg as the input source (HLS or direct MP4). */
@@ -190,6 +191,19 @@ function normalizePath(kfs: KF[], is9to16: boolean): KF[] {
   });
 }
 
+/** The same centre crop used when a clip has no saved keyframes. */
+export function defaultCropFrameForAspect(aspectRatio: string): CropKeyframe {
+  const is9to16 = aspectRatio === "9:16";
+  const w = is9to16 ? (SRC_H * 9 / 16) / SRC_W : 0.5;
+  return {
+    t: 0,
+    x: (1 - w) / 2,
+    y: 0,
+    w,
+    h: 1,
+  };
+}
+
 /** Linear interpolation of a keyframe path at time t (same units as kf.t). */
 function sampleAt(kfs: KF[], t: number): KF {
   if (kfs.length === 1) return kfs[0];
@@ -209,6 +223,22 @@ function sampleAt(kfs: KF[], t: number): KF {
     w: a.w + (b.w - a.w) * p,
     h: a.h + (b.h - a.h) * p,
   };
+}
+
+/** Shared crop-path normalization for server-side stills and video renders. */
+export function normalizeCropPathForAspect(
+  keyframes: CropKeyframe[],
+  aspectRatio: string,
+): CropKeyframe[] {
+  return normalizePath(
+    sanitizeKeyframes(keyframes),
+    aspectRatio === "9:16",
+  ).sort((a, b) => a.t - b.t);
+}
+
+/** Shared keyframe interpolation used by poster extraction. */
+export function interpolateCropFrame(keyframes: CropKeyframe[], t: number): CropKeyframe {
+  return sampleAt(keyframes, t);
 }
 
 /**
