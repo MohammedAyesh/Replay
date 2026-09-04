@@ -8,7 +8,7 @@ import {
   GraduationCap, Video, Check, Radio, Square, AlertTriangle,
   Play, Clock, CheckCircle2, XCircle, Loader2, ExternalLink as LinkIcon,
   CalendarDays, ChevronLeft, ChevronRight,
-  Download,
+  Download, Upload,
 } from "lucide-react";
 import Hls from "hls.js";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
@@ -32,7 +32,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "settings";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -118,8 +118,65 @@ interface AdminRecording {
   trackingSegmentCount?: number | null;
   trackingFrameCoverage?: string | null;
   trackingVideoStartSeconds?: number | null;
+  trackingPitchModel?: {
+    calibrationId: string | null;
+    fittedAt: string | null;
+    calibratedAspectRatio?: number | null;
+    gridRows: number;
+    gridColumns: number;
+    pitchWidthMetres: number;
+    pitchHeightMetres: number;
+  } | null;
   hasIdentityMap?: boolean;
   identityMapMatchesBundle?: boolean;
+}
+
+interface ClaimDispute {
+  id: number;
+  recordingId: number;
+  recordingLabel: string;
+  claimantUserId: number;
+  claimantName: string;
+  claimantEmail: string;
+  personId: string;
+  supportCount: number;
+  acceptedAnswerCount: number;
+  supportPercent: number;
+  state: string;
+  currentOwnerUserId: number | null;
+  currentOwnerName: string | null;
+  createdAt: string;
+}
+
+interface AdminRecordingPlayerMetric {
+  userId: number;
+  displayName: string;
+  email: string;
+  playerStats: {
+    minutesPlayed: number;
+    distanceMetres: number | null;
+    averageSpeedMetresPerSecond: number | null;
+  };
+  topSpeedMetresPerSecond: number | null;
+  topSpeedUsableTimeFraction: number | null;
+}
+
+function calibrationDateLabel(value: string | null | undefined): string {
+  return value ? value.slice(0, 10) : "unknown date";
+}
+
+function calibrationLabel(model: AdminRecording["trackingPitchModel"]): string {
+  if (!model) return "No valid pitch model";
+  if (!model.calibrationId || !model.fittedAt || typeof model.calibratedAspectRatio !== "number") {
+    return "Legacy pitch model · reattach required";
+  }
+  return `Calibration ${model.calibrationId} · fitted ${calibrationDateLabel(model.fittedAt)}`;
+}
+
+function calibrationAspectLabel(model: AdminRecording["trackingPitchModel"]): string {
+  return typeof model?.calibratedAspectRatio === "number"
+    ? `${model.calibratedAspectRatio.toFixed(4)} aspect`
+    : "aspect ratio unavailable";
 }
 
 interface AdminBanner {
@@ -355,6 +412,79 @@ async function apiFetch(path: string, opts?: RequestInit) {
 }
 
 // ─── Clips Tab ────────────────────────────────────────────────────────────────
+
+function ClaimDisputesTab() {
+  const [disputes, setDisputes] = useState<ClaimDispute[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setDisputes(await apiFetch("/admin/claim-match/disputes"));
+    } catch {
+      setNotice("Could not load claim disputes.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const resolve = async (dispute: ClaimDispute, winnerUserId: number) => {
+    setWorking(dispute.id);
+    setNotice(null);
+    try {
+      await apiFetch(`/admin/claim-match/disputes/${dispute.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ winnerUserId }),
+      });
+      setNotice("Claim transferred and the previous owner was released.");
+      await load();
+    } catch {
+      setNotice("Could not resolve this dispute.");
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-white text-sm font-semibold">Claim disputes</h2>
+        <p className="text-zinc-500 text-xs mt-1">A disputed claimant is never confirmed or awarded clips until you choose the owner.</p>
+      </div>
+      {notice && <div className="rounded-xl bg-amber-500/10 px-3 py-2 text-sm text-amber-300">{notice}</div>}
+      {loading ? <div className="py-16 text-center text-zinc-500">Loading…</div> : disputes.length === 0 ? (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-10 text-center text-sm text-zinc-500">No disputes waiting for review.</div>
+      ) : disputes.map((dispute) => (
+        <div key={dispute.id} className="rounded-xl border border-amber-500/20 bg-zinc-900 p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-white">{dispute.recordingLabel}</p>
+              <p className="mt-1 text-xs text-zinc-400">Person {dispute.personId} · {Math.round(dispute.supportPercent)}% support from {dispute.acceptedAnswerCount} accepted answers</p>
+            </div>
+          </div>
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            <div className="rounded-lg bg-zinc-800/70 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">Current owner</p>
+              <p className="mt-1 text-zinc-200">{dispute.currentOwnerName ?? "Unassigned"}</p>
+              {dispute.currentOwnerUserId && <button disabled={working === dispute.id} onClick={() => void resolve(dispute, dispute.currentOwnerUserId!)} className="mt-2 text-xs font-semibold text-primary hover:underline">Keep current owner</button>}
+            </div>
+            <div className="rounded-lg bg-zinc-800/70 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">Pending claimant</p>
+              <p className="mt-1 text-zinc-200">{dispute.claimantName}</p>
+              <p className="text-xs text-zinc-500">{dispute.claimantEmail}</p>
+              <button disabled={working === dispute.id} onClick={() => void resolve(dispute, dispute.claimantUserId)} className="mt-2 text-xs font-semibold text-primary hover:underline">Transfer to claimant</button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ClipsTab() {
   const [clips, setClips] = useState<AdminClip[]>([]);
@@ -4183,7 +4313,12 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
     recording.hasTrackingBundle ? String(recording.trackingVideoStartSeconds ?? 0) : "",
   );
   const [verifying, setVerifying] = useState(false);
+  const [pitchModel, setPitchModel] = useState(recording.trackingPitchModel ?? null);
+  const [pitchBusy, setPitchBusy] = useState(false);
+  const [playerMetrics, setPlayerMetrics] = useState<AdminRecordingPlayerMetric[] | null>(null);
+  const [loadingPlayerMetrics, setLoadingPlayerMetrics] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const pitchInputRef = useRef<HTMLInputElement | null>(null);
 
   const upload = async (file: File) => {
     setBusy(true);
@@ -4195,6 +4330,7 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         segmentCount: number;
         frameCoverage: string;
         videoStartSeconds?: number;
+        pitchModel?: NonNullable<AdminRecording["trackingPitchModel"]> | null;
       };
       // Where the tracked window starts inside THIS recording. It belongs to
       // the pairing, not to the bundle: the same tracking can be attached to a
@@ -4226,6 +4362,8 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
       setHasBundle(true);
       setHasIdentityMap(false);
       setIdentityMapMatchesBundle(false);
+      setPitchModel(result.pitchModel ?? null);
+      setPlayerMetrics(null);
       setMessage(
         `Ready · ${result.segmentCount} segments · ${result.trackCount} tracks · `
         + `starts ${result.videoStartSeconds ?? 0}s into the video · ${result.frameCoverage}`,
@@ -4267,6 +4405,68 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
     }
   };
 
+  const uploadPitchModel = async (file: File) => {
+    setPitchBusy(true);
+    setMessage(null);
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const source = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        && ("pitchModel" in parsed || "pitch_model" in parsed)
+        ? (parsed as { pitchModel?: unknown; pitch_model?: unknown }).pitchModel
+          ?? (parsed as { pitch_model?: unknown }).pitch_model
+        : parsed;
+      const result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
+        method: "PATCH",
+        body: JSON.stringify({ pitchModel: source }),
+      }) as { pitchModel: NonNullable<AdminRecording["trackingPitchModel"]> | null };
+      setPitchModel(result.pitchModel);
+      setPlayerMetrics(null);
+      setMessage(result.pitchModel
+        ? `Pitch model saved · ${calibrationLabel(result.pitchModel)} · ${result.pitchModel.gridRows}×${result.pitchModel.gridColumns} grid · ${result.pitchModel.pitchWidthMetres}×${result.pitchModel.pitchHeightMetres} m`
+        : "Pitch model removed · distance unavailable");
+    } catch (error) {
+      setMessage(error instanceof SyntaxError
+        ? "That pitch model file is not valid JSON"
+        : "Pitch model upload failed — check dimensions and grid points");
+    } finally {
+      setPitchBusy(false);
+      if (pitchInputRef.current) pitchInputRef.current.value = "";
+    }
+  };
+
+  const removePitchModel = async () => {
+    if (!window.confirm("Remove the pitch model? Distance will become unavailable for this recording.")) return;
+    setPitchBusy(true);
+    setMessage(null);
+    try {
+      await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
+        method: "PATCH",
+        body: JSON.stringify({ pitchModel: null }),
+      });
+      setPitchModel(null);
+      setPlayerMetrics(null);
+      setMessage("Pitch model removed · distance unavailable");
+    } catch {
+      setMessage("Could not remove the pitch model");
+    } finally {
+      setPitchBusy(false);
+    }
+  };
+
+  const loadPlayerMetrics = async () => {
+    setLoadingPlayerMetrics(true);
+    try {
+      const result = await apiFetch(`/admin/recordings/${recording.id}/player-metrics`) as {
+        players: AdminRecordingPlayerMetric[];
+      };
+      setPlayerMetrics(result.players);
+    } catch {
+      setMessage("Could not load player metrics");
+    } finally {
+      setLoadingPlayerMetrics(false);
+    }
+  };
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
@@ -4291,6 +4491,16 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
                {!hasIdentityMap ? "No identity map" : identityMapMatchesBundle ? "Identity map saved" : "Identity map needs review"}
              </p>
            )}
+           {hasBundle && (
+             <p
+               className={cn("mt-0.5 text-[10px]", pitchModel ? "text-emerald-400" : "text-zinc-500")}
+               data-testid={`tracking-pitch-model-${recording.id}`}
+             >
+               {pitchModel
+                  ? `${calibrationLabel(pitchModel)} · ${calibrationAspectLabel(pitchModel)} · ${pitchModel.gridRows}×${pitchModel.gridColumns} grid · ${pitchModel.pitchWidthMetres}×${pitchModel.pitchHeightMetres} m${pitchModel.calibrationId && pitchModel.fittedAt && typeof pitchModel.calibratedAspectRatio === "number" ? "" : " · distance unavailable"}`
+                  : "No pitch model · distance unavailable"}
+             </p>
+           )}
         </div>
       </div>
       <input
@@ -4304,6 +4514,19 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
           if (file) void upload(file);
         }}
       />
+       {hasBundle && (
+         <input
+           ref={pitchInputRef}
+           type="file"
+           accept=".json,application/json"
+           className="hidden"
+           data-testid={`input-pitch-model-${recording.id}`}
+           onChange={(event) => {
+             const file = event.target.files?.[0];
+             if (file) void uploadPitchModel(file);
+           }}
+         />
+       )}
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-[10px] text-zinc-500">
           starts
@@ -4332,6 +4555,31 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
             </button>
           )}
         </label>
+         {hasBundle && (
+           <>
+             <button
+               type="button"
+               className="flex items-center gap-1 rounded-lg border border-primary/40 px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+               disabled={busy || savingStart || pitchBusy}
+               data-testid={`button-upload-pitch-model-${recording.id}`}
+               onClick={() => pitchInputRef.current?.click()}
+             >
+               {pitchBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+               {pitchModel ? "Replace pitch model" : "Upload pitch model"}
+             </button>
+             {pitchModel && (
+               <button
+                 type="button"
+                 className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-400 transition-colors hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+                 disabled={busy || savingStart || pitchBusy}
+                 data-testid={`button-remove-pitch-model-${recording.id}`}
+                 onClick={() => void removePitchModel()}
+               >
+                 Remove model
+               </button>
+             )}
+           </>
+         )}
         <button
           type="button"
           className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
@@ -4363,7 +4611,52 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
             {verifying ? "Hide check" : "Check alignment"}
           </button>
         )}
+         {hasBundle && (
+           <button
+             type="button"
+             className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+             disabled={loadingPlayerMetrics}
+             data-testid={`button-load-player-metrics-${recording.id}`}
+             onClick={() => void loadPlayerMetrics()}
+           >
+             {loadingPlayerMetrics ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+             {loadingPlayerMetrics ? "Loading metrics…" : playerMetrics ? "Refresh player metrics" : "Player metrics"}
+           </button>
+         )}
       </div>
+       {playerMetrics && (
+         <div className="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-3" data-testid={`admin-player-metrics-${recording.id}`}>
+           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+             <p className="text-xs font-semibold text-zinc-200">Claimed player metrics</p>
+             <p className="text-[10px] text-zinc-500">
+               {pitchModel && pitchModel.calibrationId && pitchModel.fittedAt && typeof pitchModel.calibratedAspectRatio === "number"
+                 ? `${calibrationLabel(pitchModel)} · ${calibrationAspectLabel(pitchModel)}`
+                 : "No valid pitch model · distance and speed unavailable"}
+             </p>
+           </div>
+           {playerMetrics.length === 0 ? (
+             <p className="text-[10px] text-zinc-500">No player claims have been recorded for this bundle.</p>
+           ) : (
+             <div className="grid gap-2 md:grid-cols-2">
+               {playerMetrics.map((metric) => (
+                 <div key={metric.userId} className="rounded border border-zinc-800 px-2.5 py-2">
+                   <p className="truncate text-xs font-medium text-zinc-200">{metric.displayName}</p>
+                   <p className="truncate text-[10px] text-zinc-500">{metric.email}</p>
+                   <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-zinc-400">
+                     <span>Minutes <b className="text-zinc-200">{metric.playerStats.minutesPlayed.toFixed(1)}</b></span>
+                     <span>Distance <b className="text-zinc-200">{metric.playerStats.distanceMetres === null ? "Unavailable" : `${metric.playerStats.distanceMetres.toLocaleString()} m`}</b></span>
+                     <span>Average speed <b className="text-zinc-200">{metric.playerStats.averageSpeedMetresPerSecond === null ? "Unavailable" : `${metric.playerStats.averageSpeedMetresPerSecond.toFixed(2)} m/s`}</b></span>
+                     <span>Top speed <b className="text-amber-300">{metric.topSpeedMetresPerSecond === null ? "Unavailable" : `${metric.topSpeedMetresPerSecond.toFixed(2)} m/s`}</b></span>
+                   </div>
+                   <p className="mt-1 text-[9px] text-amber-400/80">
+                     Top speed unvalidated · usable time {metric.topSpeedUsableTimeFraction === null ? "—" : `${Math.round(metric.topSpeedUsableTimeFraction * 100)}%`}
+                   </p>
+                 </div>
+               ))}
+             </div>
+           )}
+         </div>
+       )}
       {verifying && <TrackingAlignmentCheck recordingId={recording.id} />}
     </div>
   );
@@ -4921,6 +5214,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "live", label: "Live Control" },
   { id: "var", label: "VAR" },
   { id: "matches", label: "Matches" },
+  { id: "claim-disputes", label: "Claim Disputes" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -4977,6 +5271,7 @@ export default function Admin() {
         {tab === "live" && <LiveTab />}
         {tab === "var" && <VarTab />}
         {tab === "matches" && <MatchesTab />}
+        {tab === "claim-disputes" && <ClaimDisputesTab />}
         {tab === "settings" && <SettingsTab />}
       </div>
     </div>

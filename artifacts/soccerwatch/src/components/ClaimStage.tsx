@@ -57,6 +57,8 @@ export type StageCandidate = {
   overlap?: boolean;
   /** position interpolated across a gap in the track - drawn dashed */
   coasting?: boolean;
+  /** source fragment has been vouched for by another claimant */
+  taken?: boolean;
 };
 
 type Frame = { x: number; y: number; w: number; h: number };
@@ -550,7 +552,7 @@ export function ClaimStage({
             {showBoxes && candidates.map((candidate, index) => (
               <div
                 key={candidate.id}
-                className={`claim-track-box ${candidate.overlap ? "is-overlap" : ""} ${candidate.coasting ? "is-coasting" : ""}`}
+                 className={`claim-track-box ${candidate.overlap ? "is-overlap" : ""} ${candidate.coasting ? "is-coasting" : ""} ${candidate.taken ? "is-taken" : ""}`}
                 style={{
                   left: `${(candidate.box.x / bundle.width) * 100}%`,
                   top: `${(candidate.box.y / bundle.height) * 100}%`,

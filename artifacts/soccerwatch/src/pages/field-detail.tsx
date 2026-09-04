@@ -1,16 +1,19 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { SkipFlash } from "@/components/skip-flash";
-import { useRoute, useLocation } from "wouter";
+import { Link, useRoute, useLocation } from "wouter";
 import {
   useGetBunnyCollections,
   useGetBunnyCollectionVideos,
+  useGetFieldRecordings,
+  getGetFieldRecordingsQueryKey,
   useCreateUserClip,
   useListAcademies,
   getListAcademiesQueryKey,
   getListUserClipsQueryKey,
   getGetBunnyCollectionsQueryKey,
   BunnyVideo,
+  type FieldRecording,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Play, Pause, X, SkipBack, SkipForward, Circle, Square, CheckCircle2, Maximize, Minimize, Video, Clock, RotateCcw } from "lucide-react";
@@ -136,6 +139,84 @@ function formatShortDate(isoDate: string): string {
   const [y, m, d] = isoDate.split("-");
   const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   return `${parseInt(d)} ${months[parseInt(m) - 1]} ${y}`;
+}
+
+function formatRecordingDateTime(
+  date: string,
+  timeSlot: string,
+  locale: "en" | "ar",
+  fallback: (date: string, time: string) => string,
+): string {
+  const parsed = new Date(`${date}T${timeSlot.length === 5 ? `${timeSlot}:00` : timeSlot}`);
+  if (Number.isNaN(parsed.getTime())) return fallback(date, timeSlot);
+  return new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
+function ClaimableRecordingRow({
+  recording,
+  index,
+  locale,
+  copy,
+}: {
+  recording: FieldRecording;
+  index: number;
+  locale: "en" | "ar";
+  copy: {
+    invite: string;
+    continue: string;
+    result: string;
+    disputed: string;
+    disputedDesc: string;
+    needsResolution: string;
+    needsResolutionDesc: string;
+    dateTimeFallback: (date: string, time: string) => string;
+  };
+}) {
+  const state = recording.viewerClaimState;
+  const dateTime = formatRecordingDateTime(recording.date, recording.timeSlot, locale, copy.dateTimeFallback);
+  const isDisputed = state === "disputed";
+  const needsResolution = state === "needs_resolution";
+  const isSettled = state === "confirmed";
+  const actionLabel = isSettled ? copy.result : state === null ? copy.invite : copy.continue;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0, transition: { delay: index * 0.05, duration: 0.22 } }}
+      className="flex items-center gap-3 border-t border-border px-4 py-3.5 first:border-t-0"
+    >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+        <CheckCircle2 className="h-4 w-4 text-primary" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-foreground">{dateTime}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {recording.court}
+        </p>
+        {(isDisputed || needsResolution) && (
+          <p className="mt-1 text-xs font-medium text-amber-500">
+            {isDisputed ? copy.disputed : copy.needsResolution}
+            <span className="block font-normal text-muted-foreground">
+              {isDisputed ? copy.disputedDesc : copy.needsResolutionDesc}
+            </span>
+          </p>
+        )}
+      </div>
+      {!isDisputed && !needsResolution && (
+        <Link
+          href={`/claim-match/${recording.id}`}
+          className="flex shrink-0 items-center gap-1 rounded-xl bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20"
+        >
+          <span>{actionLabel}</span>
+          <ChevronRight className="h-3.5 w-3.5 rtl:hidden" />
+          <ChevronLeft className="h-3.5 w-3.5 ltr:hidden" />
+        </Link>
+      )}
+    </motion.div>
+  );
 }
 
 // ── Calendar ──────────────────────────────────────────────────────────────────
@@ -302,7 +383,9 @@ interface CurrentMatchResponse {
 export default function FieldDetail() {
   const [, params] = useRoute("/fields/:id");
   const guid = params?.id ?? "";
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
+  const { user, isGuest } = useAuth();
+  const canClaim = Boolean(user) && !isGuest;
 
   const { data: collections } = useGetBunnyCollections({
     query: {
@@ -320,6 +403,20 @@ export default function FieldDetail() {
     ? academies?.find((a) => a.fieldId === collection.id)?.id
     : undefined;
   const { data: videos, isLoading: videosLoading } = useGetBunnyCollectionVideos(guid);
+  const { data: fieldRecordings, isLoading: fieldRecordingsLoading } = useGetFieldRecordings(
+    collection?.id ?? 0,
+    {
+      query: {
+        enabled: canClaim && collection?.id != null,
+        queryKey: getGetFieldRecordingsQueryKey(collection?.id ?? 0),
+        staleTime: 60 * 1000,
+      },
+    },
+  );
+  const claimableRecordings = useMemo(
+    () => (fieldRecordings ?? []).filter((recording) => recording.hasTracking),
+    [fieldRecordings],
+  );
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
 
   // ── VAR / match state ──────────────────────────────────────────────────────
@@ -490,6 +587,47 @@ export default function FieldDetail() {
       {/* ── Recordings tab (default / always shown when no live match) ──────── */}
       {(!varEnabled || currentTab === "recordings") && (
         <div className="field-detail-recordings flex-1 overflow-y-auto no-scrollbar pb-24">
+          {canClaim && (fieldRecordingsLoading || claimableRecordings.length > 0) && (
+            <section className="mx-4 mt-4 overflow-hidden rounded-[22px] border border-primary/20 bg-card">
+              <div className="border-b border-border px-4 py-4">
+                <h2 className="font-display text-base font-bold text-foreground">{t.fieldDetail.claimYourMatch.title}</h2>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{t.fieldDetail.claimYourMatch.subtitle}</p>
+              </div>
+              {fieldRecordingsLoading ? (
+                <div className="space-y-2 p-4">
+                  <div className="h-14 animate-pulse rounded-xl bg-muted" />
+                  <div className="h-14 animate-pulse rounded-xl bg-muted" />
+                </div>
+              ) : (
+                <div>
+                  {claimableRecordings.map((recording, index) => (
+                    <ClaimableRecordingRow
+                      key={recording.id}
+                      recording={recording}
+                      index={index}
+                      locale={locale}
+                      copy={t.fieldDetail.claimYourMatch}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+          {canClaim && (
+            <div className="mx-4 mt-3 rounded-2xl border border-border bg-card px-4 py-3">
+              <Link
+                href="/claim-match/demo"
+                className="flex items-center justify-between gap-3 text-start"
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-foreground">{t.fieldDetail.claimYourMatch.tryDemo}</span>
+                  <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{t.fieldDetail.claimYourMatch.tryDemoDesc}</span>
+                </span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground rtl:hidden" />
+                <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground ltr:hidden" />
+              </Link>
+            </div>
+          )}
           {videosLoading ? (
             <div className="p-4 space-y-3">
               <div className="h-52 bg-muted rounded-2xl animate-pulse" />

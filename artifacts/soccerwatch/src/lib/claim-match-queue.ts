@@ -13,6 +13,14 @@ export function isPermanentClaimQueueError(error: unknown): boolean {
     ? Number((error as { status?: unknown }).status)
     : NaN;
   if (!Number.isInteger(status)) return false;
+  if (status === 409) {
+    const body = error as { data?: unknown; message?: string };
+    const text = JSON.stringify(body.data ?? body.message ?? "").toLowerCase();
+    // Ownership conflicts and stale bundles are server decisions, not
+    // transient connectivity failures. Remove the queued write so it cannot
+    // retry forever; the next claim read surfaces the review state.
+    return /claim|identity|owner|bundle|tracking/.test(text);
+  }
   // Client errors normally describe an invalid queued payload. These statuses
   // remain retryable because the request may become valid later.
   return status >= 400

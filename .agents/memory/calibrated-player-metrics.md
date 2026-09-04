@@ -7,4 +7,4 @@ Use only a bundle-supplied pitch calibration for metre-based distance. Map each 
 
 **Why:** Pixel-scale estimates drift over a full match and produce confidently wrong distances; the bottom centre is the closest available ground-contact proxy.
 
-**How to apply:** Keep minutes and heatmaps available from confirmed tracking intervals; gate distance on a valid pitch model and describe it as an approximate camera-tracking result.
+**How to apply:** Keep minutes and heatmaps available from confirmed tracking intervals; gate distance on a valid pitch model and describe it as an approximate camera-tracking result. The admin bundle PATCH preserves the model when omitted and removes it only when `pitchModel: null` is explicit; calibration grid values are stored unchanged from the upload.

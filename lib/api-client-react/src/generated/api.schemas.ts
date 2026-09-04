@@ -106,6 +106,48 @@ export interface Recording {
   fieldName?: string | null;
 }
 
+/**
+ * The signed-in viewer's progress or claim state, or null when they have not started or are not signed in.
+ * @nullable
+ */
+export type FieldRecordingViewerClaimState = typeof FieldRecordingViewerClaimState[keyof typeof FieldRecordingViewerClaimState] | null;
+
+
+export const FieldRecordingViewerClaimState = {
+  in_progress: 'in_progress',
+  pending: 'pending',
+  confirmed: 'confirmed',
+  disputed: 'disputed',
+  needs_resolution: 'needs_resolution',
+  released: 'released',
+  rejected: 'rejected',
+} as const;
+
+export interface FieldRecording {
+  id: number;
+  fieldId: number;
+  court: string;
+  date: string;
+  timeSlot: string;
+  duration: string;
+  /** @nullable */
+  score?: string | null;
+  videoUrl?: string;
+  /** @nullable */
+  highlightMoment?: string | null;
+  /** @nullable */
+  fieldName?: string | null;
+  /** Whether this recording has an uploaded tracking bundle. */
+  hasTracking: boolean;
+  /** Whether the signed-in viewer has an identity claim for this recording. */
+  viewerHasClaim: boolean;
+  /**
+     * The signed-in viewer's progress or claim state, or null when they have not started or are not signed in.
+     * @nullable
+     */
+  viewerClaimState: FieldRecordingViewerClaimState;
+}
+
 export interface PublicProfile {
   id: number;
   name: string;
@@ -592,6 +634,18 @@ export interface TrackingPitchModelGridPoint {
 
 export interface TrackingPitchModel {
   /**
+     * Immutable identifier for the calibration fit that produced this model.
+     * @minLength 1
+     */
+  calibrationId: string;
+  /** Date and time at which this calibration was fitted. */
+  fittedAt: string;
+  /**
+     * Image width divided by image height used when fitting this model.
+     * @exclusiveMinimum 0
+     */
+  calibratedAspectRatio: number;
+  /**
      * Real pitch width represented by the model, in metres.
      * @exclusiveMinimum 0
      */
@@ -607,6 +661,23 @@ export interface TrackingPitchModel {
      * @items.minItems 2
      */
   grid: TrackingPitchModelGridPoint[][];
+}
+
+export interface TrackingPitchModelSummary {
+  /** @nullable */
+  calibrationId: string | null;
+  /** @nullable */
+  fittedAt: string | null;
+  /** @nullable */
+  calibratedAspectRatio: number | null;
+  /** @minimum 2 */
+  gridRows: number;
+  /** @minimum 2 */
+  gridColumns: number;
+  /** @exclusiveMinimum 0 */
+  pitchWidthMetres: number;
+  /** @exclusiveMinimum 0 */
+  pitchHeightMetres: number;
 }
 
 /**
@@ -670,6 +741,20 @@ export interface TrackingBundle {
   events: TrackingEvent[];
 }
 
+export interface AdminTrackingBundlePatchBody {
+  /** @minimum 0 */
+  videoStartSeconds?: number;
+  pitchModel?: TrackingPitchModel | null;
+}
+
+export interface AdminTrackingBundlePatchResponse {
+  recordingId: number;
+  /** @minimum 0 */
+  videoStartSeconds: number;
+  pitchModel: TrackingPitchModelSummary | null;
+  updatedAt: string;
+}
+
 export interface TrackingBundleSummary {
   recordingId: number;
   label: string;
@@ -679,6 +764,7 @@ export interface TrackingBundleSummary {
   segmentCount: number;
   frameCoverage: string;
   segmentRanges?: TrackingSegmentManifest[];
+  pitchModel?: TrackingPitchModelSummary | null;
   uploadedAt: string;
 }
 
@@ -738,6 +824,14 @@ export type ClaimPlayerStatsHeatmap = {
   cells: ClaimPlayerStatsHeatmapCellsItem[];
 };
 
+export interface UnavailablePlayerMetric {
+  /** @nullable */
+  value: number | null;
+  available: boolean;
+  /** Machine-readable reason when the metric is unavailable. */
+  unavailableReason: string;
+}
+
 export interface ClaimPlayerStats {
   /**
      * Union of the player's accepted tracking intervals, in seconds.
@@ -787,6 +881,100 @@ export interface ClaimPlayerStats {
      * @nullable
      */
   distanceMetres: number | null;
+  /**
+     * Total calibrated distance divided by confirmed time present, or null without a pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  averageSpeedMetresPerSecond: number | null;
+  touches: UnavailablePlayerMetric;
+  passes: UnavailablePlayerMetric;
+  shots: UnavailablePlayerMetric;
+  dribbles: UnavailablePlayerMetric;
+}
+
+export interface AdminPlayerMetrics {
+  userId: number;
+  displayName: string;
+  email: string;
+  playerStats: ClaimPlayerStats;
+  /**
+     * Highest valid rolling one-second speed in metres per second; intentionally unvalidated.
+     * @minimum 0
+     * @nullable
+     */
+  topSpeedMetresPerSecond: number | null;
+  /**
+     * Fraction of confirmed player time remaining after top-speed exclusions.
+     * @minimum 0
+     * @maximum 1
+     * @nullable
+     */
+  topSpeedUsableTimeFraction: number | null;
+}
+
+export interface AdminRecordingPlayerMetricsResponse {
+  recordingId: number;
+  pitchModel: TrackingPitchModelSummary | null;
+  players: AdminPlayerMetrics[];
+}
+
+export interface ClaimVouchedFragment {
+  trackId: string;
+  /** @minimum 0 */
+  fromFrame: number;
+  /** @minimum 0 */
+  toFrame: number;
+}
+
+export type ClaimTakenFragment = ClaimVouchedFragment & {
+  ownedByCurrentUser: boolean;
+};
+
+export type ClaimIdentityBindingResolutionMethod = typeof ClaimIdentityBindingResolutionMethod[keyof typeof ClaimIdentityBindingResolutionMethod];
+
+
+export const ClaimIdentityBindingResolutionMethod = {
+  'identity-map': 'identity-map',
+  'track-fallback': 'track-fallback',
+} as const;
+
+export type ClaimIdentityBindingState = typeof ClaimIdentityBindingState[keyof typeof ClaimIdentityBindingState];
+
+
+export const ClaimIdentityBindingState = {
+  pending: 'pending',
+  confirmed: 'confirmed',
+  disputed: 'disputed',
+  needs_resolution: 'needs_resolution',
+  released: 'released',
+  rejected: 'rejected',
+} as const;
+
+export interface ClaimIdentityBinding {
+  id: number;
+  personId: string;
+  trackingBundleId: number;
+  bundleFingerprint: string;
+  resolutionMethod: ClaimIdentityBindingResolutionMethod;
+  /** @minimum 0 */
+  supportCount: number;
+  /** @minimum 0 */
+  acceptedAnswerCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  supportPercent: number;
+  vouchedFragments: ClaimVouchedFragment[];
+  state: ClaimIdentityBindingState;
+  /** Claimant name. Returned only by the admin binding-list endpoint. */
+  claimantName?: string;
+  /** When the claimant created this binding. Returned only by the admin binding-list endpoint. */
+  claimedAt?: string;
+  /** @nullable */
+  resolvedAt: string | null;
+  updatedAt: string;
 }
 
 export interface ClaimProgress {
@@ -809,6 +997,19 @@ export interface ClaimProgress {
      * @maximum 100
      */
   coveragePercent: number;
+  /**
+     * Union of contiguous tracking fragments directly accepted by this claimant.
+     * @minimum 0
+     */
+  humanVouchedSeconds: number;
+  /**
+     * Attributed tracking time supplied by the identity grouping rather than a direct answer.
+     * @minimum 0
+     */
+  inferredSeconds: number;
+  vouchedFragments: ClaimVouchedFragment[];
+  /** Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant. */
+  takenFragments: ClaimTakenFragment[];
   /** @minimum 0 */
   answeredAnchorCount: number;
   /** @minimum 0 */
@@ -818,6 +1019,12 @@ export interface ClaimProgress {
      * @items.minimum 0
      */
   unresolvedMoments: number[];
+  /**
+     * Accepted moments attributed to a different person than the current winner.
+     * @items.minimum 0
+     */
+  conflictMoments: number[];
+  identityBinding: ClaimIdentityBinding | null;
   clipsUnlocked: number;
   correctionCount: number;
   completed: boolean;
@@ -883,6 +1090,67 @@ export interface ClaimMatchClipGroup {
 }
 
 export type ClaimMatchClipsResponse = ClaimMatchClipGroup[];
+
+export type ClaimedMatchHistoryItemState = typeof ClaimedMatchHistoryItemState[keyof typeof ClaimedMatchHistoryItemState];
+
+
+export const ClaimedMatchHistoryItemState = {
+  pending: 'pending',
+  confirmed: 'confirmed',
+  disputed: 'disputed',
+  needs_resolution: 'needs_resolution',
+  released: 'released',
+  rejected: 'rejected',
+} as const;
+
+export type ClaimedMatchHistoryItemResolutionMethod = typeof ClaimedMatchHistoryItemResolutionMethod[keyof typeof ClaimedMatchHistoryItemResolutionMethod];
+
+
+export const ClaimedMatchHistoryItemResolutionMethod = {
+  'identity-map': 'identity-map',
+  'track-fallback': 'track-fallback',
+} as const;
+
+export interface ClaimedMatchHistoryItem {
+  recordingId: number;
+  recordingLabel: string;
+  fieldName: string;
+  date: string;
+  state: ClaimedMatchHistoryItemState;
+  personId: string;
+  resolutionMethod: ClaimedMatchHistoryItemResolutionMethod;
+  supportPercent: number;
+  claimedAt: string;
+}
+
+export type ClaimedMatchHistoryResponse = ClaimedMatchHistoryItem[];
+
+export interface ClaimMatchDispute {
+  id: number;
+  recordingId: number;
+  recordingLabel: string;
+  claimantUserId: number;
+  claimantName: string;
+  claimantEmail: string;
+  personId: string;
+  resolutionMethod: string;
+  supportCount: number;
+  acceptedAnswerCount: number;
+  supportPercent: number;
+  state: string;
+  /** @nullable */
+  currentOwnerUserId: number | null;
+  /** @nullable */
+  currentOwnerName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ClaimMatchDisputesResponse = ClaimMatchDispute[];
+
+export interface ResolveClaimMatchDisputeInput {
+  winnerUserId: number;
+}
 
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */

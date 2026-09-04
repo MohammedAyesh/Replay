@@ -243,7 +243,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Recording"
+                  $ref: "#/components/schemas/FieldRecording"
 
   /recordings/{id}:
     get:
@@ -357,6 +357,108 @@ paths:
         "401":
           description: Authenticated account required
 
+  /admin/claim-match/disputes:
+    get:
+      operationId: listClaimMatchDisputes
+      tags: [admin]
+      summary: List claim identity disputes awaiting admin review
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Claim disputes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimMatchDisputesResponse"
+        "403":
+          description: Admin required
+
+  /admin/claim-match/disputes/{id}:
+    patch:
+      operationId: resolveClaimMatchDispute
+      tags: [admin]
+      summary: Transfer a disputed person to one claimant
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveClaimMatchDisputeInput"
+      responses:
+        "200":
+          description: Dispute resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimMatchDispute"
+        "400":
+          description: Invalid dispute decision
+        "403":
+          description: Admin required
+        "404":
+          description: Dispute not found
+
+  /admin/claim-match/bindings/{id}/release:
+    post:
+      operationId: releaseClaimMatchBinding
+      tags: [admin]
+      summary: Release a human-vouched fragment so it can be regrouped
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Binding released
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimIdentityBinding"
+        "403":
+          description: Admin required
+        "404":
+          description: Identity binding not found
+
+  /admin/recordings/{id}/claim-match/bindings:
+    get:
+      operationId: listClaimMatchBindings
+      tags: [admin]
+      summary: List claim identity bindings and their human-vouched fragments
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Claim identity bindings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClaimIdentityBinding"
+        "403":
+          description: Admin required
+        "400":
+          description: Invalid recording id
+
   /recordings/{id}/claim-match/corrections:
     post:
       operationId: createClaimMatchCorrection
@@ -461,6 +563,35 @@ paths:
           description: Correction not found
 
   /admin/recordings/{id}/tracking-bundle:
+    patch:
+      operationId: updateTrackingBundle
+      tags: [admin]
+      summary: Update tracking-bundle metadata and pitch calibration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminTrackingBundlePatchBody"
+      responses:
+        "200":
+          description: Tracking-bundle metadata stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTrackingBundlePatchResponse"
+        "400":
+          description: Invalid tracking-bundle metadata or pitch model
+        "403":
+          description: Forbidden
+        "404":
+          description: Tracking bundle not found
     put:
       operationId: replaceTrackingBundle
       tags: [admin]
@@ -498,6 +629,29 @@ paths:
           description: Forbidden
         "404":
           description: Recording not found
+
+  /admin/recordings/{id}/player-metrics:
+    get:
+      operationId: getAdminRecordingPlayerMetrics
+      tags: [admin]
+      summary: Get claim player metrics including unvalidated top speed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Player metrics for claims on this recording
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRecordingPlayerMetricsResponse"
+        "403":
+          description: Forbidden
+        "404":
+          description: Recording or tracking bundle not found
 
   /academies:
     get:
@@ -962,6 +1116,23 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountStats"
 
+  /account/claimed-matches:
+    get:
+      operationId: getAccountClaimedMatches
+      tags: [account]
+      summary: List the current player's claimed match history
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Claimed match history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimedMatchHistoryResponse"
+        "401":
+          description: Unauthenticated
+
   /account/locale:
     patch:
       operationId: updateLocale
@@ -1373,6 +1544,41 @@ components:
           type: ["string", "null"]
         fieldName:
           type: ["string", "null"]
+
+    FieldRecording:
+      type: object
+      required: [id, fieldId, court, date, timeSlot, duration, hasTracking, viewerHasClaim, viewerClaimState]
+      properties:
+        id:
+          type: integer
+        fieldId:
+          type: integer
+        court:
+          type: string
+        date:
+          type: string
+        timeSlot:
+          type: string
+        duration:
+          type: string
+        score:
+          type: ["string", "null"]
+        videoUrl:
+          type: string
+        highlightMoment:
+          type: ["string", "null"]
+        fieldName:
+          type: ["string", "null"]
+        hasTracking:
+          type: boolean
+          description: Whether this recording has an uploaded tracking bundle.
+        viewerHasClaim:
+          type: boolean
+          description: Whether the signed-in viewer has an identity claim for this recording.
+        viewerClaimState:
+          type: ["string", "null"]
+          enum: [in_progress, pending, confirmed, disputed, needs_resolution, released, rejected, null]
+          description: The signed-in viewer's progress or claim state, or null when they have not started or are not signed in.
 
     PublicProfile:
       type: object
@@ -2069,8 +2275,20 @@ components:
 
     TrackingPitchModel:
       type: object
-      required: [pitchWidthMetres, pitchHeightMetres, grid]
+      required: [calibrationId, fittedAt, calibratedAspectRatio, pitchWidthMetres, pitchHeightMetres, grid]
       properties:
+        calibrationId:
+          type: string
+          minLength: 1
+          description: Immutable identifier for the calibration fit that produced this model.
+        fittedAt:
+          type: string
+          format: date-time
+          description: Date and time at which this calibration was fitted.
+        calibratedAspectRatio:
+          type: number
+          exclusiveMinimum: 0
+          description: Image width divided by image height used when fitting this model.
         pitchWidthMetres:
           type: number
           exclusiveMinimum: 0
@@ -2091,6 +2309,30 @@ components:
             minItems: 2
             items:
               $ref: "#/components/schemas/TrackingPitchModelGridPoint"
+
+    TrackingPitchModelSummary:
+      type: object
+      required: [calibrationId, fittedAt, calibratedAspectRatio, gridRows, gridColumns, pitchWidthMetres, pitchHeightMetres]
+      properties:
+        calibrationId:
+          type: ["string", "null"]
+        fittedAt:
+          type: ["string", "null"]
+          format: date-time
+        calibratedAspectRatio:
+          type: ["number", "null"]
+        gridRows:
+          type: integer
+          minimum: 2
+        gridColumns:
+          type: integer
+          minimum: 2
+        pitchWidthMetres:
+          type: number
+          exclusiveMinimum: 0
+        pitchHeightMetres:
+          type: number
+          exclusiveMinimum: 0
 
     TrackingManifest:
       type: object
@@ -2195,6 +2437,35 @@ components:
           items:
             $ref: "#/components/schemas/TrackingEvent"
 
+    AdminTrackingBundlePatchBody:
+      type: object
+      minProperties: 1
+      properties:
+        videoStartSeconds:
+          type: number
+          minimum: 0
+        pitchModel:
+          oneOf:
+            - $ref: "#/components/schemas/TrackingPitchModel"
+            - type: "null"
+
+    AdminTrackingBundlePatchResponse:
+      type: object
+      required: [recordingId, videoStartSeconds, pitchModel, updatedAt]
+      properties:
+        recordingId:
+          type: integer
+        videoStartSeconds:
+          type: number
+          minimum: 0
+        pitchModel:
+          oneOf:
+            - $ref: "#/components/schemas/TrackingPitchModelSummary"
+            - type: "null"
+        updatedAt:
+          type: string
+          format: date-time
+
     TrackingBundleSummary:
       type: object
       required: [recordingId, label, duration, segmentCount, frameCoverage, trackCount, crossingCount, uploadedAt]
@@ -2217,6 +2488,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TrackingSegmentManifest"
+        pitchModel:
+          oneOf:
+            - $ref: "#/components/schemas/TrackingPitchModelSummary"
+            - type: "null"
         uploadedAt:
           type: string
 
@@ -2265,7 +2540,7 @@ components:
 
     ClaimPlayerStats:
       type: object
-      required: [confirmedSeconds, minutesPlayed, coveragePercent, answeredMoments, acceptedMoments, trackedSegments, totalSegments, matchedEvents, heatmap, distanceMetres]
+      required: [confirmedSeconds, minutesPlayed, coveragePercent, answeredMoments, acceptedMoments, trackedSegments, totalSegments, matchedEvents, heatmap, distanceMetres, averageSpeedMetresPerSecond, touches, passes, shots, dribbles]
       properties:
         confirmedSeconds:
           type: number
@@ -2329,10 +2604,71 @@ components:
           type: ["number", "null"]
           minimum: 0
           description: Smoothed camera-derived distance in metres, or null without a pitch model.
+        averageSpeedMetresPerSecond:
+          type: ["number", "null"]
+          minimum: 0
+          description: Total calibrated distance divided by confirmed time present, or null without a pitch model.
+        touches:
+          $ref: "#/components/schemas/UnavailablePlayerMetric"
+        passes:
+          $ref: "#/components/schemas/UnavailablePlayerMetric"
+        shots:
+          $ref: "#/components/schemas/UnavailablePlayerMetric"
+        dribbles:
+          $ref: "#/components/schemas/UnavailablePlayerMetric"
+
+    UnavailablePlayerMetric:
+      type: object
+      required: [value, available, unavailableReason]
+      properties:
+        value:
+          type: ["number", "null"]
+        available:
+          type: boolean
+        unavailableReason:
+          type: string
+          description: Machine-readable reason when the metric is unavailable.
+
+    AdminPlayerMetrics:
+      type: object
+      required: [userId, displayName, email, playerStats, topSpeedMetresPerSecond, topSpeedUsableTimeFraction]
+      properties:
+        userId:
+          type: integer
+        displayName:
+          type: string
+        email:
+          type: string
+        playerStats:
+          $ref: "#/components/schemas/ClaimPlayerStats"
+        topSpeedMetresPerSecond:
+          type: ["number", "null"]
+          minimum: 0
+          description: Highest valid rolling one-second speed in metres per second; intentionally unvalidated.
+        topSpeedUsableTimeFraction:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 1
+          description: Fraction of confirmed player time remaining after top-speed exclusions.
+
+    AdminRecordingPlayerMetricsResponse:
+      type: object
+      required: [recordingId, pitchModel, players]
+      properties:
+        recordingId:
+          type: integer
+        pitchModel:
+          oneOf:
+            - $ref: "#/components/schemas/TrackingPitchModelSummary"
+            - type: "null"
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminPlayerMetrics"
 
     ClaimProgress:
       type: object
-      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
+      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, humanVouchedSeconds, inferredSeconds, vouchedFragments, takenFragments, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
       properties:
         recordingId:
           type: integer
@@ -2358,6 +2694,23 @@ components:
           minimum: 0
           maximum: 100
           description: coverageSeconds divided by the tracked match duration.
+        humanVouchedSeconds:
+          type: number
+          minimum: 0
+          description: Union of contiguous tracking fragments directly accepted by this claimant.
+        inferredSeconds:
+          type: number
+          minimum: 0
+          description: Attributed tracking time supplied by the identity grouping rather than a direct answer.
+        vouchedFragments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimVouchedFragment"
+        takenFragments:
+          type: array
+          description: Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant.
+          items:
+            $ref: "#/components/schemas/ClaimTakenFragment"
         answeredAnchorCount:
           type: integer
           minimum: 0
@@ -2370,6 +2723,16 @@ components:
           items:
             type: number
             minimum: 0
+        conflictMoments:
+          type: array
+          description: Accepted moments attributed to a different person than the current winner.
+          items:
+            type: number
+            minimum: 0
+        identityBinding:
+          oneOf:
+            - $ref: "#/components/schemas/ClaimIdentityBinding"
+            - type: "null"
         clipsUnlocked:
           type: integer
         correctionCount:
@@ -2483,6 +2846,156 @@ components:
       type: array
       items:
         $ref: "#/components/schemas/ClaimMatchClipGroup"
+
+    ClaimIdentityBinding:
+      type: object
+      required: [id, personId, trackingBundleId, bundleFingerprint, resolutionMethod, supportCount, acceptedAnswerCount, supportPercent, vouchedFragments, state, resolvedAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        personId:
+          type: string
+        trackingBundleId:
+          type: integer
+        bundleFingerprint:
+          type: string
+        resolutionMethod:
+          type: string
+          enum: [identity-map, track-fallback]
+        supportCount:
+          type: integer
+          minimum: 0
+        acceptedAnswerCount:
+          type: integer
+          minimum: 0
+        supportPercent:
+          type: number
+          minimum: 0
+          maximum: 100
+        vouchedFragments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimVouchedFragment"
+        state:
+          type: string
+          enum: [pending, confirmed, disputed, needs_resolution, released, rejected]
+        claimantName:
+          type: string
+          description: Claimant name. Returned only by the admin binding-list endpoint.
+        claimedAt:
+          type: string
+          format: date-time
+          description: When the claimant created this binding. Returned only by the admin binding-list endpoint.
+        resolvedAt:
+          type: ["string", "null"]
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ClaimVouchedFragment:
+      type: object
+      required: [trackId, fromFrame, toFrame]
+      properties:
+        trackId:
+          type: string
+        fromFrame:
+          type: integer
+          minimum: 0
+        toFrame:
+          type: integer
+          minimum: 0
+
+    ClaimTakenFragment:
+      allOf:
+        - $ref: "#/components/schemas/ClaimVouchedFragment"
+        - type: object
+          required: [ownedByCurrentUser]
+          properties:
+            ownedByCurrentUser:
+              type: boolean
+
+    ClaimedMatchHistoryItem:
+      type: object
+      required: [recordingId, recordingLabel, fieldName, date, state, personId, resolutionMethod, supportPercent, claimedAt]
+      properties:
+        recordingId:
+          type: integer
+        recordingLabel:
+          type: string
+        fieldName:
+          type: string
+        date:
+          type: string
+        state:
+          type: string
+          enum: [pending, confirmed, disputed, needs_resolution, released, rejected]
+        personId:
+          type: string
+        resolutionMethod:
+          type: string
+          enum: [identity-map, track-fallback]
+        supportPercent:
+          type: number
+        claimedAt:
+          type: string
+          format: date-time
+
+    ClaimedMatchHistoryResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/ClaimedMatchHistoryItem"
+
+    ClaimMatchDispute:
+      type: object
+      required: [id, recordingId, recordingLabel, claimantUserId, claimantName, claimantEmail, personId, resolutionMethod, supportCount, acceptedAnswerCount, supportPercent, state, currentOwnerUserId, currentOwnerName, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        recordingId:
+          type: integer
+        recordingLabel:
+          type: string
+        claimantUserId:
+          type: integer
+        claimantName:
+          type: string
+        claimantEmail:
+          type: string
+        personId:
+          type: string
+        resolutionMethod:
+          type: string
+        supportCount:
+          type: integer
+        acceptedAnswerCount:
+          type: integer
+        supportPercent:
+          type: number
+        state:
+          type: string
+        currentOwnerUserId:
+          type: ["integer", "null"]
+        currentOwnerName:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ClaimMatchDisputesResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/ClaimMatchDispute"
+
+    ResolveClaimMatchDisputeInput:
+      type: object
+      required: [winnerUserId]
+      properties:
+        winnerUserId:
+          type: integer
 
   securitySchemes:
     clerkSession:

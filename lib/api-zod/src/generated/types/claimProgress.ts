@@ -6,7 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ClaimEarnedClip } from './claimEarnedClip';
+import type { ClaimIdentityBinding } from './claimIdentityBinding';
 import type { ClaimPlayerStats } from './claimPlayerStats';
+import type { ClaimTakenFragment } from './claimTakenFragment';
+import type { ClaimVouchedFragment } from './claimVouchedFragment';
 
 export interface ClaimProgress {
   recordingId: number;
@@ -28,6 +31,19 @@ export interface ClaimProgress {
      * @maximum 100
      */
   coveragePercent: number;
+  /**
+     * Union of contiguous tracking fragments directly accepted by this claimant.
+     * @minimum 0
+     */
+  humanVouchedSeconds: number;
+  /**
+     * Attributed tracking time supplied by the identity grouping rather than a direct answer.
+     * @minimum 0
+     */
+  inferredSeconds: number;
+  vouchedFragments: ClaimVouchedFragment[];
+  /** Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant. */
+  takenFragments: ClaimTakenFragment[];
   /** @minimum 0 */
   answeredAnchorCount: number;
   /** @minimum 0 */
@@ -37,6 +53,12 @@ export interface ClaimProgress {
      * @items.minimum 0
      */
   unresolvedMoments: number[];
+  /**
+     * Accepted moments attributed to a different person than the current winner.
+     * @items.minimum 0
+     */
+  conflictMoments: number[];
+  identityBinding: ClaimIdentityBinding | null;
   clipsUnlocked: number;
   correctionCount: number;
   completed: boolean;

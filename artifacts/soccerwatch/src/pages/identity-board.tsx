@@ -9,24 +9,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { useAuth } from "@/lib/auth";
-import type { TrackingIdentity, TrackingManifest } from "@workspace/api-client-react";
+import type { ClaimIdentityBinding, TrackingIdentity, TrackingManifest } from "@workspace/api-client-react";
 import { identityMapMatchesBundle } from "@/lib/claim-match-identities";
+import {
+  restoreAcceptedBoard,
+  type IdentityBoardPart,
+  type IdentityBoardRow,
+  type IdentityBoardSnapshot,
+} from "@/lib/identity-board-state";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${basePath}/api${path}`, { credentials: "include" });
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${basePath}/api${path}`, { ...init, credentials: "include" });
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.json() as Promise<T>;
+}
+async function get<T>(path: string): Promise<T> {
+  return request<T>(path);
 }
 
 type Box = { frame: number; x: number; y: number; w: number; h: number };
 type Track = { id: string; label?: string | null; startFrame: number; endFrame: number; boxes: Box[] };
 type Segment = { segmentIndex: number; tracks: Track[] };
 type Sprite = { f: number; j: string };
-type Part = { trackId: string; fromFrame: number; toFrame: number };
-type Row = { id: string; name: string; parts: Part[] };
+type Part = IdentityBoardPart;
+type Row = IdentityBoardRow;
 type Drag = { kind: "crop" | "row"; rowId: string; trackId?: string; frame?: number };
 type HistoryEntry = { rows: Row[]; same: Set<string>; different: Set<string> };
+type BoardSnapshot = IdentityBoardSnapshot;
 type Crop = { trackId: string; frame: number; j?: string; boundary?: boolean };
 type Issue = { rowId: string; message: string };
 
@@ -284,7 +294,9 @@ export default function IdentityBoard() {
   const [same, setSame] = useState<Set<string>>(new Set());
   const [different, setDifferent] = useState<Set<string>>(new Set());
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const acceptedBoard = useRef<BoardSnapshot | null>(null);
   const [spriteCoverage, setSpriteCoverage] = useState<Array<{ name: string; ok: boolean; reason?: string }>>([]);
+  const [bindings, setBindings] = useState<ClaimIdentityBinding[]>([]);
   const nameBeforeEdit = useRef(new Map<string, string>());
   const cropCache = useRef(new Map<string, Crop[]>());
   const spriteReference = useRef(sprites);
@@ -319,6 +331,11 @@ export default function IdentityBoard() {
         const claim = await get<{ manifest: TrackingManifest }>(`/recordings/${recordingId}/claim-match`);
         if (cancelled) return;
         setManifest(claim.manifest);
+        try {
+          setBindings(await get<ClaimIdentityBinding[]>(`/admin/recordings/${recordingId}/claim-match/bindings`));
+        } catch {
+          setBindings([]);
+        }
         const all: Record<string, Track> = {};
         const spr: Record<string, Sprite[]> = {};
         const coverage: Array<{ name: string; ok: boolean; reason?: string }> = [];
@@ -352,6 +369,11 @@ export default function IdentityBoard() {
         setDifferent(initialConstraints.different);
         setHistory([]);
         setSavedSnapshot(serializeRows(initialRows));
+        acceptedBoard.current = {
+          rows: initialRows.map((row) => ({ ...row, parts: row.parts.map((part) => ({ ...part })) })),
+          same: new Set(initialConstraints.same),
+          different: new Set(initialConstraints.different),
+        };
         setStatus(saved.length > 0 && !usableSavedMap
           ? "Saved identity map does not match this tracking bundle. It was not applied; recompute and save a new map."
           : "");
@@ -362,11 +384,34 @@ export default function IdentityBoard() {
     return () => { cancelled = true; };
   }, [userId, isAdmin, recordingId]);
 
+  const releaseBinding = async (binding: ClaimIdentityBinding) => {
+    const claimantName = binding.claimantName ?? "this claimant";
+    const claimedAt = binding.claimedAt
+      ? new Date(binding.claimedAt).toLocaleString()
+      : "an unknown time";
+    const confirmed = window.confirm(
+      `Release ${claimantName}'s claim, made ${claimedAt}? This clears their human-vouched fragment lock and may allow the identity grouping to change.`,
+    );
+    if (!confirmed) return;
+
+    setSaving(true);
+    try {
+      const released = await request<ClaimIdentityBinding>(`/admin/claim-match/bindings/${binding.id}/release`, {
+        method: "POST",
+      });
+      setBindings((current) => current.map((binding) => binding.id === released.id ? released : binding));
+      flashMessage("Vouched fragment released. The next identity-map save may regroup it.");
+    } catch {
+      flashMessage("Could not release this vouched fragment.", true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const sortedRows = useMemo(() => [...rows].sort((a, b) => rowSpan(b) - rowSpan(a)), [rows]);
   const mainRows = useMemo(() => sortedRows.filter((row) => rowSpan(row) / fps >= 20), [sortedRows, fps]);
   const fragments = useMemo(() => sortedRows.filter((row) => rowSpan(row) / fps < 20).sort((a, b) => a.parts[0].fromFrame - b.parts[0].fromFrame), [sortedRows, fps]);
   const issues = useMemo(() => rowIssues(rows, tracks, fps), [rows, tracks, fps]);
-  const issueRows = useMemo(() => new Set(issues.map((issue) => issue.rowId)), [issues]);
   const boardMetrics = useMemo(() => metrics(rows, tracks, fps), [rows, tracks, fps]);
 
   const cropsForRow = useCallback((row: Row): Crop[] => {
@@ -507,26 +552,66 @@ export default function IdentityBoard() {
 
   const save = async () => {
     const next = buildRows(tracks, fps, rows.flatMap((row) => row.parts), same, different, rows);
-    setRows(next);
     setSaving(true);
+    const restoreAccepted = () => {
+      if (!acceptedBoard.current) return;
+      const restored = restoreAcceptedBoard(acceptedBoard.current);
+      setRows(restored.rows);
+      setSame(restored.same);
+      setDifferent(restored.different);
+      setSavedSnapshot(serializeRows(restored.rows));
+    };
     try {
-      const res = await fetch(`${basePath}/api/admin/recordings/${recordingId}/identities`, {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bundleFingerprint: String(manifest?.provenance?.bundleFingerprint ?? ""),
-          identities: next.map((row) => ({ id: row.id, name: row.name || null, parts: row.parts })),
-        }),
-      });
+      const saveMap = () => fetch(
+        `${basePath}/api/admin/recordings/${recordingId}/identities`,
+        {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bundleFingerprint: String(manifest?.provenance?.bundleFingerprint ?? ""),
+            identities: next.map((row) => ({ id: row.id, name: row.name || null, parts: row.parts })),
+          }),
+        },
+      );
+      const res = await saveMap();
+      if (res.status === 409) {
+        const body = await res.json().catch(() => null) as {
+          error?: string;
+          lockedClaims?: number;
+          lockedFragments?: number;
+          requiresRelease?: boolean;
+        } | null;
+        if (body?.requiresRelease) {
+          restoreAccepted();
+          flashMessage(
+            `Change was not saved: ${body.lockedFragments ?? "A"} human-vouched fragment${body.lockedFragments === 1 ? "" : "s"} are locked. Release the affected claim before moving them.`,
+            true,
+          );
+          return;
+        } else {
+          throw new Error(body?.error || "save -> 409");
+        }
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => null) as { error?: string } | null;
         throw new Error(body?.error || `save -> ${res.status}`);
       }
+      const acceptedConstraints = deriveConstraints(next);
+      const accepted = {
+        rows: next.map((row) => ({ ...row, parts: row.parts.map((part) => ({ ...part })) })),
+        same: acceptedConstraints.same,
+        different: acceptedConstraints.different,
+      };
+      acceptedBoard.current = accepted;
+      setRows(next);
+      setSame(accepted.same);
+      setDifferent(accepted.different);
       setSavedSnapshot(serializeRows(next));
       flashMessage(`Saved ${next.length} people and refreshed grouping`);
     } catch (error) {
-      flashMessage(error instanceof Error ? error.message : "Save failed", true);
+      restoreAccepted();
+      flashMessage(`Change was not saved: ${error instanceof Error ? error.message : "Save failed"}`, true);
     } finally {
       setSaving(false);
     }
@@ -624,6 +709,29 @@ export default function IdentityBoard() {
       </header>
       {status && <p className={`idb-status ${status.includes("does not match") ? "is-warn" : ""}`}>{status}</p>}
       {flash && <p className={`idb-status ${flash.startsWith("Warning") ? "is-warn" : ""}`}>{flash}</p>}
+      {bindings.some((binding) => binding.vouchedFragments.length > 0) && (
+        <section className="idb-status is-warn">
+          <strong>Human-vouched fragments are locked</strong>
+          <p>Automatic grouping may move other pieces, but it cannot move these exact frame ranges. Release one only when an administrator has reviewed the claim.</p>
+          <div className="idb-locks">
+            {bindings.filter((binding) => binding.vouchedFragments.length > 0).map((binding) => (
+              <div key={binding.id} className="idb-lock">
+                <span>
+                  <strong>{binding.claimantName ?? "Unknown claimant"}</strong>
+                  {" · claimed "}
+                  {binding.claimedAt ? new Date(binding.claimedAt).toLocaleString() : "date unavailable"}
+                  {" · Binding #"}
+                  {binding.id} · {binding.vouchedFragments.map((fragment) =>
+                    `${fragment.trackId} ${fmt(fragment.fromFrame / fps)}–${fmt(fragment.toFrame / fps)}`).join(", ")}
+                </span>
+                <button type="button" onClick={() => void releaseBinding(binding)} disabled={saving}>
+                  Release lock
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="idb-metrics">
         <span>Assigned tracked time <b>{fmt(boardMetrics.assignedSeconds)}</b></span>
         <span>Unassigned pieces <b>{boardMetrics.unassignedPieces}</b></span>
