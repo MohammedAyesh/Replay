@@ -14,6 +14,7 @@ import Hls from "hls.js";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
+import SettingsTab from "@/components/admin/SettingsTab";
 import {
   getGetFeedQueryKey,
   getListClipsQueryKey,
@@ -31,7 +32,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -4920,6 +4921,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "live", label: "Live Control" },
   { id: "var", label: "VAR" },
   { id: "matches", label: "Matches" },
+  { id: "settings", label: "Settings" },
 ];
 
 export default function Admin() {
@@ -4975,6 +4977,7 @@ export default function Admin() {
         {tab === "live" && <LiveTab />}
         {tab === "var" && <VarTab />}
         {tab === "matches" && <MatchesTab />}
+        {tab === "settings" && <SettingsTab />}
       </div>
     </div>
   );
