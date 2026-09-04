@@ -41,6 +41,23 @@ export const userClipsTable = pgTable("user_clips", {
   exportStatus: text("export_status"),
   /** Bunny Storage CDN URL of the rendered MP4 once exportStatus = 'done' */
   exportedUrl: text("exported_url"),
+  /**
+   * Bunny Storage path of the share-card poster, once one has been generated.
+   *
+   * A path, not a URL: Bunny Storage is an authenticated origin, so the poster
+   * is always served through the API's own proxy and the public URL is derived
+   * from the clip id at request time. Storing a URL here would bake the CDN host
+   * into every row.
+   *
+   * Null means "not generated yet". Generation is lazy — first share, not
+   * export — because most clips are never shared and a poster costs a seek
+   * against an hour-long source.
+   */
+  posterPath: text("poster_path"),
+  /** Absolute position in the source video the poster was taken from, in
+   *  seconds. Kept for diagnosis: a poster that looks wrong is usually a poster
+   *  taken from the wrong second. */
+  posterAtSec: numeric("poster_at_sec", { precision: 10, scale: 3 }),
 });
 
 export type UserClipRow = typeof userClipsTable.$inferSelect;

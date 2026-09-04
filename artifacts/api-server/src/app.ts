@@ -10,6 +10,7 @@ import {
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
 import router from "./routes";
+import shareRouter from "./routes/share";
 import { logger } from "./lib/logger";
 import { COOKIE_SECRET } from "./lib/cookies";
 
@@ -101,6 +102,12 @@ app.use("/api", (_req, res, next) => {
   res.setHeader("Vary", "Cookie, Authorization");
   next();
 });
+
+// Share cards live at the site root, not under /api, and deliberately outside
+// the no-store block above: they are public, cacheable, and fetched by crawlers
+// that will never send a cookie. Mounted before the API so /s/... never falls
+// through to it.
+app.use(shareRouter);
 
 app.use("/api", router);
 

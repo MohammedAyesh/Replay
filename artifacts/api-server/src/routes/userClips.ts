@@ -45,6 +45,8 @@ import {
   buildLimitReachedEvent,
   type DownloadEvent,
 } from "../lib/downloadQuota";
+import { shareCardPath } from "../lib/shareCard";
+import { ensureClipPoster } from "./share";
 import { introPlaybackPath } from "./clipIntro";
 
 const router: IRouter = Router();
@@ -876,6 +878,12 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
   const newShareCount = updatedShare?.shareCount ?? clip.shareCount + 1;
   const newScore = await updateClipScore(userClipId);
 
+  // Start the poster now, in the background. WhatsApp fetches the card within
+  // seconds of the link being pasted, and a card whose og:image 404s is cached
+  // as a card with no image — by the platform, not by us, and for a long time.
+  // Not awaited: the share must not wait on FFmpeg.
+  void ensureClipPoster(clip).catch(() => {});
+
   res.json(
     RecordShareResponse.parse({
       ok: true,
@@ -1136,6 +1144,45 @@ router.get("/user-clips/download-quota", async (req, res): Promise<void> => {
   const now = new Date();
   const { events, unlimited } = await loadQuotaContext(userId, now);
   res.json(toQuotaResponse(evaluateQuota(events, now, { unlimited })));
+});
+
+/**
+ * GET /user-clips/:id/share-link
+ *
+ * The public URL for a clip, and its poster. The token in the path is derived
+ * server-side and never leaves this endpoint, which is what stops the share
+ * space being walkable by counting ids.
+ *
+ * Kept out of openapi.yaml alongside /export, /export-status and /download,
+ * which are also operational rather than data endpoints.
+ */
+router.get("/user-clips/:id/share-link", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) { unauthenticatedResponse(res, req); return; }
+
+  const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const clipId = parseInt(rawId, 10);
+  if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
+
+  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
+  if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  if (clip.userId !== userId && clip.visibility !== "public") {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
+
+  const proto = (req.headers["x-forwarded-proto"] as string)?.split(",")[0] || req.protocol || "https";
+  const host = (req.headers["x-forwarded-host"] as string)?.split(",")[0] || req.get("host") || "";
+  const base = (process.env.PUBLIC_SHARE_BASE_URL || process.env.PUBLIC_BASE_URL || `${proto}://${host}`).replace(/\/$/, "");
+  const cardPath = shareCardPath(clip.id);
+
+  void ensureClipPoster(clip).catch(() => {});
+
+  res.json({
+    shareUrl: `${base}${cardPath}`,
+    posterUrl: `${base}${cardPath}/poster.jpg`,
+    ready: clip.exportStatus === "done" && !!clip.exportedUrl,
+  });
 });
 
 /**

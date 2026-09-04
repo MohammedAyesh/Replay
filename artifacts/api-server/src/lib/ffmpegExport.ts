@@ -556,6 +556,53 @@ function buildZoompanFilter(options: {
  * every frame position the pan visits (computed across ALL keyframes, not just
  * kfs[0]), and the crop then runs entirely inside that canvas.
  */
+/**
+ * The crop rectangle a clip shows at a given point, in source pixels.
+ *
+ * The poster generator needs the same rectangle the export renders, or a share
+ * card advertises a different piece of pitch than the clip contains. Rather than
+ * reimplement the frame model there, this runs the export's own
+ * sanitize -> normalize -> sample chain and returns a single rectangle.
+ *
+ * One deliberate difference from the render path: the result is clamped to sit
+ * entirely inside the source frame. `buildCropCommands` pads the canvas so a
+ * frame may legitimately hang off the edge and produce black bars — correct for
+ * video, wrong for a share card, where a bar of black is the difference between
+ * a preview that sells the clip and one that looks broken.
+ *
+ * `t` is normalized clip time in [0, 1], matching `kf.t`.
+ */
+export function cropRectAt(
+  keyframes: KF[],
+  aspectRatio: string,
+  t: number,
+): { x: number; y: number; w: number; h: number } {
+  const is9to16 = aspectRatio === "9:16";
+  const normalized = normalizePath(sanitizeKeyframes(keyframes), is9to16)
+    .sort((a, b) => a.t - b.t);
+
+  const toEven = (n: number) => {
+    const r = Math.max(2, Math.round(n));
+    return r % 2 === 0 ? r : r + 1;
+  };
+
+  if (normalized.length === 0) {
+    // Same fallback as buildCropCommands' zero-keyframe branch: a centred crop
+    // at zoom 1, which is what a clip with no pan path actually renders.
+    const fallbackW = is9to16 ? (SRC_H * 9) / 16 / SRC_W : 0.5;
+    const w = Math.min(SRC_W, toEven(fallbackW * SRC_W));
+    const h = SRC_H;
+    return { x: Math.round((SRC_W - w) / 2), y: 0, w, h };
+  }
+
+  const kf = sampleAt(normalized, Math.max(0, Math.min(1, t)));
+  const w = Math.min(SRC_W, toEven(kf.w * SRC_W));
+  const h = Math.min(SRC_H, toEven(kf.h * SRC_H));
+  const x = Math.round(Math.max(0, Math.min(SRC_W - w, (kf.x ?? 0) * SRC_W)));
+  const y = Math.round(Math.max(0, Math.min(SRC_H - h, (kf.y ?? 0) * SRC_H)));
+  return { x, y, w, h };
+}
+
 export function buildCropCommands(
   keyframes: KF[],
   clipDuration: number,
