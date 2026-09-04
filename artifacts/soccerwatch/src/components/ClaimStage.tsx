@@ -27,6 +27,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
+import { capPlaybackQuality } from "../lib/hlsQuality";
 import {
   Expand,
   Gauge,
@@ -118,6 +119,7 @@ function useBunnyHls(
     const startPlayback = () => {
       if (url.includes(".m3u8") && Hls.isSupported()) {
         hls = new Hls({ enableWorker: false, maxBufferLength: 30, backBufferLength: 60 });
+        capPlaybackQuality(hls);
         hls.loadSource(url);
         hls.attachMedia(video);
         hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setVideoError(""); });

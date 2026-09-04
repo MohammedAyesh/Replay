@@ -24,6 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { SkipFlash } from "@/components/skip-flash";
 import Hls from "hls.js";
+import { capPlaybackQuality } from "../lib/hlsQuality";
 import {
   DEFAULT_SRC_ASPECT,
   OUT_ASPECT,
@@ -631,6 +632,7 @@ function VideoPlayer({
 
     if (Hls.isSupported()) {
       const hls = new Hls(isLive ? { enableWorker: false, liveSyncDurationCount: 3 } : { enableWorker: false });
+      capPlaybackQuality(hls);
       hlsRef.current = hls;
       hls.loadSource(playbackUrl);
       hls.attachMedia(el);

@@ -21,6 +21,7 @@ import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import Hls from "hls.js";
+import { capPlaybackQuality } from "../lib/hlsQuality";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
@@ -1082,6 +1083,7 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
     const proxiedUrl = `/api/hls-proxy/manifest?url=${encodeURIComponent(video.playbackUrl)}`;
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
+      capPlaybackQuality(hls);
       hlsRef.current = hls;
       hls.loadSource(proxiedUrl);
       hls.attachMedia(el);

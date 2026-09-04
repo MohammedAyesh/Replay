@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import Hls from "hls.js";
+import { capPlaybackQuality } from "../lib/hlsQuality";
 import {
   useGetFeed,
   useToggleUserClipLike,
@@ -307,6 +308,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
       if (src.includes(".m3u8")) {
         if (Hls.isSupported()) {
           const hls = new Hls({ enableWorker: false });
+          capPlaybackQuality(hls);
           hlsRef.current = hls;
           hls.loadSource(src);
           hls.attachMedia(video);
@@ -398,6 +400,7 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
     if (urlPath(src).includes(".m3u8")) {
       if (Hls.isSupported()) {
         const hls = new Hls({ enableWorker: false });
+        capPlaybackQuality(hls);
         adHlsRef.current = hls;
         hls.loadSource(src);
         hls.attachMedia(adVideo);

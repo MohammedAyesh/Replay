@@ -20,6 +20,7 @@
  */
 import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import Hls from "hls.js";
+import { capPlaybackQuality } from "../lib/hlsQuality";
 import { RotateCcw } from "lucide-react";
 
 /** Non-recoverable: the only error that survives a successful fragment load. */
@@ -80,6 +81,8 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           maxMaxBufferLength: 60,
           backBufferLength: 90,
         });
+        // Live is ordinary playback: same ceiling as VOD.
+        capPlaybackQuality(hls);
         hls.loadSource(url);
         hls.attachMedia(el);
 

@@ -18,6 +18,7 @@ import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import Hls from "hls.js";
+import { capPlaybackQuality } from "../lib/hlsQuality";
 import { exportClip, canExportVideo, triggerDownload } from "@/lib/exportClip";
 import { saveLocalClip, getLocalClip, listLocalClips, deleteLocalClip, createLocalBlobUrl, revokeLocalBlobUrl, type LocalClipRecord } from "@/lib/localClips";
 import { cn } from "@/lib/utils";
@@ -232,6 +233,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
+      capPlaybackQuality(hls);
       hlsRef.current = hls;
       hls.loadSource(clip.playbackUrl);
       hls.attachMedia(video);

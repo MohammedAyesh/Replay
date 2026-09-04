@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { useLocation, useRoute } from "wouter";
 import Hls from "hls.js";
+import { capPlaybackQuality } from "../lib/hlsQuality";
 import { useGetClip, useToggleLike, useSaveClip, useUnsaveClip, getGetClipQueryKey, getListSavedClipsQueryKey, getListClipsQueryKey, getGetFeedQueryKey, getGetAccountStatsQueryKey, Clip, FeedClip } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Heart, Share, Bookmark, ChevronLeft, ChevronRight, Volume2, VolumeX } from "lucide-react";
@@ -212,6 +213,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
     if (src.includes(".m3u8")) {
       if (Hls.isSupported()) {
         const hls = new Hls({ enableWorker: false });
+        capPlaybackQuality(hls);
         hlsRef.current = hls;
         hls.loadSource(src);
         hls.attachMedia(video);
