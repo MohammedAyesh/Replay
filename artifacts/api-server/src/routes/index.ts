@@ -23,6 +23,7 @@ import liveSchedulesRouter from "./liveSchedules";
 import clipIntroRouter from "./clipIntro";
 import matchesRouter from "./matches";
 import claimMatchRouter from "./claimMatch";
+import analysisJobsRouter from "./analysisJobs";
 
 const router: IRouter = Router();
 
@@ -50,5 +51,6 @@ router.use(liveSchedulesRouter);
 router.use(clipIntroRouter);
 router.use(matchesRouter);
 router.use(claimMatchRouter);
+router.use(analysisJobsRouter);
 
 export default router;

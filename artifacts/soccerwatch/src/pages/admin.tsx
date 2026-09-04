@@ -15,6 +15,7 @@ import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import SettingsTab from "@/components/admin/SettingsTab";
+import AnalysisTab from "@/components/admin/AnalysisTab";
 import {
   getGetFeedQueryKey,
   getListClipsQueryKey,
@@ -32,7 +33,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "settings";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "analysis" | "settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -5215,6 +5216,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "var", label: "VAR" },
   { id: "matches", label: "Matches" },
   { id: "claim-disputes", label: "Claim Disputes" },
+  { id: "analysis", label: "Analysis" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -5272,6 +5274,7 @@ export default function Admin() {
         {tab === "var" && <VarTab />}
         {tab === "matches" && <MatchesTab />}
         {tab === "claim-disputes" && <ClaimDisputesTab />}
+        {tab === "analysis" && <AnalysisTab />}
         {tab === "settings" && <SettingsTab />}
       </div>
     </div>

@@ -15,3 +15,4 @@ export * from "./matches";
 export * from "./claimMatch";
 export * from "./clipDownloads";
 export * from "./settingsRules";
+export * from "./analysisJobs";
