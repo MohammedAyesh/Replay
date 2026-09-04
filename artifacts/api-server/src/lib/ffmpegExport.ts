@@ -24,6 +24,39 @@ const SRC_W = EXPORT_SOURCE_WIDTH;
 const SRC_H = EXPORT_SOURCE_HEIGHT;
 
 /**
+ * The one output encode spec. Every stage that produces a segment which will be
+ * concatenated with another must use exactly this.
+ *
+ * It is a shared constant rather than three copies of an argument list because
+ * the concat demuxer requires matching parameters across parts, and a mismatch
+ * does not fail cleanly — it drops audio partway through playback, or produces a
+ * file that plays for one segment and stops. The intro pass, the main render and
+ * the branding end card all encode to this.
+ *
+ * 30 fps is the platform contract: sources recorded at 25 fps are intentionally
+ * normalised to it, and `-fps_mode cfr` enforces constant frame timing rather
+ * than just stamping a target rate onto a variable-rate stream.
+ *
+ * Audio is always pinned to stereo 44.1 kHz for the same concat reason.
+ */
+export const EXPORT_ENCODE_ARGS: { video: string[]; audio: string[] } = {
+  video: [
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "23",
+    "-pix_fmt", "yuv420p",
+    "-r", "30",
+    "-fps_mode", "cfr",
+  ],
+  audio: [
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-ar", "44100",
+    "-ac", "2",
+  ],
+};
+
+/**
  * Longest selection we will render, in seconds of source footage.
  *
  * Exceeding it is an error, not a silent trim: quietly returning 15 minutes of
@@ -979,25 +1012,10 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     "-t", String(clipDuration),
     // pad -> crop pan -> scale, all built together so black bars survive
     ...(filterScriptPath ? ["-filter_script:v", filterScriptPath] : ["-vf", cropFilter]),
-    // H.264 video, fast encode, web-compatible
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-crf", "23",
-    "-pix_fmt", "yuv420p",
-    // Force constant 30 fps on output. 30 fps is the platform contract: the
-    // normalizeSegment() intro pass (above) already pins the intro to 30 fps via
-    // the fps=30 filter, and the concat demuxer used by withIntro() requires
-    // matching frame rates across segments. Sources recorded at 25 fps are
-    // intentionally normalized to that platform rate. -fps_mode cfr enforces
-    // constant frame timing rather than just stamping a target rate onto a
-    // variable-rate stream.
-    "-r", "30",
-    "-fps_mode", "cfr",
-    // AAC audio — always pin to stereo 44.1 kHz so intro concat works cleanly
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-ar", "44100",
-    "-ac", "2",
+    // The single shared output spec — see EXPORT_ENCODE_ARGS. The intro pass and
+    // the branding end card encode to the same constant so every concat works.
+    ...EXPORT_ENCODE_ARGS.video,
+    ...EXPORT_ENCODE_ARGS.audio,
     ...(needsSilentTrack ? ["-map", "0:v:0", "-map", "1:a:0", "-shortest"] : []),
     // Optimise for streaming/download
     "-movflags", "+faststart",
