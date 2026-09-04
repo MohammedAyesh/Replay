@@ -89,12 +89,16 @@ export async function getBunnyVideoInfo(videoId: string): Promise<{
 }
 
 /**
- * Returns a direct MP4 URL for a specific resolution.
- * Bunny Stream transcodes to multiple MP4 resolutions; 1080p is the target.
- * Fallback: use 720p if available.
+ * Returns a direct MP4 URL for a specific rendition folder.
+ * The folder is taken from the matching HLS variant rather than inferred from
+ * the variant's declared pixel dimensions.
  */
-export function getBunnyDirectMp4Url(videoId: string, height = 1080): string {
-  return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/play_${height}p.mp4`;
+export function getBunnyDirectMp4Url(videoId: string, folder: string | number = "1080p"): string {
+  const renditionFolder = typeof folder === "number" ? `${folder}p` : folder;
+  if (!/^[^/]+p$/i.test(renditionFolder)) {
+    throw new Error(`Invalid Bunny rendition folder for direct MP4: ${folder}`);
+  }
+  return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/play_${renditionFolder}.mp4`;
 }
 
 /**

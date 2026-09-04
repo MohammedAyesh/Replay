@@ -1,4 +1,4 @@
-import { BUNNY_CDN_HOSTNAME, getBunnyPlaybackUrl } from "./bunny";
+import { getBunnyDirectMp4Url, getBunnyPlaybackUrl } from "./bunny";
 
 export const REQUIRED_SOURCE_WIDTH = 3840;
 export const REQUIRED_SOURCE_HEIGHT = 1080;
@@ -41,13 +41,13 @@ function parseAttributes(value: string): Record<string, string> {
   );
 }
 
-function variantFolder(url: string): string {
-  const pathname = new URL(url).pathname;
-  const match = pathname.match(/\/([^/]+)\/(?:video|playlist)\.m3u8$/i);
-  if (!match?.[1]) {
-    throw new Error(`Could not determine the rendition folder from HLS variant URL: ${url}`);
+function variantFolder(url: string): string | null {
+  try {
+    const pathname = new URL(url).pathname;
+    return pathname.match(/\/([^/]+)\/(?:video|playlist)\.m3u8$/i)?.[1] ?? null;
+  } catch {
+    return null;
   }
-  return match[1];
 }
 
 export function parseHlsMasterVariants(master: string, masterUrl: string): HlsVariant[] {
@@ -67,8 +67,15 @@ export function parseHlsMasterVariants(master: string, masterUrl: string): HlsVa
       .find((candidate) => candidate && !candidate.startsWith("#"));
     if (!uri || !Number.isFinite(width) || !Number.isFinite(height)) continue;
 
-    const url = new URL(uri, masterUrl).href;
-    variants.push({ url, folder: variantFolder(url), width, height });
+    let url: string;
+    try {
+      url = new URL(uri, masterUrl).href;
+    } catch {
+      continue;
+    }
+    const folder = variantFolder(url);
+    if (!folder) continue;
+    variants.push({ url, folder, width, height });
   }
   return variants;
 }
@@ -104,7 +111,7 @@ export async function selectExportSource(options: {
   }
 
   if (hasMP4Fallback) {
-    const directUrl = buildDirectMp4Url(videoId, matchingVariant.folder);
+    const directUrl = getBunnyDirectMp4Url(videoId, matchingVariant.folder);
     try {
       const response = await fetch(directUrl, {
         method: "HEAD",
@@ -134,11 +141,4 @@ export async function selectExportSource(options: {
     );
   }
   return { url: matchingVariant.url, path: "verified HLS variant playlist", variant: matchingVariant };
-}
-
-export function buildDirectMp4Url(videoId: string, folder: string): string {
-  if (!/^[^/]+p$/i.test(folder)) {
-    throw new Error(`Invalid Bunny rendition folder for direct MP4: ${folder}`);
-  }
-  return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/play_${folder}.mp4`;
 }

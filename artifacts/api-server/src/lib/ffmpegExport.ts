@@ -698,9 +698,7 @@ export async function verifyBufferedSourceDimensions(bufferPath: string): Promis
     dimensions = await run("ffprobe", [
       "-v", "error",
       "-select_streams", "v:0",
-      "-read_intervals", "%+#1",
-      "-show_frames",
-      "-show_entries", "frame=width,height",
+      "-show_entries", "stream=width,height",
       "-of", "csv=p=0:s=x",
       bufferPath,
     ]);
