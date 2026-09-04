@@ -4,12 +4,17 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+process.env.BUNNY_STORAGE_HOSTNAME = "fake-storage.local";
+process.env.BUNNY_STORAGE_CDN_URL = "https://fake-cdn.local";
+process.env.BUNNY_STORAGE_API_KEY = "k";
+
 const {
   frameStats, scoreFrame, posterCandidateTimes, buildPosterFilter,
   generatePosterFrame, encodePosterFrame, sampleFrameStats, posterCropForClip, probeDuration,
   POSTER_WIDTH, POSTER_HEIGHT,
 } = await import("./posterFrame");
 const { cropRectAt } = await import("./ffmpegExport");
+const { isBunnyStorageUrl } = await import("./bunny");
 
 describe("frame statistics", () => {
   it("reads a flat black frame as zero mean and zero detail", () => {
@@ -233,4 +238,20 @@ describe("against a real video", () => {
     expect(Buffer.compare(left, right)).not.toBe(0);
     expect(Math.abs(meanOf(left) - meanOf(right))).toBeGreaterThan(1);
   }, 120_000);
+});
+
+describe("authenticating the source", () => {
+  it("recognises a storage object by the pull-zone name it is actually written as", () => {
+    // uploadToBunnyStorage returns the CDN form, so this is the shape that ends
+    // up in exportedUrl and in an academy intro URL — and it was the shape the
+    // old origin-only check missed.
+    expect(isBunnyStorageUrl("https://fake-cdn.local/clips/12-abc.mp4")).toBe(true);
+    expect(isBunnyStorageUrl("https://fake-storage.local/galaxyfield/clips/12.mp4")).toBe(true);
+  });
+
+  it("does not hand the storage key to the Stream CDN or anywhere else", () => {
+    expect(isBunnyStorageUrl("https://vz-03425ccd-3d0.b-cdn.net/guid/2160p/video.m3u8")).toBe(false);
+    expect(isBunnyStorageUrl("https://evil.example/clips/12.mp4")).toBe(false);
+    expect(isBunnyStorageUrl("not a url")).toBe(false);
+  });
 });

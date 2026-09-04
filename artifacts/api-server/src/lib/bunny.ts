@@ -45,6 +45,39 @@ export function getBunnyProxiedThumbnailUrl(videoId: string, time?: number | nul
   return `/api/hls-proxy/segment?url=${encodeURIComponent(getBunnyThumbnailUrl(videoId, time))}`;
 }
 
+/**
+ * Does this URL point at our Bunny Storage content, by either of the two names
+ * it goes by?
+ *
+ * Storage objects are reachable two ways: the origin at BUNNY_STORAGE_HOSTNAME,
+ * and the pull zone at BUNNY_STORAGE_CDN_URL — and everything we *write* returns
+ * the pull-zone form, so that is the one that actually shows up in
+ * `exportedUrl`, in an academy's `introVideoUrl`, and in a poster path.
+ *
+ * The check used to match only the origin hostname. That silently withheld the
+ * AccessKey from every fetch of a rendered export or a branding intro, which is
+ * exactly the set of URLs that has it. `/user-clips/:id/download` sends the key
+ * to the pull zone and works, so the two paths disagreed about whether the zone
+ * needs authenticating — this makes them agree, in the direction that works. If
+ * the zone turns out to be public the extra header is inert; if it is not, this
+ * is the difference between a poster and no poster.
+ */
+export function isBunnyStorageUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).host.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (BUNNY_STORAGE_HOSTNAME && host === BUNNY_STORAGE_HOSTNAME.toLowerCase()) return true;
+  if (!BUNNY_STORAGE_CDN_URL) return false;
+  try {
+    return host === new URL(BUNNY_STORAGE_CDN_URL).host.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 export function isBunnyConfigured(): boolean {
   return !!BUNNY_CDN_HOSTNAME && !!BUNNY_API_KEY && !!BUNNY_LIBRARY_ID;
 }

@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { logger } from "./logger";
 import { cropRectAt } from "./ffmpegExport";
 import { EXPORT_SOURCE_WIDTH, EXPORT_SOURCE_HEIGHT } from "./exportSource";
+import { BUNNY_STORAGE_API_KEY, isBunnyStorageUrl } from "./bunny";
 
 /**
  * Poster frames for share cards.
@@ -207,9 +208,22 @@ function runBinary(bin: string, args: string[], timeoutMs = POSTER_TIMEOUT_MS): 
   });
 }
 
-function headerArgs(referer?: string): string[] {
-  if (!referer) return [];
-  return ["-headers", `Referer: ${referer}\r\n`];
+/**
+ * Headers FFmpeg should send when reading the poster source.
+ *
+ * Two different origins are in play and they want different things. The pinned
+ * HLS variant lives on the Stream pull zone, which rejects a request with no
+ * Referer (measured: 403). The rendered export lives on the Storage pull zone,
+ * which wants the AccessKey — the same key `/user-clips/:id/download` sends to
+ * that exact URL. Omitting it is why a poster taken from the export can fail
+ * while the download of the same file succeeds.
+ */
+function headerArgs(url: string, referer?: string): string[] {
+  const lines = [
+    referer ? `Referer: ${referer}` : null,
+    BUNNY_STORAGE_API_KEY && isBunnyStorageUrl(url) ? `AccessKey: ${BUNNY_STORAGE_API_KEY}` : null,
+  ].filter((v): v is string => !!v);
+  return lines.length ? ["-headers", `${lines.join("\r\n")}\r\n`] : [];
 }
 
 /**
@@ -255,7 +269,7 @@ export async function sampleFrameStats(
   const { sourceUrl, referer, crop, atSec } = options;
   const raw = await runBinary(FFMPEG, [
     "-nostdin", "-loglevel", "error",
-    ...headerArgs(referer),
+    ...headerArgs(sourceUrl, referer),
     ...seekArgs(atSec),
     "-i", sourceUrl,
     "-frames:v", "1",
@@ -279,7 +293,7 @@ export async function encodePosterFrame(
 
   return runBinary(FFMPEG, [
     "-nostdin", "-loglevel", "error",
-    ...headerArgs(referer),
+    ...headerArgs(sourceUrl, referer),
     ...seekArgs(atSec),
     "-i", sourceUrl,
     "-frames:v", "1",
@@ -384,7 +398,7 @@ export function posterCropForClip(
 export async function probeDuration(sourceUrl: string, referer?: string): Promise<number> {
   const args = [
     "-v", "error",
-    ...(referer ? ["-headers", `Referer: ${referer}\r\n`] : []),
+    ...headerArgs(sourceUrl, referer),
     "-show_entries", "format=duration",
     "-of", "default=nw=1:nk=1",
     sourceUrl,

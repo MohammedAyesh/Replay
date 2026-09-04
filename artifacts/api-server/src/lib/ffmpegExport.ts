@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { logger } from "./logger";
-import { BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_HOSTNAME } from "./bunny";
+import { BUNNY_STORAGE_API_KEY, isBunnyStorageUrl } from "./bunny";
 import {
   EXPORT_SOURCE_WIDTH,
   EXPORT_SOURCE_HEIGHT,
@@ -776,14 +776,6 @@ function run(bin: string, args: string[], timeoutMs = SUBPROCESS_TIMEOUT_MS): Pr
  * Only for that exact host: the key must never be attached to an arbitrary URL
  * an admin could paste in.
  */
-function isBunnyStorageUrl(url: string): boolean {
-  try {
-    return new URL(url).host.toLowerCase() === BUNNY_STORAGE_HOSTNAME.toLowerCase();
-  } catch {
-    return false;
-  }
-}
-
 function buildHeaderVal(referer?: string, url?: string): string {
   const needsKey = !!url && !!BUNNY_STORAGE_API_KEY && isBunnyStorageUrl(url);
   return [
