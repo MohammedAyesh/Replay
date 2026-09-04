@@ -215,6 +215,30 @@ describe("path prefixes", () => {
     expect(mp4.status).toBe(206);
   }, 180_000);
 
+  it("escapes the /api no-store block even when served under /api", async () => {
+    // Reproduces app.ts's ordering: the share router is mounted before the
+    // middleware that stamps no-store and Vary on everything under /api. Get
+    // that order wrong and the card still renders but becomes uncacheable, and
+    // a Vary on Cookie fragments every crawler fetch — silently, since nothing
+    // about the page looks different.
+    const stacked = express();
+    const { default: sr } = await import("./share");
+    stacked.use(sr);
+    stacked.use("/api", (_req, res, next) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Vary", "Cookie, Authorization");
+      next();
+    });
+    stacked.use("/api", (_req, res) => res.status(404).end());
+
+    const tok = shareToken(readyClipId);
+    const viaApi = await request(stacked).get(`/api/s/${readyClipId}/${tok}`);
+    expect(viaApi.status).toBe(200);
+    expect(viaApi.headers["cache-control"]).toMatch(/public/);
+    expect(viaApi.headers["cache-control"]).not.toMatch(/no-store/);
+    expect(viaApi.headers["vary"]).toBeUndefined();
+  }, 180_000);
+
   it("emits whichever form SHARE_PATH_PREFIX selects", async () => {
     const saved = process.env.SHARE_PATH_PREFIX;
     process.env.SHARE_PATH_PREFIX = "/api/s";

@@ -1122,14 +1122,19 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
  * Reads a window's worth of rows, not a counter: see lib/downloadQuota.ts for
  * why the allowance is rolling rather than per calendar month.
  */
-async function loadQuotaContext(userId: number, now: Date, clipId?: number): Promise<{
+async function loadQuotaContext(
+  userId: number,
+  now: Date,
+  clipId?: number,
+  tx: Pick<typeof db, "select"> = db,
+): Promise<{
   events: DownloadEvent[];
   unlimited: boolean;
   limit: number;
   windowDays: number;
   downloadsEnabled: boolean;
 }> {
-  const [user] = await db
+  const [user] = await tx
     .select({ plan: usersTable.plan, academyId: usersTable.academyId })
     .from(usersTable)
     .where(eq(usersTable.id, userId));
@@ -1147,7 +1152,7 @@ async function loadQuotaContext(userId: number, now: Date, clipId?: number): Pro
   const downloadsEnabled = settings["downloads.enabled"] !== false;
 
   const windowStart = new Date(now.getTime() - (windowDays + 1) * 86_400_000);
-  const rows = await db
+  const rows = await tx
     .select({ at: clipDownloadsTable.createdAt, clipId: clipDownloadsTable.clipId })
     .from(clipDownloadsTable)
     .where(and(
@@ -1184,6 +1189,59 @@ async function fieldIdForClip(clipId?: number): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+
+/**
+ * Decide and record a download as one serialised operation.
+ *
+ * The previous shape — read the ledger, decide, then insert — has a race that a
+ * five-download allowance makes easy to hit: two downloads of different clips
+ * arriving together both read four-of-five used, both conclude they have a slot,
+ * and both insert. The user gets six. Nothing surfaces it; the counter is simply
+ * wrong from then on, and the 5/5 event either fires twice or not at all.
+ *
+ * A row lock on the user closes it. The lock is on `users` rather than on the
+ * ledger because there is no ledger row to lock when the account is at zero —
+ * you cannot lock what does not exist yet — and every download for one account
+ * has to serialise against the same thing whether or not they have downloaded
+ * before.
+ *
+ * Borrowed from the parallel implementation on claim-identity-binding, which got
+ * this right where this one did not.
+ */
+async function reserveDownload(
+  userId: number,
+  clipId: number,
+  now: Date,
+): Promise<
+  | { outcome: "disabled" }
+  | { outcome: "refused"; state: ReturnType<typeof evaluateQuota> }
+  | { outcome: "allowed"; state: ReturnType<typeof evaluateQuota>; limitReachedNow: boolean }
+> {
+  return db.transaction(async (tx) => {
+    // Serialise every download for this account against this row.
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`);
+
+    const ctx = await loadQuotaContext(userId, now, clipId, tx);
+    if (!ctx.downloadsEnabled) return { outcome: "disabled" as const };
+
+    const decision = consumeQuota(ctx.events, clipId, now, {
+      unlimited: ctx.unlimited,
+      limit: ctx.limit,
+      windowDays: ctx.windowDays,
+    });
+    if (!decision.allowed) return { outcome: "refused" as const, state: decision.state };
+
+    if (decision.shouldRecord) {
+      await tx.insert(clipDownloadsTable).values({ userId, clipId, createdAt: now });
+    }
+    return {
+      outcome: "allowed" as const,
+      state: decision.state,
+      limitReachedNow: decision.limitReachedNow,
+    };
+  });
 }
 
 /**
@@ -1262,40 +1320,34 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
 
   // ── the free tier's rolling allowance ───────────────────────────────────
   const now = new Date();
-  const { events, unlimited, limit, windowDays, downloadsEnabled } = await loadQuotaContext(userId, now, clipId);
+  const reservation = await reserveDownload(userId, clipId, now);
 
-  // A global off switch, checked before the allowance: an admin turning
+  // A global off switch, checked inside the same decision: an admin turning
   // downloads off means off, including for accounts that are not metered.
-  if (!downloadsEnabled) {
+  if (reservation.outcome === "disabled") {
     res.status(403).json({ error: "Downloads are currently disabled" });
     return;
   }
-
-  const decision = consumeQuota(events, clipId, now, { unlimited, limit, windowDays });
-
-  if (!decision.allowed) {
+  if (reservation.outcome === "refused") {
     res.status(402).json({
       error: "Download limit reached",
-      quota: toQuotaResponse(decision.state),
+      quota: toQuotaResponse(reservation.state),
     });
     return;
   }
-
-  if (decision.shouldRecord) {
-    await db.insert(clipDownloadsTable).values({ userId, clipId, createdAt: now });
-  }
-  if (decision.limitReachedNow) {
+  if (reservation.limitReachedNow) {
     // The 5/5 event. Emitted exactly once per user per time they hit the wall —
-    // consumeQuota guarantees that — because the hit-limit-to-conversion rate is
+    // the reservation is serialised, so two concurrent downloads cannot both
+    // believe they were the one that hit it. The hit-limit-to-conversion rate is
     // the only clean read on whether five is the right number. A structured log
     // line rather than a call into an analytics SDK: this is the one place the
     // event is emitted, so pointing it somewhere else later is a one-line change.
-    logger.info(buildLimitReachedEvent(userId, clipId, decision.state, now), "Download quota limit reached");
+    logger.info(buildLimitReachedEvent(userId, clipId, reservation.state, now), "Download quota limit reached");
   }
 
-  res.setHeader("X-Download-Quota-Used", String(decision.state.used));
-  res.setHeader("X-Download-Quota-Limit", String(decision.state.limit));
-  if (decision.state.resetAt) res.setHeader("X-Download-Quota-Reset", decision.state.resetAt.toISOString());
+  res.setHeader("X-Download-Quota-Used", String(reservation.state.used));
+  res.setHeader("X-Download-Quota-Limit", String(reservation.state.limit));
+  if (reservation.state.resetAt) res.setHeader("X-Download-Quota-Reset", reservation.state.resetAt.toISOString());
 
   const safeName = clip.title.replace(/[^a-z0-9_\-]/gi, "_") || "clip";
 

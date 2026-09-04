@@ -310,3 +310,39 @@ describe("admin overrides", () => {
     expect((await dl(id)).status).toBe(403);
   }, 30_000);
 });
+
+describe("concurrency", () => {
+  it("holds the limit when eight downloads arrive at once", async () => {
+    // This is the race the row lock exists to close, and it is not theoretical.
+    // With the lock removed and these exact eight simultaneous requests against
+    // an empty allowance, MEASURED: allowed=8 of 8, ledger rows=8, against a
+    // limit of 5. Read-decide-insert lets every one of them see a free slot.
+    //
+    // A two-request version of this test passed with the lock removed, which is
+    // why it is eight: the window is wide enough that a small number of requests
+    // will often serialise on the pool by luck.
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    const ids = [] as number[];
+    for (let i = 0; i < 8; i++) ids.push(await insertClip(freeUserId, 800 + i));
+
+    const results = await Promise.all(ids.map((id) => dl(id)));
+    const allowed = results.filter((r) => r.status === 200).length;
+    const refused = results.filter((r) => r.status === 402).length;
+
+    expect(allowed).toBe(5);
+    expect(refused).toBe(3);
+
+    const rows = await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.userId, freeUserId));
+    expect(rows).toHaveLength(5);
+    expect((await quota()).body).toMatchObject({ used: 5, remaining: 0 });
+  }, 60_000);
+
+  it("still lets concurrent repeats of one clip through, since a repeat is free", async () => {
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    const id = await insertClip(freeUserId, 820);
+    const results = await Promise.all([dl(id), dl(id), dl(id)]);
+    expect(results.every((r) => r.status === 200)).toBe(true);
+    const rows = await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.userId, freeUserId));
+    expect(rows).toHaveLength(1);
+  }, 60_000);
+});
