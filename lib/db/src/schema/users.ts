@@ -18,6 +18,13 @@ export const usersTable = pgTable("users", {
   profileComplete: boolean("profile_complete").notNull().default(false),
   preferredLocale: text("preferred_locale"),
   academyId: integer("academy_id"),
+  /**
+   * Billing tier. "free" is metered by the rolling download allowance; anything
+   * else is not. A column rather than an inference from academy or admin status,
+   * because those are access-control facts and this is a billing one, and the
+   * two have already diverged once.
+   */
+  plan: text("plan").notNull().default("free"),
   recordingConsent: boolean("recording_consent").notNull().default(false),
   recordingConsentAt: timestamp("recording_consent_at", { withTimezone: true }),
   socialMediaConsent: boolean("social_media_consent").notNull().default(false),

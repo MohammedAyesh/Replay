@@ -23,6 +23,13 @@ import { exportClip, canExportVideo, triggerDownload } from "@/lib/exportClip";
 import { saveLocalClip, getLocalClip, listLocalClips, deleteLocalClip, createLocalBlobUrl, revokeLocalBlobUrl, type LocalClipRecord } from "@/lib/localClips";
 import { cn } from "@/lib/utils";
 import { applyFrameToVideo, frameToVideoStyle, interpolateFrame } from "@/lib/cropFrame";
+import {
+  fetchDownloadQuota,
+  formatQuotaLabel,
+  formatQueueLabel,
+  isQuotaExhausted,
+  type DownloadQuota,
+} from "@/lib/downloadQuota";
 
 /** How long to wait for the branding intro to actually start before skipping it. */
 const INTRO_START_TIMEOUT_MS = 4000;
@@ -73,6 +80,16 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const [exportedUrl, setExportedUrl] = useState<string | null>(clip.exportedUrl ?? null);
   /** User-friendly step label shown inside the export button while polling. */
   const [exportStepLabel, setExportStepLabel] = useState("Step 1/3");
+  /**
+   * The rolling download allowance. Fetched when the player opens rather than
+   * when Download is tapped: a limit only discovered at the moment of failure is
+   * an error message, and one that is visible all along is the thing that
+   * actually sells a subscription.
+   */
+  const [quota, setQuota] = useState<DownloadQuota | null>(null);
+  const refreshQuota = useCallback(() => { void fetchDownloadQuota().then(setQuota); }, []);
+  useEffect(() => { refreshQuota(); }, [refreshQuota]);
+
   /** Set to false on unmount to abort the polling loop. */
   const pollingRef = useRef(false);
   const [isLocal, setIsLocal] = useState(false);
@@ -105,7 +122,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const [clipDurationSec, setClipDurationSec] = useState(0);
   /** True while the user is dragging the scrub handle — suppresses timeupdate overwrites. */
   const seekDraggingRef = useRef(false);
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
+  const quotaLabel = useMemo(() => formatQuotaLabel(quota, locale), [quota, locale]);
   const { toast } = useToast();
   const { user } = useAuth();
   const { setFullscreenVideo } = useFullscreenVideo();
@@ -503,6 +521,17 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
    * session auth still works without credentials: "include".
    */
   const deliverViaProxy = useCallback(() => {
+    // The download is an <a download> navigation, so a 402 from the server would
+    // land as a blank tab rather than an error the user can act on. Check the
+    // allowance first and say what is actually happening.
+    if (isQuotaExhausted(quota)) {
+      toast({
+        title: "Download limit reached",
+        description: formatQuotaLabel(quota, locale) ?? undefined,
+        variant: "destructive",
+      });
+      return;
+    }
     const filename = `${clip.title || "clip"}.mp4`;
     const a = document.createElement("a");
     a.href = `/api/user-clips/${clip.id}/download`;
@@ -513,7 +542,10 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     document.body.removeChild(a);
     toast({ title: t.export.done, description: "Your download has started." });
     onDownloaded?.();
-  }, [clip, toast, t, onDownloaded]);
+    // The server has just spent a slot; re-read rather than decrement locally,
+    // so a repeat download (which costs nothing) does not show a phantom loss.
+    setTimeout(refreshQuota, 1200);
+  }, [clip, toast, t, onDownloaded, quota, locale, refreshQuota]);
 
   const handleExport = useCallback(async () => {
     if (exportState === "polling") return;
@@ -592,17 +624,22 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 
         const statusRes = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
         if (!statusRes.ok) throw new Error("Status check failed");
-        const status = await statusRes.json() as { status: string; url?: string; progress?: string | null };
+        const status = await statusRes.json() as {
+          status: string; url?: string; progress?: string | null;
+          queuePosition?: number | null;
+        };
 
         // Map the backend's fixed three-stage progress to a simple user-facing step.
-        if (status.progress) {
-          const stepLabels: Record<string, string> = {
-            fetching: "Step 1/3",
-            encoding: "Step 2/3",
-            uploading: "Step 3/3",
-          };
-          setExportStepLabel(stepLabels[status.progress] ?? "Step 1/3");
-        }
+        const stepLabels: Record<string, string> = {
+          fetching: "Step 1/3",
+          encoding: "Step 2/3",
+          uploading: "Step 3/3",
+        };
+        const step = status.progress ? stepLabels[status.progress] ?? "Step 1/3" : null;
+        // A queued render used to be indistinguishable from a stalled one, so
+        // people tapped again and queued a second copy of the same clip. The
+        // position is the whole fix.
+        setExportStepLabel(formatQueueLabel(status.queuePosition, step));
 
         if (status.status === "done" && status.url) {
           setExportedUrl(status.url);
@@ -758,6 +795,17 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
                   : t.export.button}
               </span>
             </button>
+
+            {/* The allowance, always visible — see lib/downloadQuota.ts */}
+            {quotaLabel && (
+              <span
+                className={`text-[11px] leading-tight drop-shadow pointer-events-none ${
+                  isQuotaExhausted(quota) ? "text-amber-300" : "text-white/70"
+                } ${landscape ? "w-full text-center" : "max-w-[9rem]"}`}
+              >
+                {quotaLabel}
+              </span>
+            )}
 
             {/* Fullscreen toggle */}
             <button

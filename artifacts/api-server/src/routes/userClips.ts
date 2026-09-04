@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { eq, and, desc, inArray, count, sql, like } from "drizzle-orm";
-import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable, recordingsTable, academyRecordingsTable } from "@workspace/db";
+import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable, recordingsTable, academyRecordingsTable, clipDownloadsTable } from "@workspace/db";
 import {
   CreateUserClipBody,
   CreateUserClipResponse,
@@ -37,6 +37,14 @@ import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
 import { selectExportSource as resolveExportSource } from "../lib/exportSource";
 import { logger } from "../lib/logger";
+import { renderQueue } from "../lib/renderQueue";
+import {
+  consumeQuota,
+  evaluateQuota,
+  toQuotaResponse,
+  buildLimitReachedEvent,
+  type DownloadEvent,
+} from "../lib/downloadQuota";
 import { introPlaybackPath } from "./clipIntro";
 
 const router: IRouter = Router();
@@ -54,28 +62,36 @@ const inFlight = new Set<number>();
 const exportProgress = new Map<number, string>();
 
 /**
- * Renders are CPU-bound: a single 1080p `-preset slow -crf 16` pass already
- * saturates several of the VPS's 6 shared vCPUs. `inFlight` only dedupes per
- * clip id, so without a global cap one account can queue N clips and fire N
- * exports at once, starving the live remux and the hourly archive encoder that
- * share the box. Everything past the cap waits its turn instead; the clip row
- * stays "pending" throughout, so the client's existing polling loop is unaffected.
+ * Renders are CPU-bound and contend with the hourly archive for the same cores,
+ * so they run through a shared queue rather than all at once. The queue itself,
+ * the concurrency cap and the rule that renders yield to the archive live in
+ * lib/renderQueue.ts, which has no database imports and is unit-tested there.
+ *
+ * Keyed by clip id, which is what lets `positionOf` answer "where am I" for a
+ * specific clip rather than only "how many are ahead".
  */
-const MAX_CONCURRENT_RENDERS = Math.max(1, parseInt(process.env.MAX_CONCURRENT_RENDERS ?? "2", 10) || 2);
-let activeRenders = 0;
-const renderQueue: (() => void)[] = [];
+function withRenderSlot<T>(clipId: number, job: () => Promise<T>): Promise<T> {
+  return renderQueue.run(String(clipId), job);
+}
 
-async function withRenderSlot<T>(job: () => Promise<T>): Promise<T> {
-  if (activeRenders >= MAX_CONCURRENT_RENDERS) {
-    await new Promise<void>((resolve) => renderQueue.push(resolve));
-  }
-  activeRenders++;
-  try {
-    return await job();
-  } finally {
-    activeRenders--;
-    renderQueue.shift()?.();
-  }
+/**
+ * Where a clip sits in the render queue, in the form the client shows.
+ *
+ * `position` counts jobs ahead of this one: 0 means it is rendering now. Null
+ * means this process is not tracking the clip, which after a restart is the
+ * truth — hence null rather than a reassuring 0.
+ */
+export function queueStateFor(clipId: number): {
+  position: number | null;
+  waiting: number;
+  concurrency: number;
+} {
+  const snap = renderQueue.snapshot();
+  return {
+    position: renderQueue.positionOf(String(clipId)),
+    waiting: snap.waiting,
+    concurrency: snap.concurrency,
+  };
 }
 
 export function normalizeExportWindow(
@@ -319,7 +335,7 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
   const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
   const videoId = clip.videoId;
 
-  void withRenderSlot(async () => {
+  void withRenderSlot(clipId, async () => {
     let tmpPath: string | null = null;
     let bufferTmpFile: string | null = null;
     try {
@@ -1067,7 +1083,59 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
 
   const progress = exportProgress.get(clip.id) ?? null;
-  res.json({ status: clip.exportStatus ?? "idle", url: clip.exportedUrl ?? null, progress });
+  // Queue position is additive and only meaningful while pending. A spinner that
+  // says "3rd in line" is the difference between waiting and giving up.
+  const queue = queueStateFor(clip.id);
+  res.json({
+    status: clip.exportStatus ?? "idle",
+    url: clip.exportedUrl ?? null,
+    progress,
+    queuePosition: queue.position,
+    queueWaiting: queue.waiting,
+  });
+});
+
+
+/**
+ * The rolling-30-day download ledger for one user.
+ *
+ * Reads a window's worth of rows, not a counter: see lib/downloadQuota.ts for
+ * why the allowance is rolling rather than per calendar month.
+ */
+async function loadQuotaContext(userId: number, now: Date): Promise<{
+  events: DownloadEvent[];
+  unlimited: boolean;
+}> {
+  const windowStart = new Date(now.getTime() - 31 * 86_400_000);
+  const [rows, [user]] = await Promise.all([
+    db
+      .select({ at: clipDownloadsTable.createdAt, clipId: clipDownloadsTable.clipId })
+      .from(clipDownloadsTable)
+      .where(and(
+        eq(clipDownloadsTable.userId, userId),
+        sql`${clipDownloadsTable.createdAt} > ${windowStart.toISOString()}`,
+      )),
+    db.select({ plan: usersTable.plan }).from(usersTable).where(eq(usersTable.id, userId)),
+  ]);
+  return {
+    events: rows.map((r) => ({ at: r.at, clipId: r.clipId ?? -1 })),
+    unlimited: (user?.plan ?? "free") !== "free",
+  };
+}
+
+/**
+ * GET /user-clips/download-quota
+ *
+ * The counter and reset date the UI shows. Surfaced as its own endpoint and read
+ * before the user taps Download, not after: a limit nobody can see is an error
+ * message, and a visible one is the conversion trigger.
+ */
+router.get("/user-clips/download-quota", async (req, res): Promise<void> => {
+  const userId = await getLocalUserId(req);
+  if (!userId) { unauthenticatedResponse(res, req); return; }
+  const now = new Date();
+  const { events, unlimited } = await loadQuotaContext(userId, now);
+  res.json(toQuotaResponse(evaluateQuota(events, now, { unlimited })));
 });
 
 /**
@@ -1089,6 +1157,35 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
     .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
 
   if (!clip || !clip.exportedUrl) { res.status(404).json({ error: "Export not ready" }); return; }
+
+  // ── the free tier's rolling allowance ───────────────────────────────────
+  const now = new Date();
+  const { events, unlimited } = await loadQuotaContext(userId, now);
+  const decision = consumeQuota(events, clipId, now, { unlimited });
+
+  if (!decision.allowed) {
+    res.status(402).json({
+      error: "Download limit reached",
+      quota: toQuotaResponse(decision.state),
+    });
+    return;
+  }
+
+  if (decision.shouldRecord) {
+    await db.insert(clipDownloadsTable).values({ userId, clipId, createdAt: now });
+  }
+  if (decision.limitReachedNow) {
+    // The 5/5 event. Emitted exactly once per user per time they hit the wall —
+    // consumeQuota guarantees that — because the hit-limit-to-conversion rate is
+    // the only clean read on whether five is the right number. A structured log
+    // line rather than a call into an analytics SDK: this is the one place the
+    // event is emitted, so pointing it somewhere else later is a one-line change.
+    logger.info(buildLimitReachedEvent(userId, clipId, decision.state, now), "Download quota limit reached");
+  }
+
+  res.setHeader("X-Download-Quota-Used", String(decision.state.used));
+  res.setHeader("X-Download-Quota-Limit", String(decision.state.limit));
+  if (decision.state.resetAt) res.setHeader("X-Download-Quota-Reset", decision.state.resetAt.toISOString());
 
   const safeName = clip.title.replace(/[^a-z0-9_\-]/gi, "_") || "clip";
 
