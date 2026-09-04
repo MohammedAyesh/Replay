@@ -37,7 +37,7 @@ import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
 import { selectExportSource as resolveExportSource } from "../lib/exportSource";
 import { logger } from "../lib/logger";
-import { renderQueue } from "../lib/renderQueue";
+import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
 import {
   consumeQuota,
   evaluateQuota,
@@ -46,6 +46,7 @@ import {
   type DownloadEvent,
 } from "../lib/downloadQuota";
 import { shareCardPath } from "../lib/shareCard";
+import { getAllSettings } from "../lib/settings";
 import { ensureClipPoster } from "./share";
 import { introPlaybackPath } from "./clipIntro";
 
@@ -72,6 +73,17 @@ const exportProgress = new Map<number, string>();
  * Keyed by clip id, which is what lets `positionOf` answer "where am I" for a
  * specific clip rather than only "how many are ahead".
  */
+// Point the queue at the admin settings. Done here rather than in renderQueue.ts
+// so that module keeps no database import and stays unit-testable.
+useLiveRenderSettings(async () => {
+  const settings = await getAllSettings();
+  return {
+    concurrency: Number(settings["render.maxConcurrent"]),
+    yieldToArchive: settings["render.yieldToArchive"] !== false,
+    yieldCeilingMs: Number(settings["render.yieldCeilingSeconds"]) * 1000,
+  };
+});
+
 function withRenderSlot<T>(clipId: number, job: () => Promise<T>): Promise<T> {
   return renderQueue.run(String(clipId), job);
 }
@@ -1110,25 +1122,68 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
  * Reads a window's worth of rows, not a counter: see lib/downloadQuota.ts for
  * why the allowance is rolling rather than per calendar month.
  */
-async function loadQuotaContext(userId: number, now: Date): Promise<{
+async function loadQuotaContext(userId: number, now: Date, clipId?: number): Promise<{
   events: DownloadEvent[];
   unlimited: boolean;
+  limit: number;
+  windowDays: number;
+  downloadsEnabled: boolean;
 }> {
-  const windowStart = new Date(now.getTime() - 31 * 86_400_000);
-  const [rows, [user]] = await Promise.all([
-    db
-      .select({ at: clipDownloadsTable.createdAt, clipId: clipDownloadsTable.clipId })
-      .from(clipDownloadsTable)
-      .where(and(
-        eq(clipDownloadsTable.userId, userId),
-        sql`${clipDownloadsTable.createdAt} > ${windowStart.toISOString()}`,
-      )),
-    db.select({ plan: usersTable.plan }).from(usersTable).where(eq(usersTable.id, userId)),
-  ]);
+  const [user] = await db
+    .select({ plan: usersTable.plan, academyId: usersTable.academyId })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+
+  // Resolve the admin-configurable values for THIS user before reading their
+  // ledger, because the window length decides which rows count.
+  const settings = await getAllSettings({
+    userId,
+    academyId: user?.academyId ?? null,
+    fieldId: await fieldIdForClip(clipId),
+    at: now,
+  });
+  const limit = Number(settings["downloads.limit"]);
+  const windowDays = Number(settings["downloads.windowDays"]);
+  const downloadsEnabled = settings["downloads.enabled"] !== false;
+
+  const windowStart = new Date(now.getTime() - (windowDays + 1) * 86_400_000);
+  const rows = await db
+    .select({ at: clipDownloadsTable.createdAt, clipId: clipDownloadsTable.clipId })
+    .from(clipDownloadsTable)
+    .where(and(
+      eq(clipDownloadsTable.userId, userId),
+      sql`${clipDownloadsTable.createdAt} > ${windowStart.toISOString()}`,
+    ));
+
   return {
     events: rows.map((r) => ({ at: r.at, clipId: r.clipId ?? -1 })),
     unlimited: (user?.plan ?? "free") !== "free",
+    limit,
+    windowDays,
+    downloadsEnabled,
   };
+}
+
+/**
+ * The field a clip was recorded at, for field-scoped settings.
+ *
+ * Best-effort by design: a clip whose recording cannot be matched simply has no
+ * field scope, which means field rules do not apply to it. That is the correct
+ * outcome, not an error, so this never throws and never blocks a download.
+ */
+async function fieldIdForClip(clipId?: number): Promise<number | null> {
+  if (!clipId) return null;
+  try {
+    const [row] = await db
+      .select({ fieldId: recordingsTable.fieldId })
+      .from(userClipsTable)
+      .innerJoin(recordingsTable, like(recordingsTable.videoUrl, sql`'%' || ${userClipsTable.videoId} || '%'`))
+      .where(eq(userClipsTable.id, clipId))
+      .limit(1);
+    return row?.fieldId ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1142,8 +1197,8 @@ router.get("/user-clips/download-quota", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) { unauthenticatedResponse(res, req); return; }
   const now = new Date();
-  const { events, unlimited } = await loadQuotaContext(userId, now);
-  res.json(toQuotaResponse(evaluateQuota(events, now, { unlimited })));
+  const { events, unlimited, limit, windowDays } = await loadQuotaContext(userId, now);
+  res.json(toQuotaResponse(evaluateQuota(events, now, { unlimited, limit, windowDays })));
 });
 
 /**
@@ -1207,8 +1262,16 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
 
   // ── the free tier's rolling allowance ───────────────────────────────────
   const now = new Date();
-  const { events, unlimited } = await loadQuotaContext(userId, now);
-  const decision = consumeQuota(events, clipId, now, { unlimited });
+  const { events, unlimited, limit, windowDays, downloadsEnabled } = await loadQuotaContext(userId, now, clipId);
+
+  // A global off switch, checked before the allowance: an admin turning
+  // downloads off means off, including for accounts that are not metered.
+  if (!downloadsEnabled) {
+    res.status(403).json({ error: "Downloads are currently disabled" });
+    return;
+  }
+
+  const decision = consumeQuota(events, clipId, now, { unlimited, limit, windowDays });
 
   if (!decision.allowed) {
     res.status(402).json({

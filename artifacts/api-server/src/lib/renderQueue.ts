@@ -67,6 +67,23 @@ export interface RenderQueueOptions {
   maxYieldMs?: number;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /**
+   * Live, admin-configurable values, resolved once per job at admission.
+   *
+   * Read per job rather than captured at construction because these are exactly
+   * the knobs someone reaches for while something is going wrong — an evening
+   * where renders are starving the archive, or one where the queue has stalled
+   * and needs more slots. A value you have to restart the process to change is
+   * not much use at that moment.
+   *
+   * Omitted entirely, the constructor values stand, which is what keeps this
+   * testable without a database.
+   */
+  liveConfig?: () => Promise<{
+    concurrency?: number;
+    yieldToArchive?: boolean;
+    yieldCeilingMs?: number;
+  }>;
 }
 
 export interface RenderQueueSnapshot {
@@ -100,6 +117,7 @@ export class RenderQueue {
   private readonly maxYieldMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
+  private liveConfig?: RenderQueueOptions["liveConfig"];
 
   constructor(options: RenderQueueOptions = {}) {
     this.concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
@@ -108,6 +126,34 @@ export class RenderQueue {
     this.maxYieldMs = options.maxYieldMs ?? 10 * 60_000;
     this.sleep = options.sleep ?? defaultSleep;
     this.now = options.now ?? Date.now;
+    this.liveConfig = options.liveConfig;
+  }
+
+  /**
+   * The configuration in force for the job about to be admitted.
+   *
+   * A failing lookup falls back to the constructor values rather than blocking:
+   * an unreadable settings table must not stop renders, for the same reason the
+   * archive probe fails open.
+   */
+  private async currentConfig(): Promise<{ concurrency: number; yieldToArchive: boolean; yieldCeilingMs: number }> {
+    const fallback = {
+      concurrency: this.concurrency,
+      yieldToArchive: true,
+      yieldCeilingMs: this.maxYieldMs,
+    };
+    if (!this.liveConfig) return fallback;
+    try {
+      const live = await this.liveConfig();
+      return {
+        concurrency: Math.max(1, Math.floor(live.concurrency ?? fallback.concurrency)),
+        yieldToArchive: live.yieldToArchive ?? true,
+        yieldCeilingMs: Math.max(0, live.yieldCeilingMs ?? fallback.yieldCeilingMs),
+      };
+    } catch (err) {
+      logger.warn({ err }, "Could not read live render settings — using the configured values");
+      return fallback;
+    }
   }
 
   /**
@@ -146,11 +192,13 @@ export class RenderQueue {
   }
 
   private async acquire(key: string): Promise<void> {
+    const config = await this.currentConfig();
+
     // Yield to the archive BEFORE queuing, so a job that is waiting on the
     // archive is not also occupying a place in front of jobs that could run.
-    await this.yieldToArchive(key);
+    if (config.yieldToArchive) await this.yieldToArchive(key, config.yieldCeilingMs);
 
-    if (this.active.size < this.concurrency && this.waiters.length === 0) {
+    if (this.active.size < config.concurrency && this.waiters.length === 0) {
       this.active.add(key);
       return;
     }
@@ -163,6 +211,10 @@ export class RenderQueue {
 
   private release(key: string): void {
     this.active.delete(key);
+    // Hand on using the cap the departing job ran under. Re-resolving here would
+    // need an await, which would reopen the window the synchronous handover
+    // exists to close; a lowered cap therefore takes effect on the next
+    // admission rather than retroactively, which is the honest behaviour anyway.
     const next = this.waiters.shift();
     if (!next) return;
     // Hand the slot over inside the same synchronous step that gave it up, so
@@ -171,7 +223,7 @@ export class RenderQueue {
     next.admit();
   }
 
-  private async yieldToArchive(key: string): Promise<void> {
+  private async yieldToArchive(key: string, ceilingMs = this.maxYieldMs): Promise<void> {
     let busy: boolean;
     try {
       busy = await this.isArchiveBusy();
@@ -186,7 +238,7 @@ export class RenderQueue {
     this.yielding.add(key);
     logger.info({ key }, "Archive pipeline is busy — render yielding");
     try {
-      while (this.now() - startedAt < this.maxYieldMs) {
+      while (this.now() - startedAt < ceilingMs) {
         await this.sleep(this.yieldPollMs);
         let stillBusy: boolean;
         try {
@@ -200,7 +252,7 @@ export class RenderQueue {
         }
       }
       logger.warn(
-        { key, maxYieldMs: this.maxYieldMs },
+        { key, maxYieldMs: ceilingMs },
         "Archive still busy at the yield ceiling — running the render anyway",
       );
     } finally {
@@ -261,8 +313,26 @@ export function makeArchiveBusyProbe(deps?: {
   };
 }
 
-/** The process-wide queue. Constructed once; `run` is the only entry point. */
+/**
+ * The process-wide queue. Constructed once; `run` is the only entry point.
+ *
+ * `liveConfig` is injected rather than imported at the top of this file so the
+ * queue keeps no database dependency and stays unit-testable — routes/userClips
+ * supplies it at startup via `useLiveRenderSettings`.
+ */
 export const renderQueue = new RenderQueue({
   concurrency: DEFAULT_CONCURRENCY,
   isArchiveBusy: makeArchiveBusyProbe(),
 });
+
+/**
+ * Point the process-wide queue at the admin settings.
+ *
+ * Separate from construction so this module never imports the database layer.
+ * Called once at wiring time; calling it again replaces the source.
+ */
+export function useLiveRenderSettings(
+  liveConfig: NonNullable<RenderQueueOptions["liveConfig"]>,
+): void {
+  (renderQueue as unknown as { liveConfig?: RenderQueueOptions["liveConfig"] }).liveConfig = liveConfig;
+}

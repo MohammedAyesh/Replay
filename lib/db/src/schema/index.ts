@@ -14,3 +14,4 @@ export * from "./recordingSchedules";
 export * from "./matches";
 export * from "./claimMatch";
 export * from "./clipDownloads";
+export * from "./settingsRules";

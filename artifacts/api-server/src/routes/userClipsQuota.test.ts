@@ -13,12 +13,13 @@
  *
  * A local HTTP origin stands in for Bunny Storage, as in userClipsDownload.test.ts.
  */
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import cookieParser from "cookie-parser";
 import http from "http";
-import { db, usersTable, userClipsTable, clipDownloadsTable } from "@workspace/db";
+import { db, usersTable, userClipsTable, clipDownloadsTable, settingsRulesTable } from "@workspace/db";
+import { invalidateSettingsCache } from "../lib/settings";
 import { eq, inArray, sql } from "drizzle-orm";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -198,4 +199,114 @@ describe("paid accounts", () => {
     expect(rows).toHaveLength(0);
     expect((await quota()).body).toMatchObject({ unlimited: true, remaining: -1, used: 0 });
   }, 40_000);
+});
+
+/**
+ * The allowance is admin-configurable. These are the tests that matter for that,
+ * because they exercise the whole path — a rule written through the admin table,
+ * resolved for one specific user, changing what the download route actually does
+ * — rather than the resolver in isolation.
+ */
+describe("admin overrides", () => {
+  const addRule = async (over: Record<string, unknown>) => {
+    const [row] = await db.insert(settingsRulesTable).values({
+      key: "downloads.limit", value: 5, scopeType: "global", ...over,
+    } as never).returning({ id: settingsRulesTable.id });
+    invalidateSettingsCache();
+    return row.id;
+  };
+
+  afterEach(async () => {
+    await db.delete(settingsRulesTable);
+    invalidateSettingsCache();
+  });
+
+  it("an empty rules table leaves the shipped limit of five in force", async () => {
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    expect((await quota()).body).toMatchObject({ limit: 5, remaining: 5 });
+  });
+
+  it("a user-scoped rule changes what that user can actually download", async () => {
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    await addRule({ key: "downloads.limit", value: 1, scopeType: "user", scopeId: freeUserId });
+
+    expect((await quota()).body).toMatchObject({ limit: 1, remaining: 1 });
+
+    const a = await insertClip(freeUserId, 500);
+    const b = await insertClip(freeUserId, 501);
+    expect((await dl(a)).status).toBe(200);
+    const refused = await dl(b);
+    expect(refused.status).toBe(402);
+    expect(refused.body.quota).toMatchObject({ used: 1, limit: 1, remaining: 0 });
+  }, 30_000);
+
+  it("a higher-priority global promotion beats the per-user override", async () => {
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    await addRule({ value: 1, scopeType: "user", scopeId: freeUserId, priority: 0 });
+    await addRule({ value: 50, scopeType: "global", priority: 100 });
+    expect((await quota()).body).toMatchObject({ limit: 50 });
+  }, 30_000);
+
+  it("excluding a user from the promotion drops them back to the next rule", async () => {
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    await addRule({ value: 1, scopeType: "user", scopeId: freeUserId, priority: 0 });
+    await addRule({
+      value: 50, scopeType: "global", priority: 100,
+      excludes: [{ scopeType: "user", scopeId: freeUserId }],
+    });
+    expect((await quota()).body).toMatchObject({ limit: 1 });
+  }, 30_000);
+
+  it("a disabled rule stops applying without being deleted", async () => {
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    const id = await addRule({ value: 1, scopeType: "user", scopeId: freeUserId });
+    expect((await quota()).body).toMatchObject({ limit: 1 });
+
+    await db.update(settingsRulesTable).set({ enabled: false }).where(eq(settingsRulesTable.id, id));
+    invalidateSettingsCache();
+    expect((await quota()).body).toMatchObject({ limit: 5 });
+  }, 30_000);
+
+  it("an expired rule stops applying on its own", async () => {
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    await addRule({
+      value: 1, scopeType: "user", scopeId: freeUserId,
+      effectiveUntil: new Date(Date.now() - 60_000),
+    });
+    expect((await quota()).body).toMatchObject({ limit: 5 });
+  }, 30_000);
+
+  it("a shortened window hands aged-out slots back immediately", async () => {
+    // The window length decides which ledger rows count, so changing it
+    // re-evaluates every account — worth pinning, because it is the one setting
+    // that rewrites history rather than only the future.
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    const ids = [] as number[];
+    for (let i = 0; i < 5; i++) ids.push(await insertClip(freeUserId, 600 + i));
+    for (const id of ids) expect((await dl(id)).status).toBe(200);
+    expect((await quota()).body).toMatchObject({ used: 5, remaining: 0 });
+
+    await db.update(clipDownloadsTable)
+      .set({ createdAt: sql`now() - interval '10 days'` })
+      .where(eq(clipDownloadsTable.userId, freeUserId));
+
+    await addRule({ key: "downloads.windowDays", value: 7, scopeType: "user", scopeId: freeUserId });
+    expect((await quota()).body).toMatchObject({ used: 0, remaining: 5, windowDays: 7 });
+  }, 40_000);
+
+  it("turning downloads off refuses even an account with slots left", async () => {
+    mockedGetLocalUserId.mockResolvedValue(freeUserId);
+    await addRule({ key: "downloads.enabled", value: false, scopeType: "global" });
+    const id = await insertClip(freeUserId, 700);
+    const res = await dl(id);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/disabled/i);
+  }, 30_000);
+
+  it("turning downloads off also stops an unmetered account", async () => {
+    mockedGetLocalUserId.mockResolvedValue(proUserId);
+    await addRule({ key: "downloads.enabled", value: false, scopeType: "global" });
+    const id = await insertClip(proUserId, 701);
+    expect((await dl(id)).status).toBe(403);
+  }, 30_000);
 });

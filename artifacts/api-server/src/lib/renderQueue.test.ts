@@ -265,3 +265,70 @@ describe("makeArchiveBusyProbe", () => {
     });
   });
 });
+
+describe("live, admin-configurable limits", () => {
+  it("admits against the cap in force at the moment of admission, not at construction", async () => {
+    let cap = 1;
+    const q = new RenderQueue({
+      concurrency: 1,
+      liveConfig: async () => ({ concurrency: cap }),
+    });
+    const gates = [deferred(), deferred(), deferred()];
+    let peak = 0;
+    const hold = (i: number) =>
+      q.run(`c${i}`, async () => {
+        peak = Math.max(peak, q.snapshot().active);
+        await gates[i]!.promise;
+      });
+
+    void hold(0);
+    await tick();
+    expect(q.snapshot().active).toBe(1);
+
+    // An admin raises the cap mid-evening; the next job takes the new slot
+    // without a restart.
+    cap = 3;
+    void hold(1);
+    void hold(2);
+    await tick();
+    expect(q.snapshot().active).toBe(3);
+    expect(peak).toBe(3);
+
+    gates.forEach((g) => g.resolve());
+  });
+
+  it("stops yielding to the archive when an admin turns yielding off", async () => {
+    const q = new RenderQueue({
+      concurrency: 1,
+      isArchiveBusy: async () => true,          // archive is busy the whole time
+      liveConfig: async () => ({ yieldToArchive: false }),
+      sleep: async () => { throw new Error("must not sleep"); },
+    });
+    await expect(q.run("clip-1", async () => "rendered")).resolves.toBe("rendered");
+  });
+
+  it("honours an admin-shortened yield ceiling", async () => {
+    let clock = 0;
+    const q = new RenderQueue({
+      concurrency: 1,
+      isArchiveBusy: async () => true,
+      yieldPollMs: 30_000,
+      maxYieldMs: 10 * 60_000,                    // constructor default
+      liveConfig: async () => ({ yieldCeilingMs: 60_000 }),  // admin says one minute
+      now: () => clock,
+      sleep: async (ms) => { clock += ms; },
+    });
+    await expect(q.run("clip-1", async () => "rendered")).resolves.toBe("rendered");
+    expect(clock).toBe(60_000);
+  });
+
+  it("falls back to the configured values when settings cannot be read", async () => {
+    // An unreadable settings table must not stop renders, for the same reason
+    // the archive probe fails open.
+    const q = new RenderQueue({
+      concurrency: 2,
+      liveConfig: async () => { throw new Error("db down"); },
+    });
+    await expect(q.run("clip-1", async () => "rendered")).resolves.toBe("rendered");
+  });
+});
