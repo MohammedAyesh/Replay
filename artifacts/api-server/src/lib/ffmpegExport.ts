@@ -9,6 +9,11 @@ import {
   REQUIRED_SOURCE_HEIGHT,
   REQUIRED_SOURCE_WIDTH,
 } from "./exportSource";
+import {
+  CLIP_RENDER_ENCODER,
+  clipAudioEncoderArgs,
+  clipVideoEncoderArgs,
+} from "./ffmpegRenderSpec";
 
 const SRC_W = REQUIRED_SOURCE_WIDTH;
 const SRC_H = REQUIRED_SOURCE_HEIGHT;
@@ -389,7 +394,8 @@ function buildZoompanFilter(options: {
       const dt = Math.max(1e-9, (kfs[i + 1].t - kfs[i].t) * clipDuration);
       const slope = (values[i + 1] - values[i]) / dt;
       terms.push(
-        `(${formatNumber(slope)}*clip((on/30)-${formatNumber(t0)}\\,0\\,${formatNumber(dt)}))`,
+        `(${formatNumber(slope)}*clip((on/${CLIP_RENDER_ENCODER.frameRate})-` +
+        `${formatNumber(t0)}\\,0\\,${formatNumber(dt)}))`,
       );
     }
     return terms.join("+");
@@ -412,7 +418,7 @@ function buildZoompanFilter(options: {
     geometryAtKeyframes.map((g) => g.yPx * supersample),
   );
 
-  const FPS = 30;
+  const FPS = CLIP_RENDER_ENCODER.frameRate;
   const frameCount = Math.ceil(clipDuration * FPS);
   const EPSILON = 1 / supersample + 1e-6;
   for (let i = 0; i < frameCount; i++) {
@@ -676,6 +682,8 @@ function run(bin: string, args: string[], timeoutMs = SUBPROCESS_TIMEOUT_MS): Pr
   });
 }
 
+export { run as runFfmpeg };
+
 export class BufferedSourceDimensionsError extends Error {
   readonly actualWidth: number | null;
   readonly actualHeight: number | null;
@@ -786,7 +794,8 @@ async function normalizeSegment(
   const tmpPath = path.join(os.tmpdir(), `soccerwatch-intro-${randomUUID()}.mp4`);
   const scalePad =
     `scale=${dims.w}:${dims.h}:force_original_aspect_ratio=decrease,` +
-    `pad=${dims.w}:${dims.h}:(ow-iw)/2:(oh-ih)/2:black,fps=30,setsar=1`;
+    `pad=${dims.w}:${dims.h}:(ow-iw)/2:(oh-ih)/2:black,` +
+    `fps=${CLIP_RENDER_ENCODER.frameRate},setsar=1`;
 
   const args = hasAudio
     ? [
@@ -795,8 +804,8 @@ async function normalizeSegment(
         // Branding, not content — see MAX_INTRO_SECONDS.
         "-t", String(MAX_INTRO_SECONDS),
         "-vf", scalePad,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+        ...clipVideoEncoderArgs(),
+        ...clipAudioEncoderArgs(),
         "-movflags", "+faststart",
         "-y", tmpPath,
       ]
@@ -808,8 +817,8 @@ async function normalizeSegment(
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-t", String(MAX_INTRO_SECONDS),
         "-vf", scalePad,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k",
+        ...clipVideoEncoderArgs(),
+        ...clipAudioEncoderArgs(),
         "-map", "0:v:0", "-map", "1:a:0",
         "-shortest",
         "-movflags", "+faststart",
@@ -955,25 +964,18 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     "-t", String(clipDuration),
     // pad -> crop pan -> scale, all built together so black bars survive
     ...(filterScriptPath ? ["-filter_script:v", filterScriptPath] : ["-vf", cropFilter]),
-    // H.264 video, fast encode, web-compatible
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-crf", "23",
-    "-pix_fmt", "yuv420p",
-    // Force constant 30 fps on output. 30 fps is the platform contract: the
-    // normalizeSegment() intro pass (above) already pins the intro to 30 fps via
-    // the fps=30 filter, and the concat demuxer used by withIntro() requires
+    // H.264/AAC and CFR parameters are shared with intro normalization and
+    // pre-built branding end cards. This exact match is required for -c copy
+    // concatenation.
+    ...clipVideoEncoderArgs(),
+    // Force the shared platform frame rate on output. The normalizeSegment()
+    // intro pass (above) pins the intro to the same rate via its shared fps
+    // filter, and the concat demuxer used by withIntro() requires
     // matching frame rates across segments. Sources recorded at 25 fps are
     // intentionally normalized to that platform rate. -fps_mode cfr enforces
     // constant frame timing rather than just stamping a target rate onto a
     // variable-rate stream.
-    "-r", "30",
-    "-fps_mode", "cfr",
-    // AAC audio — always pin to stereo 44.1 kHz so intro concat works cleanly
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-ar", "44100",
-    "-ac", "2",
+    ...clipAudioEncoderArgs(),
     ...(needsSilentTrack ? ["-map", "0:v:0", "-map", "1:a:0", "-shortest"] : []),
     // Optimise for streaming/download
     "-movflags", "+faststart",
