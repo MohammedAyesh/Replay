@@ -16,6 +16,7 @@ what failure looks like, and what to do about it.
 | **B6** | [GPU workstation](B6-gpu-workstation.md) | The job agent, sleep suppression, the workstation/VPS division of labour |
 | **B7** | [Incident runbooks](B7-incident-runbooks.md) | Seven one-page runbooks: symptom → first diagnostic → resolution → prevention |
 | **B8** | [Analysis queue](B8-analysis-queue.md) | The button-to-claimable path: queueing a match, the workstation worker, job states, failure modes, the API |
+| **B9** | [Branding and settings](B9-branding-and-settings.md) | Where to set what: the three settings layers, the overlay and end card, the resolution order, and which toggles still do nothing |
 
 Supporting documents produced alongside these:
 
