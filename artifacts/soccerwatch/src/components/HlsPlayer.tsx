@@ -34,6 +34,15 @@ export interface HlsPlayerProps {
   onTimelineChange?: (timeline: {
     position: number;
     liveEdge: number;
+    /**
+     * Low end of the reviewable window, already clamped to `windowSeconds`.
+     *
+     * Emitted because a scrubber cannot be drawn without it: the caller knows
+     * where the handle is and where live is, but not how far back the footage
+     * actually goes, and guessing that is how a slider ends up letting someone
+     * seek into an empty buffer.
+     */
+    start: number;
     programTime?: number;
   }) => void;
 }
@@ -194,6 +203,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         onTimelineChange?.({
           position: el.currentTime,
           liveEdge: rawEnd,
+          start,
           programTime: anchor
             ? anchor.wallTime + (el.currentTime - anchor.mediaTime) * 1000
             : undefined,

@@ -18,6 +18,14 @@ import SettingsTab from "@/components/admin/SettingsTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
 import BrandingTab from "@/components/admin/BrandingTab";
 import {
+  dvrWindowSeconds,
+  fetchLiveSource,
+  formatBehindLive,
+  formatWallClock,
+  nextPollMs,
+  type LiveSource,
+} from "@/lib/liveSource";
+import {
   getGetFeedQueryKey,
   getListClipsQueryKey,
   getListUserClipsQueryKey,
@@ -2937,6 +2945,8 @@ function CameraCard({
 interface VarTimeline {
   position: number;
   liveEdge: number;
+  /** Low end of the reviewable window, clamped to what the VPS is keeping. */
+  start: number;
   programTime?: number;
 }
 
@@ -2948,8 +2958,41 @@ function VarTab() {
   const [camera, setCamera] = useState<Camera>("camera1");
   const [rate, setRate] = useState(1);
   const [timeline, setTimeline] = useState<VarTimeline | null>(null);
+  const [source, setSource] = useState<LiveSource | null>(null);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  /** Where the scrub handle sits while it is being dragged, in seconds of media time. */
+  const [scrub, setScrub] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Ask the server where to play from, and whether anything is arriving.
+   *
+   * VAR used to point at `/api/live/<cam>/index.m3u8`, which relayed every
+   * segment through the app from the VPS origin, bypassing the CDN entirely.
+   * It also had no way to know that cam1's playlist had been frozen for four
+   * days: the fetch succeeds, the player attaches, and the reviewer stares at a
+   * spinner. Both are the same fix.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const next = await fetchLiveSource(camera);
+        if (cancelled) return;
+        setSource(next);
+        setSourceError(null);
+        timer = setTimeout(poll, nextPollMs(next.status));
+      } catch (err) {
+        if (cancelled) return;
+        setSourceError((err as Error).message);
+        timer = setTimeout(poll, nextPollMs(null));
+      }
+    };
+    poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [camera]);
   const handleTimelineChange = useCallback((nextTimeline: VarTimeline) => {
     setTimeline(nextTimeline);
   }, []);
@@ -3047,15 +3090,32 @@ function VarTab() {
       </div>
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3">
-        <SharedHlsPlayer
-          key={camera}
-          ref={videoRef}
-          url={`${LIVE_PLAYBACK_BASE}/${camera}/index.m3u8`}
-          label={`${camera === "camera1" ? "Camera 1" : "Camera 2"} · VAR`}
-          windowSeconds={300}
-          retryOnNetworkError
-          onTimelineChange={handleTimelineChange}
-        />
+        {sourceError ? (
+          <p className="text-red-400 text-xs px-1 py-6 text-center">{sourceError}</p>
+        ) : !source ? (
+          <p className="text-zinc-500 text-xs px-1 py-6 text-center">Checking the feed…</p>
+        ) : !source.status.live ? (
+          <div className="px-1 py-6 text-center">
+            <p className="text-zinc-300 text-sm">{source.message ?? "No live feed."}</p>
+            <p className="text-zinc-600 text-xs mt-1">
+              There is nothing to review until a camera is pushing. Checking again every 15 seconds.
+            </p>
+          </div>
+        ) : (
+          <SharedHlsPlayer
+            key={source.url}
+            ref={videoRef}
+            url={source.url}
+            label={`${camera === "camera1" ? "Camera 1" : "Camera 2"} · VAR`}
+            // The window the VPS is actually keeping, not a guess. This was
+            // hardcoded to 300 while the origin held 900 for the stream copy and
+            // about 1800 for the transcode, so most of the reviewable footage
+            // could not be reached.
+            windowSeconds={dvrWindowSeconds(source.status)}
+            retryOnNetworkError
+            onTimelineChange={handleTimelineChange}
+          />
+        )}
       </div>
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-4">
@@ -3064,6 +3124,56 @@ function VarTab() {
           <span className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">Playback position</span>
           <span className="text-white text-sm font-mono tabular-nums">{positionLabel}</span>
         </div>
+
+        {/*
+          The scrub bar.
+
+          VAR had jog buttons and no timeline, so reviewing a moment meant
+          guessing how many times to press −10. A referee knows where in the
+          half the incident was, not how many ten-second hops back it is.
+
+          Dragging seeks live rather than only on release: scrubbing to find a
+          moment is a visual search, and a handle that moves over a frozen frame
+          is not a search.
+        */}
+        {timeline && (
+          <div className="space-y-1.5">
+            <input
+              type="range"
+              aria-label="Scrub the review window"
+              min={timeline.start}
+              max={timeline.liveEdge}
+              step={0.05}
+              value={scrub ?? timeline.position}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setScrub(next);
+                const video = videoRef.current;
+                if (video) {
+                  video.pause();
+                  video.currentTime = next;
+                }
+              }}
+              onPointerUp={() => setScrub(null)}
+              onKeyUp={() => setScrub(null)}
+              className="w-full accent-primary"
+            />
+            <div className="flex justify-between text-[11px] text-zinc-500 tabular-nums">
+              <span>
+                {timeline.programTime != null
+                  ? formatWallClock(new Date((timeline.programTime - (timeline.position - timeline.start)) * 1000))
+                  : `−${Math.round(timeline.liveEdge - timeline.start)}s`}
+              </span>
+              <span className={cn(
+                "font-semibold",
+                timeline.liveEdge - (scrub ?? timeline.position) <= 2 ? "text-red-400" : "text-zinc-300",
+              )}>
+                {formatBehindLive(timeline.liveEdge - (scrub ?? timeline.position))}
+              </span>
+              <span>live</span>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => seekBy(-30)} className="px-3 py-2 rounded-lg border border-zinc-700 text-xs font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors">−30 sec</button>
