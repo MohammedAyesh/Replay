@@ -791,6 +791,10 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .idb-handle { display: grid; gap: 4px; align-content: start; cursor: grab; padding: 4px; border-radius: 6px; }
 .idb-handle:active { cursor: grabbing; }
 .idb-name { width: 100%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: #eef3e6; padding: 4px 6px; border-radius: 4px; font-weight: 600; }
+.idb-row-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.idb-select { display: inline-flex; align-items: center; gap: 4px; color: #91a08f; font-family: var(--app-font-mono); font-size: 9px; cursor: pointer; }
+.idb-select input { accent-color: #d4ff4f; }
+.idb-remove { border: 1px solid rgba(255,131,95,.35); background: rgba(255,131,95,.08); color: #ff835f; padding: 3px 7px; border-radius: 4px; cursor: pointer; font-size: 10px; }
 .idb-meta { color: #91a08f; font-family: var(--app-font-mono); font-size: 10px; }
 .idb-timeline { position: relative; height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
 .idb-timeline span { position: absolute; top: 0; height: 100%; background: #d4ff4f; opacity: .8; }
@@ -809,6 +813,13 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .idb-frags h2 { font-size: 14px; color: #91a08f; margin: 18px 0 8px; }
 .idb-frags .idb-row { grid-template-columns: 200px 1fr; }
 .idb-frags .idb-crop, .idb-frags .idb-crop img { height: 64px; }
+.idb-removed { width: min(100%, 1440px); margin: 18px auto 0; }
+.idb-removed h2 { font-size: 14px; color: #ffbf69; margin: 0 0 8px; }
+.idb-removed-list { display: grid; gap: 6px; }
+.idb-removed-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid rgba(255,191,105,.25); border-radius: 6px; background: rgba(255,191,105,.06); }
+.idb-removed-row span { display: grid; gap: 2px; }
+.idb-removed-row small { color: #91a08f; font-family: var(--app-font-mono); font-size: 10px; }
+.idb-removed-row button { border: 1px solid rgba(212,255,79,.4); background: rgba(212,255,79,.1); color: #d4ff4f; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
 
 /* ── Responsive app shell ──────────────────────────────────────────────── */
 /*
@@ -988,7 +999,8 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
   .idb-status,
   .idb-rows,
   .idb-newrow,
-  .idb-frags {
+   .idb-frags,
+   .idb-removed {
     width: min(100%, 1440px);
     margin-inline: auto;
   }

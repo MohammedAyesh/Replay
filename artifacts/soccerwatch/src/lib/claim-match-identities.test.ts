@@ -69,6 +69,17 @@ describe("applyClaimIdentities", () => {
     expect(result.crossings[0].trackId).toBe("same");
     expect(result.crossings[0].otherTrackId).toBe("unclaimed:0:t2:3");
   });
+
+  it("removes excluded pieces instead of exposing them as unclaimed players", () => {
+    const result = applyClaimIdentities(segment(), [
+      { id: "spectator", excluded: true, parts: [{ trackId: "t1", fromFrame: 0, toFrame: 4 }] },
+      { id: "alice", parts: [{ trackId: "t1", fromFrame: 5, toFrame: 9 }] },
+    ]);
+
+    expect(result.tracks.map((track) => track.id)).toEqual(["t2", "alice"]);
+    expect(result.tracks.find((track) => track.id === "alice")?.boxes.map((box) => box.frame)).toEqual([5, 6, 7, 8, 9]);
+    expect(result.crossings).toEqual([]);
+  });
 });
 
 describe("identityMapMatchesBundle", () => {

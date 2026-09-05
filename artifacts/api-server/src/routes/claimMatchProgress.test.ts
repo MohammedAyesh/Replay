@@ -236,6 +236,11 @@ describe("claim match server-derived progress", () => {
         id: "person-b",
         parts: [{ trackId: "piece-a", fromFrame: 21, toFrame: 99 }],
       }])).toBe(false);
+    expect(identityMapMovesVouchedFragment(binding as never, [{
+      id: "person-a",
+      excluded: true,
+      parts: [{ trackId: "piece-a", fromFrame: 10, toFrame: 20 }],
+    }])).toBe(true);
   });
 
   it("distinguishes disjoint claimant fragments from a true overlap", () => {

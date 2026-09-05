@@ -7,11 +7,13 @@ export type IdentityBoardPart = {
 export type IdentityBoardRow = {
   id: string;
   name: string;
+  excluded?: boolean;
   parts: IdentityBoardPart[];
 };
 
 export type IdentityBoardSnapshot = {
   rows: IdentityBoardRow[];
+  excludedRows: IdentityBoardRow[];
   same: Set<string>;
   different: Set<string>;
 };
@@ -24,6 +26,10 @@ export type IdentityBoardSnapshot = {
 export function restoreAcceptedBoard(snapshot: IdentityBoardSnapshot): IdentityBoardSnapshot {
   return {
     rows: snapshot.rows.map((row) => ({
+      ...row,
+      parts: row.parts.map((part) => ({ ...part })),
+    })),
+    excludedRows: snapshot.excludedRows.map((row) => ({
       ...row,
       parts: row.parts.map((part) => ({ ...part })),
     })),
