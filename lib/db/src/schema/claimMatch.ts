@@ -127,6 +127,8 @@ export type TrackingPitchModel = {
 export type TrackingIdentity = {
   id: string;
   name?: string | null;
+  /** Admin identity-board decision: this row is excluded from player identities. */
+  excluded?: boolean;
   parts: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
 };
 

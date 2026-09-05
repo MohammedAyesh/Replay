@@ -10,5 +10,7 @@ import type { TrackingIdentityPart } from './trackingIdentityPart';
 export interface TrackingIdentity {
   id: string;
   name?: string | null;
+  /** Admin identity-board decision; excluded rows are not player identities. */
+  excluded?: boolean;
   parts: TrackingIdentityPart[];
 }
