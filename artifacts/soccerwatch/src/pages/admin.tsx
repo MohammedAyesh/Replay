@@ -2646,6 +2646,8 @@ const LIVE_PLAYBACK_BASE = `${basePath}/api/live`;
 
 interface CameraStatus {
   live: boolean;
+  unitActive?: boolean;
+  unit_active?: boolean;
   startedAt?: string;
   viewers?: number;
   [k: string]: unknown;
@@ -2764,6 +2766,9 @@ function CameraCard({
   adminPassword: string;
 }) {
   const [status, setStatus] = useState<CameraStatus | null>(null);
+  const [liveSource, setLiveSource] = useState<LiveSource | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(true);
+  const [sourceError, setSourceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2804,6 +2809,38 @@ function CameraCard({
     return () => clearInterval(id);
   }, [fetchStatus]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    setLiveSource(null);
+    setSourceError(null);
+    setSourceLoading(true);
+
+    const poll = async () => {
+      try {
+        const next = await fetchLiveSource(camera);
+        if (cancelled) return;
+        setLiveSource(next);
+        setSourceError(null);
+        setSourceLoading(false);
+        timer = setTimeout(poll, nextPollMs(next.status));
+      } catch (e) {
+        if (cancelled) return;
+        setLiveSource(null);
+        setSourceError(e instanceof Error ? e.message : "Could not verify the live feed");
+        setSourceLoading(false);
+        timer = setTimeout(poll, nextPollMs(null));
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [camera]);
+
   const handleStart = async () => {
     setWorking(true);
     try {
@@ -2830,8 +2867,18 @@ function CameraCard({
     }
   };
 
-  const playbackUrl = `${LIVE_PLAYBACK_BASE}/${camera}/index.m3u8`;
-  const isLive = status?.live === true;
+  const playbackUrl = liveSource?.url ?? `${LIVE_PLAYBACK_BASE}/${camera}/index.m3u8`;
+  const unitRunning = typeof status?.unitActive === "boolean"
+    ? status.unitActive
+    : typeof status?.unit_active === "boolean"
+      ? status.unit_active
+      : status?.live === true;
+  const videoArriving = liveSource?.status.live === true;
+  const statusReady = !loading && !sourceLoading;
+  const isLive = statusReady && unitRunning && videoArriving;
+  const runningNoFeed = statusReady && unitRunning && !videoArriving;
+  const showOffline = statusReady && !unitRunning;
+  const noFeedMessage = liveSource?.message ?? sourceError ?? "Could not verify the live feed.";
   const label = camera === "camera1" ? "Camera 1" : "Camera 2";
 
   return (
@@ -2845,6 +2892,7 @@ function CameraCard({
           "w-2.5 h-2.5 rounded-full flex-shrink-0",
           loading ? "bg-zinc-600 animate-pulse" :
           isLive ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse" :
+          runningNoFeed ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.45)]" :
           "bg-zinc-600"
         )} />
         <span className="text-white font-semibold text-sm">{label}</span>
@@ -2853,7 +2901,12 @@ function CameraCard({
             LIVE
           </span>
         )}
-        {!isLive && !loading && (
+        {runningNoFeed && (
+          <span className="text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full font-medium tracking-wide ml-auto">
+            RUNNING, NO FEED
+          </span>
+        )}
+        {showOffline && (
           <span className="text-[10px] text-zinc-500 ml-auto">Offline</span>
         )}
       </div>
@@ -2874,15 +2927,29 @@ function CameraCard({
           </div>
         )}
 
-        {!loading && isLive && status?.startedAt && (
+        {sourceLoading && !loading && (
+          <div className="flex items-center gap-2 text-zinc-500 text-xs">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Checking feed…
+          </div>
+        )}
+
+        {runningNoFeed && (
+          <div className="flex items-start gap-2 text-amber-300 text-xs bg-amber-900/20 border border-amber-700/40 rounded-xl px-3 py-2">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>{noFeedMessage}</span>
+          </div>
+        )}
+
+        {!loading && unitRunning && status?.startedAt && (
           <div className="flex items-center gap-1.5 text-xs text-zinc-400">
             <Clock className="w-3 h-3" />
             Started {new Date(status.startedAt as string).toLocaleTimeString()}
           </div>
         )}
 
-        {/* Playback link when live */}
-        {isLive && (
+        {/* Playback link while the service is running, even if the feed is stale. */}
+        {unitRunning && (
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <a
@@ -2912,7 +2979,7 @@ function CameraCard({
         <div className="flex gap-2 pt-1">
           <button
             onClick={handleStart}
-            disabled={working || loading || isLive}
+            disabled={working || loading || unitRunning}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold bg-red-600 text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Radio className="w-3.5 h-3.5" />
@@ -2920,7 +2987,7 @@ function CameraCard({
           </button>
           <button
             onClick={handleStop}
-            disabled={working || loading || !isLive}
+            disabled={working || loading || !unitRunning}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Square className="w-3.5 h-3.5" />
