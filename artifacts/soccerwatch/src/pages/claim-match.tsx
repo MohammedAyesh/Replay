@@ -19,15 +19,25 @@ import { useLocation, useParams } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGetClaimMatchQueryKey,
+  useCreateClaimMatchOffPitchSpan,
   useCreateClaimMatchCorrection,
+  useDeleteClaimMatchOffPitchSpan,
   useGetClaimMatch,
   useUndoClaimMatchCorrection,
   useUpdateClaimMatchProgress,
   useResetClaimMatchDemo,
 } from "@workspace/api-client-react";
-import type { ClaimCorrection, ClaimMatchResponse, ClaimPlayerStats, TrackingSegment } from "@workspace/api-client-react";
+import type {
+  ClaimCorrection,
+  ClaimMatchResponse,
+  ClaimOffPitchInput,
+  ClaimPlayerStats,
+  TrackingSegment,
+} from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
+import { useTranslation } from "@/i18n";
 import { ClaimStage } from "@/components/ClaimStage";
+import { ClaimInlineConfirmation } from "@/components/ClaimInlineConfirmation";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import {
   boxesOverlap,
@@ -58,6 +68,7 @@ import {
 } from "@/lib/claim-match-segments";
 import {
   buildClaimAnchors,
+  claimAnswerMoment,
   nearestAnchorIndex,
   nextUnansweredAnchor,
 } from "@/lib/claim-match-anchors";
@@ -75,6 +86,46 @@ type Candidate = {
   coasting?: boolean;
   taken?: boolean;
 };
+
+type ClaimOffPitchSpan = {
+  id: number;
+  clientId: string;
+  fromSeconds: number;
+  toSeconds: number;
+  createdAt: string;
+};
+
+type OffPitchConflictState = {
+  payload: ClaimOffPitchInput;
+  rangeCount: number | null;
+  answerCount: number | null;
+  queueActionId?: string;
+};
+
+type ClaimConfirmation =
+  | { kind: "offPitchConflict"; conflict: OffPitchConflictState }
+  | { kind: "demoReset" };
+
+function readOffPitchConflict(
+  error: unknown,
+  payload: ClaimOffPitchInput,
+  queueActionId?: string,
+): OffPitchConflictState | null {
+  if (!error || typeof error !== "object" || (error as { status?: unknown }).status !== 409) return null;
+  const data = (error as { data?: unknown }).data;
+  if (!data || typeof data !== "object") {
+    return { payload, rangeCount: null, answerCount: null, queueActionId };
+  }
+  const body = data as { conflicts?: unknown; correctionCount?: unknown };
+  return {
+    payload,
+    rangeCount: Array.isArray(body.conflicts) ? body.conflicts.length : null,
+    answerCount: typeof body.correctionCount === "number" && Number.isFinite(body.correctionCount)
+      ? body.correctionCount
+      : null,
+    queueActionId,
+  };
+}
 
 function segmentAsBundle(
   manifest: ClaimMatchResponse["manifest"],
@@ -308,6 +359,7 @@ export default function ClaimMatchPage() {
   const params = useParams<{ id?: string }>();
   const [, setLocation] = useLocation();
   const { user, isLoading: authLoading, isGuest } = useAuth();
+  const { t } = useTranslation();
   const isDemo = !params.id || params.id === "demo";
   const recordingId = isDemo ? 0 : Number(params.id);
   const queryKey = useMemo(() => getGetClaimMatchQueryKey(recordingId), [recordingId]);
@@ -333,16 +385,22 @@ export default function ClaimMatchPage() {
   const updateProgress = useUpdateClaimMatchProgress();
   const createCorrection = useCreateClaimMatchCorrection();
   const undoCorrection = useUndoClaimMatchCorrection();
+  const createOffPitch = useCreateClaimMatchOffPitchSpan();
+  const deleteOffPitch = useDeleteClaimMatchOffPitchSpan();
   const resetClaimDemo = useResetClaimMatchDemo();
   const updateProgressAsync = updateProgress.mutateAsync;
   const createCorrectionAsync = createCorrection.mutateAsync;
   const undoCorrectionAsync = undoCorrection.mutateAsync;
+  const createOffPitchAsync = createOffPitch.mutateAsync;
+  const deleteOffPitchAsync = deleteOffPitch.mutateAsync;
   const queryClient = useQueryClient();
   const queueFlushControllerRef = useRef(createClaimQueueFlushController());
   const queueSyncRef = useRef({
     updateProgressAsync,
     createCorrectionAsync,
     undoCorrectionAsync,
+    createOffPitchAsync,
+    deleteOffPitchAsync,
     queryClient,
     responseQueryKey,
     activeRecordingId: 0,
@@ -366,6 +424,7 @@ export default function ClaimMatchPage() {
   const [queueRetryToken, setQueueRetryToken] = useState(0);
   const [resettingDemo, setResettingDemo] = useState(false);
   const [demoResetError, setDemoResetError] = useState("");
+  const [confirmation, setConfirmation] = useState<ClaimConfirmation | null>(null);
   const [segmentCache, setSegmentCache] = useState<Record<number, TrackingSegment>>({});
   const segmentCacheRef = useRef<Record<number, TrackingSegment>>({});
   const segmentRequestsRef = useRef<Record<number, Promise<void>>>({});
@@ -374,10 +433,15 @@ export default function ClaimMatchPage() {
   const [segmentError, setSegmentError] = useState("");
   const [segmentRetryToken, setSegmentRetryToken] = useState(0);
   const [videoReadyTick, setVideoReadyTick] = useState(0);
+  const [offPitchStart, setOffPitchStart] = useState<number | null>(null);
+  const [offPitchSaving, setOffPitchSaving] = useState(false);
   const snappedAnchorRef = useRef<string | null>(null);
   const anchorAnswerNonceRef = useRef(0);
+  const offPitchNonceRef = useRef(0);
   const undoneClientIdsRef = useRef(new Set<string>());
   const restoredRecordingRef = useRef<number | null>(null);
+  const resumeTrackingTimeRef = useRef<number | null>(null);
+  const videoRestoreKeyRef = useRef<string | null>(null);
 
   const response = isDemo ? demoQuery.data : claimQuery.data;
   const activeRecordingId = isDemo ? response?.recording.id || 0 : recordingId;
@@ -385,6 +449,8 @@ export default function ClaimMatchPage() {
     updateProgressAsync,
     createCorrectionAsync,
     undoCorrectionAsync,
+    createOffPitchAsync,
+    deleteOffPitchAsync,
     queryClient,
     responseQueryKey,
     activeRecordingId,
@@ -392,6 +458,7 @@ export default function ClaimMatchPage() {
   const recording = response?.recording;
   const manifest = response?.manifest;
   const serverProgress = response?.progress;
+  const offPitchSpans = (response?.offPitchSpans ?? []) as ClaimOffPitchSpan[];
   useEffect(() => {
     if (manifest && manifest.identities?.length && !identityMapMatchesBundle(manifest)) {
       setNotice("This recording's identity map belongs to an older tracking bundle, so it was not applied. An admin must reload the Identity Board and save it again.");
@@ -420,8 +487,8 @@ export default function ClaimMatchPage() {
   const claimAnchors = useMemo(
     // Anchor ids are derived from their stable tracking times, never from the
     // currently loaded segment's array position.
-    () => buildClaimAnchors(duration, [], duration < 120 ? 4 : 8),
-    [duration],
+    () => buildClaimAnchors(duration, [], duration < 120 ? 4 : 8, offPitchSpans),
+    [duration, offPitchSpans],
   );
   const answeredAnchorMoments = useMemo(
     () => allCorrections
@@ -476,6 +543,26 @@ export default function ClaimMatchPage() {
       : videoSeconds,
     [bundle],
   );
+
+  // The saved tracking position can be restored before HLS has attached to the
+  // video element. Keep it separate from the live playhead and apply it once
+  // when the media element is ready, rather than re-seeking on every timeupdate.
+  useEffect(() => {
+    videoRestoreKeyRef.current = null;
+  }, [activeRecordingId, recording?.videoUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const resumeTrackingTime = resumeTrackingTimeRef.current;
+    if (!video || !bundle || resumeTrackingTime === null || video.readyState < 1) return;
+    const restoreKey = `${activeRecordingId}:${recording?.videoUrl ?? ""}`;
+    if (videoRestoreKeyRef.current === restoreKey) return;
+    const targetVideoTime = toVideoTime(resumeTrackingTime);
+    if (!Number.isFinite(targetVideoTime)) return;
+    video.currentTime = targetVideoTime;
+    videoRestoreKeyRef.current = restoreKey;
+  }, [activeRecordingId, bundle, currentTime, recording?.videoUrl, toVideoTime, videoReadyTick]);
+
   /** The only way this page moves the playhead. Tracking seconds in. */
   const seekTracking = useCallback((trackingSeconds: number) => {
     const next = bundle ? clampToTracked(trackingSeconds, bundle) : Math.max(0, trackingSeconds);
@@ -664,7 +751,11 @@ export default function ClaimMatchPage() {
     snappedAnchorRef.current = currentAnchor.id;
     const anchorFrame = trackingSecondsToFrame(currentAnchor.momentSeconds, bundle);
     const detectionFrame = nearestDetectionFrame(bundle, bundle.tracks, anchorFrame);
-    if (detectionFrame !== null) seekTracking(frameToTrackingSeconds(detectionFrame, bundle));
+    if (detectionFrame !== null) {
+      seekTracking(frameToTrackingSeconds(detectionFrame, bundle));
+    } else {
+      seekTracking(currentAnchor.momentSeconds);
+    }
   }, [bundle, currentAnchor, seekTracking, stage]);
 
   const candidates = useMemo<Candidate[]>(() => {
@@ -710,6 +801,7 @@ export default function ClaimMatchPage() {
       .map((item) => item.momentSeconds);
     const savedAnchorIndex = nextUnansweredAnchor(claimAnchors, savedAnchorMoments);
     const unresolvedIndex = (response.progress.unresolvedMoments ?? [])
+      .concat(response.progress.conflictMoments ?? [])
       .map((moment) => nearestAnchorIndex(claimAnchors, moment))
       .find((index) => index >= 0) ?? -1;
     const reviewIndex = savedAnchorIndex >= 0 ? savedAnchorIndex : unresolvedIndex >= 0 ? unresolvedIndex : 0;
@@ -718,6 +810,9 @@ export default function ClaimMatchPage() {
       || response.progress.stage === "picker"
       || unresolvedIndex >= 0;
     const resumeReview = !response.progress.completed && claimAnchors.length > 0 && hasSavedAnchorState;
+    resumeTrackingTimeRef.current = resumeReview
+      ? claimAnchors[reviewIndex].momentSeconds
+      : response.progress.currentPositionSeconds || 0;
     setAnchorMode(resumeReview);
     setActiveAnchorId(resumeReview ? claimAnchors[reviewIndex].id : null);
     setStage(response.progress.completed ? "done" : resumeReview ? "picker" : "find");
@@ -765,6 +860,7 @@ export default function ClaimMatchPage() {
   const flushQueue = useCallback(async () => {
     if (!canFlushQueue) return;
     const context = queueSyncRef.current;
+    let queuedOffPitchConflict: OffPitchConflictState | null = null;
     const result = await queueFlushControllerRef.current.flush(() =>
       flushClaimQueue({
         readActions: readClaimQueue,
@@ -774,13 +870,35 @@ export default function ClaimMatchPage() {
             await context.updateProgressAsync({ id: action.recordingId, data: action.payload as never });
           } else if (action.kind === "correction") {
             await context.createCorrectionAsync({ id: action.recordingId, data: action.payload as never });
-          } else {
+          } else if (action.kind === "undo") {
             await context.undoCorrectionAsync({ correctionId: action.correctionId });
+          } else if (action.kind === "offPitchCreate") {
+            try {
+              await context.createOffPitchAsync({
+                id: action.recordingId,
+                data: action.payload as unknown as ClaimOffPitchInput,
+              });
+            } catch (error) {
+              queuedOffPitchConflict = readOffPitchConflict(
+                error,
+                action.payload as unknown as ClaimOffPitchInput,
+                action.id,
+              );
+              throw error;
+            }
+          } else {
+            await context.deleteOffPitchAsync({
+              id: action.recordingId,
+              clientId: action.clientId,
+            });
           }
         },
       }),
     );
     setQueuedCount(result.remaining.length);
+    if (queuedOffPitchConflict) {
+      setConfirmation({ kind: "offPitchConflict", conflict: queuedOffPitchConflict });
+    }
     if (result.discarded.length > 0) {
       setNotice(`${result.discarded.length} queued answer${result.discarded.length === 1 ? "" : "s"} could not be applied and was removed`);
     }
@@ -810,10 +928,15 @@ export default function ClaimMatchPage() {
     chosenTrackId: string = EMPTY_ANCHOR_TRACK,
   ) => {
     if (!anchorMode || !currentAnchor || !bundle) return;
-    // The answer belongs to the frame the player actually saw. candidateFrame
-    // is the nearest usable detection frame, so exports and later matching do
-    // not drift from the nominal anchor timestamp.
-    const momentSeconds = frameToTrackingSeconds(candidateFrame, bundle);
+    // Prefer a nearby usable detection so exports stay aligned with what was
+    // shown, but never let a missing detection move the answer to frame zero
+    // or another unrelated part of the match.
+    const anchorFrame = trackingSecondsToFrame(currentAnchor.momentSeconds, bundle);
+    const detectionFrame = nearestDetectionFrame(bundle, bundle.tracks, anchorFrame);
+    const nearestDetectionSeconds = detectionFrame === null
+      ? null
+      : frameToTrackingSeconds(detectionFrame, bundle);
+    const momentSeconds = claimAnswerMoment(currentAnchor.momentSeconds, nearestDetectionSeconds);
     const answerMethod = `anchor-${answer}`;
     const nextIndex = nextUnansweredAnchor(
       claimAnchors,
@@ -840,7 +963,7 @@ export default function ClaimMatchPage() {
       id: `correction-${payload.clientId}`,
       kind: "correction" as const,
       recordingId: activeRecordingId,
-      payload,
+      payload: { ...payload },
       createdAt: Date.now(),
     };
     if (isOffline) {
@@ -872,6 +995,7 @@ export default function ClaimMatchPage() {
             .map((item) => item.momentSeconds) ?? [];
           const nextServerIndex = nextUnansweredAnchor(claimAnchors, latestMoments);
           const unresolvedIndex = (latest?.progress.unresolvedMoments ?? [])
+            .concat(latest?.progress.conflictMoments ?? [])
             .map((moment) => nearestAnchorIndex(claimAnchors, moment))
             .find((index) => index >= 0) ?? -1;
           const reviewIndex = nextServerIndex >= 0 ? nextServerIndex : unresolvedIndex;
@@ -1084,6 +1208,9 @@ export default function ClaimMatchPage() {
   const handleSeek = (value: number) => {
     seekTracking(value);
   };
+  const handleVideoReady = () => {
+    setVideoReadyTick((value) => value + 1);
+  };
   const cyclePlaybackRate = () => {
     setPlaybackRate((current) => {
       const currentIndex = PLAYBACK_SPEEDS.indexOf(current as (typeof PLAYBACK_SPEEDS)[number]);
@@ -1099,16 +1226,117 @@ export default function ClaimMatchPage() {
     }
   };
 
+  const queueOffPitchCreate = async (payload: ClaimOffPitchInput) => {
+    await enqueueClaimAction({
+      id: `offpitch-create-${payload.clientId}`,
+      kind: "offPitchCreate",
+      recordingId: activeRecordingId,
+      payload: { ...payload },
+      createdAt: Date.now(),
+    });
+    setQueuedCount((await readClaimQueue()).length);
+  };
+
+  const submitOffPitchSpan = async (
+    payload: ClaimOffPitchInput,
+    confirmConflict = false,
+    queuedActionId?: string,
+  ) => {
+    setOffPitchSaving(true);
+    setNotice(t.fieldDetail.claimYourMatch.offPitchTitle);
+    const requestPayload = confirmConflict ? { ...payload, confirmConflict: true } : payload;
+    try {
+      await createOffPitchAsync({ id: activeRecordingId, data: requestPayload });
+      if (queuedActionId) await removeClaimAction(queuedActionId);
+      setConfirmation(null);
+      setOffPitchStart(null);
+      setQueuedCount((await readClaimQueue()).length);
+      await queryClient.invalidateQueries({ queryKey: responseQueryKey, refetchType: "active" });
+      setNotice(t.fieldDetail.claimYourMatch.offPitchSaved);
+    } catch (error) {
+      const conflict = readOffPitchConflict(error, requestPayload, queuedActionId);
+      if (conflict) {
+        setConfirmation({ kind: "offPitchConflict", conflict });
+        return;
+      }
+      await queueOffPitchCreate(requestPayload);
+      setOffPitchStart(null);
+      setNotice(t.fieldDetail.claimYourMatch.offPitchQueued);
+    } finally {
+      setOffPitchSaving(false);
+    }
+  };
+
+  const saveOffPitchSpan = async (fromSeconds: number, toSeconds: number) => {
+    if (offPitchSaving || confirmation || toSeconds <= fromSeconds) return;
+    const payload: ClaimOffPitchInput = {
+      clientId: `offpitch-${activeRecordingId}-${Date.now()}-${++offPitchNonceRef.current}`,
+      fromSeconds,
+      toSeconds,
+    };
+    if (isOffline) {
+      await queueOffPitchCreate(payload);
+      setOffPitchStart(null);
+      setNotice(t.fieldDetail.claimYourMatch.offPitchQueued);
+      return;
+    }
+    await submitOffPitchSpan(payload);
+  };
+
+  const removeOffPitchSpan = async (span: ClaimOffPitchSpan) => {
+    if (offPitchSaving || confirmation) return;
+    const queueAction = {
+      id: `offpitch-delete-${activeRecordingId}-${span.clientId}`,
+      kind: "offPitchDelete" as const,
+      recordingId: activeRecordingId,
+      clientId: span.clientId,
+      createdAt: Date.now(),
+    };
+    if (isOffline) {
+      await enqueueClaimAction(queueAction);
+      setQueuedCount((await readClaimQueue()).length);
+      setNotice(t.fieldDetail.claimYourMatch.offPitchRemoveQueued);
+      return;
+    }
+    setOffPitchSaving(true);
+    try {
+      await deleteOffPitchAsync({ id: activeRecordingId, clientId: span.clientId });
+      await queryClient.invalidateQueries({ queryKey: responseQueryKey, refetchType: "active" });
+      setNotice(t.fieldDetail.claimYourMatch.offPitchRemoved);
+    } catch {
+      await enqueueClaimAction(queueAction);
+      setQueuedCount((await readClaimQueue()).length);
+      setNotice(t.fieldDetail.claimYourMatch.offPitchRemoveQueued);
+    } finally {
+      setOffPitchSaving(false);
+    }
+  };
+
+  const confirmOffPitchConflict = async () => {
+    if (confirmation?.kind !== "offPitchConflict" || offPitchSaving) return;
+    await submitOffPitchSpan(
+      confirmation.conflict.payload,
+      true,
+      confirmation.conflict.queueActionId,
+    );
+  };
+
+  const cancelConfirmation = () => {
+    setConfirmation(null);
+    setNotice(t.fieldDetail.claimYourMatch.offPitchCancel);
+  };
+
+  const requestResetDemo = () => {
+    if (!isDemo || resettingDemo) return;
+    setConfirmation({ kind: "demoReset" });
+  };
+
   const handleResetDemo = async () => {
     if (!isDemo || resettingDemo) return;
-    const confirmed = window.confirm(
-      "Start Claim Demo over? Your saved demo answers and progress will be removed. Other matches and clips will not be affected.",
-    );
-    if (!confirmed) return;
-
+    setConfirmation(null);
     setResettingDemo(true);
     setDemoResetError("");
-    setNotice("Resetting demo");
+    setNotice(t.fieldDetail.claimYourMatch.resettingDemo);
     try {
       await queueFlushControllerRef.current.waitForFlush();
       const reset = await resetClaimDemo.mutateAsync();
@@ -1132,6 +1360,7 @@ export default function ClaimMatchPage() {
             answeredAnchorCount: 0,
             acceptedAnchorCount: 0,
             unresolvedMoments: [],
+            conflictMoments: [],
             clipsUnlocked: 0,
             correctionCount: 0,
             completed: false,
@@ -1167,6 +1396,8 @@ export default function ClaimMatchPage() {
       setSegmentLoading(false);
       setSegmentError("");
       setVideoReadyTick(0);
+      resumeTrackingTimeRef.current = 0;
+      videoRestoreKeyRef.current = null;
       anchorAnswerNonceRef.current = 0;
       restoredRecordingRef.current = null;
       lastSavedPosition.current = 0;
@@ -1180,14 +1411,23 @@ export default function ClaimMatchPage() {
         queryKey: responseQueryKey,
         refetchType: "active",
       });
-      setNotice("Demo reset · start by finding your moments");
+      setNotice(t.fieldDetail.claimYourMatch.demoResetDone);
     } catch {
-      setDemoResetError("We couldn’t reset the demo. Try again.");
-      setNotice("Demo reset failed");
+      setDemoResetError(t.fieldDetail.claimYourMatch.demoResetFailed);
+      setNotice(t.fieldDetail.claimYourMatch.demoResetFailed);
     } finally {
       setResettingDemo(false);
     }
   };
+
+  const offPitchConflictCopy = confirmation?.kind === "offPitchConflict"
+    && confirmation.conflict.rangeCount !== null
+    && confirmation.conflict.answerCount !== null
+    ? t.fieldDetail.claimYourMatch.offPitchConflictCounts(
+      confirmation.conflict.rangeCount,
+      confirmation.conflict.answerCount,
+    )
+    : t.fieldDetail.claimYourMatch.offPitchConflictFallback;
 
   const panelBody = (
     <>
@@ -1201,6 +1441,72 @@ export default function ClaimMatchPage() {
           </small>
            {completionSyncPending && <small className="claim-completion-sync" role="status">Checking the saved result…</small>}
         </div>
+         <div className="claim-offpitch-tools" data-testid="claim-offpitch-tools">
+           <div className="claim-offpitch-heading">
+             <span><Clock3 size={15} /> {t.fieldDetail.claimYourMatch.offPitchTitle}</span>
+             <small>{t.fieldDetail.claimYourMatch.offPitchDesc}</small>
+           </div>
+           <div className="claim-offpitch-actions">
+             <button
+               type="button"
+               className="claim-button claim-button-secondary"
+               data-testid="button-offpitch-toggle"
+                disabled={offPitchSaving || Boolean(confirmation)}
+               onClick={() => {
+                 if (offPitchStart === null) {
+                   setOffPitchStart(currentTime);
+                   setNotice(t.fieldDetail.claimYourMatch.offPitchChooseEnd);
+                 } else {
+                   void saveOffPitchSpan(offPitchStart, currentTime);
+                 }
+               }}
+             >
+               {offPitchStart === null ? t.fieldDetail.claimYourMatch.offPitchStart : t.fieldDetail.claimYourMatch.offPitchEnd}
+             </button>
+             {offPitchStart !== null && (
+                <button type="button" className="claim-text-button" data-testid="button-offpitch-cancel" disabled={Boolean(confirmation)} onClick={() => {
+                 setOffPitchStart(null);
+                 setNotice(t.fieldDetail.claimYourMatch.offPitchCancel);
+               }}>{t.fieldDetail.claimYourMatch.offPitchCancel}</button>
+             )}
+           </div>
+           {offPitchSpans.length > 0 && (
+             <div className="claim-offpitch-list">
+               {offPitchSpans.map((span) => (
+                 <div className="claim-offpitch-row" key={span.clientId}>
+                   <span>{formatTime(span.fromSeconds)} – {formatTime(span.toSeconds)}</span>
+                   <button type="button" className="claim-text-button" onClick={() => void removeOffPitchSpan(span)} disabled={offPitchSaving}>{t.fieldDetail.claimYourMatch.offPitchRemove}</button>
+                 </div>
+               ))}
+             </div>
+           )}
+         </div>
+          {confirmation?.kind === "offPitchConflict" && (
+            <ClaimInlineConfirmation
+              kind="offPitchConflict"
+              title={t.fieldDetail.claimYourMatch.offPitchConflictTitle}
+              body={offPitchConflictCopy}
+              irreversible={t.fieldDetail.claimYourMatch.offPitchConflictIrreversible}
+              period={`${formatTime(confirmation.conflict.payload.fromSeconds)} – ${formatTime(confirmation.conflict.payload.toSeconds)}`}
+              confirmLabel={t.fieldDetail.claimYourMatch.offPitchConflictConfirm}
+              cancelLabel={t.fieldDetail.claimYourMatch.offPitchConflictCancel}
+              onConfirm={() => void confirmOffPitchConflict()}
+              onCancel={cancelConfirmation}
+              confirming={offPitchSaving}
+            />
+          )}
+          {confirmation?.kind === "demoReset" && (
+            <ClaimInlineConfirmation
+              kind="demoReset"
+              title={t.fieldDetail.claimYourMatch.demoResetTitle}
+              body={t.fieldDetail.claimYourMatch.demoResetDesc}
+              confirmLabel={t.fieldDetail.claimYourMatch.demoResetConfirm}
+              cancelLabel={t.fieldDetail.claimYourMatch.demoResetCancel}
+              onConfirm={() => void handleResetDemo()}
+              onCancel={cancelConfirmation}
+              confirming={resettingDemo}
+            />
+          )}
         {serverProgress?.identityBinding?.state === "disputed" && (
           <div className="claim-panel claim-panel-warning" role="alert">
             <b>This player is already claimed by another account.</b>
@@ -1215,8 +1521,17 @@ export default function ClaimMatchPage() {
         )}
         {(serverProgress?.conflictMoments?.length ?? 0) > 0 && (
           <div className="claim-panel claim-panel-warning" role="alert">
-            <b>Some answers point to a different player.</b>
-            <span>Review the highlighted moments and choose the same person throughout the match.</span>
+            {serverProgress.completionReason === "identity-unresolved" ? (
+              <>
+                <b>{t.fieldDetail.claimYourMatch.identityUnresolvedTitle}</b>
+                <span>{t.fieldDetail.claimYourMatch.identityUnresolvedDesc}</span>
+              </>
+            ) : (
+              <>
+                <b>Some answers point to a different player.</b>
+                <span>Review the highlighted moments and choose the same person throughout the match.</span>
+              </>
+            )}
           </div>
         )}
         {isDemo && (
@@ -1225,10 +1540,10 @@ export default function ClaimMatchPage() {
               type="button"
               className="claim-text-button"
               data-testid="button-reset-claim-demo"
-              onClick={() => void handleResetDemo()}
+               onClick={requestResetDemo}
               disabled={resettingDemo}
             >
-              {resettingDemo ? "Starting over…" : "Start Claim Demo over"} <RotateCcw size={14} />
+               {resettingDemo ? t.fieldDetail.claimYourMatch.resettingDemo : t.fieldDetail.claimYourMatch.startDemoOver} <RotateCcw size={14} />
             </button>
             {demoResetError && <small className="claim-error-text" role="alert">{demoResetError}</small>}
           </div>
@@ -1236,11 +1551,10 @@ export default function ClaimMatchPage() {
         {stage === "find" && (
           <div className="claim-panel claim-panel-find" data-testid="panel-find-yourself">
             <span className="claim-context"><ScanSearch size={16} /> IDENTITY CHECKPOINTS</span>
-            <h2>Find your moments</h2>
-            <p>We’ll show you a few clear moments from different parts of the match. Pick yourself when you see you — no need to follow one continuous trail.</p>
-            <div className="claim-prompt-card"><div className="prompt-icon"><LocateFixed size={19} /></div><div><b>{claimAnchors.length} moments to check</b><span>Your answers build coverage across the match.</span></div></div>
-            <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-start-following" onClick={handlePrimaryAction} disabled={!claimAnchors.length}>Show the first moment <ChevronRight size={17} /></button>
-            <button type="button" className="claim-text-button" data-testid="button-skip-find" onClick={startAnchorReview}>Start identity review <ArrowLeft size={14} /></button>
+            <h2>First, identify yourself</h2>
+            <p>Before we calculate your moments, we’ll show you clear checkpoints from different parts of the match. Choose the same player each time you see yourself.</p>
+            <div className="claim-prompt-card"><div className="prompt-icon"><LocateFixed size={19} /></div><div><b>{claimAnchors.length} identity checks</b><span>Your choices confirm your player before coverage and clips are calculated.</span></div></div>
+            <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-start-following" onClick={handlePrimaryAction} disabled={!claimAnchors.length}>Start identity check <ChevronRight size={17} /></button>
           </div>
         )}
         {stage === "picker" && (
@@ -1343,6 +1657,16 @@ export default function ClaimMatchPage() {
              ) : <p className="claim-muted">Every reviewed moment is resolved. You can return to the match whenever you want.</p>}
              <div className="earned-count"><Sparkles size={18} /><b>{clipsUnlocked} earned clips</b><span>ready in My Clips</span></div>
             <button type="button" className="claim-button claim-button-primary claim-button-wide" data-testid="button-done-view-clips" onClick={() => setLocation("/my-clips")}>View your clips <ChevronRight size={17} /></button>
+            {user?.id && (
+              <button
+                type="button"
+                className="claim-button claim-button-secondary claim-button-wide"
+                data-testid="button-done-view-stats"
+                onClick={() => setLocation(`/players/${user.id}`)}
+              >
+                {t.profile.viewStats} <ChevronRight size={17} />
+              </button>
+            )}
              <button type="button" className="claim-text-button" data-testid="button-done-back-match" onClick={() => setLocation("/home")}>Return to your matches <ArrowLeft size={14} /></button>
           </div>
         )}
@@ -1369,6 +1693,7 @@ export default function ClaimMatchPage() {
         slow={slow}
         playbackRate={playbackRate}
         goalTimes={goalTimes}
+         offPitchSpans={offPitchSpans}
         videoRef={videoRef}
         onToggle={handlePlay}
         onSeek={handleSeek}
@@ -1378,7 +1703,7 @@ export default function ClaimMatchPage() {
         onToggleMute={() => setMuted((value) => !value)}
         onTap={onVideoTap}
         onTimeUpdate={(value) => setCurrentTime(fromVideoTime(value))}
-        onVideoReady={() => setVideoReadyTick((value) => value + 1)}
+        onVideoReady={handleVideoReady}
         topLeft={(
           <>
             <button type="button" className="claim-back" data-testid="button-back-claim" onClick={handleBack}><ArrowLeft size={17} /><span>Leave claim</span></button>

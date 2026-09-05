@@ -8,12 +8,16 @@ export type ClaimQueueFlushResult = {
   stoppedOnFailure: boolean;
 };
 
-export function isPermanentClaimQueueError(error: unknown): boolean {
+export function isPermanentClaimQueueError(
+  error: unknown,
+  action?: ClaimQueueAction,
+): boolean {
   const status = typeof error === "object" && error !== null && "status" in error
     ? Number((error as { status?: unknown }).status)
     : NaN;
   if (!Number.isInteger(status)) return false;
   if (status === 409) {
+    if (action?.kind === "offPitchCreate" || action?.kind === "offPitchDelete") return false;
     const body = error as { data?: unknown; message?: string };
     const text = JSON.stringify(body.data ?? body.message ?? "").toLowerCase();
     // Ownership conflicts and stale bundles are server decisions, not
@@ -48,7 +52,7 @@ export async function flushClaimQueue({
       await removeAction(action.id);
       succeeded.push(action);
     } catch (error) {
-      if (isPermanentClaimQueueError(error)) {
+      if (isPermanentClaimQueueError(error, action)) {
         await removeAction(action.id);
         discarded.push(action);
         continue;

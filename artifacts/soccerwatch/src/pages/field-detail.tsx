@@ -1223,6 +1223,7 @@ function VideoPlayer({ video, onClose, academyId }: { video: BunnyVideo; onClose
       const hls = new Hls({ enableWorker: false });
       capPlaybackQuality(hls);
       hlsRef.current = hls;
+      capPlaybackQuality(hls);
       hls.loadSource(proxiedUrl);
       hls.attachMedia(el);
       hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));

@@ -215,6 +215,7 @@ function PlayerScreen({ clip }: { clip: Clip }) {
         const hls = new Hls({ enableWorker: false });
         capPlaybackQuality(hls);
         hlsRef.current = hls;
+        capPlaybackQuality(hls);
         hls.loadSource(src);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, seekToStartAndPlay);

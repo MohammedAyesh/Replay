@@ -562,6 +562,78 @@ paths:
         "404":
           description: Correction not found
 
+  /recordings/{id}/claim-match/off-pitch:
+    post:
+      operationId: createClaimMatchOffPitchSpan
+      tags: [claimMatch]
+      summary: Declare a tracking-time period with no playable pitch action
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimOffPitchInput"
+      responses:
+        "201":
+          description: Off-pitch period recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimOffPitchSpan"
+        "200":
+          description: Idempotent replay of an existing period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimOffPitchSpan"
+        "400":
+          description: Invalid tracking-time period
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Recording or tracking bundle not found
+        "409":
+          description: The period overlaps vouched identity fragments and requires explicit confirmation
+  /recordings/{id}/claim-match/off-pitch/{clientId}:
+    delete:
+      operationId: deleteClaimMatchOffPitchSpan
+      tags: [claimMatch]
+      summary: Delete an off-pitch period by client id
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Off-pitch period deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimOffPitchDeleteResponse"
+        "400":
+          description: Invalid recording or client id
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Off-pitch period not found
+
   /admin/recordings/{id}/tracking-bundle:
     patch:
       operationId: updateTrackingBundle
@@ -990,6 +1062,29 @@ paths:
         "404":
           description: Not found
 
+  /user-clips/{id}/share-link:
+    get:
+      operationId: getUserClipShareLink
+      tags: [clips]
+      summary: Get the public share and poster URLs for a clip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Public share URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareLinkResult"
+        "401":
+          description: Unauthenticated
+        "404":
+          description: Not found
+
   /feed:
     get:
       operationId: getFeed
@@ -1246,6 +1341,27 @@ paths:
                 $ref: "#/components/schemas/PublicProfile"
         "404":
           description: Not found
+
+  /users/{id}/stats:
+    get:
+      operationId: getPublicPlayerStats
+      tags: [users]
+      summary: Get confirmed cross-match player stats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Confirmed public player stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicPlayerStats"
+        "404":
+          description: Player not found
 
   /users/{id}/follow:
     post:
@@ -1601,6 +1717,99 @@ components:
         isFollowing:
           type: boolean
 
+    PublicPlayerStats:
+      type: object
+      required: [matches, totals, excludedClaimCount]
+      properties:
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicPlayerMatchStats"
+        totals:
+          $ref: "#/components/schemas/PublicPlayerStatsTotals"
+        excludedClaimCount:
+          type: integer
+          minimum: 0
+          description: Claims awaiting review because they are disputed or need resolution.
+
+    PublicPlayerStatsTotals:
+      type: object
+      required: [totalMatchesClaimed, totalMinutesPlayed, totalDistanceMetres, totalHumanVouchedSeconds, totalInferredSeconds, totalOffPitchSeconds]
+      properties:
+        totalMatchesClaimed:
+          type: integer
+          minimum: 0
+        totalMinutesPlayed:
+          type: number
+          minimum: 0
+        totalDistanceMetres:
+          type: ["number", "null"]
+          minimum: 0
+          description: Sum of calibrated distances, or null when any claimed recording has no pitch model.
+        totalHumanVouchedSeconds:
+          type: number
+          minimum: 0
+        totalInferredSeconds:
+          type: number
+          minimum: 0
+        totalOffPitchSeconds:
+          type: number
+          minimum: 0
+
+    PublicPlayerMatchStats:
+      type: object
+      required: [recordingId, title, date, minutesPlayed, distanceMetres, humanVouchedSeconds, inferredSeconds, offPitchSeconds, heatmap]
+      properties:
+        recordingId:
+          type: integer
+        title:
+          type: string
+        date:
+          type: string
+        minutesPlayed:
+          type: number
+          minimum: 0
+        distanceMetres:
+          type: ["number", "null"]
+          minimum: 0
+          description: Calibrated distance, or null when this recording has no pitch model.
+        humanVouchedSeconds:
+          type: number
+          minimum: 0
+        inferredSeconds:
+          type: number
+          minimum: 0
+        offPitchSeconds:
+          type: number
+          minimum: 0
+        heatmap:
+          $ref: "#/components/schemas/PublicPlayerHeatmap"
+
+    PublicPlayerHeatmap:
+      type: object
+      required: [coordinateSpace, cells]
+      properties:
+        coordinateSpace:
+          type: string
+          enum: [pitch, camera]
+        cells:
+          type: array
+          items:
+            type: object
+            required: [x, y, weight]
+            properties:
+              x:
+                type: number
+                minimum: 0
+                maximum: 1
+              y:
+                type: number
+                minimum: 0
+                maximum: 1
+              weight:
+                type: number
+                minimum: 0
+
     FollowResult:
       type: object
       required: [following, followerCount]
@@ -1859,6 +2068,18 @@ components:
           type: integer
         score:
           type: number
+
+    ShareLinkResult:
+      type: object
+      required: [shareUrl, posterUrl]
+      properties:
+        shareUrl:
+          type: string
+          format: uri
+        posterUrl:
+          type: string
+          format: uri
+
 
     ProfileInput:
       type: object
@@ -2668,7 +2889,7 @@ components:
 
     ClaimProgress:
       type: object
-      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, humanVouchedSeconds, inferredSeconds, vouchedFragments, takenFragments, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
+      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, offPitchSeconds, humanVouchedSeconds, inferredSeconds, vouchedFragments, takenFragments, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
       properties:
         recordingId:
           type: integer
@@ -2693,7 +2914,11 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: coverageSeconds divided by the tracked match duration.
+          description: coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.
+        offPitchSeconds:
+          type: number
+          minimum: 0
+          description: Union of this claimant's declared off-pitch periods in tracking seconds.
         humanVouchedSeconds:
           type: number
           minimum: 0
@@ -2800,9 +3025,52 @@ components:
           type: integer
           minimum: 0
 
+    ClaimOffPitchInput:
+      type: object
+      required: [clientId, fromSeconds, toSeconds]
+      properties:
+        clientId:
+          type: string
+          minLength: 1
+        fromSeconds:
+          type: number
+          minimum: 0
+          description: Exact tracking-time seconds from the start of the tracking window.
+        toSeconds:
+          type: number
+          minimum: 0
+          description: Exact tracking-time seconds from the start of the tracking window.
+        confirmConflict:
+          type: boolean
+          description: Explicitly acknowledge overlap with vouched identity fragments.
+
+    ClaimOffPitchSpan:
+      type: object
+      required: [id, clientId, fromSeconds, toSeconds, createdAt]
+      properties:
+        id:
+          type: integer
+        clientId:
+          type: string
+        fromSeconds:
+          type: number
+        toSeconds:
+          type: number
+        createdAt:
+          type: string
+
+    ClaimOffPitchDeleteResponse:
+      type: object
+      required: [deleted, clientId]
+      properties:
+        deleted:
+          type: boolean
+        clientId:
+          type: string
+
     ClaimMatchResponse:
       type: object
-      required: [recording, manifest, progress, corrections]
+      required: [recording, manifest, progress, corrections, offPitchSpans, offPitchSeconds]
       properties:
         recording:
           $ref: "#/components/schemas/Recording"
@@ -2814,6 +3082,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ClaimCorrection"
+        offPitchSpans:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimOffPitchSpan"
+        offPitchSeconds:
+          type: number
+          minimum: 0
 
     ClaimMatchDemoResetResponse:
       type: object

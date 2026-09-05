@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ClaimCorrection } from './claimCorrection';
+import type { ClaimOffPitchSpan } from './claimOffPitchSpan';
 import type { ClaimProgress } from './claimProgress';
 import type { Recording } from './recording';
 import type { TrackingManifest } from './trackingManifest';
@@ -15,4 +16,7 @@ export interface ClaimMatchResponse {
   manifest: TrackingManifest;
   progress: ClaimProgress;
   corrections: ClaimCorrection[];
+  offPitchSpans: ClaimOffPitchSpan[];
+  /** @minimum 0 */
+  offPitchSeconds: number;
 }

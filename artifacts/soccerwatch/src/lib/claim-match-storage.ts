@@ -19,6 +19,20 @@ export type ClaimQueueAction =
       recordingId: number;
       correctionId: number;
       createdAt: number;
+    }
+  | {
+      id: string;
+      kind: "offPitchCreate";
+      recordingId: number;
+      payload: Record<string, unknown>;
+      createdAt: number;
+    }
+  | {
+      id: string;
+      kind: "offPitchDelete";
+      recordingId: number;
+      clientId: string;
+      createdAt: number;
     };
 
 const STORAGE_KEY = "replay-claim-match-queue";

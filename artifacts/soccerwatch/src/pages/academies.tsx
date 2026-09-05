@@ -634,6 +634,7 @@ function VideoPlayer({
       const hls = new Hls(isLive ? { enableWorker: false, liveSyncDurationCount: 3 } : { enableWorker: false });
       capPlaybackQuality(hls);
       hlsRef.current = hls;
+      capPlaybackQuality(hls);
       hls.loadSource(playbackUrl);
       hls.attachMedia(el);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {

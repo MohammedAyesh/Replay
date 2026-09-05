@@ -92,6 +92,11 @@ app.use(cookieParser(COOKIE_SECRET));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Public share pages and their media proxies are deliberately outside /api:
+// crawlers do not send cookies, and these immutable media responses must not
+// inherit the authenticated API's no-store cache policy.
+app.use(shareRouter);
+
 // Most /api responses are per-user and cookie-authenticated. Without an
 // explicit directive a shared cache (CDN / proxy edge) may store one user's
 // response and serve it to another. Default everything to no-store; routes

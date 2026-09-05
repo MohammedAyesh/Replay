@@ -131,6 +131,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const { setFullscreenVideo } = useFullscreenVideo();
   const keyframes = clip.cropPath ?? [];
 
+
   // Notify layout that a fullscreen video is active — suppresses orientation lock
   useEffect(() => {
     setFullscreenVideo(true);

@@ -23,6 +23,18 @@ export type ClaimEarnedClip = {
   userClipId?: number;
 };
 
+export type ClaimMatchComputedPlayerStats = {
+  minutesPlayed: number;
+  distanceMetres: number | null;
+  humanVouchedSeconds: number;
+  inferredSeconds: number;
+  offPitchSeconds: number;
+  heatmap: {
+    coordinateSpace: "pitch" | "camera";
+    cells: Array<{ x: number; y: number; weight: number }>;
+  };
+};
+
 export type TrackingSegmentPayload = {
   version: number;
   segmentIndex: number;
@@ -248,9 +260,44 @@ export const claimMatchCorrectionsTable = pgTable(
     questionCount: integer("question_count").notNull().default(0),
     undone: boolean("undone").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     clientUnique: uniqueIndex("claim_match_corrections_client_unique").on(
+      table.userId,
+      table.recordingId,
+      table.clientId,
+    ),
+  }),
+);
+
+export const claimMatchOffPitchSpansTable = pgTable(
+  "claim_match_off_pitch_spans",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    recordingId: integer("recording_id")
+      .notNull()
+      .references(() => recordingsTable.id, { onDelete: "cascade" }),
+    clientId: text("client_id").notNull(),
+    /**
+     * Exact tracking-time seconds from the start of the tracking window,
+     * not wall-clock time and not the source video's time.
+     */
+    fromSeconds: doublePrecision("from_seconds")
+      .notNull(),
+    /**
+     * Exact tracking-time seconds from the start of the tracking window,
+     * not wall-clock time and not the source video's time.
+     */
+    toSeconds: doublePrecision("to_seconds")
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    clientUnique: uniqueIndex("claim_match_off_pitch_spans_user_recording_client_unique").on(
       table.userId,
       table.recordingId,
       table.clientId,
@@ -306,6 +353,9 @@ export const claimMatchIdentityBindingsTable = pgTable(
         toFrame: number;
       }>>()
       .default([]),
+    computedStats: jsonb("computed_stats").$type<ClaimMatchComputedPlayerStats>(),
+    statsComputedAt: timestamp("stats_computed_at", { withTimezone: true }),
+    statsInputFingerprint: text("stats_input_fingerprint"),
     resolutionMethod: text("resolution_method").notNull(),
     supportCount: integer("support_count").notNull().default(0),
     acceptedAnswerCount: integer("accepted_answer_count").notNull().default(0),
@@ -330,4 +380,5 @@ export type TrackingBundleRow = typeof recordingTrackingBundlesTable.$inferSelec
 export type TrackingSegmentRow = typeof recordingTrackingSegmentsTable.$inferSelect;
 export type ClaimMatchProgressRow = typeof claimMatchProgressTable.$inferSelect;
 export type ClaimMatchCorrectionRow = typeof claimMatchCorrectionsTable.$inferSelect;
+export type ClaimMatchOffPitchSpanRow = typeof claimMatchOffPitchSpansTable.$inferSelect;
 export type ClaimIdentityBindingRow = typeof claimMatchIdentityBindingsTable.$inferSelect;

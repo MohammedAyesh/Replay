@@ -17,6 +17,7 @@
 - [Claim queue invalidation loop](claim-queue-invalidation-loop.md) — never invalidate Claim Match queries after an empty offline-queue flush; unstable mutation dependencies can create a permanent refetch skeleton.
 - [GCS gzip downloads](gcs-gzip-downloads.md) — Google Cloud Storage auto-decompresses gzip objects unless download uses `{ decompress: false }`; preserve bytes when forwarding Content-Encoding.
 - [Progressive HLS browser cache](progressive-hls-browser-cache.md) — keep persisted cache reads independent from per-client post-Play writes, and make every Cache API failure fall back to network.
+- [HLS cache generations](hls-cache-generation.md) — bump the service-worker cache namespace when proxy/media response behavior changes; stale successful error bodies can black-screen playback.
 - [Claim completion and results](claim-completion-results.md) — ordinary progress saves cannot clear completion; expose only server-supported tracking results and keep unsupported metrics unavailable.
 - [Signup media consent](signup-media-consent.md) — collect recording consent inline during Clerk signup; social-media consent is separate and optional, with no post-signup gate.
 - [Claim Match bundle summaries](claim-match-bundle-summary.md) — derive state from compact ranges/events; reserve full segment reads for legacy manifests.
@@ -24,3 +25,5 @@
 - [Calibrated player metrics](calibrated-player-metrics.md) — distance requires pitch calibration, bottom-centre positions, and smoothing; never estimate metres from pixels.
 - [Calibration metadata and guarded speed metrics](calibration-metadata-and-speed.md) — bundle-owned metadata and conservative admin-only top-speed rules prevent misleading numbers.
 - [Claim identity ownership](identity-binding-ownership.md) — confirmed bindings own exact vouched fragments; unvouched regrouping is allowed, disjoint claims split, and overlaps remain disputes.
+- [Export rendition geometry](export-rendition-geometry.md) — select Bunny variants by declared 3840×1080 pixels, never folder labels or adaptive master fallback.
+- [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.

@@ -1,5 +1,6 @@
 export type AnchorAnswer = "yes" | "no" | "skip";
 export const CLAIM_ANCHOR_MATCH_TOLERANCE_SECONDS = 1;
+export const CLAIM_DETECTION_SNAP_MAX_SECONDS = 4;
 
 export type CoverageInterval = {
   startSeconds: number;
@@ -10,6 +11,32 @@ export type ClaimAnchor = {
   id: string;
   momentSeconds: number;
 };
+
+type ExcludedSpan = {
+  fromSeconds: number;
+  toSeconds: number;
+};
+
+/**
+ * Keep an answer attached to its checkpoint when the player cannot be
+ * meaningfully snapped to a nearby detection. A missing detection is not
+ * permission to use the beginning of the recording (or any other fallback
+ * frame).
+ */
+export function claimAnswerMoment(
+  checkpointSeconds: number,
+  nearestDetectionSeconds: number | null,
+  maxSnapSeconds = CLAIM_DETECTION_SNAP_MAX_SECONDS,
+): number {
+  if (
+    nearestDetectionSeconds === null
+    || !Number.isFinite(nearestDetectionSeconds)
+    || Math.abs(nearestDetectionSeconds - checkpointSeconds) > maxSnapSeconds
+  ) {
+    return checkpointSeconds;
+  }
+  return nearestDetectionSeconds;
+}
 
 export function mergeCoverageIntervals(
   intervals: CoverageInterval[],
@@ -52,9 +79,12 @@ export function buildClaimAnchors(
   duration: number,
   eventTimes: number[] = [],
   desiredCount = 8,
+  excludedSpans: ExcludedSpan[] = [],
 ): ClaimAnchor[] {
   const safeDuration = Math.max(1, duration);
   const minGap = Math.max(8, safeDuration / Math.max(desiredCount * 2, 1));
+  const isExcluded = (moment: number) => excludedSpans.some((span) =>
+    moment >= span.fromSeconds && moment < span.toSeconds);
   const candidates = [
     ...eventTimes,
     ...Array.from(
@@ -63,6 +93,7 @@ export function buildClaimAnchors(
     ),
   ]
     .map((momentSeconds) => Math.max(0, Math.min(safeDuration, momentSeconds)))
+    .filter((momentSeconds) => !isExcluded(momentSeconds))
     .sort((a, b) => a - b);
   const selected: number[] = [];
   for (const moment of candidates) {

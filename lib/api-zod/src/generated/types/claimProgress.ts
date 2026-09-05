@@ -26,11 +26,16 @@ export interface ClaimProgress {
      */
   coverageSeconds: number;
   /**
-     * coverageSeconds divided by the tracked match duration.
+     * coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.
      * @minimum 0
      * @maximum 100
      */
   coveragePercent: number;
+  /**
+     * Union of this claimant's declared off-pitch periods in tracking seconds.
+     * @minimum 0
+     */
+  offPitchSeconds: number;
   /**
      * Union of contiguous tracking fragments directly accepted by this claimant.
      * @minimum 0

@@ -41,6 +41,9 @@ import type {
   ClaimMatchDispute,
   ClaimMatchDisputesResponse,
   ClaimMatchResponse,
+  ClaimOffPitchDeleteResponse,
+  ClaimOffPitchInput,
+  ClaimOffPitchSpan,
   ClaimProgress,
   ClaimProgressInput,
   ClaimedMatchHistoryResponse,
@@ -61,10 +64,12 @@ import type {
   MediaConsentInput,
   PatchAdInput,
   ProfileInput,
+  PublicPlayerStats,
   PublicProfile,
   Recording,
   ReplaceTrackingBundleBodyTwo,
   ResolveClaimMatchDisputeInput,
+  ShareLinkResult,
   TrackingBundle,
   TrackingBundleSummary,
   TrackingSegment,
@@ -1888,6 +1893,149 @@ export const useUndoClaimMatchCorrection = <TError = ErrorType<void>,
       return useMutation(getUndoClaimMatchCorrectionMutationOptions(options));
     }
 
+export const getCreateClaimMatchOffPitchSpanUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/off-pitch`
+}
+
+/**
+ * @summary Declare a tracking-time period with no playable pitch action
+ */
+export const createClaimMatchOffPitchSpan = async (id: number,
+    claimOffPitchInput: ClaimOffPitchInput, options?: RequestInit): Promise<ClaimOffPitchSpan> => {
+
+  return customFetch<ClaimOffPitchSpan>(getCreateClaimMatchOffPitchSpanUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimOffPitchInput)
+  }
+);}
+
+
+
+
+export const getCreateClaimMatchOffPitchSpanMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>, TError,{id: number;data: BodyType<ClaimOffPitchInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>, TError,{id: number;data: BodyType<ClaimOffPitchInput>}, TContext> => {
+
+const mutationKey = ['createClaimMatchOffPitchSpan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>, {id: number;data: BodyType<ClaimOffPitchInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  createClaimMatchOffPitchSpan(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateClaimMatchOffPitchSpanMutationResult = NonNullable<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>>
+    export type CreateClaimMatchOffPitchSpanMutationBody = BodyType<ClaimOffPitchInput>
+    export type CreateClaimMatchOffPitchSpanMutationError = ErrorType<void>
+
+    /**
+ * @summary Declare a tracking-time period with no playable pitch action
+ */
+export const useCreateClaimMatchOffPitchSpan = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>, TError,{id: number;data: BodyType<ClaimOffPitchInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createClaimMatchOffPitchSpan>>,
+        TError,
+        {id: number;data: BodyType<ClaimOffPitchInput>},
+        TContext
+      > => {
+      return useMutation(getCreateClaimMatchOffPitchSpanMutationOptions(options));
+    }
+
+export const getDeleteClaimMatchOffPitchSpanUrl = (id: number,
+    clientId: string,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/off-pitch/${clientId}`
+}
+
+/**
+ * @summary Delete an off-pitch period by client id
+ */
+export const deleteClaimMatchOffPitchSpan = async (id: number,
+    clientId: string, options?: RequestInit): Promise<ClaimOffPitchDeleteResponse> => {
+
+  return customFetch<ClaimOffPitchDeleteResponse>(getDeleteClaimMatchOffPitchSpanUrl(id,clientId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteClaimMatchOffPitchSpanMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>, TError,{id: number;clientId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>, TError,{id: number;clientId: string}, TContext> => {
+
+const mutationKey = ['deleteClaimMatchOffPitchSpan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>, {id: number;clientId: string}> = (props) => {
+          const {id,clientId} = props ?? {};
+
+          return  deleteClaimMatchOffPitchSpan(id,clientId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteClaimMatchOffPitchSpanMutationResult = NonNullable<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>>
+
+    export type DeleteClaimMatchOffPitchSpanMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete an off-pitch period by client id
+ */
+export const useDeleteClaimMatchOffPitchSpan = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>, TError,{id: number;clientId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteClaimMatchOffPitchSpan>>,
+        TError,
+        {id: number;clientId: string},
+        TContext
+      > => {
+      return useMutation(getDeleteClaimMatchOffPitchSpanMutationOptions(options));
+    }
+
 export const getUpdateTrackingBundleUrl = (id: number,) => {
 
 
@@ -3268,6 +3416,83 @@ export const useRecordShare = <TError = ErrorType<void>,
       return useMutation(getRecordShareMutationOptions(options));
     }
 
+export const getGetUserClipShareLinkUrl = (id: number,) => {
+
+
+
+
+  return `/api/user-clips/${id}/share-link`
+}
+
+/**
+ * @summary Get the public share and poster URLs for a clip
+ */
+export const getUserClipShareLink = async (id: number, options?: RequestInit): Promise<ShareLinkResult> => {
+
+  return customFetch<ShareLinkResult>(getGetUserClipShareLinkUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUserClipShareLinkQueryKey = (id: number,) => {
+    return [
+    `/api/user-clips/${id}/share-link`
+    ] as const;
+    }
+
+
+export const getGetUserClipShareLinkQueryOptions = <TData = Awaited<ReturnType<typeof getUserClipShareLink>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserClipShareLink>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUserClipShareLinkQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUserClipShareLink>>> = ({ signal }) => getUserClipShareLink(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUserClipShareLink>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetUserClipShareLinkQueryResult = NonNullable<Awaited<ReturnType<typeof getUserClipShareLink>>>
+export type GetUserClipShareLinkQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the public share and poster URLs for a clip
+ */
+
+export function useGetUserClipShareLink<TData = Awaited<ReturnType<typeof getUserClipShareLink>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserClipShareLink>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetUserClipShareLinkQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getGetFeedUrl = () => {
 
 
@@ -4363,6 +4588,83 @@ export function useGetUserProfile<TData = Awaited<ReturnType<typeof getUserProfi
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetUserProfileQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPublicPlayerStatsUrl = (id: number,) => {
+
+
+
+
+  return `/api/users/${id}/stats`
+}
+
+/**
+ * @summary Get confirmed cross-match player stats
+ */
+export const getPublicPlayerStats = async (id: number, options?: RequestInit): Promise<PublicPlayerStats> => {
+
+  return customFetch<PublicPlayerStats>(getGetPublicPlayerStatsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPublicPlayerStatsQueryKey = (id: number,) => {
+    return [
+    `/api/users/${id}/stats`
+    ] as const;
+    }
+
+
+export const getGetPublicPlayerStatsQueryOptions = <TData = Awaited<ReturnType<typeof getPublicPlayerStats>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicPlayerStats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPublicPlayerStatsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicPlayerStats>>> = ({ signal }) => getPublicPlayerStats(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicPlayerStats>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPublicPlayerStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicPlayerStats>>>
+export type GetPublicPlayerStatsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get confirmed cross-match player stats
+ */
+
+export function useGetPublicPlayerStats<TData = Awaited<ReturnType<typeof getPublicPlayerStats>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicPlayerStats>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPublicPlayerStatsQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

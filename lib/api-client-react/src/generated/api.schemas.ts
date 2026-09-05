@@ -161,6 +161,84 @@ export interface PublicProfile {
   isFollowing: boolean;
 }
 
+export type PublicPlayerHeatmapCoordinateSpace = typeof PublicPlayerHeatmapCoordinateSpace[keyof typeof PublicPlayerHeatmapCoordinateSpace];
+
+
+export const PublicPlayerHeatmapCoordinateSpace = {
+  pitch: 'pitch',
+  camera: 'camera',
+} as const;
+
+export type PublicPlayerHeatmapCellsItem = {
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  x: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  y: number;
+  /** @minimum 0 */
+  weight: number;
+};
+
+export interface PublicPlayerHeatmap {
+  coordinateSpace: PublicPlayerHeatmapCoordinateSpace;
+  cells: PublicPlayerHeatmapCellsItem[];
+}
+
+export interface PublicPlayerMatchStats {
+  recordingId: number;
+  title: string;
+  date: string;
+  /** @minimum 0 */
+  minutesPlayed: number;
+  /**
+     * Calibrated distance, or null when this recording has no pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  distanceMetres: number | null;
+  /** @minimum 0 */
+  humanVouchedSeconds: number;
+  /** @minimum 0 */
+  inferredSeconds: number;
+  /** @minimum 0 */
+  offPitchSeconds: number;
+  heatmap: PublicPlayerHeatmap;
+}
+
+export interface PublicPlayerStatsTotals {
+  /** @minimum 0 */
+  totalMatchesClaimed: number;
+  /** @minimum 0 */
+  totalMinutesPlayed: number;
+  /**
+     * Sum of calibrated distances, or null when any claimed recording has no pitch model.
+     * @minimum 0
+     * @nullable
+     */
+  totalDistanceMetres: number | null;
+  /** @minimum 0 */
+  totalHumanVouchedSeconds: number;
+  /** @minimum 0 */
+  totalInferredSeconds: number;
+  /** @minimum 0 */
+  totalOffPitchSeconds: number;
+}
+
+export interface PublicPlayerStats {
+  matches: PublicPlayerMatchStats[];
+  totals: PublicPlayerStatsTotals;
+  /**
+     * Claims awaiting review because they are disputed or need resolution.
+     * @minimum 0
+     */
+  excludedClaimCount: number;
+}
+
 export interface FollowResult {
   following: boolean;
   followerCount: number;
@@ -363,6 +441,11 @@ export interface EngagementResult {
   shareCount: number;
   likeCount: number;
   score: number;
+}
+
+export interface ShareLinkResult {
+  shareUrl: string;
+  posterUrl: string;
 }
 
 export type ProfileInputPosition = typeof ProfileInputPosition[keyof typeof ProfileInputPosition];
@@ -992,11 +1075,16 @@ export interface ClaimProgress {
      */
   coverageSeconds: number;
   /**
-     * coverageSeconds divided by the tracked match duration.
+     * coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.
      * @minimum 0
      * @maximum 100
      */
   coveragePercent: number;
+  /**
+     * Union of this claimant's declared off-pitch periods in tracking seconds.
+     * @minimum 0
+     */
+  offPitchSeconds: number;
   /**
      * Union of contiguous tracking fragments directly accepted by this claimant.
      * @minimum 0
@@ -1068,11 +1156,44 @@ export interface ClaimCorrectionInput {
   questionCount: number;
 }
 
+export interface ClaimOffPitchInput {
+  /** @minLength 1 */
+  clientId: string;
+  /**
+     * Exact tracking-time seconds from the start of the tracking window.
+     * @minimum 0
+     */
+  fromSeconds: number;
+  /**
+     * Exact tracking-time seconds from the start of the tracking window.
+     * @minimum 0
+     */
+  toSeconds: number;
+  /** Explicitly acknowledge overlap with vouched identity fragments. */
+  confirmConflict?: boolean;
+}
+
+export interface ClaimOffPitchSpan {
+  id: number;
+  clientId: string;
+  fromSeconds: number;
+  toSeconds: number;
+  createdAt: string;
+}
+
+export interface ClaimOffPitchDeleteResponse {
+  deleted: boolean;
+  clientId: string;
+}
+
 export interface ClaimMatchResponse {
   recording: Recording;
   manifest: TrackingManifest;
   progress: ClaimProgress;
   corrections: ClaimCorrection[];
+  offPitchSpans: ClaimOffPitchSpan[];
+  /** @minimum 0 */
+  offPitchSeconds: number;
 }
 
 export interface ClaimMatchDemoResetResponse {

@@ -326,6 +326,8 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: false });
       hlsInstance = hls;
+      // Intentional omission: client-side clip export needs the real source
+      // pixels for its frame measurements and export output.
       hls.loadSource(playbackUrl);
       hls.attachMedia(video);
       // MANIFEST_PARSED is a fast path; loadedmetadata/durationchange above handle the

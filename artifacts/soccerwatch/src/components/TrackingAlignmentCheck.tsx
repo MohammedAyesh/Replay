@@ -102,6 +102,7 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
           video.addEventListener("error", () => reject(new Error("video failed to load")), { once: true });
           if (url.includes(".m3u8") && Hls.isSupported()) {
             hls = new Hls({ enableWorker: false });
+            // Intentional omission: tracking alignment measures source pixels.
             hls.loadSource(url);
             hls.attachMedia(video);
             hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) reject(new Error("HLS load failed")); });
