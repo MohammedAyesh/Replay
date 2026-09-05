@@ -261,12 +261,15 @@ export function settingKeys(): string[] {
   return SETTINGS.map((s) => s.key);
 }
 
-export interface ValidationResult {
-  ok: boolean;
-  /** Coerced value, present when ok. */
-  value?: number | boolean | string;
-  error?: string;
-}
+/**
+ * A discriminated union rather than `{ ok, value?, error? }`, so that checking
+ * `ok` is enough for the compiler to know the value is there. The optional-both
+ * shape forced every caller to write `value!` or `error!`, which is the exact
+ * assertion this validator exists to make unnecessary.
+ */
+export type ValidationResult =
+  | { ok: true; value: number | boolean | string; error?: undefined }
+  | { ok: false; error: string; value?: undefined };
 
 /**
  * Validate and coerce a value for a key.

@@ -31,7 +31,7 @@ const ctx = (over: Partial<ResolveContext> = {}): ResolveContext => ({ at: AT, .
 describe("falling back to the shipped default", () => {
   it("returns the registry default when there are no rules at all", () => {
     const r = resolveSetting("downloads.limit", [], ctx());
-    expect(r).toEqual({ value: 5, rule: null, matched: [] });
+    expect(r).toEqual({ value: 5, rule: null, matched: [], source: "shipped" });
   });
 
   it("an empty rules table leaves every setting exactly as it shipped", () => {
@@ -237,5 +237,74 @@ describe("specificity table", () => {
     expect(SCOPE_SPECIFICITY.user).toBeGreaterThan(SCOPE_SPECIFICITY.academy);
     expect(SCOPE_SPECIFICITY.academy).toBeGreaterThan(SCOPE_SPECIFICITY.field);
     expect(SCOPE_SPECIFICITY.field).toBeGreaterThan(SCOPE_SPECIFICITY.global);
+  });
+});
+
+/**
+ * The third layer.
+ *
+ * Before this existed, changing the value everyone gets meant writing a global
+ * rule — which worked, but put an ordinary configuration decision into the same
+ * list as the genuinely conditional ones. The list you read when something
+ * surprising is happening should only contain surprises.
+ */
+describe("administrator-set base values", () => {
+  const ctx = { userId: null, academyId: null, fieldId: null, at: new Date("2026-09-05T12:00:00Z") };
+
+  it("uses the shipped value when nothing has been set", () => {
+    const result = resolveSetting("downloads.limit", [], ctx);
+    expect(result.value).toBe(5);
+    expect(result.source).toBe("shipped");
+  });
+
+  it("prefers an administrator's base value over the shipped one", () => {
+    const result = resolveSetting("downloads.limit", [], ctx, { "downloads.limit": 12 });
+    expect(result.value).toBe(12);
+    expect(result.source).toBe("default");
+    expect(result.rule).toBeNull();
+  });
+
+  it("still lets a rule win over the base value", () => {
+    const rule = {
+      id: 1,
+      key: "downloads.limit",
+      value: 50,
+      priority: 0,
+      scopeType: "global" as const,
+      scopeId: null,
+      excludes: [],
+      enabled: true,
+      effectiveFrom: null,
+      effectiveUntil: null,
+      daysOfWeek: null,
+      startMinute: null,
+      endMinute: null,
+      timezone: "Asia/Amman",
+    };
+    const result = resolveSetting("downloads.limit", [rule], ctx, { "downloads.limit": 12 });
+    expect(result.value).toBe(50);
+    expect(result.source).toBe("rule");
+  });
+
+  it("ignores a stored value for a key the registry no longer has", () => {
+    // Removing a setting from the code must not leave a row in the database
+    // able to bring it back, resolving to something nothing validates.
+    const result = resolveSetting("downloads.limit", [], ctx, { "settings.that.went.away": 99 });
+    expect(result.value).toBe(5);
+    expect(result.source).toBe("shipped");
+  });
+
+  it("accepts a base value that happens to equal the shipped one", () => {
+    // Worth pinning: `false` and `0` are legitimate values, and a truthiness
+    // check here would silently fall through to the shipped value instead.
+    expect(resolveSetting("downloads.enabled", [], ctx, { "downloads.enabled": false }).value).toBe(false);
+    expect(resolveSetting("downloads.enabled", [], ctx, { "downloads.enabled": false }).source).toBe("default");
+    expect(resolveSetting("downloads.limit", [], ctx, { "downloads.limit": 0 }).value).toBe(0);
+  });
+
+  it("applies base values across every key at once", () => {
+    const all = resolveAll(["downloads.limit", "downloads.windowDays"], [], ctx, { "downloads.limit": 3 });
+    expect(all["downloads.limit"]).toBe(3);
+    expect(all["downloads.windowDays"]).toBe(30);
   });
 });

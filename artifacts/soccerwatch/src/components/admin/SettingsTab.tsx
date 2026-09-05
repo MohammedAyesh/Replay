@@ -51,6 +51,18 @@ interface Resolution {
   value: number | boolean | string;
   rule: Rule | null;
   matched: Rule[];
+  /** Which of the three layers decided: a rule, an admin base value, or the shipped one. */
+  source?: "rule" | "default" | "shipped";
+}
+
+/** The base value of one setting, and whether it is still what the product ships. */
+interface DefaultEntry {
+  key: string;
+  value: number | boolean | string;
+  shippedValue: number | boolean | string;
+  isShipped: boolean;
+  note: string | null;
+  updatedAt: string | null;
 }
 
 interface PreviewEntry {
@@ -136,6 +148,8 @@ export default function SettingsTab() {
   const [context, setContext] = useState<PreviewContext>({ userId: "", academyId: "", fieldId: "", at: "" });
   const [entries, setEntries] = useState<PreviewEntry[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
+  const [defaults, setDefaults] = useState<DefaultEntry[]>([]);
+  const [baseDraft, setBaseDraft] = useState<{ key: string; value: string } | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [draft, setDraft] = useState<ReturnType<typeof emptyDraft> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -150,12 +164,14 @@ export default function SettingsTab() {
     if (context.fieldId) params.set("fieldId", context.fieldId);
     if (context.at) params.set("at", new Date(context.at).toISOString());
     try {
-      const [preview, ruleList] = await Promise.all([
+      const [preview, ruleList, defaultList] = await Promise.all([
         api(`/admin/settings/preview?${params.toString()}`),
         api("/admin/settings/rules"),
+        api("/admin/settings/defaults"),
       ]);
       setEntries(preview.settings);
       setRules(ruleList.rules);
+      setDefaults(defaultList.defaults ?? []);
       // Distinguish "not configured yet" from "broken". The first has a remedy
       // and the admin can act on it; a bare failure gives them nothing.
       setSchemaNotice(
@@ -181,6 +197,51 @@ export default function SettingsTab() {
   }, [entries]);
 
   const rulesFor = useCallback((key: string) => rules.filter((r) => r.key === key), [rules]);
+
+  const defaultFor = (key: string) => defaults.find((d) => d.key === key);
+
+  /**
+   * Change the base value, or put it back to the one the product ships with.
+   *
+   * Reverting deletes the row rather than writing today's shipped value into
+   * it. Copying would pin the setting: a later change to the default in code
+   * would then be silently ignored for this key, forever, with nothing in the
+   * console to show why.
+   */
+  async function saveBase(def: SettingDefinition, raw: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      let value: number | boolean | string;
+      if (def.type === "boolean") value = raw === "true";
+      else if (def.type === "number") value = Number(raw);
+      else value = raw;
+      await api(`/admin/settings/defaults/${encodeURIComponent(def.key)}`, {
+        method: "PUT",
+        body: JSON.stringify({ value }),
+      });
+      setBaseDraft(null);
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revertBase(def: SettingDefinition) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/admin/settings/defaults/${encodeURIComponent(def.key)}`, { method: "DELETE" });
+      setBaseDraft(null);
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const submit = async () => {
     if (!draft) return;
@@ -319,11 +380,21 @@ export default function SettingsTab() {
                     )}>
                       {formatValue(definition, resolution.value)}
                     </span>
+                    {/* Three states, not two. "Default" used to cover both the
+                        value the product shipped with and one an administrator
+                        chose, which are the two things you most need to tell
+                        apart when a number is not what you expected. */}
                     <span className={cn(
                       "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded",
-                      isDefault ? "bg-zinc-800 text-zinc-400" : "bg-primary/15 text-primary",
+                      resolution.rule
+                        ? "bg-primary/15 text-primary"
+                        : resolution.source === "default"
+                          ? "bg-sky-950/60 text-sky-300"
+                          : "bg-zinc-800 text-zinc-400",
                     )}>
-                      {isDefault ? "Default" : `Rule #${resolution.rule?.id}`}
+                      {resolution.rule
+                        ? `Rule #${resolution.rule.id}`
+                        : resolution.source === "default" ? "Base" : "Shipped"}
                     </span>
                   </button>
 
@@ -358,11 +429,79 @@ export default function SettingsTab() {
                         </div>
                       )}
 
+                      {/* The base value: what everyone gets when no rule fires.
+                          Kept separate from the rule list on purpose — an
+                          ordinary configuration decision should not have to be
+                          written as a rule and then sit in the evidence you read
+                          when something surprising is happening. */}
+                      <div className="rounded border border-zinc-800 bg-black/30 p-2.5">
+                        <div className="flex items-center gap-2">
+                          <p className={labelCls}>Base value, when no rule applies</p>
+                          {!defaultFor(definition.key)?.isShipped && (
+                            <span className="text-[10px] uppercase tracking-wider text-sky-300">changed</span>
+                          )}
+                        </div>
+                        {baseDraft?.key === definition.key ? (
+                          <div className="mt-1.5 flex items-center gap-2">
+                            {definition.type === "boolean" ? (
+                              <select className={input} value={baseDraft.value}
+                                onChange={(e) => setBaseDraft({ ...baseDraft, value: e.target.value })}>
+                                <option value="true">On</option>
+                                <option value="false">Off</option>
+                              </select>
+                            ) : definition.type === "enum" ? (
+                              <select className={input} value={baseDraft.value}
+                                onChange={(e) => setBaseDraft({ ...baseDraft, value: e.target.value })}>
+                                {definition.options?.map((o) => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            ) : (
+                              <input className={input} value={baseDraft.value} inputMode="decimal"
+                                placeholder={String(definition.defaultValue)}
+                                onChange={(e) => setBaseDraft({ ...baseDraft, value: e.target.value })} />
+                            )}
+                            <button onClick={() => void saveBase(definition, baseDraft.value)} disabled={busy}
+                              className="text-xs px-2 py-1 rounded bg-primary text-black font-semibold disabled:opacity-40">
+                              Save
+                            </button>
+                            <button onClick={() => setBaseDraft(null)} disabled={busy}
+                              className="text-xs px-2 py-1 rounded border border-zinc-700 text-zinc-400">
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="mt-1.5 flex items-center gap-2 text-xs">
+                            <span className="text-zinc-200 tabular-nums">
+                              {formatValue(definition, defaultFor(definition.key)?.value ?? definition.defaultValue)}
+                            </span>
+                            {!defaultFor(definition.key)?.isShipped && (
+                              <span className="text-zinc-600">
+                                ships as {formatValue(definition, definition.defaultValue)}
+                              </span>
+                            )}
+                            <button
+                              onClick={() => setBaseDraft({
+                                key: definition.key,
+                                value: String(defaultFor(definition.key)?.value ?? definition.defaultValue),
+                              })}
+                              className="ml-auto text-zinc-400 hover:text-zinc-200 px-1"
+                            >
+                              Change
+                            </button>
+                            {!defaultFor(definition.key)?.isShipped && (
+                              <button onClick={() => void revertBase(definition)} disabled={busy}
+                                className="text-zinc-500 hover:text-zinc-300 px-1">
+                                Reset to shipped
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
                       <div>
                         <p className={labelCls}>All rules for this setting</p>
                         {keyRules.length === 0 && (
                           <p className="text-zinc-600 text-xs mt-1">
-                            None. The shipped default of {formatValue(definition, definition.defaultValue)} applies to everyone.
+                            None — everyone gets the base value above.
                           </p>
                         )}
                         <ul className="mt-1 space-y-1">

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, settingsRulesTable, usersTable } from "@workspace/db";
+import { db, settingsRulesTable, settingsDefaultsTable, usersTable } from "@workspace/db";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { logger } from "../lib/logger";
 import {
@@ -19,6 +19,7 @@ import {
   invalidateSettingsCache,
   isMissingRelationError,
   isSettingsSchemaReady,
+  loadDefaults,
   loadRules,
 } from "../lib/settings";
 
@@ -81,7 +82,7 @@ function validateRule(body: RuleInput): { ok: true; value: typeof settingsRulesT
   if (!definition) return { ok: false, error: `Unknown setting "${key}"` };
 
   const value = validateSettingValue(key, body.value);
-  if (!value.ok) return { ok: false, error: value.error! };
+  if (!value.ok) return { ok: false, error: value.error };
 
   const scopeType = (typeof body.scopeType === "string" ? body.scopeType : "global") as ScopeType;
   if (!SCOPE_TYPES.includes(scopeType)) {
@@ -202,6 +203,126 @@ router.get("/admin/settings/registry", async (req, res): Promise<void> => {
 const SCHEMA_MISSING_MESSAGE =
   "The settings tables have not been created in this database yet. " +
   "Open a Shell tab and run: pnpm --filter @workspace/db run push";
+
+/**
+ * GET /admin/settings/defaults
+ *
+ * The base value of every setting, and whether it is still the one the product
+ * shipped with. A rule beats a default; a default beats the shipped value.
+ */
+router.get("/admin/settings/defaults", async (req, res): Promise<void> => {
+  if (!(await requireAdmin(req))) { unauthenticatedResponse(res, req); return; }
+  try {
+    const rows = await db.select().from(settingsDefaultsTable);
+    const byKey = new Map(rows.map((row) => [row.key, row]));
+    res.json({
+      schemaReady: true,
+      defaults: SETTINGS.map((definition) => {
+        const stored = byKey.get(definition.key);
+        return {
+          key: definition.key,
+          shippedValue: definition.defaultValue,
+          value: stored ? stored.value : definition.defaultValue,
+          isShipped: !stored,
+          note: stored?.note ?? null,
+          updatedAt: stored?.updatedAt?.toISOString() ?? null,
+        };
+      }),
+    });
+  } catch (err) {
+    if (!isMissingRelationError(err)) throw err;
+    res.json({
+      schemaReady: false,
+      message: SCHEMA_MISSING_MESSAGE,
+      defaults: SETTINGS.map((definition) => ({
+        key: definition.key,
+        shippedValue: definition.defaultValue,
+        value: definition.defaultValue,
+        isShipped: true,
+        note: null,
+        updatedAt: null,
+      })),
+    });
+  }
+});
+
+/**
+ * PUT /admin/settings/defaults/:key
+ *
+ * Change the base value everyone gets. Validated against the registry exactly
+ * as a rule's value is - the same function, deliberately, because a base value
+ * reaches more people than any rule and there is no argument for it being the
+ * looser of the two.
+ */
+router.put("/admin/settings/defaults/:key", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+  const key = String(Array.isArray(req.params.key) ? req.params.key[0] : req.params.key);
+  const definition = getSetting(key);
+  if (!definition) { res.status(400).json({ error: `Unknown setting: ${key}` }); return; }
+
+  const checked = validateSettingValue(key, (req.body as { value?: unknown })?.value);
+  if (!checked.ok) { res.status(400).json({ error: checked.error }); return; }
+  const value = checked.value;
+
+  const note = typeof (req.body as { note?: unknown })?.note === "string"
+    ? String((req.body as { note: string }).note).slice(0, 500)
+    : null;
+
+  try {
+    const [saved] = await db
+      .insert(settingsDefaultsTable)
+      .values({ key, value, note, updatedBy: adminId })
+      .onConflictDoUpdate({
+        target: settingsDefaultsTable.key,
+        set: { value, note, updatedBy: adminId, updatedAt: new Date() },
+      })
+      .returning();
+    invalidateSettingsCache();
+    logger.info({ key, value, adminId }, "Admin changed a setting's base value");
+    res.json({
+      key: saved.key,
+      value: saved.value,
+      shippedValue: definition.defaultValue,
+      isShipped: false,
+      note: saved.note,
+      updatedAt: saved.updatedAt.toISOString(),
+    });
+  } catch (err) {
+    if (!isMissingRelationError(err)) throw err;
+    res.status(503).json({ error: SCHEMA_MISSING_MESSAGE });
+  }
+});
+
+/**
+ * DELETE /admin/settings/defaults/:key - go back to the value the product ships
+ * with. Not the same as setting it to that value by hand: this removes the row,
+ * so a later change to the shipped default is picked up instead of being
+ * silently pinned to whatever it happened to be today.
+ */
+router.delete("/admin/settings/defaults/:key", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+  const key = String(Array.isArray(req.params.key) ? req.params.key[0] : req.params.key);
+  const definition = getSetting(key);
+  if (!definition) { res.status(400).json({ error: `Unknown setting: ${key}` }); return; }
+  try {
+    await db.delete(settingsDefaultsTable).where(eq(settingsDefaultsTable.key, key));
+    invalidateSettingsCache();
+    logger.info({ key, adminId }, "Admin reverted a setting to its shipped value");
+    res.json({
+      key,
+      value: definition.defaultValue,
+      shippedValue: definition.defaultValue,
+      isShipped: true,
+      note: null,
+      updatedAt: null,
+    });
+  } catch (err) {
+    if (!isMissingRelationError(err)) throw err;
+    res.status(503).json({ error: SCHEMA_MISSING_MESSAGE });
+  }
+});
 
 /** Every rule, newest first. */
 router.get("/admin/settings/rules", async (req, res): Promise<void> => {

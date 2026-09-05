@@ -68,10 +68,17 @@ export interface ResolveContext {
 
 export interface Resolution<T = number | boolean | string> {
   value: T;
-  /** The rule that decided, or null when the registry default applied. */
+  /** The rule that decided, or null when no rule matched. */
   rule: SettingRule | null;
   /** Every rule that matched, winner first. This is what makes it explainable. */
   matched: SettingRule[];
+  /**
+   * Which of the three layers produced the value. `rule` and `null` together
+   * cannot say this: with no rule matching, the value may be the shipped one or
+   * an administrator's base value, and those mean different things to whoever
+   * is looking at the console trying to work out why a number is what it is.
+   */
+  source: "rule" | "default" | "shipped";
 }
 
 /** The default recurring-window timezone. */
@@ -221,22 +228,37 @@ export function compareRules(a: SettingRule, b: SettingRule): number {
  * system with an empty rules table behaves exactly as it did before the table
  * existed — which is what makes it safe to put every value behind this at once.
  */
+/**
+ * Base values an administrator has set, replacing what the registry ships.
+ *
+ * Three layers, narrowest first: a matching rule, then this, then the value
+ * compiled into the registry. The middle one exists so that "this is how the
+ * product is configured" does not have to be expressed as a global rule sitting
+ * in the same list as the genuinely conditional ones — the list you read when
+ * something surprising is happening should only contain surprises.
+ */
+export type SettingDefaults = Readonly<Record<string, number | boolean | string>>;
+
 export function resolveSetting<T extends number | boolean | string>(
   key: string,
   rules: readonly SettingRule[],
   ctx: ResolveContext,
+  defaults: SettingDefaults = {},
 ): Resolution<T> {
   const def = getSetting(key);
-  const fallback = def?.defaultValue as T;
+  // An unknown key in `defaults` is ignored rather than trusted: removing a
+  // setting from the registry must not leave a stored row able to resurrect it.
+  const hasOverride = def !== undefined && Object.prototype.hasOwnProperty.call(defaults, key);
+  const base = (hasOverride ? defaults[key] : def?.defaultValue) as T;
 
   const matched = rules
     .filter((r) => r.key === key && ruleApplies(r, ctx))
     .sort(compareRules);
 
   if (matched.length === 0) {
-    return { value: fallback, rule: null, matched: [] };
+    return { value: base, rule: null, matched: [], source: hasOverride ? "default" : "shipped" };
   }
-  return { value: matched[0]!.value as T, rule: matched[0]!, matched };
+  return { value: matched[0]!.value as T, rule: matched[0]!, matched, source: "rule" };
 }
 
 /** Resolve every registered key at once, for one context. */
@@ -244,8 +266,9 @@ export function resolveAll(
   keys: readonly string[],
   rules: readonly SettingRule[],
   ctx: ResolveContext,
+  defaults: SettingDefaults = {},
 ): Record<string, number | boolean | string> {
   const out: Record<string, number | boolean | string> = {};
-  for (const key of keys) out[key] = resolveSetting(key, rules, ctx).value;
+  for (const key of keys) out[key] = resolveSetting(key, rules, ctx, defaults).value;
   return out;
 }

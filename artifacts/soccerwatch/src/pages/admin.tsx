@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -5206,19 +5206,34 @@ function MatchesTab() {
 
 // ─── Main Admin Console ───────────────────────────────────────────────────────
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "clips", label: "Clips" },
-  { id: "accounts", label: "Accounts" },
-  { id: "fields", label: "Fields" },
-  { id: "banners", label: "Banners" },
-  { id: "recordings", label: "Recordings" },
-  { id: "live", label: "Live Control" },
-  { id: "var", label: "VAR" },
-  { id: "matches", label: "Matches" },
-  { id: "claim-disputes", label: "Claim Disputes" },
-  { id: "analysis", label: "Analysis" },
-  { id: "settings", label: "Settings" },
-];
+/**
+ * One list, not two.
+ *
+ * The label list and the render switch used to be separate, and Academies fell
+ * out of the label list while its `{tab === "academies" && <AcademiesTab />}`
+ * line stayed — so the tab existed, rendered correctly, and had no button
+ * anywhere that could reach it. Nothing failed; it was simply gone.
+ *
+ * `Record<Tab, ...>` makes that a compile error: every member of the Tab union
+ * must appear here, and anything here must be a member of it. Insertion order
+ * is the display order.
+ */
+const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
+  clips: { label: "Clips", render: () => <ClipsTab /> },
+  accounts: { label: "Accounts", render: () => <AccountsTab /> },
+  fields: { label: "Fields", render: () => <FieldsTab /> },
+  academies: { label: "Academies", render: () => <AcademiesTab /> },
+  banners: { label: "Banners", render: () => <BannersTab /> },
+  recordings: { label: "Recordings", render: () => <RecordingsTab /> },
+  live: { label: "Live Control", render: () => <LiveTab /> },
+  var: { label: "VAR", render: () => <VarTab /> },
+  matches: { label: "Matches", render: () => <MatchesTab /> },
+  "claim-disputes": { label: "Claim Disputes", render: () => <ClaimDisputesTab /> },
+  analysis: { label: "Analysis", render: () => <AnalysisTab /> },
+  settings: { label: "Settings", render: () => <SettingsTab /> },
+};
+
+const TAB_ORDER = Object.keys(TABS) as Tab[];
 
 export default function Admin() {
   const { user, isLoading, isAdmin } = useAuth();
@@ -5245,17 +5260,17 @@ export default function Admin() {
 
       {/* Tabs */}
       <div className="admin-page-tabs flex border-b border-zinc-800/60 bg-zinc-950 flex-shrink-0 px-2 overflow-x-auto no-scrollbar">
-        {TABS.map((t) => (
+        {TAB_ORDER.map((id) => (
           <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
+            key={id}
+            onClick={() => setTab(id)}
             className={cn(
               "px-4 py-3 text-sm font-semibold transition-colors relative whitespace-nowrap flex-shrink-0",
-              tab === t.id ? "text-primary" : "text-zinc-500 hover:text-zinc-300"
+              tab === id ? "text-primary" : "text-zinc-500 hover:text-zinc-300"
             )}
           >
-            {t.label}
-            {tab === t.id && (
+            {TABS[id].label}
+            {tab === id && (
               <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />
             )}
           </button>
@@ -5264,18 +5279,7 @@ export default function Admin() {
 
       {/* Content */}
       <div className="admin-page-content flex-1 overflow-y-auto no-scrollbar px-4 py-4 pb-24">
-        {tab === "clips" && <ClipsTab />}
-        {tab === "accounts" && <AccountsTab />}
-        {tab === "fields" && <FieldsTab />}
-        {tab === "banners" && <BannersTab />}
-        {tab === "academies" && <AcademiesTab />}
-        {tab === "recordings" && <RecordingsTab />}
-        {tab === "live" && <LiveTab />}
-        {tab === "var" && <VarTab />}
-        {tab === "matches" && <MatchesTab />}
-        {tab === "claim-disputes" && <ClaimDisputesTab />}
-        {tab === "analysis" && <AnalysisTab />}
-        {tab === "settings" && <SettingsTab />}
+        {TABS[tab].render()}
       </div>
     </div>
   );
