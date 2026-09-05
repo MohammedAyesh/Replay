@@ -1,3 +1,379 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  CircleHelp,
+  Clock3,
+  FastForward,
+  LocateFixed,
+  LockKeyhole,
+  MapPinned,
+  Play,
+  RotateCcw,
+  ScanSearch,
+  Sparkles,
+  X,
+} from "lucide-react";
+import { useLocation, useParams } from "wouter";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  getGetClaimMatchQueryKey,
+  useCreateClaimMatchOffPitchSpan,
+  useCreateClaimMatchCorrection,
+  useDeleteClaimMatchOffPitchSpan,
+  useGetClaimMatch,
+  useUndoClaimMatchCorrection,
+  useUpdateClaimMatchProgress,
+  useResetClaimMatchDemo,
+} from "@workspace/api-client-react";
+import type {
+  ClaimCorrection,
+  ClaimMatchResponse,
+  ClaimOffPitchInput,
+  ClaimPlayerStats,
+  TrackingSegment,
+} from "@workspace/api-client-react";
+import { useAuth } from "@/lib/auth";
+import { useTranslation } from "@/i18n";
+import { ClaimStage } from "@/components/ClaimStage";
+import { ClaimInlineConfirmation } from "@/components/ClaimInlineConfirmation";
+import { useFullscreenVideo } from "@/lib/fullscreen-video";
+import {
+  boxesOverlap,
+  findHitTracks,
+  frameToTrackingSeconds,
+  trackingSecondsToFrame,
+  trackingToVideoTime,
+  videoTimeToTracking,
+  clampToTracked,
+  type ClaimBundle,
+  type ClaimBox,
+  type ClaimTrack,
+} from "@/lib/claim-match-engine";
+import {
+  enqueueClaimAction,
+  readClaimQueue,
+  removeClaimAction,
+  removeClaimActionsForRecording,
+  type ClaimQueueAction,
+} from "@/lib/claim-match-storage";
+import {
+  createClaimQueueFlushController,
+  flushClaimQueue,
+} from "@/lib/claim-match-queue";
+import {
+  retainNearbySegments,
+  segmentIndexAtTime,
+} from "@/lib/claim-match-segments";
+import {
+  buildClaimAnchors,
+  claimAnswerMoment,
+  nearestAnchorIndex,
+  nextUnansweredAnchor,
+} from "@/lib/claim-match-anchors";
+import { applyClaimIdentities, identityMapMatchesBundle } from "@/lib/claim-match-identities";
+
+type Stage = "find" | "picker" | "done";
+const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2] as const;
+const EMPTY_ANCHOR_TRACK = "__none__";
+type Candidate = {
+  id: string;
+  label: string;
+  box: ClaimBox;
+  overlap?: boolean;
+  distance?: number;
+  coasting?: boolean;
+  taken?: boolean;
+};
+
+type ClaimOffPitchSpan = {
+  id: number;
+  clientId: string;
+  fromSeconds: number;
+  toSeconds: number;
+  createdAt: string;
+};
+
+type OffPitchConflictState = {
+  payload: ClaimOffPitchInput;
+  rangeCount: number | null;
+  answerCount: number | null;
+  queueActionId?: string;
+};
+
+type ClaimConfirmation =
+  | { kind: "offPitchConflict"; conflict: OffPitchConflictState }
+  | { kind: "demoReset" };
+
+function readOffPitchConflict(
+  error: unknown,
+  payload: ClaimOffPitchInput,
+  queueActionId?: string,
+): OffPitchConflictState | null {
+  if (!error || typeof error !== "object" || (error as { status?: unknown }).status !== 409) return null;
+  const data = (error as { data?: unknown }).data;
+  if (!data || typeof data !== "object") {
+    return { payload, rangeCount: null, answerCount: null, queueActionId };
+  }
+  const body = data as { conflicts?: unknown; correctionCount?: unknown };
+  return {
+    payload,
+    rangeCount: Array.isArray(body.conflicts) ? body.conflicts.length : null,
+    answerCount: typeof body.correctionCount === "number" && Number.isFinite(body.correctionCount)
+      ? body.correctionCount
+      : null,
+    queueActionId,
+  };
+}
+
+function segmentAsBundle(
+  manifest: ClaimMatchResponse["manifest"],
+  segment: TrackingSegment,
+) {
+  const applied = identityMapMatchesBundle(manifest)
+    ? applyClaimIdentities(segment, manifest.identities)
+    : { tracks: segment.tracks, crossings: segment.crossings };
+  const totalDuration = Math.max(
+    manifest.duration,
+    ...manifest.segments.map((range) => range.endSeconds),
+  );
+  return {
+    version: manifest.version,
+    label: manifest.label,
+    width: manifest.width,
+    height: manifest.height,
+    frameRate: manifest.frameRate,
+    frameCount: manifest.frameCount,
+    duration: totalDuration,
+    matchOffset: manifest.matchOffset,
+    videoStartSeconds: manifest.videoStartSeconds ?? 0,
+    tracks: applied.tracks,
+    crossings: applied.crossings,
+    inPlaySpans: segment.inPlaySpans,
+    events: segment.events,
+  };
+}
+
+function formatTime(seconds: number) {
+  const safe = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function PlayerHeatmap({ heatmap }: Pick<ClaimPlayerStats, "heatmap">) {
+  const cells = new Map(
+    heatmap.cells.map((cell) => [
+      `${Math.min(11, Math.floor(cell.x * 12))}:${Math.min(7, Math.floor(cell.y * 8))}`,
+      cell.weight,
+    ]),
+  );
+  const maxWeight = Math.max(...cells.values(), 0);
+  return (
+    <div className="claim-heatmap" data-testid="claim-player-heatmap" aria-label={`Player position heatmap in ${heatmap.coordinateSpace === "pitch" ? "pitch" : "camera"} coordinates`}>
+      {Array.from({ length: 96 }, (_, index) => {
+        const column = index % 12;
+        const row = Math.floor(index / 12);
+        const weight = cells.get(`${column}:${row}`) ?? 0;
+        const intensity = maxWeight > 0 ? weight / maxWeight : 0;
+        return (
+          <span
+            key={`${column}-${row}`}
+            className="claim-heatmap-cell"
+            style={{ opacity: intensity ? 0.12 + intensity * 0.88 : 0.08 }}
+            title={weight ? `${Math.round(weight * 100)}% of confirmed time` : undefined}
+          />
+        );
+      })}
+      <span className="claim-heatmap-line claim-heatmap-line-mid" />
+      <span className="claim-heatmap-circle" />
+      <span className="claim-heatmap-goal claim-heatmap-goal-left" />
+      <span className="claim-heatmap-goal claim-heatmap-goal-right" />
+    </div>
+  );
+}
+
+function detectionAtFrame(track: ClaimTrack, frame: number, tolerance = 2): ClaimBox | null {
+  const box = track.boxes.reduce<ClaimBox | null>((nearest, candidate) => {
+    if (Math.abs(candidate.frame - frame) > tolerance) return nearest;
+    if (!nearest || Math.abs(candidate.frame - frame) < Math.abs(nearest.frame - frame)) return candidate;
+    return nearest;
+  }, null);
+  return box;
+}
+
+function candidateMatchesTakenFragment(
+  candidateId: string,
+  frame: number,
+  rawSegment: TrackingSegment,
+  manifest: ClaimMatchResponse["manifest"],
+  fragment: ClaimMatchResponse["progress"]["takenFragments"][number],
+): boolean {
+  const rawTrack = rawSegment.tracks.find((track) => track.id === candidateId);
+  if (rawTrack) {
+    return rawTrack.id === fragment.trackId
+      && rawTrack.boxes.some((box) => box.frame === frame)
+      && frame >= fragment.fromFrame
+      && frame <= fragment.toFrame;
+  }
+  const identity = manifest.identities?.find((item) => item.id === candidateId);
+  return Boolean(identity?.parts.some((part) =>
+    part.trackId === fragment.trackId
+    && frame >= part.fromFrame
+    && frame <= part.toFrame
+    && rawSegment.tracks.some((track) =>
+      track.id === part.trackId && track.boxes.some((box) => box.frame === frame))));
+}
+
+function boxCenter(box: ClaimBox) {
+  return { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+}
+
+function nearestDetectionFrame(
+  bundle: ClaimBundle,
+  tracks: ClaimTrack[],
+  targetFrame: number,
+  requiredTrackId?: string | null,
+): number | null {
+  const maxOffset = Math.max(2, Math.round(bundle.frameRate * 4));
+  let bestFrame: number | null = null;
+  let bestCount = -1;
+  for (let offset = 0; offset <= maxOffset; offset += 1) {
+    const frames = offset === 0 ? [targetFrame] : [targetFrame - offset, targetFrame + offset];
+    for (const frame of frames) {
+      if (frame < 0 || frame >= bundle.frameCount) continue;
+      if (requiredTrackId && !tracks.some((track) => track.id === requiredTrackId && detectionAtFrame(track, frame))) continue;
+      const count = tracks.reduce((total, track) => total + (detectionAtFrame(track, frame) ? 1 : 0), 0);
+      if (count > bestCount) {
+        bestCount = count;
+        bestFrame = frame;
+      }
+    }
+    if (bestCount >= 2) return bestFrame;
+  }
+  return bestCount >= 2 ? bestFrame : null;
+}
+
+function captionForTrack(track: ClaimTrack, frame: number, bundle: ClaimBundle) {
+  let before: ClaimBox | undefined;
+  let after: ClaimBox | undefined;
+  for (const box of track.boxes) {
+    if (box.frame <= frame) before = box;
+    if (box.frame >= frame) { after = box; break; }
+  }
+  let movement = "standing";
+  let direction = "";
+  if (before && after && after.frame > before.frame) {
+    const beforeCenter = boxCenter(before);
+    const afterCenter = boxCenter(after);
+    const seconds = (after.frame - before.frame) / bundle.frameRate;
+    const pixelsPerSecond = Math.hypot(afterCenter.x - beforeCenter.x, afterCenter.y - beforeCenter.y) / Math.max(seconds, 0.01);
+    const bodyHeight = Math.max((before.h + after.h) / 2, 1);
+    const bodyLengthsPerSecond = pixelsPerSecond / bodyHeight;
+    if (bodyLengthsPerSecond >= 1.2) movement = "sprinting";
+    else if (bodyLengthsPerSecond >= 0.55) movement = "running";
+    else if (bodyLengthsPerSecond >= 0.15) movement = "jogging";
+    if (movement !== "standing") {
+      direction = Math.abs(afterCenter.x - beforeCenter.x) >= Math.abs(afterCenter.y - beforeCenter.y)
+        ? (afterCenter.x < beforeCenter.x ? " left" : " right")
+        : (afterCenter.y < beforeCenter.y ? " up" : " down");
+    }
+  }
+  return `${movement}${direction}`;
+}
+
+
+/**
+ * A cropped still of one candidate, drawn from the paused <video> at the
+ * candidate frame. drawImage works on a cross-origin video even when the
+ * canvas is tainted, and nothing reads the pixels back, so this is safe on
+ * the real Bunny stream. Redrawn whenever the video reports a new frame.
+ */
+function CandidateThumb({ videoRef, box, bundle, tick, size = 64 }: {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  box: ClaimBox;
+  bundle: ClaimBundle;
+  tick: number;
+  size?: number;
+}) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const video = videoRef.current;
+    const canvas = ref.current;
+    if (!video || !canvas || video.readyState < 2 || !video.videoWidth) return;
+    const sx = video.videoWidth / bundle.width;
+    const sy = video.videoHeight / bundle.height;
+    // a little context around the box, keeping the player's aspect
+    const padX = box.w * 0.35;
+    const padY = box.h * 0.12;
+    const x0 = Math.max(0, (box.x - padX) * sx);
+    const y0 = Math.max(0, (box.y - padY) * sy);
+    const w = Math.min(video.videoWidth - x0, (box.w + 2 * padX) * sx);
+    const h = Math.min(video.videoHeight - y0, (box.h + 2 * padY) * sy);
+    canvas.width = Math.round(size * (w / h));
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    try {
+      context.drawImage(video, x0, y0, w, h, 0, 0, canvas.width, canvas.height);
+    } catch {
+      // nothing to draw yet
+    }
+  }, [videoRef, box, bundle, tick, size]);
+  return <canvas ref={ref} className="candidate-thumb" aria-hidden="true" />;
+}
+
+function SkeletonPage() {
+  return (
+    <main className="claim-page" data-testid="claim-loading">
+      <div className="claim-skeleton-top" />
+      <div className="claim-skeleton-video" />
+      <div className="claim-skeleton-copy" />
+      <div className="claim-skeleton-copy short" />
+    </main>
+  );
+}
+
+function ErrorState({
+  onRetry,
+  title = "We lost the thread for a moment.",
+  message = "Your progress is safe. Try loading the match again and we’ll pick up from the last calm checkpoint.",
+  actionLabel = "Try again",
+}: {
+  onRetry: () => void;
+  title?: string;
+  message?: string;
+  actionLabel?: string;
+}) {
+  return (
+    <main className="claim-page claim-centered" data-testid="claim-error">
+      <div className="claim-error-mark"><CircleHelp size={28} /></div>
+      <p className="claim-eyebrow">Replay / Claim your match</p>
+      <h1>{title}</h1>
+      <p className="claim-muted">{message}</p>
+      <button type="button" className="claim-button claim-button-primary" data-testid="button-retry-claim" onClick={onRetry}>{actionLabel} <RotateCcw size={16} /></button>
+    </main>
+  );
+}
+
+export default function ClaimMatchPage() {
+  const params = useParams<{ id?: string }>();
+  const [, setLocation] = useLocation();
+  const { user, isLoading: authLoading, isGuest } = useAuth();
+  const { t } = useTranslation();
+  const isDemo = !params.id || params.id === "demo";
+  const recordingId = isDemo ? 0 : Number(params.id);
+  const queryKey = useMemo(() => getGetClaimMatchQueryKey(recordingId), [recordingId]);
+  const responseQueryKey = useMemo(
+    () => (isDemo ? ["claim-match", "demo"] as const : queryKey),
+    [isDemo, queryKey],
+  );
+  const claimQuery = useGetClaimMatch(recordingId, { query: { enabled: !isDemo, queryKey } });
+  const demoQuery = useQuery<ClaimMatchResponse>({
+    queryKey: ["claim-match", "demo"],
+    enabled: isDemo && Boolean(user) && !isGuest,
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const response = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/claim-match/demo`, {
         credentials: "include",

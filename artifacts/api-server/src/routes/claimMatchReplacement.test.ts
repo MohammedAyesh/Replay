@@ -529,19 +529,6 @@ describe("Claim Match tracking bundle replacement", () => {
       .select({ state: claimMatchIdentityBindingsTable.state })
       .from(claimMatchIdentityBindingsTable)
        .where(eq(claimMatchIdentityBindingsTable.id, binding!.id)))[0].state).toBe("confirmed");
-
-    const mapWithRemovedPiece = {
-      bundleFingerprint: fingerprint,
-      identities: [
-        { id: "person-a", parts: [{ trackId: "piece-b", fromFrame: 0, toFrame: 1 }] },
-        { id: "spectator", excluded: true, parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 1 }] },
-      ],
-    };
-    const removed = await request(app)
-      .put(`/api/admin/recordings/${recordingId}/identities`)
-      .send(mapWithRemovedPiece);
-    expect(removed.status).toBe(200);
-    expect((await currentManifest()).identities).toEqual(mapWithRemovedPiece.identities);
   });
 
   it("automatically splits one inferred row for disjoint human-vouched fragments", async () => {

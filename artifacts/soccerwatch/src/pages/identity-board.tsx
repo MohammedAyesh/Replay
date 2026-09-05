@@ -35,7 +35,7 @@ type Sprite = { f: number; j: string };
 type Part = IdentityBoardPart;
 type Row = IdentityBoardRow;
 type Drag = { kind: "crop" | "row"; rowId: string; trackId?: string; frame?: number };
-type HistoryEntry = IdentityBoardSnapshot;
+type HistoryEntry = { rows: Row[]; same: Set<string>; different: Set<string> };
 type BoardSnapshot = IdentityBoardSnapshot;
 type Crop = { trackId: string; frame: number; j?: string; boundary?: boolean };
 type Issue = { rowId: string; message: string };
@@ -269,13 +269,8 @@ function serializeRows(rows: Row[]) {
   return JSON.stringify(rows.map((row) => ({
     id: row.id,
     name: row.name,
-    ...(row.excluded ? { excluded: true } : {}),
     parts: [...row.parts].sort((a, b) => partKey(a).localeCompare(partKey(b))),
   })).sort((a, b) => a.id.localeCompare(b.id)));
-}
-
-function serializeBoard(rows: Row[], excludedRows: Row[]) {
-  return serializeRows([...rows, ...excludedRows.map((row) => ({ ...row, excluded: true }))]);
 }
 
 function addUnique(items: Crop[], item: Crop) {
@@ -291,13 +286,11 @@ export default function IdentityBoard() {
   const [tracks, setTracks] = useState<Record<string, Track>>({});
   const [sprites, setSprites] = useState<Record<string, Sprite[]>>({});
   const [rows, setRows] = useState<Row[]>([]);
-  const [excludedRows, setExcludedRows] = useState<Row[]>([]);
   const [status, setStatus] = useState("Loading…");
   const [drag, setDrag] = useState<Drag | null>(null);
   const [flash, setFlash] = useState("");
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   const [same, setSame] = useState<Set<string>>(new Set());
   const [different, setDifferent] = useState<Set<string>>(new Set());
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
@@ -310,7 +303,7 @@ export default function IdentityBoard() {
 
   const fps = manifest?.frameRate ?? 20;
   const duration = manifest?.duration ?? 1;
-  const isDirty = savedSnapshot !== null && savedSnapshot !== serializeBoard(rows, excludedRows);
+  const isDirty = savedSnapshot !== null && savedSnapshot !== serializeRows(rows);
 
   useEffect(() => {
     if (spriteReference.current !== sprites) {
@@ -365,29 +358,19 @@ export default function IdentityBoard() {
         const saved = claim.manifest.identities ?? [];
         const usableSavedMap = saved.length > 0 && identityMapMatchesBundle(claim.manifest);
         const initialRows = usableSavedMap
-          ? saved.filter((identity: TrackingIdentity) => !identity.excluded)
-            .map((identity: TrackingIdentity) => ({ id: identity.id, name: identity.name ?? "", parts: identity.parts }))
+          ? saved.map((identity: TrackingIdentity) => ({ id: identity.id, name: identity.name ?? "", parts: identity.parts }))
           : autoRows(all, claim.manifest.frameRate);
-        const initialExcludedRows = usableSavedMap
-          ? saved.filter((identity: TrackingIdentity) => identity.excluded)
-            .map((identity: TrackingIdentity) => ({ id: identity.id, name: identity.name ?? "", excluded: true, parts: identity.parts }))
-          : [];
-        const initialConstraints = usableSavedMap
-          ? deriveConstraints([...initialRows, ...initialExcludedRows])
-          : { same: new Set<string>(), different: new Set<string>() };
+        const initialConstraints = usableSavedMap ? deriveConstraints(initialRows) : { same: new Set<string>(), different: new Set<string>() };
         setTracks(all);
         setSprites(spr);
         setSpriteCoverage(coverage);
         setRows(initialRows);
-        setExcludedRows(initialExcludedRows);
         setSame(initialConstraints.same);
         setDifferent(initialConstraints.different);
         setHistory([]);
-        setSelectedRowIds(new Set());
-        setSavedSnapshot(serializeBoard(initialRows, initialExcludedRows));
+        setSavedSnapshot(serializeRows(initialRows));
         acceptedBoard.current = {
           rows: initialRows.map((row) => ({ ...row, parts: row.parts.map((part) => ({ ...part })) })),
-          excludedRows: initialExcludedRows.map((row) => ({ ...row, parts: row.parts.map((part) => ({ ...part })) })),
           same: new Set(initialConstraints.same),
           different: new Set(initialConstraints.different),
         };
@@ -481,13 +464,7 @@ export default function IdentityBoard() {
     window.setTimeout(() => setFlash(""), 3500);
   }, []);
 
-  const commit = useCallback((
-    next: Row[],
-    message: string,
-    sameAdd: string[] = [],
-    differentAdd: string[] = [],
-    nextExcludedRows = excludedRows,
-  ) => {
+  const commit = useCallback((next: Row[], message: string, sameAdd: string[] = [], differentAdd: string[] = []) => {
     const nextSame = new Set(same);
     const nextDifferent = new Set(different);
     sameAdd.forEach((key) => {
@@ -498,26 +475,19 @@ export default function IdentityBoard() {
       nextDifferent.add(key);
       nextSame.delete(key);
     });
-    setHistory((historyEntries) => [...historyEntries.slice(-30), {
-      rows,
-      excludedRows,
-      same: new Set(same),
-      different: new Set(different),
-    }]);
+    setHistory((historyEntries) => [...historyEntries.slice(-30), { rows, same: new Set(same), different: new Set(different) }]);
     const recomputed = buildRows(tracks, fps, next.flatMap((row) => row.parts), nextSame, nextDifferent, next);
     setSame(nextSame);
     setDifferent(nextDifferent);
     setRows(recomputed);
-    setExcludedRows(nextExcludedRows.map((row) => ({ ...row, excluded: true })));
     flashMessage(message);
-  }, [different, excludedRows, flashMessage, fps, rows, same, tracks]);
+  }, [different, flashMessage, fps, rows, same, tracks]);
 
   const undo = () => {
     const previous = history.at(-1);
     if (!previous) return;
     setHistory((entries) => entries.slice(0, -1));
     setRows(previous.rows);
-    setExcludedRows(previous.excludedRows);
     setSame(previous.same);
     setDifferent(previous.different);
     flashMessage("Undid the last edit");
@@ -547,67 +517,18 @@ export default function IdentityBoard() {
     commit(next, to ? `Moved ${fmt(frame / fps)} onwards to ${to.name || to.id}` : `Split off a new person from ${fmt(frame / fps)}`, sameAdd, differentAdd);
   };
 
-  const mergeRowIds = (rowIds: string[]) => {
-    const selected = rows.filter((row) => rowIds.includes(row.id));
-    if (selected.length < 2) return;
-    if (selected.some((left, leftIndex) =>
-      selected.slice(leftIndex + 1).some((right) => left.parts.some((a) => right.parts.some((b) => overlaps(a, b)))))) {
-      flashMessage("Those pieces overlap in time — they cannot be one person", true);
+  const mergeRows = (fromId: string, toId: string) => {
+    const from = rows.find((row) => row.id === fromId);
+    const to = rows.find((row) => row.id === toId);
+    if (!from || !to || from === to) return;
+    if (from.parts.some((a) => to.parts.some((b) => overlaps(a, b)))) {
+      flashMessage("Those two pieces overlap in time — they cannot be one person", true);
       return;
     }
-    const target = selected[0];
-    const selectedSet = new Set(selected.map((row) => row.id));
-    const mergedParts = selected.flatMap((row) => row.parts)
-      .sort((a, b) => a.fromFrame - b.fromFrame || a.trackId.localeCompare(b.trackId));
-    const next = rows.flatMap((row) => {
-      if (row.id === target.id) return [{ ...target, parts: mergedParts }];
-      return selectedSet.has(row.id) ? [] : [row];
-    });
-    const sameAdd = selected.flatMap((left, leftIndex) =>
-      selected.slice(leftIndex + 1).flatMap((right) =>
-        left.parts.flatMap((a) => right.parts.map((b) => pairKey(a, b)))));
-    commit(next, `Merged ${selected.length} rows into ${target.name || target.id}`, sameAdd);
-    setSelectedRowIds(new Set([target.id]));
-  };
-
-  const mergeRows = (fromId: string, toId: string) => {
-    if (fromId === toId) return;
-    mergeRowIds([toId, fromId]);
-  };
-
-  const mergeSelectedRows = () => {
-    mergeRowIds(rows.filter((row) => selectedRowIds.has(row.id)).map((row) => row.id));
-  };
-
-  const removeRow = (rowId: string) => {
-    const row = rows.find((candidate) => candidate.id === rowId);
-    if (!row) return;
-    if (!window.confirm(`Remove ${row.name || row.id} from the player board? Its pieces will stay excluded until restored.`)) return;
-    commit(
-      rows.filter((candidate) => candidate.id !== rowId),
-      `Removed ${row.name || row.id}`,
-      [],
-      [],
-      [...excludedRows, { ...row, excluded: true }],
+    const next = rows.filter((row) => row.id !== fromId).map((row) =>
+      row.id === toId ? { ...row, parts: [...row.parts, ...from.parts].sort((a, b) => a.fromFrame - b.fromFrame) } : row,
     );
-    setSelectedRowIds((current) => {
-      const next = new Set(current);
-      next.delete(rowId);
-      return next;
-    });
-  };
-
-  const restoreRow = (rowId: string) => {
-    const row = excludedRows.find((candidate) => candidate.id === rowId);
-    if (!row) return;
-    const restored = { ...row, excluded: undefined };
-    commit(
-      [...rows, restored],
-      `Restored ${row.name || row.id}`,
-      [],
-      [],
-      excludedRows.filter((candidate) => candidate.id !== rowId),
-    );
+    commit(next, `Merged into ${to.name || to.id}`, from.parts.flatMap((a) => to.parts.map((b) => pairKey(a, b))));
   };
 
   const recompute = useCallback((message = "Recomputed grouping from the current constraints") => {
@@ -624,12 +545,7 @@ export default function IdentityBoard() {
     const current = rows.find((row) => row.id === id)?.name;
     nameBeforeEdit.current.delete(id);
     if (before !== undefined && current !== before) {
-      setHistory((entries) => [...entries.slice(-30), {
-        rows,
-        excludedRows,
-        same: new Set(same),
-        different: new Set(different),
-      }]);
+      setHistory((entries) => [...entries.slice(-30), { rows, same: new Set(same), different: new Set(different) }]);
       flashMessage(`Renamed ${id}`);
     }
   };
@@ -641,10 +557,9 @@ export default function IdentityBoard() {
       if (!acceptedBoard.current) return;
       const restored = restoreAcceptedBoard(acceptedBoard.current);
       setRows(restored.rows);
-      setExcludedRows(restored.excludedRows);
       setSame(restored.same);
       setDifferent(restored.different);
-      setSavedSnapshot(serializeBoard(restored.rows, restored.excludedRows));
+      setSavedSnapshot(serializeRows(restored.rows));
     };
     try {
       const saveMap = () => fetch(
@@ -655,10 +570,7 @@ export default function IdentityBoard() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             bundleFingerprint: String(manifest?.provenance?.bundleFingerprint ?? ""),
-            identities: [
-              ...next.map((row) => ({ id: row.id, name: row.name || null, parts: row.parts })),
-              ...excludedRows.map((row) => ({ id: row.id, name: row.name || null, excluded: true, parts: row.parts })),
-            ],
+            identities: next.map((row) => ({ id: row.id, name: row.name || null, parts: row.parts })),
           }),
         },
       );
@@ -685,10 +597,9 @@ export default function IdentityBoard() {
         const body = await res.json().catch(() => null) as { error?: string } | null;
         throw new Error(body?.error || `save -> ${res.status}`);
       }
-      const acceptedConstraints = deriveConstraints([...next, ...excludedRows]);
+      const acceptedConstraints = deriveConstraints(next);
       const accepted = {
         rows: next.map((row) => ({ ...row, parts: row.parts.map((part) => ({ ...part })) })),
-        excludedRows: excludedRows.map((row) => ({ ...row, excluded: true, parts: row.parts.map((part) => ({ ...part })) })),
         same: acceptedConstraints.same,
         different: acceptedConstraints.different,
       };
@@ -696,8 +607,8 @@ export default function IdentityBoard() {
       setRows(next);
       setSame(accepted.same);
       setDifferent(accepted.different);
-       setSavedSnapshot(serializeBoard(next, excludedRows));
-       flashMessage(`Saved ${next.length} people and kept ${excludedRows.length} removed`);
+      setSavedSnapshot(serializeRows(next));
+      flashMessage(`Saved ${next.length} people and refreshed grouping`);
     } catch (error) {
       restoreAccepted();
       flashMessage(`Change was not saved: ${error instanceof Error ? error.message : "Save failed"}`, true);
@@ -746,28 +657,6 @@ export default function IdentityBoard() {
             onBlur={() => finishRename(row.id)}
             onClick={(event) => event.stopPropagation()}
           />
-          <div className="idb-row-tools">
-            <label className="idb-select">
-              <input
-                type="checkbox"
-                checked={selectedRowIds.has(row.id)}
-                aria-label={`Select ${row.name || row.id} for merge`}
-                onChange={(event) => {
-                  setSelectedRowIds((current) => {
-                    const next = new Set(current);
-                    if (event.target.checked) next.add(row.id);
-                    else next.delete(row.id);
-                    return next;
-                  });
-                }}
-                onClick={(event) => event.stopPropagation()}
-              />
-              Merge
-            </label>
-            <button type="button" className="idb-remove" onClick={(event) => { event.stopPropagation(); removeRow(row.id); }}>
-              Remove
-            </button>
-          </div>
           <span className="idb-meta">{fmt(span)} · {row.parts.length} piece{row.parts.length === 1 ? "" : "s"}{issue ? ` · ${issue.message}` : ""}</span>
           <div className="idb-timeline" aria-hidden="true">
             {row.parts.map((part, index) => (
@@ -810,13 +699,12 @@ export default function IdentityBoard() {
         <button type="button" className="idb-back" onClick={leave}>← Admin</button>
         <div>
           <h1>Who is who</h1>
-          <p>{manifest?.label} · {rows.length} people · select rows to merge, or drag a row handle</p>
+          <p>{manifest?.label} · {rows.length} people · drag a crop to split, or a row handle to merge</p>
         </div>
         <div className="idb-actions">
           <button type="button" onClick={undo} disabled={!history.length}>Undo</button>
           <button type="button" onClick={() => recompute()} disabled={!rows.length}>Recompute</button>
-          <button type="button" onClick={mergeSelectedRows} disabled={selectedRowIds.size < 2}>Merge selected</button>
-          <button type="button" className="is-primary" onClick={save} disabled={saving || (!rows.length && !excludedRows.length)}>{saving ? "Saving…" : "Save"}</button>
+          <button type="button" className="is-primary" onClick={save} disabled={saving || !rows.length}>{saving ? "Saving…" : "Save"}</button>
         </div>
       </header>
       {status && <p className={`idb-status ${status.includes("does not match") ? "is-warn" : ""}`}>{status}</p>}
@@ -847,7 +735,6 @@ export default function IdentityBoard() {
       <div className="idb-metrics">
         <span>Assigned tracked time <b>{fmt(boardMetrics.assignedSeconds)}</b></span>
         <span>Unassigned pieces <b>{boardMetrics.unassignedPieces}</b></span>
-        <span>Removed <b>{excludedRows.reduce((count, row) => count + row.parts.length, 0)}</b></span>
         <span>Single-piece rows <b>{boardMetrics.singlePieceRows}</b></span>
         <span>Consistency <b>{issues.length ? `${issues.length} flagged` : "OK"}</b></span>
         {isDirty && <strong>Unsaved changes</strong>}
@@ -867,22 +754,6 @@ export default function IdentityBoard() {
         <section className="idb-frags">
           <h2>Short-span rows ({fragments.length}) — suggestions can join fragments too</h2>
           {fragments.map((row) => renderRow(row, true))}
-        </section>
-      )}
-      {excludedRows.length > 0 && (
-        <section className="idb-removed">
-          <h2>Removed ({excludedRows.length}) — excluded from recompute and player identities</h2>
-          <div className="idb-removed-list">
-            {excludedRows.map((row) => (
-              <div key={row.id} className="idb-removed-row">
-                <span>
-                  <strong>{row.name || row.id}</strong>
-                  <small>{fmt(rowSpan(row) / fps)} · {row.parts.length} piece{row.parts.length === 1 ? "" : "s"}</small>
-                </span>
-                <button type="button" onClick={() => restoreRow(row.id)}>Restore</button>
-              </div>
-            ))}
-          </div>
         </section>
       )}
     </main>
