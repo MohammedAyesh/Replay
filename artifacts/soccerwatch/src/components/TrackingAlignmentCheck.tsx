@@ -9,7 +9,17 @@ import Hls from "hls.js";
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${basePath}/api${path}`, { credentials: "include" });
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  if (!res.ok) {
+    let message: string | null = null;
+    try {
+      const body = await res.json() as { error?: unknown; message?: unknown };
+      if (typeof body.error === "string" && body.error.trim()) message = body.error;
+      else if (typeof body.message === "string" && body.message.trim()) message = body.message;
+    } catch {
+      // Preserve the status fallback when the response is not JSON.
+    }
+    throw new Error(message ?? `${path} -> ${res.status}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -205,7 +215,10 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
           ? "Some segments drew no boxes at all — that usually means the offset is wrong."
           : "Every box you see should be sitting on a person. If they are on grass, the offset is wrong.");
       } catch (error) {
-        if (!cancelled) setStatus(error instanceof Error ? error.message : "Could not run the check");
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : "Could not run the check";
+          setStatus(`Alignment check unavailable: ${message}`);
+        }
       }
     };
 

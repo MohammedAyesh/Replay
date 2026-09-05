@@ -1078,6 +1078,34 @@ async function getVisibleRecordingBundle(recordingId: number) {
   return row;
 }
 
+async function getClaimMatchBundleForRequest(
+  req: Parameters<typeof getLocalUserId>[0],
+  recordingId: number,
+) {
+  const row = await getRecordingBundle(recordingId);
+  if (!row) {
+    return { row: null, error: "Recording not found", code: "recording_not_found" as const };
+  }
+  if (!row.bundle?.manifest) {
+    return {
+      row,
+      error: "No tracking bundle has been uploaded for this recording",
+      code: "tracking_bundle_missing" as const,
+    };
+  }
+  // Admins use this read path to validate a bundle before player visibility is
+  // enabled. Ordinary account users remain subject to the recording schedule.
+  if (await requireAdmin(req)) return { row, error: null, code: null };
+  if (!(await isRecordingVisible(row.recording))) {
+    return {
+      row,
+      error: "Recording is not visible to players yet",
+      code: "recording_not_visible" as const,
+    };
+  }
+  return { row, error: null, code: null };
+}
+
 async function getDemoRecordingId(): Promise<number | null> {
   const bundles = await db
     .select({ recordingId: recordingTrackingBundlesTable.recordingId })
@@ -2859,11 +2887,17 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     res.status(400).json({ error: params.error.message });
     return;
   }
-  const row = await getVisibleRecordingBundle(params.data.id);
-  if (!row?.bundle?.manifest) {
-    res.status(404).json({ error: "Recording or tracking bundle not found" });
+  const access = await getClaimMatchBundleForRequest(req, params.data.id);
+  if (access.error) {
+    res.status(404).json({ error: access.error ?? "Recording not found", code: access.code ?? "recording_not_found" });
     return;
   }
+  const row = access.row;
+  if (!row?.bundle?.manifest) {
+    res.status(404).json({ error: "No tracking bundle has been uploaded for this recording", code: "tracking_bundle_missing" });
+    return;
+  }
+  const bundle = row.bundle;
   const [progress] = await db
     .select()
     .from(claimMatchProgressTable)
@@ -2880,8 +2914,8 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     ))
     .orderBy(desc(claimMatchCorrectionsTable.createdAt));
   const storedOffPitchSpans = await getClaimOffPitchSpans(userId, params.data.id);
-  const manifest = await manifestWithBundleFingerprint(row.bundle);
-  const segments = await getClaimStateSegments(row.bundle);
+  const manifest = await manifestWithBundleFingerprint(bundle);
+  const segments = await getClaimStateSegments(bundle);
   const offPitchSpans = normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration);
   let derived = deriveClaimState(manifest, segments, corrections, undefined, offPitchSpans);
   if (corrections.some(isAcceptedClaimAnswer) || progress?.completed || derived.completed) {
@@ -2891,11 +2925,11 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
       manifest,
       segments,
       corrections,
-      await readBundleSegments(row.bundle.id),
+      await readBundleSegments(bundle.id),
       offPitchSpans,
     );
   }
-  const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
+  const binding = await syncIdentityBinding(userId, params.data.id, bundle, derived);
   const takenFragments = await getTakenClaimFragments(params.data.id, userId);
   const canAward = completionAllowed(derived, binding);
   const earnedClips = canAward
@@ -2935,9 +2969,14 @@ router.get("/recordings/:id/claim-match/segments/:segmentIndex", async (req, res
     res.status(400).json({ error: params.error.message });
     return;
   }
-  const row = await getVisibleRecordingBundle(params.data.id);
+  const access = await getClaimMatchBundleForRequest(req, params.data.id);
+  if (access.error) {
+    res.status(404).json({ error: access.error ?? "Recording not found", code: access.code ?? "recording_not_found" });
+    return;
+  }
+  const row = access.row;
   if (!row?.bundle?.manifest) {
-    res.status(404).json({ error: "Recording or tracking bundle not found" });
+    res.status(404).json({ error: "No tracking bundle has been uploaded for this recording", code: "tracking_bundle_missing" });
     return;
   }
   const manifestSegment = row.bundle.manifest.segments.find((segment) => segment.index === params.data.segmentIndex);
@@ -3616,8 +3655,16 @@ router.get("/recordings/:id/claim-match/sprites/:segmentIndex", async (req, res)
     res.status(400).json({ error: params.error.message });
     return;
   }
-  const row = await getVisibleRecordingBundle(params.data.id);
-  const manifestSegment = row?.bundle?.manifest?.segments.find((segment) => segment.index === params.data.segmentIndex);
+  const access = await getClaimMatchBundleForRequest(req, params.data.id);
+  if (access.error) {
+    res.status(404).json({ error: access.error ?? "Recording not found", code: access.code ?? "recording_not_found" });
+    return;
+  }
+  if (!access.row?.bundle?.manifest) {
+    res.status(404).json({ error: "No tracking bundle has been uploaded for this recording", code: "tracking_bundle_missing" });
+    return;
+  }
+  const manifestSegment = access.row.bundle.manifest.segments.find((segment) => segment.index === params.data.segmentIndex);
   const spritesPath = (manifestSegment as { spritesPath?: string } | undefined)?.spritesPath;
   if (!spritesPath) {
     res.status(404).json({ error: "No sprites for this segment" });
