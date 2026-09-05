@@ -41,6 +41,42 @@ describe("claim match segmented bundles", () => {
     expect(validateUploadBundle(upload!)).toBeNull();
   });
 
+  it("accepts one sprite file when the segment name is its positional name", () => {
+    const manifest = {
+      version: 1,
+      label: "positional segment",
+      width: 1920,
+      height: 1080,
+      frameRate: 25,
+      frameCount: 2,
+      duration: 0.08,
+      segmentCount: 1,
+      segments: [
+        { index: 0, name: "segment-01", startFrame: 0, endFrame: 1, startSeconds: 0, endSeconds: 0.08 },
+      ],
+    };
+    const payload = {
+      tracks: [{ id: "player-1", startFrame: 0, endFrame: 1, boxes: [{ frame: 0, x: 1, y: 1, w: 10, h: 20 }] }],
+      crossings: [],
+      inPlaySpans: [{ start: 0, end: 0.08 }],
+      events: [],
+    };
+    const zip = zipSync({
+      "manifest.json": strToU8(JSON.stringify(manifest)),
+      "segments/segment-01.json": strToU8(JSON.stringify(payload)),
+      "sprites/segment-01.json": strToU8(JSON.stringify({
+        "player-1": [{ f: 0, j: "base64-jpeg" }],
+      })),
+    });
+
+    const result = parseZipBundleDetailed(Buffer.from(zip));
+
+    expect(result.error).toBeNull();
+    expect(result.upload?.sprites?.[0]).toEqual({
+      "s0:player-1": [{ f: 0, j: "base64-jpeg" }],
+    });
+  });
+
   it("rejects gaps between segment frame ranges", () => {
     const upload = {
       manifest: {

@@ -852,10 +852,10 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
     }
     segments.push(namespaceSegment(segment));
 
-    const spriteCandidates = [
+    const spriteCandidates = [...new Set([
       `sprites/${name}.json`,
       `sprites/segment-${String(index + 1).padStart(2, "0")}.json`,
-    ];
+    ])];
     const matchingSpriteEntries = spriteCandidates.filter((candidate) => Boolean(entries[candidate]));
     if (matchingSpriteEntries.length > 1) {
       return { upload: null, error: `Segment ${index + 1} has duplicate sprite files` };
