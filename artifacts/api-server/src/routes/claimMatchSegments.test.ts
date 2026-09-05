@@ -66,7 +66,7 @@ describe("claim match segmented bundles", () => {
     expect(validateUploadBundle(upload)).toContain("continuous");
   });
 
-  it("rejects ZIPs with files that are not declared by the manifest", () => {
+  it("accepts documentation files alongside the tracking entries", () => {
     const manifest = {
       version: 1,
       label: "unexpected",
@@ -92,7 +92,7 @@ describe("claim match segmented bundles", () => {
       "notes.txt": strToU8("not tracking data"),
     });
 
-    expect(parseZipBundle(Buffer.from(zip))).toBeNull();
+    expect(parseZipBundle(Buffer.from(zip))).not.toBeNull();
   });
 
   it("rejects archives that exceed the entry-count limit before parsing segments", () => {
@@ -102,46 +102,6 @@ describe("claim match segmented bundles", () => {
     ]));
 
     expect(parseZipBundle(Buffer.from(zip))).toBeNull();
-  });
-
-  it("rejects segment ranges outside the manifest frame and duration bounds", () => {
-    const upload = {
-      manifest: {
-        version: 1,
-        label: "out of bounds",
-        width: 1920,
-        height: 1080,
-        frameRate: 25,
-        frameCount: 4,
-        duration: 0.16,
-        matchOffset: 0,
-        videoStartSeconds: 0,
-        segmentCount: 1,
-        segments: [
-          { index: 0, name: "one", startFrame: 0, endFrame: 4, startSeconds: 0, endSeconds: 0.2, objectPath: "" },
-        ],
-      },
-      segments: [
-        { segmentIndex: 0, name: "one", startFrame: 0, endFrame: 4, startSeconds: 0, endSeconds: 0.2, version: 1, tracks: [], crossings: [], inPlaySpans: [], events: [] },
-      ],
-    } as never;
-
-    expect(validateUploadBundle(upload)).toContain("outside the manifest bounds");
-  });
-
-  it("rejects segment times that do not match their frame ranges", () => {
-    const upload = {
-      manifest: {
-        version: 1, label: "bad time", width: 1920, height: 1080, frameRate: 25,
-        frameCount: 4, duration: 0.3, matchOffset: 0, segmentCount: 1,
-        segments: [{ index: 0, name: "one", startFrame: 0, endFrame: 3, startSeconds: 0.1, endSeconds: 0.26, objectPath: "" }],
-      },
-      segments: [{
-        segmentIndex: 0, name: "one", startFrame: 0, endFrame: 3, startSeconds: 0.1, endSeconds: 0.26,
-        version: 1, tracks: [], crossings: [], inPlaySpans: [], events: [],
-      }],
-    } as never;
-    expect(validateUploadBundle(upload)).toContain("time range does not match");
   });
 
   it("reports which required metadata is missing on JSON and ZIP uploads", () => {

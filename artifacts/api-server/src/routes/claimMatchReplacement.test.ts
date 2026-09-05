@@ -681,8 +681,11 @@ describe("Claim Match tracking bundle replacement", () => {
     expect(released).toEqual({ state: "released", vouchedFragments: [] });
   });
 
-  it("returns a useful ZIP constraint error without exposing storage internals", async () => {
+  it("accepts documentation files without changing replacement storage behavior", async () => {
     mockedGetLocalUserId.mockResolvedValue(adminId);
+    mockedWriteClaimSegment
+      .mockResolvedValueOnce({ objectPath: "/objects/new-segment-0", compressedBytes: 10 })
+      .mockResolvedValueOnce({ objectPath: "/objects/new-segment-1", compressedBytes: 10 });
     const upload = makeUpload();
     const zip = zipSync({
       "manifest.json": strToU8(JSON.stringify(upload.manifest)),
@@ -695,9 +698,9 @@ describe("Claim Match tracking bundle replacement", () => {
       .put(`/api/admin/recordings/${recordingId}/tracking-bundle`)
       .attach("bundle", Buffer.from(zip), "tracking.zip");
 
-    expect(response.status).toBe(400);
-    expect(response.body.error).toContain("unexpected file");
-    expect(response.body.error).not.toContain("PRIVATE_OBJECT_DIR");
-    expect((await currentManifest()).segments[0].objectPath).toBe("/objects/old-segment-0");
+    expect(response.status).toBe(200);
+    expect((await currentManifest()).segments[0].objectPath).toBe("/objects/new-segment-0");
+    expect(mockedDeleteClaimSegment).toHaveBeenCalledWith("/objects/old-segment-0");
+    expect(mockedDeleteClaimSegment).toHaveBeenCalledWith("/objects/old-segment-1");
   });
 });

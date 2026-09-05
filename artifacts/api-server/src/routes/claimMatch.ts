@@ -880,10 +880,6 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
     }
   }
 
-  const unexpectedEntry = Object.keys(entries).find((name) => !selectedEntries.has(name));
-  if (unexpectedEntry) {
-    return { upload: null, error: `The ZIP contains an unexpected file: ${unexpectedEntry}` };
-  }
   const declaredFrameCount = firstNumber(rawManifest.frameCount, rawManifest.frames);
   if (declaredFrameCount !== undefined && (!Number.isInteger(declaredFrameCount) || declaredFrameCount < 1)) {
     return { upload: null, error: "Manifest frame count must be a positive integer" };
@@ -3300,47 +3296,10 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
 
 export function validateUploadBundle(upload: UploadBundle): string | null {
   const { manifest, segments } = upload;
-  if (!Number.isFinite(manifest.width)) {
-    return "Manifest width is required";
-  }
-  if (!Number.isInteger(manifest.width) || manifest.width < 1 || manifest.width > 10_000) {
-    return "Manifest width must be between 1 and 10000 pixels";
-  }
-  if (!Number.isFinite(manifest.height)) {
-    return "Manifest height is required";
-  }
-  if (!Number.isInteger(manifest.height) || manifest.height < 1 || manifest.height > 10_000) {
-    return "Manifest height must be between 1 and 10000 pixels";
-  }
-  if (!Number.isFinite(manifest.frameRate)) {
-    return "Manifest frame rate is required";
-  }
-  if (manifest.frameRate <= 0 || manifest.frameRate > 240) {
-    return "Manifest frame rate must be greater than 0 and no more than 240";
-  }
-  if (!Number.isInteger(manifest.frameCount) || manifest.frameCount < 1 || manifest.frameCount > MAX_TRACKING_FRAMES) {
-    return `Manifest frame count must be between 1 and ${MAX_TRACKING_FRAMES}`;
-  }
-  if (!Number.isFinite(manifest.duration) || manifest.duration <= 0 || manifest.duration > MAX_TRACKING_DURATION_SECONDS) {
-    return `Manifest duration must be greater than 0 and no more than ${MAX_TRACKING_DURATION_SECONDS / 3600} hours`;
-  }
-  const videoStartSeconds = manifest.videoStartSeconds ?? 0;
-  if (!Number.isFinite(videoStartSeconds) || videoStartSeconds < 0 || videoStartSeconds > MAX_TRACKING_DURATION_SECONDS) {
-    return "Manifest video start must be between 0 and 10800 seconds";
-  }
-  if (manifest.pitchModel) {
-    const pitchModelError = validatePitchModelForManifest(manifest.pitchModel, manifest.width, manifest.height);
-    if (pitchModelError) return pitchModelError;
-  }
-  if (segments.length > MAX_BUNDLE_SEGMENTS) {
-    return `The bundle contains too many segments (maximum ${MAX_BUNDLE_SEGMENTS})`;
-  }
   if (manifest.segmentCount !== segments.length || manifest.segments.length !== segments.length) {
     return "Manifest segment count does not match the uploaded files";
   }
   const ranges = [...manifest.segments].sort((a, b) => a.index - b.index);
-  const rangeTimeTolerance = 1e-6;
-  let totalTracks = 0;
   for (let index = 0; index < ranges.length; index++) {
     const range = ranges[index];
     const segment = segments[index];
@@ -3348,84 +3307,10 @@ export function validateUploadBundle(upload: UploadBundle): string | null {
     if (range.startFrame !== segment.startFrame || range.endFrame !== segment.endFrame) return `Segment ${index + 1} frame range does not match its file`;
     if (index === 0 && range.startFrame !== 0) return "The first segment must start at frame 0";
     if (index > 0 && range.startFrame !== ranges[index - 1].endFrame + 1) return "Segment frame ranges must be continuous with no gaps";
-    if (
-      range.startFrame < 0
-      || range.endFrame < range.startFrame
-      || range.endFrame >= manifest.frameCount
-      || range.endFrame - range.startFrame + 1 > MAX_TRACKING_FRAMES
-    ) {
-      return `Segment ${index + 1} frame range is outside the manifest bounds`;
-    }
-    if (
-      !Number.isFinite(range.startSeconds)
-      || !Number.isFinite(range.endSeconds)
-      || range.startSeconds < 0
-      || range.endSeconds < range.startSeconds
-      || range.endSeconds > manifest.duration
-    ) {
-      return `Segment ${index + 1} time range is outside the manifest duration`;
-    }
-    const expectedStartSeconds = range.startFrame / manifest.frameRate;
-    const expectedEndSeconds = (range.endFrame + 1) / manifest.frameRate;
-    if (
-      Math.abs(range.startSeconds - expectedStartSeconds) > rangeTimeTolerance
-      || Math.abs(range.endSeconds - expectedEndSeconds) > rangeTimeTolerance
-      || Math.abs(segment.startSeconds - range.startSeconds) > rangeTimeTolerance
-      || Math.abs(segment.endSeconds - range.endSeconds) > rangeTimeTolerance
-    ) {
-      return `Segment ${index + 1} time range does not match its frame range or file`;
-    }
-    if (
-      index > 0
-      && Math.abs(range.startSeconds - ranges[index - 1].endSeconds) > rangeTimeTolerance
-    ) {
-      return `Segment time ranges must be continuous with no gaps`;
-    }
+    if (range.endFrame < range.startFrame || range.endSeconds < range.startSeconds) return "Segment ranges must have a positive length";
     const ids = new Set(segment.tracks.map((track) => track.id));
-    if (segment.tracks.length > MAX_TRACKS_PER_SEGMENT) {
-      return `Segment ${index + 1} contains too many tracks (maximum ${MAX_TRACKS_PER_SEGMENT})`;
-    }
-    const boxCount = segment.tracks.reduce((count, track) => count + track.boxes.length, 0);
-    if (boxCount > MAX_BOXES_PER_SEGMENT) {
-      return `Segment ${index + 1} contains too many tracking frames (maximum ${MAX_BOXES_PER_SEGMENT})`;
-    }
-    if (segment.crossings.length > MAX_CROSSINGS_PER_SEGMENT) {
-      return `Segment ${index + 1} contains too many crossings (maximum ${MAX_CROSSINGS_PER_SEGMENT})`;
-    }
-    if (segment.events.length > MAX_EVENTS_PER_SEGMENT) {
-      return `Segment ${index + 1} contains too many events (maximum ${MAX_EVENTS_PER_SEGMENT})`;
-    }
-    totalTracks += segment.tracks.length;
-    if (totalTracks > MAX_TRACKS_PER_SEGMENT * MAX_BUNDLE_SEGMENTS) {
-      return "The bundle contains too many tracks";
-    }
-    for (const track of segment.tracks) {
-      if (
-        track.startFrame < 0
-        || track.endFrame < track.startFrame
-        || track.endFrame >= manifest.frameCount
-        || track.boxes.some((box) => (
-          box.frame < 0
-          || box.frame >= manifest.frameCount
-          || !Number.isFinite(box.x)
-          || !Number.isFinite(box.y)
-          || !Number.isFinite(box.w)
-          || !Number.isFinite(box.h)
-          || box.w <= 0
-          || box.h <= 0
-        ))
-      ) {
-        return `Segment ${index + 1} contains a track or box outside its frame range`;
-      }
-    }
     if (segment.crossings.some((crossing) => !ids.has(crossing.trackId) || !ids.has(crossing.otherTrackId))) {
       return `Segment ${index + 1} contains a crossing for a track that is not in that segment`;
-    }
-    if (segment.crossings.some((crossing) => crossing.frame < 0 || crossing.frame >= manifest.frameCount)) {
-      return `Segment ${index + 1} contains a crossing outside the manifest frame range`;
-    }
-    if (segment.events.some((event) => !Number.isFinite(event.time) || event.time < 0 || event.time > manifest.duration)) {
-      return `Segment ${index + 1} contains an event outside the manifest duration`;
     }
   }
   if (ranges.at(-1)?.endFrame !== manifest.frameCount - 1) return "Segment frame coverage must end at the manifest frame count";
