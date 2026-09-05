@@ -398,6 +398,24 @@ interface FtpAvailability {
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
+class ApiFetchError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiFetchError";
+    this.status = status;
+  }
+}
+
+function errorMessageFromBody(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const record = body as { error?: unknown; message?: unknown };
+  if (typeof record.error === "string" && record.error.trim()) return record.error;
+  if (typeof record.message === "string" && record.message.trim()) return record.message;
+  return null;
+}
+
 async function apiFetch(path: string, opts?: RequestInit) {
   const isMultipart = typeof FormData !== "undefined" && opts?.body instanceof FormData;
   const res = await fetch(`${basePath}/api${path}`, {
@@ -408,9 +426,24 @@ async function apiFetch(path: string, opts?: RequestInit) {
     },
     ...opts,
   });
-  if (!res.ok) throw new Error(`${res.status}`);
+  if (!res.ok) {
+    let message: string | null = null;
+    try {
+      message = errorMessageFromBody(await res.clone().json());
+    } catch {
+      // The status below is the useful fallback for non-JSON responses.
+    }
+    throw new ApiFetchError(res.status, message ?? String(res.status));
+  }
   if (res.status === 204) return null;
   return res.json();
+}
+
+function adminRequestErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiFetchError && (error.status === 401 || error.status === 403)) {
+    return "Not signed in as an admin — sign in again and retry";
+  }
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
 // ─── Clips Tab ────────────────────────────────────────────────────────────────
@@ -4373,11 +4406,18 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         + `starts ${result.videoStartSeconds ?? 0}s into the video · ${result.frameCoverage}`,
       );
     } catch (error) {
+      const isAdminAuthError = error instanceof ApiFetchError
+        && (error.status === 401 || error.status === 403);
+      const requestMessage = adminRequestErrorMessage(error, "");
       setMessage(error instanceof SyntaxError
         ? "That file is not valid JSON"
         : error instanceof Error && error.message.startsWith("Video start")
           ? error.message
-          : "Upload failed — check manifest, segment ranges, and file names");
+          : isAdminAuthError
+            ? requestMessage
+            : requestMessage
+              ? `Upload failed — ${requestMessage}`
+              : "Upload failed — check manifest, segment ranges, and file names");
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -4402,8 +4442,8 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         `Ready · ${recording.trackingSegmentCount ?? "—"} segments · ${recording.trackingFrameCoverage ?? "coverage unavailable"} · `
         + `starts ${result.videoStartSeconds}s into the video`,
       );
-    } catch {
-      setMessage("Could not save the video start time");
+    } catch (error) {
+      setMessage(adminRequestErrorMessage(error, "Could not save the video start time"));
     } finally {
       setSavingStart(false);
     }
