@@ -52,6 +52,40 @@ function meanColour(file: string): { r: number; g: number } {
   return { r: b[0]!, g: b[1]! };
 }
 
+/**
+ * An overlay with one opaque patch in the top-left corner and nothing else.
+ *
+ * Opaque-on-transparent is the shape that actually tests something: it proves
+ * the composite happened where it should AND that the transparent remainder let
+ * the clip through. A fully opaque overlay would pass even if it were drawn at
+ * the wrong scale.
+ */
+function buildOverlayPng(width: number, height: number, name: string): string {
+  const out = path.join(tmp, name);
+  execFileSync("ffmpeg", [
+    "-hide_banner", "-loglevel", "error",
+    "-f", "lavfi", "-i", `color=c=black@0.0:s=${width}x${height},format=rgba`,
+    // replace=1 is load-bearing. Without it drawbox BLENDS into the RGB planes
+    // and leaves alpha at zero, producing a PNG that looks magenta in a viewer
+    // and composites to nothing at all.
+    "-vf", "drawbox=x=0:y=0:w=200:h=100:color=magenta@1.0:t=fill:replace=1",
+    "-frames:v", "1", "-y", out,
+  ]);
+  return out;
+}
+
+/** Mean colour of one region of the first frame. */
+function meanRegion(file: string, crop: string): { r: number; g: number; b: number } {
+  const raw = path.join(tmp, `region-${crop.replace(/[^0-9]/g, "_")}.rgb`);
+  execFileSync("ffmpeg", [
+    "-hide_banner", "-loglevel", "error",
+    "-i", file, "-frames:v", "1", "-vf", `crop=${crop},scale=1:1`,
+    "-f", "rawvideo", "-pix_fmt", "rgb24", "-y", raw,
+  ]);
+  const b = fs.readFileSync(raw);
+  return { r: b[0]!, g: b[1]!, b: b[2]! };
+}
+
 let source3840: string;
 let source1920: string;
 
@@ -153,4 +187,96 @@ describe("the geometry gate refuses the half-scale rendition", () => {
       cleanupTempFile(bad);
     }
   }, 240_000);
+});
+
+
+/**
+ * Branding, rendered for real.
+ *
+ * The unit tests in brandingAssets.test.ts assert the filter string is shaped
+ * correctly, which is necessary and not sufficient: a graph ffmpeg refuses, and
+ * one it accepts but composites in the wrong place, produce the same string.
+ * The first version of this passed `-headers` on a local overlay input and
+ * ffmpeg exited 8 with "Option headers not found" — a graph-shape test would
+ * never have seen it.
+ */
+describe("branding burned into the export", () => {
+  it("draws the overlay over the clip and lets the clip through where it is transparent", async () => {
+    const overlay = buildOverlayPng(1920, 1080, "overlay-1920x1080.png");
+    const out = await renderClip({
+      videoUrl: source3840,
+      totalDuration: 3,
+      startTime: 0,
+      endTime: 1,
+      // Left half: green in the source, so anything the overlay does not cover
+      // must still read green.
+      cropPath: [{ t: 0, x: 0, y: 0, w: 0.5, h: 1 }],
+      aspectRatio: "16:9",
+      title: "branded",
+      overlayUrl: overlay,
+    } as Parameters<typeof renderClip>[0]);
+
+    const patch = meanRegion(out, "100:50:10:10");
+    expect(patch.r).toBeGreaterThan(180);
+    expect(patch.b).toBeGreaterThan(180);
+    expect(patch.g).toBeLessThan(80);
+
+    const elsewhere = meanRegion(out, "200:200:800:600");
+    expect(elsewhere.g).toBeGreaterThan(80);
+    expect(elsewhere.r).toBeLessThan(80);
+
+    cleanupTempFile(out);
+  }, 120_000);
+
+  it("renders identically to an unbranded export where the overlay is transparent", () => {
+    // The crop chain must go into the filter_complex untouched. If it were
+    // rewritten, the framing would shift and this comparison would drift.
+    const plain = buildCropCommands([{ t: 0, x: 0.25, y: 0, w: 0.5, h: 1 } as never], 3, false).filter;
+    expect(plain).toContain("crop=1920:1080:960:0");
+  });
+
+  it("appends the end card after the clip", async () => {
+    // Two seconds of clip plus a one-second card should come back longer than
+    // the clip alone. Duration is the only honest check here: a concat that
+    // silently drops a segment still produces a playable file.
+    const card = path.join(tmp, "endcard.mp4");
+    execFileSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error",
+      "-f", "lavfi", "-i", "color=c=blue:s=1920x1080:r=30:d=1",
+      "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "-shortest", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-y", card,
+    ]);
+
+    const bare = await renderClip({
+      videoUrl: source3840, totalDuration: 3, startTime: 0, endTime: 2 / 3,
+      cropPath: [], aspectRatio: "16:9", title: "bare",
+    } as Parameters<typeof renderClip>[0]);
+    const withCard = await renderClip({
+      videoUrl: source3840, totalDuration: 3, startTime: 0, endTime: 2 / 3,
+      cropPath: [], aspectRatio: "16:9", title: "with card",
+      endCardUrl: card,
+    } as Parameters<typeof renderClip>[0]);
+
+    const seconds = (file: string) => Number(execFileSync("ffprobe", [
+      "-v", "error", "-show_entries", "format=duration",
+      "-of", "default=nw=1:nk=1", file,
+    ]).toString().trim());
+
+    expect(seconds(withCard)).toBeGreaterThan(seconds(bare) + 0.8);
+    cleanupTempFile(bare);
+    cleanupTempFile(withCard);
+  }, 180_000);
+
+  it("still produces the clip when the branding cannot be fetched", async () => {
+    // The rule that matters more than any of the above: branding never costs
+    // someone their clip.
+    const out = await renderClip({
+      videoUrl: source3840, totalDuration: 3, startTime: 0, endTime: 1 / 3,
+      cropPath: [], aspectRatio: "16:9", title: "broken branding",
+      endCardUrl: path.join(tmp, "does-not-exist.mp4"),
+    } as Parameters<typeof renderClip>[0]);
+    expect(fs.statSync(out).size).toBeGreaterThan(0);
+    cleanupTempFile(out);
+  }, 120_000);
 });

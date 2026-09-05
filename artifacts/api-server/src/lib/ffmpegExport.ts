@@ -5,6 +5,7 @@ import fs from "fs";
 import os from "os";
 import { logger } from "./logger";
 import { BUNNY_STORAGE_API_KEY, isBunnyStorageUrl } from "./bunny";
+import { buildOverlayFilterComplex } from "./brandingAssets";
 import {
   EXPORT_SOURCE_WIDTH,
   EXPORT_SOURCE_HEIGHT,
@@ -131,6 +132,16 @@ export interface FfmpegExportOptions {
   introUrl?: string;
   /** Referer for fetching introUrl, if it's also behind a CDN that checks one. */
   introReferer?: string;
+  /**
+   * Branding overlay, composited over the finished frame at 0,0 in the main
+   * encode rather than in a pass of its own — a second full re-encode of every
+   * branded clip is a real cost, and the crop chain is used verbatim either way.
+   */
+  overlayUrl?: string;
+  /** End card, appended after the clip. Normalized and concatenated like the intro. */
+  endCardUrl?: string;
+  /** Referer for fetching either branding asset. */
+  brandingReferer?: string;
 }
 
 
@@ -139,7 +150,7 @@ const SRC_ASPECT = SRC_W / SRC_H;
 /** Output pixel dimensions for a given aspect ratio — shared by the main
  * render and by intro-video normalization so the two segments concatenate
  * cleanly (concat demuxer requires matching dimensions/codec across parts). */
-function getOutputDims(is9to16: boolean): { w: number; h: number } {
+export function getOutputDims(is9to16: boolean): { w: number; h: number } {
   return is9to16
     ? { w: Math.round((SRC_H * 9) / 16), h: SRC_H }
     : { w: 1920, h: SRC_H };
@@ -796,7 +807,10 @@ function buildHeaderVal(referer?: string, url?: string): string {
 async function probeHasAudio(url: string, referer?: string): Promise<boolean> {
   try {
     const out = await run("ffprobe", [
-      "-headers", buildHeaderVal(referer, url),
+      // Remote only — a local path makes ffprobe reject the option and the
+      // catch below would then report "no audio track", which is a different
+      // and wrong answer rather than an error.
+      ...(/^https?:\/\//i.test(url) ? ["-headers", buildHeaderVal(referer, url)] : []),
       "-v", "error",
       "-select_streams", "a",
       "-show_entries", "stream=codec_type",
@@ -884,9 +898,18 @@ async function normalizeSegment(
     `scale=${dims.w}:${dims.h}:force_original_aspect_ratio=decrease,` +
     `pad=${dims.w}:${dims.h}:(ow-iw)/2:(oh-ih)/2:black,fps=30,setsar=1`;
 
+  // ffmpeg's file demuxer rejects -headers outright ("Option headers not found",
+  // exit 8), so it goes on only for a remote source. The main render input has
+  // carried this guard for a while; this one did not, and every branding asset
+  // that is not an http(s) URL would have failed here — silently, because
+  // withBookends swallows the failure and exports the clip alone.
+  const remoteHeaders = /^https?:\/\//i.test(url)
+    ? ["-headers", buildHeaderVal(referer, url)]
+    : [];
+
   const args = hasAudio
     ? [
-        "-headers", buildHeaderVal(referer, url),
+        ...remoteHeaders,
         "-i", url,
         // Branding, not content — see MAX_INTRO_SECONDS.
         "-t", String(MAX_INTRO_SECONDS),
@@ -899,7 +922,7 @@ async function normalizeSegment(
     : [
         // No source audio: synthesize silence so the segment still has an
         // audio stream matching the main clip's layout (see probeHasAudio).
-        "-headers", buildHeaderVal(referer, url),
+        ...remoteHeaders,
         "-i", url,
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-t", String(MAX_INTRO_SECONDS),
@@ -939,34 +962,58 @@ async function concatSegments(paths: string[]): Promise<string> {
 }
 
 /**
- * Render the main clip, then — if an intro is given — normalize it to match
- * the main clip's exact output spec and prepend it via concat.
+ * Render the main clip, then wrap it in whatever branding it has: the academy
+ * intro before, the end card after, each normalized to the clip's exact output
+ * spec and joined with the concat demuxer.
  *
- * A broken/unreachable intro must never block the user's own clip: any
- * failure in the intro or concat step is logged and swallowed, falling back
- * to the main-only render.
+ * Branding must never cost someone their clip. Every failure here — an
+ * unreachable asset, a file ffmpeg will not decode, a concat that refuses — is
+ * logged and swallowed, and the export falls back to the clip itself. That is
+ * also why the two are attempted together in one concat rather than one after
+ * the other: a broken end card should not throw away a good intro, and joining
+ * once means one place where that decision lives.
  */
-async function withIntro(
+async function withBookends(
   mainPath: string,
   is9to16: boolean,
   introUrl: string | undefined,
   introReferer: string | undefined,
+  endCardUrl: string | undefined,
+  endCardReferer: string | undefined,
 ): Promise<string> {
-  if (!introUrl) return mainPath;
+  if (!introUrl && !endCardUrl) return mainPath;
 
-  let introNormPath: string | null = null;
+  const dims = getOutputDims(is9to16);
+  const temps: string[] = [];
+
+  /** Normalize one bookend, or null if it cannot be used. */
+  const prepare = async (url: string | undefined, referer: string | undefined, what: string) => {
+    if (!url) return null;
+    try {
+      const hasAudio = await probeHasAudio(url, referer);
+      const norm = await normalizeSegment(url, dims, referer, hasAudio);
+      temps.push(norm);
+      return norm;
+    } catch (err) {
+      logger.error({ err, url }, `Could not prepare the ${what} — exporting without it`);
+      return null;
+    }
+  };
+
   try {
-    const dims = getOutputDims(is9to16);
-    const hasAudio = await probeHasAudio(introUrl, introReferer);
-    introNormPath = await normalizeSegment(introUrl, dims, introReferer, hasAudio);
-    const finalPath = await concatSegments([introNormPath, mainPath]);
+    const introPath = await prepare(introUrl, introReferer, "intro");
+    const endCardPath = await prepare(endCardUrl, endCardReferer, "end card");
+    const parts = [introPath, mainPath, endCardPath].filter((p): p is string => !!p);
+    if (parts.length === 1) return mainPath;
+
+    const finalPath = await concatSegments(parts);
     cleanupTempFile(mainPath);
     return finalPath;
   } catch (err) {
-    logger.error({ err, introUrl }, "Intro concat failed — exporting clip without intro");
+    logger.error({ err, introUrl, endCardUrl }, "Branding concat failed — exporting the clip alone");
     return mainPath;
   } finally {
-    if (introNormPath) cleanupTempFile(introNormPath);
+    for (const temp of temps) cleanupTempFile(temp);
   }
 }
 
@@ -1016,21 +1063,22 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   // audio stream that definitely exists. The concat demuxer runs with -c copy,
   // so a source that is mono, 16 kHz, or silent (all normal for a Reolink feed)
   // would otherwise either fail the concat — silently dropping the intro,
-  // because withIntro swallows the error — or emit a file whose main portion
+  // because withBookends swallows the error — or emit a file whose main portion
   // plays at the intro's declared sample rate.
   //
   // Only done when there is an intro: the plain export path keeps the source's
   // own audio parameters and costs no extra probe.
+  const willConcat = !!options.introUrl || !!options.endCardUrl;
   let mainHasAudio = true;
   try {
-    if (options.introUrl) {
+    if (willConcat) {
       mainHasAudio = await probeHasAudio(videoUrl, referer);
     }
   } catch (err) {
     if (filterScriptPath) cleanupTempFile(filterScriptPath);
     throw err;
   }
-  const needsSilentTrack = !!options.introUrl && !mainHasAudio;
+  const needsSilentTrack = willConcat && !mainHasAudio;
 
   // Only attach -headers for remote HTTP(S) sources.  For local file paths
   // (e.g. the temp buffer file produced by bufferRemoteClip), FFmpeg's file
@@ -1038,24 +1086,69 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   // found" when it is present.
   const isRemoteUrl = /^https?:\/\//i.test(videoUrl);
 
+  /**
+   * The overlay rides along in this encode rather than getting a pass of its
+   * own. A second full re-encode of every branded clip is a real cost, and the
+   * crop chain goes in untouched either way: it becomes `[0:v]<chain>[base]`
+   * and the overlay is drawn over `[base]`, so no part of the pad/pan/scale
+   * that turns crop fractions into pixels is rewritten.
+   *
+   * It is written to a script file for the same reason the crop chain sometimes
+   * is — a multi-keyframe pan produces a filter longer than a command line will
+   * carry, and anything built from it inherits that.
+   */
+  let overlayScriptPath: string | null = null;
+  if (options.overlayUrl) {
+    overlayScriptPath = path.join(os.tmpdir(), `soccerwatch-brand-${randomUUID()}.txt`);
+    await fs.promises.writeFile(overlayScriptPath, buildOverlayFilterComplex(cropFilter), "utf8");
+  }
+  // -headers only for a remote overlay. ffmpeg's file demuxer rejects the option
+  // outright — "Option headers not found", exit 8 — and the overlay is a local
+  // path in tests and could be one in any future local-asset path. The video
+  // input a few lines down carries the same guard for the same reason.
+  const overlayInput = options.overlayUrl
+    ? [
+        ...(/^https?:\/\//i.test(options.overlayUrl)
+          ? ["-headers", buildHeaderVal(options.brandingReferer, options.overlayUrl)]
+          : []),
+        "-i", options.overlayUrl,
+      ]
+    : [];
+
   const args = [
     // HTTP headers only for remote inputs; omit entirely for local files.
     ...(isRemoteUrl ? ["-headers", headerVal] : []),
     // Fast seek before input (segment-level for HLS)
     "-ss", String(startSec),
     "-i", videoUrl,
+    // Input 1 when branded: the overlay. Kept immediately after the video so
+    // its stream index is stable regardless of the silent-audio input below.
+    ...overlayInput,
     ...(needsSilentTrack
       ? ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
       : []),
     // Clip duration
     "-t", String(clipDuration),
     // pad -> crop pan -> scale, all built together so black bars survive
-    ...(filterScriptPath ? ["-filter_script:v", filterScriptPath] : ["-vf", cropFilter]),
+    ...(overlayScriptPath
+      ? ["-filter_complex_script", overlayScriptPath, "-map", "[v]"]
+      : filterScriptPath
+        ? ["-filter_script:v", filterScriptPath]
+        : ["-vf", cropFilter]),
     // The single shared output spec — see EXPORT_ENCODE_ARGS. The intro pass and
     // the branding end card encode to the same constant so every concat works.
     ...EXPORT_ENCODE_ARGS.video,
     ...EXPORT_ENCODE_ARGS.audio,
-    ...(needsSilentTrack ? ["-map", "0:v:0", "-map", "1:a:0", "-shortest"] : []),
+    // With an overlay present the video comes from the filter graph's [v] label
+    // (mapped above) and the silent track has moved to input 2. Leaving this as
+    // a bare 1:a:0 would map the overlay PNG as audio and fail the render.
+    ...(needsSilentTrack
+      ? overlayScriptPath
+        ? ["-map", "2:a:0", "-shortest"]
+        : ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
+      : overlayScriptPath
+        ? ["-map", "0:a?"]
+        : []),
     // Optimise for streaming/download
     "-movflags", "+faststart",
     // Overwrite output
@@ -1089,6 +1182,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
       // clean it up.
       fs.unlink(tmpPath, () => {});
       if (filterScriptPath) cleanupTempFile(filterScriptPath);
+      if (overlayScriptPath) cleanupTempFile(overlayScriptPath);
       reject(err);
     });
 
@@ -1097,6 +1191,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
       // Keep cleanup conditional for compatibility with the static crop path;
       // multi-keyframe zoompan stores its filter graph in this script.
       if (filterScriptPath) cleanupTempFile(filterScriptPath);
+      if (overlayScriptPath) cleanupTempFile(overlayScriptPath);
       if (code !== 0) {
         logger.error({ code, signal, stderr: stderr.slice(-2000) }, "FFmpeg exited with non-zero code");
         fs.unlink(tmpPath, () => {});
@@ -1104,7 +1199,14 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
         return;
       }
       logger.info({ tmpPath }, "FFmpeg render complete");
-      withIntro(tmpPath, is9to16, options.introUrl, options.introReferer).then(resolve, reject);
+      withBookends(
+        tmpPath,
+        is9to16,
+        options.introUrl,
+        options.introReferer,
+        options.endCardUrl,
+        options.brandingReferer,
+      ).then(resolve, reject);
     });
   });
 }

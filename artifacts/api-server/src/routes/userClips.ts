@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { eq, and, desc, inArray, count, sql, like } from "drizzle-orm";
-import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable, recordingsTable, academyRecordingsTable, clipDownloadsTable } from "@workspace/db";
+import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable, recordingsTable, academyRecordingsTable, clipDownloadsTable, brandingAssetsTable } from "@workspace/db";
 import {
   CreateUserClipBody,
   CreateUserClipResponse,
@@ -38,6 +38,7 @@ import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExpo
 import { selectExportSource as resolveExportSource } from "../lib/exportSource";
 import { logger } from "../lib/logger";
 import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
+import { chooseBrandingAsset, type BrandingCandidate } from "../lib/brandingAssets";
 import {
   consumeQuota,
   evaluateQuota,
@@ -46,7 +47,7 @@ import {
   type DownloadEvent,
 } from "../lib/downloadQuota";
 import { shareCardPath } from "../lib/shareCard";
-import { getAllSettings } from "../lib/settings";
+import { getAllSettings, getSettingValue, type SettingsContext } from "../lib/settings";
 import { ensureClipPoster } from "./share";
 import { introPlaybackPath } from "./clipIntro";
 
@@ -313,6 +314,69 @@ async function resolveIntroVideoUrl(academyId: number | null): Promise<string | 
   return settings?.introVideoUrl ?? null;
 }
 
+/**
+ * The overlay and end card this clip gets, as URLs the renderer can fetch.
+ *
+ * Academy, then field, then global — the same order as the intro above, so
+ * there is one rule to learn rather than two. Each kind resolves on its own:
+ * an academy with an overlay but no end card gets the global end card, because
+ * a clip carrying an academy's logo and no sign-off is worse than one that
+ * mixes tiers.
+ *
+ * Both settings are consulted here rather than inside the renderer, so that
+ * turning branding off costs nothing at render time and the reason a clip has
+ * no logo is visible in one place.
+ */
+async function resolveBrandingForClip(
+  academyId: number | null,
+  fieldId: number | null,
+  ctx: SettingsContext,
+): Promise<{ overlayUrl?: string; endCardUrl?: string; brandingReferer?: string }> {
+  const [overlayOn, endCardOn] = await Promise.all([
+    getSettingValue<boolean>("branding.overlayEnabled", ctx),
+    getSettingValue<boolean>("branding.endCardEnabled", ctx),
+  ]);
+  if (!overlayOn && !endCardOn) return {};
+
+  let rows: BrandingCandidate[] = [];
+  try {
+    rows = (await db.select().from(brandingAssetsTable)).map((row) => ({
+      scopeType: row.scopeType,
+      scopeId: row.scopeId,
+      kind: row.kind,
+      assetUrl: row.assetUrl,
+      width: row.width,
+      height: row.height,
+    }));
+  } catch (err) {
+    // No branding table yet is not a reason to fail an export.
+    logger.warn({ err }, "Could not read branding assets — exporting unbranded");
+    return {};
+  }
+
+  const scope = { academyId, fieldId };
+  const overlay = overlayOn ? chooseBrandingAsset(rows, "overlay", scope) : null;
+  const endCard = endCardOn ? chooseBrandingAsset(rows, "endCard", scope) : null;
+  if (!overlay && !endCard) return {};
+
+  // The renderer needs a Referer for the pull zone, the same way the intro
+  // fetch does; derived from the asset's own host so a future move to another
+  // zone does not need a second thing changed.
+  const anyUrl = overlay?.assetUrl ?? endCard?.assetUrl ?? "";
+  let brandingReferer: string | undefined;
+  try {
+    brandingReferer = anyUrl ? `https://${new URL(anyUrl).host}/` : undefined;
+  } catch {
+    brandingReferer = undefined;
+  }
+
+  return {
+    overlayUrl: overlay?.assetUrl,
+    endCardUrl: endCard?.assetUrl,
+    brandingReferer,
+  };
+}
+
 // Engagement scoring: weighted composite of likes, views, and recency
 function computeScore(likeCount: number, viewCount: number, shareCount: number, createdAt: Date): number {
   const hoursOld = Math.max(0, (Date.now() - createdAt.getTime()) / 36e5);
@@ -434,6 +498,18 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
       const bufStartFraction = Math.max(0, adjustedOffsetSec / bufferedDuration);
       const bufEndFraction = Math.min(1, (adjustedOffsetSec + clipDuration) / bufferedDuration);
 
+      const branding = await resolveBrandingForClip(
+        clip.academyId,
+        await fieldIdForClip(clipId),
+        { academyId: clip.academyId, fieldId: await fieldIdForClip(clipId) },
+      );
+      if (branding.overlayUrl || branding.endCardUrl) {
+        logger.info(
+          { clipId, overlay: !!branding.overlayUrl, endCard: !!branding.endCardUrl },
+          "Branding this export",
+        );
+      }
+
       exportProgress.set(clipId, "encoding");
       tmpPath = await renderClip({
         // Encode from the local buffer — no remote URL, no referer needed
@@ -447,6 +523,7 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
         // referer omitted — local file
         introUrl,
         introReferer,
+        ...branding,
       });
 
       exportProgress.set(clipId, "uploading");

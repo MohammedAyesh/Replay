@@ -16,6 +16,7 @@ import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import SettingsTab from "@/components/admin/SettingsTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
+import BrandingTab from "@/components/admin/BrandingTab";
 import {
   getGetFeedQueryKey,
   getListClipsQueryKey,
@@ -33,7 +34,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "analysis" | "settings";
+type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "analysis" | "branding" | "settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -5230,6 +5231,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   matches: { label: "Matches", render: () => <MatchesTab /> },
   "claim-disputes": { label: "Claim Disputes", render: () => <ClaimDisputesTab /> },
   analysis: { label: "Analysis", render: () => <AnalysisTab /> },
+  branding: { label: "Branding", render: () => <BrandingTab /> },
   settings: { label: "Settings", render: () => <SettingsTab /> },
 };
 

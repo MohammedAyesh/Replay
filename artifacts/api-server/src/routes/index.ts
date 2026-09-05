@@ -24,6 +24,7 @@ import clipIntroRouter from "./clipIntro";
 import matchesRouter from "./matches";
 import claimMatchRouter from "./claimMatch";
 import analysisJobsRouter from "./analysisJobs";
+import brandingRouter from "./branding";
 
 const router: IRouter = Router();
 
@@ -52,5 +53,6 @@ router.use(clipIntroRouter);
 router.use(matchesRouter);
 router.use(claimMatchRouter);
 router.use(analysisJobsRouter);
+router.use(brandingRouter);
 
 export default router;
