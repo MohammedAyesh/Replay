@@ -77,10 +77,47 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
     // canvas does not matter here and no CORS header is required.
     let hls: Hls | null = null;
 
+    const waitForPresentedFrame = () => new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        resolve(ok);
+      };
+      const timeout = window.setTimeout(() => finish(false), 8000);
+      if (typeof video.requestVideoFrameCallback === "function") {
+        video.requestVideoFrameCallback(() => finish(true));
+      } else if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        // Older browsers do not expose requestVideoFrameCallback. Give the
+        // decoder one paint turn before drawing from the paused element.
+        window.requestAnimationFrame(() => finish(true));
+      } else {
+        video.addEventListener("loadeddata", () => finish(true), { once: true });
+      }
+    });
+
     const seekTo = (seconds: number) => new Promise<boolean>((resolve) => {
-      const done = () => { video.removeEventListener("seeked", done); resolve(true); };
-      const fail = window.setTimeout(() => { video.removeEventListener("seeked", done); resolve(false); }, 8000);
-      video.addEventListener("seeked", () => { window.clearTimeout(fail); done(); }, { once: true });
+      if (!Number.isFinite(video.duration) || seconds < 0 || seconds > video.duration + 0.5) {
+        resolve(false);
+        return;
+      }
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        video.removeEventListener("seeked", onSeeked);
+        video.removeEventListener("error", onError);
+        resolve(ok);
+      };
+      const onError = () => finish(false);
+      const onSeeked = () => {
+        void waitForPresentedFrame().then(finish);
+      };
+      const timeout = window.setTimeout(() => finish(false), 8000);
+      video.addEventListener("seeked", onSeeked, { once: true });
+      video.addEventListener("error", onError, { once: true });
       video.currentTime = seconds;
     });
 
@@ -129,7 +166,11 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
           const ok = await seekTo(trackingSeconds + videoStart);
           if (cancelled) return;
           const canvas = canvasRefs.current[entry.index];
-          if (!canvas || !ok) { results.push({ name: entry.name, seconds: trackingSeconds, drawn: -1 }); continue; }
+          if (!canvas || !ok) {
+            results.push({ name: entry.name, seconds: trackingSeconds, drawn: -1 });
+            setShots([...results]);
+            continue;
+          }
 
           // centre the crop on the players, not on the frame - at a 3x zoom an
           // empty corner would prove nothing either way
