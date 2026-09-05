@@ -2478,9 +2478,6 @@ components:
         name:
           type: string
           nullable: true
-        excluded:
-          type: boolean
-          description: Admin identity-board decision; excluded rows are not player identities.
         parts:
           type: array
           items:

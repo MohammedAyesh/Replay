@@ -28,19 +28,6 @@ function partForFrame(
   ) ?? null;
 }
 
-function isExcludedFrame(
-  trackId: string,
-  frame: number,
-  identities: TrackingIdentity[],
-): boolean {
-  return identities.some((identity) =>
-    identity.excluded
-    && identity.parts.some((part) =>
-      part.trackId === trackId && frame >= part.fromFrame && frame <= part.toFrame,
-    ),
-  );
-}
-
 function sourcePieceId(segmentIndex: number, trackId: string, fromFrame: number): string {
   return `unclaimed:${segmentIndex}:${trackId}:${fromFrame}`;
 }
@@ -68,7 +55,6 @@ export function applyClaimIdentities(
       crossings: segment.crossings.filter((crossing) => crossing.trackId !== crossing.otherTrackId),
     };
   }
-  const activeIdentities = identities.filter((identity) => !identity.excluded);
 
   const piecesBySource = new Map<string, Piece[]>();
   const assignedBoxes = new Map<string, Box[]>();
@@ -80,11 +66,7 @@ export function applyClaimIdentities(
     let currentUnclaimed: Piece | null = null;
 
     for (const box of boxes) {
-      if (isExcludedFrame(track.id, box.frame, identities)) {
-        currentUnclaimed = null;
-        continue;
-      }
-      const identity = partForFrame(track.id, box.frame, activeIdentities);
+      const identity = partForFrame(track.id, box.frame, identities);
       if (identity) {
         (assignedBoxes.get(identity.id) ?? (assignedBoxes.set(identity.id, []), assignedBoxes.get(identity.id)!)).push(box);
         currentUnclaimed = null;
@@ -119,7 +101,7 @@ export function applyClaimIdentities(
   }
 
   const merged: TrackingSegment["tracks"] = [];
-  for (const identity of activeIdentities) {
+  for (const identity of identities) {
     const boxes = assignedBoxes.get(identity.id);
     if (!boxes?.length) continue;
     boxes.sort((a, b) => a.frame - b.frame);
@@ -133,7 +115,6 @@ export function applyClaimIdentities(
 
   for (const track of sourceTracks) {
     const sourcePieces = piecesBySource.get(track.id) ?? [];
-    if (!sourcePieces.length) continue;
     const hasIdentityPiece = sourcePieces.some((piece) => !piece.outputId.startsWith("unclaimed:"));
     if (!hasIdentityPiece) {
       merged.push(track);
@@ -151,11 +132,10 @@ export function applyClaimIdentities(
     }
   }
 
-  const resolve = (trackId: string, frame: number): string | null => {
-    if (isExcludedFrame(trackId, frame, identities)) return null;
+  const resolve = (trackId: string, frame: number): string => {
     // Crossings are event frames, not necessarily box frames. Prefer the
     // persisted identity interval so a sparse track is still remapped.
-    const identity = partForFrame(trackId, frame, activeIdentities);
+    const identity = partForFrame(trackId, frame, identities);
     if (identity) return identity.id;
     const pieces = piecesBySource.get(trackId);
     const piece = pieces?.find((item) => frame >= item.fromFrame && frame <= item.toFrame);
@@ -168,13 +148,7 @@ export function applyClaimIdentities(
       trackId: resolve(crossing.trackId, crossing.frame),
       otherTrackId: resolve(crossing.otherTrackId, crossing.frame),
     };
-    if (next.trackId && next.otherTrackId && next.trackId !== next.otherTrackId) {
-      crossings.push({
-        ...next,
-        trackId: next.trackId,
-        otherTrackId: next.otherTrackId,
-      });
-    }
+    if (next.trackId !== next.otherTrackId) crossings.push(next);
   }
 
   return {

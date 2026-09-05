@@ -66,7 +66,6 @@ const IdentityMapBody = z.object({
   identities: z.array(z.object({
     id: z.string().min(1),
     name: z.string().nullish(),
-    excluded: z.boolean().optional(),
     parts: z.array(z.object({
       trackId: z.string().min(1),
       fromFrame: z.number().int().min(0),
@@ -1427,7 +1426,7 @@ export function knownClaimTrackIds(
 ): Set<string> {
   return new Set([
     ...segments.flatMap((segment) => segment.tracks.map((track) => track.id)),
-    ...(manifest.identities ?? []).filter((identity) => !identity.excluded).map((identity) => identity.id),
+    ...(manifest.identities ?? []).map((identity) => identity.id),
   ]);
 }
 
@@ -1442,7 +1441,7 @@ function usableIdentityMap(manifest: TrackingManifest): TrackingIdentity[] {
   ) {
     return [];
   }
-  return identities.filter((identity) => !identity.excluded);
+  return identities;
 }
 
 function canonicalIdentityParts(parts: TrackingIdentity["parts"]): string[] {
@@ -1491,13 +1490,8 @@ export function identityMapMovesVouchedFragment(
   binding: Pick<ClaimIdentityBindingRow, "personId" | "vouchedFragments">,
   incomingIdentities: TrackingIdentity[],
 ): boolean {
-  const fragments = canonicalVouchedFragments(binding.vouchedFragments);
-  if (!fragments.length) return false;
-  if (!incomingIdentities.some((identity) => identity.id === binding.personId && !identity.excluded)) {
-    return true;
-  }
-  return fragments.some((fragment) => {
-    const overlappingParts = incomingIdentities.filter((identity) => !identity.excluded).flatMap((identity) =>
+  return canonicalVouchedFragments(binding.vouchedFragments).some((fragment) => {
+    const overlappingParts = incomingIdentities.flatMap((identity) =>
       identity.parts
         .filter((part) =>
           part.trackId === fragment.trackId
@@ -1523,7 +1517,7 @@ export function identityMapInvalidatesBinding(
   binding: Pick<ClaimIdentityBindingRow, "personId" | "personParts">,
   incomingIdentities: TrackingIdentity[],
 ): boolean {
-  const identity = incomingIdentities.find((item) => item.id === binding.personId && !item.excluded);
+  const identity = incomingIdentities.find((item) => item.id === binding.personId);
   if (!identity) return true;
   const incomingParts = canonicalIdentityParts(identity.parts);
   return incomingParts.length !== binding.personParts.length
@@ -1861,7 +1855,7 @@ function acceptedPositionSamples(
       .push([fromFrame, toFrame]);
   };
   for (const row of accepted) {
-    const identity = usableIdentityMap(manifest).find((item) => item.id === row.chosenTrackId);
+    const identity = manifest.identities?.find((item) => item.id === row.chosenTrackId);
     if (identity) {
       identity.parts.forEach((part) => addRange(part.trackId, part.fromFrame, part.toFrame));
       continue;

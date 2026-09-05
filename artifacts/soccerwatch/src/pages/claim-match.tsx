@@ -215,7 +215,7 @@ function candidateMatchesTakenFragment(
       && frame >= fragment.fromFrame
       && frame <= fragment.toFrame;
   }
-  const identity = manifest.identities?.find((item) => item.id === candidateId && !item.excluded);
+  const identity = manifest.identities?.find((item) => item.id === candidateId);
   return Boolean(identity?.parts.some((part) =>
     part.trackId === fragment.trackId
     && frame >= part.fromFrame

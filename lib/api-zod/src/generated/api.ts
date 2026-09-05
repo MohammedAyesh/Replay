@@ -426,7 +426,6 @@ export const GetClaimMatchResponse = zod.object({
   "identities": zod.array(zod.object({
   "id": zod.string(),
   "name": zod.string().nullish(),
-  "excluded": zod.boolean().optional().describe('Admin identity-board decision; excluded rows are not player identities.'),
   "parts": zod.array(zod.object({
   "trackId": zod.string(),
   "fromFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemPartsItemFromFrameMin),
