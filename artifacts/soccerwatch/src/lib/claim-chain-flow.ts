@@ -72,9 +72,24 @@ export function reachedStop(chain: ClaimChain, trackingSeconds: number): boolean
   return stop !== null && trackingSeconds >= stop;
 }
 
-export function stageFor(chain: ClaimChain | null, answered: boolean): ChainStage {
+/**
+ * Which of the three things the person is doing right now.
+ *
+ * The rule that matters: if the chain does not cover where we are, we are
+ * LOOKING for them, whatever else is true. That is the state right after "not
+ * me from here", after an undo, and any time they scrub back to a stretch they
+ * never claimed -- and in every one of those the only useful thing on screen is
+ * "tap yourself". Deciding this from a flag instead of from the chain left the
+ * panel saying "following you" over footage nobody was following anyone in.
+ */
+export function stageFor(
+  chain: ClaimChain | null,
+  frame: number,
+  answered: boolean,
+): ChainStage {
   if (!chain || chain.chain.length === 0) return "identify";
-  return answered ? "following" : "asking";
+  if (!answered) return "asking";
+  return partAtFrame(chain.chain, frame) ? "following" : "identify";
 }
 
 /**

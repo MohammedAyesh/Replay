@@ -134,16 +134,31 @@ describe("the stop", () => {
 
 describe("stages", () => {
   it("starts at identify with no chain at all", () => {
-    expect(stageFor(null, true)).toBe("identify");
-    expect(stageFor(chainOf({ chain: [] }), true)).toBe("identify");
+    expect(stageFor(null, 50, true)).toBe("identify");
+    expect(stageFor(chainOf({ chain: [] }), 50, true)).toBe("identify");
   });
 
   it("follows once something is claimed and the question is answered", () => {
-    expect(stageFor(chainOf(), true)).toBe("following");
+    expect(stageFor(chainOf(), 50, true)).toBe("following");
   });
 
   it("asks while a question is outstanding", () => {
-    expect(stageFor(chainOf({ nextUncertainty: swap }), false)).toBe("asking");
+    expect(stageFor(chainOf({ nextUncertainty: swap }), 50, false)).toBe("asking");
+  });
+
+  it("goes back to looking for you wherever the chain does not reach", () => {
+    // The state right after "not me from here", after an undo, and any time
+    // the person scrubs back to a stretch they never claimed. Deciding this
+    // from a flag left the panel saying "following you" over footage nobody
+    // was following anyone in.
+    expect(stageFor(chainOf(), 5, true)).toBe("identify");
+    expect(stageFor(chainOf(), 150, true)).toBe("identify");
+  });
+
+  it("still asks an outstanding question even outside the chain", () => {
+    // The question is about the stretch just left behind; losing it because
+    // playback drifted a frame past the part would drop the answer silently.
+    expect(stageFor(chainOf({ nextUncertainty: swap }), 5, false)).toBe("asking");
   });
 });
 

@@ -256,6 +256,22 @@ export function nextUncertainty(
   crossings: Crossing[],
   fromFrame: number,
   decisions?: IdentityDecision[],
+  /**
+   * Frames this claimant has already answered.
+   *
+   * Without this the flow loops, and it loops in the two most ordinary cases.
+   * Say the person confirms "yes, still me" at a crossing: the chain is
+   * unchanged, so the same crossing is still the earliest uncertainty and they
+   * are asked again the instant playback resumes, forever. Say instead they
+   * tap the OTHER player at that crossing: the chain now runs on that track,
+   * the crossing involves it just as symmetrically, and the same question
+   * comes back about the same moment.
+   *
+   * An answered frame is answered. The caller passes the frames this claimant
+   * has labelled on this bundle, which makes the suppression durable across a
+   * reload rather than a piece of component state that a refresh forgets.
+   */
+  answeredFrames?: Set<number>,
 ): Uncertainty | null {
   const ordered = [...chain].sort((a, b) => a.fromFrame - b.fromFrame);
   const candidates: Uncertainty[] = [];
@@ -270,6 +286,8 @@ export function nextUncertainty(
       const involvesMe = crossing.trackId === part.trackId || crossing.otherTrackId === part.trackId;
       if (!involvesMe) continue;
       if (crossing.frame < Math.max(part.fromFrame, fromFrame) || crossing.frame > part.toFrame) continue;
+
+      if (answeredFrames?.has(crossing.frame)) continue;
 
       const otherId = crossing.trackId === part.trackId ? crossing.otherTrackId : crossing.trackId;
       const other = tracksById.get(otherId);
@@ -307,7 +325,12 @@ export function nextUncertainty(
     // The part runs out. Only an uncertainty if nothing in the chain picks up.
     const continues = ordered.some((other) =>
       other !== part && other.fromFrame <= part.toFrame + 1 && other.toFrame > part.toFrame);
-    if (!continues && part.toFrame >= fromFrame) {
+    // A track end one frame behind an answered frame is what "not me from
+    // here" leaves behind: the chain was truncated at the answered frame, so
+    // its new end sits at answered - 1. Raising that would be telling the
+    // person we lost them at the exact moment they just told us we had.
+    const answeredHere = answeredFrames?.has(part.toFrame) || answeredFrames?.has(part.toFrame + 1);
+    if (!continues && part.toFrame >= fromFrame && !answeredHere) {
       candidates.push({
         kind: "track-end",
         frame: part.toFrame,

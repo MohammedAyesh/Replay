@@ -198,7 +198,7 @@ export default function ClaimChainPage() {
   const [answered, setAnswered] = useState(true);
   const [pendingName, setPendingName] = useState<{ trackId: string; frame: number } | null>(null);
   const [nameDraft, setNameDraft] = useState("");
-  const stage = stageFor(chain, answered);
+  const stage = stageFor(chain, currentFrame, answered);
   const clock = useDecisionClock();
 
   const tap = useTapClaimChain();

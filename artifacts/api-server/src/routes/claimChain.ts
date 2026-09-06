@@ -165,7 +165,42 @@ type ChainContext = {
   tracksById: Map<string, Track>;
   fingerprint: string;
   identityId: string;
+  /** Frames this claimant has already answered on this bundle. */
+  answeredFrames: Set<number>;
 };
+
+/**
+ * The frames this claimant has already given an answer at.
+ *
+ * Read from the labels because they are already written on every decision, so
+ * this needs no new state and survives a reload -- and because the alternative,
+ * remembering it in the client, forgets the moment anyone refreshes and starts
+ * asking the same question again.
+ *
+ * Tolerant of the table not existing: the label write is deliberately allowed
+ * to fail without failing the claim, so the read must be too, or a missing
+ * migration would turn a silently empty corpus into a broken claim page.
+ */
+async function answeredFramesFor(
+  recordingId: number,
+  userId: number,
+  fingerprint: string,
+): Promise<Set<number>> {
+  try {
+    const rows = await db
+      .select({ atFrame: claimChainLabelsTable.atFrame })
+      .from(claimChainLabelsTable)
+      .where(and(
+        eq(claimChainLabelsTable.recordingId, recordingId),
+        eq(claimChainLabelsTable.userId, userId),
+        eq(claimChainLabelsTable.bundleFingerprint, fingerprint),
+      ));
+    return new Set(rows.map((row) => row.atFrame));
+  } catch (error) {
+    console.error("[claim-chain] answered-frame read failed", { recordingId, error });
+    return new Set();
+  }
+}
 
 async function loadContext(
   req: Parameters<typeof requireAccountUser>[0],
@@ -193,6 +228,7 @@ async function loadContext(
       tracksById: tracksFromSegments(segments),
       fingerprint,
       identityId: claimIdentityId(userId, recordingId),
+      answeredFrames: await answeredFramesFor(recordingId, userId, fingerprint),
     },
   };
 }
@@ -210,6 +246,7 @@ function describe(
     crossingsFromSegments(ctx.segments),
     chain.length ? Math.min(...chain.map((p) => p.fromFrame)) : 0,
     ctx.manifest.identityDecisions,
+    ctx.answeredFrames,
   );
   return {
     recordingId: ctx.recordingId,
@@ -283,7 +320,17 @@ export function subtractParts(
 async function persistChain(
   ctx: ChainContext,
   chain: ChainPart[],
-  name: string | null,
+  /**
+   * `chosen` is a name the person typed on THIS call; `fallback` is their
+   * account name, used only when nothing has ever been set.
+   *
+   * Keeping these apart matters more than it looks. Only the first tap carries
+   * a name -- every later tap sends none -- so resolving the account fallback
+   * before the write made each subsequent decision quietly rename the person
+   * back from what they called themselves to whatever their account says. They
+   * name themselves once and it has to stick.
+   */
+  name: { chosen: string | null; fallback?: string | null },
 ): Promise<{ chain: ChainPart[]; name: string | null }> {
   return db.transaction(async (tx) => {
     await tx.execute(
@@ -296,7 +343,7 @@ async function persistChain(
     const manifest = (fresh?.manifest ?? ctx.manifest) as TrackingManifest;
 
     const existing = (manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-    const nextName = name ?? existing?.name ?? null;
+    const nextName = name.chosen ?? existing?.name ?? name.fallback ?? null;
 
     // A frame belongs to exactly one person. Anything this claim now holds is
     // taken off whoever held it before, rather than sitting in two rows at
@@ -465,16 +512,19 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
     return;
   }
 
-  let name = body.data.name ?? null;
-  if (!name) {
-    const [user] = await db
-      .select({ name: usersTable.name })
-      .from(usersTable)
-      .where(eq(usersTable.id, ctx.userId));
-    name = user?.name ?? null;
-  }
+  // Always fetched, never conditionally: making the read depend on what this
+  // request happens to know about the identity would leave the ordering rule
+  // inside the lock -- the rule that actually protects the person's chosen
+  // name -- unreachable, and therefore untested and free to rot.
+  const [account] = await db
+    .select({ name: usersTable.name })
+    .from(usersTable)
+    .where(eq(usersTable.id, ctx.userId));
 
-  const saved = await persistChain(ctx, next, name);
+  const saved = await persistChain(ctx, next, {
+    chosen: body.data.name ?? null,
+    fallback: account?.name ?? null,
+  });
   const labelRecorded = await recordLabel(
     ctx,
     body.data.rejectedTrackId ? "switch" : "confirm",
@@ -485,6 +535,10 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
       decisionMs: body.data.decisionMs ?? null,
     },
   );
+  // The response has to reflect the answer just given, whether or not the row
+  // landed. Otherwise the reply to an answer re-asks the same question, and
+  // the person is stuck on it for as long as they keep answering.
+  ctx.answeredFrames.add(frame);
   res.json(describe(ctx, saved.chain, saved.name, labelRecorded));
 });
 
@@ -511,11 +565,12 @@ router.post("/recordings/:id/claim-match/chain/not-me", async (req, res): Promis
     body.data.frame >= part.fromFrame && body.data.frame <= part.toFrame);
   const next = normaliseChain(truncateChain(current, body.data.frame), ctx.tracksById);
 
-  const saved = await persistChain(ctx, next, null);
+  const saved = await persistChain(ctx, next, { chosen: null });
   const labelRecorded = await recordLabel(ctx, "lost", body.data.frame, {
     wrongTrackId: wrong?.trackId ?? null,
     decisionMs: body.data.decisionMs ?? null,
   });
+  ctx.answeredFrames.add(body.data.frame);
   res.json(describe(ctx, saved.chain, saved.name, labelRecorded));
 });
 
@@ -540,6 +595,10 @@ router.post("/recordings/:id/claim-match/chain/confirm", async (req, res): Promi
     rightTrackId: part?.trackId ?? null,
     decisionMs: body.data.decisionMs ?? null,
   });
+  // "Yes, still me" changes nothing about the chain, so without this the
+  // reply carries the identical uncertainty and the person is asked the same
+  // question the instant playback resumes -- forever.
+  ctx.answeredFrames.add(body.data.frame);
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
   res.json(describe(ctx, current, identity?.name ?? null, labelRecorded));
 });
@@ -549,7 +608,7 @@ router.delete("/recordings/:id/claim-match/chain/last", async (req, res): Promis
   const ctx = await begin(req, res);
   if (!ctx) return;
   const current = chainOf(ctx.manifest, ctx.identityId);
-  const saved = await persistChain(ctx, normaliseChain(dropLastPart(current), ctx.tracksById), null);
+  const saved = await persistChain(ctx, normaliseChain(dropLastPart(current), ctx.tracksById), { chosen: null });
   res.json(describe(ctx, saved.chain, saved.name));
 });
 
