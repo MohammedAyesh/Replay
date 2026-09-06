@@ -2343,3 +2343,205 @@ export const GetAdStatsResponse = zod.object({
 })
 
 
+/**
+ * @summary The caller's claim chain for this recording, and where playback should next stop
+ */
+export const GetClaimChainParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetClaimChainResponse = zod.object({
+  "recordingId": zod.number(),
+  "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "name": zod.string().nullable(),
+  "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
+  "frameRate": zod.number(),
+  "chain": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number(),
+  "toFrame": zod.number()
+})),
+  "coverageSeconds": zod.number(),
+  "coveragePercent": zod.number(),
+  "nextUncertainty": zod.union([zod.object({
+  "kind": zod.enum(['track-end', 'swap']),
+  "frame": zod.number(),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
+  "confidence": zod.number(),
+  "reason": zod.string().describe('A plain sentence for the person watching. Never a code.')
+}).describe('Where playback should stop and ask. Playback stops here and nowhere else: a track end is definitive, a swap is judged and only raised when the geometry or the tracker\'s own confidence passes a threshold.'),zod.null()]),
+  "labelRecorded": zod.boolean().nullable().describe('Whether this decision\'s training label landed. A label write never fails the claim, so this is how a silently empty corpus becomes visible. Null on reads, which record nothing.')
+})
+
+
+/**
+ * @summary "That is me, here." The only way a chain grows
+ */
+export const TapClaimChainParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+export const tapClaimChainBodyFrameMin = 0;
+
+export const tapClaimChainBodyNameMax = 60;
+
+export const tapClaimChainBodyDecisionMsMin = 0;
+
+
+
+export const TapClaimChainBody = zod.object({
+  "trackId": zod.string().min(1),
+  "frame": zod.number().min(tapClaimChainBodyFrameMin),
+  "rejectedTrackId": zod.string().nullish().describe('The track we were following that turned out to be wrong, if any.'),
+  "name": zod.string().max(tapClaimChainBodyNameMax).nullish().describe('What the person calls themselves. Falls back to their account name.'),
+  "decisionMs": zod.number().min(tapClaimChainBodyDecisionMsMin).nullish().describe('How long the person took. Free difficulty weighting for the label.'),
+  "bundleFingerprint": zod.string().nullish()
+})
+
+export const TapClaimChainResponse = zod.object({
+  "recordingId": zod.number(),
+  "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "name": zod.string().nullable(),
+  "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
+  "frameRate": zod.number(),
+  "chain": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number(),
+  "toFrame": zod.number()
+})),
+  "coverageSeconds": zod.number(),
+  "coveragePercent": zod.number(),
+  "nextUncertainty": zod.union([zod.object({
+  "kind": zod.enum(['track-end', 'swap']),
+  "frame": zod.number(),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
+  "confidence": zod.number(),
+  "reason": zod.string().describe('A plain sentence for the person watching. Never a code.')
+}).describe('Where playback should stop and ask. Playback stops here and nowhere else: a track end is definitive, a swap is judged and only raised when the geometry or the tracker\'s own confidence passes a threshold.'),zod.null()]),
+  "labelRecorded": zod.boolean().nullable().describe('Whether this decision\'s training label landed. A label write never fails the claim, so this is how a silently empty corpus becomes visible. Null on reads, which record nothing.')
+})
+
+
+/**
+ * @summary "That is not me, and has not been since here." Always available
+ */
+export const RejectClaimChainFromParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const rejectClaimChainFromBodyFrameMin = 0;
+
+export const rejectClaimChainFromBodyDecisionMsMin = 0;
+
+
+
+export const RejectClaimChainFromBody = zod.object({
+  "frame": zod.number().min(rejectClaimChainFromBodyFrameMin),
+  "decisionMs": zod.number().min(rejectClaimChainFromBodyDecisionMsMin).nullish(),
+  "bundleFingerprint": zod.string().nullish()
+})
+
+export const RejectClaimChainFromResponse = zod.object({
+  "recordingId": zod.number(),
+  "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "name": zod.string().nullable(),
+  "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
+  "frameRate": zod.number(),
+  "chain": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number(),
+  "toFrame": zod.number()
+})),
+  "coverageSeconds": zod.number(),
+  "coveragePercent": zod.number(),
+  "nextUncertainty": zod.union([zod.object({
+  "kind": zod.enum(['track-end', 'swap']),
+  "frame": zod.number(),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
+  "confidence": zod.number(),
+  "reason": zod.string().describe('A plain sentence for the person watching. Never a code.')
+}).describe('Where playback should stop and ask. Playback stops here and nowhere else: a track end is definitive, a swap is judged and only raised when the geometry or the tracker\'s own confidence passes a threshold.'),zod.null()]),
+  "labelRecorded": zod.boolean().nullable().describe('Whether this decision\'s training label landed. A label write never fails the claim, so this is how a silently empty corpus becomes visible. Null on reads, which record nothing.')
+})
+
+
+/**
+ * @summary "Yes, still me." Recorded because silence is not a label
+ */
+export const ConfirmClaimChainAtParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const confirmClaimChainAtBodyFrameMin = 0;
+
+export const confirmClaimChainAtBodyDecisionMsMin = 0;
+
+
+
+export const ConfirmClaimChainAtBody = zod.object({
+  "frame": zod.number().min(confirmClaimChainAtBodyFrameMin),
+  "decisionMs": zod.number().min(confirmClaimChainAtBodyDecisionMsMin).nullish(),
+  "bundleFingerprint": zod.string().nullish()
+})
+
+export const ConfirmClaimChainAtResponse = zod.object({
+  "recordingId": zod.number(),
+  "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "name": zod.string().nullable(),
+  "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
+  "frameRate": zod.number(),
+  "chain": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number(),
+  "toFrame": zod.number()
+})),
+  "coverageSeconds": zod.number(),
+  "coveragePercent": zod.number(),
+  "nextUncertainty": zod.union([zod.object({
+  "kind": zod.enum(['track-end', 'swap']),
+  "frame": zod.number(),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
+  "confidence": zod.number(),
+  "reason": zod.string().describe('A plain sentence for the person watching. Never a code.')
+}).describe('Where playback should stop and ask. Playback stops here and nowhere else: a track end is definitive, a swap is judged and only raised when the geometry or the tracker\'s own confidence passes a threshold.'),zod.null()]),
+  "labelRecorded": zod.boolean().nullable().describe('Whether this decision\'s training label landed. A label write never fails the claim, so this is how a silently empty corpus becomes visible. Null on reads, which record nothing.')
+})
+
+
+/**
+ * @summary Undo the last link. Writes no label -- a mis-tap is not evidence
+ */
+export const UndoClaimChainLastParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UndoClaimChainLastResponse = zod.object({
+  "recordingId": zod.number(),
+  "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "name": zod.string().nullable(),
+  "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
+  "frameRate": zod.number(),
+  "chain": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number(),
+  "toFrame": zod.number()
+})),
+  "coverageSeconds": zod.number(),
+  "coveragePercent": zod.number(),
+  "nextUncertainty": zod.union([zod.object({
+  "kind": zod.enum(['track-end', 'swap']),
+  "frame": zod.number(),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
+  "confidence": zod.number(),
+  "reason": zod.string().describe('A plain sentence for the person watching. Never a code.')
+}).describe('Where playback should stop and ask. Playback stops here and nowhere else: a track end is definitive, a swap is judged and only raised when the geometry or the tracker\'s own confidence passes a threshold.'),zod.null()]),
+  "labelRecorded": zod.boolean().nullable().describe('Whether this decision\'s training label landed. A label write never fails the claim, so this is how a silently empty corpus becomes visible. Null on reads, which record nothing.')
+})
+
+

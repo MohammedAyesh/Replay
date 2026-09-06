@@ -197,7 +197,12 @@ async function loadContext(
   };
 }
 
-function describe(ctx: ChainContext, chain: ChainPart[], name: string | null) {
+function describe(
+  ctx: ChainContext,
+  chain: ChainPart[],
+  name: string | null,
+  labelRecorded: boolean | null = null,
+) {
   const spans = chainIntervals(chain, ctx.manifest);
   const uncertainty = nextUncertainty(
     chain,
@@ -218,6 +223,17 @@ function describe(ctx: ChainContext, chain: ChainPart[], name: string | null) {
       ? Math.min(100, Math.round((totalSeconds(spans) / ctx.manifest.duration) * 10000) / 100)
       : 0,
     nextUncertainty: uncertainty,
+    /**
+     * Whether this decision's training label actually landed.
+     *
+     * A label write is deliberately allowed to fail without failing the claim,
+     * which means a missing table or a broken insert produces a corpus that
+     * quietly stays empty while everything looks fine -- the same silent shape
+     * as identityDecisions being written and read by nobody. Reporting it
+     * makes the gap visible to the client and to anyone probing the endpoint.
+     * Null on reads, which record nothing.
+     */
+    labelRecorded,
   };
 }
 
@@ -328,7 +344,7 @@ async function recordLabel(
   kind: "switch" | "lost" | "confirm",
   frame: number,
   opts: { wrongTrackId?: string | null; rightTrackId?: string | null; decisionMs?: number | null },
-): Promise<void> {
+): Promise<boolean> {
   const geom = captureDecisionGeometry(ctx.tracksById, frame, {
     frameRate: ctx.manifest.frameRate,
     chosenTrackId: opts.rightTrackId ?? null,
@@ -349,11 +365,13 @@ async function recordLabel(
       geom: geom as unknown as Record<string, unknown>,
       detectorSwapEvidence: geom.detector.swapEvidence,
     });
+    return true;
   } catch (error) {
     // A label is valuable, but never at the cost of the claim itself: the
     // person is mid-flow and losing their tap to a logging failure is worse
     // than losing the training row.
     console.error("[claim-chain] label write failed", { recordingId: ctx.recordingId, kind, error });
+    return false;
   }
 }
 
@@ -457,12 +475,17 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
   }
 
   const saved = await persistChain(ctx, next, name);
-  await recordLabel(ctx, body.data.rejectedTrackId ? "switch" : "confirm", frame, {
-    wrongTrackId: body.data.rejectedTrackId ?? null,
-    rightTrackId: trackId,
-    decisionMs: body.data.decisionMs ?? null,
-  });
-  res.json(describe(ctx, saved.chain, saved.name));
+  const labelRecorded = await recordLabel(
+    ctx,
+    body.data.rejectedTrackId ? "switch" : "confirm",
+    frame,
+    {
+      wrongTrackId: body.data.rejectedTrackId ?? null,
+      rightTrackId: trackId,
+      decisionMs: body.data.decisionMs ?? null,
+    },
+  );
+  res.json(describe(ctx, saved.chain, saved.name, labelRecorded));
 });
 
 /**
@@ -489,11 +512,11 @@ router.post("/recordings/:id/claim-match/chain/not-me", async (req, res): Promis
   const next = normaliseChain(truncateChain(current, body.data.frame), ctx.tracksById);
 
   const saved = await persistChain(ctx, next, null);
-  await recordLabel(ctx, "lost", body.data.frame, {
+  const labelRecorded = await recordLabel(ctx, "lost", body.data.frame, {
     wrongTrackId: wrong?.trackId ?? null,
     decisionMs: body.data.decisionMs ?? null,
   });
-  res.json(describe(ctx, saved.chain, saved.name));
+  res.json(describe(ctx, saved.chain, saved.name, labelRecorded));
 });
 
 /**
@@ -513,12 +536,12 @@ router.post("/recordings/:id/claim-match/chain/confirm", async (req, res): Promi
   }
   const current = chainOf(ctx.manifest, ctx.identityId);
   const part = current.find((p) => body.data.frame >= p.fromFrame && body.data.frame <= p.toFrame);
-  await recordLabel(ctx, "confirm", body.data.frame, {
+  const labelRecorded = await recordLabel(ctx, "confirm", body.data.frame, {
     rightTrackId: part?.trackId ?? null,
     decisionMs: body.data.decisionMs ?? null,
   });
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-  res.json(describe(ctx, current, identity?.name ?? null));
+  res.json(describe(ctx, current, identity?.name ?? null, labelRecorded));
 });
 
 /** Undo the last link. Deliberately does not write a label — a mis-tap is not evidence. */

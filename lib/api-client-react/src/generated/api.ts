@@ -33,6 +33,10 @@ import type {
   Banner,
   BunnyCollection,
   BunnyVideo,
+  ClaimChain,
+  ClaimChainConflict,
+  ClaimChainFrameInput,
+  ClaimChainTapInput,
   ClaimCorrection,
   ClaimCorrectionInput,
   ClaimIdentityBinding,
@@ -5188,4 +5192,364 @@ export function useGetAdStats<TData = Awaited<ReturnType<typeof getAdStats>>, TE
 
 
 
+
+export const getGetClaimChainUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/chain`
+}
+
+/**
+ * @summary The caller's claim chain for this recording, and where playback should next stop
+ */
+export const getClaimChain = async (id: number, options?: RequestInit): Promise<ClaimChain> => {
+
+  return customFetch<ClaimChain>(getGetClaimChainUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetClaimChainQueryKey = (id: number,) => {
+    return [
+    `/api/recordings/${id}/claim-match/chain`
+    ] as const;
+    }
+
+
+export const getGetClaimChainQueryOptions = <TData = Awaited<ReturnType<typeof getClaimChain>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimChain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetClaimChainQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getClaimChain>>> = ({ signal }) => getClaimChain(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClaimChain>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetClaimChainQueryResult = NonNullable<Awaited<ReturnType<typeof getClaimChain>>>
+export type GetClaimChainQueryError = ErrorType<void>
+
+
+/**
+ * @summary The caller's claim chain for this recording, and where playback should next stop
+ */
+
+export function useGetClaimChain<TData = Awaited<ReturnType<typeof getClaimChain>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimChain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetClaimChainQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getTapClaimChainUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/chain/tap`
+}
+
+/**
+ * @summary "That is me, here." The only way a chain grows
+ */
+export const tapClaimChain = async (id: number,
+    claimChainTapInput: ClaimChainTapInput, options?: RequestInit): Promise<ClaimChain> => {
+
+  return customFetch<ClaimChain>(getTapClaimChainUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimChainTapInput)
+  }
+);}
+
+
+
+
+export const getTapClaimChainMutationOptions = <TError = ErrorType<void | ClaimChainConflict>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof tapClaimChain>>, TError,{id: number;data: BodyType<ClaimChainTapInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof tapClaimChain>>, TError,{id: number;data: BodyType<ClaimChainTapInput>}, TContext> => {
+
+const mutationKey = ['tapClaimChain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof tapClaimChain>>, {id: number;data: BodyType<ClaimChainTapInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  tapClaimChain(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TapClaimChainMutationResult = NonNullable<Awaited<ReturnType<typeof tapClaimChain>>>
+    export type TapClaimChainMutationBody = BodyType<ClaimChainTapInput>
+    export type TapClaimChainMutationError = ErrorType<void | ClaimChainConflict>
+
+    /**
+ * @summary "That is me, here." The only way a chain grows
+ */
+export const useTapClaimChain = <TError = ErrorType<void | ClaimChainConflict>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof tapClaimChain>>, TError,{id: number;data: BodyType<ClaimChainTapInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof tapClaimChain>>,
+        TError,
+        {id: number;data: BodyType<ClaimChainTapInput>},
+        TContext
+      > => {
+      return useMutation(getTapClaimChainMutationOptions(options));
+    }
+
+export const getRejectClaimChainFromUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/chain/not-me`
+}
+
+/**
+ * @summary "That is not me, and has not been since here." Always available
+ */
+export const rejectClaimChainFrom = async (id: number,
+    claimChainFrameInput: ClaimChainFrameInput, options?: RequestInit): Promise<ClaimChain> => {
+
+  return customFetch<ClaimChain>(getRejectClaimChainFromUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimChainFrameInput)
+  }
+);}
+
+
+
+
+export const getRejectClaimChainFromMutationOptions = <TError = ErrorType<void | ClaimChainConflict>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectClaimChainFrom>>, TError,{id: number;data: BodyType<ClaimChainFrameInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectClaimChainFrom>>, TError,{id: number;data: BodyType<ClaimChainFrameInput>}, TContext> => {
+
+const mutationKey = ['rejectClaimChainFrom'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectClaimChainFrom>>, {id: number;data: BodyType<ClaimChainFrameInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  rejectClaimChainFrom(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RejectClaimChainFromMutationResult = NonNullable<Awaited<ReturnType<typeof rejectClaimChainFrom>>>
+    export type RejectClaimChainFromMutationBody = BodyType<ClaimChainFrameInput>
+    export type RejectClaimChainFromMutationError = ErrorType<void | ClaimChainConflict>
+
+    /**
+ * @summary "That is not me, and has not been since here." Always available
+ */
+export const useRejectClaimChainFrom = <TError = ErrorType<void | ClaimChainConflict>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectClaimChainFrom>>, TError,{id: number;data: BodyType<ClaimChainFrameInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof rejectClaimChainFrom>>,
+        TError,
+        {id: number;data: BodyType<ClaimChainFrameInput>},
+        TContext
+      > => {
+      return useMutation(getRejectClaimChainFromMutationOptions(options));
+    }
+
+export const getConfirmClaimChainAtUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/chain/confirm`
+}
+
+/**
+ * @summary "Yes, still me." Recorded because silence is not a label
+ */
+export const confirmClaimChainAt = async (id: number,
+    claimChainFrameInput: ClaimChainFrameInput, options?: RequestInit): Promise<ClaimChain> => {
+
+  return customFetch<ClaimChain>(getConfirmClaimChainAtUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimChainFrameInput)
+  }
+);}
+
+
+
+
+export const getConfirmClaimChainAtMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmClaimChainAt>>, TError,{id: number;data: BodyType<ClaimChainFrameInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmClaimChainAt>>, TError,{id: number;data: BodyType<ClaimChainFrameInput>}, TContext> => {
+
+const mutationKey = ['confirmClaimChainAt'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmClaimChainAt>>, {id: number;data: BodyType<ClaimChainFrameInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  confirmClaimChainAt(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmClaimChainAtMutationResult = NonNullable<Awaited<ReturnType<typeof confirmClaimChainAt>>>
+    export type ConfirmClaimChainAtMutationBody = BodyType<ClaimChainFrameInput>
+    export type ConfirmClaimChainAtMutationError = ErrorType<void>
+
+    /**
+ * @summary "Yes, still me." Recorded because silence is not a label
+ */
+export const useConfirmClaimChainAt = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmClaimChainAt>>, TError,{id: number;data: BodyType<ClaimChainFrameInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof confirmClaimChainAt>>,
+        TError,
+        {id: number;data: BodyType<ClaimChainFrameInput>},
+        TContext
+      > => {
+      return useMutation(getConfirmClaimChainAtMutationOptions(options));
+    }
+
+export const getUndoClaimChainLastUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/chain/last`
+}
+
+/**
+ * @summary Undo the last link. Writes no label -- a mis-tap is not evidence
+ */
+export const undoClaimChainLast = async (id: number, options?: RequestInit): Promise<ClaimChain> => {
+
+  return customFetch<ClaimChain>(getUndoClaimChainLastUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getUndoClaimChainLastMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof undoClaimChainLast>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof undoClaimChainLast>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['undoClaimChainLast'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof undoClaimChainLast>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  undoClaimChainLast(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UndoClaimChainLastMutationResult = NonNullable<Awaited<ReturnType<typeof undoClaimChainLast>>>
+
+    export type UndoClaimChainLastMutationError = ErrorType<void>
+
+    /**
+ * @summary Undo the last link. Writes no label -- a mis-tap is not evidence
+ */
+export const useUndoClaimChainLast = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof undoClaimChainLast>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof undoClaimChainLast>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getUndoClaimChainLastMutationOptions(options));
+    }
 

@@ -46,6 +46,13 @@ import {
   type TrackingManifest,
   type TrackingSegmentPayload,
 } from "@workspace/db";
+import {
+  ConfirmClaimChainAtResponse,
+  GetClaimChainResponse,
+  RejectClaimChainFromResponse,
+  TapClaimChainResponse,
+  UndoClaimChainLastResponse,
+} from "@workspace/api-zod";
 import { readClaimSegment } from "../lib/claimMatchStorage";
 import { getLocalAccountUserId, getLocalUserId } from "../lib/clerkUserBridge";
 
@@ -601,5 +608,71 @@ describe("a failed label write never costs the person their claim", () => {
     } finally {
       insert.mockRestore();
     }
+  });
+});
+
+describe("the endpoint says whether the label landed", () => {
+  it("reports true on a real write and false when the corpus write fails", async () => {
+    // A label failing silently would leave the corpus empty while every claim
+    // looked healthy -- exactly the shape of identityDecisions being written
+    // and read by nobody.
+    const good = await request(app).post(url("/tap")).send({ trackId: "t1", frame: 10 });
+    expect(good.body.labelRecorded).toBe(true);
+
+    const insert = vi.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("no such table");
+    });
+    try {
+      const bad = await request(app).post(url("/not-me")).send({ frame: 50 });
+      expect(bad.status).toBe(200);
+      expect(bad.body.labelRecorded).toBe(false);
+    } finally {
+      insert.mockRestore();
+    }
+  });
+
+  it("is null on a read, which records nothing", async () => {
+    expect((await request(app).get(url())).body.labelRecorded).toBeNull();
+  });
+});
+
+/**
+ * The spec and the server, checked against each other.
+ *
+ * The client's hooks and types are generated from openapi.yaml, so a response
+ * that does not match the spec is a lie the compiler cannot see: the client
+ * gets types that typecheck perfectly and describe a shape the server never
+ * sends. Parsing real responses through the generated Zod is the only place
+ * that gap shows up.
+ */
+describe("responses match the generated contract", () => {
+  it("every chain endpoint returns exactly what the spec promises", async () => {
+    expect(GetClaimChainResponse.parse((await request(app).get(url())).body)).toBeTruthy();
+
+    const tapped = await request(app).post(url("/tap"))
+      .send({ trackId: "t1", frame: 10, name: "Ayesh", decisionMs: 1200 });
+    expect(TapClaimChainResponse.parse(tapped.body).nextUncertainty?.kind).toBe("track-end");
+
+    const confirmed = await request(app).post(url("/confirm")).send({ frame: 50 });
+    expect(ConfirmClaimChainAtResponse.parse(confirmed.body).labelRecorded).toBe(true);
+
+    const rejected = await request(app).post(url("/not-me")).send({ frame: 80 });
+    expect(RejectClaimChainFromResponse.parse(rejected.body).chain).toHaveLength(1);
+
+    const undone = await request(app).delete(url("/last"));
+    expect(UndoClaimChainLastResponse.parse(undone.body).chain).toEqual([]);
+  });
+
+  it("accepts the bodies the spec says clients may send", async () => {
+    const full = await request(app).post(url("/tap")).send({
+      trackId: "t2",
+      frame: 120,
+      rejectedTrackId: "t1",
+      name: "Ayesh",
+      decisionMs: 4200,
+      bundleFingerprint: (await request(app).get(url())).body.bundleFingerprint,
+    });
+    expect(full.status).toBe(200);
+    expect(TapClaimChainResponse.parse(full.body).coverageSeconds).toBeGreaterThan(0);
   });
 });

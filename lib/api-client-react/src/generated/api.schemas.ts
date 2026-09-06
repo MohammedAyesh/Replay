@@ -1162,6 +1162,98 @@ export interface ClaimProgressInput {
   earnedClips?: ClaimEarnedClip[];
 }
 
+export interface ClaimChainPart {
+  trackId: string;
+  fromFrame: number;
+  toFrame: number;
+}
+
+export type ClaimChainUncertaintyKind = typeof ClaimChainUncertaintyKind[keyof typeof ClaimChainUncertaintyKind];
+
+
+export const ClaimChainUncertaintyKind = {
+  'track-end': 'track-end',
+  swap: 'swap',
+} as const;
+
+/**
+ * Where playback should stop and ask. Playback stops here and nowhere else: a track end is definitive, a swap is judged and only raised when the geometry or the tracker's own confidence passes a threshold.
+ */
+export interface ClaimChainUncertainty {
+  kind: ClaimChainUncertaintyKind;
+  frame: number;
+  trackId: string;
+  /** For a swap, the player the identity may have been exchanged with. */
+  otherTrackId?: string;
+  confidence: number;
+  /** A plain sentence for the person watching. Never a code. */
+  reason: string;
+}
+
+export interface ClaimChain {
+  recordingId: number;
+  /** The caller's identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board. */
+  identityId: string;
+  /** @nullable */
+  name: string | null;
+  /** Send this back on writes; a mismatch is a 409, never a blind merge. */
+  bundleFingerprint: string;
+  frameRate: number;
+  chain: ClaimChainPart[];
+  coverageSeconds: number;
+  coveragePercent: number;
+  nextUncertainty: ClaimChainUncertainty | null;
+  /**
+     * Whether this decision's training label landed. A label write never fails the claim, so this is how a silently empty corpus becomes visible. Null on reads, which record nothing.
+     * @nullable
+     */
+  labelRecorded: boolean | null;
+}
+
+export interface ClaimChainConflict {
+  error: string;
+  currentBundleFingerprint?: string;
+  conflict?: ClaimChainPart;
+}
+
+export interface ClaimChainTapInput {
+  /** @minLength 1 */
+  trackId: string;
+  /** @minimum 0 */
+  frame: number;
+  /**
+     * The track we were following that turned out to be wrong, if any.
+     * @nullable
+     */
+  rejectedTrackId?: string | null;
+  /**
+     * What the person calls themselves. Falls back to their account name.
+     * @maxLength 60
+     * @nullable
+     */
+  name?: string | null;
+  /**
+     * How long the person took. Free difficulty weighting for the label.
+     * @minimum 0
+     * @nullable
+     */
+  decisionMs?: number | null;
+  /** @nullable */
+  bundleFingerprint?: string | null;
+}
+
+export interface ClaimChainFrameInput {
+  /** @minimum 0 */
+  frame: number;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  decisionMs?: number | null;
+  /** @nullable */
+  bundleFingerprint?: string | null;
+}
+
 export interface ClaimCorrectionInput {
   /** @minLength 1 */
   clientId: string;

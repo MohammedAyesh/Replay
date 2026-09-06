@@ -1498,6 +1498,177 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdStats"
 
+  /recordings/{id}/claim-match/chain:
+    get:
+      operationId: getClaimChain
+      tags: [claimMatch]
+      summary: The caller's claim chain for this recording, and where playback should next stop
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The chain, empty if the caller has not started one
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChain"
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Recording is not visible to players yet
+        "404":
+          description: Recording or tracking bundle not found
+
+  /recordings/{id}/claim-match/chain/tap:
+    post:
+      operationId: tapClaimChain
+      tags: [claimMatch]
+      summary: "\"That is me, here.\" The only way a chain grows"
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimChainTapInput"
+      responses:
+        "200":
+          description: The chain after the tap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChain"
+        "400":
+          description: Unknown track, or a piece the identity board has struck off
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Recording is not visible to players yet
+        "404":
+          description: Recording or tracking bundle not found
+        "409":
+          description: Another player has vouched for that stretch, or the bundle has been replaced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChainConflict"
+
+  /recordings/{id}/claim-match/chain/not-me:
+    post:
+      operationId: rejectClaimChainFrom
+      tags: [claimMatch]
+      summary: "\"That is not me, and has not been since here.\" Always available"
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimChainFrameInput"
+      responses:
+        "200":
+          description: The chain, truncated at the given frame
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChain"
+        "400":
+          description: Invalid body
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Recording is not visible to players yet
+        "404":
+          description: Recording or tracking bundle not found
+        "409":
+          description: The tracking bundle has been replaced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChainConflict"
+
+  /recordings/{id}/claim-match/chain/confirm:
+    post:
+      operationId: confirmClaimChainAt
+      tags: [claimMatch]
+      summary: "\"Yes, still me.\" Recorded because silence is not a label"
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimChainFrameInput"
+      responses:
+        "200":
+          description: The unchanged chain, with the label outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChain"
+        "400":
+          description: Invalid body
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Recording is not visible to players yet
+        "404":
+          description: Recording or tracking bundle not found
+
+  /recordings/{id}/claim-match/chain/last:
+    delete:
+      operationId: undoClaimChainLast
+      tags: [claimMatch]
+      summary: Undo the last link. Writes no label -- a mis-tap is not evidence
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The chain with its last link removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChain"
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Recording is not visible to players yet
+        "404":
+          description: Recording or tracking bundle not found
+
 components:
   schemas:
     HealthStatus:
@@ -3025,6 +3196,128 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ClaimEarnedClip"
+
+    ClaimChainPart:
+      type: object
+      required: [trackId, fromFrame, toFrame]
+      properties:
+        trackId:
+          type: string
+        fromFrame:
+          type: integer
+        toFrame:
+          type: integer
+
+    ClaimChainUncertainty:
+      type: object
+      description: >-
+        Where playback should stop and ask. Playback stops here and nowhere
+        else: a track end is definitive, a swap is judged and only raised when
+        the geometry or the tracker's own confidence passes a threshold.
+      required: [kind, frame, trackId, confidence, reason]
+      properties:
+        kind:
+          type: string
+          enum: [track-end, swap]
+        frame:
+          type: integer
+        trackId:
+          type: string
+        otherTrackId:
+          type: string
+          description: For a swap, the player the identity may have been exchanged with.
+        confidence:
+          type: number
+        reason:
+          type: string
+          description: A plain sentence for the person watching. Never a code.
+
+    ClaimChain:
+      type: object
+      required:
+        [recordingId, identityId, name, bundleFingerprint, frameRate, chain,
+         coverageSeconds, coveragePercent, nextUncertainty, labelRecorded]
+      properties:
+        recordingId:
+          type: integer
+        identityId:
+          type: string
+          description: >-
+            The caller's identity row on the identity board. The chain IS that
+            identity, so a merge made in the video is a merge on the board.
+        name:
+          type: ["string", "null"]
+        bundleFingerprint:
+          type: string
+          description: Send this back on writes; a mismatch is a 409, never a blind merge.
+        frameRate:
+          type: number
+        chain:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimChainPart"
+        coverageSeconds:
+          type: number
+        coveragePercent:
+          type: number
+        nextUncertainty:
+          oneOf:
+            - $ref: "#/components/schemas/ClaimChainUncertainty"
+            - type: "null"
+        labelRecorded:
+          type: ["boolean", "null"]
+          description: >-
+            Whether this decision's training label landed. A label write never
+            fails the claim, so this is how a silently empty corpus becomes
+            visible. Null on reads, which record nothing.
+
+    ClaimChainConflict:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        currentBundleFingerprint:
+          type: string
+        conflict:
+          $ref: "#/components/schemas/ClaimChainPart"
+
+    ClaimChainTapInput:
+      type: object
+      required: [trackId, frame]
+      properties:
+        trackId:
+          type: string
+          minLength: 1
+        frame:
+          type: integer
+          minimum: 0
+        rejectedTrackId:
+          type: ["string", "null"]
+          description: The track we were following that turned out to be wrong, if any.
+        name:
+          type: ["string", "null"]
+          maxLength: 60
+          description: What the person calls themselves. Falls back to their account name.
+        decisionMs:
+          type: ["integer", "null"]
+          minimum: 0
+          description: How long the person took. Free difficulty weighting for the label.
+        bundleFingerprint:
+          type: ["string", "null"]
+
+    ClaimChainFrameInput:
+      type: object
+      required: [frame]
+      properties:
+        frame:
+          type: integer
+          minimum: 0
+        decisionMs:
+          type: ["integer", "null"]
+          minimum: 0
+        bundleFingerprint:
+          type: ["string", "null"]
 
     ClaimCorrectionInput:
       type: object
