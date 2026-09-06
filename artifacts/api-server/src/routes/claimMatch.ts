@@ -1085,6 +1085,42 @@ async function getVisibleRecordingBundle(recordingId: number) {
   return row;
 }
 
+/**
+ * Write-path access. Deliberately the mirror image of
+ * getClaimMatchBundleForRequest below.
+ *
+ * Until 2026-09-06 the three write handlers -- progress PATCH, corrections
+ * POST, correction undo -- used getVisibleRecordingBundle, which has NO admin
+ * bypass, while every read handler used getClaimMatchBundleForRequest, which
+ * has one. isRecordingVisible() returns false when a field has no
+ * recording_schedules rows at all, so that is the DEFAULT state of every
+ * recording not yet scheduled for players -- precisely the recordings an admin
+ * opens to validate a bundle.
+ *
+ * The result was silent and total: the page loaded, the anchors rendered, all
+ * eight checkpoints could be answered, and every write returned 404. The
+ * client reported those 404s to the user as "Saved on this device" and then
+ * discarded them (claim-match-queue treats 4xx as permanent), so the only
+ * visible symptom was a first-run identity prompt on every single load.
+ *
+ * A visibility refusal is 403, not 404: "not found" sent the client down its
+ * permanent-discard path and told the user something untrue.
+ */
+async function getClaimMatchWritableBundle(
+  req: Parameters<typeof getLocalUserId>[0],
+  recordingId: number,
+) {
+  const row = await getRecordingBundle(recordingId);
+  if (!row?.bundle) {
+    return { row: null, status: 404 as const, error: "Recording or tracking bundle not found" };
+  }
+  if (await requireAdmin(req)) return { row, status: null, error: null };
+  if (!(await isRecordingVisible(row.recording))) {
+    return { row: null, status: 403 as const, error: "Recording is not visible to players yet" };
+  }
+  return { row, status: null, error: null };
+}
+
 async function getClaimMatchBundleForRequest(
   req: Parameters<typeof getLocalUserId>[0],
   recordingId: number,
@@ -1437,6 +1473,42 @@ export function knownClaimTrackIds(
   ]);
 }
 
+/**
+ * A candidate id the client minted for a stretch of a track that no identity
+ * part covers: `unclaimed:<segmentIndex>:<trackId>:<fromFrame>`
+ * (claim-match-identities.ts sourcePieceId). These are selectable in the
+ * picker, so the server has to accept them -- until 2026-09-06 it rejected
+ * every one with 400 "Correction references an unknown track", and the client
+ * queued that 400 and then permanently discarded it, so choosing an
+ * "Unclaimed" candidate silently threw the answer away.
+ */
+export function parseUnclaimedCandidateId(
+  id: string,
+): { segmentIndex: number; trackId: string; fromFrame: number } | null {
+  if (!id.startsWith("unclaimed:")) return null;
+  const rest = id.slice("unclaimed:".length);
+  const first = rest.indexOf(":");
+  const last = rest.lastIndexOf(":");
+  if (first <= 0 || last <= first) return null;
+  const segmentIndex = Number(rest.slice(0, first));
+  const trackId = rest.slice(first + 1, last);
+  const fromFrame = Number(rest.slice(last + 1));
+  if (!Number.isInteger(segmentIndex) || !Number.isInteger(fromFrame) || !trackId) return null;
+  return { segmentIndex, trackId, fromFrame };
+}
+
+/** Whether a correction may reference this id at all. */
+export function isKnownClaimCandidateId(
+  manifest: TrackingManifest,
+  segments: ClaimStateSegment[],
+  id: string,
+): boolean {
+  const known = knownClaimTrackIds(manifest, segments);
+  if (known.has(id)) return true;
+  const piece = parseUnclaimedCandidateId(id);
+  return piece !== null && known.has(piece.trackId);
+}
+
 function usableIdentityMap(manifest: TrackingManifest): TrackingIdentity[] {
   const identities = manifest.identities;
   const provenance = manifest.provenance;
@@ -1657,22 +1729,49 @@ export function resolveClaimIdentity(
   };
 }
 
+/**
+ * One surviving answer per checkpoint.
+ *
+ * This deduped on the exact float momentSeconds until 2026-09-06. Because an
+ * answer is snapped to the nearest detection before it is stored, re-answering
+ * the same checkpoint could land on a different float, so BOTH rows survived
+ * and both voted. Two votes for different candidates is a tie, and
+ * resolveClaimIdentity returns null on a tie -- which surfaces as coverage 0%
+ * with every answered moment reported as a conflict, on a match the user had
+ * answered correctly. Grouping by proximity instead makes a re-answer replace
+ * its predecessor, which is what the user meant by re-answering.
+ *
+ * Anchors are at least minGap = max(8, ...) seconds apart (buildClaimAnchors)
+ * and the snap is capped at 1 s, so a 1 s grouping window cannot merge answers
+ * belonging to two different checkpoints.
+ */
+const ANCHOR_ANSWER_GROUPING_SECONDS = 1;
+
 function latestAnchorAnswers(
   rows: typeof claimMatchCorrectionsTable.$inferSelect[],
 ): typeof claimMatchCorrectionsTable.$inferSelect[] {
-  const latestByMoment = new Map<number, typeof claimMatchCorrectionsTable.$inferSelect>();
-  for (const row of rows) {
-    if (row.undone || !row.answerMethod.startsWith("anchor-")) continue;
-    const previous = latestByMoment.get(row.momentSeconds);
-    if (
-      !previous
-      || row.createdAt.getTime() > previous.createdAt.getTime()
-      || (row.createdAt.getTime() === previous.createdAt.getTime() && row.id > previous.id)
-    ) {
-      latestByMoment.set(row.momentSeconds, row);
+  const isNewer = (
+    row: typeof claimMatchCorrectionsTable.$inferSelect,
+    previous: typeof claimMatchCorrectionsTable.$inferSelect,
+  ) => row.createdAt.getTime() > previous.createdAt.getTime()
+    || (row.createdAt.getTime() === previous.createdAt.getTime() && row.id > previous.id);
+
+  const anchorRows = rows
+    .filter((row) => !row.undone && row.answerMethod.startsWith("anchor-"))
+    .sort((a, b) => a.momentSeconds - b.momentSeconds);
+
+  const groups: Array<{ anchorSeconds: number; row: typeof claimMatchCorrectionsTable.$inferSelect }> = [];
+  for (const row of anchorRows) {
+    const group = groups.find(
+      (item) => Math.abs(item.anchorSeconds - row.momentSeconds) <= ANCHOR_ANSWER_GROUPING_SECONDS,
+    );
+    if (!group) {
+      groups.push({ anchorSeconds: row.momentSeconds, row });
+      continue;
     }
+    if (isNewer(row, group.row)) group.row = row;
   }
-  return Array.from(latestByMoment.values());
+  return groups.map((group) => group.row);
 }
 
 function trackIntervalsForId(
@@ -1689,6 +1788,31 @@ function trackIntervalsForId(
         startSeconds: Math.max(0, track.startFrame / frameRate),
         endSeconds: Math.min(manifest.duration, (track.endFrame + 1) / frameRate),
       });
+    }
+  }
+  // An "unclaimed:" piece is the part of a source track that no identity part
+  // covers, running from its fromFrame until the next identity part on the
+  // same track begins (or the track ends). Resolving it here is what makes an
+  // answer on an unclaimed candidate worth real coverage instead of zero.
+  const piece = parseUnclaimedCandidateId(trackId);
+  if (piece) {
+    const identityParts = usableIdentityMap(manifest)
+      .flatMap((item) => item.parts)
+      .filter((part) => part.trackId === piece.trackId && part.fromFrame > piece.fromFrame)
+      .map((part) => part.fromFrame);
+    for (const segment of segments) {
+      if (segment.segmentIndex !== piece.segmentIndex) continue;
+      const track = segment.tracks.find((item) => item.id === piece.trackId);
+      if (!track) continue;
+      const nextPartStart = identityParts.length ? Math.min(...identityParts) : Infinity;
+      const startFrame = Math.max(track.startFrame, piece.fromFrame);
+      const endFrame = Math.min(track.endFrame, nextPartStart - 1);
+      if (endFrame >= startFrame) {
+        intervals.push({
+          startSeconds: Math.max(0, startFrame / frameRate),
+          endSeconds: Math.min(manifest.duration, (endFrame + 1) / frameRate),
+        });
+      }
     }
   }
   const identity = usableIdentityMap(manifest).find((item) => item.id === trackId);
@@ -3033,7 +3157,12 @@ router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     res.status(400).json({ error: body.error.message });
     return;
   }
-  const row = await getVisibleRecordingBundle(params.data.id);
+  const writeAccess = await getClaimMatchWritableBundle(req, params.data.id);
+  if (writeAccess.status) {
+    res.status(writeAccess.status).json({ error: writeAccess.error });
+    return;
+  }
+  const row = writeAccess.row;
   if (!row?.bundle?.manifest) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
@@ -3145,7 +3274,12 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
     res.status(400).json({ error: body.error.message });
     return;
   }
-  const row = await getVisibleRecordingBundle(params.data.id);
+  const writeAccess = await getClaimMatchWritableBundle(req, params.data.id);
+  if (writeAccess.status) {
+    res.status(writeAccess.status).json({ error: writeAccess.error });
+    return;
+  }
+  const row = writeAccess.row;
   if (!row?.bundle) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
@@ -3154,15 +3288,14 @@ router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise
   const manifest = await manifestWithBundleFingerprint(row.bundle);
   const storedOffPitchSpans = await getClaimOffPitchSpans(userId, params.data.id);
   const offPitchSpans = normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration);
-  const trackIds = knownClaimTrackIds(manifest, segments);
   const isAnchorNoAnswer = body.data.answerMethod === "anchor-no" || body.data.answerMethod === "anchor-skip";
   if (
     (isAnchorNoAnswer
       ? body.data.chosenTrackId !== EMPTY_ANCHOR_TRACK
-      : !trackIds.has(body.data.chosenTrackId)) ||
+      : !isKnownClaimCandidateId(manifest, segments, body.data.chosenTrackId)) ||
     (body.data.rejectedTrackId !== undefined &&
       body.data.rejectedTrackId !== null &&
-      !trackIds.has(body.data.rejectedTrackId))
+      !isKnownClaimCandidateId(manifest, segments, body.data.rejectedTrackId))
   ) {
     res.status(400).json({ error: "Correction references an unknown track" });
     return;
@@ -3281,7 +3414,12 @@ router.delete("/claim-match/corrections/:correctionId", async (req, res): Promis
     res.status(403).json({ error: "Correction belongs to another user" });
     return;
   }
-  const bundleRow = await getVisibleRecordingBundle(correction.recordingId);
+  const undoAccess = await getClaimMatchWritableBundle(req, correction.recordingId);
+  if (undoAccess.status) {
+    res.status(undoAccess.status).json({ error: undoAccess.error });
+    return;
+  }
+  const bundleRow = undoAccess.row;
   if (!bundleRow?.bundle) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;

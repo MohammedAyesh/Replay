@@ -109,6 +109,28 @@ function frameContaining(
   return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, zoom };
 }
 
+/**
+ * The furthest position this media can actually be seeked to, or null while
+ * that is still unknown.
+ *
+ * Why this exists: bundle.videoStartSeconds is accepted by the server with
+ * only Math.max(0, ...) and no upper bound, and the server's own comment notes
+ * that getting it wrong "does not fail loudly". If it exceeds the video's
+ * length -- tracking cut for a full hour re-attached to a ten-minute trim, for
+ * instance -- then video.currentTime clamps silently to the end, hls.js parks
+ * past the last fragment, FRAG_BUFFERED never fires, and the result is a black
+ * frame with no error anywhere in the UI. Clamping makes it play; the caller
+ * reports the overrun so the bad offset is visible instead of inferred.
+ */
+function seekableEnd(video: HTMLVideoElement): number | null {
+  if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
+  if (video.seekable.length > 0) {
+    const end = video.seekable.end(video.seekable.length - 1);
+    if (Number.isFinite(end) && end > 0) return end;
+  }
+  return null;
+}
+
 function useBunnyHls(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   url: string | undefined,
@@ -128,6 +150,8 @@ function useBunnyHls(
     let retryTimer: number | null = null;
     let decodeTimer: number | null = null;
     let networkRetries = 0;
+    let mediaRecoveries = 0;
+    let firstFrameTimer: number | null = null;
     let mediaRecoveryAttempted = false;
     let nativeMetadataHandler: (() => void) | null = null;
     const unsubscribeCache = subscribeToVideoCache(onCacheUpdate);
@@ -157,6 +181,21 @@ function useBunnyHls(
         setVideoError("Video data loaded, but this browser could not decode the picture. Reload the page to try again.");
       }, 4_000);
     };
+    // watchForDecodedFrame only ever armed from FRAG_BUFFERED, so every failure
+    // that stops fragments arriving at all bypassed it and produced a black
+    // frame with no message. This one arms as soon as playback is attempted.
+    const watchForFirstFrame = () => {
+      if (firstFrameTimer) window.clearTimeout(firstFrameTimer);
+      firstFrameTimer = window.setTimeout(() => {
+        if (!video || video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return;
+        setVideoError("The recording did not start playing. Reload the page to try again.");
+      }, 15_000);
+    };
+    const clearFirstFrameTimer = () => {
+      if (firstFrameTimer) window.clearTimeout(firstFrameTimer);
+      firstFrameTimer = null;
+    };
+
     const startPlayback = () => {
       if (url.includes(".m3u8") && Hls.isSupported()) {
         hls = new Hls({
@@ -170,7 +209,21 @@ function useBunnyHls(
         hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(url));
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          const target = Math.max(0, startVideoTimeRef.current);
+          const requested = Math.max(0, startVideoTimeRef.current);
+          // A level's duration is known here even before any fragment loads,
+          // which is the earliest point an impossible start position can be
+          // caught. Leave a second of runway so the target is inside the last
+          // fragment rather than exactly on its boundary.
+          const limit = hls?.levels?.[hls.currentLevel]?.details?.totalduration
+            ?? hls?.levels?.[0]?.details?.totalduration
+            ?? null;
+          let target = requested;
+          if (typeof limit === "number" && Number.isFinite(limit) && limit > 0 && requested > limit - 1) {
+            target = Math.max(0, limit - 1);
+            setVideoError(
+              `This recording's tracking starts at ${Math.round(requested)}s but the video is only ${Math.round(limit)}s long. Playing from the start; the tracking offset for this recording is wrong.`,
+            );
+          }
           // startPosition is used by hls.js when it first starts loading, but
           // explicitly restarting here also covers an instance that attached
           // while the element was paused or had already requested fragment 0.
@@ -179,18 +232,45 @@ function useBunnyHls(
         });
         hls.on(Hls.Events.FRAG_BUFFERED, () => {
           networkRetries = 0;
+          clearFirstFrameTimer();
           if (!confirmDecodedFrame()) watchForDecodedFrame();
         });
         hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (!data.fatal || !hls) return;
+          if (!hls) return;
+          if (!data.fatal) {
+            // Non-fatal is not the same as harmless. hls.js reports
+            // bufferAddCodecError and bufferIncompatibleCodecsError with
+            // fatal:false, and both mean the video SourceBuffer was never
+            // created -- no picture will ever appear. Swallowing every
+            // non-fatal error is why this failed to black with no message.
+            // Matched as strings so the check does not depend on which
+            // ErrorDetails members a given hls.js version exports.
+            const details = String(data.details ?? "");
+            if (details === "bufferAddCodecError" || details === "bufferIncompatibleCodecsError") {
+              clearFirstFrameTimer();
+              setVideoError("This browser could not decode the recording's video track.");
+            }
+            return;
+          }
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             networkRetries += 1;
-            if (networkRetries > 5) { setVideoError("The recording could not be loaded. Check your connection and try again."); return; }
+            if (networkRetries > 5) { clearFirstFrameTimer(); setVideoError("The recording could not be loaded. Check your connection and try again."); return; }
             setVideoError("Reconnecting…");
             retryTimer = window.setTimeout(() => hls?.startLoad(), 1000 * networkRetries);
           } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            // recoverMediaError() used to be called with no counter and no
+            // message, so a recovery that never succeeded looped forever in
+            // silence. Two attempts, then say so.
+            mediaRecoveries += 1;
+            if (mediaRecoveries > 2) {
+              clearFirstFrameTimer();
+              setVideoError("The recording's video could not be decoded.");
+              return;
+            }
+            setVideoError("Recovering the video picture…");
             hls.recoverMediaError();
           } else {
+            clearFirstFrameTimer();
             setVideoError("The recording could not be played.");
           }
         });
@@ -204,9 +284,11 @@ function useBunnyHls(
       }
     };
     startPlayback();
+    watchForFirstFrame();
     return () => {
       unsubscribeCache();
       if (retryTimer) window.clearTimeout(retryTimer);
+      clearFirstFrameTimer();
       clearDecodeTimer();
       if (nativeMetadataHandler) video.removeEventListener("loadedmetadata", nativeMetadataHandler);
       video.onerror = null;
@@ -237,7 +319,11 @@ function useBunnyHls(
         return;
       }
       try {
-        video.currentTime = target;
+        // Same clamp as the start position: an out-of-range seek is silently
+        // pinned to the end by the element and then never resolves, which
+        // leaves pendingSeekTracking stuck and freezes the clock.
+        const end = seekableEnd(video);
+        video.currentTime = end === null ? target : Math.min(target, Math.max(0, end - 0.25));
         // HLS.js needs the target as well as the media element. Without this,
         // a long VOD can keep serving the previously buffered fragment.
         hlsRef.current?.startLoad(target);
