@@ -2483,6 +2483,22 @@ components:
           items:
             $ref: "#/components/schemas/TrackingIdentityPart"
 
+    TrackingIdentityDecision:
+      type: object
+      required: [trackId, fromFrame, toFrame, action]
+      properties:
+        trackId:
+          type: string
+        fromFrame:
+          type: integer
+          minimum: 0
+        toFrame:
+          type: integer
+          minimum: 0
+        action:
+          type: string
+          enum: [parked, deleted]
+
     TrackingPitchModelGridPoint:
       type: object
       required: [x, y]
@@ -2609,6 +2625,11 @@ components:
           description: The identity board's result - pieces of tracks that are one person. Optional.
           items:
             $ref: "#/components/schemas/TrackingIdentity"
+        identityDecisions:
+          type: array
+          description: Admin decisions that keep parked or deleted fragments out of automatic regrouping.
+          items:
+            $ref: "#/components/schemas/TrackingIdentityDecision"
         provenance:
           type: object
           additionalProperties: true

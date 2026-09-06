@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { TrackingIdentity } from './trackingIdentity';
+import type { TrackingIdentityDecision } from './trackingIdentityDecision';
 import type { TrackingManifestProvenance } from './trackingManifestProvenance';
 import type { TrackingPitchModel } from './trackingPitchModel';
 import type { TrackingSegmentManifest } from './trackingSegmentManifest';
@@ -38,6 +39,8 @@ export interface TrackingManifest {
   pitchModel?: TrackingPitchModel;
   /** The identity board's result - pieces of tracks that are one person. Optional. */
   identities?: TrackingIdentity[];
+  /** Admin decisions that keep parked or deleted fragments out of automatic regrouping. */
+  identityDecisions?: TrackingIdentityDecision[];
   /** How the tracking bundle was produced. */
   provenance?: TrackingManifestProvenance;
 }

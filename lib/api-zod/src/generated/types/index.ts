@@ -90,6 +90,8 @@ export * from './trackingBundleSummary';
 export * from './trackingCrossing';
 export * from './trackingEvent';
 export * from './trackingIdentity';
+export * from './trackingIdentityDecision';
+export * from './trackingIdentityDecisionAction';
 export * from './trackingIdentityPart';
 export * from './trackingManifest';
 export * from './trackingManifestProvenance';

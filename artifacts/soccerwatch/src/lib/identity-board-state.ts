@@ -4,6 +4,13 @@ export type IdentityBoardPart = {
   toFrame: number;
 };
 
+export type IdentityBoardDecision = {
+  trackId: string;
+  fromFrame: number;
+  toFrame: number;
+  action: "parked" | "deleted";
+};
+
 export type IdentityBoardRow = {
   id: string;
   name: string;
@@ -12,6 +19,7 @@ export type IdentityBoardRow = {
 
 export type IdentityBoardSnapshot = {
   rows: IdentityBoardRow[];
+  decisions: IdentityBoardDecision[];
   same: Set<string>;
   different: Set<string>;
 };
@@ -27,6 +35,7 @@ export function restoreAcceptedBoard(snapshot: IdentityBoardSnapshot): IdentityB
       ...row,
       parts: row.parts.map((part) => ({ ...part })),
     })),
+    decisions: snapshot.decisions.map((decision) => ({ ...decision })),
     same: new Set(snapshot.same),
     different: new Set(snapshot.different),
   };

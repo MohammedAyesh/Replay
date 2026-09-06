@@ -109,6 +109,12 @@ export type TrackingManifest = {
    * from it at load time.
    */
   identities?: TrackingIdentity[];
+  /**
+   * Explicit admin decisions for fragments that are not currently assigned to
+   * an identity row. These live beside the identity map in the manifest so
+   * recompute cannot silently reintroduce them.
+   */
+  identityDecisions?: TrackingIdentityDecision[];
   /** How the bundle was produced (linker, parameters, measurements). Free-form. */
   provenance?: Record<string, unknown>;
   /** Small server-side index used for coverage and completion calculations. */
@@ -128,6 +134,13 @@ export type TrackingIdentity = {
   id: string;
   name?: string | null;
   parts: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
+};
+
+export type TrackingIdentityDecision = {
+  trackId: string;
+  fromFrame: number;
+  toFrame: number;
+  action: "parked" | "deleted";
 };
 
 export type TrackingBundleSummary = {

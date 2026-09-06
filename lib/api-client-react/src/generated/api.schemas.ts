@@ -708,6 +708,23 @@ export interface TrackingIdentity {
   parts: TrackingIdentityPart[];
 }
 
+export type TrackingIdentityDecisionAction = typeof TrackingIdentityDecisionAction[keyof typeof TrackingIdentityDecisionAction];
+
+
+export const TrackingIdentityDecisionAction = {
+  parked: 'parked',
+  deleted: 'deleted',
+} as const;
+
+export interface TrackingIdentityDecision {
+  trackId: string;
+  /** @minimum 0 */
+  fromFrame: number;
+  /** @minimum 0 */
+  toFrame: number;
+  action: TrackingIdentityDecisionAction;
+}
+
 export interface TrackingPitchModelGridPoint {
   /** Pitch position in metres on the horizontal axis. */
   x: number;
@@ -796,6 +813,8 @@ export interface TrackingManifest {
   pitchModel?: TrackingPitchModel;
   /** The identity board's result - pieces of tracks that are one person. Optional. */
   identities?: TrackingIdentity[];
+  /** Admin decisions that keep parked or deleted fragments out of automatic regrouping. */
+  identityDecisions?: TrackingIdentityDecision[];
   /** How the tracking bundle was produced. */
   provenance?: TrackingManifestProvenance;
 }

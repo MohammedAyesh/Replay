@@ -307,6 +307,10 @@ export const getClaimMatchResponseManifestIdentitiesItemPartsItemFromFrameMin = 
 
 export const getClaimMatchResponseManifestIdentitiesItemPartsItemToFrameMin = 0;
 
+export const getClaimMatchResponseManifestIdentityDecisionsItemFromFrameMin = 0;
+
+export const getClaimMatchResponseManifestIdentityDecisionsItemToFrameMin = 0;
+
 export const getClaimMatchResponseProgressCoverageSecondsMin = 0;
 
 export const getClaimMatchResponseProgressCoveragePercentMin = 0;
@@ -432,6 +436,12 @@ export const GetClaimMatchResponse = zod.object({
   "toFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemPartsItemToFrameMin)
 }))
 })).optional().describe('The identity board\'s result - pieces of tracks that are one person. Optional.'),
+  "identityDecisions": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(getClaimMatchResponseManifestIdentityDecisionsItemFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchResponseManifestIdentityDecisionsItemToFrameMin),
+  "action": zod.enum(['parked', 'deleted'])
+})).optional().describe('Admin decisions that keep parked or deleted fragments out of automatic regrouping.'),
   "provenance": zod.record(zod.string(), zod.unknown()).optional().describe('How the tracking bundle was produced.')
 }),
   "progress": zod.object({

@@ -681,6 +681,62 @@ describe("Claim Match tracking bundle replacement", () => {
     expect(released).toEqual({ state: "released", vouchedFragments: [] });
   });
 
+  it("persists parked and deleted fragment decisions beside the identity map", async () => {
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    await db.delete(claimMatchIdentityBindingsTable).where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    const manifest = {
+      ...(bindingManifest as object),
+      summary: { segments: bindingSegments },
+      provenance: { bundleFingerprint: "decision-test", identityMapBundleFingerprint: "decision-test" },
+    } as unknown as TrackingManifest;
+    const fingerprint = trackingBundleFingerprint(
+      manifest,
+      manifest.summary?.segments ?? bindingSegments,
+    );
+    const anchoredManifest = {
+      ...manifest,
+      provenance: { bundleFingerprint: fingerprint, identityMapBundleFingerprint: fingerprint },
+    };
+    await db
+      .update(recordingTrackingBundlesTable)
+      .set({ manifest: anchoredManifest })
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const decisions = [
+      { trackId: "piece-a", fromFrame: 50, toFrame: 74, action: "parked" as const },
+      { trackId: "piece-a", fromFrame: 75, toFrame: 99, action: "deleted" as const },
+    ];
+
+    const saved = await request(app)
+      .put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({
+        bundleFingerprint: fingerprint,
+        identities: [{ id: "person-a", parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 49 }] }],
+        identityDecisions: decisions,
+      });
+
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect((await currentManifest()).identityDecisions).toEqual(decisions);
+
+    const legacySaved = await request(app)
+      .put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({
+        bundleFingerprint: fingerprint,
+        identities: [{ id: "person-a", parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 49 }] }],
+      });
+    expect(legacySaved.status).toBe(200);
+    expect((await currentManifest()).identityDecisions).toEqual(decisions);
+
+    const conflicting = await request(app)
+      .put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({
+        bundleFingerprint: fingerprint,
+        identities: [{ id: "person-a", parts: [{ trackId: "piece-a", fromFrame: 50, toFrame: 99 }] }],
+        identityDecisions: [decisions[0]],
+      });
+    expect(conflicting.status).toBe(400);
+    expect(conflicting.body.error).toContain("cannot also remain");
+  });
+
   it("accepts documentation files without changing replacement storage behavior", async () => {
     mockedGetLocalUserId.mockResolvedValue(adminId);
     mockedWriteClaimSegment

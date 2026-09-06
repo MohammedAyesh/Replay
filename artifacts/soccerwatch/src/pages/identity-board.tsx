@@ -13,6 +13,7 @@ import type { ClaimIdentityBinding, TrackingIdentity, TrackingManifest } from "@
 import { identityMapMatchesBundle } from "@/lib/claim-match-identities";
 import {
   restoreAcceptedBoard,
+  type IdentityBoardDecision,
   type IdentityBoardPart,
   type IdentityBoardRow,
   type IdentityBoardSnapshot,
@@ -34,10 +35,19 @@ type Segment = { segmentIndex: number; tracks: Track[] };
 type Sprite = { f: number; j: string };
 type Part = IdentityBoardPart;
 type Row = IdentityBoardRow;
-type Drag = { kind: "crop" | "row"; rowId: string; trackId?: string; frame?: number };
-type HistoryEntry = { rows: Row[]; same: Set<string>; different: Set<string> };
+type Decision = IdentityBoardDecision;
+type Drag =
+  | { kind: "crop" | "row"; rowId: string; trackId?: string; frame?: number }
+  | { kind: "parked"; decisionKey: string };
+type HistoryEntry = { rows: Row[]; decisions: Decision[]; same: Set<string>; different: Set<string> };
 type BoardSnapshot = IdentityBoardSnapshot;
-type Crop = { trackId: string; frame: number; j?: string; boundary?: boolean };
+type Crop = {
+  trackId: string;
+  frame: number;
+  j?: string;
+  boundary?: boolean;
+  join?: { left: string; right: string };
+};
 type Issue = { rowId: string; message: string };
 
 const K_PER_ROW = 14;
@@ -46,6 +56,10 @@ const MAX_SPEED_MPS = 8;
 
 function partKey(part: Part) {
   return `${part.trackId}:${part.fromFrame}-${part.toFrame}`;
+}
+
+function decisionKey(decision: Decision) {
+  return `${decision.trackId}:${decision.fromFrame}-${decision.toFrame}`;
 }
 
 function pairKey(a: Part, b: Part) {
@@ -265,12 +279,17 @@ function rowIssues(rows: Row[], tracks: Record<string, Track>, fps: number): Iss
   return issues;
 }
 
-function serializeRows(rows: Row[]) {
-  return JSON.stringify(rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    parts: [...row.parts].sort((a, b) => partKey(a).localeCompare(partKey(b))),
-  })).sort((a, b) => a.id.localeCompare(b.id)));
+function serializeBoard(rows: Row[], decisions: Decision[], same: Set<string>, different: Set<string>) {
+  return JSON.stringify({
+    rows: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      parts: [...row.parts].sort((a, b) => partKey(a).localeCompare(partKey(b))),
+    })).sort((a, b) => a.id.localeCompare(b.id)),
+    decisions: [...decisions].sort((a, b) => decisionKey(a).localeCompare(decisionKey(b))),
+    same: [...same].sort(),
+    different: [...different].sort(),
+  });
 }
 
 function addUnique(items: Crop[], item: Crop) {
@@ -286,6 +305,7 @@ export default function IdentityBoard() {
   const [tracks, setTracks] = useState<Record<string, Track>>({});
   const [sprites, setSprites] = useState<Record<string, Sprite[]>>({});
   const [rows, setRows] = useState<Row[]>([]);
+  const [decisions, setDecisions] = useState<Decision[]>([]);
   const [status, setStatus] = useState("Loading…");
   const [drag, setDrag] = useState<Drag | null>(null);
   const [flash, setFlash] = useState("");
@@ -303,7 +323,7 @@ export default function IdentityBoard() {
 
   const fps = manifest?.frameRate ?? 20;
   const duration = manifest?.duration ?? 1;
-  const isDirty = savedSnapshot !== null && savedSnapshot !== serializeRows(rows);
+  const isDirty = savedSnapshot !== null && savedSnapshot !== serializeBoard(rows, decisions, same, different);
 
   useEffect(() => {
     if (spriteReference.current !== sprites) {
@@ -356,21 +376,28 @@ export default function IdentityBoard() {
           if (cancelled) return;
         }
         const saved = claim.manifest.identities ?? [];
+        const savedDecisions = (claim.manifest.identityDecisions ?? []) as Decision[];
         const usableSavedMap = saved.length > 0 && identityMapMatchesBundle(claim.manifest);
-        const initialRows = usableSavedMap
+        const loadedRows = usableSavedMap
           ? saved.map((identity: TrackingIdentity) => ({ id: identity.id, name: identity.name ?? "", parts: identity.parts }))
           : autoRows(all, claim.manifest.frameRate);
+        const decisionKeys = new Set(savedDecisions.map(decisionKey));
+        const initialRows = loadedRows
+          .map((row) => ({ ...row, parts: row.parts.filter((part) => !decisionKeys.has(partKey(part))) }))
+          .filter((row) => row.parts.length > 0);
         const initialConstraints = usableSavedMap ? deriveConstraints(initialRows) : { same: new Set<string>(), different: new Set<string>() };
         setTracks(all);
         setSprites(spr);
         setSpriteCoverage(coverage);
         setRows(initialRows);
+        setDecisions(savedDecisions);
         setSame(initialConstraints.same);
         setDifferent(initialConstraints.different);
         setHistory([]);
-        setSavedSnapshot(serializeRows(initialRows));
+        setSavedSnapshot(serializeBoard(initialRows, savedDecisions, initialConstraints.same, initialConstraints.different));
         acceptedBoard.current = {
           rows: initialRows.map((row) => ({ ...row, parts: row.parts.map((part) => ({ ...part })) })),
+          decisions: savedDecisions.map((decision) => ({ ...decision })),
           same: new Set(initialConstraints.same),
           different: new Set(initialConstraints.different),
         };
@@ -439,13 +466,94 @@ export default function IdentityBoard() {
       const currentStrips = (sprites[current.trackId] ?? []).filter((sprite) => sprite.f >= current.fromFrame && sprite.f <= current.toFrame);
       const before = previousStrips.slice(-2);
       const after = currentStrips.slice(0, 2);
-      (before.length ? before : [{ f: previous.toFrame, j: "" }]).forEach((sprite) => addUnique(items, { trackId: previous.trackId, frame: sprite.f, j: sprite.j, boundary: true }));
-      (after.length ? after : [{ f: current.fromFrame, j: "" }]).forEach((sprite) => addUnique(items, { trackId: current.trackId, frame: sprite.f, j: sprite.j, boundary: true }));
+      const join = { left: partKey(previous), right: partKey(current) };
+      (before.length ? before : [{ f: previous.toFrame, j: "" }]).forEach((sprite) =>
+        addUnique(items, { trackId: previous.trackId, frame: sprite.f, j: sprite.j, boundary: true, join }));
+      (after.length ? after : [{ f: current.fromFrame, j: "" }]).forEach((sprite) =>
+        addUnique(items, { trackId: current.trackId, frame: sprite.f, j: sprite.j, boundary: true, join }));
     }
     items.sort((a, b) => a.frame - b.frame || Number(Boolean(a.boundary)) - Number(Boolean(b.boundary)));
     cropCache.current.set(cacheKey, items);
     return items;
   }, [sprites]);
+
+  const partForCrop = (row: Row, crop: Crop) =>
+    row.parts.find((part) => part.trackId === crop.trackId && part.fromFrame <= crop.frame && crop.frame <= part.toFrame);
+
+  const partScope = (part: Part) => {
+    const start = fmt(part.fromFrame / fps);
+    const end = fmt((part.toFrame + 1) / fps);
+    const track = tracks[part.trackId];
+    const whole = track && track.startFrame === part.fromFrame && track.endFrame === part.toFrame;
+    return `Fragment ${start}–${end} (${part.toFrame - part.fromFrame + 1} frames). ${
+      whole ? "This crop represents the whole tracked fragment." : "This crop is a sample from the full tracked fragment."
+    }`;
+  };
+
+  const decidePart = (rowId: string, crop: Crop, action: Decision["action"]) => {
+    const row = rows.find((candidate) => candidate.id === rowId);
+    const part = row && partForCrop(row, crop);
+    if (!row || !part) return;
+    const verb = action === "parked" ? "move this fragment to the holding panel" : "delete this fragment as a non-player";
+    if (!window.confirm(`You are about to ${verb}.\n\n${partScope(part)}\n\nThis action applies to the whole fragment, not just the sampled thumbnail.`)) return;
+    const nextRows = rows
+      .map((candidate) => candidate.id === rowId
+        ? { ...candidate, parts: candidate.parts.filter((current) => partKey(current) !== partKey(part)) }
+        : candidate)
+      .filter((candidate) => candidate.parts.length > 0);
+    const nextDecisions = [
+      ...decisions.filter((decision) => decisionKey(decision) !== partKey(part)),
+      { ...part, action },
+    ];
+    commit(
+      nextRows,
+      action === "parked" ? `Parked ${partScope(part)}` : `Deleted ${partScope(part)}`,
+      [],
+      [],
+      nextDecisions,
+    );
+  };
+
+  const deleteParked = (decision: Decision) => {
+    if (!window.confirm(`Delete this parked fragment as a non-player?\n\n${partScope(decision)}\n\nThis applies to the whole fragment.`)) return;
+    const nextDecisions = decisions.map((current) =>
+      decisionKey(current) === decisionKey(decision) ? { ...current, action: "deleted" as const } : current);
+    commit(rows, `Deleted ${partScope(decision)}`, [], [], nextDecisions);
+  };
+
+  const moveParkedToRow = (decision: Decision, rowId: string) => {
+    const target = rows.find((row) => row.id === rowId);
+    if (!target || decision.action !== "parked") return;
+    if (target.parts.some((part) => overlaps(part, decision))) {
+      flashMessage("That fragment overlaps the target row in time and cannot be assigned there.", true);
+      return;
+    }
+    const nextRows = rows.map((row) => row.id === rowId
+      ? { ...row, parts: [...row.parts, decision].sort((a, b) => a.fromFrame - b.fromFrame) }
+      : row);
+    const nextDecisions = decisions.filter((current) => decisionKey(current) !== decisionKey(decision));
+    const sameAdd = target.parts.map((part) => pairKey(part, decision));
+    commit(nextRows, `Moved ${partScope(decision)} to ${target.name || target.id}`, sameAdd, [], nextDecisions);
+  };
+
+  const joinBoundary = (row: Row, join: { left: string; right: string }) => {
+    const left = row.parts.find((part) => partKey(part) === join.left);
+    const right = row.parts.find((part) => partKey(part) === join.right);
+    if (!left || !right) return;
+    const merged = left.trackId === right.trackId && left.toFrame + 1 >= right.fromFrame
+      ? { ...left, fromFrame: Math.min(left.fromFrame, right.fromFrame), toFrame: Math.max(left.toFrame, right.toFrame) }
+      : null;
+    const nextRows = merged
+      ? rows.map((candidate) => candidate.id !== row.id ? candidate : {
+        ...candidate,
+        parts: candidate.parts
+          .filter((part) => partKey(part) !== partKey(left) && partKey(part) !== partKey(right))
+          .concat(merged)
+          .sort((a, b) => a.fromFrame - b.fromFrame),
+      })
+      : rows;
+    commit(nextRows, merged ? "Joined adjacent pieces into one fragment" : `Joined the two pieces into ${row.name || row.id}`, [pairKey(left, right)]);
+  };
 
   const suggestionFor = useCallback((row: Row): Row | null => {
     let best: { row: Row; score: number } | null = null;
@@ -464,7 +572,13 @@ export default function IdentityBoard() {
     window.setTimeout(() => setFlash(""), 3500);
   }, []);
 
-  const commit = useCallback((next: Row[], message: string, sameAdd: string[] = [], differentAdd: string[] = []) => {
+  const commit = useCallback((
+    next: Row[],
+    message: string,
+    sameAdd: string[] = [],
+    differentAdd: string[] = [],
+    nextDecisions = decisions,
+  ) => {
     const nextSame = new Set(same);
     const nextDifferent = new Set(different);
     sameAdd.forEach((key) => {
@@ -475,19 +589,26 @@ export default function IdentityBoard() {
       nextDifferent.add(key);
       nextSame.delete(key);
     });
-    setHistory((historyEntries) => [...historyEntries.slice(-30), { rows, same: new Set(same), different: new Set(different) }]);
+    setHistory((historyEntries) => [...historyEntries.slice(-30), {
+      rows,
+      decisions: decisions.map((decision) => ({ ...decision })),
+      same: new Set(same),
+      different: new Set(different),
+    }]);
     const recomputed = buildRows(tracks, fps, next.flatMap((row) => row.parts), nextSame, nextDifferent, next);
     setSame(nextSame);
     setDifferent(nextDifferent);
     setRows(recomputed);
+    setDecisions(nextDecisions);
     flashMessage(message);
-  }, [different, flashMessage, fps, rows, same, tracks]);
+  }, [decisions, different, flashMessage, fps, rows, same, tracks]);
 
   const undo = () => {
     const previous = history.at(-1);
     if (!previous) return;
     setHistory((entries) => entries.slice(0, -1));
     setRows(previous.rows);
+    setDecisions(previous.decisions);
     setSame(previous.same);
     setDifferent(previous.different);
     flashMessage("Undid the last edit");
@@ -535,9 +656,15 @@ export default function IdentityBoard() {
     const next = buildRows(tracks, fps, rows.flatMap((row) => row.parts), same, different, rows);
     const before = new Map(rows.flatMap((row) => row.parts.map((part) => [partKey(part), row.id] as const)));
     const moved = next.flatMap((row) => row.parts).filter((part) => before.get(partKey(part)) !== rowIdForPart(next, part)).length;
+    setHistory((historyEntries) => [...historyEntries.slice(-30), {
+      rows,
+      decisions: decisions.map((decision) => ({ ...decision })),
+      same: new Set(same),
+      different: new Set(different),
+    }]);
     setRows(next);
     flashMessage(`${message}${moved ? ` · ${moved} piece${moved === 1 ? "" : "s"} moved` : ""}`);
-  }, [different, flashMessage, fps, rows, same, tracks]);
+  }, [decisions, different, flashMessage, fps, rows, same, tracks]);
 
   const rename = (id: string, name: string) => setRows((current) => current.map((row) => row.id === id ? { ...row, name } : row));
   const finishRename = (id: string) => {
@@ -545,7 +672,12 @@ export default function IdentityBoard() {
     const current = rows.find((row) => row.id === id)?.name;
     nameBeforeEdit.current.delete(id);
     if (before !== undefined && current !== before) {
-      setHistory((entries) => [...entries.slice(-30), { rows, same: new Set(same), different: new Set(different) }]);
+      setHistory((entries) => [...entries.slice(-30), {
+        rows,
+        decisions: decisions.map((decision) => ({ ...decision })),
+        same: new Set(same),
+        different: new Set(different),
+      }]);
       flashMessage(`Renamed ${id}`);
     }
   };
@@ -557,9 +689,10 @@ export default function IdentityBoard() {
       if (!acceptedBoard.current) return;
       const restored = restoreAcceptedBoard(acceptedBoard.current);
       setRows(restored.rows);
+      setDecisions(restored.decisions);
       setSame(restored.same);
       setDifferent(restored.different);
-      setSavedSnapshot(serializeRows(restored.rows));
+      setSavedSnapshot(serializeBoard(restored.rows, restored.decisions, restored.same, restored.different));
     };
     try {
       const saveMap = () => fetch(
@@ -571,6 +704,7 @@ export default function IdentityBoard() {
           body: JSON.stringify({
             bundleFingerprint: String(manifest?.provenance?.bundleFingerprint ?? ""),
             identities: next.map((row) => ({ id: row.id, name: row.name || null, parts: row.parts })),
+            identityDecisions: decisions,
           }),
         },
       );
@@ -600,6 +734,7 @@ export default function IdentityBoard() {
       const acceptedConstraints = deriveConstraints(next);
       const accepted = {
         rows: next.map((row) => ({ ...row, parts: row.parts.map((part) => ({ ...part })) })),
+        decisions: decisions.map((decision) => ({ ...decision })),
         same: acceptedConstraints.same,
         different: acceptedConstraints.different,
       };
@@ -607,7 +742,7 @@ export default function IdentityBoard() {
       setRows(next);
       setSame(accepted.same);
       setDifferent(accepted.different);
-      setSavedSnapshot(serializeRows(next));
+      setSavedSnapshot(serializeBoard(next, decisions, accepted.same, accepted.different));
       flashMessage(`Saved ${next.length} people and refreshed grouping`);
     } catch (error) {
       restoreAccepted();
@@ -624,7 +759,10 @@ export default function IdentityBoard() {
 
   const onDropRow = (toId: string) => {
     if (!drag) return;
-    if (drag.kind === "row") {
+    if (drag.kind === "parked") {
+      const decision = decisions.find((candidate) => decisionKey(candidate) === drag.decisionKey);
+      if (decision) moveParkedToRow(decision, toId);
+    } else if (drag.kind === "row") {
       if (toId === "new") flashMessage("That row is already a separate person. Drag a crop to split it, or merge it into another row.", true);
       else mergeRows(drag.rowId, toId);
     } else if (drag.trackId && drag.frame !== undefined) moveTail(drag.rowId, drag.trackId, drag.frame, toId);
@@ -642,8 +780,8 @@ export default function IdentityBoard() {
     return (
       <div
         key={row.id}
-        className={`idb-row ${drag && drag.rowId !== row.id ? "is-target" : ""} ${issue ? "is-inconsistent" : ""}`}
-        onDragOver={(event) => { if (drag && drag.rowId !== row.id) event.preventDefault(); }}
+        className={`idb-row ${drag && drag.kind !== "parked" && drag.rowId !== row.id ? "is-target" : ""} ${issue ? "is-inconsistent" : ""}`}
+        onDragOver={(event) => { if (drag && drag.kind !== "parked" && drag.rowId !== row.id) event.preventDefault(); }}
         onDrop={(event) => { event.preventDefault(); onDropRow(row.id); }}
         data-testid={`idb-row-${row.id}`}
       >
@@ -677,15 +815,83 @@ export default function IdentityBoard() {
               draggable
               onDragStart={() => setDrag({ kind: "crop", rowId: row.id, trackId: crop.trackId, frame: crop.frame })}
               onDragEnd={() => setDrag(null)}
-              title={`${fmt(crop.frame / fps)} · ${crop.trackId} — drag to say "someone else from here"`}
+              title={`${fmt(crop.frame / fps)} · ${crop.trackId} — thumbnail sample of the full fragment; drag to say "someone else from here"`}
             >
-              {crop.boundary && <b className="idb-join-marker">JOIN</b>}
+              {crop.join && (
+                <button
+                  type="button"
+                  className="idb-join-marker"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    joinBoundary(row, crop.join!);
+                  }}
+                  title="Join the two neighboring pieces"
+                >
+                  JOIN
+                </button>
+              )}
               {crop.j ? <img src={`data:image/jpeg;base64,${crop.j}`} alt="" /> : <span className="idb-nocrop" />}
               <small>{fmt(crop.frame / fps)}</small>
+              {partForCrop(row, crop) && (
+                <span
+                  className="idb-crop-actions"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <button type="button" title="Remove the entire underlying fragment from this person" onClick={(event) => { event.stopPropagation(); decidePart(row.id, crop, "parked"); }}>
+                    Remove from this person
+                  </button>
+                  <button type="button" onClick={(event) => { event.stopPropagation(); decidePart(row.id, crop, "deleted"); }}>
+                    Delete
+                  </button>
+                </span>
+              )}
             </div>
           ))}
         </div>
       </div>
+    );
+  };
+
+  const parked = useMemo(
+    () => decisions.filter((decision) => decision.action === "parked").sort((a, b) => a.fromFrame - b.fromFrame || decisionKey(a).localeCompare(decisionKey(b))),
+    [decisions],
+  );
+
+  const renderHoldingEntry = (decision: Decision) => {
+    const strips = (sprites[decision.trackId] ?? []).filter((sprite) => sprite.f >= decision.fromFrame && sprite.f <= decision.toFrame);
+    const preview = strips[Math.floor(strips.length / 2)] ?? strips[0];
+    return (
+      <article
+        key={decisionKey(decision)}
+        className="idb-holding-entry"
+        draggable
+        onDragStart={() => setDrag({ kind: "parked", decisionKey: decisionKey(decision) })}
+        onDragEnd={() => setDrag(null)}
+        title="Drag this fragment onto a person row"
+      >
+        <div className="idb-holding-crop">
+          {preview?.j ? <img src={`data:image/jpeg;base64,${preview.j}`} alt="" /> : <span className="idb-nocrop" />}
+        </div>
+        <div className="idb-holding-info">
+          <strong>{fmt(decision.fromFrame / fps)}–{fmt((decision.toFrame + 1) / fps)}</strong>
+          <small>{decision.trackId} · {decision.toFrame - decision.fromFrame + 1} frames</small>
+          <select
+            defaultValue=""
+            onChange={(event) => {
+              if (event.target.value) moveParkedToRow(decision, event.target.value);
+              event.currentTarget.value = "";
+            }}
+            aria-label={`Move ${decision.trackId} to a person`}
+          >
+            <option value="">Move to person…</option>
+            {sortedRows.map((row) => <option key={row.id} value={row.id}>{row.name || row.id}</option>)}
+          </select>
+          <button type="button" onClick={() => deleteParked(decision)}>Delete — not a player</button>
+        </div>
+      </article>
     );
   };
 
@@ -746,16 +952,32 @@ export default function IdentityBoard() {
           {" · bundle: "}{manifest?.provenance?.linker ? String(manifest.provenance.linker).split(" (")[0] : "no provenance (original linker)"}
         </p>
       )}
-      <section className="idb-rows">{mainRows.map((row) => renderRow(row, false))}</section>
-      <div className={`idb-newrow ${drag ? "is-target" : ""}`} onDragOver={(event) => { if (drag) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); onDropRow("new"); }}>
-        Drop a crop here to make a new person
+      <div className="idb-layout">
+        <div className="idb-board">
+          <section className="idb-rows">{mainRows.map((row) => renderRow(row, false))}</section>
+          <div className={`idb-newrow ${drag ? "is-target" : ""}`} onDragOver={(event) => { if (drag) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); onDropRow("new"); }}>
+            Drop a crop here to make a new person
+          </div>
+          {fragments.length > 0 && (
+            <section className="idb-frags">
+              <h2>Short-span rows ({fragments.length}) — suggestions can join fragments too</h2>
+              {fragments.map((row) => renderRow(row, true))}
+            </section>
+          )}
+        </div>
+        <aside className="idb-holding" data-testid="idb-holding-panel">
+          <div className="idb-holding-header">
+            <div>
+              <h2>Holding panel</h2>
+              <p>Parked fragments · earliest first</p>
+            </div>
+            <strong>{parked.length}</strong>
+          </div>
+          {parked.length === 0
+            ? <p className="idb-holding-empty">Fragments removed from a person stay here until you know where they belong.</p>
+            : parked.map(renderHoldingEntry)}
+        </aside>
       </div>
-      {fragments.length > 0 && (
-        <section className="idb-frags">
-          <h2>Short-span rows ({fragments.length}) — suggestions can join fragments too</h2>
-          {fragments.map((row) => renderRow(row, true))}
-        </section>
-      )}
     </main>
   );
 }

@@ -38,6 +38,7 @@ import {
   type ClaimIdentityBindingState,
   type ClaimIdentityResolutionMethod,
   type TrackingIdentity,
+  type TrackingIdentityDecision,
 } from "@workspace/db";
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
@@ -72,6 +73,12 @@ const IdentityMapBody = z.object({
       toFrame: z.number().int().min(0),
     })).min(1),
   })),
+  identityDecisions: z.array(z.object({
+    trackId: z.string().min(1),
+    fromFrame: z.number().int().min(0),
+    toFrame: z.number().int().min(0),
+    action: z.enum(["parked", "deleted"]),
+  })).optional(),
 });
 const bundleUpload = multer({
   storage: multer.memoryStorage(),
@@ -1448,6 +1455,20 @@ function canonicalIdentityParts(parts: TrackingIdentity["parts"]): string[] {
   return parts
     .map((part) => JSON.stringify([part.trackId, part.fromFrame, part.toFrame]))
     .sort();
+}
+
+function canonicalIdentityDecisions(decisions: TrackingIdentityDecision[]): TrackingIdentityDecision[] {
+  const unique = new Map<string, TrackingIdentityDecision>();
+  for (const decision of decisions) {
+    const fromFrame = Math.max(0, Math.round(decision.fromFrame));
+    const toFrame = Math.max(fromFrame, Math.round(decision.toFrame));
+    unique.set(
+      `${decision.trackId}:${fromFrame}-${toFrame}`,
+      { trackId: decision.trackId, fromFrame, toFrame, action: decision.action },
+    );
+  }
+  return [...unique.values()].sort((a, b) =>
+    a.trackId.localeCompare(b.trackId) || a.fromFrame - b.fromFrame || a.toFrame - b.toFrame);
 }
 
 function personPartsForResolution(manifest: TrackingManifest, personId: string): string[] {
@@ -3729,6 +3750,19 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     });
     return;
   }
+  const identityDecisions = canonicalIdentityDecisions(
+    body.data.identityDecisions ?? row.bundle.manifest.identityDecisions ?? [],
+  );
+  const activeParts = body.data.identities.flatMap((identity) => identity.parts);
+  if (identityDecisions.some((decision) => activeParts.some((part) =>
+    part.trackId === decision.trackId
+    && part.fromFrame <= decision.toFrame
+    && decision.fromFrame <= part.toFrame))) {
+    res.status(400).json({
+      error: "A parked or deleted fragment cannot also remain in an identity row.",
+    });
+    return;
+  }
   const existingBindings = await db
     .select({
       id: claimMatchIdentityBindingsTable.id,
@@ -3771,18 +3805,25 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
   const manifest: TrackingManifest = {
     ...row.bundle.manifest,
     identities: body.data.identities,
+    identityDecisions,
     provenance: {
       ...(row.bundle.manifest.provenance ?? {}),
       bundleFingerprint: currentFingerprint,
       identityMapBundleFingerprint: currentFingerprint,
     },
   };
-  await db.transaction(async (tx) => {
-    await tx
-      .update(recordingTrackingBundlesTable)
-      .set({ manifest, updatedAt: new Date() })
-      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
-  });
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(recordingTrackingBundlesTable)
+        .set({ manifest, updatedAt: new Date() })
+        .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    });
+  } catch (error) {
+    logger.error({ err: error, recordingId }, "Could not save the identity map");
+    res.status(500).json({ error: "Could not save the identity map." });
+    return;
+  }
   res.json({
     recordingId,
     identities: body.data.identities.length,
