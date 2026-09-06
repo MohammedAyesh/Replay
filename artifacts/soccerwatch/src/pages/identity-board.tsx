@@ -440,6 +440,10 @@ export default function IdentityBoard() {
   const fragments = useMemo(() => sortedRows.filter((row) => rowSpan(row) / fps < 20).sort((a, b) => a.parts[0].fromFrame - b.parts[0].fromFrame), [sortedRows, fps]);
   const issues = useMemo(() => rowIssues(rows, tracks, fps), [rows, tracks, fps]);
   const boardMetrics = useMemo(() => metrics(rows, tracks, fps), [rows, tracks, fps]);
+  const parked = useMemo(
+    () => decisions.filter((decision) => decision.action === "parked").sort((a, b) => a.fromFrame - b.fromFrame || decisionKey(a).localeCompare(decisionKey(b))),
+    [decisions],
+  );
 
   const cropsForRow = useCallback((row: Row): Crop[] => {
     const cacheKey = row.parts.map(partKey).sort().join("|");
@@ -854,11 +858,6 @@ export default function IdentityBoard() {
       </div>
     );
   };
-
-  const parked = useMemo(
-    () => decisions.filter((decision) => decision.action === "parked").sort((a, b) => a.fromFrame - b.fromFrame || decisionKey(a).localeCompare(decisionKey(b))),
-    [decisions],
-  );
 
   const renderHoldingEntry = (decision: Decision) => {
     const strips = (sprites[decision.trackId] ?? []).filter((sprite) => sprite.f >= decision.fromFrame && sprite.f <= decision.toFrame);

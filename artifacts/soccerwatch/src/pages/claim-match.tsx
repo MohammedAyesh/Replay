@@ -568,11 +568,14 @@ export default function ClaimMatchPage() {
     const next = bundle ? clampToTracked(trackingSeconds, bundle) : Math.max(0, trackingSeconds);
     pendingSeekTrackingRef.current = next;
     setCurrentTime(next);
-    const targetSegmentIndex = manifest ? segmentIndexAtTime(manifest, next) : currentSegmentIndex;
-    if (videoRef.current && targetSegmentIndex === currentSegmentIndex) {
+    if (videoRef.current && Number.isFinite(toVideoTime(next))) {
+      // Move the real media immediately, even when the tracking overlay for the
+      // target segment is still loading. The overlay segment can catch up
+      // asynchronously; waiting here makes the boxes move while the video
+      // remains on the old picture.
       videoRef.current.currentTime = toVideoTime(next);
     }
-  }, [bundle, currentSegmentIndex, manifest, toVideoTime]);
+  }, [bundle, toVideoTime]);
 
   useEffect(() => {
     const pending = pendingSeekTrackingRef.current;
@@ -775,7 +778,6 @@ export default function ClaimMatchPage() {
       .filter((item): item is { track: ClaimTrack; box: ClaimBox; distance: number } => Boolean(item))
       .sort((a, b) => a.distance - b.distance);
     return ranked
-      .slice(0, 4)
       .sort((a, b) => a.distance - b.distance)
       .map(({ track, box, distance }) => ({
         id: track.id,
@@ -1157,7 +1159,7 @@ export default function ClaimMatchPage() {
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         seekBy(5);
-      } else if ((stage === "find" || stage === "picker") && /^[1-4]$/.test(key)) {
+      } else if ((stage === "find" || stage === "picker") && /^[1-9]$/.test(key)) {
         const candidate = candidates[Number(key) - 1];
         if (candidate) selectCandidate(candidate);
       }
@@ -1211,6 +1213,15 @@ export default function ClaimMatchPage() {
   const handleVideoReady = () => {
     setVideoReadyTick((value) => value + 1);
   };
+  const handleVideoTimeUpdate = useCallback((videoSeconds: number) => {
+    const pending = pendingSeekTrackingRef.current;
+    if (pending !== null && manifest) {
+      const targetVideoSeconds = pending + (manifest.videoStartSeconds ?? 0);
+      if (Math.abs(videoSeconds - targetVideoSeconds) > 0.5) return;
+      pendingSeekTrackingRef.current = null;
+    }
+    setCurrentTime(fromVideoTime(videoSeconds));
+  }, [fromVideoTime, manifest]);
   const cyclePlaybackRate = () => {
     setPlaybackRate((current) => {
       const currentIndex = PLAYBACK_SPEEDS.indexOf(current as (typeof PLAYBACK_SPEEDS)[number]);
@@ -1579,7 +1590,7 @@ export default function ClaimMatchPage() {
                 {currentAnchor && candidates.length === 0 && <div className="claim-empty-detections">No player is clear in this moment. You can skip it and keep your coverage honest.</div>}
                 {currentAnchor && <button type="button" className="claim-button claim-button-secondary claim-button-wide" data-testid="button-anchor-not-me" onClick={() => recordAnchorAnswer("no")}>I’m not visible here <X size={17} /></button>}
                 {currentAnchor && <button type="button" className="claim-text-button claim-skip-button" data-testid="button-skip-picker" onClick={() => recordAnchorAnswer("skip")}>Skip this moment <FastForward size={14} /></button>}
-                <p className="claim-key-note">Choose with <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> on your keyboard</p>
+                <p className="claim-key-note">Tap any player below. Keys <kbd>1</kbd>–<kbd>9</kbd> choose the first nine.</p>
               </>
                 )}
           </div>
@@ -1702,7 +1713,7 @@ export default function ClaimMatchPage() {
         onCyclePlaybackRate={cyclePlaybackRate}
         onToggleMute={() => setMuted((value) => !value)}
         onTap={onVideoTap}
-        onTimeUpdate={(value) => setCurrentTime(fromVideoTime(value))}
+        onTimeUpdate={handleVideoTimeUpdate}
         onVideoReady={handleVideoReady}
         topLeft={(
           <>
