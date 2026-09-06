@@ -286,6 +286,19 @@ function describe(
       /** Source tracks in this bundle, for comparison with `people`. */
       tracks: ctx.tracksById.size,
       segments: ctx.segments.length,
+      /**
+       * Which linker produced this bundle, when the pipeline stamped it.
+       *
+       * Null means unstamped, which the identity board has always rendered as
+       * "original linker" -- and until the upload parsers stopped discarding
+       * provenance, that was every bundle ever uploaded regardless of what
+       * made it. Comparing linker branches is impossible without this.
+       */
+      linker: typeof provenance.linker === "string"
+        ? provenance.linker
+        : typeof provenance.chain === "string"
+          ? provenance.chain
+          : null,
     },
     name,
     bundleFingerprint: ctx.fingerprint,

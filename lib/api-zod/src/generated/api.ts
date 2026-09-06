@@ -2357,7 +2357,8 @@ export const GetClaimChainResponse = zod.object({
   "people": zod.number(),
   "matchesBundle": zod.boolean(),
   "tracks": zod.number(),
-  "segments": zod.number()
+  "segments": zod.number(),
+  "linker": zod.string().nullable().describe('Which linker produced this bundle, from the pipeline\'s own provenance stamp. Null means unstamped.')
 }).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
@@ -2413,7 +2414,8 @@ export const TapClaimChainResponse = zod.object({
   "people": zod.number(),
   "matchesBundle": zod.boolean(),
   "tracks": zod.number(),
-  "segments": zod.number()
+  "segments": zod.number(),
+  "linker": zod.string().nullable().describe('Which linker produced this bundle, from the pipeline\'s own provenance stamp. Null means unstamped.')
 }).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
@@ -2463,7 +2465,8 @@ export const RejectClaimChainFromResponse = zod.object({
   "people": zod.number(),
   "matchesBundle": zod.boolean(),
   "tracks": zod.number(),
-  "segments": zod.number()
+  "segments": zod.number(),
+  "linker": zod.string().nullable().describe('Which linker produced this bundle, from the pipeline\'s own provenance stamp. Null means unstamped.')
 }).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
@@ -2513,7 +2516,8 @@ export const ConfirmClaimChainAtResponse = zod.object({
   "people": zod.number(),
   "matchesBundle": zod.boolean(),
   "tracks": zod.number(),
-  "segments": zod.number()
+  "segments": zod.number(),
+  "linker": zod.string().nullable().describe('Which linker produced this bundle, from the pipeline\'s own provenance stamp. Null means unstamped.')
 }).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
@@ -2551,7 +2555,8 @@ export const UndoClaimChainLastResponse = zod.object({
   "people": zod.number(),
   "matchesBundle": zod.boolean(),
   "tracks": zod.number(),
-  "segments": zod.number()
+  "segments": zod.number(),
+  "linker": zod.string().nullable().describe('Which linker produced this bundle, from the pipeline\'s own provenance stamp. Null means unstamped.')
 }).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),

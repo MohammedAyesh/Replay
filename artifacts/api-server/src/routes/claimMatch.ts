@@ -141,6 +141,59 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
 
 type UnknownRecord = Record<string, unknown>;
 
+/**
+ * Carry the pipeline's own provenance through from an uploaded bundle.
+ *
+ * relink2.py writes the whole chain into manifest.provenance as one line --
+ * detector, conf, tile settings, `linker=relink2.py`, its gates, and the source
+ * json -- and the identity board has a display for it. Both bundle parsers
+ * built the stored manifest from a fixed key allowlist that provenance was not
+ * on, so the relinker wrote it, the board rendered its "no provenance (original
+ * linker)" fallback, and there was no way to tell which linker produced any
+ * recording. Which is the one thing you need when you are comparing linkers.
+ *
+ * Sanitised rather than spread. This is attacker-controllable JSON going into a
+ * jsonb column that the whole claim path reads, so it is flattened to scalars
+ * and bounded on every axis. The server's own keys are NOT taken from here:
+ * bundleFingerprint and identityMapBundleFingerprint are written downstream and
+ * would let an upload claim its identity map matches a bundle it does not.
+ */
+const PROVENANCE_MAX_KEYS = 24;
+const PROVENANCE_MAX_VALUE_CHARS = 2000;
+const SERVER_OWNED_PROVENANCE = new Set(["bundleFingerprint", "identityMapBundleFingerprint"]);
+
+export function sanitizeUploadedProvenance(value: unknown): Record<string, unknown> | undefined {
+  // Two shapes are accepted because the pipeline's is not pinned down here:
+  // the 08-30 notes describe provenance as "the whole chain in one line", which
+  // reads as either a bare string or an object whose values are those lines,
+  // and the identity board reads `.linker` off an object. The writer lives on
+  // the GPU workstation. Rather than guess, both are carried -- a bare string
+  // lands under `chain` and is still readable and still searchable.
+  if (typeof value === "string") {
+    const chain = value.slice(0, PROVENANCE_MAX_VALUE_CHARS).trim();
+    return chain ? { chain } : undefined;
+  }
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (!raw) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(raw)) {
+    if (Object.keys(out).length >= PROVENANCE_MAX_KEYS) break;
+    if (SERVER_OWNED_PROVENANCE.has(key)) continue;
+    if (typeof entry === "string") {
+      out[key] = entry.slice(0, PROVENANCE_MAX_VALUE_CHARS);
+    } else if (typeof entry === "number" && Number.isFinite(entry)) {
+      out[key] = entry;
+    } else if (typeof entry === "boolean") {
+      out[key] = entry;
+    }
+    // Anything else -- nested objects, arrays, null -- is dropped. Provenance
+    // is a record of how the bundle was made, not a place to park structures.
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 function asRecord(value: unknown): UnknownRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as UnknownRecord
@@ -697,6 +750,9 @@ export function parseUploadedBundleDetailed(input: unknown): { upload: UploadBun
         duration: Math.max(firstNumber(rawMetadata.duration) ?? 0, segments.at(-1)?.endSeconds ?? 0) || 1,
         matchOffset: firstNumber(rawMetadata.matchOffset, rawMetadata.match_offset) ?? 0,
          ...(pitchModel.model ? { pitchModel: pitchModel.model } : {}),
+        ...(sanitizeUploadedProvenance(rawMetadata.provenance)
+          ? { provenance: sanitizeUploadedProvenance(rawMetadata.provenance) }
+          : {}),
         videoStartSeconds: Math.max(0, firstNumber(
           rawMetadata.videoStartSeconds,
           rawMetadata.video_start_seconds,
@@ -916,6 +972,9 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
         duration: Math.max(firstNumber(rawManifest.duration) ?? 0, segments.at(-1)!.endSeconds),
         matchOffset: firstNumber(rawManifest.matchOffset, rawManifest.match_offset) ?? 0,
          ...(pitchModel.model ? { pitchModel: pitchModel.model } : {}),
+        ...(sanitizeUploadedProvenance(rawManifest.provenance)
+          ? { provenance: sanitizeUploadedProvenance(rawManifest.provenance) }
+          : {}),
         videoStartSeconds: Math.max(0, firstNumber(
           rawManifest.videoStartSeconds,
           rawManifest.video_start_seconds,

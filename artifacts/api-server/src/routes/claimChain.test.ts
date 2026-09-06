@@ -688,6 +688,7 @@ describe("the identity map diagnostic", () => {
         matchesBundle: false,
         tracks: 3,
         segments: 1,
+        linker: null,
       });
     });
   });
@@ -715,5 +716,39 @@ describe("the identity map diagnostic", () => {
 
     const res = await request(app).get(url());
     expect(res.body.identityMap).toMatchObject({ people: 1, matchesBundle: false });
+  });
+});
+
+describe("which linker made this bundle", () => {
+  it("reports the pipeline's stamp when there is one", async () => {
+    const current = await storedManifest();
+    await db.update(recordingTrackingBundlesTable)
+      .set({
+        manifest: {
+          ...current,
+          provenance: { ...(current.provenance ?? {}), linker: "relink2.py (occ_max_s=14.0)" },
+        } as TrackingManifest,
+      })
+      .where(eq(recordingTrackingBundlesTable.id, bundleId));
+    const res = await request(app).get(url());
+    expect(res.body.identityMap.linker).toBe("relink2.py (occ_max_s=14.0)");
+  });
+
+  it("falls back to a bare one-line chain", async () => {
+    const current = await storedManifest();
+    await db.update(recordingTrackingBundlesTable)
+      .set({
+        manifest: {
+          ...current,
+          provenance: { ...(current.provenance ?? {}), chain: "detector=yolo11s-seg.pt linker=relink2.py" },
+        } as TrackingManifest,
+      })
+      .where(eq(recordingTrackingBundlesTable.id, bundleId));
+    const res = await request(app).get(url());
+    expect(res.body.identityMap.linker).toContain("linker=relink2.py");
+  });
+
+  it("is null when unstamped, which the board shows as the original linker", async () => {
+    expect((await request(app).get(url())).body.identityMap.linker).toBeNull();
   });
 });

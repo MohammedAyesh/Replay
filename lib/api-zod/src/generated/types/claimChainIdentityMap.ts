@@ -14,4 +14,9 @@ export type ClaimChainIdentityMap = {
   matchesBundle: boolean;
   tracks: number;
   segments: number;
+  /**
+     * Which linker produced this bundle, from the pipeline's own provenance stamp. Null means unstamped.
+     * @nullable
+     */
+  linker: string | null;
 };

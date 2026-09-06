@@ -3253,7 +3253,7 @@ components:
             mean the map is not joining this person's pieces -- which is either
             an empty map or one whose fingerprint no longer matches the bundle,
             in which case all of it is discarded silently.
-          required: [people, matchesBundle, tracks, segments]
+          required: [people, matchesBundle, tracks, segments, linker]
           properties:
             people:
               type: integer
@@ -3263,6 +3263,11 @@ components:
               type: integer
             segments:
               type: integer
+            linker:
+              type: ["string", "null"]
+              description: >-
+                Which linker produced this bundle, from the pipeline's own
+                provenance stamp. Null means unstamped.
         name:
           type: ["string", "null"]
         bundleFingerprint:
