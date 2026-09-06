@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { ClaimChainIdentityMap } from './claimChainIdentityMap';
 import type { ClaimChainPart } from './claimChainPart';
 import type { ClaimChainUncertainty } from './claimChainUncertainty';
 
@@ -12,6 +13,8 @@ export interface ClaimChain {
   recordingId: number;
   /** The caller's identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board. */
   identityId: string;
+  /** The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person's pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently. */
+  identityMap: ClaimChainIdentityMap;
   /** @nullable */
   name: string | null;
   /** Send this back on writes; a mismatch is a 409, never a blind merge. */

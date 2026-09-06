@@ -676,3 +676,44 @@ describe("responses match the generated contract", () => {
     expect(TapClaimChainResponse.parse(full.body).coverageSeconds).toBeGreaterThan(0);
   });
 });
+
+describe("the identity map diagnostic", () => {
+  it("reports an empty map, which is why a fragmented recording stops constantly", () => {
+    // The chain only stops where a part has nothing to continue onto, so a map
+    // that joins nobody means a stop at every dropped track. Saying so turns
+    // "it keeps stopping" from a guess into a fact about this recording.
+    return request(app).get(url()).then((res) => {
+      expect(res.body.identityMap).toEqual({
+        people: 0,
+        matchesBundle: false,
+        tracks: 3,
+        segments: 1,
+      });
+    });
+  });
+
+  it("reports a map that exists and matches the bundle", async () => {
+    await request(app).post(url("/tap")).send({ trackId: "t1", frame: 10 });
+    const res = await request(app).get(url());
+    expect(res.body.identityMap.people).toBe(1);
+    expect(res.body.identityMap.matchesBundle).toBe(true);
+  });
+
+  it("reports a map that exists but is being discarded wholesale", async () => {
+    // usableIdentityMap returns nothing at all unless the two fingerprints
+    // agree, so a full map can be silently worth zero.
+    const current = await storedManifest();
+    await db.update(recordingTrackingBundlesTable)
+      .set({
+        manifest: {
+          ...current,
+          identities: [{ id: "p1", parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }] }],
+          provenance: { bundleFingerprint: "one", identityMapBundleFingerprint: "another" },
+        } as TrackingManifest,
+      })
+      .where(eq(recordingTrackingBundlesTable.id, bundleId));
+
+    const res = await request(app).get(url());
+    expect(res.body.identityMap).toMatchObject({ people: 1, matchesBundle: false });
+  });
+});

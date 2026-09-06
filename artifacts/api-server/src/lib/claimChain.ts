@@ -322,9 +322,12 @@ export function nextUncertainty(
       }
     }
 
-    // The part runs out. Only an uncertainty if nothing in the chain picks up.
-    const continues = ordered.some((other) =>
+    // The part runs out. Something in the chain may pick up -- but if it does,
+    // it is a DIFFERENT source track, and the only reason it is in this chain
+    // is that the linker decided the two are one player.
+    const successor = ordered.find((other) =>
       other !== part && other.fromFrame <= part.toFrame + 1 && other.toFrame > part.toFrame);
+    const continues = successor !== undefined;
     // A track end one frame behind an answered frame is what "not me from
     // here" leaves behind: the chain was truncated at the answered frame, so
     // its new end sits at answered - 1. Raising that would be telling the
@@ -339,9 +342,32 @@ export function nextUncertainty(
         reason: "We lost you here — the tracker stopped following this player.",
       });
     }
+
+    /*
+     * A LINKER JOIN IS DELIBERATELY NOT A QUESTION.
+     *
+     * When the chain runs from one source track straight onto another, nothing
+     * observed says they are the same player -- the linker said so. Asking
+     * there would produce a human verdict on the tracker's weakest decision,
+     * which is tempting, and it was tried.
+     *
+     * It is not worth it. Joins are the most common thing in a fragmented
+     * recording, so asking at each one turns the flow into an interrogation,
+     * and a flow nobody finishes produces no labels at all. The decision is
+     * Mohammed's and it is explicit: trust the linker.
+     *
+     * What protects a wrong join is the override, not a prompt. "That is not
+     * me from here" is available at every moment without the detector having
+     * noticed anything, which is the property that makes the detector's misses
+     * recoverable rather than fatal.
+     */
   }
 
-  candidates.sort((a, b) => a.frame - b.frame || (a.kind === "swap" ? -1 : 1));
+  // Earliest wins; at the same frame a swap outranks a link and a link
+  // outranks a track end, so the most specific description of what happened
+  // is the one the person is shown.
+  const rank: Record<UncertaintyKind, number> = { swap: 0, "track-end": 1 };
+  candidates.sort((a, b) => a.frame - b.frame || rank[a.kind] - rank[b.kind]);
   return candidates.find((c) => c.frame >= fromFrame) ?? null;
 }
 

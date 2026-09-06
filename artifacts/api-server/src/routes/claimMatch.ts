@@ -1355,7 +1355,7 @@ function getMomentClips(
   return Array.from(byId.values()).sort((a, b) => a.momentSeconds - b.momentSeconds);
 }
 
-async function materializeClaimMoments(
+export async function materializeClaimMoments(
   userId: number,
   recording: typeof recordingsTable.$inferSelect,
   manifest: TrackingManifest,
@@ -2680,7 +2680,10 @@ export async function syncIdentityBinding(
   userId: number,
   recordingId: number,
   bundle: typeof recordingTrackingBundlesTable.$inferSelect,
-  derived: DerivedClaimState,
+  // Narrowed to what this actually reads, so the chain flow can call it with
+  // its own resolution instead of fabricating an anchor-shaped state around
+  // two fields. Every existing caller passes a full DerivedClaimState.
+  derived: Pick<DerivedClaimState, "identityResolution" | "vouchedFragments">,
   allowNeedsResolutionRecovery = false,
 ): Promise<ClaimIdentityBindingRow | null> {
   const [existing] = await db

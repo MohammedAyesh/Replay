@@ -23,6 +23,7 @@ export * from './bunnyVideo';
 export * from './claimChain';
 export * from './claimChainConflict';
 export * from './claimChainFrameInput';
+export * from './claimChainIdentityMap';
 export * from './claimChainPart';
 export * from './claimChainTapInput';
 export * from './claimChainUncertainty';

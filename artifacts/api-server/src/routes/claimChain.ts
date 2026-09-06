@@ -29,7 +29,10 @@ import {
   db,
   claimChainLabelsTable,
   claimMatchIdentityBindingsTable,
+  claimMatchOffPitchSpansTable,
+  claimMatchProgressTable,
   recordingTrackingBundlesTable,
+  recordingsTable,
   usersTable,
   type TrackingIdentity,
   type TrackingManifest,
@@ -38,10 +41,13 @@ import {
 import { unauthenticatedResponse } from "../lib/clerkUserBridge";
 import {
   getClaimMatchWritableBundle,
+  materializeClaimMoments,
   readBundleSegments,
   requireAccountUser,
+  syncIdentityBinding,
   trackingBundleFingerprint,
 } from "./claimMatch";
+import { deriveChainClaimState } from "../lib/claimChainState";
 import {
   captureDecisionGeometry,
   chainIntervals,
@@ -248,9 +254,39 @@ function describe(
     ctx.manifest.identityDecisions,
     ctx.answeredFrames,
   );
+  /*
+   * WHY AM I BEING STOPPED SO OFTEN
+   *
+   * The chain only stops where a part has nothing to continue onto. If the
+   * identity map has this person's pieces joined, extendChain takes the whole
+   * person and there is no stop at all -- so constant stopping means the map
+   * is not joining them, and that is upstream of anything the claim flow can
+   * fix.
+   *
+   * There are exactly two ways it happens and they need different answers, so
+   * reporting them separately turns "it keeps stopping" from a guess into a
+   * fact: either the map is empty for this recording (nobody has run the
+   * identity board), or it exists but its fingerprint does not match this
+   * bundle, in which case usableIdentityMap discards ALL of it silently and
+   * the map has to be rebuilt against the current tracking.
+   */
+  const identities = ctx.manifest.identities ?? [];
+  const provenance = ctx.manifest.provenance ?? {};
+  const mapMatchesBundle = typeof provenance.bundleFingerprint === "string"
+    && typeof provenance.identityMapBundleFingerprint === "string"
+    && provenance.bundleFingerprint === provenance.identityMapBundleFingerprint;
+
   return {
     recordingId: ctx.recordingId,
     identityId: ctx.identityId,
+    identityMap: {
+      people: identities.length,
+      /** False means the whole map is being ignored, however full it looks. */
+      matchesBundle: mapMatchesBundle,
+      /** Source tracks in this bundle, for comparison with `people`. */
+      tracks: ctx.tracksById.size,
+      segments: ctx.segments.length,
+    },
     name,
     bundleFingerprint: ctx.fingerprint,
     frameRate: ctx.manifest.frameRate,
@@ -384,6 +420,114 @@ async function persistChain(
 
     return { chain, name: nextName };
   });
+}
+
+/**
+ * Make a chain claim count for everything an anchor claim counted for.
+ *
+ * Coverage, the identity binding, completion, earned clips and player stats
+ * all live in `claim_match_progress` and `claim_match_identity_bindings`, and
+ * every one of them was fed exclusively by anchor answers. Until this existed
+ * a person could follow themselves through a whole match and finish with a
+ * named row on the identity board, a coverage number on screen, and nothing
+ * else: no binding, no completion, no clips, no stats.
+ *
+ * It reuses syncIdentityBinding rather than writing the binding directly, so
+ * the split, dispute and vouched-fragment-protection rules stay in one place
+ * and keep applying to claimants who arrive by either route.
+ *
+ * Never allowed to fail the claim, for the same reason the label write is not:
+ * the person is mid-flow, and losing their tap because a clip could not be
+ * materialised would be a worse trade than a late award.
+ */
+async function syncChainClaim(
+  ctx: ChainContext,
+  chain: ChainPart[],
+  hasOpenQuestion: boolean,
+): Promise<void> {
+  try {
+    const offPitchRows = await db
+      .select({
+        fromSeconds: claimMatchOffPitchSpansTable.fromSeconds,
+        toSeconds: claimMatchOffPitchSpansTable.toSeconds,
+      })
+      .from(claimMatchOffPitchSpansTable)
+      .where(and(
+        eq(claimMatchOffPitchSpansTable.recordingId, ctx.recordingId),
+        eq(claimMatchOffPitchSpansTable.userId, ctx.userId),
+      ));
+
+    const state = deriveChainClaimState(
+      ctx.manifest,
+      ctx.segments.map((segment) => ({ tracks: segment.tracks, events: segment.events })),
+      chain,
+      { offPitch: offPitchRows, hasOpenQuestion },
+    );
+
+    const [bundle] = await db
+      .select()
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.id, ctx.bundleId));
+
+    if (bundle) {
+      await syncIdentityBinding(ctx.userId, ctx.recordingId, bundle, {
+        // The person pointed at themselves. There is no vote to be ambiguous
+        // about, so there are no conflict moments and support is total --
+        // which is the whole reason this model replaced the other one.
+        identityResolution: chain.length
+          ? {
+            personId: ctx.identityId,
+            resolutionMethod: "chain",
+            supportCount: chain.length,
+            acceptedAnswerCount: ctx.answeredFrames.size,
+            supportPercent: 100,
+            conflictMoments: [],
+          }
+          : null,
+        vouchedFragments: state.vouchedFragments,
+      });
+    }
+
+    // Clips only become real user_clips on completion. Materialising earlier
+    // would litter My Clips with clips from a claim the person may still
+    // truncate with "that is not me".
+    let earnedClips = state.earnedClips.map((clip) => ({ ...clip }));
+    if (state.completed) {
+      const [recording] = await db
+        .select()
+        .from(recordingsTable)
+        .where(eq(recordingsTable.id, ctx.recordingId));
+      if (recording) {
+        earnedClips = await materializeClaimMoments(
+          ctx.userId, recording, ctx.manifest, earnedClips,
+        );
+      }
+    }
+
+    const values = {
+      userId: ctx.userId,
+      recordingId: ctx.recordingId,
+      currentTrackId: chain.length ? chain[chain.length - 1].trackId : null,
+      stage: state.completed ? "done" : chain.length ? "follow" : "find",
+      confirmedFromSeconds: state.attributed[0]?.startSeconds ?? 0,
+      currentPositionSeconds: state.attributed[state.attributed.length - 1]?.endSeconds ?? 0,
+      claimedPercent: state.coveragePercent,
+      clipsUnlocked: state.completed ? earnedClips.length : 0,
+      correctionCount: ctx.answeredFrames.size,
+      completed: state.completed,
+      earnedClips,
+      updatedAt: new Date(),
+    };
+    await db
+      .insert(claimMatchProgressTable)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
+        set: values,
+      });
+  } catch (error) {
+    console.error("[claim-chain] claim sync failed", { recordingId: ctx.recordingId, error });
+  }
 }
 
 async function recordLabel(
@@ -539,7 +683,9 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
   // landed. Otherwise the reply to an answer re-asks the same question, and
   // the person is stuck on it for as long as they keep answering.
   ctx.answeredFrames.add(frame);
-  res.json(describe(ctx, saved.chain, saved.name, labelRecorded));
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded);
+  await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
+  res.json(body_);
 });
 
 /**
@@ -571,7 +717,9 @@ router.post("/recordings/:id/claim-match/chain/not-me", async (req, res): Promis
     decisionMs: body.data.decisionMs ?? null,
   });
   ctx.answeredFrames.add(body.data.frame);
-  res.json(describe(ctx, saved.chain, saved.name, labelRecorded));
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded);
+  await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
+  res.json(body_);
 });
 
 /**
@@ -600,7 +748,9 @@ router.post("/recordings/:id/claim-match/chain/confirm", async (req, res): Promi
   // question the instant playback resumes -- forever.
   ctx.answeredFrames.add(body.data.frame);
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-  res.json(describe(ctx, current, identity?.name ?? null, labelRecorded));
+  const body_ = describe(ctx, current, identity?.name ?? null, labelRecorded);
+  await syncChainClaim(ctx, current, body_.nextUncertainty !== null);
+  res.json(body_);
 });
 
 /** Undo the last link. Deliberately does not write a label — a mis-tap is not evidence. */
@@ -609,7 +759,11 @@ router.delete("/recordings/:id/claim-match/chain/last", async (req, res): Promis
   if (!ctx) return;
   const current = chainOf(ctx.manifest, ctx.identityId);
   const saved = await persistChain(ctx, normaliseChain(dropLastPart(current), ctx.tracksById), { chosen: null });
-  res.json(describe(ctx, saved.chain, saved.name));
+  const body_ = describe(ctx, saved.chain, saved.name);
+  // An undo has to sync too, or a claim can be walked backwards while its
+  // binding and its clips stay where the high-water mark left them.
+  await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
+  res.json(body_);
 });
 
 /**

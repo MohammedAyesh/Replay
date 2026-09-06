@@ -326,7 +326,16 @@ export type ClaimIdentityBindingState =
   | "released"
   | "rejected";
 
-export type ClaimIdentityResolutionMethod = "identity-map" | "track-fallback";
+/**
+ * How a claimant was matched to a person on the identity board.
+ *
+ *   identity-map     the anchor flow's vote resolved to an existing row
+ *   track-fallback   the anchor flow found no row and fell back to a track id
+ *   chain            the person identified themselves directly, by tapping
+ *                    themselves in the video. No vote, so no ambiguity: the
+ *                    chain IS their row.
+ */
+export type ClaimIdentityResolutionMethod = "identity-map" | "track-fallback" | "chain";
 
 /**
  * One current claim per account and recording. Historical resolution details

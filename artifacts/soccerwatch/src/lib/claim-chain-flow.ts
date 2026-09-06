@@ -198,11 +198,48 @@ export function questionFor(chain: ClaimChain | null): string | null {
 /**
  * Whether we can even ask "is this still you" here.
  *
- * At a track end there is nothing left to confirm -- the person we were
- * following has stopped existing -- so the only useful answers are "tap
- * whoever I am now" or "leave it". Offering "yes, still me" there would record
- * a confirm on a track with no future, which is a label that teaches nothing.
+ * At a swap there is a real proposition to confirm: the chain carries on onto
+ * something and the person can say whether that something is them.
+ *
+ * At a track end there is nothing to confirm. The player we were following has
+ * stopped existing, so the only useful answers are "tap whoever I am now" or
+ * "leave it"; a confirm there would be a label on a track with no future,
+ * which teaches nothing.
  */
 export function canConfirmAtStop(chain: ClaimChain | null): boolean {
   return chain?.nextUncertainty?.kind === "swap";
+}
+
+/**
+ * How long to play into a check before it arrives.
+ *
+ * Seeking straight onto the frame in question drops the person on a still with
+ * no idea what just happened. A few seconds of run-up is what makes a crossing
+ * readable -- and it is the difference between answering the question and
+ * guessing at it.
+ */
+export const CHECK_LEAD_IN_SECONDS = 4;
+
+/**
+ * Where to jump to in order to reach the next check.
+ *
+ * The flow is "fast forward until he sees that he is lost", and playing the
+ * whole stretch in real time is not that: with checks minutes apart the person
+ * watches the match instead of claiming it. Jumping to just before the check
+ * skips everything nobody has a question about, which is most of it.
+ *
+ * Null when there is nothing left to check, or when the check is already
+ * behind or within the run-up -- in both cases the right move is to leave
+ * playback alone rather than yank it backwards.
+ */
+export function approachSeconds(
+  chain: ClaimChain | null,
+  currentSeconds: number,
+  leadIn = CHECK_LEAD_IN_SECONDS,
+): number | null {
+  if (!chain) return null;
+  const stop = stopSeconds(chain);
+  if (stop === null) return null;
+  const target = Math.max(0, stop - leadIn);
+  return target > currentSeconds ? target : null;
 }

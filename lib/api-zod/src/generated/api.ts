@@ -477,7 +477,7 @@ export const GetClaimMatchResponse = zod.object({
   "personId": zod.string(),
   "trackingBundleId": zod.number(),
   "bundleFingerprint": zod.string(),
-  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback', 'chain']),
   "supportCount": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneSupportCountMin),
   "acceptedAnswerCount": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneAcceptedAnswerCountMin),
   "supportPercent": zod.number().min(getClaimMatchResponseProgressIdentityBindingOneSupportPercentMin).max(getClaimMatchResponseProgressIdentityBindingOneSupportPercentMax),
@@ -707,7 +707,7 @@ export const UpdateClaimMatchProgressResponse = zod.object({
   "personId": zod.string(),
   "trackingBundleId": zod.number(),
   "bundleFingerprint": zod.string(),
-  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback', 'chain']),
   "supportCount": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneSupportCountMin),
   "acceptedAnswerCount": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneAcceptedAnswerCountMin),
   "supportPercent": zod.number().min(updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMin).max(updateClaimMatchProgressResponseIdentityBindingOneSupportPercentMax),
@@ -887,7 +887,7 @@ export const ReleaseClaimMatchBindingResponse = zod.object({
   "personId": zod.string(),
   "trackingBundleId": zod.number(),
   "bundleFingerprint": zod.string(),
-  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback', 'chain']),
   "supportCount": zod.number().min(releaseClaimMatchBindingResponseSupportCountMin),
   "acceptedAnswerCount": zod.number().min(releaseClaimMatchBindingResponseAcceptedAnswerCountMin),
   "supportPercent": zod.number().min(releaseClaimMatchBindingResponseSupportPercentMin).max(releaseClaimMatchBindingResponseSupportPercentMax),
@@ -929,7 +929,7 @@ export const ListClaimMatchBindingsResponseItem = zod.object({
   "personId": zod.string(),
   "trackingBundleId": zod.number(),
   "bundleFingerprint": zod.string(),
-  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback', 'chain']),
   "supportCount": zod.number().min(listClaimMatchBindingsResponseSupportCountMin),
   "acceptedAnswerCount": zod.number().min(listClaimMatchBindingsResponseAcceptedAnswerCountMin),
   "supportPercent": zod.number().min(listClaimMatchBindingsResponseSupportPercentMin).max(listClaimMatchBindingsResponseSupportPercentMax),
@@ -2008,7 +2008,7 @@ export const GetAccountClaimedMatchesResponseItem = zod.object({
   "date": zod.string(),
   "state": zod.enum(['pending', 'confirmed', 'disputed', 'needs_resolution', 'released', 'rejected']),
   "personId": zod.string(),
-  "resolutionMethod": zod.enum(['identity-map', 'track-fallback']),
+  "resolutionMethod": zod.enum(['identity-map', 'track-fallback', 'chain']),
   "supportPercent": zod.number(),
   "claimedAt": zod.coerce.date()
 })
@@ -2353,6 +2353,12 @@ export const GetClaimChainParams = zod.object({
 export const GetClaimChainResponse = zod.object({
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "identityMap": zod.object({
+  "people": zod.number(),
+  "matchesBundle": zod.boolean(),
+  "tracks": zod.number(),
+  "segments": zod.number()
+}).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
   "frameRate": zod.number(),
@@ -2403,6 +2409,12 @@ export const TapClaimChainBody = zod.object({
 export const TapClaimChainResponse = zod.object({
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "identityMap": zod.object({
+  "people": zod.number(),
+  "matchesBundle": zod.boolean(),
+  "tracks": zod.number(),
+  "segments": zod.number()
+}).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
   "frameRate": zod.number(),
@@ -2447,6 +2459,12 @@ export const RejectClaimChainFromBody = zod.object({
 export const RejectClaimChainFromResponse = zod.object({
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "identityMap": zod.object({
+  "people": zod.number(),
+  "matchesBundle": zod.boolean(),
+  "tracks": zod.number(),
+  "segments": zod.number()
+}).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
   "frameRate": zod.number(),
@@ -2491,6 +2509,12 @@ export const ConfirmClaimChainAtBody = zod.object({
 export const ConfirmClaimChainAtResponse = zod.object({
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "identityMap": zod.object({
+  "people": zod.number(),
+  "matchesBundle": zod.boolean(),
+  "tracks": zod.number(),
+  "segments": zod.number()
+}).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
   "frameRate": zod.number(),
@@ -2523,6 +2547,12 @@ export const UndoClaimChainLastParams = zod.object({
 export const UndoClaimChainLastResponse = zod.object({
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "identityMap": zod.object({
+  "people": zod.number(),
+  "matchesBundle": zod.boolean(),
+  "tracks": zod.number(),
+  "segments": zod.number()
+}).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
   "name": zod.string().nullable(),
   "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
   "frameRate": zod.number(),

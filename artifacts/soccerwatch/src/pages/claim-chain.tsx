@@ -43,7 +43,7 @@ import {
   type TrackingSegment,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Crosshair, Undo2, UserX } from "lucide-react";
+import { ArrowLeft, Check, Crosshair, FastForward, Undo2, UserX } from "lucide-react";
 
 import { ClaimStage, type StageCandidate } from "@/components/ClaimStage";
 import { useAuth } from "@/lib/auth";
@@ -56,6 +56,7 @@ import {
 } from "@/lib/claim-match-engine";
 import { segmentIndexAtTime, retainNearbySegments } from "@/lib/claim-match-segments";
 import {
+  approachSeconds,
   candidatesAtFrame,
   canConfirmAtStop,
   chainSpans,
@@ -111,6 +112,7 @@ export default function ClaimChainPage() {
   const [slow, setSlow] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const seekIdRef = useRef(0);
+  const pendingSeekRef = useRef<number | null>(null);
   const [seekRequest, setSeekRequest] = useState<{ id: number; videoTime: number } | null>(null);
   const [notice, setNotice] = useState("");
 
@@ -212,16 +214,41 @@ export default function ClaimChainPage() {
     setNotice(next.labelRecorded === false ? "Saved — but the training label could not be stored" : "");
   }, [chainQueryKey, queryClient]);
 
+  /**
+   * The only thing that moves the playhead. Tracking seconds in.
+   *
+   * Three parts, and leaving any of them out is why seeking did nothing:
+   * the seek REQUEST alone only asks the player to catch up, so the media
+   * element has to be moved directly as well, and a seek into a segment whose
+   * tracking has not loaded has to be re-applied once it has. Without the
+   * last one, seeking across a segment boundary lands nowhere at all.
+   */
   const seekTracking = useCallback((seconds: number) => {
     if (!bundle) return;
     const clamped = Math.max(0, Math.min(bundle.duration, seconds));
+    const videoTime = clamped + (bundle.videoStartSeconds || 0);
+    pendingSeekRef.current = clamped;
     setCurrentTime(clamped);
     seekIdRef.current += 1;
-    setSeekRequest({
-      id: seekIdRef.current,
-      videoTime: clamped + (bundle.videoStartSeconds || 0),
-    });
+    setSeekRequest({ id: seekIdRef.current, videoTime });
+    if (videoRef.current && Number.isFinite(videoTime)) {
+      // Move the real media now rather than waiting for the overlay. Waiting
+      // makes the boxes jump while the picture stays where it was.
+      videoRef.current.currentTime = videoTime;
+    }
   }, [bundle]);
+
+  // Re-apply a pending seek once the segment it lands in has actually loaded.
+  useEffect(() => {
+    const pending = pendingSeekRef.current;
+    if (pending === null || !manifest || !activeSegment || !bundle) return;
+    if (activeSegment.segmentIndex !== segmentIndexAtTime(manifest, pending)) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const videoTime = pending + (bundle.videoStartSeconds || 0);
+    video.currentTime = videoTime;
+    if (Math.abs(video.currentTime - videoTime) <= 0.5) pendingSeekRef.current = null;
+  }, [activeSegment, bundle, manifest]);
 
   /**
    * Stop where the server said to, and nowhere else.
@@ -244,10 +271,29 @@ export default function ClaimChainPage() {
     }
   }, [bundle, chain, answered, clock]);
 
+  /**
+   * Jump to the next check rather than playing the whole way to it.
+   *
+   * "Fast forward until he sees that he is lost" -- with checks minutes apart,
+   * playing straight through means watching the match rather than claiming it.
+   * We land a few seconds short so the moment arrives in context: dropped onto
+   * the exact frame, a crossing is unreadable and the person is guessing.
+   */
+  const skipToNextCheck = useCallback((from: ClaimChain, currentSeconds: number) => {
+    const target = approachSeconds(from, currentSeconds);
+    if (target === null) return false;
+    seekTracking(target);
+    setPlaying(true);
+    return true;
+  }, [seekTracking]);
+
   const askAgainFrom = useCallback((chainAfter: ClaimChain, frame: number) => {
     setAnswered(true);
-    seekTracking(resumeSecondsAfter(chainAfter, frame));
-  }, [seekTracking]);
+    const resume = resumeSecondsAfter(chainAfter, frame);
+    // Past the answered frame first, so the question just answered cannot fire
+    // again, then straight on to whatever is next.
+    if (!skipToNextCheck(chainAfter, resume)) seekTracking(resume);
+  }, [seekTracking, skipToNextCheck]);
 
   const submitTap = useCallback(async (trackId: string, frame: number, name?: string) => {
     if (!chain && !manifest) return;
@@ -398,6 +444,17 @@ export default function ClaimChainPage() {
         </small>
       </div>
 
+      {chain && (chain.identityMap.people === 0 || !chain.identityMap.matchesBundle) && (
+        <div className="claim-panel" data-testid="claim-chain-map-warning">
+          <h2>You will be stopped a lot here</h2>
+          <p className="claim-muted">
+            {chain.identityMap.people === 0
+              ? `Nobody has been linked on this recording yet — ${chain.identityMap.tracks} separate tracks across ${chain.identityMap.segments} segments, none joined into people. Every time the tracker drops you, we have to ask.`
+              : `The identity map was built from different tracking, so all ${chain.identityMap.people} of its people are being ignored. It needs rebuilding against the current bundle.`}
+          </p>
+        </div>
+      )}
+
       {stage === "identify" && (
         <div className="claim-panel" data-testid="claim-chain-identify">
           <h2>Find yourself</h2>
@@ -416,6 +473,17 @@ export default function ClaimChainPage() {
               ? "Nothing left to check — you are claimed to the end of this stretch."
               : `Playing on. We will stop at ${formatClaimTime(stop)} to check.`}
           </p>
+          {stop !== null && (
+            <button
+              type="button"
+              className="claim-button claim-button-primary claim-button-wide"
+              data-testid="button-chain-skip-to-check"
+              disabled={busy}
+              onClick={() => { if (chain) skipToNextCheck(chain, currentTime); }}
+            >
+              <FastForward size={16} /> Skip to the next check
+            </button>
+          )}
           <button
             type="button"
             className="claim-button claim-button-secondary claim-button-wide"

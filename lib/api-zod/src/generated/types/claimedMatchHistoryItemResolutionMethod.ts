@@ -12,4 +12,5 @@ export type ClaimedMatchHistoryItemResolutionMethod = typeof ClaimedMatchHistory
 export const ClaimedMatchHistoryItemResolutionMethod = {
   'identity-map': 'identity-map',
   'track-fallback': 'track-fallback',
+  chain: 'chain',
 } as const;

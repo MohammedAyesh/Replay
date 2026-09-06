@@ -1039,6 +1039,7 @@ export type ClaimIdentityBindingResolutionMethod = typeof ClaimIdentityBindingRe
 export const ClaimIdentityBindingResolutionMethod = {
   'identity-map': 'identity-map',
   'track-fallback': 'track-fallback',
+  chain: 'chain',
 } as const;
 
 export type ClaimIdentityBindingState = typeof ClaimIdentityBindingState[keyof typeof ClaimIdentityBindingState];
@@ -1190,10 +1191,22 @@ export interface ClaimChainUncertainty {
   reason: string;
 }
 
+/**
+ * The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person's pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.
+ */
+export type ClaimChainIdentityMap = {
+  people: number;
+  matchesBundle: boolean;
+  tracks: number;
+  segments: number;
+};
+
 export interface ClaimChain {
   recordingId: number;
   /** The caller's identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board. */
   identityId: string;
+  /** The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person's pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently. */
+  identityMap: ClaimChainIdentityMap;
   /** @nullable */
   name: string | null;
   /** Send this back on writes; a mismatch is a 409, never a blind merge. */
@@ -1341,6 +1354,7 @@ export type ClaimedMatchHistoryItemResolutionMethod = typeof ClaimedMatchHistory
 export const ClaimedMatchHistoryItemResolutionMethod = {
   'identity-map': 'identity-map',
   'track-fallback': 'track-fallback',
+  chain: 'chain',
 } as const;
 
 export interface ClaimedMatchHistoryItem {

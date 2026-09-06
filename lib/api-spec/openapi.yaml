@@ -3235,8 +3235,8 @@ components:
     ClaimChain:
       type: object
       required:
-        [recordingId, identityId, name, bundleFingerprint, frameRate, chain,
-         coverageSeconds, coveragePercent, nextUncertainty, labelRecorded]
+        [recordingId, identityId, identityMap, name, bundleFingerprint, frameRate,
+         chain, coverageSeconds, coveragePercent, nextUncertainty, labelRecorded]
       properties:
         recordingId:
           type: integer
@@ -3245,6 +3245,24 @@ components:
           description: >-
             The caller's identity row on the identity board. The chain IS that
             identity, so a merge made in the video is a merge on the board.
+        identityMap:
+          type: object
+          description: >-
+            The state of the identity map behind this recording. The chain only
+            stops where a part has nothing to continue onto, so frequent stops
+            mean the map is not joining this person's pieces -- which is either
+            an empty map or one whose fingerprint no longer matches the bundle,
+            in which case all of it is discarded silently.
+          required: [people, matchesBundle, tracks, segments]
+          properties:
+            people:
+              type: integer
+            matchesBundle:
+              type: boolean
+            tracks:
+              type: integer
+            segments:
+              type: integer
         name:
           type: ["string", "null"]
         bundleFingerprint:
@@ -3450,7 +3468,7 @@ components:
           type: string
         resolutionMethod:
           type: string
-          enum: [identity-map, track-fallback]
+          enum: [identity-map, track-fallback, chain]
         supportCount:
           type: integer
           minimum: 0
@@ -3523,7 +3541,7 @@ components:
           type: string
         resolutionMethod:
           type: string
-          enum: [identity-map, track-fallback]
+          enum: [identity-map, track-fallback, chain]
         supportPercent:
           type: number
         claimedAt:
