@@ -1182,6 +1182,16 @@ export default function ClaimMatchPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [candidates, selectCandidate, seekBy, slow, stage, toggleVideoPlayback]);
 
+  const handleVideoTimeUpdate = useCallback((videoSeconds: number) => {
+    const pending = pendingSeekTrackingRef.current;
+    if (pending !== null && manifest) {
+      const targetVideoSeconds = pending + (manifest.videoStartSeconds ?? 0);
+      if (Math.abs(videoSeconds - targetVideoSeconds) > 0.5) return;
+      pendingSeekTrackingRef.current = null;
+    }
+    setCurrentTime(fromVideoTime(videoSeconds));
+  }, [fromVideoTime, manifest]);
+
   if (authLoading) return <SkeletonPage />;
   if (!user || isGuest) {
     return (
@@ -1227,15 +1237,6 @@ export default function ClaimMatchPage() {
   const handleVideoReady = () => {
     setVideoReadyTick((value) => value + 1);
   };
-  const handleVideoTimeUpdate = useCallback((videoSeconds: number) => {
-    const pending = pendingSeekTrackingRef.current;
-    if (pending !== null && manifest) {
-      const targetVideoSeconds = pending + (manifest.videoStartSeconds ?? 0);
-      if (Math.abs(videoSeconds - targetVideoSeconds) > 0.5) return;
-      pendingSeekTrackingRef.current = null;
-    }
-    setCurrentTime(fromVideoTime(videoSeconds));
-  }, [fromVideoTime, manifest]);
   const cyclePlaybackRate = () => {
     setPlaybackRate((current) => {
       const currentIndex = PLAYBACK_SPEEDS.indexOf(current as (typeof PLAYBACK_SPEEDS)[number]);
