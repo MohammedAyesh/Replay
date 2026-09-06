@@ -132,9 +132,13 @@ function segmentAsBundle(
   manifest: ClaimMatchResponse["manifest"],
   segment: TrackingSegment,
 ) {
+  // identityDecisions is passed even when the identity map itself is stale:
+  // a piece the board struck off is struck off regardless of whether its
+  // groupings still match this bundle, and offering a deleted player is worse
+  // than offering an ungrouped one.
   const applied = identityMapMatchesBundle(manifest)
-    ? applyClaimIdentities(segment, manifest.identities)
-    : { tracks: segment.tracks, crossings: segment.crossings };
+    ? applyClaimIdentities(segment, manifest.identities, manifest.identityDecisions)
+    : applyClaimIdentities(segment, undefined, manifest.identityDecisions);
   const totalDuration = Math.max(
     manifest.duration,
     ...manifest.segments.map((range) => range.endSeconds),

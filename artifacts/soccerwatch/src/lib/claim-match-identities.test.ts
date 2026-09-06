@@ -80,3 +80,64 @@ describe("identityMapMatchesBundle", () => {
     expect(identityMapMatchesBundle({ identities: [] })).toBe(true);
   });
 });
+
+/**
+ * The board's deletions reaching the video.
+ *
+ * identityDecisions was written by the board, sent down on the manifest and
+ * validated on save from the day it was introduced, and read by nothing here.
+ * Removing a player on the board left them in the video and in every candidate
+ * list, which is exactly the behaviour that got reported as broken.
+ */
+describe("applyClaimIdentities honours the board's parked and deleted pieces", () => {
+  it("removes a struck-off player from the candidates entirely", () => {
+    const result = applyClaimIdentities(segment(), undefined, [
+      { trackId: "t2", fromFrame: 0, toFrame: 9, action: "deleted" },
+    ]);
+    expect(result.tracks.map((track) => track.id)).toEqual(["t1"]);
+  });
+
+  it("treats parked the same as deleted — neither is someone to claim", () => {
+    const result = applyClaimIdentities(segment(), undefined, [
+      { trackId: "t2", fromFrame: 0, toFrame: 9, action: "parked" },
+    ]);
+    expect(result.tracks.map((track) => track.id)).toEqual(["t1"]);
+  });
+
+  it("removes only the struck-off stretch, leaving the rest claimable", () => {
+    const result = applyClaimIdentities(segment(), undefined, [
+      { trackId: "t1", fromFrame: 0, toFrame: 4 },
+    ]);
+    const t1 = result.tracks.find((track) => track.id === "t1");
+    expect(t1?.boxes.map((box) => box.frame)).toEqual([5, 6, 7, 8, 9]);
+    // The bounds move with the boxes; a stale startFrame would make the piece
+    // seekable to a moment it no longer covers.
+    expect(t1?.startFrame).toBe(5);
+    expect(t1?.endFrame).toBe(9);
+  });
+
+  it("drops a crossing with a piece that is no longer there", () => {
+    // Otherwise the claim page would stop and ask about a player the board
+    // has already ruled out.
+    const result = applyClaimIdentities(segment(), undefined, [
+      { trackId: "t2", fromFrame: 3, toFrame: 3 },
+    ]);
+    expect(result.crossings).toEqual([]);
+  });
+
+  it("never offers a struck-off stretch as an Unclaimed piece either", () => {
+    const result = applyClaimIdentities(
+      segment(),
+      [{ id: "alice", parts: [{ trackId: "t1", fromFrame: 0, toFrame: 4 }] }],
+      [{ trackId: "t1", fromFrame: 5, toFrame: 9 }],
+    );
+    // Frames 5-9 of t1 are unassigned AND struck off. Before this they came
+    // back as a selectable "Unclaimed" candidate.
+    expect(result.tracks.map((track) => track.id)).toEqual(["alice", "t2"]);
+  });
+
+  it("leaves everything alone when the board has decided nothing", () => {
+    expect(applyClaimIdentities(segment(), undefined, []))
+      .toEqual(applyClaimIdentities(segment(), undefined));
+  });
+});

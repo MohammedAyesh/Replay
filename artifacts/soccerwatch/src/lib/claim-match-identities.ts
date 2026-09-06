@@ -1,6 +1,61 @@
 import type { TrackingIdentity, TrackingSegment } from "@workspace/api-client-react";
 
 type Box = TrackingSegment["tracks"][number]["boxes"][number];
+
+/**
+ * A stretch of a track the identity board has set aside or ruled out.
+ *
+ * Mirrors TrackingManifest.identityDecisions. "parked" and "deleted" differ
+ * only in intent on the board -- neither is a player anyone should be offered.
+ */
+export type ClaimIdentityDecision = {
+  trackId: string;
+  fromFrame: number;
+  toFrame: number;
+  action?: string;
+};
+
+function isStruckOff(
+  decisions: ClaimIdentityDecision[] | undefined,
+  trackId: string,
+  frame: number,
+): boolean {
+  if (!decisions?.length) return false;
+  return decisions.some((decision) =>
+    decision.trackId === trackId && frame >= decision.fromFrame && frame <= decision.toFrame);
+}
+
+/**
+ * Drop every box the board struck off, before anything else looks at them.
+ *
+ * identityDecisions has been written by the board, sent down on the manifest
+ * and validated on save since it was introduced -- and read by nothing on this
+ * side. Deleting a person on the identity board therefore left them fully
+ * present in the video and in every candidate list, which is the whole of the
+ * complaint that removing someone on the board did not remove them from the
+ * video. Filtering here rather than at each use site means a struck-off
+ * stretch cannot reappear through a path that forgot to ask.
+ */
+function withoutStruckOffBoxes(
+  segment: TrackingSegment,
+  decisions: ClaimIdentityDecision[] | undefined,
+): TrackingSegment {
+  if (!decisions?.length) return segment;
+  const tracks = segment.tracks.map((track) => {
+    const boxes = track.boxes.filter((box) => !isStruckOff(decisions, track.id, box.frame));
+    if (boxes.length === track.boxes.length) return track;
+    return {
+      ...track,
+      boxes,
+      startFrame: boxes[0]?.frame ?? track.startFrame,
+      endFrame: boxes.at(-1)?.frame ?? track.endFrame,
+    };
+  });
+  const crossings = segment.crossings.filter((crossing) =>
+    !isStruckOff(decisions, crossing.trackId, crossing.frame)
+    && !isStruckOff(decisions, crossing.otherTrackId, crossing.frame));
+  return { ...segment, tracks, crossings };
+}
 type Track = TrackingSegment["tracks"][number];
 type Crossing = TrackingSegment["crossings"][number];
 
@@ -47,12 +102,14 @@ function trackBounds(boxes: Box[]): Pick<Track, "startFrame" | "endFrame"> {
 export function applyClaimIdentities(
   segment: TrackingSegment,
   identities: TrackingIdentity[] | undefined,
+  decisions?: ClaimIdentityDecision[],
 ): IdentityApplication {
-  const sourceTracks = segment.tracks.filter((track) => track.boxes.length > 0);
+  const source = withoutStruckOffBoxes(segment, decisions);
+  const sourceTracks = source.tracks.filter((track) => track.boxes.length > 0);
   if (!identities?.length) {
     return {
       tracks: sourceTracks,
-      crossings: segment.crossings.filter((crossing) => crossing.trackId !== crossing.otherTrackId),
+      crossings: source.crossings.filter((crossing) => crossing.trackId !== crossing.otherTrackId),
     };
   }
 
@@ -88,7 +145,7 @@ export function applyClaimIdentities(
         currentUnclaimed.toFrame = box.frame;
       } else {
         currentUnclaimed = {
-          outputId: sourcePieceId(segment.segmentIndex, track.id, box.frame),
+          outputId: sourcePieceId(source.segmentIndex, track.id, box.frame),
           sourceTrackId: track.id,
           fromFrame: box.frame,
           toFrame: box.frame,
@@ -142,7 +199,7 @@ export function applyClaimIdentities(
     return piece?.outputId ?? trackId;
   };
   const crossings: Crossing[] = [];
-  for (const crossing of segment.crossings) {
+  for (const crossing of source.crossings) {
     const next = {
       ...crossing,
       trackId: resolve(crossing.trackId, crossing.frame),

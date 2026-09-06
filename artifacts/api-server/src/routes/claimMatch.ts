@@ -1774,21 +1774,64 @@ function latestAnchorAnswers(
   return groups.map((group) => group.row);
 }
 
-function trackIntervalsForId(
+/**
+ * The frame ranges of one source track that survive the identity board's
+ * parked and deleted decisions.
+ *
+ * identityDecisions has been written and validated on every board save since
+ * it was introduced, and read by nothing. A deleted player therefore still
+ * earned coverage here exactly as if the board had never touched them, which
+ * is the same complaint from the other side: removing someone on the board did
+ * not remove them from the video.
+ */
+function survivingFrameRanges(
+  decisions: TrackingIdentityDecision[] | undefined,
+  trackId: string,
+  startFrame: number,
+  endFrame: number,
+): Array<{ startFrame: number; endFrame: number }> {
+  const cuts = (decisions ?? [])
+    .filter((decision) => decision.trackId === trackId)
+    .map((decision) => ({
+      from: Math.max(decision.fromFrame, startFrame),
+      to: Math.min(decision.toFrame, endFrame),
+    }))
+    .filter((cut) => cut.to >= cut.from)
+    .sort((a, b) => a.from - b.from);
+  if (!cuts.length) return endFrame >= startFrame ? [{ startFrame, endFrame }] : [];
+
+  const out: Array<{ startFrame: number; endFrame: number }> = [];
+  let cursor = startFrame;
+  for (const cut of cuts) {
+    if (cut.from > cursor) out.push({ startFrame: cursor, endFrame: cut.from - 1 });
+    cursor = Math.max(cursor, cut.to + 1);
+  }
+  if (cursor <= endFrame) out.push({ startFrame: cursor, endFrame });
+  return out;
+}
+
+export function trackIntervalsForId(
   manifest: TrackingManifest,
   segments: ClaimStateSegment[],
   trackId: string,
 ): Array<{ startSeconds: number; endSeconds: number }> {
   const frameRate = Math.max(manifest.frameRate, 0.001);
   const intervals: Array<{ startSeconds: number; endSeconds: number }> = [];
-  for (const segment of segments) {
-    const track = segment.tracks.find((item) => item.id === trackId);
-    if (track) {
+  // Every interval below goes through here, so a struck-off stretch cannot
+  // earn coverage through whichever of the three shapes it arrived in.
+  const push = (sourceTrackId: string, startFrame: number, endFrame: number): void => {
+    for (const range of survivingFrameRanges(
+      manifest.identityDecisions, sourceTrackId, startFrame, endFrame,
+    )) {
       intervals.push({
-        startSeconds: Math.max(0, track.startFrame / frameRate),
-        endSeconds: Math.min(manifest.duration, (track.endFrame + 1) / frameRate),
+        startSeconds: Math.max(0, range.startFrame / frameRate),
+        endSeconds: Math.min(manifest.duration, (range.endFrame + 1) / frameRate),
       });
     }
+  };
+  for (const segment of segments) {
+    const track = segment.tracks.find((item) => item.id === trackId);
+    if (track) push(trackId, track.startFrame, track.endFrame);
   }
   // An "unclaimed:" piece is the part of a source track that no identity part
   // covers, running from its fromFrame until the next identity part on the
@@ -1807,12 +1850,7 @@ function trackIntervalsForId(
       const nextPartStart = identityParts.length ? Math.min(...identityParts) : Infinity;
       const startFrame = Math.max(track.startFrame, piece.fromFrame);
       const endFrame = Math.min(track.endFrame, nextPartStart - 1);
-      if (endFrame >= startFrame) {
-        intervals.push({
-          startSeconds: Math.max(0, startFrame / frameRate),
-          endSeconds: Math.min(manifest.duration, (endFrame + 1) / frameRate),
-        });
-      }
+      if (endFrame >= startFrame) push(piece.trackId, startFrame, endFrame);
     }
   }
   const identity = usableIdentityMap(manifest).find((item) => item.id === trackId);
@@ -1823,12 +1861,7 @@ function trackIntervalsForId(
         if (!track) continue;
         const startFrame = Math.max(track.startFrame, part.fromFrame);
         const endFrame = Math.min(track.endFrame, part.toFrame);
-        if (endFrame >= startFrame) {
-          intervals.push({
-            startSeconds: Math.max(0, startFrame / frameRate),
-            endSeconds: Math.min(manifest.duration, (endFrame + 1) / frameRate),
-          });
-        }
+        if (endFrame >= startFrame) push(part.trackId, startFrame, endFrame);
       }
     }
   }
