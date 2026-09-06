@@ -323,6 +323,142 @@ export function nextUncertainty(
 }
 
 /* ------------------------------------------------------------------ *
+ * Decision capture — the training set
+ * ------------------------------------------------------------------ */
+
+/**
+ * Everything a model would later need about one candidate at one instant.
+ *
+ * `before` and `after` are the same trajectory measurement the swap detector
+ * uses, stored rather than recomputed, because the tracking bundle for a
+ * recording is deleted after fourteen days and a label whose features cannot
+ * be re-derived is a label you cannot learn from.
+ */
+export type TrackSample = {
+  trackId: string;
+  box: { x: number; y: number; w: number; h: number } | null;
+  before: { vx: number; vy: number; height: number } | null;
+  after: { vx: number; vy: number; height: number } | null;
+};
+
+/**
+ * One labelled human decision, with the geometry that produced it.
+ *
+ * The point of storing this rather than just the outcome: the existing
+ * labels.db on vps1 has 48 real human picks and a `geom` column that is NULL on
+ * every one of them, so those labels can only train a model if the source clip
+ * and its detections still exist to re-derive from. This is the same mistake
+ * made once already; it costs almost nothing to not make it again.
+ *
+ * `alternatives` matters as much as `chosen`. A model learns an association
+ * cost from what was rejected while available, not from the winner alone.
+ */
+export type DecisionGeometry = {
+  frame: number;
+  frameRate: number;
+  /** Candidates on offer at this instant — the difficulty of the choice. */
+  offeredCount: number;
+  chosen: TrackSample | null;
+  /** The track the human took frames away from, when there was one. */
+  rejected: TrackSample | null;
+  alternatives: TrackSample[];
+  /** What the detector believed at this moment, so it can be scored later. */
+  detector: {
+    swapEvidence: number | null;
+    crossingConfidence: number | null;
+    uncertaintyKind: UncertaintyKind | null;
+  };
+};
+
+/** The candidates visible at a frame: every track with a box within ±2 frames. */
+export function candidatesAtFrame(
+  tracksById: Map<string, Track>,
+  frame: number,
+  decisions?: IdentityDecision[],
+  tolerance = 2,
+): string[] {
+  const out: string[] = [];
+  for (const [id, track] of tracksById) {
+    if (isStruckOff(decisions, id, frame)) continue;
+    if (track.boxes.some((b) => Math.abs(b.frame - frame) <= tolerance)) out.push(id);
+  }
+  return out.sort();
+}
+
+function sampleTrack(track: Track | undefined, frame: number): TrackSample | null {
+  if (!track) return null;
+  const window = CHAIN_TUNING.velocityWindowFrames;
+  const near = track.boxes
+    .filter((b) => Math.abs(b.frame - frame) <= 2)
+    .sort((a, b) => Math.abs(a.frame - frame) - Math.abs(b.frame - frame))[0];
+  return {
+    trackId: track.id,
+    box: near ? { x: near.x, y: near.y, w: near.w, h: near.h } : null,
+    before: trajectory(track, frame - window, frame),
+    after: trajectory(track, frame, frame + window),
+  };
+}
+
+/**
+ * Freeze the geometry around a decision so it can be trained on later.
+ *
+ * Pure and cheap — a handful of array scans — so it can run on every tap
+ * without anyone having to decide whether this particular decision is worth
+ * recording. The ones worth recording are not knowable in advance.
+ */
+export function captureDecisionGeometry(
+  tracksById: Map<string, Track>,
+  frame: number,
+  opts: {
+    frameRate: number;
+    chosenTrackId?: string | null;
+    rejectedTrackId?: string | null;
+    crossings?: Crossing[];
+    uncertaintyKind?: UncertaintyKind | null;
+    decisions?: IdentityDecision[];
+    maxAlternatives?: number;
+  },
+): DecisionGeometry {
+  const offered = candidatesAtFrame(tracksById, frame, opts.decisions);
+  const chosen = opts.chosenTrackId ? tracksById.get(opts.chosenTrackId) : undefined;
+  const rejected = opts.rejectedTrackId ? tracksById.get(opts.rejectedTrackId) : undefined;
+
+  let swap: number | null = null;
+  let crossingConfidence: number | null = null;
+  if (chosen && rejected) {
+    swap = swapEvidence(rejected, chosen, frame);
+  }
+  for (const crossing of opts.crossings ?? []) {
+    if (Math.abs(crossing.frame - frame) > CHAIN_TUNING.velocityWindowFrames) continue;
+    const ids = [crossing.trackId, crossing.otherTrackId];
+    if (opts.chosenTrackId && !ids.includes(opts.chosenTrackId)
+      && opts.rejectedTrackId && !ids.includes(opts.rejectedTrackId)) continue;
+    if (typeof crossing.confidence === "number") crossingConfidence = crossing.confidence;
+  }
+
+  const skip = new Set([opts.chosenTrackId, opts.rejectedTrackId].filter(Boolean) as string[]);
+  const alternatives = offered
+    .filter((id) => !skip.has(id))
+    .slice(0, opts.maxAlternatives ?? 12)
+    .map((id) => sampleTrack(tracksById.get(id), frame))
+    .filter((sample): sample is TrackSample => sample !== null);
+
+  return {
+    frame,
+    frameRate: opts.frameRate,
+    offeredCount: offered.length,
+    chosen: sampleTrack(chosen, frame),
+    rejected: sampleTrack(rejected, frame),
+    alternatives,
+    detector: {
+      swapEvidence: swap,
+      crossingConfidence,
+      uncertaintyKind: opts.uncertaintyKind ?? null,
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * Chain algebra
  * ------------------------------------------------------------------ */
 

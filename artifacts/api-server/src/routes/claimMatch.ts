@@ -119,7 +119,7 @@ function parseId(value: string | string[]): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-async function requireAccountUser(req: Parameters<typeof getLocalAccountUserId>[0]): Promise<number | null> {
+export async function requireAccountUser(req: Parameters<typeof getLocalAccountUserId>[0]): Promise<number | null> {
   const userId = await getLocalAccountUserId(req);
   if (!userId) return null;
   const [user] = await db
@@ -1062,7 +1062,7 @@ function toCorrection(row: typeof claimMatchCorrectionsTable.$inferSelect) {
   };
 }
 
-async function getRecordingBundle(recordingId: number) {
+export async function getRecordingBundle(recordingId: number) {
   const [row] = await db
     .select({
       recording: recordingsTable,
@@ -1106,7 +1106,7 @@ async function getVisibleRecordingBundle(recordingId: number) {
  * A visibility refusal is 403, not 404: "not found" sent the client down its
  * permanent-discard path and told the user something untrue.
  */
-async function getClaimMatchWritableBundle(
+export async function getClaimMatchWritableBundle(
   req: Parameters<typeof getLocalUserId>[0],
   recordingId: number,
 ) {
@@ -1168,7 +1168,7 @@ async function getBundleSegments(bundleId: number) {
     .orderBy(asc(recordingTrackingSegmentsTable.segmentIndex));
 }
 
-async function readBundleSegments(bundleId: number): Promise<TrackingSegmentPayload[]> {
+export async function readBundleSegments(bundleId: number): Promise<TrackingSegmentPayload[]> {
   const rows = await getBundleSegments(bundleId);
   const segments: TrackingSegmentPayload[] = [];
   for (const row of rows) {

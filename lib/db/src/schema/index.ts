@@ -13,6 +13,7 @@ export * from "./clipSettings";
 export * from "./recordingSchedules";
 export * from "./matches";
 export * from "./claimMatch";
+export * from "./claimChainLabels";
 export * from "./clipDownloads";
 export * from "./settingsRules";
 export * from "./settingsDefaults";

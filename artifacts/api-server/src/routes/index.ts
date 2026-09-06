@@ -26,6 +26,7 @@ import claimMatchRouter from "./claimMatch";
 import analysisJobsRouter from "./analysisJobs";
 import brandingRouter from "./branding";
 import claimOffPitchRouter from "./claimOffPitch";
+import claimChainRouter from "./claimChain";
 
 const router: IRouter = Router();
 
@@ -56,5 +57,6 @@ router.use(claimMatchRouter);
 router.use(analysisJobsRouter);
 router.use(brandingRouter);
 router.use(claimOffPitchRouter);
+router.use(claimChainRouter);
 
 export default router;
