@@ -28,6 +28,7 @@ import Academies from "@/pages/academies";
 import View from "@/pages/view";
 import Live from "@/pages/live";
 import ClaimMatch from "@/pages/claim-match";
+import ClaimChain from "@/pages/claim-chain";
 import IdentityBoard from "@/pages/identity-board";
 import { useAuth } from "@/lib/auth";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -444,6 +445,7 @@ function AppRouter() {
         <Route path="/live" component={Live} />
         <Route path="/claim-match/demo" component={ClaimMatch} />
         <Route path="/claim-match/:id" component={ClaimMatch} />
+        <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />

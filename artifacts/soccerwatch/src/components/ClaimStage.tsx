@@ -66,6 +66,18 @@ export type ClaimOffPitchStageSpan = {
   toSeconds: number;
 };
 
+/**
+ * Stretches the viewer has claimed as themselves, drawn on the seek bar.
+ *
+ * Deliberately NOT reusing offPitchSpans. Those render as orange "declared
+ * off-pitch" bands, so passing claimed time through them would paint the exact
+ * opposite meaning in a colour the person has already learned means excluded.
+ */
+export type ClaimClaimedStageSpan = {
+  fromSeconds: number;
+  toSeconds: number;
+};
+
 type Frame = { x: number; y: number; w: number; h: number };
 
 /** cropFrame.applyFrameToVideo, for any element that must share the video's transform. */
@@ -379,6 +391,7 @@ export function ClaimStage({
   playbackRate,
   goalTimes,
    offPitchSpans,
+  claimedSpans,
   videoRef,
   seekRequest,
   onToggle,
@@ -408,6 +421,7 @@ export function ClaimStage({
   playbackRate: number;
   goalTimes: number[];
   offPitchSpans?: ClaimOffPitchStageSpan[];
+  claimedSpans?: ClaimClaimedStageSpan[];
   videoRef: React.RefObject<HTMLVideoElement | null>;
   seekRequest: { id: number; videoTime: number } | null;
   onToggle: (forcePlaying?: boolean) => void;
@@ -795,6 +809,17 @@ export function ClaimStage({
                   width: `${((span.toSeconds - span.fromSeconds) / Math.max(duration, 0.001)) * 100}%`,
                 }}
                 title="Declared off-pitch period"
+              />
+            ))}
+            {(claimedSpans ?? []).map((span) => (
+              <span
+                key={`claimed-${span.fromSeconds}-${span.toSeconds}`}
+                className="claim-seek-claimed"
+                style={{
+                  left: `${(span.fromSeconds / Math.max(duration, 0.001)) * 100}%`,
+                  width: `${((span.toSeconds - span.fromSeconds) / Math.max(duration, 0.001)) * 100}%`,
+                }}
+                title="Claimed by you"
               />
             ))}
             {goalTimes.map((t) => <span key={t} className="claim-seek-goal" style={{ left: `${(t / duration) * 100}%` }} />)}

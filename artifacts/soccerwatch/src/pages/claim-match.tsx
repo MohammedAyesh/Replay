@@ -73,7 +73,8 @@ import {
   nearestAnchorIndex,
   nextUnansweredAnchor,
 } from "@/lib/claim-match-anchors";
-import { applyClaimIdentities, identityMapMatchesBundle } from "@/lib/claim-match-identities";
+import { identityMapMatchesBundle } from "@/lib/claim-match-identities";
+import { detectionAtFrame, segmentAsBundle } from "@/lib/claim-match-bundle";
 
 type Stage = "find" | "picker" | "done";
 const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2] as const;
@@ -128,38 +129,6 @@ function readOffPitchConflict(
   };
 }
 
-function segmentAsBundle(
-  manifest: ClaimMatchResponse["manifest"],
-  segment: TrackingSegment,
-) {
-  // identityDecisions is passed even when the identity map itself is stale:
-  // a piece the board struck off is struck off regardless of whether its
-  // groupings still match this bundle, and offering a deleted player is worse
-  // than offering an ungrouped one.
-  const applied = identityMapMatchesBundle(manifest)
-    ? applyClaimIdentities(segment, manifest.identities, manifest.identityDecisions)
-    : applyClaimIdentities(segment, undefined, manifest.identityDecisions);
-  const totalDuration = Math.max(
-    manifest.duration,
-    ...manifest.segments.map((range) => range.endSeconds),
-  );
-  return {
-    version: manifest.version,
-    label: manifest.label,
-    width: manifest.width,
-    height: manifest.height,
-    frameRate: manifest.frameRate,
-    frameCount: manifest.frameCount,
-    duration: totalDuration,
-    matchOffset: manifest.matchOffset,
-    videoStartSeconds: manifest.videoStartSeconds ?? 0,
-    tracks: applied.tracks,
-    crossings: applied.crossings,
-    inPlaySpans: segment.inPlaySpans,
-    events: segment.events,
-  };
-}
-
 function formatTime(seconds: number) {
   const safe = Math.max(0, Math.floor(seconds));
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
@@ -195,15 +164,6 @@ function PlayerHeatmap({ heatmap }: Pick<ClaimPlayerStats, "heatmap">) {
       <span className="claim-heatmap-goal claim-heatmap-goal-right" />
     </div>
   );
-}
-
-function detectionAtFrame(track: ClaimTrack, frame: number, tolerance = 2): ClaimBox | null {
-  const box = track.boxes.reduce<ClaimBox | null>((nearest, candidate) => {
-    if (Math.abs(candidate.frame - frame) > tolerance) return nearest;
-    if (!nearest || Math.abs(candidate.frame - frame) < Math.abs(nearest.frame - frame)) return candidate;
-    return nearest;
-  }, null);
-  return box;
 }
 
 function candidateMatchesTakenFragment(
