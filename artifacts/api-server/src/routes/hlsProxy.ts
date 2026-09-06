@@ -27,6 +27,66 @@ function isBunnyUrl(raw: string): boolean {
 }
 
 /**
+ * Upstream timeout for a MANIFEST fetch.
+ *
+ * Was 10 s, which a media playlist for a long recording lands right on top of
+ * in slower environments. Measured 2026-09-06 for the same 54 KB playlist:
+ *
+ *   vps1 -> Bunny, curl                 0.20 s
+ *   replayjo.com  (deployed)            1.06 s
+ *   kirk.replit.dev preview             7.6 s ... and sometimes past 10 s
+ *
+ * When it goes past, the fetch aborts, this route answers 503, hls.js retries
+ * up to five times, and each retry starts another slow upstream fetch — so the
+ * failure feeds itself and the player never gets a fragment. The symptom is a
+ * completely black video with no error text, because ClaimStage's decode
+ * watchdog only armed once a fragment had buffered.
+ *
+ * A segment fetch keeps its own, longer budget; this is only the playlist.
+ */
+const MANIFEST_TIMEOUT_MS = Number(process.env.HLS_PROXY_MANIFEST_TIMEOUT_MS ?? 30_000);
+
+/**
+ * Rewritten-manifest cache.
+ *
+ * A VOD playlist is immutable, and the rewrite is not cheap: every segment
+ * line becomes `/api/hls-proxy/segment?url=<fully encoded absolute URL>`, which
+ * turned a 54 KB upstream playlist into 264 KB. Doing that again for every
+ * hls.js retry, every seek that reloads the level, and every viewer is pure
+ * waste on exactly the environments where it is already slow.
+ *
+ * ONLY VOD is cached. A live playlist changes every few seconds, so caching it
+ * would freeze the stream — entries are stored only when the response is
+ * explicitly finished (`#EXT-X-ENDLIST`) or declared VOD.
+ */
+const MANIFEST_CACHE_TTL_MS = 5 * 60_000;
+const MANIFEST_CACHE_MAX = 64;
+const manifestCache = new Map<string, { body: string; expires: number }>();
+
+function cachedManifest(key: string): string | null {
+  const hit = manifestCache.get(key);
+  if (!hit) return null;
+  if (hit.expires < Date.now()) {
+    manifestCache.delete(key);
+    return null;
+  }
+  // Refresh recency for the crude LRU below.
+  manifestCache.delete(key);
+  manifestCache.set(key, hit);
+  return hit.body;
+}
+
+function cacheManifest(key: string, body: string): void {
+  if (!/#EXT-X-ENDLIST/.test(body) && !/#EXT-X-PLAYLIST-TYPE:\s*VOD/i.test(body)) return;
+  manifestCache.set(key, { body, expires: Date.now() + MANIFEST_CACHE_TTL_MS });
+  while (manifestCache.size > MANIFEST_CACHE_MAX) {
+    const oldest = manifestCache.keys().next().value;
+    if (oldest === undefined) break;
+    manifestCache.delete(oldest);
+  }
+}
+
+/**
  * GET /api/hls-proxy/manifest?url=<encoded>
  * Fetches the HLS manifest and rewrites all segment/sub-manifest URLs so they
  * also route through this proxy.
@@ -38,10 +98,19 @@ router.get("/hls-proxy/manifest", async (req, res): Promise<void> => {
     return;
   }
 
+  const cached = cachedManifest(raw);
+  if (cached !== null) {
+    res.set("Content-Type", "application/vnd.apple.mpegurl");
+    res.set("Cache-Control", "no-store");
+    res.set("Access-Control-Allow-Origin", "*");
+    res.send(cached);
+    return;
+  }
+
   try {
     const { hostname } = new URL(raw);
     const upstream = await fetch(raw, {
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(MANIFEST_TIMEOUT_MS),
       headers: { Referer: `https://${hostname}/` },
     });
     if (!upstream.ok) {
@@ -76,12 +145,17 @@ router.get("/hls-proxy/manifest", async (req, res): Promise<void> => {
       })
       .join("\n");
 
+    cacheManifest(raw, rewritten);
     res.set("Content-Type", "application/vnd.apple.mpegurl");
     res.set("Cache-Control", "no-store");
     res.set("Access-Control-Allow-Origin", "*");
     res.send(rewritten);
-  } catch {
-    res.status(503).send("Proxy error");
+  } catch (error) {
+    // This used to swallow the reason entirely, so a timeout and a DNS failure
+    // were indistinguishable in the logs and invisible to the client.
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    console.error("[hls-proxy] manifest fetch failed", { url: raw, reason });
+    res.status(504).send(`Upstream manifest fetch failed (${reason})`);
   }
 });
 
