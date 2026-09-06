@@ -409,6 +409,8 @@ export default function ClaimMatchPage() {
   const { setFullscreenVideo } = useFullscreenVideo();
   const [stage, setStage] = useState<Stage>("find");
   const [currentTime, setCurrentTime] = useState(0);
+  const seekRequestIdRef = useRef(0);
+  const [seekRequest, setSeekRequest] = useState<{ id: number; videoTime: number } | null>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [slow, setSlow] = useState(false);
@@ -568,12 +570,19 @@ export default function ClaimMatchPage() {
     const next = bundle ? clampToTracked(trackingSeconds, bundle) : Math.max(0, trackingSeconds);
     pendingSeekTrackingRef.current = next;
     setCurrentTime(next);
-    if (videoRef.current && Number.isFinite(toVideoTime(next))) {
+    const targetVideoTime = toVideoTime(next);
+    if (Number.isFinite(targetVideoTime)) {
+      setSeekRequest({
+        id: ++seekRequestIdRef.current,
+        videoTime: targetVideoTime,
+      });
+    }
+    if (videoRef.current && Number.isFinite(targetVideoTime)) {
       // Move the real media immediately, even when the tracking overlay for the
       // target segment is still loading. The overlay segment can catch up
       // asynchronously; waiting here makes the boxes move while the video
       // remains on the old picture.
-      videoRef.current.currentTime = toVideoTime(next);
+      videoRef.current.currentTime = targetVideoTime;
     }
   }, [bundle, toVideoTime]);
 
@@ -582,8 +591,13 @@ export default function ClaimMatchPage() {
     if (pending === null || !manifest || !activeSegment || !bundle) return;
     if (activeSegment.segmentIndex !== segmentIndexAtTime(manifest, pending)) return;
     videoRef.current?.pause();
-    if (videoRef.current) videoRef.current.currentTime = toVideoTime(pending);
-    pendingSeekTrackingRef.current = null;
+    if (videoRef.current) {
+      const targetVideoTime = toVideoTime(pending);
+      videoRef.current.currentTime = targetVideoTime;
+      if (Math.abs(videoRef.current.currentTime - targetVideoTime) <= 0.5) {
+        pendingSeekTrackingRef.current = null;
+      }
+    }
   }, [activeSegment, bundle, manifest, toVideoTime]);
 
   const loadSegment = useCallback((index: number): Promise<void> => {
@@ -1706,6 +1720,7 @@ export default function ClaimMatchPage() {
         goalTimes={goalTimes}
          offPitchSpans={offPitchSpans}
         videoRef={videoRef}
+         seekRequest={seekRequest}
         onToggle={handlePlay}
         onSeek={handleSeek}
         onSkip={seekBy}

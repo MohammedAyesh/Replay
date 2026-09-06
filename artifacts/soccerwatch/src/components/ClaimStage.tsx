@@ -114,10 +114,12 @@ function useBunnyHls(
   url: string | undefined,
   startVideoTime: number,
   onCacheUpdate: (update: VideoCacheUpdate) => void,
+  seekRequest: { id: number; videoTime: number } | null,
 ) {
   const [videoError, setVideoError] = useState("");
   const startVideoTimeRef = useRef(startVideoTime);
   startVideoTimeRef.current = startVideoTime;
+  const hlsRef = useRef<Hls | null>(null);
   useEffect(() => {
     const video = videoRef.current;
     setVideoError("");
@@ -163,6 +165,7 @@ function useBunnyHls(
           backBufferLength: 60,
           startPosition: Math.max(0, startVideoTimeRef.current),
         });
+        hlsRef.current = hls;
         capPlaybackQuality(hls);
         hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(url));
         hls.attachMedia(video);
@@ -208,10 +211,47 @@ function useBunnyHls(
       if (nativeMetadataHandler) video.removeEventListener("loadedmetadata", nativeMetadataHandler);
       video.onerror = null;
       if (hls) hls.destroy();
+      hlsRef.current = null;
       video.removeAttribute("src");
       video.load();
     };
   }, [onCacheUpdate, url, videoRef]);
+
+  useEffect(() => {
+    if (!seekRequest) return;
+    let cancelled = false;
+    let retryTimer: number | null = null;
+    const target = Math.max(0, seekRequest.videoTime);
+    const applySeek = () => {
+      if (cancelled) return;
+      const video = videoRef.current;
+      const duration = video?.duration;
+      if (
+        !video
+        || !Number.isFinite(target)
+        || video.readyState < HTMLMediaElement.HAVE_METADATA
+        || !Number.isFinite(duration)
+        || (duration ?? 0) <= 0
+      ) {
+        retryTimer = window.setTimeout(applySeek, 100);
+        return;
+      }
+      try {
+        video.currentTime = target;
+        // HLS.js needs the target as well as the media element. Without this,
+        // a long VOD can keep serving the previously buffered fragment.
+        hlsRef.current?.startLoad(target);
+      } catch {
+        retryTimer = window.setTimeout(applySeek, 100);
+      }
+    };
+    applySeek();
+    return () => {
+      cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, [seekRequest, videoRef]);
+
   return videoError;
 }
 
@@ -254,6 +294,7 @@ export function ClaimStage({
   goalTimes,
    offPitchSpans,
   videoRef,
+  seekRequest,
   onToggle,
   onSeek,
   onSkip,
@@ -282,6 +323,7 @@ export function ClaimStage({
   goalTimes: number[];
   offPitchSpans?: ClaimOffPitchStageSpan[];
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  seekRequest: { id: number; videoTime: number } | null;
   onToggle: (forcePlaying?: boolean) => void;
   onSeek: (trackingSeconds: number) => void;
   onSkip: (delta: number) => void;
@@ -319,7 +361,7 @@ export function ClaimStage({
       if (update.detail) setCacheError(update.detail);
     }
   }, []);
-  const videoError = useBunnyHls(videoRef, playbackUrl, startVideoTime, handleCacheUpdate);
+  const videoError = useBunnyHls(videoRef, playbackUrl, startVideoTime, handleCacheUpdate, seekRequest);
   useEffect(() => {
     cacheStartedForRef.current = null;
     setCachedResourceCount(0);
