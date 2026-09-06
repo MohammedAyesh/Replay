@@ -1,6 +1,24 @@
 export type AnchorAnswer = "yes" | "no" | "skip";
 export const CLAIM_ANCHOR_MATCH_TOLERANCE_SECONDS = 1;
-export const CLAIM_DETECTION_SNAP_MAX_SECONDS = 4;
+/**
+ * How far an answer may be snapped from the checkpoint the user actually saw,
+ * to land on a real detection so exports stay aligned.
+ *
+ * This MUST NOT exceed CLAIM_ANCHOR_MATCH_TOLERANCE_SECONDS. It was 4 against
+ * a tolerance of 1 until 2026-09-06, which meant an answer snapped more than a
+ * second away was stored at a moment that nextUnansweredAnchor and
+ * nearestAnchorIndex could no longer match back to its own anchor. The
+ * checkpoint stayed "unanswered" forever: the same moment was asked again on
+ * every pass, the resume index always came back 0, and coverage never moved.
+ *
+ * Widening the match tolerance instead would have been the wrong direction --
+ * anchors are only guaranteed minGap = max(8, ...) apart (buildClaimAnchors),
+ * so a 4 s tolerance on both sides of two 8 s-apart anchors makes the nearest
+ * anchor genuinely ambiguous. Narrowing the snap has no such cost: when no
+ * detection is within a second, claimAnswerMoment already falls back to the
+ * checkpoint time, which is the moment the user actually judged.
+ */
+export const CLAIM_DETECTION_SNAP_MAX_SECONDS = CLAIM_ANCHOR_MATCH_TOLERANCE_SECONDS;
 
 export type CoverageInterval = {
   startSeconds: number;

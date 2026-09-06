@@ -61,6 +61,7 @@ import {
 import {
   createClaimQueueFlushController,
   flushClaimQueue,
+  isPermanentClaimQueueError,
 } from "@/lib/claim-match-queue";
 import {
   retainNearbySegments,
@@ -722,7 +723,16 @@ export default function ClaimMatchPage() {
             setNotice("Saved just now");
           }
         },
-        onError: () => {
+        onError: (error) => {
+          // A 4xx is a server decision, not a connectivity problem. Queuing it
+          // showed the user "Saved on this device - will sync when you're
+          // back", and the queue then discarded it permanently on the next
+          // flush (claim-match-queue treats 4xx as permanent). The answer was
+          // gone and nothing ever said so. Only queue what retrying can fix.
+          if (isPermanentClaimQueueError(error)) {
+            setNotice("This match could not be saved to your account. Your answers on this page are not being kept - reload once an admin has made the recording available.");
+            return;
+          }
           if (nextStage === "done") setCompletionSyncPending(true);
           void queueProgress(payload);
         },
@@ -820,10 +830,28 @@ export default function ClaimMatchPage() {
       .concat(response.progress.conflictMoments ?? [])
       .map((moment) => nearestAnchorIndex(claimAnchors, moment))
       .find((index) => index >= 0) ?? -1;
-    const reviewIndex = savedAnchorIndex >= 0 ? savedAnchorIndex : unresolvedIndex >= 0 ? unresolvedIndex : 0;
+    // savedAnchorIndex is -1 when every anchor is answered. Falling through to
+    // 0 dropped a user who had finished all eight back onto checkpoint 1 with
+    // nothing saying why. Send them to the last one instead, so the review
+    // reads as finished rather than restarted.
+    const allAnchorsAnswered = savedAnchorIndex < 0 && savedAnchorMoments.length > 0;
+    const reviewIndex = savedAnchorIndex >= 0
+      ? savedAnchorIndex
+      : unresolvedIndex >= 0
+        ? unresolvedIndex
+        : allAnchorsAnswered
+          ? Math.max(0, claimAnchors.length - 1)
+          : 0;
+    // Any saved answer at all means this is not a first run. The old test only
+    // recognised anchor-era state, so a recording carrying corrections from
+    // the retired "continuous following" flow -- which the server still
+    // persists as stage "following" -- showed the first-run identity prompt on
+    // every load despite having real saved answers.
     const hasSavedAnchorState = savedAnchorMoments.length > 0
       || response.progress.answeredAnchorCount > 0
       || response.progress.stage === "picker"
+      || response.progress.stage === "following"
+      || response.corrections.some((item) => !item.undone)
       || unresolvedIndex >= 0;
     const resumeReview = !response.progress.completed && claimAnchors.length > 0 && hasSavedAnchorState;
     resumeTrackingTimeRef.current = resumeReview
@@ -845,10 +873,18 @@ export default function ClaimMatchPage() {
 
   const lastSavedPosition = useRef(0);
   useEffect(() => {
-    if (currentTime <= 0 || currentTime - lastSavedPosition.current < 10) return;
+    if (currentTime <= 0 || Math.abs(currentTime - lastSavedPosition.current) < 10) return;
+    // Never let the position autosave demote a saved review back to "find".
+    // Once a load had wrongly shown the first-run prompt, the next autosave
+    // wrote stage:"find" over a stored "picker" and made the wrong state
+    // permanent. Position is what this save is for; stage is not its business.
+    const storedStage = serverProgress?.stage;
+    const stageToSave = stage === "find" && (storedStage === "picker" || storedStage === "following")
+      ? (storedStage as Stage)
+      : stage;
     lastSavedPosition.current = currentTime;
-    saveProgress(stage, currentTime);
-  }, [currentTime, progressValue, saveProgress, stage]);
+    saveProgress(stageToSave, currentTime);
+  }, [currentTime, progressValue, saveProgress, serverProgress?.stage, stage]);
 
   // Hides the tab bar and stops OrientationLock covering a phone held sideways -
   // this page is the player, like VideoPlayer on the field page.
@@ -1032,8 +1068,15 @@ export default function ClaimMatchPage() {
             setNotice("All identity moments answered · checking your saved coverage");
           }
         })
-        .catch(() => {
+        .catch((error) => {
           if (undoneClientIdsRef.current.delete(optimistic.clientId)) return;
+          if (isPermanentClaimQueueError(error, queueAction)) {
+            // Same reason as the progress path: queueing a 4xx tells the user
+            // it was saved and then throws it away. Say what happened instead.
+            setCorrections((current) => current.filter((item) => item.clientId !== optimistic.clientId));
+            setNotice("That answer was rejected by the server and has not been saved. Reload to see the current state.");
+            return;
+          }
           if (nextIndex < 0) setCompletionSyncPending(true);
           void enqueueClaimAction(queueAction).then(async () => setQueuedCount((await readClaimQueue()).length));
         });
