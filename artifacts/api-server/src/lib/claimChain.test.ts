@@ -16,12 +16,15 @@ import {
   chainIntervals,
   dropLastPart,
   extendChain,
+  identityOwning,
   isStruckOff,
   nextUncertainty,
   normaliseChain,
   survivingRanges,
   swapEvidence,
+  truncateChain,
   totalSeconds,
+  type ChainIdentity,
   type ChainPart,
   type IdentityDecision,
 } from "./claimChain";
@@ -257,12 +260,12 @@ describe("extendChain", () => {
 
   it("stops where the board struck the track off", () => {
     const d: IdentityDecision[] = [{ trackId: "A", fromFrame: 40, toFrame: 60, action: "deleted" }];
-    expect(extendChain([], tracks, "A", 0, d)).toEqual([{ trackId: "A", fromFrame: 0, toFrame: 39 }]);
+    expect(extendChain([], tracks, "A", 0, { decisions: d })).toEqual([{ trackId: "A", fromFrame: 0, toFrame: 39 }]);
   });
 
   it("refuses to start on a track struck off at that frame", () => {
     const d: IdentityDecision[] = [{ trackId: "A", fromFrame: 0, toFrame: 60, action: "deleted" }];
-    expect(extendChain([], tracks, "A", 10, d)).toEqual([]);
+    expect(extendChain([], tracks, "A", 10, { decisions: d })).toEqual([]);
   });
 
   it("ignores a tap on a track that does not exist", () => {
@@ -316,5 +319,97 @@ describe("chainIntervals", () => {
   it("is empty for an empty chain", () => {
     expect(chainIntervals([], manifest)).toEqual([]);
     expect(totalSeconds([])).toBe(0);
+  });
+});
+
+describe("the board's merges reach the video", () => {
+  const tracks = byId(playerA(false), playerB(false));
+  // The board has already decided A and B are one player.
+  const identities: ChainIdentity[] = [{
+    id: "person-1",
+    parts: [
+      { trackId: "A", fromFrame: 0, toFrame: 60 },
+      { trackId: "B", fromFrame: 0, toFrame: 60 },
+    ],
+  }];
+
+  it("finds the identity that owns a track at a frame", () => {
+    expect(identityOwning(identities, "A", 10)?.id).toBe("person-1");
+    expect(identityOwning(identities, "ghost", 10)).toBeNull();
+    expect(identityOwning(undefined, "A", 10)).toBeNull();
+  });
+
+  it("a tap claims the whole PERSON, not just the piece under the cursor", () => {
+    // Without this, the viewer is interrupted at the end of track A and asked
+    // to identify a player the board had already joined to track B.
+    const result = extendChain([], tracks, "A", 10, { identities });
+    expect(result).toEqual([
+      { trackId: "A", fromFrame: 10, toFrame: 60 },
+      { trackId: "B", fromFrame: 10, toFrame: 60 },
+    ]);
+  });
+
+  it("takes only the parts from the tap forward, never backwards", () => {
+    const late: ChainIdentity[] = [{
+      id: "person-1",
+      parts: [
+        { trackId: "A", fromFrame: 0, toFrame: 20 },
+        { trackId: "B", fromFrame: 40, toFrame: 60 },
+      ],
+    }];
+    // Tap while A is the visible piece; the person continues on B later.
+    expect(extendChain([], tracks, "A", 10, { identities: late })).toEqual([
+      { trackId: "A", fromFrame: 10, toFrame: 20 },
+      { trackId: "B", fromFrame: 40, toFrame: 60 },
+    ]);
+  });
+
+  it("drops a part of the person the board has struck off", () => {
+    const decisions: IdentityDecision[] = [{ trackId: "B", fromFrame: 0, toFrame: 60, action: "deleted" }];
+    expect(extendChain([], tracks, "A", 10, { identities, decisions }))
+      .toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60 }]);
+  });
+
+  it("falls back to the single track when no identity owns it", () => {
+    expect(extendChain([], tracks, "A", 10, { identities: [] }))
+      .toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60 }]);
+  });
+});
+
+describe("truncateChain — the human override", () => {
+  const chain: ChainPart[] = [
+    { trackId: "A", fromFrame: 0, toFrame: 29 },
+    { trackId: "B", fromFrame: 30, toFrame: 60 },
+  ];
+
+  it("gives up everything from the stated frame onward", () => {
+    // "That is not me, and has not been since here" — always available, never
+    // requiring the detector to have noticed first.
+    expect(truncateChain(chain, 40)).toEqual([
+      { trackId: "A", fromFrame: 0, toFrame: 29 },
+      { trackId: "B", fromFrame: 30, toFrame: 39 },
+    ]);
+  });
+
+  it("can empty the chain entirely", () => {
+    expect(truncateChain(chain, 0)).toEqual([]);
+  });
+
+  it("leaves a chain that ends before the frame alone", () => {
+    expect(truncateChain(chain, 999)).toEqual(chain);
+  });
+});
+
+describe("a tap on a track the person does not own at that frame", () => {
+  it("claims the track alone rather than pulling in an unrelated person", () => {
+    const tracks = byId(playerA(false), playerB(false));
+    const elsewhere: ChainIdentity[] = [{
+      id: "person-1",
+      parts: [{ trackId: "A", fromFrame: 0, toFrame: 20 }],
+    }];
+    // Frame 50 is outside the identity's part, so the board has said nothing
+    // about who this is. Claim only what was tapped.
+    expect(extendChain([], tracks, "A", 50, { identities: elsewhere }))
+      .toEqual([{ trackId: "A", fromFrame: 50, toFrame: 60 }]);
   });
 });

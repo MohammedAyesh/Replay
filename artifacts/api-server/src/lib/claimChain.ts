@@ -361,6 +361,44 @@ export function normaliseChain(
   return merged;
 }
 
+export type ChainIdentity = {
+  id: string;
+  parts: ChainPart[];
+};
+
+/**
+ * Which identity, if any, owns this track at this frame.
+ *
+ * This is what makes a tap mean "that person" rather than "that track". The
+ * board's whole job is deciding that tracks A and C are one player; a claim
+ * that ignored it would interrupt the viewer at the end of A and ask them to
+ * re-tap the same person the board already linked.
+ */
+export function identityOwning(
+  identities: ChainIdentity[] | undefined,
+  trackId: string,
+  frame: number,
+): ChainIdentity | null {
+  return (identities ?? []).find((identity) => identity.parts.some((part) =>
+    part.trackId === trackId && frame >= part.fromFrame && frame <= part.toFrame)) ?? null;
+}
+
+/**
+ * Everything after `frame` stops being claimed.
+ *
+ * The human override. However good the swap detector gets, the viewer is the
+ * one who can see it is not them, and they must always be able to say so
+ * without being asked first — a detector that is the ONLY way out of a wrong
+ * chain is a detector whose misses are unrecoverable.
+ */
+export function truncateChain(chain: ChainPart[], frame: number): ChainPart[] {
+  return chain
+    .map((part) => ({ ...part }))
+    .filter((part) => part.fromFrame < frame)
+    .map((part) => ({ ...part, toFrame: Math.min(part.toFrame, frame - 1) }))
+    .filter((part) => part.toFrame >= part.fromFrame);
+}
+
 /**
  * The person tapped themselves on track `trackId` at `frame`.
  *
@@ -378,11 +416,30 @@ export function extendChain(
   tracksById: Map<string, Track>,
   trackId: string,
   frame: number,
-  decisions?: IdentityDecision[],
+  opts: { decisions?: IdentityDecision[]; identities?: ChainIdentity[] } = {},
 ): ChainPart[] {
+  const { decisions, identities } = opts;
   const track = tracksById.get(trackId);
   if (!track) return normaliseChain(chain, tracksById);
   if (isStruckOff(decisions, trackId, frame)) return normaliseChain(chain, tracksById);
+
+  // If the board has already merged this track into a person, the tap claims
+  // that PERSON from here on, not just the piece under the cursor. Otherwise
+  // the viewer gets interrupted at the end of a track the board had already
+  // joined to the next one, and is asked to identify someone twice.
+  const identity = identityOwning(identities, trackId, frame);
+  if (identity) {
+    const forward = identity.parts
+      // Every part starts at the tap, not just the tapped one. Clamping only
+      // the track under the cursor claimed the rest of the person from before
+      // the moment the viewer actually identified them.
+      .map((part) => ({ ...part, fromFrame: Math.max(part.fromFrame, frame) }))
+      .filter((part) => part.toFrame >= part.fromFrame && part.toFrame >= frame)
+      .filter((part) => !isStruckOff(decisions, part.trackId, part.fromFrame));
+    if (forward.length) {
+      return normaliseChain([...truncateChain(chain, frame), ...forward], tracksById);
+    }
+  }
 
   const start = Math.max(frame, track.startFrame);
   const boxes = track.boxes.filter((b) => b.frame >= start).sort((a, b) => a.frame - b.frame);
@@ -396,13 +453,10 @@ export function extendChain(
     end = boxes[i].frame;
   }
 
-  const truncated = chain
-    .map((part) => ({ ...part }))
-    .filter((part) => part.fromFrame < start)
-    .map((part) => ({ ...part, toFrame: Math.min(part.toFrame, start - 1) }))
-    .filter((part) => part.toFrame >= part.fromFrame);
-
-  return normaliseChain([...truncated, { trackId, fromFrame: start, toFrame: end }], tracksById);
+  return normaliseChain(
+    [...truncateChain(chain, start), { trackId, fromFrame: start, toFrame: end }],
+    tracksById,
+  );
 }
 
 /** Remove the last link. The undo for a mis-tap. */
