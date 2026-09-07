@@ -381,6 +381,7 @@ export function ClaimStage({
   videoUrl,
   bundle,
   candidates,
+  highlightedId,
   showBoxes,
   viewKey,
   currentTime,
@@ -410,6 +411,9 @@ export function ClaimStage({
   videoUrl?: string;
   bundle: ClaimBundle;
   candidates: StageCandidate[];
+  /** Candidate to light up while the number picker points at it. Optional, so
+   * the anchor page is unaffected. */
+  highlightedId?: string | null;
   showBoxes: boolean;
   /** changes when the selected review view changes; resets a manual pan */
   viewKey: string;
@@ -756,7 +760,7 @@ export function ClaimStage({
             {showBoxes && candidates.map((candidate, index) => (
               <div
                 key={candidate.id}
-                 className={`claim-track-box ${candidate.overlap ? "is-overlap" : ""} ${candidate.coasting ? "is-coasting" : ""} ${candidate.taken ? "is-taken" : ""}`}
+                 className={`claim-track-box ${candidate.overlap ? "is-overlap" : ""} ${candidate.coasting ? "is-coasting" : ""} ${candidate.taken ? "is-taken" : ""} ${candidate.id === highlightedId ? "is-highlighted" : ""}`}
                 style={{
                   left: `${(candidate.box.x / bundle.width) * 100}%`,
                   top: `${(candidate.box.y / bundle.height) * 100}%`,

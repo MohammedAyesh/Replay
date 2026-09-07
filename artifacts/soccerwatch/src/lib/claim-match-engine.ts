@@ -164,14 +164,41 @@ export function boxesOverlap(a: ClaimBox, b: ClaimBox): boolean {
   return smallerArea > 0 && overlapArea / smallerArea >= 0.2;
 }
 
+/**
+ * The box a tap should hit at this frame.
+ *
+ * Deliberately the same rule the overlay draws with (detectionAtFrame): the
+ * nearest detection within `tolerance` frames, and nothing outside it.
+ * boxAtFrame is not that -- it refuses outside [startFrame, endFrame] and
+ * otherwise returns the nearest box however far away it is. So at a track edge
+ * the overlay drew a box the tap could not hit ("No player detected at that
+ * point" on a player you can see), and inside a long gap it hit one that was
+ * not drawn. A track edge is exactly where a track-end stop leaves you, and
+ * exactly where you are being asked to tap.
+ */
+function detectionNearFrame(
+  track: ClaimTrack,
+  frame: number,
+  tolerance: number,
+): ClaimBox | null {
+  return track.boxes.reduce<ClaimBox | null>((nearest, candidate) => {
+    if (Math.abs(candidate.frame - frame) > tolerance) return nearest;
+    if (!nearest || Math.abs(candidate.frame - frame) < Math.abs(nearest.frame - frame)) {
+      return candidate;
+    }
+    return nearest;
+  }, null);
+}
+
 export function findHitTracks(
   bundle: ClaimBundle,
   frame: number,
   x: number,
   y: number,
+  tolerance = 2,
 ): Array<{ track: ClaimTrack; box: ClaimBox }> {
   return bundle.tracks
-    .map((track) => ({ track, box: boxAtFrame(track, frame) }))
+    .map((track) => ({ track, box: detectionNearFrame(track, frame, tolerance) }))
     .filter((candidate): candidate is { track: ClaimTrack; box: ClaimBox } =>
       candidate.box !== null && boxContainsPoint(candidate.box, x, y),
     );

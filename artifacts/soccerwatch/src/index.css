@@ -411,6 +411,19 @@
 .claim-track-box.is-coasting { border-style: dashed; opacity: .75; }
 .claim-track-box.is-overlap { border-color: var(--claim-orange); background: rgba(255,131,95,.11); }
 .claim-track-box.is-taken { border-color: #ff8a80; background: rgba(255,74,74,.18); }
+/* The number picker points here. Bright enough to find in a 3840-wide frame
+   without being mistaken for the "this is you" state. */
+.claim-track-box.is-highlighted { border: 2px solid #7fd1ff; background: rgba(127,209,255,.18); box-shadow: 0 0 0 4px rgba(127,209,255,.16); }
+.claim-track-box.is-highlighted span { color: #06202e; background: #7fd1ff; }
+/* Pick your player by the number drawn on the box, for a mouse. */
+.claim-number-picker .claim-number-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.claim-number-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 5px 9px; border: 1px solid rgba(238,243,230,.22); cursor: pointer; color: var(--claim-ink); background: rgba(10,17,16,.6); font-family: var(--app-font-mono); font-size: 10px; }
+.claim-number-chip b { min-width: 14px; color: var(--claim-green); font-size: 12px; }
+.claim-number-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.claim-number-chip:hover:not(:disabled), .claim-number-chip:focus-visible { border-color: #7fd1ff; background: rgba(127,209,255,.14); }
+.claim-number-chip.is-suspect b { color: var(--claim-orange); }
+.claim-number-chip:disabled { opacity: .5; cursor: default; }
+
 .claim-track-box.is-taken span { color: #fff; background: #a52a2a; }
 .claim-track-box span { position: absolute; top: -17px; left: -2px; padding: 2px 4px; color: #0e1513; background: var(--claim-green); font-family: var(--app-font-mono); font-size: 8px; white-space: nowrap; }
 .claim-track-box:not(.is-active) span { color: var(--claim-ink); background: rgba(10,17,16,.84); }

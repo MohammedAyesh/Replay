@@ -276,6 +276,35 @@ export function swapEvidence(
  * ------------------------------------------------------------------ */
 
 /**
+ * Where to start looking for the next question.
+ *
+ * NOT the start of the chain, which is what this used to be and which is the
+ * whole of the "it stops the second after I pick myself" bug. A tap says "I am
+ * this track from here"; everything before it has been settled by the act of
+ * tapping. Scanning from the chain start re-raised the track end the person had
+ * just answered BY tapping past it, and `reachedStop` is `>=`, so the stale
+ * stop fired on the very next frame. Answering again did not help: the answer
+ * was recorded at the tap frame, never at the track end, so nothing suppressed
+ * it and the stop followed the person for the rest of the claim.
+ *
+ * `tapFrame` is the honest floor when it is there. Chains written before it
+ * existed, and parts the identity board wrote, have none -- those fall back to
+ * the chain start, which is exactly the old behaviour and no worse.
+ *
+ * `afterFrame` is the frame just answered on this request, so a decision can
+ * never re-raise itself in its own response.
+ */
+export function scanFloor(chain: ChainPart[], afterFrame: number | null): number {
+  const stamps = chain
+    .map((part) => part.tapFrame)
+    .filter((frame): frame is number => typeof frame === "number");
+  const lastDecision = stamps.length
+    ? Math.max(...stamps)
+    : (chain.length ? Math.min(...chain.map((p) => p.fromFrame)) : 0);
+  return Math.max(0, lastDecision, (afterFrame ?? -1) + 1);
+}
+
+/**
  * Where playback should next stop, following `chain` forward from `fromFrame`.
  *
  * Returns null when the chain runs cleanly to its end with nothing to ask —

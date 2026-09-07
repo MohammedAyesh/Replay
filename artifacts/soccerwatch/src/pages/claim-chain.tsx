@@ -201,6 +201,8 @@ export default function ClaimChainPage() {
   const [answered, setAnswered] = useState(true);
   const [pendingName, setPendingName] = useState<{ trackId: string; frame: number } | null>(null);
   const [nameDraft, setNameDraft] = useState("");
+  /** Which candidate the number picker is pointing at, so its box lights up. */
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const stage = stageFor(chain, currentFrame, answered);
   const clock = useDecisionClock();
 
@@ -299,9 +301,22 @@ export default function ClaimChainPage() {
 
   const submitTap = useCallback(async (trackId: string, frame: number, name?: string) => {
     if (!chain && !manifest) return;
-    const rejectedTrackId = chain?.nextUncertainty?.trackId
-      ?? candidatesAtFrame(bundle!, chain, frame).find((candidate) => candidate.mine)?.id
-      ?? null;
+    /*
+     * What the human took frames away from -- which is the track the chain was
+     * FOLLOWING at this frame, and nothing else.
+     *
+     * It used to prefer `nextUncertainty.trackId`, which is also set for a
+     * track END. So an ordinary handoff -- the tracker stopped following you,
+     * you found yourself again and tapped -- was recorded as
+     * `kind: "switch", wrongTrackId: <the track that simply ran out>`,
+     * teaching the model that track was the wrong person at a frame where
+     * nothing was wrong. At a real swap the chain IS still following the old
+     * track at the crossing, so this finds it and the switch label is
+     * unchanged; at a track end nothing is being followed, so no rejection is
+     * recorded and it lands as a plain confirm.
+     */
+    const rejectedTrackId = candidatesAtFrame(bundle!, chain, frame)
+      .find((candidate) => candidate.mine)?.id ?? null;
     try {
       const next = await tap.mutateAsync({
         id: recordingId,
@@ -321,23 +336,37 @@ export default function ClaimChainPage() {
     }
   }, [applyChain, askAgainFrom, bundle, chain, clock, manifest, recordingId, tap]);
 
-  const onVideoTap = useCallback((x: number, y: number) => {
-    if (!bundle || busy) return;
-    const hit = findHitTracks(bundle, currentFrame, x, y)[0];
-    if (!hit) {
-      setNotice("No player detected at that point");
-      return;
-    }
+  /**
+   * Claim a track as yourself at the current frame.
+   *
+   * Both ways in land here: tapping the picture, and picking the number drawn
+   * on the box. On a laptop the boxes in a 3840-wide panorama are a few pixels
+   * across and a mouse is not a finger, so the number is the usable target --
+   * and it is already on screen, so choosing one is the same act, not a new
+   * concept.
+   */
+  const claimTrack = useCallback((trackId: string) => {
+    if (busy) return;
     // First tap of the whole claim: the person names themselves, and that name
     // is what the identity board shows. A row labelled by the person in it
     // beats one labelled by whoever was doing the linking.
     if (!chain?.chain.length) {
-      setPendingName({ trackId: hit.track.id, frame: currentFrame });
+      setPendingName({ trackId, frame: currentFrame });
       setNameDraft(user?.name ?? "");
       return;
     }
-    void submitTap(hit.track.id, currentFrame);
-  }, [bundle, busy, chain, currentFrame, submitTap, user?.name]);
+    void submitTap(trackId, currentFrame);
+  }, [busy, chain, currentFrame, submitTap, user?.name]);
+
+  const onVideoTap = useCallback((x: number, y: number) => {
+    if (!bundle || busy) return;
+    const hit = findHitTracks(bundle, currentFrame, x, y)[0];
+    if (!hit) {
+      setNotice("No player there — or pick a number below.");
+      return;
+    }
+    claimTrack(hit.track.id);
+  }, [bundle, busy, claimTrack, currentFrame]);
 
   const onNotMe = useCallback(async () => {
     if (!chain) return;
@@ -409,6 +438,65 @@ export default function ClaimChainPage() {
       overlap: candidate.suspect,
     }));
   }, [bundle, chain, currentFrame]);
+
+  /**
+   * Pick by the number drawn on the box.
+   *
+   * `candidates` is the very array ClaimStage numbers, so index n-1 IS the box
+   * labelled n. That equality is the whole trick and it is why this recomputes
+   * nothing: a second list, however carefully derived, would drift from the
+   * one on screen the moment either changed.
+   *
+   * The numbers are positional -- left to right at this frame -- so they
+   * reshuffle as players move. That is fine for the only two moments you pick
+   * in (stopped at a check, or paused hunting for yourself) and it is why a
+   * number is never stored anywhere: it is a target, not a name.
+   */
+  const claimNumber = useCallback((n: number) => {
+    const candidate = candidates[n - 1];
+    if (!candidate) {
+      setNotice(`There is no player ${n} on screen right now.`);
+      return;
+    }
+    claimTrack(candidate.id);
+  }, [candidates, claimTrack]);
+
+  /*
+   * Type the number instead of hunting for the box.
+   *
+   * Two digits are supported because a busy frame runs past nine: after "1" we
+   * wait, because 10, 11 and 12 may still be coming, but after "3" with twelve
+   * on screen we fire at once because no longer number can exist. That keeps
+   * the common case instant and the two-digit case possible without a modifier.
+   */
+  const digits = useRef<{ text: string; timer: number | null }>({ text: "", timer: null });
+  useEffect(() => {
+    const fire = () => {
+      const n = Number(digits.current.text);
+      digits.current = { text: "", timer: null };
+      if (n > 0) claimNumber(n);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      const el = event.target as HTMLElement | null;
+      // Never take a keystroke off the name box.
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (pendingName || busy || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!/^[0-9]$/.test(event.key)) return;
+      event.preventDefault();
+      if (digits.current.timer) window.clearTimeout(digits.current.timer);
+      const text = digits.current.text + event.key;
+      const n = Number(text);
+      if (n === 0 || n > candidates.length) { digits.current = { text: "", timer: null }; return; }
+      digits.current.text = text;
+      if (n * 10 > candidates.length) fire();
+      else digits.current.timer = window.setTimeout(fire, 600);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      if (digits.current.timer) window.clearTimeout(digits.current.timer);
+    };
+  }, [busy, candidates.length, claimNumber, pendingName]);
 
   const claimedSpans = useMemo(
     () => (chain
@@ -541,6 +629,37 @@ export default function ClaimChainPage() {
         </div>
       )}
 
+      {(stage === "identify" || stage === "asking") && (
+        <div className="claim-panel claim-number-picker" data-testid="claim-chain-numbers">
+          <h2>Or pick your number</h2>
+          {candidates.length === 0 ? (
+            <p className="claim-muted">No players detected at this moment.</p>
+          ) : (
+            <>
+              <p className="claim-muted">The number on the box. Type it, or click it.</p>
+              <div className="claim-number-grid">
+                {candidates.map((candidate, index) => (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    className={`claim-number-chip ${candidate.overlap ? "is-suspect" : ""}`}
+                    data-testid={`button-chain-number-${index + 1}`}
+                    disabled={busy}
+                    onMouseEnter={() => setHighlightId(candidate.id)}
+                    onMouseLeave={() => setHighlightId(null)}
+                    onFocus={() => setHighlightId(candidate.id)}
+                    onBlur={() => setHighlightId(null)}
+                    onClick={() => claimNumber(index + 1)}
+                  >
+                    <b>{index + 1}</b><span>{candidate.label}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {Boolean(chain?.chain.length) && (
         <button
           type="button"
@@ -561,6 +680,7 @@ export default function ClaimChainPage() {
         videoUrl={recording.videoUrl}
         bundle={bundle}
         candidates={candidates}
+        highlightedId={highlightId}
         showBoxes
         viewKey={`${stage}:${currentSegmentIndex}`}
         currentTime={currentTime}

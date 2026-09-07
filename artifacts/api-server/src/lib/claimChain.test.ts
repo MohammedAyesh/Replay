@@ -21,6 +21,7 @@ import {
   isStruckOff,
   nextUncertainty,
   normaliseChain,
+  scanFloor,
   survivingRanges,
   swapEvidence,
   truncateChain,
@@ -480,5 +481,67 @@ describe("a board join suppresses the stop it was made to remove", () => {
       { trackId: "C", fromFrame: 900, toFrame: 1000 },
     ];
     expect(nextUncertainty(chain, far, [], 0)).toMatchObject({ kind: "track-end", frame: 100 });
+  });
+});
+
+/**
+ * The bug this exists to stop coming back.
+ *
+ * A track ends, the person cannot see themselves for a second or two, scrubs
+ * forward and taps the track they are on now. Nothing about that is unusual --
+ * it is what a track end IS -- and it wedged the whole flow: the scan started
+ * at the chain's beginning, found the old track's end still unanswered (the
+ * answer was recorded at the tap, not at the end), and returned a stop BEHIND
+ * the playhead. `reachedStop` is `>=`, so it fired on the next frame, every
+ * time, for the rest of the claim.
+ *
+ * The journey test never caught it because every scenario there is a swap
+ * between two full-length tracks that touch: the successor rule sees the join
+ * and the tap lands exactly on the crossing frame. A real handoff is neither.
+ */
+describe("scanFloor — where the next question is looked for", () => {
+  const tapped = (trackId: string, fromFrame: number, toFrame: number, tapFrame: number) =>
+    ({ trackId, fromFrame, toFrame, tapFrame });
+
+  it("starts at the newest decision, not at the start of the chain", () => {
+    const chain = [tapped("A", 20, 99, 20), tapped("B", 400, 900, 400)];
+    expect(scanFloor(chain, null)).toBe(400);
+  });
+
+  it("takes the frame just answered when that is later still", () => {
+    const chain = [tapped("A", 20, 99, 20)];
+    expect(scanFloor(chain, 250)).toBe(251);
+  });
+
+  it("falls back to the chain start for parts with no stamp", () => {
+    // Parts the identity board wrote, and chains stored before tapFrame
+    // existed. The old behaviour exactly -- no worse, and no crash.
+    const chain = [{ trackId: "A", fromFrame: 20, toFrame: 99 }];
+    expect(scanFloor(chain, null)).toBe(20);
+  });
+
+  it("is zero for an empty chain", () => {
+    expect(scanFloor([], null)).toBe(0);
+  });
+
+  it("does not re-raise a track end the person answered by tapping past it", () => {
+    // A ran out at 99. The person found themselves again at 400 and tapped B,
+    // which is a gap of 301 frames -- beyond successorGapFrames, so the
+    // successor rule cannot rescue this one and the floor has to.
+    const tracks = new Map<string, any>([
+      ["A", { id: "A", startFrame: 0, endFrame: 99, boxes: [{ frame: 99, x: 0, y: 0, w: 10, h: 20 }] }],
+      ["B", { id: "B", startFrame: 400, endFrame: 900, boxes: [{ frame: 400, x: 0, y: 0, w: 10, h: 20 }] }],
+    ]);
+    const chain = [tapped("A", 20, 99, 20), tapped("B", 400, 900, 400)];
+
+    const fromChainStart = nextUncertainty(chain, tracks, [], 20, undefined, new Set([400]));
+    expect(fromChainStart).toMatchObject({ kind: "track-end", frame: 99 });
+
+    const fromFloor = nextUncertainty(
+      chain, tracks, [], scanFloor(chain, 400), undefined, new Set([400]),
+    );
+    // Still asks about where B runs out -- that question is real and ahead.
+    expect(fromFloor).toMatchObject({ kind: "track-end", frame: 900 });
+    expect(fromFloor!.frame).toBeGreaterThan(400);
   });
 });

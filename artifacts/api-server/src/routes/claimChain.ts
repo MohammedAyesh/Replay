@@ -56,6 +56,7 @@ import {
   isStruckOff,
   nextUncertainty,
   normaliseChain,
+  scanFloor,
   totalSeconds,
   truncateChain,
   type ChainPart,
@@ -173,6 +174,16 @@ type ChainContext = {
   identityId: string;
   /** Frames this claimant has already answered on this bundle. */
   answeredFrames: Set<number>;
+  /**
+   * The claimant's declared off-pitch spans.
+   *
+   * Here so `describe` can measure coverage exactly the way
+   * `deriveChainClaimState` does. They used two different formulas: the page
+   * showed `raw / duration` while completion, clips and the binding were
+   * decided on `(raw - offPitch) / (duration - offPitch)`. With any off-pitch
+   * declared, the number on screen was not the number that unlocked the match.
+   */
+  offPitch: Array<{ fromSeconds: number; toSeconds: number }>;
 };
 
 /**
@@ -235,6 +246,16 @@ async function loadContext(
       fingerprint,
       identityId: claimIdentityId(userId, recordingId),
       answeredFrames: await answeredFramesFor(recordingId, userId, fingerprint),
+      offPitch: await db
+        .select({
+          fromSeconds: claimMatchOffPitchSpansTable.fromSeconds,
+          toSeconds: claimMatchOffPitchSpansTable.toSeconds,
+        })
+        .from(claimMatchOffPitchSpansTable)
+        .where(and(
+          eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
+          eq(claimMatchOffPitchSpansTable.userId, userId),
+        )),
     },
   };
 }
@@ -244,13 +265,15 @@ function describe(
   chain: ChainPart[],
   name: string | null,
   labelRecorded: boolean | null = null,
+  /** The frame answered on this request, if this is a write. */
+  afterFrame: number | null = null,
 ) {
-  const spans = chainIntervals(chain, ctx.manifest);
+  const spans = chainIntervals(chain, ctx.manifest, ctx.offPitch);
   const uncertainty = nextUncertainty(
     chain,
     ctx.tracksById,
     crossingsFromSegments(ctx.segments),
-    chain.length ? Math.min(...chain.map((p) => p.fromFrame)) : 0,
+    scanFloor(chain, afterFrame),
     ctx.manifest.identityDecisions,
     ctx.answeredFrames,
   );
@@ -311,9 +334,17 @@ function describe(
      */
     chain: chain.map(({ trackId, fromFrame, toFrame }) => ({ trackId, fromFrame, toFrame })),
     coverageSeconds: totalSeconds(spans),
-    coveragePercent: ctx.manifest.duration > 0
-      ? Math.min(100, Math.round((totalSeconds(spans) / ctx.manifest.duration) * 10000) / 100)
-      : 0,
+    // Same numerator and same denominator as deriveChainClaimState, so the
+    // number on screen is the number that decides completion and clips.
+    coveragePercent: (() => {
+      const offPitchSeconds = totalSeconds(ctx.offPitch.map((span) => ({
+        startSeconds: span.fromSeconds,
+        endSeconds: span.toSeconds,
+      })));
+      const denominator = ctx.manifest.duration - offPitchSeconds;
+      if (denominator <= 0) return 0;
+      return Math.min(100, Math.round((totalSeconds(spans) / denominator) * 10000) / 100);
+    })(),
     nextUncertainty: uncertainty,
     /**
      * Whether this decision's training label actually landed.
@@ -702,7 +733,7 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
   // landed. Otherwise the reply to an answer re-asks the same question, and
   // the person is stuck on it for as long as they keep answering.
   ctx.answeredFrames.add(frame);
-  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded);
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, frame);
   await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
   res.json(body_);
 });
@@ -736,7 +767,7 @@ router.post("/recordings/:id/claim-match/chain/not-me", async (req, res): Promis
     decisionMs: body.data.decisionMs ?? null,
   });
   ctx.answeredFrames.add(body.data.frame);
-  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded);
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, body.data.frame);
   await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
   res.json(body_);
 });
@@ -756,6 +787,9 @@ router.post("/recordings/:id/claim-match/chain/confirm", async (req, res): Promi
     res.status(400).json({ error: body.error.message });
     return;
   }
+  // tap and not-me both refuse a client working from a replaced bundle. This
+  // one carried the field, the client sent it, and nothing read it.
+  if (fingerprintConflict(ctx, body.data.bundleFingerprint, res)) return;
   const current = chainOf(ctx.manifest, ctx.identityId);
   const part = current.find((p) => body.data.frame >= p.fromFrame && body.data.frame <= p.toFrame);
   const labelRecorded = await recordLabel(ctx, "confirm", body.data.frame, {
@@ -767,7 +801,7 @@ router.post("/recordings/:id/claim-match/chain/confirm", async (req, res): Promi
   // question the instant playback resumes -- forever.
   ctx.answeredFrames.add(body.data.frame);
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-  const body_ = describe(ctx, current, identity?.name ?? null, labelRecorded);
+  const body_ = describe(ctx, current, identity?.name ?? null, labelRecorded, body.data.frame);
   await syncChainClaim(ctx, current, body_.nextUncertainty !== null);
   res.json(body_);
 });
