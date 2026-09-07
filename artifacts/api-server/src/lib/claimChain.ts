@@ -129,6 +129,18 @@ export const CHAIN_TUNING = {
    * each part separately.
    */
   successorGapFrames: 200,
+  /**
+   * Most parts one tap may add.
+   *
+   * Splitting a track at every detection hole keeps coverage honest, but a
+   * badly fragmented track could split into hundreds of parts, and parts live
+   * in a jsonb blob that is read, rewritten and row-locked on every single
+   * tap. Past this many the split stops being worth its weight: the tap
+   * claims one span instead, which over-counts the holes but keeps the
+   * manifest bounded. 64 is far above anything a working detector produces
+   * over one track and far below anything that would bloat the row.
+   */
+  maxPartsPerTap: 64,
 };
 
 /* ------------------------------------------------------------------ *
@@ -294,14 +306,25 @@ export function swapEvidence(
  * `afterFrame` is the frame just answered on this request, so a decision can
  * never re-raise itself in its own response.
  */
-export function scanFloor(chain: ChainPart[], afterFrame: number | null): number {
+export function scanFloor(
+  chain: ChainPart[],
+  afterFrame: number | null,
+  reviewedThroughFrame?: number | null,
+): number {
   const stamps = chain
     .map((part) => part.tapFrame)
     .filter((frame): frame is number => typeof frame === "number");
+  // +1: a tap ANSWERS its own frame, so the floor sits just past it. Without
+  // that the write and the read disagreed -- a write passes `afterFrame` and
+  // hides the tapped frame, a GET has no `afterFrame` and exposed it again. A
+  // refetch (react-query refetches on window focus, so alt-tabbing is enough)
+  // then returned a stop AT the frame just tapped, `reachedStop` is `>=`, and
+  // the page wedged into play-pause-play-pause. The unstamped fallback stays
+  // inclusive because there is no decision there to have answered anything.
   const lastDecision = stamps.length
-    ? Math.max(...stamps)
+    ? Math.max(...stamps) + 1
     : (chain.length ? Math.min(...chain.map((p) => p.fromFrame)) : 0);
-  return Math.max(0, lastDecision, (afterFrame ?? -1) + 1);
+  return Math.max(0, lastDecision, (afterFrame ?? -1) + 1, reviewedThroughFrame ?? 0);
 }
 
 /**
@@ -699,18 +722,44 @@ export function extendChain(
   const boxes = track.boxes.filter((b) => b.frame >= start).sort((a, b) => a.frame - b.frame);
   if (!boxes.length) return normaliseChain(chain, tracksById);
 
-  let end = boxes[0].frame;
+  /*
+   * EVERY run of this track from the tap on, not just the first.
+   *
+   * This used to stop dead at the first gap wider than maxBridgeGapFrames and
+   * claim only what came before it. On a floodlit pitch the detector loses a
+   * player for a second all the time, so a tap could land on a detection with
+   * a hole right behind it and claim exactly ONE FRAME -- after which the
+   * write said "nothing left to check" while a refetch said "we lost you at
+   * the frame you just tapped". That is the reported "it stops the second
+   * after I pick myself".
+   *
+   * The gaps are still not claimed: each run is its own part, so
+   * chainIntervals measures them separately and the holes count for nothing.
+   * But they are no longer QUESTIONS either -- consecutive runs are within
+   * successorGapFrames of each other, so the successor rule sees the
+   * continuation. Which is right: a gap inside ONE track is the tracker
+   * asserting this is the same person across it, a stronger claim than the
+   * two-different-tracks join the successor rule already forgives.
+   */
+  const runs: ChainPart[] = [];
+  let runStart = boxes[0].frame;
+  let previous = boxes[0].frame;
   for (let i = 1; i < boxes.length; i++) {
-    const gap = boxes[i].frame - boxes[i - 1].frame;
-    if (gap > CHAIN_TUNING.maxBridgeGapFrames) break;
-    if (isStruckOff(decisions, trackId, boxes[i].frame)) break;
-    end = boxes[i].frame;
+    const at = boxes[i].frame;
+    if (isStruckOff(decisions, trackId, at)) break;
+    if (at - previous > CHAIN_TUNING.maxBridgeGapFrames) {
+      runs.push({ trackId, fromFrame: runStart, toFrame: previous, tapFrame: frame });
+      runStart = at;
+    }
+    previous = at;
   }
+  runs.push({ trackId, fromFrame: runStart, toFrame: previous, tapFrame: frame });
 
-  return normaliseChain(
-    [...truncateChain(chain, start), { trackId, fromFrame: start, toFrame: end, tapFrame: frame }],
-    tracksById,
-  );
+  const claimed = runs.length > CHAIN_TUNING.maxPartsPerTap
+    ? [{ trackId, fromFrame: start, toFrame: previous, tapFrame: frame }]
+    : runs;
+
+  return normaliseChain([...truncateChain(chain, start), ...claimed], tracksById);
 }
 
 /** Remove the last part. Kept for chains with no `tapFrame` to go on. */

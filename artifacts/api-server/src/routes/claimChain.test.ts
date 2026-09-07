@@ -480,7 +480,7 @@ describe("not-me — the human override", () => {
 });
 
 describe("confirm — because silence is not a label", () => {
-  it("writes the label without touching the chain", async () => {
+  it("writes the label, and moves the review mark but not the chain", async () => {
     await request(app).post(url("/tap")).send({ trackId: "t1", frame: 0 });
     await db.delete(claimChainLabelsTable).where(eq(claimChainLabelsTable.recordingId, recordingId));
 
@@ -488,7 +488,17 @@ describe("confirm — because silence is not a label", () => {
     const res = await request(app).post(url("/confirm")).send({ frame: 50, decisionMs: 900 });
     expect(res.status).toBe(200);
     expect(res.body.chain).toEqual([{ trackId: "t1", fromFrame: 0, toFrame: 99 }]);
-    expect((await storedManifest()).identities).toEqual(before.identities);
+
+    const after = await storedManifest();
+    // The claim itself is untouched -- a confirm says "carry on", not "this is
+    // mine from somewhere else".
+    expect(after.identities?.map((i) => i.parts)).toEqual(before.identities?.map((i) => i.parts));
+    expect(after.identities?.map((i) => i.name)).toEqual(before.identities?.map((i) => i.name));
+    // But the answer is now stored. Before this it lived only in
+    // claim_chain_labels, which fails soft to an empty set when that table is
+    // absent -- so on such a database the confirmed crossing came straight
+    // back on the next refetch and the page wedged.
+    expect(after.identities?.[0]?.reviewedThroughFrame).toBe(51);
 
     const [label] = await labels();
     expect(label).toMatchObject({ kind: "confirm", atFrame: 50, rightTrackId: "t1", decisionMs: 900 });

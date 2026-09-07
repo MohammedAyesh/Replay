@@ -71,7 +71,14 @@ const IdentityMapBody = z.object({
       trackId: z.string().min(1),
       fromFrame: z.number().int().min(0),
       toFrame: z.number().int().min(0),
+      // Zod strips what it does not name. Both of these are written by the
+      // claim chain and were being silently deleted by every board save --
+      // which quietly reverted `dropLastDecision` to dropping one part, and
+      // `scanFloor` to scanning from the start of the chain, which is the
+      // original "it stops the second after I pick myself" bug coming back.
+      tapFrame: z.number().int().min(0).optional(),
     })).min(1),
+    reviewedThroughFrame: z.number().int().min(0).optional(),
   })),
   identityDecisions: z.array(z.object({
     trackId: z.string().min(1),

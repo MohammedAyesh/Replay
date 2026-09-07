@@ -267,13 +267,15 @@ function describe(
   labelRecorded: boolean | null = null,
   /** The frame answered on this request, if this is a write. */
   afterFrame: number | null = null,
+  /** Everything before this has already been answered, across reloads. */
+  reviewedThroughFrame: number | null = null,
 ) {
   const spans = chainIntervals(chain, ctx.manifest, ctx.offPitch);
   const uncertainty = nextUncertainty(
     chain,
     ctx.tracksById,
     crossingsFromSegments(ctx.segments),
-    scanFloor(chain, afterFrame),
+    scanFloor(chain, afterFrame, reviewedThroughFrame),
     ctx.manifest.identityDecisions,
     ctx.answeredFrames,
   );
@@ -417,7 +419,13 @@ async function persistChain(
    * name themselves once and it has to stick.
    */
   name: { chosen: string | null; fallback?: string | null },
-): Promise<{ chain: ChainPart[]; name: string | null }> {
+  /**
+   * The frame just answered, or null to leave the mark alone. `reset` is for
+   * undo: the decision being reversed has to become askable again, so the mark
+   * drops back to just past whatever decision is now the newest.
+   */
+  reviewed: { answeredFrame?: number | null; reset?: boolean } = {},
+): Promise<{ chain: ChainPart[]; name: string | null; reviewedThroughFrame: number }> {
   return db.transaction(async (tx) => {
     await tx.execute(
       sql`select id from ${recordingTrackingBundlesTable} where id = ${ctx.bundleId} for update`,
@@ -431,6 +439,18 @@ async function persistChain(
     const existing = (manifest.identities ?? []).find((item) => item.id === ctx.identityId);
     const nextName = name.chosen ?? existing?.name ?? name.fallback ?? null;
 
+    const stamps = chain
+      .map((part) => part.tapFrame)
+      .filter((frame): frame is number => typeof frame === "number");
+    const reviewedThroughFrame = reviewed.reset
+      ? (stamps.length ? Math.max(...stamps) + 1 : 0)
+      : Math.max(
+        existing?.reviewedThroughFrame ?? 0,
+        reviewed.answeredFrame === null || reviewed.answeredFrame === undefined
+          ? 0
+          : reviewed.answeredFrame + 1,
+      );
+
     // A frame belongs to exactly one person. Anything this claim now holds is
     // taken off whoever held it before, rather than sitting in two rows at
     // once -- that is what makes the board and the video one map instead of
@@ -442,7 +462,12 @@ async function persistChain(
       .filter((item) => item.parts.length > 0);
 
     const identities: TrackingIdentity[] = chain.length
-      ? [...others, { id: ctx.identityId, name: nextName, parts: chain.map((p) => ({ ...p })) }]
+      ? [...others, {
+        id: ctx.identityId,
+        name: nextName,
+        parts: chain.map((p) => ({ ...p })),
+        reviewedThroughFrame,
+      }]
       : others;
 
     await tx
@@ -468,7 +493,7 @@ async function persistChain(
       })
       .where(eq(recordingTrackingBundlesTable.id, ctx.bundleId));
 
-    return { chain, name: nextName };
+    return { chain, name: nextName, reviewedThroughFrame };
   });
 }
 
@@ -658,7 +683,8 @@ router.get("/recordings/:id/claim-match/chain", async (req, res): Promise<void> 
   const ctx = await begin(req, res);
   if (!ctx) return;
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-  res.json(describe(ctx, chainOf(ctx.manifest, ctx.identityId), identity?.name ?? null));
+  res.json(describe(ctx, chainOf(ctx.manifest, ctx.identityId), identity?.name ?? null,
+    null, null, identity?.reviewedThroughFrame ?? null));
 });
 
 /**
@@ -718,7 +744,7 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
   const saved = await persistChain(ctx, next, {
     chosen: body.data.name ?? null,
     fallback: account?.name ?? null,
-  });
+  }, { answeredFrame: frame });
   const labelRecorded = await recordLabel(
     ctx,
     body.data.rejectedTrackId ? "switch" : "confirm",
@@ -733,7 +759,7 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
   // landed. Otherwise the reply to an answer re-asks the same question, and
   // the person is stuck on it for as long as they keep answering.
   ctx.answeredFrames.add(frame);
-  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, frame);
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, frame, saved.reviewedThroughFrame);
   await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
   res.json(body_);
 });
@@ -761,13 +787,13 @@ router.post("/recordings/:id/claim-match/chain/not-me", async (req, res): Promis
     body.data.frame >= part.fromFrame && body.data.frame <= part.toFrame);
   const next = normaliseChain(truncateChain(current, body.data.frame), ctx.tracksById);
 
-  const saved = await persistChain(ctx, next, { chosen: null });
+  const saved = await persistChain(ctx, next, { chosen: null }, { answeredFrame: body.data.frame });
   const labelRecorded = await recordLabel(ctx, "lost", body.data.frame, {
     wrongTrackId: wrong?.trackId ?? null,
     decisionMs: body.data.decisionMs ?? null,
   });
   ctx.answeredFrames.add(body.data.frame);
-  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, body.data.frame);
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, body.data.frame, saved.reviewedThroughFrame);
   await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
   res.json(body_);
 });
@@ -801,7 +827,11 @@ router.post("/recordings/:id/claim-match/chain/confirm", async (req, res): Promi
   // question the instant playback resumes -- forever.
   ctx.answeredFrames.add(body.data.frame);
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-  const body_ = describe(ctx, current, identity?.name ?? null, labelRecorded, body.data.frame);
+  // A confirm leaves the chain alone, so before this it stored nothing at all
+  // and relied entirely on the labels table to be remembered. It writes the
+  // high-water mark now, which is what makes it survive a refetch.
+  const saved = await persistChain(ctx, current, { chosen: null }, { answeredFrame: body.data.frame });
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, body.data.frame, saved.reviewedThroughFrame);
   await syncChainClaim(ctx, current, body_.nextUncertainty !== null);
   res.json(body_);
 });
@@ -813,8 +843,9 @@ router.delete("/recordings/:id/claim-match/chain/last", async (req, res): Promis
   const current = chainOf(ctx.manifest, ctx.identityId);
   // Reverse the whole decision, not one part of it: a tap on a board-merged
   // person adds every part of them from the tap forward.
-  const saved = await persistChain(ctx, normaliseChain(dropLastDecision(current), ctx.tracksById), { chosen: null });
-  const body_ = describe(ctx, saved.chain, saved.name);
+  const saved = await persistChain(
+    ctx, normaliseChain(dropLastDecision(current), ctx.tracksById), { chosen: null }, { reset: true });
+  const body_ = describe(ctx, saved.chain, saved.name, null, null, saved.reviewedThroughFrame);
   // An undo has to sync too, or a claim can be walked backwards while its
   // binding and its clips stay where the high-water mark left them.
   await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);

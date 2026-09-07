@@ -253,11 +253,43 @@ describe("extendChain", () => {
     ]);
   });
 
-  it("stops at a detection gap rather than claiming across it", () => {
+  it("splits at a detection gap instead of claiming across it — but claims both sides", () => {
+    /*
+     * The gap itself is never claimed: that is the invariant, and it is why
+     * these are two parts rather than one span from 0 to 60.
+     *
+     * But the far side IS claimed, by this same tap. Stopping dead at the
+     * first hole meant that on floodlit footage -- where the detector loses a
+     * player for a second constantly -- a tap could claim a SINGLE FRAME and
+     * then report "nothing left to check", while a refetch asked about the
+     * very frame just tapped. Both sides carry one track id: the tracker is
+     * asserting this is the same person across the hole, which is a stronger
+     * claim than the two-different-tracks join `successorGapFrames` already
+     * forgives. Being stricter here than there was incoherent.
+     */
     const gappy = track("G", 0, 60, (f) => ({ x: f, y: 0 }), 1);
     gappy.boxes = gappy.boxes.filter((b) => b.frame <= 20 || b.frame >= 45);
     const result = extendChain([], byId(gappy), "G", 0);
-    expect(result).toEqual([{ trackId: "G", fromFrame: 0, toFrame: 20, tapFrame: 0 }]);
+    expect(result).toEqual([
+      { trackId: "G", fromFrame: 0, toFrame: 20, tapFrame: 0 },
+      { trackId: "G", fromFrame: 45, toFrame: 60, tapFrame: 0 },
+    ]);
+    // 21..44 belongs to nobody.
+    const covered = chainIntervals(result, { frameRate: 1, duration: 61 });
+    expect(covered).toEqual([
+      { startSeconds: 0, endSeconds: 21 },
+      { startSeconds: 45, endSeconds: 61 },
+    ]);
+  });
+
+  it("collapses to one span when a track is too fragmented to itemise", () => {
+    // Past maxPartsPerTap the split costs more than it is worth: parts live in
+    // a jsonb blob rewritten under a row lock on every tap.
+    const shredded = track("S", 0, 4000, (f) => ({ x: f, y: 0 }), 1);
+    shredded.boxes = shredded.boxes.filter((b) => b.frame % 20 === 0);
+    const result = extendChain([], byId(shredded), "S", 0);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ trackId: "S", fromFrame: 0, tapFrame: 0 });
   });
 
   it("stops where the board struck the track off", () => {
@@ -505,7 +537,10 @@ describe("scanFloor — where the next question is looked for", () => {
 
   it("starts at the newest decision, not at the start of the chain", () => {
     const chain = [tapped("A", 20, 99, 20), tapped("B", 400, 900, 400)];
-    expect(scanFloor(chain, null)).toBe(400);
+    // 401, not 400: a tap answers its own frame, so the floor sits past it.
+    // Without the +1 a GET (which carries no afterFrame) handed back a stop AT
+    // the frame just tapped, while the write that created it did not.
+    expect(scanFloor(chain, null)).toBe(401);
   });
 
   it("takes the frame just answered when that is later still", () => {

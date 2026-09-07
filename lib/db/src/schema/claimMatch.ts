@@ -140,6 +140,16 @@ export type TrackingIdentity = {
    * written before 2026-09-07, do not carry it.
    */
   parts: Array<{ trackId: string; fromFrame: number; toFrame: number; tapFrame?: number }>;
+  /**
+   * Everything before this frame has been answered by the claimant.
+   *
+   * The claim flow used to derive that entirely from `claim_chain_labels`,
+   * which fails soft to an empty set when the table is not there -- so on a
+   * database where that migration never ran, nothing was ever remembered as
+   * answered and a "yes, still me" came straight back on the next refetch.
+   * Storing it beside the parts makes the flow work on its own.
+   */
+  reviewedThroughFrame?: number;
 };
 
 export type TrackingIdentityDecision = {
