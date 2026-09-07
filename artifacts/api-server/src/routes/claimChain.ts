@@ -51,7 +51,7 @@ import { deriveChainClaimState } from "../lib/claimChainState";
 import {
   captureDecisionGeometry,
   chainIntervals,
-  dropLastPart,
+  dropLastDecision,
   extendChain,
   isStruckOff,
   nextUncertainty,
@@ -303,7 +303,13 @@ function describe(
     name,
     bundleFingerprint: ctx.fingerprint,
     frameRate: ctx.manifest.frameRate,
-    chain,
+    /*
+     * `tapFrame` is stripped here on purpose. It is bookkeeping the server
+     * needs so an undo can reverse a whole decision rather than one part of a
+     * board-merged person; the client draws boxes and never reads it, and the
+     * generated contract has no field for it. Persist it, do not publish it.
+     */
+    chain: chain.map(({ trackId, fromFrame, toFrame }) => ({ trackId, fromFrame, toFrame })),
     coverageSeconds: totalSeconds(spans),
     coveragePercent: ctx.manifest.duration > 0
       ? Math.min(100, Math.round((totalSeconds(spans) / ctx.manifest.duration) * 10000) / 100)
@@ -771,7 +777,9 @@ router.delete("/recordings/:id/claim-match/chain/last", async (req, res): Promis
   const ctx = await begin(req, res);
   if (!ctx) return;
   const current = chainOf(ctx.manifest, ctx.identityId);
-  const saved = await persistChain(ctx, normaliseChain(dropLastPart(current), ctx.tracksById), { chosen: null });
+  // Reverse the whole decision, not one part of it: a tap on a board-merged
+  // person adds every part of them from the tap forward.
+  const saved = await persistChain(ctx, normaliseChain(dropLastDecision(current), ctx.tracksById), { chosen: null });
   const body_ = describe(ctx, saved.chain, saved.name);
   // An undo has to sync too, or a claim can be walked backwards while its
   // binding and its clips stay where the high-water mark left them.

@@ -14,6 +14,7 @@ import type { TrackingSegmentPayload } from "@workspace/db";
 import {
   CHAIN_TUNING,
   chainIntervals,
+  dropLastDecision,
   dropLastPart,
   extendChain,
   identityOwning,
@@ -240,14 +241,14 @@ describe("extendChain", () => {
   const tracks = byId(playerA(false), playerB(false));
 
   it("claims from the tapped frame to the end of the track", () => {
-    expect(extendChain([], tracks, "A", 10)).toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60 }]);
+    expect(extendChain([], tracks, "A", 10)).toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60, tapFrame: 10 }]);
   });
 
   it("truncates everything after the tap — a correction replaces, never doubles up", () => {
     const before: ChainPart[] = [{ trackId: "A", fromFrame: 0, toFrame: 60 }];
     expect(extendChain(before, tracks, "B", 30)).toEqual([
       { trackId: "A", fromFrame: 0, toFrame: 29 },
-      { trackId: "B", fromFrame: 30, toFrame: 60 },
+      { trackId: "B", fromFrame: 30, toFrame: 60, tapFrame: 30 },
     ]);
   });
 
@@ -255,12 +256,12 @@ describe("extendChain", () => {
     const gappy = track("G", 0, 60, (f) => ({ x: f, y: 0 }), 1);
     gappy.boxes = gappy.boxes.filter((b) => b.frame <= 20 || b.frame >= 45);
     const result = extendChain([], byId(gappy), "G", 0);
-    expect(result).toEqual([{ trackId: "G", fromFrame: 0, toFrame: 20 }]);
+    expect(result).toEqual([{ trackId: "G", fromFrame: 0, toFrame: 20, tapFrame: 0 }]);
   });
 
   it("stops where the board struck the track off", () => {
     const d: IdentityDecision[] = [{ trackId: "A", fromFrame: 40, toFrame: 60, action: "deleted" }];
-    expect(extendChain([], tracks, "A", 0, { decisions: d })).toEqual([{ trackId: "A", fromFrame: 0, toFrame: 39 }]);
+    expect(extendChain([], tracks, "A", 0, { decisions: d })).toEqual([{ trackId: "A", fromFrame: 0, toFrame: 39, tapFrame: 0 }]);
   });
 
   it("refuses to start on a track struck off at that frame", () => {
@@ -278,6 +279,37 @@ describe("extendChain", () => {
       { trackId: "B", fromFrame: 30, toFrame: 60 },
     ];
     expect(dropLastPart(chain)).toEqual([{ trackId: "A", fromFrame: 0, toFrame: 29 }]);
+  });
+
+  /*
+   * The bug this pins: a tap on a board-merged person adds every part of that
+   * person from the tap forward, and undo removed one of them. The rest stayed
+   * claimed while subtractParts had already taken those frames off whoever
+   * held them, so the mis-tap was unrecoverable from the UI.
+   */
+  it("a board-merged tap adds many parts, so undoing one part is not enough", () => {
+    const tracks = new Map([
+      ["A", track("A", 0, 100, (f) => ({ x: f, y: 100 }))],
+      ["B", track("B", 130, 240, (f) => ({ x: f, y: 100 }))],
+      ["C", track("C", 260, 400, (f) => ({ x: f, y: 100 }))],
+    ]);
+    const identities = [{ id: "board:1", parts: [
+      { trackId: "A", fromFrame: 0, toFrame: 100 },
+      { trackId: "B", fromFrame: 130, toFrame: 240 },
+      { trackId: "C", fromFrame: 260, toFrame: 400 },
+    ] }];
+
+    const after = extendChain([], tracks, "A", 10, { identities });
+    expect(after.length).toBe(3);
+
+    // Every part carries the frame of the decision that claimed it.
+    expect(after.every((part) => part.tapFrame === 10)).toBe(true);
+
+    // What undo used to do: leave two thirds of a merged person claimed.
+    expect(dropLastPart(after).length).toBe(2);
+
+    // What it does now.
+    expect(dropLastDecision(after)).toEqual([]);
   });
 });
 
@@ -344,8 +376,8 @@ describe("the board's merges reach the video", () => {
     // to identify a player the board had already joined to track B.
     const result = extendChain([], tracks, "A", 10, { identities });
     expect(result).toEqual([
-      { trackId: "A", fromFrame: 10, toFrame: 60 },
-      { trackId: "B", fromFrame: 10, toFrame: 60 },
+      { trackId: "A", fromFrame: 10, toFrame: 60, tapFrame: 10 },
+      { trackId: "B", fromFrame: 10, toFrame: 60, tapFrame: 10 },
     ]);
   });
 
@@ -359,20 +391,20 @@ describe("the board's merges reach the video", () => {
     }];
     // Tap while A is the visible piece; the person continues on B later.
     expect(extendChain([], tracks, "A", 10, { identities: late })).toEqual([
-      { trackId: "A", fromFrame: 10, toFrame: 20 },
-      { trackId: "B", fromFrame: 40, toFrame: 60 },
+      { trackId: "A", fromFrame: 10, toFrame: 20, tapFrame: 10 },
+      { trackId: "B", fromFrame: 40, toFrame: 60, tapFrame: 10 },
     ]);
   });
 
   it("drops a part of the person the board has struck off", () => {
     const decisions: IdentityDecision[] = [{ trackId: "B", fromFrame: 0, toFrame: 60, action: "deleted" }];
     expect(extendChain([], tracks, "A", 10, { identities, decisions }))
-      .toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60 }]);
+      .toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60, tapFrame: 10 }]);
   });
 
   it("falls back to the single track when no identity owns it", () => {
     expect(extendChain([], tracks, "A", 10, { identities: [] }))
-      .toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60 }]);
+      .toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60, tapFrame: 10 }]);
   });
 });
 
@@ -410,6 +442,43 @@ describe("a tap on a track the person does not own at that frame", () => {
     // Frame 50 is outside the identity's part, so the board has said nothing
     // about who this is. Claim only what was tapped.
     expect(extendChain([], tracks, "A", 50, { identities: elsewhere }))
-      .toEqual([{ trackId: "A", fromFrame: 50, toFrame: 60 }]);
+      .toEqual([{ trackId: "A", fromFrame: 50, toFrame: 60, tapFrame: 50 }]);
+  });
+});
+
+describe("a board join suppresses the stop it was made to remove", () => {
+  /*
+   * The board joins pieces across gaps up to 8 s; the stop rule wanted a
+   * successor within 1 frame. So merging two pieces over a duel still stopped
+   * the claimant at the join — while the page told them stopping meant the map
+   * was not joining them.
+   */
+  const tracks = new Map([
+    ["A", track("A", 0, 100, (f) => ({ x: f, y: 100 }))],
+    ["B", track("B", 130, 300, (f) => ({ x: f, y: 100 }))],
+  ]);
+
+  it("does not raise a track end at a gap the board bridged", () => {
+    const chain = [
+      { trackId: "A", fromFrame: 0, toFrame: 100 },
+      { trackId: "B", fromFrame: 130, toFrame: 300 },
+    ];
+    const at = nextUncertainty(chain, tracks, [], 0);
+    expect(at?.frame).not.toBe(100);
+  });
+
+  it("still raises one where nothing follows at all", () => {
+    const chain = [{ trackId: "A", fromFrame: 0, toFrame: 100 }];
+    expect(nextUncertainty(chain, tracks, [], 0)).toMatchObject({ kind: "track-end", frame: 100 });
+  });
+
+  it("still raises one when the next part is beyond the board's reach", () => {
+    const far = new Map(tracks);
+    far.set("C", track("C", 900, 1000, (f) => ({ x: f, y: 100 })));
+    const chain = [
+      { trackId: "A", fromFrame: 0, toFrame: 100 },
+      { trackId: "C", fromFrame: 900, toFrame: 1000 },
+    ];
+    expect(nextUncertainty(chain, far, [], 0)).toMatchObject({ kind: "track-end", frame: 100 });
   });
 });

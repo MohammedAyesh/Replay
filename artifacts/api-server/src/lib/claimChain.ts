@@ -46,6 +46,20 @@ export type ChainPart = {
   trackId: string;
   fromFrame: number;
   toFrame: number;
+  /**
+   * The frame of the decision that put this part in the chain.
+   *
+   * One tap can add many parts — the board-merged branch of `extendChain`
+   * adopts every part of a person from the tap forward — so "remove the last
+   * link" cannot mean "remove the last part". It left most of a merged person
+   * claimed while `subtractParts` had already taken those frames off whoever
+   * held them, which made a mis-tap unrecoverable from the UI.
+   *
+   * Optional because the identity board writes parts too, and because chains
+   * stored before this existed have none. `dropLastDecision` falls back to
+   * dropping a single part when it is absent.
+   */
+  tapFrame?: number;
 };
 
 export type UncertaintyKind = "track-end" | "swap";
@@ -95,6 +109,26 @@ export const CHAIN_TUNING = {
   lowConfidenceBelow: 0.35,
   /** A detection gap longer than this ends the part rather than bridging it. */
   maxBridgeGapFrames: 12,
+  /**
+   * How far ahead a following part may start and still count as continuing
+   * this one.
+   *
+   * This was 1 frame, hardcoded, and it quietly defeated the identity board.
+   * `describe()` tells the person that constant stopping means the map is not
+   * joining them — but the board's own `canReach` joins pieces across gaps of
+   * up to MAX_GAP_SECONDS = 8, and `extendChain` adopts those parts verbatim.
+   * A board merge over a 1.5 s duel therefore left parts [..,100] and [130,..],
+   * 130 > 101, no successor, and the claimant was stopped at a join a human had
+   * already made. Only an exactly-adjacent join suppressed a stop.
+   *
+   * 200 frames is 10 s at 20 fps and 8 s at 25 fps, so it covers the board's
+   * whole permitted range. It is deliberately generous: every part in a chain
+   * is there because a person tapped it or because a person joined it on the
+   * board, and neither is worth re-asking. Coverage is unaffected — the gap
+   * between two parts is still not claimed, because `chainIntervals` measures
+   * each part separately.
+   */
+  successorGapFrames: 200,
 };
 
 /* ------------------------------------------------------------------ *
@@ -326,7 +360,9 @@ export function nextUncertainty(
     // it is a DIFFERENT source track, and the only reason it is in this chain
     // is that the linker decided the two are one player.
     const successor = ordered.find((other) =>
-      other !== part && other.fromFrame <= part.toFrame + 1 && other.toFrame > part.toFrame);
+      other !== part
+      && other.fromFrame <= part.toFrame + CHAIN_TUNING.successorGapFrames
+      && other.toFrame > part.toFrame);
     const continues = successor !== undefined;
     // A track end one frame behind an answered frame is what "not me from
     // here" leaves behind: the chain was truncated at the answered frame, so
@@ -529,7 +565,10 @@ export function normaliseChain(
     const fromFrame = Math.max(part.fromFrame, track.startFrame);
     const toFrame = Math.min(part.toFrame, track.endFrame);
     if (toFrame < fromFrame) continue;
-    clamped.push({ trackId: part.trackId, fromFrame, toFrame });
+    // `tapFrame` has to survive here or undo loses the grouping it needs.
+    clamped.push(part.tapFrame === undefined
+      ? { trackId: part.trackId, fromFrame, toFrame }
+      : { trackId: part.trackId, fromFrame, toFrame, tapFrame: part.tapFrame });
   }
 
   clamped.sort((a, b) => a.fromFrame - b.fromFrame || a.trackId.localeCompare(b.trackId));
@@ -622,7 +661,8 @@ export function extendChain(
       .filter((part) => part.toFrame >= part.fromFrame && part.toFrame >= frame)
       .filter((part) => !isStruckOff(decisions, part.trackId, part.fromFrame));
     if (forward.length) {
-      return normaliseChain([...truncateChain(chain, frame), ...forward], tracksById);
+      const stamped = forward.map((part) => ({ ...part, tapFrame: frame }));
+      return normaliseChain([...truncateChain(chain, frame), ...stamped], tracksById);
     }
   }
 
@@ -639,16 +679,37 @@ export function extendChain(
   }
 
   return normaliseChain(
-    [...truncateChain(chain, start), { trackId, fromFrame: start, toFrame: end }],
+    [...truncateChain(chain, start), { trackId, fromFrame: start, toFrame: end, tapFrame: frame }],
     tracksById,
   );
 }
 
-/** Remove the last link. The undo for a mis-tap. */
+/** Remove the last part. Kept for chains with no `tapFrame` to go on. */
 export function dropLastPart(chain: ChainPart[]): ChainPart[] {
   const ordered = [...chain].sort((a, b) => a.fromFrame - b.fromFrame);
   ordered.pop();
   return ordered;
+}
+
+/**
+ * Undo the last decision — all of it.
+ *
+ * A tap adds every part it claimed, stamped with the frame it was made at, so
+ * reversing a decision means dropping every part carrying the newest stamp.
+ * Dropping one part instead left the rest of a board-merged person claimed and
+ * subtracted from whoever actually held those frames.
+ *
+ * Parts with no stamp were written by the identity board or by a build that
+ * predates the stamp; there is nothing to group them by, so those fall back to
+ * removing a single part, which is what undo always did.
+ */
+export function dropLastDecision(chain: ChainPart[]): ChainPart[] {
+  const stamps = chain
+    .map((part) => part.tapFrame)
+    .filter((frame): frame is number => typeof frame === "number");
+  if (!stamps.length) return dropLastPart(chain);
+  const newest = Math.max(...stamps);
+  return chain.filter((part) => part.tapFrame !== newest);
 }
 
 /* ------------------------------------------------------------------ *

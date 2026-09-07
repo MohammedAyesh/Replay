@@ -292,9 +292,12 @@ describe("the whole claim, one call after another", () => {
     const identities = row.manifest.identities ?? [];
     expect(identities).toHaveLength(1);
     expect(identities[0].name).toBe("Mohammed");
+    // Each part carries the frame of the decision that claimed it. The client
+    // never sees it -- describe() strips it -- but it is what lets an undo
+    // reverse a whole decision instead of one part of a merged person.
     expect(identities[0].parts).toEqual([
-      { trackId: "A", fromFrame: 20, toFrame: 99 },
-      { trackId: "B", fromFrame: CROSS, toFrame: 299 },
+      { trackId: "A", fromFrame: 20, toFrame: 99, tapFrame: 20 },
+      { trackId: "B", fromFrame: CROSS, toFrame: 299, tapFrame: CROSS },
     ]);
     // The map has to claim to belong to THIS bundle or usableIdentityMap
     // discards the whole thing and the work becomes invisible.

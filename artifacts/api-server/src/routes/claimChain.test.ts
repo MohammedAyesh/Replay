@@ -372,6 +372,29 @@ describe("the board and the video are one map", () => {
     ]);
   });
 
+  /*
+   * One tap on a merged person adds every part of them. Undo used to remove
+   * the last part only, leaving the rest claimed — and subtractParts had
+   * already taken those frames off the row that held them, so a mis-tap could
+   * not be walked back from the UI at all.
+   */
+  it("undoing that tap gives back the WHOLE person, not just its last piece", async () => {
+    await setIdentities([{
+      id: "person-x",
+      name: "tracker guess",
+      parts: [
+        { trackId: "t1", fromFrame: 0, toFrame: 99 },
+        { trackId: "t2", fromFrame: 100, toFrame: 199 },
+      ],
+    }] as never);
+
+    const tapped = await request(app).post(url("/tap")).send({ trackId: "t1", frame: 20 });
+    expect(tapped.body.chain).toHaveLength(2);
+
+    const undone = await request(app).delete(url("/last"));
+    expect(undone.body.chain).toEqual([]);
+  });
+
   it("moves those frames off the row that held them — never two people on one frame", async () => {
     await setIdentities([{
       id: "person-x",
