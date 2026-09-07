@@ -284,6 +284,7 @@ export default function ClaimChainPage() {
     if (target === null) return false;
     seekTracking(target);
     setPlaying(true);
+    void videoRef.current?.play().catch(() => setPlaying(false));
     return true;
   }, [seekTracking]);
 
