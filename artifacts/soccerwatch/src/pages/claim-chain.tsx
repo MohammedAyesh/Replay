@@ -63,6 +63,7 @@ import {
   questionFor,
   reachedStop,
   resumeSecondsAfter,
+  rewindSecondsAfterUndo,
   stageFor,
   stopSeconds,
 } from "@/lib/claim-chain-flow";
@@ -383,11 +384,18 @@ export default function ClaimChainPage() {
       const next = await undo.mutateAsync({ id: recordingId });
       applyChain(next);
       setAnswered(true);
-      setNotice("Last link removed.");
+      // An undo reopens the check the undone decision answered, and that check
+      // is behind the playhead. Staying put would fire it on the next
+      // timeupdate with no way to reach it -- see rewindSecondsAfterUndo.
+      const target = rewindSecondsAfterUndo(next);
+      if (target !== null) seekTracking(target);
+      setPlaying(false);
+      videoRef.current?.pause();
+      setNotice("Last decision undone.");
     } catch (error) {
       setNotice(errorMessage(error, "That could not be undone."));
     }
-  }, [applyChain, recordingId, undo]);
+  }, [applyChain, recordingId, seekTracking, undo]);
 
   /* ---------------- rendering ---------------- */
 

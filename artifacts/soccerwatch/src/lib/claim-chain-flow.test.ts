@@ -10,8 +10,10 @@ import {
   followedTrack,
   partAtFrame,
   questionFor,
+  approachSeconds,
   reachedStop,
   resumeSecondsAfter,
+  rewindSecondsAfterUndo,
   stageFor,
   stopFrame,
   stopSeconds,
@@ -244,3 +246,41 @@ describe("claimed stretches on the seek bar", () => {
     expect(chainSpans([], FPS)).toEqual([]);
   });
 });
+
+describe("rewindSecondsAfterUndo — an undo must not wedge playback", () => {
+  /*
+   * The failure it prevents: an undo reopens the check the undone decision
+   * answered, and that check sits BEHIND the playhead. reachedStop is `>=`, so
+   * the stale stop fires on the next timeupdate; approachSeconds refuses to
+   * seek backwards, so the skip button is inert. Play then pauses instantly,
+   * forever, on a question the person cannot reach.
+   */
+  it("seeks backwards to the reopened check, which approachSeconds will not do", () => {
+    const chain = chainOf({
+      frameRate: FPS,
+      nextUncertainty: { kind: "track-end", frame: 100, trackId: "A", confidence: 1, reason: "lost" },
+    });
+    const playhead = 100;   // seconds, far past the frame-100 stop at 25 fps
+
+    expect(approachSecondsIsInert(chain, playhead)).toBe(true);
+    expect(rewindSecondsAfterUndo(chain)).toBeCloseTo(100 / FPS - 4, 5);
+  });
+
+  it("clamps at zero for a check inside the run-up", () => {
+    const chain = chainOf({
+      frameRate: FPS,
+      nextUncertainty: { kind: "track-end", frame: 10, trackId: "A", confidence: 1, reason: "lost" },
+    });
+    expect(rewindSecondsAfterUndo(chain)).toBe(0);
+  });
+
+  it("has nothing to seek to when the chain is complete", () => {
+    expect(rewindSecondsAfterUndo(chainOf({ nextUncertainty: null }))).toBeNull();
+    expect(rewindSecondsAfterUndo(null)).toBeNull();
+  });
+});
+
+/** approachSeconds returns null once the check is behind you — the inertness. */
+function approachSecondsIsInert(chain: ClaimChain, currentSeconds: number): boolean {
+  return approachSeconds(chain, currentSeconds) === null;
+}

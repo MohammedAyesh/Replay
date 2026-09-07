@@ -133,7 +133,13 @@ export type TrackingPitchModel = {
 export type TrackingIdentity = {
   id: string;
   name?: string | null;
-  parts: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
+  /**
+   * `tapFrame` is the frame of the decision that created this part, stamped by
+   * the claim chain so an undo can reverse a whole decision rather than one
+   * part of it. Optional: parts written by the identity board, and every part
+   * written before 2026-09-07, do not carry it.
+   */
+  parts: Array<{ trackId: string; fromFrame: number; toFrame: number; tapFrame?: number }>;
 };
 
 export type TrackingIdentityDecision = {

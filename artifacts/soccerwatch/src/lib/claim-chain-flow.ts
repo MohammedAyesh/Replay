@@ -232,6 +232,30 @@ export const CHECK_LEAD_IN_SECONDS = 4;
  * behind or within the run-up -- in both cases the right move is to leave
  * playback alone rather than yank it backwards.
  */
+/**
+ * Where to put the playhead after an undo.
+ *
+ * An undo exposes an uncertainty that is BEHIND the playhead — the decision
+ * just reversed is precisely what carried the chain past it, and reversing it
+ * also makes its frame askable again. Leaving the playhead alone then wedges
+ * the flow: `reachedStop` is `>=`, so the stale stop fires on the next
+ * timeupdate, and `approachSeconds` refuses to seek backwards, so "skip to the
+ * next check" cannot rescue it. Play becomes play-pause-play-pause on a
+ * question about a moment minutes behind.
+ *
+ * So an undo seeks, in whichever direction the check now lies, with the same
+ * run-up an ordinary check gets.
+ */
+export function rewindSecondsAfterUndo(
+  chain: ClaimChain | null,
+  leadIn = CHECK_LEAD_IN_SECONDS,
+): number | null {
+  if (!chain) return null;
+  const stop = stopSeconds(chain);
+  if (stop === null) return null;
+  return Math.max(0, stop - leadIn);
+}
+
 export function approachSeconds(
   chain: ClaimChain | null,
   currentSeconds: number,
