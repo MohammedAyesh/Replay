@@ -4042,9 +4042,44 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     });
     return;
   }
+  /*
+   * Carry forward what the board does not know about.
+   *
+   * The claim page stores two things on an identity that the board has never
+   * loaded, edited or sent back: `reviewedThroughFrame` on the row, and
+   * `tapFrame` on each part. The board loads a row as {id, name, parts} and
+   * saves it as {id, name, parts}, so replacing identities wholesale with its
+   * payload deleted both on every save -- which quietly re-opened every
+   * crossing a claimant had already confirmed, and turned "undo the last
+   * decision" back into "undo one part". Neither field is the board's to
+   * change, so a save that omits one keeps what was there.
+   */
+  const priorById = new Map(
+    (row.bundle.manifest.identities ?? []).map((identity) => [identity.id, identity] as const),
+  );
+  const partKeyOf = (part: { trackId: string; fromFrame: number; toFrame: number }) =>
+    `${part.trackId}:${part.fromFrame}:${part.toFrame}`;
+  const identities: TrackingIdentity[] = body.data.identities.map((incoming) => {
+    const prior = priorById.get(incoming.id);
+    if (!prior) return incoming;
+    const priorStamps = new Map(
+      prior.parts
+        .filter((part) => typeof part.tapFrame === "number")
+        .map((part) => [partKeyOf(part), part.tapFrame as number] as const),
+    );
+    const parts = incoming.parts.map((part) => {
+      if (typeof part.tapFrame === "number") return part;
+      const stamp = priorStamps.get(partKeyOf(part));
+      return stamp === undefined ? part : { ...part, tapFrame: stamp };
+    });
+    const reviewedThroughFrame = incoming.reviewedThroughFrame ?? prior.reviewedThroughFrame;
+    return reviewedThroughFrame === undefined
+      ? { ...incoming, parts }
+      : { ...incoming, parts, reviewedThroughFrame };
+  });
   const manifest: TrackingManifest = {
     ...row.bundle.manifest,
-    identities: body.data.identities,
+    identities,
     identityDecisions,
     provenance: {
       ...(row.bundle.manifest.provenance ?? {}),

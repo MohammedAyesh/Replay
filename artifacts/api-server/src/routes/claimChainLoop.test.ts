@@ -71,7 +71,8 @@ const url = (s = "") => `/api/recordings/${recordingId}/claim-match/chain${s}`;
 
 beforeAll(async () => {
   const { default: r } = await import("./claimChain");
-  app = express(); app.use(express.json()); app.use("/api", r);
+  const { default: board } = await import("./claimMatch");
+  app = express(); app.use(express.json()); app.use("/api", r); app.use("/api", board);
   const [f] = await db.insert(fieldsTable).values({ name: `${TAG} f`, location: "T" }).returning({ id: fieldsTable.id });
   fieldId = f.id;
   const made = await db.insert(usersTable).values([
@@ -216,6 +217,43 @@ describe("a whole claim, answered the way a person answers it", () => {
     // least to stand on. If it does not survive a refetch, the crossing comes
     // straight back the moment the window regains focus.
     const reread = await request(app).get(url());
+    expect(reread.body.nextUncertainty?.frame ?? null).not.toBe(700);
+  });
+
+  /**
+   * The identity board and the claim page edit the same rows. The board
+   * loads a row as {id, name, parts} and saves it back the same way, and the
+   * server replaced identities wholesale -- so every board save silently
+   * reset every claimant's reviewedThroughFrame. On a database without the
+   * labels table that put the "yes, still me" loop straight back.
+   */
+  it("an identity-board save does not erase what the claimant has answered", async () => {
+    await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10, name: "Mohammed" });
+    const confirmed = await request(app).post(url("/confirm")).send({ frame: 700 });
+    expect(confirmed.body.nextUncertainty?.frame).not.toBe(700);
+    const chain = (await request(app).get(url())).body;
+
+    // The board, as an admin, saving the map exactly as it loaded it.
+    vi.mocked(getLocalUserId).mockResolvedValue(adminId);
+    const [stored] = await db.select({ manifest: recordingTrackingBundlesTable.manifest })
+      .from(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, bundleId));
+    const asTheBoardSendsIt = (stored.manifest.identities ?? []).map((i: any) => ({
+      id: i.id, name: i.name ?? null,
+      parts: i.parts.map((p: any) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
+    }));
+    const saved = await request(app)
+      .put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({ bundleFingerprint: chain.bundleFingerprint, identities: asTheBoardSendsIt });
+    expect(saved.status).toBe(200);
+    vi.mocked(getLocalUserId).mockResolvedValue(playerId);
+
+    const [after] = await db.select({ manifest: recordingTrackingBundlesTable.manifest })
+      .from(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, bundleId));
+    // Both fields the board never sends have to survive its save.
+    expect(after.manifest.identities?.[0]?.reviewedThroughFrame).toBe(701);
+    expect(after.manifest.identities?.[0]?.parts.every((p: any) => typeof p.tapFrame === "number")).toBe(true);
+    const reread = await request(app).get(url());
+    expect(reread.body.chain.length).toBeGreaterThan(0);
     expect(reread.body.nextUncertainty?.frame ?? null).not.toBe(700);
   });
 });
