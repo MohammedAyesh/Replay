@@ -269,6 +269,8 @@ function describe(
   afterFrame: number | null = null,
   /** Everything before this has already been answered, across reloads. */
   reviewedThroughFrame: number | null = null,
+  /** The claimant has no chain because an administrator released it. */
+  resetByAdmin = false,
 ) {
   const spans = chainIntervals(chain, ctx.manifest, ctx.offPitch);
   const uncertainty = nextUncertainty(
@@ -359,6 +361,7 @@ function describe(
      * Null on reads, which record nothing.
      */
     labelRecorded,
+    resetByAdmin,
   };
 }
 
@@ -683,8 +686,23 @@ router.get("/recordings/:id/claim-match/chain", async (req, res): Promise<void> 
   const ctx = await begin(req, res);
   if (!ctx) return;
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-  res.json(describe(ctx, chainOf(ctx.manifest, ctx.identityId), identity?.name ?? null,
-    null, null, identity?.reviewedThroughFrame ?? null));
+  const chain = chainOf(ctx.manifest, ctx.identityId);
+  // No chain, but a binding an admin released: the claim was taken away, not
+  // never made. Without saying so the page just looks like a fresh start and
+  // the person's coverage has silently gone to zero.
+  let resetByAdmin = false;
+  if (!chain.length) {
+    const [own] = await db
+      .select({ state: claimMatchIdentityBindingsTable.state })
+      .from(claimMatchIdentityBindingsTable)
+      .where(and(
+        eq(claimMatchIdentityBindingsTable.recordingId, ctx.recordingId),
+        eq(claimMatchIdentityBindingsTable.userId, ctx.userId),
+      ));
+    resetByAdmin = own?.state === "released";
+  }
+  res.json(describe(ctx, chain, identity?.name ?? null,
+    null, null, identity?.reviewedThroughFrame ?? null, resetByAdmin));
 });
 
 /**

@@ -554,11 +554,24 @@ export default function ClaimChainPage() {
 
       {stage === "identify" && (
         <div className="claim-panel" data-testid="claim-chain-identify">
-          <h2>Find yourself</h2>
-          <p className="claim-muted">
-            Scrub to any moment where you can see yourself clearly, then tap yourself in the
-            picture. You only have to do this once — we follow you from there.
-          </p>
+          {chain?.resetByAdmin && !chain.chain.length ? (
+            <>
+              <h2>Your claim was reset</h2>
+              <p className="claim-muted" data-testid="claim-chain-reset-notice">
+                An administrator removed your claim on this match while tidying the identity
+                board. Nothing you did was wrong — scrub to a moment where you can see yourself
+                and tap yourself to start again.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2>Find yourself</h2>
+              <p className="claim-muted">
+                Scrub to any moment where you can see yourself clearly, then tap yourself in the
+                picture. You only have to do this once — we follow you from there.
+              </p>
+            </>
+          )}
         </div>
       )}
 

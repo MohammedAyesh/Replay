@@ -60,9 +60,37 @@ import {
 
 const router: IRouter = Router();
 
+/** Deterministic JSON: keys sorted at every level, so two equal structures
+ * hash equal regardless of the order jsonb or a client returned them in. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort()
+      .filter((key) => record[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * A digest of the identity map as it stands.
+ *
+ * The tracking fingerprint deliberately hashes geometry only, so it cannot
+ * tell a board that identities changed underneath it -- and identities change
+ * every time a player taps themselves on the claim page. The board echoes
+ * this on save and a mismatch is refused. It is the guard that does not
+ * depend on the bindings write having succeeded.
+ */
+export function identitiesFingerprint(identities: TrackingIdentity[] | undefined): string {
+  return createHash("sha256").update(canonicalJson(identities ?? [])).digest("hex").slice(0, 32);
+}
+
 /** identity board result: pieces of tracks that are one person */
 const IdentityMapBody = z.object({
   bundleFingerprint: z.string().min(1),
+  /** What the board loaded. Optional only for clients that predate it. */
+  identitiesFingerprint: z.string().min(1).optional(),
   confirmInvalidations: z.boolean().optional(),
   identities: z.array(z.object({
     id: z.string().min(1),
@@ -3189,6 +3217,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   }
 
   res.json(GetClaimMatchResponse.parse({
+    identitiesFingerprint: identitiesFingerprint(manifest.identities),
     recording: toRecording(row.recording, row.fieldName ?? null),
     // Bundles uploaded before videoStartSeconds existed have no value for it.
     // Default to 0 rather than failing the response, but that default is a
@@ -3982,6 +4011,15 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     });
     return;
   }
+  if (body.data.identitiesFingerprint !== undefined
+    && body.data.identitiesFingerprint !== identitiesFingerprint(row.bundle.manifest.identities)) {
+    res.status(409).json({
+      error: "Someone claimed themselves on this recording after you opened the board. Reload the identity board to see their row before saving.",
+      code: "identities_changed",
+      currentIdentitiesFingerprint: identitiesFingerprint(row.bundle.manifest.identities),
+    });
+    return;
+  }
   const storedFingerprint = row.bundle.manifest.provenance?.bundleFingerprint;
   if (typeof storedFingerprint === "string" && storedFingerprint !== currentFingerprint) {
     res.status(409).json({
@@ -4103,6 +4141,9 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     recordingId,
     identities: body.data.identities.length,
     bundleFingerprint: currentFingerprint,
+    // The board holds this for its next save. Without it the second save
+    // would be refused as stale, because the first one just changed the map.
+    identitiesFingerprint: identitiesFingerprint(identities),
     ...lockSummary,
   });
 });

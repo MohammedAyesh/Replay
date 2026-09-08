@@ -11,4 +11,9 @@ export interface TrackingIdentity {
   id: string;
   name?: string | null;
   parts: TrackingIdentityPart[];
+  /**
+     * Everything before this frame has been answered by the claimant on the claim page. Not the board's to change; declared so it survives a round trip through the board.
+     * @minimum 0
+     */
+  reviewedThroughFrame?: number;
 }

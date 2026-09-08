@@ -256,4 +256,88 @@ describe("a whole claim, answered the way a person answers it", () => {
     expect(reread.body.chain.length).toBeGreaterThan(0);
     expect(reread.body.nextUncertainty?.frame ?? null).not.toBe(700);
   });
+
+  /**
+   * The board's only protection against overwriting a claim was the
+   * vouched-fragment binding -- written by a fire-and-forget sync. This is
+   * the guard that does not depend on it: the board echoes a digest of the
+   * identities it loaded, and a save against a different map is refused.
+   */
+  it("a board opened before a claim cannot save over it, and reloading clears the refusal", async () => {
+    vi.mocked(getLocalUserId).mockResolvedValue(adminId);
+    const loaded = await request(app).get(`/api/recordings/${recordingId}/claim-match`);
+    expect(loaded.status).toBe(200);
+    const stale = loaded.body.identitiesFingerprint;
+    expect(typeof stale).toBe("string");
+    const fp = loaded.body.manifest.provenance.bundleFingerprint;
+
+    // A player claims themselves after the board was opened.
+    vi.mocked(getLocalUserId).mockResolvedValue(playerId);
+    await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10, name: "Mohammed" });
+
+    // The board saves what it loaded: an empty map.
+    vi.mocked(getLocalUserId).mockResolvedValue(adminId);
+    const refused = await request(app).put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({ bundleFingerprint: fp, identitiesFingerprint: stale, identities: [] });
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe("identities_changed");
+
+    // The claim is untouched.
+    vi.mocked(getLocalUserId).mockResolvedValue(playerId);
+    expect((await request(app).get(url())).body.chain.length).toBeGreaterThan(0);
+
+    // Reload, save the map as it now is, and the next save carries on.
+    vi.mocked(getLocalUserId).mockResolvedValue(adminId);
+    const fresh = await request(app).get(`/api/recordings/${recordingId}/claim-match`);
+    const saved = await request(app).put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({
+        bundleFingerprint: fp,
+        identitiesFingerprint: fresh.body.identitiesFingerprint,
+        identities: fresh.body.manifest.identities.map((i: any) => ({ id: i.id, name: i.name ?? null, parts: i.parts })),
+      });
+    expect(saved.status).toBe(200);
+    expect(typeof saved.body.identitiesFingerprint).toBe("string");
+    const again = await request(app).put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({
+        bundleFingerprint: fp,
+        identitiesFingerprint: saved.body.identitiesFingerprint,
+        identities: fresh.body.manifest.identities.map((i: any) => ({ id: i.id, name: i.name ?? null, parts: i.parts })),
+      });
+    expect(again.status).toBe(200);
+    vi.mocked(getLocalUserId).mockResolvedValue(playerId);
+  });
+
+  /**
+   * Release, then delete the row: the claimant's next load found no chain and
+   * looked like a fresh page, coverage silently at zero. Now it says so.
+   */
+  it("tells the claimant when an administrator removed their claim", async () => {
+    await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10, name: "Mohammed" });
+    const before = (await request(app).get(url())).body;
+    expect(before.resetByAdmin).toBe(false);
+
+    vi.mocked(getLocalUserId).mockResolvedValue(adminId);
+    const bindings = await request(app).get(`/api/admin/recordings/${recordingId}/claim-match/bindings`);
+    expect(bindings.status).toBe(200);
+    const mine = bindings.body.find((b: any) => b.personId === before.identityId);
+    expect(mine).toBeTruthy();
+    const released = await request(app).post(`/api/admin/claim-match/bindings/${mine.id}/release`).send({});
+    expect(released.status).toBe(200);
+
+    const loaded = await request(app).get(`/api/recordings/${recordingId}/claim-match`);
+    const fp = loaded.body.manifest.provenance.bundleFingerprint;
+    const wiped = await request(app).put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({ bundleFingerprint: fp, identitiesFingerprint: loaded.body.identitiesFingerprint, identities: [] });
+    expect(wiped.status).toBe(200);
+
+    vi.mocked(getLocalUserId).mockResolvedValue(playerId);
+    const after = (await request(app).get(url())).body;
+    expect(after.chain).toEqual([]);
+    expect(after.resetByAdmin).toBe(true);
+
+    // Claiming again clears it.
+    const retapped = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10 });
+    expect(retapped.status).toBe(200);
+    expect((await request(app).get(url())).body.resetByAdmin).toBe(false);
+  });
 });

@@ -11,6 +11,7 @@ import { useLocation, useParams } from "wouter";
 import { useAuth } from "@/lib/auth";
 import type { ClaimIdentityBinding, TrackingIdentity, TrackingManifest } from "@workspace/api-client-react";
 import { identityMapMatchesBundle } from "@/lib/claim-match-identities";
+import { partitionPinned, reattachPinned } from "@/lib/pin-vouched";
 import {
   restoreAcceptedBoard,
   type IdentityBoardDecision,
@@ -200,6 +201,35 @@ function buildRows(
   });
 }
 
+/**
+ * Regroup everything EXCEPT what a player has personally vouched for.
+ *
+ * buildRows regroups every part by reachability, claim rows included, and the
+ * server refuses any save that moves a vouched frame off its claim row (409,
+ * "human-vouched fragment") -- so once one player had claimed, Recompute and
+ * Save were both dead on that recording until every claim was released. The
+ * board froze exactly when someone wanted to tidy it. The pure parts live in
+ * lib/pin-vouched and are tested there.
+ */
+function buildRowsPinned(
+  all: Record<string, Track>,
+  fps: number,
+  pieces: Part[],
+  same: Set<string>,
+  different: Set<string>,
+  priorRows: Row[],
+  bindings: ClaimIdentityBinding[],
+): Row[] {
+  const { pinned, free } = partitionPinned(pieces, bindings);
+  if (!pinned.size) return buildRows(all, fps, pieces, same, different, priorRows);
+  return reattachPinned(
+    buildRows(all, fps, free, same, different, priorRows),
+    pinned,
+    priorRows,
+    (id, name, parts) => ({ id, name, parts }),
+  );
+}
+
 function autoRows(all: Record<string, Track>, frameRate: number) {
   const pieces = validTracks(all).map((track) => ({
     trackId: track.id,
@@ -317,6 +347,8 @@ export default function IdentityBoard() {
   const acceptedBoard = useRef<BoardSnapshot | null>(null);
   const [spriteCoverage, setSpriteCoverage] = useState<Array<{ name: string; ok: boolean; reason?: string }>>([]);
   const [bindings, setBindings] = useState<ClaimIdentityBinding[]>([]);
+  /** What the identity map looked like when this board loaded. Echoed on save. */
+  const identitiesFingerprintRef = useRef<string | null>(null);
   const nameBeforeEdit = useRef(new Map<string, string>());
   const cropCache = useRef(new Map<string, Crop[]>());
   const spriteReference = useRef(sprites);
@@ -348,9 +380,10 @@ export default function IdentityBoard() {
     let cancelled = false;
     (async () => {
       try {
-        const claim = await get<{ manifest: TrackingManifest }>(`/recordings/${recordingId}/claim-match`);
+        const claim = await get<{ manifest: TrackingManifest; identitiesFingerprint?: string }>(`/recordings/${recordingId}/claim-match`);
         if (cancelled) return;
         setManifest(claim.manifest);
+        identitiesFingerprintRef.current = claim.identitiesFingerprint ?? null;
         try {
           setBindings(await get<ClaimIdentityBinding[]>(`/admin/recordings/${recordingId}/claim-match/bindings`));
         } catch {
@@ -599,13 +632,13 @@ export default function IdentityBoard() {
       same: new Set(same),
       different: new Set(different),
     }]);
-    const recomputed = buildRows(tracks, fps, next.flatMap((row) => row.parts), nextSame, nextDifferent, next);
+    const recomputed = buildRowsPinned(tracks, fps, next.flatMap((row) => row.parts), nextSame, nextDifferent, next, bindings);
     setSame(nextSame);
     setDifferent(nextDifferent);
     setRows(recomputed);
     setDecisions(nextDecisions);
     flashMessage(message);
-  }, [decisions, different, flashMessage, fps, rows, same, tracks]);
+  }, [bindings, decisions, different, flashMessage, fps, rows, same, tracks]);
 
   const undo = () => {
     const previous = history.at(-1);
@@ -657,7 +690,7 @@ export default function IdentityBoard() {
   };
 
   const recompute = useCallback((message = "Recomputed grouping from the current constraints") => {
-    const next = buildRows(tracks, fps, rows.flatMap((row) => row.parts), same, different, rows);
+    const next = buildRowsPinned(tracks, fps, rows.flatMap((row) => row.parts), same, different, rows, bindings);
     const before = new Map(rows.flatMap((row) => row.parts.map((part) => [partKey(part), row.id] as const)));
     const moved = next.flatMap((row) => row.parts).filter((part) => before.get(partKey(part)) !== rowIdForPart(next, part)).length;
     setHistory((historyEntries) => [...historyEntries.slice(-30), {
@@ -668,7 +701,7 @@ export default function IdentityBoard() {
     }]);
     setRows(next);
     flashMessage(`${message}${moved ? ` · ${moved} piece${moved === 1 ? "" : "s"} moved` : ""}`);
-  }, [decisions, different, flashMessage, fps, rows, same, tracks]);
+  }, [bindings, decisions, different, flashMessage, fps, rows, same, tracks]);
 
   const rename = (id: string, name: string) => setRows((current) => current.map((row) => row.id === id ? { ...row, name } : row));
   const finishRename = (id: string) => {
@@ -687,7 +720,7 @@ export default function IdentityBoard() {
   };
 
   const save = async () => {
-    const next = buildRows(tracks, fps, rows.flatMap((row) => row.parts), same, different, rows);
+    const next = buildRowsPinned(tracks, fps, rows.flatMap((row) => row.parts), same, different, rows, bindings);
     setSaving(true);
     const restoreAccepted = () => {
       if (!acceptedBoard.current) return;
@@ -707,6 +740,7 @@ export default function IdentityBoard() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             bundleFingerprint: String(manifest?.provenance?.bundleFingerprint ?? ""),
+            identitiesFingerprint: identitiesFingerprintRef.current ?? undefined,
             identities: next.map((row) => ({ id: row.id, name: row.name || null, parts: row.parts })),
             identityDecisions: decisions,
           }),
@@ -716,10 +750,19 @@ export default function IdentityBoard() {
       if (res.status === 409) {
         const body = await res.json().catch(() => null) as {
           error?: string;
+          code?: string;
           lockedClaims?: number;
           lockedFragments?: number;
           requiresRelease?: boolean;
         } | null;
+        if (body?.code === "identities_changed") {
+          restoreAccepted();
+          flashMessage(
+            "Not saved: a player claimed themselves on this recording after you opened the board. Reload the board to see their row, then redo your change.",
+            true,
+          );
+          return;
+        }
         if (body?.requiresRelease) {
           restoreAccepted();
           flashMessage(
@@ -735,6 +778,8 @@ export default function IdentityBoard() {
         const body = await res.json().catch(() => null) as { error?: string } | null;
         throw new Error(body?.error || `save -> ${res.status}`);
       }
+      const savedBody = await res.json().catch(() => null) as { identitiesFingerprint?: string } | null;
+      if (savedBody?.identitiesFingerprint) identitiesFingerprintRef.current = savedBody.identitiesFingerprint;
       const acceptedConstraints = deriveConstraints(next);
       const accepted = {
         rows: next.map((row) => ({ ...row, parts: row.parts.map((part) => ({ ...part })) })),

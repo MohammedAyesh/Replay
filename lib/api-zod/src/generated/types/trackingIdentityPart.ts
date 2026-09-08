@@ -12,4 +12,9 @@ export interface TrackingIdentityPart {
   fromFrame: number;
   /** @minimum 0 */
   toFrame: number;
+  /**
+     * The frame of the claim-page decision that added this part, so an undo can reverse a whole decision. Absent on parts the identity board wrote. Declared here so the response validator stops stripping it on the way to the board.
+     * @minimum 0
+     */
+  tapFrame?: number;
 }

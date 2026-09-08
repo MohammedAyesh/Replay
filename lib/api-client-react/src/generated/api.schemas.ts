@@ -700,12 +700,22 @@ export interface TrackingIdentityPart {
   fromFrame: number;
   /** @minimum 0 */
   toFrame: number;
+  /**
+     * The frame of the claim-page decision that added this part, so an undo can reverse a whole decision. Absent on parts the identity board wrote. Declared here so the response validator stops stripping it on the way to the board.
+     * @minimum 0
+     */
+  tapFrame?: number;
 }
 
 export interface TrackingIdentity {
   id: string;
   name?: string | null;
   parts: TrackingIdentityPart[];
+  /**
+     * Everything before this frame has been answered by the claimant on the claim page. Not the board's to change; declared so it survives a round trip through the board.
+     * @minimum 0
+     */
+  reviewedThroughFrame?: number;
 }
 
 export type TrackingIdentityDecisionAction = typeof TrackingIdentityDecisionAction[keyof typeof TrackingIdentityDecisionAction];
@@ -1207,6 +1217,8 @@ export type ClaimChainIdentityMap = {
 };
 
 export interface ClaimChain {
+  /** True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start. */
+  resetByAdmin: boolean;
   recordingId: number;
   /** The caller's identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board. */
   identityId: string;
@@ -1316,6 +1328,8 @@ export interface ClaimOffPitchDeleteResponse {
 }
 
 export interface ClaimMatchResponse {
+  /** A digest of manifest.identities as served. The identity board echoes it on save, and a save against a different value is refused - which is how a board opened before a player claimed themselves is stopped from overwriting that claim, independent of the vouched-fragment bindings. */
+  identitiesFingerprint?: string;
   recording: Recording;
   manifest: TrackingManifest;
   progress: ClaimProgress;

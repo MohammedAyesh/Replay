@@ -307,6 +307,10 @@ export const getClaimMatchResponseManifestIdentitiesItemPartsItemFromFrameMin = 
 
 export const getClaimMatchResponseManifestIdentitiesItemPartsItemToFrameMin = 0;
 
+export const getClaimMatchResponseManifestIdentitiesItemPartsItemTapFrameMin = 0;
+
+export const getClaimMatchResponseManifestIdentitiesItemReviewedThroughFrameMin = 0;
+
 export const getClaimMatchResponseManifestIdentityDecisionsItemFromFrameMin = 0;
 
 export const getClaimMatchResponseManifestIdentityDecisionsItemToFrameMin = 0;
@@ -383,6 +387,7 @@ export const getClaimMatchResponseOffPitchSecondsMin = 0;
 
 
 export const GetClaimMatchResponse = zod.object({
+  "identitiesFingerprint": zod.string().optional().describe('A digest of manifest.identities as served. The identity board echoes it on save, and a save against a different value is refused - which is how a board opened before a player claimed themselves is stopped from overwriting that claim, independent of the vouched-fragment bindings.'),
   "recording": zod.object({
   "id": zod.number(),
   "fieldId": zod.number(),
@@ -433,8 +438,10 @@ export const GetClaimMatchResponse = zod.object({
   "parts": zod.array(zod.object({
   "trackId": zod.string(),
   "fromFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemPartsItemFromFrameMin),
-  "toFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemPartsItemToFrameMin)
-}))
+  "toFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemPartsItemToFrameMin),
+  "tapFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemPartsItemTapFrameMin).optional().describe('The frame of the claim-page decision that added this part, so an undo can reverse a whole decision. Absent on parts the identity board wrote. Declared here so the response validator stops stripping it on the way to the board.')
+})),
+  "reviewedThroughFrame": zod.number().min(getClaimMatchResponseManifestIdentitiesItemReviewedThroughFrameMin).optional().describe('Everything before this frame has been answered by the claimant on the claim page. Not the board\'s to change; declared so it survives a round trip through the board.')
 })).optional().describe('The identity board\'s result - pieces of tracks that are one person. Optional.'),
   "identityDecisions": zod.array(zod.object({
   "trackId": zod.string(),
@@ -2351,6 +2358,7 @@ export const GetClaimChainParams = zod.object({
 })
 
 export const GetClaimChainResponse = zod.object({
+  "resetByAdmin": zod.boolean().describe('True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start.'),
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
   "identityMap": zod.object({
@@ -2408,6 +2416,7 @@ export const TapClaimChainBody = zod.object({
 })
 
 export const TapClaimChainResponse = zod.object({
+  "resetByAdmin": zod.boolean().describe('True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start.'),
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
   "identityMap": zod.object({
@@ -2459,6 +2468,7 @@ export const RejectClaimChainFromBody = zod.object({
 })
 
 export const RejectClaimChainFromResponse = zod.object({
+  "resetByAdmin": zod.boolean().describe('True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start.'),
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
   "identityMap": zod.object({
@@ -2510,6 +2520,7 @@ export const ConfirmClaimChainAtBody = zod.object({
 })
 
 export const ConfirmClaimChainAtResponse = zod.object({
+  "resetByAdmin": zod.boolean().describe('True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start.'),
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
   "identityMap": zod.object({
@@ -2549,6 +2560,7 @@ export const UndoClaimChainLastParams = zod.object({
 })
 
 export const UndoClaimChainLastResponse = zod.object({
+  "resetByAdmin": zod.boolean().describe('True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start.'),
   "recordingId": zod.number(),
   "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
   "identityMap": zod.object({

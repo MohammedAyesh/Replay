@@ -2639,6 +2639,14 @@ components:
         toFrame:
           type: integer
           minimum: 0
+        tapFrame:
+          type: integer
+          minimum: 0
+          description: >-
+            The frame of the claim-page decision that added this part, so an
+            undo can reverse a whole decision. Absent on parts the identity
+            board wrote. Declared here so the response validator stops
+            stripping it on the way to the board.
 
     TrackingIdentity:
       type: object
@@ -2653,6 +2661,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TrackingIdentityPart"
+        reviewedThroughFrame:
+          type: integer
+          minimum: 0
+          description: >-
+            Everything before this frame has been answered by the claimant on
+            the claim page. Not the board's to change; declared so it survives
+            a round trip through the board.
 
     TrackingIdentityDecision:
       type: object
@@ -3236,8 +3251,16 @@ components:
       type: object
       required:
         [recordingId, identityId, identityMap, name, bundleFingerprint, frameRate,
-         chain, coverageSeconds, coveragePercent, nextUncertainty, labelRecorded]
+         chain, coverageSeconds, coveragePercent, nextUncertainty, labelRecorded,
+         resetByAdmin]
       properties:
+        resetByAdmin:
+          type: boolean
+          description: >-
+            True when this claimant has no chain but an administrator released
+            their claim on the identity board - i.e. the claim was removed by
+            someone else, not by the claimant. The page says so instead of
+            looking like a fresh start.
         recordingId:
           type: integer
         identityId:
@@ -3409,6 +3432,14 @@ components:
       type: object
       required: [recording, manifest, progress, corrections, offPitchSpans, offPitchSeconds]
       properties:
+        identitiesFingerprint:
+          type: string
+          description: >-
+            A digest of manifest.identities as served. The identity board
+            echoes it on save, and a save against a different value is refused
+            - which is how a board opened before a player claimed themselves
+            is stopped from overwriting that claim, independent of the
+            vouched-fragment bindings.
         recording:
           $ref: "#/components/schemas/Recording"
         manifest:

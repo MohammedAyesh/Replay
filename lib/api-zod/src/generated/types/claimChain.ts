@@ -10,6 +10,8 @@ import type { ClaimChainPart } from './claimChainPart';
 import type { ClaimChainUncertainty } from './claimChainUncertainty';
 
 export interface ClaimChain {
+  /** True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start. */
+  resetByAdmin: boolean;
   recordingId: number;
   /** The caller's identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board. */
   identityId: string;
