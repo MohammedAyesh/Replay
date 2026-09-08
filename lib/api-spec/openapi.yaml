@@ -270,7 +270,7 @@ paths:
     get:
       operationId: getClaimMatch
       tags: [claimMatch]
-      summary: Get a recording tracking bundle and the current player's claim progress
+      summary: Get a recording tracking bundle
       security:
         - clerkSession: []
       parameters:
@@ -290,55 +290,6 @@ paths:
           description: Authenticated account required
         "404":
           description: Recording or tracking bundle not found
-
-    patch:
-      operationId: updateClaimMatchProgress
-      tags: [claimMatch]
-      summary: Save claim progress for the current player
-      security:
-        - clerkSession: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ClaimProgressInput"
-      responses:
-        "200":
-          description: Updated claim progress
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClaimProgress"
-        "401":
-          description: Authenticated account required
-        "404":
-          description: Recording or tracking bundle not found
-
-  /claim-match/demo/reset:
-    post:
-      operationId: resetClaimMatchDemo
-      tags: [claimMatch]
-      summary: Reset the current player's Claim Demo progress
-      security:
-        - clerkSession: []
-      responses:
-        "200":
-          description: Claim Demo reset
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClaimMatchDemoResetResponse"
-        "401":
-          description: Authenticated account required
-        "404":
-          description: No tracking bundle has been uploaded yet
 
   /claim-match/clips:
     get:
@@ -459,43 +410,6 @@ paths:
         "400":
           description: Invalid recording id
 
-  /recordings/{id}/claim-match/corrections:
-    post:
-      operationId: createClaimMatchCorrection
-      tags: [claimMatch]
-      summary: Record an identity correction, safely repeatable by client id
-      security:
-        - clerkSession: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ClaimCorrectionInput"
-      responses:
-        "200":
-          description: Correction already recorded or recorded now
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClaimCorrection"
-        "201":
-          description: Correction recorded
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClaimCorrection"
-        "401":
-          description: Authenticated account required
-        "404":
-          description: Recording or tracking bundle not found
-
   /recordings/{id}/claim-match/segments/{segmentIndex}:
     get:
       operationId: getClaimMatchSegment
@@ -534,33 +448,6 @@ paths:
           description: Authenticated account required
         "404":
           description: Recording or tracking segment not found
-
-  /claim-match/corrections/{correctionId}:
-    delete:
-      operationId: undoClaimMatchCorrection
-      tags: [claimMatch]
-      summary: Undo a previously synced correction
-      security:
-        - clerkSession: []
-      parameters:
-        - name: correctionId
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Correction marked undone
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClaimCorrection"
-        "401":
-          description: Authenticated account required
-        "403":
-          description: Correction belongs to another user
-        "404":
-          description: Correction not found
 
   /recordings/{id}/claim-match/off-pitch:
     post:
@@ -2949,31 +2836,6 @@ components:
           type: integer
           description: The user clip row backing this earned moment, when materialized.
 
-    ClaimCorrection:
-      type: object
-      required: [id, clientId, recordingId, momentSeconds, chosenTrackId, answerMethod, questionCount, undone, createdAt]
-      properties:
-        id:
-          type: integer
-        clientId:
-          type: string
-        recordingId:
-          type: integer
-        momentSeconds:
-          type: number
-        rejectedTrackId:
-          type: ["string", "null"]
-        chosenTrackId:
-          type: string
-        answerMethod:
-          type: string
-        questionCount:
-          type: integer
-        undone:
-          type: boolean
-        createdAt:
-          type: string
-
     ClaimPlayerStats:
       type: object
       required: [confirmedSeconds, minutesPlayed, coveragePercent, answeredMoments, acceptedMoments, trackedSegments, totalSegments, matchedEvents, heatmap, distanceMetres, averageSpeedMetresPerSecond, touches, passes, shots, dribbles]
@@ -3101,124 +2963,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AdminPlayerMetrics"
-
-    ClaimProgress:
-      type: object
-      required: [recordingId, stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, coverageSeconds, coveragePercent, offPitchSeconds, humanVouchedSeconds, inferredSeconds, vouchedFragments, takenFragments, answeredAnchorCount, acceptedAnchorCount, unresolvedMoments, conflictMoments, identityBinding, clipsUnlocked, correctionCount, completed, earnedClips, completionReason, playerStats, updatedAt]
-      properties:
-        recordingId:
-          type: integer
-        currentTrackId:
-          type: ["string", "null"]
-        stage:
-          type: string
-        confirmedFromSeconds:
-          type: number
-        currentPositionSeconds:
-          type: number
-        claimedPercent:
-          type: number
-          description: >-
-            Backwards-compatible name for coveragePercent. This is derived from
-            accepted attributed person-seconds on the server, never from UI stage.
-        coverageSeconds:
-          type: number
-          minimum: 0
-          description: Union of the accepted track spans, in tracking seconds.
-        coveragePercent:
-          type: number
-          minimum: 0
-          maximum: 100
-          description: coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.
-        offPitchSeconds:
-          type: number
-          minimum: 0
-          description: Union of this claimant's declared off-pitch periods in tracking seconds.
-        humanVouchedSeconds:
-          type: number
-          minimum: 0
-          description: Union of contiguous tracking fragments directly accepted by this claimant.
-        inferredSeconds:
-          type: number
-          minimum: 0
-          description: Attributed tracking time supplied by the identity grouping rather than a direct answer.
-        vouchedFragments:
-          type: array
-          items:
-            $ref: "#/components/schemas/ClaimVouchedFragment"
-        takenFragments:
-          type: array
-          description: Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant.
-          items:
-            $ref: "#/components/schemas/ClaimTakenFragment"
-        answeredAnchorCount:
-          type: integer
-          minimum: 0
-        acceptedAnchorCount:
-          type: integer
-          minimum: 0
-        unresolvedMoments:
-          type: array
-          description: Anchor moments answered as not me or skipped.
-          items:
-            type: number
-            minimum: 0
-        conflictMoments:
-          type: array
-          description: Accepted moments attributed to a different person than the current winner.
-          items:
-            type: number
-            minimum: 0
-        identityBinding:
-          oneOf:
-            - $ref: "#/components/schemas/ClaimIdentityBinding"
-            - type: "null"
-        clipsUnlocked:
-          type: integer
-        correctionCount:
-          type: integer
-        completed:
-          type: boolean
-        completionReason:
-          type: string
-        earnedClips:
-          type: array
-          items:
-            $ref: "#/components/schemas/ClaimEarnedClip"
-        playerStats:
-          $ref: "#/components/schemas/ClaimPlayerStats"
-        updatedAt:
-          type: string
-
-    ClaimProgressInput:
-      type: object
-      required: [stage, confirmedFromSeconds, currentPositionSeconds, claimedPercent, clipsUnlocked, completed]
-      properties:
-        currentTrackId:
-          type: ["string", "null"]
-        stage:
-          type: string
-        confirmedFromSeconds:
-          type: number
-          minimum: 0
-        currentPositionSeconds:
-          type: number
-          minimum: 0
-        claimedPercent:
-          type: number
-          minimum: 0
-          maximum: 100
-          description: Accepted for backwards compatibility; the server recalculates it.
-        clipsUnlocked:
-          type: integer
-          minimum: 0
-        completed:
-          type: boolean
-          description: Accepted for backwards compatibility; the server recalculates it.
-        earnedClips:
-          type: array
-          items:
-            $ref: "#/components/schemas/ClaimEarnedClip"
 
     ClaimChainPart:
       type: object
@@ -3391,26 +3135,6 @@ components:
         bundleFingerprint:
           type: ["string", "null"]
 
-    ClaimCorrectionInput:
-      type: object
-      required: [clientId, momentSeconds, chosenTrackId, answerMethod, questionCount]
-      properties:
-        clientId:
-          type: string
-          minLength: 1
-        momentSeconds:
-          type: number
-          minimum: 0
-        rejectedTrackId:
-          type: ["string", "null"]
-        chosenTrackId:
-          type: string
-        answerMethod:
-          type: string
-        questionCount:
-          type: integer
-          minimum: 0
-
     ClaimOffPitchInput:
       type: object
       required: [clientId, fromSeconds, toSeconds]
@@ -3456,7 +3180,7 @@ components:
 
     ClaimMatchResponse:
       type: object
-      required: [recording, manifest, progress, corrections, offPitchSpans, offPitchSeconds]
+      required: [identitiesFingerprint, recording, manifest, offPitchSpans, offPitchSeconds]
       properties:
         identitiesFingerprint:
           type: string
@@ -3470,12 +3194,6 @@ components:
           $ref: "#/components/schemas/Recording"
         manifest:
           $ref: "#/components/schemas/TrackingManifest"
-        progress:
-          $ref: "#/components/schemas/ClaimProgress"
-        corrections:
-          type: array
-          items:
-            $ref: "#/components/schemas/ClaimCorrection"
         offPitchSpans:
           type: array
           items:
@@ -3483,15 +3201,6 @@ components:
         offPitchSeconds:
           type: number
           minimum: 0
-
-    ClaimMatchDemoResetResponse:
-      type: object
-      required: [recordingId, reset]
-      properties:
-        recordingId:
-          type: integer
-        reset:
-          type: boolean
 
     ClaimMatchClipGroup:
       type: object
@@ -3574,15 +3283,6 @@ components:
         toFrame:
           type: integer
           minimum: 0
-
-    ClaimTakenFragment:
-      allOf:
-        - $ref: "#/components/schemas/ClaimVouchedFragment"
-        - type: object
-          required: [ownedByCurrentUser]
-          properties:
-            ownedByCurrentUser:
-              type: boolean
 
     ClaimedMatchHistoryItem:
       type: object

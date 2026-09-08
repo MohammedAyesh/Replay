@@ -895,20 +895,6 @@ export interface ClaimEarnedClip {
   userClipId?: number;
 }
 
-export interface ClaimCorrection {
-  id: number;
-  clientId: string;
-  recordingId: number;
-  momentSeconds: number;
-  /** @nullable */
-  rejectedTrackId?: string | null;
-  chosenTrackId: string;
-  answerMethod: string;
-  questionCount: number;
-  undone: boolean;
-  createdAt: string;
-}
-
 /**
  * Pitch-normalized coordinates when calibrated, otherwise image coordinates.
  */
@@ -1036,148 +1022,6 @@ export interface AdminRecordingPlayerMetricsResponse {
   players: AdminPlayerMetrics[];
 }
 
-export interface ClaimVouchedFragment {
-  trackId: string;
-  /** @minimum 0 */
-  fromFrame: number;
-  /** @minimum 0 */
-  toFrame: number;
-}
-
-export type ClaimTakenFragment = ClaimVouchedFragment & {
-  ownedByCurrentUser: boolean;
-};
-
-export type ClaimIdentityBindingResolutionMethod = typeof ClaimIdentityBindingResolutionMethod[keyof typeof ClaimIdentityBindingResolutionMethod];
-
-
-export const ClaimIdentityBindingResolutionMethod = {
-  'identity-map': 'identity-map',
-  'track-fallback': 'track-fallback',
-  chain: 'chain',
-} as const;
-
-export type ClaimIdentityBindingState = typeof ClaimIdentityBindingState[keyof typeof ClaimIdentityBindingState];
-
-
-export const ClaimIdentityBindingState = {
-  pending: 'pending',
-  confirmed: 'confirmed',
-  disputed: 'disputed',
-  needs_resolution: 'needs_resolution',
-  released: 'released',
-  rejected: 'rejected',
-} as const;
-
-export interface ClaimIdentityBinding {
-  id: number;
-  personId: string;
-  trackingBundleId: number;
-  bundleFingerprint: string;
-  resolutionMethod: ClaimIdentityBindingResolutionMethod;
-  /** @minimum 0 */
-  supportCount: number;
-  /** @minimum 0 */
-  acceptedAnswerCount: number;
-  /**
-     * @minimum 0
-     * @maximum 100
-     */
-  supportPercent: number;
-  vouchedFragments: ClaimVouchedFragment[];
-  state: ClaimIdentityBindingState;
-  /** Claimant name. Returned only by the admin binding-list endpoint. */
-  claimantName?: string;
-  /** When the claimant created this binding. Returned only by the admin binding-list endpoint. */
-  claimedAt?: string;
-  /** @nullable */
-  resolvedAt: string | null;
-  updatedAt: string;
-}
-
-export interface ClaimProgress {
-  recordingId: number;
-  /** @nullable */
-  currentTrackId?: string | null;
-  stage: string;
-  confirmedFromSeconds: number;
-  currentPositionSeconds: number;
-  /** Backwards-compatible name for coveragePercent. This is derived from accepted attributed person-seconds on the server, never from UI stage. */
-  claimedPercent: number;
-  /**
-     * Union of the accepted track spans, in tracking seconds.
-     * @minimum 0
-     */
-  coverageSeconds: number;
-  /**
-     * coverageSeconds divided by tracked duration minus declared off-pitch time, with a minimum one-second denominator.
-     * @minimum 0
-     * @maximum 100
-     */
-  coveragePercent: number;
-  /**
-     * Union of this claimant's declared off-pitch periods in tracking seconds.
-     * @minimum 0
-     */
-  offPitchSeconds: number;
-  /**
-     * Union of contiguous tracking fragments directly accepted by this claimant.
-     * @minimum 0
-     */
-  humanVouchedSeconds: number;
-  /**
-     * Attributed tracking time supplied by the identity grouping rather than a direct answer.
-     * @minimum 0
-     */
-  inferredSeconds: number;
-  vouchedFragments: ClaimVouchedFragment[];
-  /** Source-track fragments vouched for by claimants; owned fragments remain selectable for the current claimant. */
-  takenFragments: ClaimTakenFragment[];
-  /** @minimum 0 */
-  answeredAnchorCount: number;
-  /** @minimum 0 */
-  acceptedAnchorCount: number;
-  /**
-     * Anchor moments answered as not me or skipped.
-     * @items.minimum 0
-     */
-  unresolvedMoments: number[];
-  /**
-     * Accepted moments attributed to a different person than the current winner.
-     * @items.minimum 0
-     */
-  conflictMoments: number[];
-  identityBinding: ClaimIdentityBinding | null;
-  clipsUnlocked: number;
-  correctionCount: number;
-  completed: boolean;
-  completionReason: string;
-  earnedClips: ClaimEarnedClip[];
-  playerStats: ClaimPlayerStats;
-  updatedAt: string;
-}
-
-export interface ClaimProgressInput {
-  /** @nullable */
-  currentTrackId?: string | null;
-  stage: string;
-  /** @minimum 0 */
-  confirmedFromSeconds: number;
-  /** @minimum 0 */
-  currentPositionSeconds: number;
-  /**
-     * Accepted for backwards compatibility; the server recalculates it.
-     * @minimum 0
-     * @maximum 100
-     */
-  claimedPercent: number;
-  /** @minimum 0 */
-  clipsUnlocked: number;
-  /** Accepted for backwards compatibility; the server recalculates it. */
-  completed: boolean;
-  earnedClips?: ClaimEarnedClip[];
-}
-
 export interface ClaimChainPart {
   trackId: string;
   fromFrame: number;
@@ -1295,19 +1139,6 @@ export interface ClaimChainFrameInput {
   bundleFingerprint?: string | null;
 }
 
-export interface ClaimCorrectionInput {
-  /** @minLength 1 */
-  clientId: string;
-  /** @minimum 0 */
-  momentSeconds: number;
-  /** @nullable */
-  rejectedTrackId?: string | null;
-  chosenTrackId: string;
-  answerMethod: string;
-  /** @minimum 0 */
-  questionCount: number;
-}
-
 export interface ClaimOffPitchInput {
   /** @minLength 1 */
   clientId: string;
@@ -1340,19 +1171,12 @@ export interface ClaimOffPitchDeleteResponse {
 
 export interface ClaimMatchResponse {
   /** A digest of manifest.identities as served. The identity board echoes it on save, and a save against a different value is refused - which is how a board opened before a player claimed themselves is stopped from overwriting that claim, independent of the vouched-fragment bindings. */
-  identitiesFingerprint?: string;
+  identitiesFingerprint: string;
   recording: Recording;
   manifest: TrackingManifest;
-  progress: ClaimProgress;
-  corrections: ClaimCorrection[];
   offPitchSpans: ClaimOffPitchSpan[];
   /** @minimum 0 */
   offPitchSeconds: number;
-}
-
-export interface ClaimMatchDemoResetResponse {
-  recordingId: number;
-  reset: boolean;
 }
 
 export interface ClaimMatchClipGroup {
@@ -1365,6 +1189,61 @@ export interface ClaimMatchClipGroup {
 }
 
 export type ClaimMatchClipsResponse = ClaimMatchClipGroup[];
+
+export type ClaimIdentityBindingResolutionMethod = typeof ClaimIdentityBindingResolutionMethod[keyof typeof ClaimIdentityBindingResolutionMethod];
+
+
+export const ClaimIdentityBindingResolutionMethod = {
+  'identity-map': 'identity-map',
+  'track-fallback': 'track-fallback',
+  chain: 'chain',
+} as const;
+
+export type ClaimIdentityBindingState = typeof ClaimIdentityBindingState[keyof typeof ClaimIdentityBindingState];
+
+
+export const ClaimIdentityBindingState = {
+  pending: 'pending',
+  confirmed: 'confirmed',
+  disputed: 'disputed',
+  needs_resolution: 'needs_resolution',
+  released: 'released',
+  rejected: 'rejected',
+} as const;
+
+export interface ClaimVouchedFragment {
+  trackId: string;
+  /** @minimum 0 */
+  fromFrame: number;
+  /** @minimum 0 */
+  toFrame: number;
+}
+
+export interface ClaimIdentityBinding {
+  id: number;
+  personId: string;
+  trackingBundleId: number;
+  bundleFingerprint: string;
+  resolutionMethod: ClaimIdentityBindingResolutionMethod;
+  /** @minimum 0 */
+  supportCount: number;
+  /** @minimum 0 */
+  acceptedAnswerCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  supportPercent: number;
+  vouchedFragments: ClaimVouchedFragment[];
+  state: ClaimIdentityBindingState;
+  /** Claimant name. Returned only by the admin binding-list endpoint. */
+  claimantName?: string;
+  /** When the claimant created this binding. Returned only by the admin binding-list endpoint. */
+  claimedAt?: string;
+  /** @nullable */
+  resolvedAt: string | null;
+  updatedAt: string;
+}
 
 export type ClaimedMatchHistoryItemState = typeof ClaimedMatchHistoryItemState[keyof typeof ClaimedMatchHistoryItemState];
 

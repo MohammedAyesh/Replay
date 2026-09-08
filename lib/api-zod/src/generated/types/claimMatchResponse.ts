@@ -5,19 +5,15 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
-import type { ClaimCorrection } from './claimCorrection';
 import type { ClaimOffPitchSpan } from './claimOffPitchSpan';
-import type { ClaimProgress } from './claimProgress';
 import type { Recording } from './recording';
 import type { TrackingManifest } from './trackingManifest';
 
 export interface ClaimMatchResponse {
   /** A digest of manifest.identities as served. The identity board echoes it on save, and a save against a different value is refused - which is how a board opened before a player claimed themselves is stopped from overwriting that claim, independent of the vouched-fragment bindings. */
-  identitiesFingerprint?: string;
+  identitiesFingerprint: string;
   recording: Recording;
   manifest: TrackingManifest;
-  progress: ClaimProgress;
-  corrections: ClaimCorrection[];
   offPitchSpans: ClaimOffPitchSpan[];
   /** @minimum 0 */
   offPitchSeconds: number;

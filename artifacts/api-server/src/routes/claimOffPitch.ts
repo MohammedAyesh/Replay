@@ -3,7 +3,6 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   db,
-  claimMatchCorrectionsTable,
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   recordingTrackingBundlesTable,
@@ -133,15 +132,6 @@ type BindingConflict = {
   toSeconds: number;
 };
 
-function isAcceptedCorrection(
-  correction: typeof claimMatchCorrectionsTable.$inferSelect,
-): boolean {
-  return !correction.undone
-    && correction.chosenTrackId !== "__none__"
-    && correction.answerMethod !== "anchor-no"
-    && correction.answerMethod !== "anchor-skip";
-}
-
 function fragmentSeconds(fragment: VouchedFragment, frameRate: number): OffPitchSpan {
   return {
     fromSeconds: fragment.fromFrame / frameRate,
@@ -261,25 +251,15 @@ router.post("/recordings/:id/claim-match/off-pitch", async (req, res): Promise<v
         toSeconds: Math.min(span.toSeconds, candidate.toSeconds),
       }));
     }));
-  const corrections = await db
-    .select()
-    .from(claimMatchCorrectionsTable)
-    .where(and(
-      eq(claimMatchCorrectionsTable.userId, userId),
-      eq(claimMatchCorrectionsTable.recordingId, recordingId),
-      eq(claimMatchCorrectionsTable.undone, false),
-    ));
-  const correctionConflicts = corrections.filter((correction) =>
-    isAcceptedCorrection(correction)
-    && correction.momentSeconds >= candidate.fromSeconds
-    && correction.momentSeconds < candidate.toSeconds);
-  const hasConflicts = bindingConflicts.length > 0 || correctionConflicts.length > 0;
+  // A claim is the binding and its vouched fragments. There is no second
+  // place an answer can live any more, so the fragments are the whole check.
+  const hasConflicts = bindingConflicts.length > 0;
   if (hasConflicts && !body.data.confirmConflict) {
     res.status(409).json({
       error: "off-pitch-conflict",
-      message: "This period overlaps your vouched identity fragments or accepted answers. Confirm the conflict explicitly before saving it.",
+      message: "This period overlaps the stretches you have claimed. Confirm the conflict explicitly before saving it.",
       conflicts: bindingConflicts.map(({ fromSeconds, toSeconds }) => ({ fromSeconds, toSeconds })),
-      correctionCount: correctionConflicts.length,
+      correctionCount: 0,
       requiresExplicitConflictRelease: true,
     });
     return;
@@ -318,17 +298,6 @@ router.post("/recordings/:id/claim-match/off-pitch", async (req, res): Promise<v
             eq(claimMatchIdentityBindingsTable.id, binding.id),
             eq(claimMatchIdentityBindingsTable.userId, userId),
             eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
-          ));
-      }
-      for (const correction of correctionConflicts) {
-        await tx
-          .update(claimMatchCorrectionsTable)
-          .set({ undone: true, updatedAt: new Date() })
-          .where(and(
-            eq(claimMatchCorrectionsTable.id, correction.id),
-            eq(claimMatchCorrectionsTable.userId, userId),
-            eq(claimMatchCorrectionsTable.recordingId, recordingId),
-            eq(claimMatchCorrectionsTable.undone, false),
           ));
       }
     }

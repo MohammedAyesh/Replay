@@ -13,7 +13,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 
   const isLogin = location === "/";
-  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim-match/");
+  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/");
   const isWatchFeed = location === "/home";
   const { isFullscreenVideo } = useFullscreenVideo();
 

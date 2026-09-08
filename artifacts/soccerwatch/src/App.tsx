@@ -27,7 +27,7 @@ import NotFound from "@/pages/not-found";
 import Academies from "@/pages/academies";
 import View from "@/pages/view";
 import Live from "@/pages/live";
-import ClaimMatch from "@/pages/claim-match";
+import ClaimDemo from "@/pages/claim-demo";
 import ClaimChain from "@/pages/claim-chain";
 import IdentityBoard from "@/pages/identity-board";
 import { useAuth } from "@/lib/auth";
@@ -443,8 +443,7 @@ function AppRouter() {
         <Route path="/players/:id" component={Profile} />
         <Route path="/my-clips" component={MyClips} />
         <Route path="/live" component={Live} />
-        <Route path="/claim-match/demo" component={ClaimMatch} />
-        <Route path="/claim-match/:id" component={ClaimMatch} />
+        <Route path="/claim/demo" component={ClaimDemo} />
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
         <Route path="/admin" component={Admin} />

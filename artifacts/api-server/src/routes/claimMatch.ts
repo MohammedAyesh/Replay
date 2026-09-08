@@ -6,7 +6,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync as nodeGunzipSync } from "node:zlib";
 import { z } from "zod";
 import {
-  CreateClaimMatchCorrectionBody,
   GetClaimMatchResponse,
   GetClaimMatchParams,
   GetClaimMatchSegmentParams,
@@ -16,9 +15,9 @@ import {
   UpdateTrackingBundleBody,
   UpdateTrackingBundleResponse,
   GetAdminRecordingPlayerMetricsResponse,
-  UpdateClaimMatchProgressBody,
 } from "@workspace/api-zod";
 import {
+  camerasTable,
   db,
   usersTable,
   recordingsTable,
@@ -26,7 +25,6 @@ import {
   recordingTrackingBundlesTable,
   recordingTrackingSegmentsTable,
   claimMatchProgressTable,
-  claimMatchCorrectionsTable,
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   type TrackingManifest,
@@ -41,6 +39,24 @@ import {
   type TrackingIdentityDecision,
 } from "@workspace/db";
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { manifestWithPitchModel } from "../lib/cameraPitchModel";
+import { chainPlayerMetrics, deriveChainClaimState } from "../lib/claimChainState";
+import { asRecord, firstNumber, firstString, type UnknownRecord } from "../lib/jsonCoerce";
+import {
+  hasUsablePitchModel,
+  interpolatePitchPosition,
+  manifestForClient,
+  parsePitchModel,
+  pitchModelFramingError,
+  pitchModelSummary,
+  validatePitchModelForManifest,
+} from "../lib/pitchModel";
+import {
+  buildPlayerMetrics,
+  unavailablePlayerMetric,
+  type ClaimedRange,
+  type UnavailablePlayerMetric,
+} from "../lib/playerMetrics";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { logger } from "../lib/logger";
 import { ensureClaimMomentUserClip } from "./userClips";
@@ -175,7 +191,6 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
   return user?.isAdmin ? user.id : null;
 }
 
-type UnknownRecord = Record<string, unknown>;
 
 /**
  * Carry the pipeline's own provenance through from an uploaded bundle.
@@ -228,166 +243,6 @@ export function sanitizeUploadedProvenance(value: unknown): Record<string, unkno
     // is a record of how the bundle was made, not a place to park structures.
   }
   return Object.keys(out).length ? out : undefined;
-}
-
-function asRecord(value: unknown): UnknownRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as UnknownRecord
-    : {};
-}
-
-function firstNumber(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) {
-      return Number(value);
-    }
-  }
-  return undefined;
-}
-
-function firstString(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim() !== "") return value;
-    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
-  }
-  return undefined;
-}
-
-function parsePitchModel(input: unknown): { model?: TrackingPitchModel; error?: string } {
-  if (input === undefined || input === null) return {};
-  const source = asRecord(input);
-  const calibrationId = firstString(source.calibrationId, source.calibrationIdentifier, source.calibration_id);
-  const fittedAt = firstString(
-    source.fittedAt,
-    source.fitDate,
-    source.fittedDate,
-    source.fitted_at,
-    source.fit_date,
-    source.calibratedAt,
-    source.calibrated_at,
-  );
-  const calibratedAspectRatio = firstNumber(
-    source.calibratedAspectRatio,
-    source.calibrationAspectRatio,
-    source.aspectRatio,
-    source.sourceAspectRatio,
-    source.calibrated_aspect_ratio,
-    source.aspect_ratio,
-  );
-  const pitchWidthMetres = firstNumber(source.pitchWidthMetres);
-  const pitchHeightMetres = firstNumber(source.pitchHeightMetres);
-  const rawGrid = source.grid;
-  if (!calibrationId) return { error: "Pitch model calibrationId is required" };
-  if (!fittedAt || Number.isNaN(Date.parse(fittedAt))) {
-    return { error: "Pitch model fittedAt must be a valid date-time" };
-  }
-  if (calibratedAspectRatio === undefined || calibratedAspectRatio <= 0) {
-    return { error: "Pitch model calibratedAspectRatio must be a positive number" };
-  }
-  if (
-    pitchWidthMetres === undefined
-    || pitchHeightMetres === undefined
-    || pitchWidthMetres <= 0
-    || pitchHeightMetres <= 0
-  ) {
-    return { error: "Pitch model dimensions must be positive numbers" };
-  }
-  if (!Array.isArray(rawGrid) || rawGrid.length < 2) {
-    return { error: "Pitch model grid must contain at least two rows" };
-  }
-  const grid: TrackingPitchModel["grid"] = [];
-  let columnCount: number | null = null;
-  for (const rawRow of rawGrid) {
-    if (!Array.isArray(rawRow) || rawRow.length < 2) {
-      return { error: "Every pitch model grid row must contain at least two points" };
-    }
-    if (columnCount === null) columnCount = rawRow.length;
-    if (rawRow.length !== columnCount) {
-      return { error: "Pitch model grid rows must all have the same number of points" };
-    }
-    const row: Array<{ x: number; y: number }> = [];
-    for (const rawPoint of rawRow) {
-      const point = asRecord(rawPoint);
-      const x = firstNumber(point.x);
-      const y = firstNumber(point.y);
-      if (
-        x === undefined
-        || y === undefined
-        || x < 0
-        || x > pitchWidthMetres
-        || y < 0
-        || y > pitchHeightMetres
-      ) {
-        return {
-          error: "Pitch model points must be finite and inside the declared pitch dimensions",
-        };
-      }
-      row.push({ x, y });
-    }
-    grid.push(row);
-  }
-  return {
-    model: {
-      calibrationId,
-      fittedAt: new Date(fittedAt).toISOString(),
-      calibratedAspectRatio,
-      pitchWidthMetres,
-      pitchHeightMetres,
-      grid,
-    },
-  };
-}
-
-function pitchModelSummary(model: TrackingPitchModel | undefined) {
-  const stored = model as (TrackingPitchModel & {
-    calibrationId?: string;
-    fittedAt?: string;
-    calibratedAspectRatio?: number;
-  }) | undefined;
-  return stored
-    ? {
-        calibrationId: stored.calibrationId ?? null,
-        fittedAt: stored.fittedAt ?? null,
-        calibratedAspectRatio: stored.calibratedAspectRatio ?? null,
-        gridRows: stored.grid.length,
-        gridColumns: stored.grid[0]?.length ?? 0,
-        pitchWidthMetres: stored.pitchWidthMetres,
-        pitchHeightMetres: stored.pitchHeightMetres,
-      }
-    : null;
-}
-
-function pitchModelFramingError(
-  model: TrackingPitchModel,
-  width: number,
-  height: number,
-): string | undefined {
-  const bundleAspectRatio = width / height;
-  const relativeDifference = Math.abs(bundleAspectRatio - model.calibratedAspectRatio)
-    / model.calibratedAspectRatio;
-  if (relativeDifference <= PITCH_ASPECT_RATIO_TOLERANCE) return undefined;
-  return `Pitch model aspect ratio ${model.calibratedAspectRatio.toFixed(4)} does not match bundle aspect ratio ${bundleAspectRatio.toFixed(4)}; the model was fitted for a different crop`;
-}
-
-function validatePitchModelForManifest(
-  model: TrackingPitchModel | undefined,
-  width: number,
-  height: number,
-): string | undefined {
-  if (!model) return undefined;
-  const parsed = parsePitchModel(model);
-  if (parsed.error || !parsed.model) return parsed.error ?? "Invalid pitch model";
-  return pitchModelFramingError(parsed.model, width, height);
-}
-
-function manifestForClient(manifest: TrackingManifest): TrackingManifest {
-  if (!manifest.pitchModel || !validatePitchModelForManifest(manifest.pitchModel, manifest.width, manifest.height)) {
-    return manifest;
-  }
-  const safeManifest = { ...manifest };
-  delete safeManifest.pitchModel;
-  return safeManifest;
 }
 
 /**
@@ -1078,52 +933,6 @@ function toRecording(
   };
 }
 
-function toProgress(row: typeof claimMatchProgressTable.$inferSelect | null, recordingId: number) {
-  return {
-    recordingId,
-    currentTrackId: row?.currentTrackId ?? null,
-    stage: row?.stage ?? "find",
-    confirmedFromSeconds: row?.confirmedFromSeconds ?? 0,
-    currentPositionSeconds: row?.currentPositionSeconds ?? 0,
-    claimedPercent: row?.claimedPercent ?? 0,
-    coverageSeconds: 0,
-    coveragePercent: row?.claimedPercent ?? 0,
-    offPitchSeconds: 0,
-    answeredAnchorCount: 0,
-    acceptedAnchorCount: 0,
-    unresolvedMoments: [],
-    conflictMoments: [],
-    identityBinding: null,
-    clipsUnlocked: row?.clipsUnlocked ?? 0,
-    correctionCount: row?.correctionCount ?? 0,
-    completed: row?.completed ?? false,
-    earnedClips: row?.earnedClips ?? [],
-    completionReason: row?.completed ? "coverage-threshold" : "keep-confirming",
-    playerStats: {
-      confirmedSeconds: 0,
-      minutesPlayed: 0,
-      coveragePercent: row?.claimedPercent ?? 0,
-      answeredMoments: 0,
-      acceptedMoments: 0,
-      trackedSegments: 0,
-      totalSegments: 0,
-      matchedEvents: 0,
-      heatmap: { coordinateSpace: "camera" as const, cells: [] },
-      distanceMetres: null,
-      averageSpeedMetresPerSecond: null,
-      touches: unavailablePlayerMetric(),
-      passes: unavailablePlayerMetric(),
-      shots: unavailablePlayerMetric(),
-      dribbles: unavailablePlayerMetric(),
-    },
-    adminPlayerStats: {
-      topSpeedMetresPerSecond: null,
-      topSpeedUsableTimeFraction: null,
-    },
-    updatedAt: row?.updatedAt.toISOString() ?? new Date().toISOString(),
-  };
-}
-
 function toIdentityBinding(row: ClaimIdentityBindingRow | null) {
   if (!row) return null;
   return {
@@ -1142,36 +951,38 @@ function toIdentityBinding(row: ClaimIdentityBindingRow | null) {
   };
 }
 
-function toCorrection(row: typeof claimMatchCorrectionsTable.$inferSelect) {
-  return {
-    id: row.id,
-    clientId: row.clientId,
-    recordingId: row.recordingId,
-    momentSeconds: row.momentSeconds,
-    rejectedTrackId: row.rejectedTrackId ?? null,
-    chosenTrackId: row.chosenTrackId,
-    answerMethod: row.answerMethod,
-    questionCount: row.questionCount,
-    undone: row.undone,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
+/**
+ * The one place a bundle is loaded, and therefore the one place the camera's
+ * pitch model is attached to it. Everything downstream reads
+ * `manifest.pitchModel` as if it had always been there, which is what keeps
+ * the metric functions pure.
+ */
 export async function getRecordingBundle(recordingId: number) {
   const [row] = await db
     .select({
       recording: recordingsTable,
       fieldName: fieldsTable.name,
+      cameraId: fieldsTable.cameraId,
+      cameraPitchModel: camerasTable.pitchModel,
       bundle: recordingTrackingBundlesTable,
     })
     .from(recordingsTable)
     .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .leftJoin(camerasTable, eq(camerasTable.id, fieldsTable.cameraId))
     .leftJoin(
       recordingTrackingBundlesTable,
       eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id),
     )
     .where(eq(recordingsTable.id, recordingId));
-  return row ?? null;
+  if (!row) return null;
+  if (!row.bundle?.manifest) return row;
+  return {
+    ...row,
+    bundle: {
+      ...row.bundle,
+      manifest: manifestWithPitchModel(row.bundle.manifest, row.cameraPitchModel, row.cameraId),
+    },
+  };
 }
 
 async function getVisibleRecordingBundle(recordingId: number) {
@@ -1273,21 +1084,6 @@ export async function readBundleSegments(bundleId: number): Promise<TrackingSegm
   return segments;
 }
 
-function stateSegmentsFromSummary(summary: TrackingBundleSummary): TrackingBundleSummary["segments"] {
-  return summary.segments;
-}
-
-async function getClaimStateSegments(
-  bundle: typeof recordingTrackingBundlesTable.$inferSelect,
-): Promise<TrackingBundleSummary["segments"]> {
-  if (bundle.manifest.summary?.segments?.length) {
-    return stateSegmentsFromSummary(bundle.manifest.summary);
-  }
-  // Older bundles have no index yet. They are read once for compatibility;
-  // every newly stored bundle carries the compact summary above.
-  return readBundleSegments(bundle.id);
-}
-
 async function manifestWithBundleFingerprint(
   bundle: typeof recordingTrackingBundlesTable.$inferSelect,
 ): Promise<TrackingManifest> {
@@ -1308,7 +1104,13 @@ async function manifestWithBundleFingerprint(
 // The demo deliberately resolves to the first real uploaded bundle. It never
 // manufactures a recording or synthetic player metrics, so Mohammed's sample
 // can be opened through one stable URL after an admin uploads it.
-router.get("/claim-match/demo", async (req, res): Promise<void> => {
+/**
+ * A match to try claiming on, for someone who has not got one in mind.
+ *
+ * Answers with an id rather than redirecting into the data, because the claim
+ * page is a page: it wants somewhere to navigate to.
+ */
+router.get("/claim/demo", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
     unauthenticatedResponse(res, req, "Authenticated account required");
@@ -1319,49 +1121,7 @@ router.get("/claim-match/demo", async (req, res): Promise<void> => {
     res.status(404).json({ error: "No tracking bundle has been uploaded yet" });
     return;
   }
-  res.redirect(307, `/api/recordings/${recordingId}/claim-match`);
-});
-
-router.post("/claim-match/demo/reset", async (req, res): Promise<void> => {
-  const userId = await requireAccountUser(req);
-  if (!userId) {
-    unauthenticatedResponse(res, req, "Authenticated account required");
-    return;
-  }
-  const recordingId = await getDemoRecordingId();
-  if (!recordingId) {
-    res.status(404).json({ error: "No tracking bundle has been uploaded yet" });
-    return;
-  }
-
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(claimMatchCorrectionsTable)
-      .where(and(
-        eq(claimMatchCorrectionsTable.userId, userId),
-        eq(claimMatchCorrectionsTable.recordingId, recordingId),
-      ));
-    await tx
-      .delete(claimMatchProgressTable)
-      .where(and(
-        eq(claimMatchProgressTable.userId, userId),
-        eq(claimMatchProgressTable.recordingId, recordingId),
-      ));
-    await tx
-      .delete(claimMatchIdentityBindingsTable)
-      .where(and(
-        eq(claimMatchIdentityBindingsTable.userId, userId),
-        eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
-      ));
-    await tx
-      .delete(claimMatchOffPitchSpansTable)
-      .where(and(
-        eq(claimMatchOffPitchSpansTable.userId, userId),
-        eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
-      ));
-  });
-
-  res.json({ recordingId, reset: true });
+  res.json({ recordingId });
 });
 
 router.get("/claim-match/clips", async (req, res): Promise<void> => {
@@ -1424,32 +1184,6 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
   res.json(ListClaimMatchClipsResponse.parse(groups));
 });
 
-type ClaimStateSegment = TrackingBundleSummary["segments"][number];
-
-function getMomentClips(
-  segments: ClaimStateSegment[],
-  momentSeconds: number,
-  existing: ClaimEarnedClip[],
-  playerIntervals: Array<{ startSeconds: number; endSeconds: number }> = [],
-): ClaimEarnedClip[] {
-  const newClips = segments.flatMap((segment) => segment.events)
-    .filter((event) => ["goal", "shot", "kickoff", "second-half", "second_half"].includes(event.type.toLowerCase()))
-    .filter((event) => Math.abs(event.time - momentSeconds) <= 12)
-    .filter((event) => playerIntervals.length === 0 || playerIntervals.some((interval) =>
-      event.time >= interval.startSeconds && event.time <= interval.endSeconds,
-    ))
-    .map((event) => ({
-      id: event.clipId ?? `claim-${event.type}-${Math.round(event.time)}`,
-      title: event.label ?? `${event.type.replace(/[-_]/g, " ")} at ${formatMoment(event.time)}`,
-      momentSeconds: event.time,
-      kind: event.type,
-      status: "ready",
-    }));
-  const byId = new Map(existing.map((clip) => [clip.id, clip]));
-  for (const clip of newClips) byId.set(clip.id, clip);
-  return Array.from(byId.values()).sort((a, b) => a.momentSeconds - b.momentSeconds);
-}
-
 export async function materializeClaimMoments(
   userId: number,
   recording: typeof recordingsTable.$inferSelect,
@@ -1479,130 +1213,11 @@ export async function materializeClaimMoments(
   }));
 }
 
-type DerivedClaimState = {
-  coverageSeconds: number;
-  coveragePercent: number;
-  offPitchSeconds: number;
-  humanVouchedSeconds: number;
-  inferredSeconds: number;
-  vouchedFragments: ClaimVouchedFragment[];
-  answeredAnchorCount: number;
-  acceptedAnchorCount: number;
-  unresolvedMoments: number[];
-  conflictMoments: number[];
-  identityResolution: ResolvedClaimIdentity | null;
-  clipsUnlocked: number;
-  correctionCount: number;
-  completed: boolean;
-  completionReason: string;
-  earnedClips: ClaimEarnedClip[];
-  playerStats: {
-    confirmedSeconds: number;
-    minutesPlayed: number;
-    coveragePercent: number;
-    answeredMoments: number;
-    acceptedMoments: number;
-    trackedSegments: number;
-    totalSegments: number;
-    matchedEvents: number;
-    heatmap: {
-      coordinateSpace: "pitch" | "camera";
-      cells: Array<{ x: number; y: number; weight: number }>;
-    };
-    distanceMetres: number | null;
-    averageSpeedMetresPerSecond: number | null;
-    touches: UnavailablePlayerMetric;
-    passes: UnavailablePlayerMetric;
-    shots: UnavailablePlayerMetric;
-    dribbles: UnavailablePlayerMetric;
-  };
-  adminPlayerStats: {
-    topSpeedMetresPerSecond: number | null;
-    topSpeedUsableTimeFraction: number | null;
-  };
-};
-
-type UnavailablePlayerMetric = {
-  value: null;
-  available: false;
-  unavailableReason: "ball_tracking_and_possession_attribution_unavailable";
-};
-
 export type ClaimVouchedFragment = {
   trackId: string;
   fromFrame: number;
   toFrame: number;
 };
-
-function unavailablePlayerMetric(): UnavailablePlayerMetric {
-  return {
-    value: null,
-    available: false,
-    unavailableReason: "ball_tracking_and_possession_attribution_unavailable",
-  };
-}
-
-const EMPTY_ANCHOR_TRACK = "__none__";
-
-export function isAcceptedClaimAnswer(row: typeof claimMatchCorrectionsTable.$inferSelect): boolean {
-  return !row.undone
-    && row.chosenTrackId !== EMPTY_ANCHOR_TRACK
-    && row.answerMethod !== "anchor-no"
-    && row.answerMethod !== "anchor-skip";
-}
-
-export function completionSurvivesConcurrentProgress(
-  existingCompleted: boolean,
-  derivedCompleted: boolean,
-): boolean {
-  return existingCompleted || derivedCompleted;
-}
-
-export function knownClaimTrackIds(
-  manifest: TrackingManifest,
-  segments: ClaimStateSegment[],
-): Set<string> {
-  return new Set([
-    ...segments.flatMap((segment) => segment.tracks.map((track) => track.id)),
-    ...(manifest.identities ?? []).map((identity) => identity.id),
-  ]);
-}
-
-/**
- * A candidate id the client minted for a stretch of a track that no identity
- * part covers: `unclaimed:<segmentIndex>:<trackId>:<fromFrame>`
- * (claim-match-identities.ts sourcePieceId). These are selectable in the
- * picker, so the server has to accept them -- until 2026-09-06 it rejected
- * every one with 400 "Correction references an unknown track", and the client
- * queued that 400 and then permanently discarded it, so choosing an
- * "Unclaimed" candidate silently threw the answer away.
- */
-export function parseUnclaimedCandidateId(
-  id: string,
-): { segmentIndex: number; trackId: string; fromFrame: number } | null {
-  if (!id.startsWith("unclaimed:")) return null;
-  const rest = id.slice("unclaimed:".length);
-  const first = rest.indexOf(":");
-  const last = rest.lastIndexOf(":");
-  if (first <= 0 || last <= first) return null;
-  const segmentIndex = Number(rest.slice(0, first));
-  const trackId = rest.slice(first + 1, last);
-  const fromFrame = Number(rest.slice(last + 1));
-  if (!Number.isInteger(segmentIndex) || !Number.isInteger(fromFrame) || !trackId) return null;
-  return { segmentIndex, trackId, fromFrame };
-}
-
-/** Whether a correction may reference this id at all. */
-export function isKnownClaimCandidateId(
-  manifest: TrackingManifest,
-  segments: ClaimStateSegment[],
-  id: string,
-): boolean {
-  const known = knownClaimTrackIds(manifest, segments);
-  if (known.has(id)) return true;
-  const piece = parseUnclaimedCandidateId(id);
-  return piece !== null && known.has(piece.trackId);
-}
 
 function usableIdentityMap(manifest: TrackingManifest): TrackingIdentity[] {
   const identities = manifest.identities;
@@ -1700,38 +1315,6 @@ export function identityMapMovesVouchedFragment(
   });
 }
 
-/** @deprecated Use identityMapMovesVouchedFragment; person rows are no longer frozen. */
-export function identityMapInvalidatesBinding(
-  binding: Pick<ClaimIdentityBindingRow, "personId" | "personParts">,
-  incomingIdentities: TrackingIdentity[],
-): boolean {
-  const identity = incomingIdentities.find((item) => item.id === binding.personId);
-  if (!identity) return true;
-  const incomingParts = canonicalIdentityParts(identity.parts);
-  return incomingParts.length !== binding.personParts.length
-    || incomingParts.some((part, index) => part !== binding.personParts[index]);
-}
-
-function resolvePersonForTrack(
-  manifest: TrackingManifest,
-  chosenTrackId: string,
-  momentSeconds?: number,
-): { personId: string; resolutionMethod: ClaimIdentityResolutionMethod } {
-  const identities = usableIdentityMap(manifest);
-  const direct = identities.find((identity) => identity.id === chosenTrackId);
-  if (direct) return { personId: direct.id, resolutionMethod: "identity-map" };
-  const frame = momentSeconds === undefined
-    ? undefined
-    : Math.max(0, Math.round(momentSeconds * Math.max(manifest.frameRate, 0.001)));
-  const mapped = identities.find((identity) =>
-    identity.parts.some((part) =>
-      part.trackId === chosenTrackId
-      && (frame === undefined || (frame >= part.fromFrame && frame <= part.toFrame))),
-  );
-  if (mapped) return { personId: mapped.id, resolutionMethod: "identity-map" };
-  return { personId: chosenTrackId, resolutionMethod: "track-fallback" };
-}
-
 export type ResolvedClaimIdentity = {
   personId: string;
   resolutionMethod: ClaimIdentityResolutionMethod;
@@ -1740,858 +1323,6 @@ export type ResolvedClaimIdentity = {
   supportPercent: number;
   conflictMoments: number[];
 };
-
-type IdentityCandidateSupport = {
-  count: number;
-  latestCreatedAt: number;
-  resolutionMethod: ClaimIdentityResolutionMethod;
-};
-
-type ClaimIdentityEvidence = {
-  usableAnswers: typeof claimMatchCorrectionsTable.$inferSelect[];
-  rankedCandidates: Array<[string, IdentityCandidateSupport]>;
-};
-
-function claimIdentityEvidence(
-  manifest: TrackingManifest,
-  segments: ClaimStateSegment[],
-  accepted: typeof claimMatchCorrectionsTable.$inferSelect[],
-): ClaimIdentityEvidence {
-  const knownTrackIds = new Set(segments.flatMap((segment) => segment.tracks.map((track) => track.id)));
-  const identities = usableIdentityMap(manifest);
-  for (const identity of identities) {
-    knownTrackIds.add(identity.id);
-  }
-  const usableAnswers = accepted.filter((row) =>
-    knownTrackIds.has(row.chosenTrackId)
-    || trackIntervalsForId(manifest, segments, row.chosenTrackId).length > 0,
-  );
-  const candidates = new Map<string, IdentityCandidateSupport>();
-  for (const row of usableAnswers) {
-    const resolved = resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds);
-    const previous = candidates.get(resolved.personId);
-    candidates.set(resolved.personId, {
-      count: (previous?.count ?? 0) + 1,
-      latestCreatedAt: Math.max(previous?.latestCreatedAt ?? 0, row.createdAt.getTime()),
-      resolutionMethod: previous?.resolutionMethod ?? resolved.resolutionMethod,
-    });
-  }
-  const rankedCandidates = [...candidates.entries()]
-    .sort(([personA, a], [personB, b]) =>
-      b.count - a.count
-      || b.latestCreatedAt - a.latestCreatedAt
-      || personA.localeCompare(personB),
-    );
-  return { usableAnswers, rankedCandidates };
-}
-
-function ambiguousClaimMoments(evidence: ClaimIdentityEvidence): number[] {
-  const winner = evidence.rankedCandidates[0];
-  if (!winner || evidence.rankedCandidates[1]?.[1].count !== winner[1].count) return [];
-  return [...new Set(evidence.usableAnswers.map((row) => row.momentSeconds))]
-    .sort((a, b) => a - b)
-    .slice(0, 50);
-}
-
-export function resolveClaimIdentity(
-  manifest: TrackingManifest,
-  segments: ClaimStateSegment[],
-  accepted: typeof claimMatchCorrectionsTable.$inferSelect[],
-): ResolvedClaimIdentity | null {
-  const { usableAnswers, rankedCandidates } = claimIdentityEvidence(manifest, segments, accepted);
-  if (usableAnswers.length === 0) return null;
-
-  // A tie is not evidence. Do not let deterministic ordering turn equal
-  // support into a person assignment; the user must answer again.
-  const winner = rankedCandidates[0];
-  if (!winner || rankedCandidates[1]?.[1].count === winner[1].count) return null;
-
-  const [personId, support] = winner;
-  const conflictMoments = usableAnswers
-     .filter((row) => resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds).personId !== personId)
-    .map((row) => row.momentSeconds)
-    .sort((a, b) => a - b);
-  return {
-    personId,
-    resolutionMethod: support.resolutionMethod,
-    supportCount: support.count,
-    // This count describes the resolved person, not every accepted answer
-    // that happened to be submitted while resolving the claim. Conflicting
-    // answers remain visible through conflictMoments and supportPercent.
-    acceptedAnswerCount: support.count,
-    supportPercent: Math.round((support.count / usableAnswers.length) * 10000) / 100,
-    conflictMoments: [...new Set(conflictMoments)].slice(0, 50),
-  };
-}
-
-/**
- * One surviving answer per checkpoint.
- *
- * This deduped on the exact float momentSeconds until 2026-09-06. Because an
- * answer is snapped to the nearest detection before it is stored, re-answering
- * the same checkpoint could land on a different float, so BOTH rows survived
- * and both voted. Two votes for different candidates is a tie, and
- * resolveClaimIdentity returns null on a tie -- which surfaces as coverage 0%
- * with every answered moment reported as a conflict, on a match the user had
- * answered correctly. Grouping by proximity instead makes a re-answer replace
- * its predecessor, which is what the user meant by re-answering.
- *
- * Anchors are at least minGap = max(8, ...) seconds apart (buildClaimAnchors)
- * and the snap is capped at 1 s, so a 1 s grouping window cannot merge answers
- * belonging to two different checkpoints.
- */
-const ANCHOR_ANSWER_GROUPING_SECONDS = 1;
-
-function latestAnchorAnswers(
-  rows: typeof claimMatchCorrectionsTable.$inferSelect[],
-): typeof claimMatchCorrectionsTable.$inferSelect[] {
-  const isNewer = (
-    row: typeof claimMatchCorrectionsTable.$inferSelect,
-    previous: typeof claimMatchCorrectionsTable.$inferSelect,
-  ) => row.createdAt.getTime() > previous.createdAt.getTime()
-    || (row.createdAt.getTime() === previous.createdAt.getTime() && row.id > previous.id);
-
-  const anchorRows = rows
-    .filter((row) => !row.undone && row.answerMethod.startsWith("anchor-"))
-    .sort((a, b) => a.momentSeconds - b.momentSeconds);
-
-  const groups: Array<{ anchorSeconds: number; row: typeof claimMatchCorrectionsTable.$inferSelect }> = [];
-  for (const row of anchorRows) {
-    const group = groups.find(
-      (item) => Math.abs(item.anchorSeconds - row.momentSeconds) <= ANCHOR_ANSWER_GROUPING_SECONDS,
-    );
-    if (!group) {
-      groups.push({ anchorSeconds: row.momentSeconds, row });
-      continue;
-    }
-    if (isNewer(row, group.row)) group.row = row;
-  }
-  return groups.map((group) => group.row);
-}
-
-/**
- * The frame ranges of one source track that survive the identity board's
- * parked and deleted decisions.
- *
- * identityDecisions has been written and validated on every board save since
- * it was introduced, and read by nothing. A deleted player therefore still
- * earned coverage here exactly as if the board had never touched them, which
- * is the same complaint from the other side: removing someone on the board did
- * not remove them from the video.
- */
-function survivingFrameRanges(
-  decisions: TrackingIdentityDecision[] | undefined,
-  trackId: string,
-  startFrame: number,
-  endFrame: number,
-): Array<{ startFrame: number; endFrame: number }> {
-  const cuts = (decisions ?? [])
-    .filter((decision) => decision.trackId === trackId)
-    .map((decision) => ({
-      from: Math.max(decision.fromFrame, startFrame),
-      to: Math.min(decision.toFrame, endFrame),
-    }))
-    .filter((cut) => cut.to >= cut.from)
-    .sort((a, b) => a.from - b.from);
-  if (!cuts.length) return endFrame >= startFrame ? [{ startFrame, endFrame }] : [];
-
-  const out: Array<{ startFrame: number; endFrame: number }> = [];
-  let cursor = startFrame;
-  for (const cut of cuts) {
-    if (cut.from > cursor) out.push({ startFrame: cursor, endFrame: cut.from - 1 });
-    cursor = Math.max(cursor, cut.to + 1);
-  }
-  if (cursor <= endFrame) out.push({ startFrame: cursor, endFrame });
-  return out;
-}
-
-export function trackIntervalsForId(
-  manifest: TrackingManifest,
-  segments: ClaimStateSegment[],
-  trackId: string,
-): Array<{ startSeconds: number; endSeconds: number }> {
-  const frameRate = Math.max(manifest.frameRate, 0.001);
-  const intervals: Array<{ startSeconds: number; endSeconds: number }> = [];
-  // Every interval below goes through here, so a struck-off stretch cannot
-  // earn coverage through whichever of the three shapes it arrived in.
-  const push = (sourceTrackId: string, startFrame: number, endFrame: number): void => {
-    for (const range of survivingFrameRanges(
-      manifest.identityDecisions, sourceTrackId, startFrame, endFrame,
-    )) {
-      intervals.push({
-        startSeconds: Math.max(0, range.startFrame / frameRate),
-        endSeconds: Math.min(manifest.duration, (range.endFrame + 1) / frameRate),
-      });
-    }
-  };
-  for (const segment of segments) {
-    const track = segment.tracks.find((item) => item.id === trackId);
-    if (track) push(trackId, track.startFrame, track.endFrame);
-  }
-  // An "unclaimed:" piece is the part of a source track that no identity part
-  // covers, running from its fromFrame until the next identity part on the
-  // same track begins (or the track ends). Resolving it here is what makes an
-  // answer on an unclaimed candidate worth real coverage instead of zero.
-  const piece = parseUnclaimedCandidateId(trackId);
-  if (piece) {
-    const identityParts = usableIdentityMap(manifest)
-      .flatMap((item) => item.parts)
-      .filter((part) => part.trackId === piece.trackId && part.fromFrame > piece.fromFrame)
-      .map((part) => part.fromFrame);
-    for (const segment of segments) {
-      if (segment.segmentIndex !== piece.segmentIndex) continue;
-      const track = segment.tracks.find((item) => item.id === piece.trackId);
-      if (!track) continue;
-      const nextPartStart = identityParts.length ? Math.min(...identityParts) : Infinity;
-      const startFrame = Math.max(track.startFrame, piece.fromFrame);
-      const endFrame = Math.min(track.endFrame, nextPartStart - 1);
-      if (endFrame >= startFrame) push(piece.trackId, startFrame, endFrame);
-    }
-  }
-  const identity = usableIdentityMap(manifest).find((item) => item.id === trackId);
-  if (identity) {
-    for (const part of identity.parts) {
-      for (const segment of segments) {
-        const track = segment.tracks.find((item) => item.id === part.trackId);
-        if (!track) continue;
-        const startFrame = Math.max(track.startFrame, part.fromFrame);
-        const endFrame = Math.min(track.endFrame, part.toFrame);
-        if (endFrame >= startFrame) push(part.trackId, startFrame, endFrame);
-      }
-    }
-  }
-  return intervals;
-}
-
-function boxForFrame(
-  boxes: TrackingSegmentPayload["tracks"][number]["boxes"],
-  frame: number,
-): number {
-  let bestIndex = -1;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  boxes.forEach((box, index) => {
-    const distance = Math.abs(box.frame - frame);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = index;
-    }
-  });
-  return bestIndex;
-}
-
-/**
- * Capture the actual uninterrupted detection run containing an accepted
- * answer. Track start/end summaries are not sufficient here: a track may
- * disappear for several frames and return later.
- */
-export function vouchedFragmentForAnswer(
-  manifest: TrackingManifest,
-  fullSegments: TrackingSegmentPayload[],
-  answer: Pick<typeof claimMatchCorrectionsTable.$inferSelect, "momentSeconds" | "chosenTrackId">,
-): ClaimVouchedFragment | null {
-  const frameRate = Math.max(manifest.frameRate, 0.001);
-  const targetFrame = Math.max(0, Math.round(answer.momentSeconds * frameRate));
-  const identities = usableIdentityMap(manifest);
-  const directTrack = fullSegments
-    .flatMap((segment) => segment.tracks)
-    .find((track) => track.id === answer.chosenTrackId);
-  const identity = identities.find((item) => item.id === answer.chosenTrackId);
-  const possibleParts = identity?.parts.filter((part) =>
-    targetFrame >= part.fromFrame && targetFrame <= part.toFrame) ?? [];
-
-  let selectedTrack: TrackingSegmentPayload["tracks"][number] | undefined = directTrack;
-  let selectedPart: TrackingIdentity["parts"][number] | undefined;
-  if (!selectedTrack && possibleParts.length > 0) {
-    for (const part of possibleParts) {
-      const track = fullSegments
-        .flatMap((segment) => segment.tracks)
-        .find((candidate) =>
-          candidate.id === part.trackId
-          && candidate.boxes.some((box) => box.frame >= part.fromFrame && box.frame <= part.toFrame));
-      if (track) {
-        selectedTrack = track;
-        selectedPart = part;
-        break;
-      }
-    }
-  }
-  if (!selectedTrack) {
-    // A browser can answer with an identity id even when the frame is just
-    // outside a persisted part due to rounding. Fall back to the closest
-    // source track that contributes to that identity.
-    const parts = identity?.parts ?? [];
-    for (const part of parts) {
-      const track = fullSegments.flatMap((segment) => segment.tracks).find((candidate) => candidate.id === part.trackId);
-      if (track) {
-        selectedTrack = track;
-        selectedPart = part;
-        break;
-      }
-    }
-  }
-  if (!selectedTrack) return null;
-
-  const boxes = [...selectedTrack.boxes]
-    .filter((box) => !selectedPart || (box.frame >= selectedPart.fromFrame && box.frame <= selectedPart.toFrame))
-    .sort((a, b) => a.frame - b.frame);
-  const index = boxForFrame(boxes, targetFrame);
-  if (index < 0) return null;
-
-  let start = index;
-  let end = index;
-  while (start > 0 && boxes[start].frame - boxes[start - 1].frame <= 1) start -= 1;
-  while (end + 1 < boxes.length && boxes[end + 1].frame - boxes[end].frame <= 1) end += 1;
-  return {
-    trackId: selectedTrack.id,
-    fromFrame: boxes[start].frame,
-    toFrame: boxes[end].frame,
-  };
-}
-
-function unionFragmentSeconds(
-  manifest: TrackingManifest,
-  fragments: ClaimVouchedFragment[],
-): number {
-  const frameRate = Math.max(manifest.frameRate, 0.001);
-  const intervals = canonicalVouchedFragments(fragments)
-    .map((fragment) => ({
-      start: Math.max(0, fragment.fromFrame / frameRate),
-      end: Math.min(manifest.duration, (fragment.toFrame + 1) / frameRate),
-    }))
-    .filter((interval) => interval.end > interval.start)
-    .sort((a, b) => a.start - b.start);
-  let total = 0;
-  let end = 0;
-  for (const interval of intervals) {
-    if (interval.start > end) {
-      total += interval.end - interval.start;
-      end = interval.end;
-    } else if (interval.end > end) {
-      total += interval.end - end;
-      end = interval.end;
-    }
-  }
-  return Math.round(total * 100) / 100;
-}
-
-type PositionSample = { frame: number; x: number; y: number };
-type MappedPosition = PositionSample & { pitchX: number; pitchY: number; nx: number; ny: number };
-
-function interpolatePitchPosition(
-  x: number,
-  y: number,
-  manifest: TrackingManifest,
-): { x: number; y: number } | null {
-  const model = manifest.pitchModel;
-  if (!model || model.grid.length < 2 || model.grid[0].length < 2) return null;
-  const columns = model.grid[0].length;
-  if (model.grid.some((row) => row.length !== columns || row.length < 2)) return null;
-  const u = Math.max(0, Math.min(1, x / Math.max(manifest.width, 1)));
-  const v = Math.max(0, Math.min(1, y / Math.max(manifest.height, 1)));
-  const column = u * (columns - 1);
-  const row = v * (model.grid.length - 1);
-  const left = Math.floor(column);
-  const top = Math.floor(row);
-  const right = Math.min(columns - 1, left + 1);
-  const bottom = Math.min(model.grid.length - 1, top + 1);
-  const tx = column - left;
-  const ty = row - top;
-  const topLeft = model.grid[top][left];
-  const topRight = model.grid[top][right];
-  const bottomLeft = model.grid[bottom][left];
-  const bottomRight = model.grid[bottom][right];
-  return {
-    x: (topLeft.x * (1 - tx) + topRight.x * tx) * (1 - ty)
-      + (bottomLeft.x * (1 - tx) + bottomRight.x * tx) * ty,
-    y: (topLeft.y * (1 - tx) + topRight.y * tx) * (1 - ty)
-      + (bottomLeft.y * (1 - tx) + bottomRight.y * tx) * ty,
-  };
-}
-
-function hasUsablePitchModel(manifest: TrackingManifest): boolean {
-  const model = manifest.pitchModel;
-  if (!model || model.grid.length < 2 || model.grid[0].length < 2) return false;
-  const columns = model.grid[0].length;
-  if (!model.grid.every((row) => row.length === columns && row.length >= 2)) return false;
-  return !validatePitchModelForManifest(model, manifest.width, manifest.height);
-}
-
-function acceptedPositionSamples(
-  manifest: TrackingManifest,
-  fullSegments: TrackingSegmentPayload[],
-  accepted: typeof claimMatchCorrectionsTable.$inferSelect[],
-): PositionSample[] {
-  const rangesByTrack = new Map<string, Array<[number, number]>>();
-  const addRange = (trackId: string, fromFrame: number, toFrame: number) => {
-    if (toFrame < fromFrame) return;
-    (rangesByTrack.get(trackId) ?? (rangesByTrack.set(trackId, []), rangesByTrack.get(trackId)!))
-      .push([fromFrame, toFrame]);
-  };
-  for (const row of accepted) {
-    const identity = manifest.identities?.find((item) => item.id === row.chosenTrackId);
-    if (identity) {
-      identity.parts.forEach((part) => addRange(part.trackId, part.fromFrame, part.toFrame));
-      continue;
-    }
-    for (const segment of fullSegments) {
-      const track = segment.tracks.find((item) => item.id === row.chosenTrackId);
-      if (track) addRange(track.id, track.startFrame, track.endFrame);
-    }
-  }
-
-  const byFrame = new Map<number, PositionSample>();
-  for (const segment of fullSegments) {
-    for (const track of segment.tracks) {
-      const ranges = rangesByTrack.get(track.id);
-      if (!ranges?.length) continue;
-      for (const box of track.boxes) {
-        if (
-          ranges.some(([fromFrame, toFrame]) => box.frame >= fromFrame && box.frame <= toFrame)
-          && !byFrame.has(box.frame)
-        ) {
-          byFrame.set(box.frame, {
-            frame: box.frame,
-            // The bottom centre is the player's ground contact proxy. The box
-            // centre is at chest height and creates a systematic pitch error.
-            x: box.x + box.w / 2,
-            y: box.y + box.h,
-          });
-        }
-      }
-    }
-  }
-  const ordered = [...byFrame.values()].sort((a, b) => a.frame - b.frame);
-  const step = Math.max(1, Math.round(manifest.frameRate / 10));
-  const sampled: PositionSample[] = [];
-  for (const sample of ordered) {
-    const previous = sampled.at(-1);
-    if (!previous || sample.frame - previous.frame >= step) sampled.push(sample);
-  }
-  return sampled;
-}
-
-type SpeedSummary = {
-  topSpeedMetresPerSecond: number | null;
-  topSpeedUsableTimeFraction: number | null;
-};
-
-function topSpeedSummary(
-  manifest: TrackingManifest,
-  mapped: MappedPosition[],
-  coveredSeconds: number,
-): SpeedSummary {
-  if (!hasUsablePitchModel(manifest) || mapped.length < 2) {
-    return { topSpeedMetresPerSecond: null, topSpeedUsableTimeFraction: coveredSeconds > 0 ? 0 : null };
-  }
-
-  const maxDirectGapSeconds = Math.max(0.2, 3 / Math.max(manifest.frameRate, 0.001));
-  const intervals = mapped.slice(1).map((current, index) => {
-    const previous = mapped[index];
-    const seconds = (current.frame - previous.frame) / Math.max(manifest.frameRate, 0.001);
-    const distance = Math.hypot(current.pitchX - previous.pitchX, current.pitchY - previous.pitchY);
-    const speed = seconds > 0 ? distance / seconds : Number.POSITIVE_INFINITY;
-    const valid = seconds > 0
-      && seconds <= maxDirectGapSeconds
-      && speed <= 11
-      // Image-space y increases toward the camera, so the far third is ny < 1/3.
-      && previous.ny >= 1 / 3
-      && current.ny >= 1 / 3;
-    return { seconds, distance, speed, valid };
-  });
-
-  // A rejected sample invalidates its surrounding speed window. This prevents
-  // an erroneous spike from being clipped into an apparently plausible sprint.
-  for (let index = 0; index < intervals.length; index++) {
-    if (!intervals[index].valid) {
-      if (intervals[index - 1]) intervals[index - 1].valid = false;
-      if (intervals[index + 1]) intervals[index + 1].valid = false;
-    }
-  }
-  for (let index = 1; index < intervals.length; index++) {
-    const previous = intervals[index - 1];
-    const current = intervals[index];
-    if (!previous.valid || !current.valid) continue;
-    const elapsed = Math.max((previous.seconds + current.seconds) / 2, 0.001);
-    if (Math.abs(current.speed - previous.speed) / elapsed > 10) {
-      previous.valid = false;
-      current.valid = false;
-      if (intervals[index - 2]) intervals[index - 2].valid = false;
-      if (intervals[index + 1]) intervals[index + 1].valid = false;
-    }
-  }
-
-  const usableSeconds = intervals.reduce(
-    (total, interval) => total + (interval.valid ? interval.seconds : 0),
-    0,
-  );
-  let topSpeed: number | null = null;
-  for (let start = 0; start < intervals.length; start++) {
-    if (!intervals[start].valid) continue;
-    let elapsed = 0;
-    let distance = 0;
-    for (let end = start; end < intervals.length && intervals[end].valid; end++) {
-      const interval = intervals[end];
-      if (elapsed + interval.seconds >= 1) {
-        const remaining = 1 - elapsed;
-        distance += interval.distance * (remaining / interval.seconds);
-        const average = distance;
-        topSpeed = topSpeed === null ? average : Math.max(topSpeed, average);
-        break;
-      }
-      elapsed += interval.seconds;
-      distance += interval.distance;
-    }
-  }
-  return {
-    topSpeedMetresPerSecond: topSpeed === null ? null : Math.round(topSpeed * 100) / 100,
-    topSpeedUsableTimeFraction: coveredSeconds > 0
-      ? Math.min(1, Math.max(0, Math.round((usableSeconds / coveredSeconds) * 10_000) / 10_000))
-      : null,
-  };
-}
-
-function buildPlayerMetrics(
-  manifest: TrackingManifest,
-  fullSegments: TrackingSegmentPayload[] | undefined,
-  accepted: typeof claimMatchCorrectionsTable.$inferSelect[],
-  coveredSeconds: number,
-  coveragePercent: number,
-  answeredMoments: number,
-  acceptedMoments: number,
-  trackedSegments: number,
-  totalSegments: number,
-  matchedEvents: number,
-  humanVouchedSeconds: number,
-  inferredSeconds: number,
-  offPitchSpans: OffPitchSpan[],
-) {
-  const base = {
-    confirmedSeconds: Math.round(coveredSeconds * 100) / 100,
-    minutesPlayed: Math.round((coveredSeconds / 60) * 100) / 100,
-    coveragePercent,
-    answeredMoments,
-    acceptedMoments,
-    trackedSegments,
-    totalSegments,
-    matchedEvents,
-  };
-  const usablePitchModel = hasUsablePitchModel(manifest);
-  const coordinateSpace = usablePitchModel ? "pitch" as const : "camera" as const;
-  if (!fullSegments) {
-    return {
-      ...base,
-      heatmap: { coordinateSpace, cells: [] },
-      distanceMetres: null,
-      averageSpeedMetresPerSecond: null,
-      touches: unavailablePlayerMetric(),
-      passes: unavailablePlayerMetric(),
-      shots: unavailablePlayerMetric(),
-      dribbles: unavailablePlayerMetric(),
-      adminPlayerStats: {
-        topSpeedMetresPerSecond: null,
-        topSpeedUsableTimeFraction: null,
-      },
-    };
-  }
-
-  const raw = acceptedPositionSamples(manifest, fullSegments, accepted)
-    .filter((sample) => !offPitchSpans.some((span) => {
-      const seconds = sample.frame / Math.max(manifest.frameRate, 0.001);
-      return seconds >= span.fromSeconds && seconds < span.toSeconds;
-    }));
-  const mapped: MappedPosition[] = [];
-  for (const sample of raw) {
-    const pitch = interpolatePitchPosition(sample.x, sample.y, manifest);
-    if (usablePitchModel && !pitch) continue;
-    const pitchX = pitch?.x ?? sample.x;
-    const pitchY = pitch?.y ?? sample.y;
-    mapped.push({
-      ...sample,
-      pitchX,
-      pitchY,
-      nx: usablePitchModel
-        ? Math.max(0, Math.min(1, pitchX / manifest.pitchModel!.pitchWidthMetres))
-        : Math.max(0, Math.min(1, sample.x / Math.max(manifest.width, 1))),
-      ny: usablePitchModel
-        ? Math.max(0, Math.min(1, pitchY / manifest.pitchModel!.pitchHeightMetres))
-        : Math.max(0, Math.min(1, sample.y / Math.max(manifest.height, 1))),
-    });
-  }
-
-  const smoothed: MappedPosition[] = [];
-  const smoothingSeconds = 0.35;
-  const maxGapSeconds = 2;
-  for (const sample of mapped) {
-    const previous = smoothed.at(-1);
-    const gapSeconds = previous ? (sample.frame - previous.frame) / Math.max(manifest.frameRate, 0.001) : 0;
-    if (!previous || gapSeconds > maxGapSeconds) {
-      smoothed.push(sample);
-      continue;
-    }
-    const alpha = 1 - Math.exp(-gapSeconds / smoothingSeconds);
-    smoothed.push({
-      ...sample,
-      pitchX: previous.pitchX + (sample.pitchX - previous.pitchX) * alpha,
-      pitchY: previous.pitchY + (sample.pitchY - previous.pitchY) * alpha,
-      nx: previous.nx + (sample.nx - previous.nx) * alpha,
-      ny: previous.ny + (sample.ny - previous.ny) * alpha,
-    });
-  }
-
-  const bins = new Map<string, number>();
-  let totalWeight = 0;
-  for (let index = 0; index < smoothed.length; index++) {
-    const sample = smoothed[index];
-    const previous = smoothed[index - 1];
-    const gapSeconds = previous ? (sample.frame - previous.frame) / Math.max(manifest.frameRate, 0.001) : 1 / Math.max(manifest.frameRate, 0.001);
-    const weight = previous && gapSeconds <= maxGapSeconds ? Math.max(0, gapSeconds) : 1 / Math.max(manifest.frameRate, 0.001);
-    const column = Math.min(11, Math.floor(sample.nx * 12));
-    const row = Math.min(7, Math.floor(sample.ny * 8));
-    const key = `${column}:${row}`;
-    bins.set(key, (bins.get(key) ?? 0) + weight);
-    totalWeight += weight;
-  }
-  const heatmap = {
-    coordinateSpace,
-    cells: [...bins.entries()]
-      .map(([key, weight]) => {
-        const [column, row] = key.split(":").map(Number);
-        return {
-          x: (column + 0.5) / 12,
-          y: (row + 0.5) / 8,
-          weight: totalWeight > 0 ? Math.round((weight / totalWeight) * 10000) / 10000 : 0,
-        };
-      })
-      .sort((a, b) => b.weight - a.weight),
-  };
-  let distanceMetres: number | null = null;
-  if (usablePitchModel) {
-    distanceMetres = 0;
-    for (let index = 1; index < smoothed.length; index++) {
-      const previous = smoothed[index - 1];
-      const current = smoothed[index];
-      const gapSeconds = (current.frame - previous.frame) / Math.max(manifest.frameRate, 0.001);
-      if (gapSeconds <= maxGapSeconds) {
-        distanceMetres += Math.hypot(current.pitchX - previous.pitchX, current.pitchY - previous.pitchY);
-      }
-    }
-    distanceMetres = Math.round(distanceMetres);
-  }
-  const averageSpeedMetresPerSecond = distanceMetres === null
-    ? null
-    : coveredSeconds > 0
-      ? Math.round((distanceMetres / coveredSeconds) * 100) / 100
-      : 0;
-  const speedSummary = topSpeedSummary(manifest, mapped, coveredSeconds);
-  return {
-    ...base,
-    heatmap,
-    distanceMetres,
-    averageSpeedMetresPerSecond,
-    touches: unavailablePlayerMetric(),
-    passes: unavailablePlayerMetric(),
-    shots: unavailablePlayerMetric(),
-    dribbles: unavailablePlayerMetric(),
-    adminPlayerStats: speedSummary,
-  };
-}
-
-export function deriveClaimState(
-  manifest: TrackingManifest,
-  segments: ClaimStateSegment[],
-  corrections: typeof claimMatchCorrectionsTable.$inferSelect[],
-  fullSegments?: TrackingSegmentPayload[],
-  declaredOffPitchSpans: OffPitchSpan[] = [],
-): DerivedClaimState {
-  const offPitchSpans = normaliseOffPitchSpans(declaredOffPitchSpans, manifest.duration);
-  const offPitchSeconds = totalSeconds(offPitchSpans);
-  const isOffPitch = (seconds: number) => offPitchSpans.some((span) =>
-    seconds >= span.fromSeconds && seconds < span.toSeconds);
-  const active = corrections.filter((row) => !row.undone);
-  const anchorAnswers = latestAnchorAnswers(corrections).filter((row) => !isOffPitch(row.momentSeconds));
-  const nonAnchorAnswers = active.filter((row) =>
-    !row.answerMethod.startsWith("anchor-") && !isOffPitch(row.momentSeconds));
-  const accepted = [...nonAnchorAnswers, ...anchorAnswers].filter(isAcceptedClaimAnswer);
-  const identityEvidence = claimIdentityEvidence(manifest, segments, accepted);
-  const identityResolution = resolveClaimIdentity(manifest, segments, accepted);
-  const resolvedPersonId = identityResolution?.personId ?? null;
-  const acceptedForPerson = accepted.filter((row) =>
-    resolvedPersonId !== null
-    && resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds).personId === resolvedPersonId,
-  );
-  const acceptedAnchorCount = anchorAnswers.filter((row) =>
-    isAcceptedClaimAnswer(row)
-    && resolvedPersonId !== null
-    && resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds).personId === resolvedPersonId,
-  ).length;
-  const intervals = acceptedForPerson.flatMap((row) => {
-    const resolved = resolvePersonForTrack(manifest, row.chosenTrackId);
-    return trackIntervalsForId(manifest, segments, resolved.personId);
-  });
-  const sorted = intervals
-    .map((interval) => ({
-      startSeconds: Math.max(0, Math.min(manifest.duration, interval.startSeconds)),
-      endSeconds: Math.max(0, Math.min(manifest.duration, interval.endSeconds)),
-    }))
-    .filter((interval) => interval.endSeconds > interval.startSeconds)
-    .sort((a, b) => a.startSeconds - b.startSeconds);
-  const attributed = subtractSpans(
-    normaliseOffPitchSpans(sorted.map((interval) => ({
-      fromSeconds: interval.startSeconds,
-      toSeconds: interval.endSeconds,
-    })), manifest.duration),
-    offPitchSpans,
-  );
-  const coveredSeconds = totalSeconds(attributed);
-  const coverageDenominator = Math.max(manifest.duration - offPitchSeconds, 1);
-  const coveragePercent = Math.min(100, Math.round((coveredSeconds / coverageDenominator) * 10000) / 100);
-  const vouchedFragments = fullSegments
-    ? acceptedForPerson
-      .map((row) => vouchedFragmentForAnswer(manifest, fullSegments, row))
-      .filter((fragment): fragment is ClaimVouchedFragment => fragment !== null)
-    : [];
-  const humanVouchedSeconds = totalSeconds(subtractSpans(
-    canonicalVouchedFragments(vouchedFragments).map((fragment) => ({
-      fromSeconds: Math.max(0, fragment.fromFrame / Math.max(manifest.frameRate, 0.001)),
-      toSeconds: Math.min(manifest.duration, (fragment.toFrame + 1) / Math.max(manifest.frameRate, 0.001)),
-    })),
-    offPitchSpans,
-  ));
-  const inferredSeconds = Math.max(0, Math.round((coveredSeconds - humanVouchedSeconds) * 100) / 100);
-  const unresolvedMoments = anchorAnswers
-    .filter((row) => row.answerMethod === "anchor-no" || row.answerMethod === "anchor-skip")
-    .map((row) => row.momentSeconds)
-    .sort((a, b) => a - b);
-  const conflictMoments = identityResolution?.conflictMoments ?? ambiguousClaimMoments(identityEvidence);
-  const requiredAnchors = manifest.duration < 120 ? 1 : 3;
-  const requiredCoverage = manifest.duration < 120 ? 55 : 60;
-  const completed = identityResolution !== null
-    && acceptedAnchorCount >= requiredAnchors
-    && coveragePercent >= requiredCoverage;
-  const attributedIntervals = attributed.map((interval) => ({
-    startSeconds: interval.fromSeconds,
-    endSeconds: interval.toSeconds,
-  }));
-  const earnedClips = acceptedForPerson.reduce(
-    (all, row) => getMomentClips(segments, row.momentSeconds, all, attributedIntervals),
-    [] as ClaimEarnedClip[],
-  );
-  const acceptedTrackIds = new Set<string>();
-  for (const row of acceptedForPerson) {
-    const personId = resolvePersonForTrack(manifest, row.chosenTrackId, row.momentSeconds).personId;
-    acceptedTrackIds.add(personId);
-    const identity = usableIdentityMap(manifest).find((item) => item.id === personId);
-    for (const part of identity?.parts ?? []) acceptedTrackIds.add(part.trackId);
-    if (!identity) acceptedTrackIds.add(row.chosenTrackId);
-  }
-  const trackedSegments = segments.filter((segment) =>
-    segment.tracks.some((track) => acceptedTrackIds.has(track.id)),
-  ).length;
-  const matchedEvents = segments
-    .flatMap((segment) => segment.events)
-    .filter((event) => attributedIntervals.some((interval) =>
-      event.time >= interval.startSeconds && event.time <= interval.endSeconds,
-    ))
-    .length;
-  const playerMetrics = buildPlayerMetrics(
-    manifest,
-    fullSegments,
-    acceptedForPerson,
-    coveredSeconds,
-    coveragePercent,
-    anchorAnswers.length,
-    acceptedAnchorCount,
-    trackedSegments,
-    segments.length,
-    matchedEvents,
-    humanVouchedSeconds,
-    inferredSeconds,
-    offPitchSpans,
-  );
-  const { adminPlayerStats, ...playerStats } = playerMetrics;
-  return {
-    coverageSeconds: Math.round(coveredSeconds * 100) / 100,
-    coveragePercent,
-    offPitchSeconds,
-    humanVouchedSeconds,
-    inferredSeconds,
-    vouchedFragments: canonicalVouchedFragments(vouchedFragments),
-    answeredAnchorCount: anchorAnswers.length,
-    acceptedAnchorCount,
-    unresolvedMoments: Array.from(new Set(unresolvedMoments)).slice(0, 50),
-    conflictMoments,
-    identityResolution,
-    clipsUnlocked: earnedClips.length,
-    correctionCount: active.length,
-    completed,
-    completionReason: identityResolution === null && accepted.length > 0
-        ? "identity-unresolved"
-        : conflictMoments.length > 0
-          ? "identity-conflicts"
-        : completed ? "coverage-threshold" : "keep-confirming",
-    earnedClips,
-    playerStats,
-    adminPlayerStats,
-  };
-}
-
-function progressWithDerived(
-  row: typeof claimMatchProgressTable.$inferSelect | null,
-  recordingId: number,
-  derived: DerivedClaimState,
-  binding: ClaimIdentityBindingRow | null,
-  takenFragments: Array<ClaimVouchedFragment & { ownedByCurrentUser: boolean }> = [],
-) {
-  const completed = shouldKeepClaimCompleted(
-    Boolean(row?.completed),
-    derived.conflictMoments.length === 0 && derived.completed,
-    binding?.state ?? null,
-  );
-  const storedClipsById = new Map((row?.earnedClips ?? []).map((clip) => [clip.id, clip]));
-  const earnedClips = derived.earnedClips.map((clip) => ({
-    ...clip,
-    ...(storedClipsById.get(clip.id)?.userClipId
-      ? { userClipId: storedClipsById.get(clip.id)?.userClipId }
-      : {}),
-  }));
-  return {
-    ...toProgress(row, recordingId),
-    claimedPercent: derived.coveragePercent,
-    coverageSeconds: derived.coverageSeconds,
-    coveragePercent: derived.coveragePercent,
-    offPitchSeconds: derived.offPitchSeconds,
-    humanVouchedSeconds: derived.humanVouchedSeconds,
-    inferredSeconds: derived.inferredSeconds,
-    vouchedFragments: derived.vouchedFragments,
-    takenFragments,
-    answeredAnchorCount: derived.answeredAnchorCount,
-    acceptedAnchorCount: derived.acceptedAnchorCount,
-    unresolvedMoments: derived.unresolvedMoments,
-    conflictMoments: derived.conflictMoments,
-    identityBinding: toIdentityBinding(binding),
-    clipsUnlocked: earnedClips.length,
-    correctionCount: derived.correctionCount,
-    completed,
-    earnedClips,
-    completionReason: derived.identityResolution === null
-      ? derived.completionReason
-      : derived.conflictMoments.length > 0
-        ? "identity-conflicts"
-        : completed ? "coverage-threshold" : derived.completionReason,
-    playerStats: derived.playerStats,
-  };
-}
-
-async function getClaimCorrections(userId: number, recordingId: number) {
-  return db
-    .select()
-    .from(claimMatchCorrectionsTable)
-    .where(and(
-      eq(claimMatchCorrectionsTable.userId, userId),
-      eq(claimMatchCorrectionsTable.recordingId, recordingId),
-    ))
-    .orderBy(desc(claimMatchCorrectionsTable.createdAt));
-}
 
 async function getClaimOffPitchSpans(userId: number, recordingId: number) {
   return db
@@ -2614,30 +1345,23 @@ function toOffPitchSpan(row: typeof claimMatchOffPitchSpansTable.$inferSelect) {
   };
 }
 
-async function getTakenClaimFragments(recordingId: number, userId: number) {
-  const bindings = await db
-    .select({
-      userId: claimMatchIdentityBindingsTable.userId,
-      state: claimMatchIdentityBindingsTable.state,
-      vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments,
-    })
-    .from(claimMatchIdentityBindingsTable)
-    .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
-  return bindings
-    .filter((binding) =>
-      ["pending", "confirmed", "disputed", "needs_resolution"].includes(binding.state)
-      && (binding.vouchedFragments?.length ?? 0) > 0)
-    .flatMap((binding) => canonicalVouchedFragments(binding.vouchedFragments).map((fragment) => ({
-      ...fragment,
-      ownedByCurrentUser: binding.userId === userId,
-    })));
-}
-
+/**
+ * Two people confirming the same person at the same instant.
+ *
+ * The unique index catches it and the caller retries as a dispute -- but only
+ * if it can recognise the violation. Drizzle wraps pg errors in a
+ * DrizzleQueryError that carries no `code` of its own and keeps the real error
+ * on `cause`, so checking only the top level silently stopped matching and
+ * turned a genuine simultaneous claim into a 500 instead of a dispute. Walk
+ * the cause chain rather than trusting either shape.
+ */
 function isBindingUniqueViolation(error: unknown): boolean {
-  return typeof error === "object"
-    && error !== null
-    && "code" in error
-    && (error as { code?: string }).code === "23505";
+  let current: unknown = error;
+  for (let depth = 0; current && typeof current === "object" && depth < 5; depth++) {
+    if ((current as { code?: string }).code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 function fragmentIdentityId(basePersonId: string, fragments: ClaimVouchedFragment[]): string {
@@ -2746,26 +1470,6 @@ async function identityBindingsTableExists(): Promise<boolean> {
   }
 }
 
-export function completionAllowed(
-  derived: DerivedClaimState,
-  binding: ClaimIdentityBindingRow | null,
-): boolean {
-  return derived.completed
-    && derived.conflictMoments.length === 0
-    && binding?.state === "confirmed";
-}
-
-export function shouldKeepClaimCompleted(
-  existingCompleted: boolean,
-  derivedCompleted: boolean,
-  bindingState: string | null,
-): boolean {
-  if (existingCompleted) {
-    return bindingState === "confirmed" || bindingState === "pending";
-  }
-  return derivedCompleted && bindingState === "confirmed";
-}
-
 /**
  * Turn the current answer set into the user's one recording binding. This is
  * intentionally called on reads as well as writes: an admin transfer and a
@@ -2775,10 +1479,13 @@ export async function syncIdentityBinding(
   userId: number,
   recordingId: number,
   bundle: typeof recordingTrackingBundlesTable.$inferSelect,
-  // Narrowed to what this actually reads, so the chain flow can call it with
-  // its own resolution instead of fabricating an anchor-shaped state around
-  // two fields. Every existing caller passes a full DerivedClaimState.
-  derived: Pick<DerivedClaimState, "identityResolution" | "vouchedFragments">,
+  // The two fields a binding is actually made of. This used to be a Pick of
+  // the old flow's derived state, which is why it reads like a narrowing --
+  // there is nothing left to narrow from.
+  derived: {
+    identityResolution: ResolvedClaimIdentity | null;
+    vouchedFragments: ClaimVouchedFragment[];
+  },
   allowNeedsResolutionRecovery = false,
 ): Promise<ClaimIdentityBindingRow | null> {
   const [existing] = await db
@@ -2896,6 +1603,15 @@ async function markBindingsNeedsResolution(recordingId: number): Promise<void> {
   }
 }
 
+/**
+ * Every person who has claimed themselves on this recording, with their
+ * numbers.
+ *
+ * The list is built from identity bindings, which is what a claim is. It used
+ * to be built from correction rows -- so a claim made on the chain page, which
+ * writes no corrections, was not shown as a player with no stats: it was not
+ * shown at all.
+ */
 router.get("/admin/recordings/:id/player-metrics", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) {
@@ -2912,25 +1628,22 @@ router.get("/admin/recordings/:id/player-metrics", async (req, res): Promise<voi
     res.status(404).json({ error: "Recording or tracking bundle not found" });
     return;
   }
-  const [corrections, fullSegments, offPitchRows] = await Promise.all([
+  const [bindings, fullSegments, offPitchRows] = await Promise.all([
     db
       .select()
-      .from(claimMatchCorrectionsTable)
-      .where(eq(claimMatchCorrectionsTable.recordingId, recordingId))
-      .orderBy(desc(claimMatchCorrectionsTable.createdAt)),
+      .from(claimMatchIdentityBindingsTable)
+      .where(and(
+        eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+        inArray(claimMatchIdentityBindingsTable.state, ["confirmed", "pending", "disputed"]),
+      )),
     readBundleSegments(row.bundle.id),
     db
       .select()
       .from(claimMatchOffPitchSpansTable)
       .where(eq(claimMatchOffPitchSpansTable.recordingId, recordingId)),
   ]);
-  const correctionsByUser = new Map<number, typeof corrections>();
-  for (const correction of corrections) {
-    const existing = correctionsByUser.get(correction.userId) ?? [];
-    existing.push(correction);
-    correctionsByUser.set(correction.userId, existing);
-  }
-  const userIds = [...correctionsByUser.keys()];
+
+  const userIds = [...new Set(bindings.map((binding) => binding.userId))];
   const users = userIds.length
     ? await db
       .select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
@@ -2939,29 +1652,45 @@ router.get("/admin/recordings/:id/player-metrics", async (req, res): Promise<voi
     : [];
   const usersById = new Map(users.map((user) => [user.id, user]));
   const manifest = await manifestWithBundleFingerprint(row.bundle);
-  const segments = await getClaimStateSegments(row.bundle);
+  const chainSegments = fullSegments.map((segment) => ({
+    tracks: segment.tracks,
+    events: segment.events,
+  }));
   const offPitchByUser = new Map<number, OffPitchSpan[]>();
-  for (const row of offPitchRows) {
-    const existing = offPitchByUser.get(row.userId) ?? [];
-    existing.push(row);
-    offPitchByUser.set(row.userId, existing);
+  for (const span of offPitchRows) {
+    const existing = offPitchByUser.get(span.userId) ?? [];
+    existing.push(span);
+    offPitchByUser.set(span.userId, existing);
   }
-  const players = [...correctionsByUser.entries()]
-    .map(([userId, userCorrections]) => {
-      const derived = deriveClaimState(
-        manifest,
-        segments,
-        userCorrections,
-        fullSegments,
-        normaliseOffPitchSpans(offPitchByUser.get(userId) ?? [], manifest.duration),
+
+  const players = bindings
+    .map((binding) => {
+      const identity = manifest.identities?.find((item) => item.id === binding.personId);
+      const chain = (identity?.parts ?? []).map((part) => ({ ...part }));
+      const offPitch = normaliseOffPitchSpans(
+        offPitchByUser.get(binding.userId) ?? [],
+        manifest.duration,
       );
-      const user = usersById.get(userId);
+      const state = deriveChainClaimState(manifest, chainSegments, chain, {
+        offPitch,
+        hasOpenQuestion: false,
+      });
+      const metrics = chainPlayerMetrics(
+        manifest,
+        fullSegments,
+        chainSegments,
+        chain,
+        state,
+        { answeredMoments: chain.length, offPitch },
+      );
+      const { adminPlayerStats, ...playerStats } = metrics;
+      const user = usersById.get(binding.userId);
       return {
-        userId,
-        displayName: user?.name ?? `User ${userId}`,
+        userId: binding.userId,
+        displayName: identity?.name ?? user?.name ?? `User ${binding.userId}`,
         email: user?.email ?? "unknown",
-        playerStats: derived.playerStats,
-        ...derived.adminPlayerStats,
+        playerStats,
+        ...adminPlayerStats,
       };
     })
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -2972,6 +1701,7 @@ router.get("/admin/recordings/:id/player-metrics", async (req, res): Promise<voi
     players,
   }));
 });
+
 
 function formatMoment(seconds: number): string {
   const mins = Math.floor(seconds / 60);
@@ -3152,6 +1882,15 @@ router.post("/admin/claim-match/bindings/:id/release", async (req, res): Promise
   res.json(toIdentityBinding(released));
 });
 
+/**
+ * The bundle a claim page or the identity board works from.
+ *
+ * It used to carry a derived claim state as well -- coverage, vouched
+ * fragments, anchor counts, earned clips -- computed on every read from the
+ * correction rows. Nothing consumed it: the claim page derives its own state
+ * from the chain endpoints and the board reads only the map. So this is now
+ * what it says it is, the manifest and the recording.
+ */
 router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
@@ -3173,49 +1912,9 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     res.status(404).json({ error: "No tracking bundle has been uploaded for this recording", code: "tracking_bundle_missing" });
     return;
   }
-  const bundle = row.bundle;
-  const [progress] = await db
-    .select()
-    .from(claimMatchProgressTable)
-    .where(and(
-      eq(claimMatchProgressTable.userId, userId),
-      eq(claimMatchProgressTable.recordingId, params.data.id),
-    ));
-  const corrections = await db
-    .select()
-    .from(claimMatchCorrectionsTable)
-    .where(and(
-      eq(claimMatchCorrectionsTable.userId, userId),
-      eq(claimMatchCorrectionsTable.recordingId, params.data.id),
-    ))
-    .orderBy(desc(claimMatchCorrectionsTable.createdAt));
   const storedOffPitchSpans = await getClaimOffPitchSpans(userId, params.data.id);
-  const manifest = await manifestWithBundleFingerprint(bundle);
-  const segments = await getClaimStateSegments(bundle);
+  const manifest = await manifestWithBundleFingerprint(row.bundle);
   const offPitchSpans = normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration);
-  let derived = deriveClaimState(manifest, segments, corrections, undefined, offPitchSpans);
-  if (corrections.some(isAcceptedClaimAnswer) || progress?.completed || derived.completed) {
-    // Vouched fragments are exact detection runs, so a claim read must use
-    // full boxes whenever the user has accepted an identity answer.
-    derived = deriveClaimState(
-      manifest,
-      segments,
-      corrections,
-      await readBundleSegments(bundle.id),
-      offPitchSpans,
-    );
-  }
-  const binding = await syncIdentityBinding(userId, params.data.id, bundle, derived);
-  const takenFragments = await getTakenClaimFragments(params.data.id, userId);
-  const canAward = completionAllowed(derived, binding);
-  const earnedClips = canAward
-    ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
-    : [];
-  if (canAward && earnedClips.length !== derived.earnedClips.length) {
-    derived = { ...derived, earnedClips };
-  } else if (!canAward) {
-    derived = { ...derived, earnedClips: [] };
-  }
 
   res.json(GetClaimMatchResponse.parse({
     identitiesFingerprint: identitiesFingerprint(manifest.identities),
@@ -3225,10 +1924,11 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
     // guess and it is almost always wrong on a recording longer than the
     // tracked window.
     manifest: { ...manifestForClient(manifest), videoStartSeconds: manifest.videoStartSeconds ?? 0 },
-    progress: progressWithDerived(progress ?? null, params.data.id, derived, binding, takenFragments),
-    corrections: corrections.map(toCorrection),
     offPitchSpans: storedOffPitchSpans.map(toOffPitchSpan),
-    offPitchSeconds: derived.offPitchSeconds,
+    offPitchSeconds: offPitchSpans.reduce(
+      (sum, span) => sum + Math.max(0, span.toSeconds - span.fromSeconds),
+      0,
+    ),
   }));
 });
 
@@ -3271,357 +1971,6 @@ router.get("/recordings/:id/claim-match/segments/:segmentIndex", async (req, res
   } catch {
     res.status(404).json({ error: "Tracking segment not found" });
   }
-});
-
-router.patch("/recordings/:id/claim-match", async (req, res): Promise<void> => {
-  const userId = await requireAccountUser(req);
-  if (!userId) {
-    unauthenticatedResponse(res, req, "Authenticated account required");
-    return;
-  }
-  const params = GetClaimMatchParams.safeParse({ id: recordingIdFromRequest(req.params.id) });
-  const body = UpdateClaimMatchProgressBody.safeParse(req.body);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
-  if (!body.success) {
-    res.status(400).json({ error: body.error.message });
-    return;
-  }
-  const writeAccess = await getClaimMatchWritableBundle(req, params.data.id);
-  if (writeAccess.status) {
-    res.status(writeAccess.status).json({ error: writeAccess.error });
-    return;
-  }
-  const row = writeAccess.row;
-  if (!row?.bundle?.manifest) {
-    res.status(404).json({ error: "Recording or tracking bundle not found" });
-    return;
-  }
-  const segments = await getClaimStateSegments(row.bundle);
-  const corrections = await getClaimCorrections(userId, params.data.id);
-  const manifest = await manifestWithBundleFingerprint(row.bundle);
-  const storedOffPitchSpans = await getClaimOffPitchSpans(userId, params.data.id);
-  const offPitchSpans = normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration);
-  let derived = deriveClaimState(manifest, segments, corrections, undefined, offPitchSpans);
-  if (corrections.some(isAcceptedClaimAnswer) || derived.completed) {
-    derived = deriveClaimState(
-      manifest,
-      segments,
-      corrections,
-      await readBundleSegments(row.bundle.id),
-      offPitchSpans,
-    );
-  }
-  const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived, true);
-  const takenFragments = await getTakenClaimFragments(params.data.id, userId);
-  const isCompleted = completionAllowed(derived, binding);
-  const earnedClips = isCompleted
-    ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
-    : [];
-  const nextStage = isCompleted
-    ? "done"
-    : body.data.stage === "done"
-      ? "picker"
-      : body.data.stage;
-  const responseDerived = {
-    ...derived,
-    completed: isCompleted,
-    completionReason: derived.identityResolution === null
-      ? derived.completionReason
-      : derived.conflictMoments.length > 0
-        ? "identity-conflicts"
-        : isCompleted ? "coverage-threshold" : derived.completionReason,
-    earnedClips,
-  };
-  const [existingProgress] = await db
-    .select({ completed: claimMatchProgressTable.completed })
-    .from(claimMatchProgressTable)
-    .where(and(
-      eq(claimMatchProgressTable.userId, userId),
-      eq(claimMatchProgressTable.recordingId, params.data.id),
-    ));
-  const stickyCompleted = shouldKeepClaimCompleted(
-    existingProgress?.completed ?? false,
-    isCompleted,
-    binding?.state ?? null,
-  );
-  const [saved] = await db
-    .insert(claimMatchProgressTable)
-    .values({
-      userId,
-      recordingId: params.data.id,
-      currentTrackId: body.data.currentTrackId ?? null,
-      stage: nextStage,
-      confirmedFromSeconds: body.data.confirmedFromSeconds,
-      currentPositionSeconds: body.data.currentPositionSeconds,
-      claimedPercent: derived.coveragePercent,
-      clipsUnlocked: earnedClips.length,
-      correctionCount: derived.correctionCount,
-      completed: stickyCompleted,
-      earnedClips,
-    })
-    .onConflictDoUpdate({
-      target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
-      set: {
-        currentTrackId: body.data.currentTrackId ?? null,
-        confirmedFromSeconds: body.data.confirmedFromSeconds,
-        currentPositionSeconds: body.data.currentPositionSeconds,
-        claimedPercent: derived.coveragePercent,
-         clipsUnlocked: earnedClips.length,
-        correctionCount: derived.correctionCount,
-         completed: sql`${claimMatchProgressTable.completed} OR ${stickyCompleted}`,
-         stage: sql`CASE WHEN (${claimMatchProgressTable.completed} OR ${stickyCompleted}) THEN 'done' ELSE ${nextStage} END`,
-        earnedClips,
-        updatedAt: new Date(),
-      },
-    })
-    .returning();
-  const responseCompleted = completionSurvivesConcurrentProgress(saved.completed, isCompleted);
-  res.json(progressWithDerived(
-    saved,
-    params.data.id,
-    responseCompleted && !responseDerived.completed
-      ? { ...responseDerived, completed: true }
-      : responseDerived,
-    binding,
-    takenFragments,
-  ));
-});
-
-router.post("/recordings/:id/claim-match/corrections", async (req, res): Promise<void> => {
-  const userId = await requireAccountUser(req);
-  if (!userId) {
-    unauthenticatedResponse(res, req, "Authenticated account required");
-    return;
-  }
-  const params = GetClaimMatchParams.safeParse({ id: recordingIdFromRequest(req.params.id) });
-  const body = CreateClaimMatchCorrectionBody.safeParse(req.body);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
-  if (!body.success) {
-    res.status(400).json({ error: body.error.message });
-    return;
-  }
-  const writeAccess = await getClaimMatchWritableBundle(req, params.data.id);
-  if (writeAccess.status) {
-    res.status(writeAccess.status).json({ error: writeAccess.error });
-    return;
-  }
-  const row = writeAccess.row;
-  if (!row?.bundle) {
-    res.status(404).json({ error: "Recording or tracking bundle not found" });
-    return;
-  }
-  const segments = await getClaimStateSegments(row.bundle);
-  const manifest = await manifestWithBundleFingerprint(row.bundle);
-  const storedOffPitchSpans = await getClaimOffPitchSpans(userId, params.data.id);
-  const offPitchSpans = normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration);
-  const isAnchorNoAnswer = body.data.answerMethod === "anchor-no" || body.data.answerMethod === "anchor-skip";
-  if (
-    (isAnchorNoAnswer
-      ? body.data.chosenTrackId !== EMPTY_ANCHOR_TRACK
-      : !isKnownClaimCandidateId(manifest, segments, body.data.chosenTrackId)) ||
-    (body.data.rejectedTrackId !== undefined &&
-      body.data.rejectedTrackId !== null &&
-      !isKnownClaimCandidateId(manifest, segments, body.data.rejectedTrackId))
-  ) {
-    res.status(400).json({ error: "Correction references an unknown track" });
-    return;
-  }
-
-  const [existing] = await db
-    .select()
-    .from(claimMatchCorrectionsTable)
-    .where(and(
-      eq(claimMatchCorrectionsTable.userId, userId),
-      eq(claimMatchCorrectionsTable.recordingId, params.data.id),
-      eq(claimMatchCorrectionsTable.clientId, body.data.clientId),
-    ));
-  if (existing) {
-    res.status(200).json(toCorrection(existing));
-    return;
-  }
-
-  const [created] = await db
-    .insert(claimMatchCorrectionsTable)
-    .values({
-      userId,
-      recordingId: params.data.id,
-      clientId: body.data.clientId,
-      momentSeconds: body.data.momentSeconds,
-      rejectedTrackId: body.data.rejectedTrackId,
-      chosenTrackId: body.data.chosenTrackId,
-      answerMethod: body.data.answerMethod,
-      questionCount: body.data.questionCount,
-    })
-    .returning();
-  const allCorrections = await getClaimCorrections(userId, params.data.id);
-  const derived = deriveClaimState(
-    manifest,
-    segments,
-    allCorrections,
-    await readBundleSegments(row.bundle.id),
-    offPitchSpans,
-  );
-  const binding = await syncIdentityBinding(userId, params.data.id, row.bundle, derived);
-  const isCompleted = completionAllowed(derived, binding);
-  const [existingProgress] = await db
-    .select({ completed: claimMatchProgressTable.completed })
-    .from(claimMatchProgressTable)
-    .where(and(
-      eq(claimMatchProgressTable.userId, userId),
-      eq(claimMatchProgressTable.recordingId, params.data.id),
-    ));
-  const stickyCompleted = shouldKeepClaimCompleted(
-    existingProgress?.completed ?? false,
-    isCompleted,
-    binding?.state ?? null,
-  );
-  const earnedClips = isCompleted
-    ? await materializeClaimMoments(userId, row.recording, manifest, derived.earnedClips)
-    : [];
-  const nextStage = stickyCompleted
-    ? "done"
-    : body.data.answerMethod.startsWith("anchor-")
-      ? "picker"
-      : "following";
-  await db
-    .insert(claimMatchProgressTable)
-    .values({
-      userId,
-      recordingId: params.data.id,
-      currentTrackId: isAnchorNoAnswer ? null : body.data.chosenTrackId,
-      stage: nextStage,
-      confirmedFromSeconds: body.data.momentSeconds,
-      currentPositionSeconds: body.data.momentSeconds,
-      claimedPercent: derived.coveragePercent,
-       clipsUnlocked: earnedClips.length,
-      correctionCount: derived.correctionCount,
-       completed: isCompleted,
-      earnedClips,
-    })
-    .onConflictDoUpdate({
-      target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
-      set: {
-        currentTrackId: isAnchorNoAnswer ? null : body.data.chosenTrackId,
-        confirmedFromSeconds: body.data.momentSeconds,
-        currentPositionSeconds: body.data.momentSeconds,
-        claimedPercent: derived.coveragePercent,
-         clipsUnlocked: earnedClips.length,
-        correctionCount: derived.correctionCount,
-          completed: sql`${claimMatchProgressTable.completed} OR ${stickyCompleted}`,
-          stage: sql`CASE WHEN (${claimMatchProgressTable.completed} OR ${stickyCompleted}) THEN 'done' ELSE ${nextStage} END`,
-        earnedClips,
-        updatedAt: new Date(),
-      },
-    });
-
-  res.status(201).json(toCorrection(created));
-});
-
-router.delete("/claim-match/corrections/:correctionId", async (req, res): Promise<void> => {
-  const userId = await requireAccountUser(req);
-  if (!userId) {
-    unauthenticatedResponse(res, req, "Authenticated account required");
-    return;
-  }
-  const correctionId = parseId(req.params.correctionId);
-  if (!correctionId) {
-    res.status(400).json({ error: "Invalid correction id" });
-    return;
-  }
-  const [correction] = await db
-    .select()
-    .from(claimMatchCorrectionsTable)
-    .where(eq(claimMatchCorrectionsTable.id, correctionId));
-  if (!correction) {
-    res.status(404).json({ error: "Correction not found" });
-    return;
-  }
-  if (correction.userId !== userId) {
-    res.status(403).json({ error: "Correction belongs to another user" });
-    return;
-  }
-  const undoAccess = await getClaimMatchWritableBundle(req, correction.recordingId);
-  if (undoAccess.status) {
-    res.status(undoAccess.status).json({ error: undoAccess.error });
-    return;
-  }
-  const bundleRow = undoAccess.row;
-  if (!bundleRow?.bundle) {
-    res.status(404).json({ error: "Recording or tracking bundle not found" });
-    return;
-  }
-  if (!correction.undone) {
-    await db
-      .update(claimMatchCorrectionsTable)
-      .set({ undone: true, updatedAt: new Date() })
-      .where(eq(claimMatchCorrectionsTable.id, correctionId));
-  }
-  {
-    const [segments, corrections, existingProgress] = await Promise.all([
-      getClaimStateSegments(bundleRow.bundle),
-      getClaimCorrections(userId, correction.recordingId),
-      db
-        .select()
-        .from(claimMatchProgressTable)
-        .where(and(
-          eq(claimMatchProgressTable.userId, userId),
-          eq(claimMatchProgressTable.recordingId, correction.recordingId),
-        ))
-        .then((rows) => rows[0] ?? null),
-    ]);
-    const manifest = await manifestWithBundleFingerprint(bundleRow.bundle);
-    const storedOffPitchSpans = await getClaimOffPitchSpans(userId, correction.recordingId);
-    const derived = deriveClaimState(
-      manifest,
-      segments,
-      corrections,
-      await readBundleSegments(bundleRow.bundle.id),
-      normaliseOffPitchSpans(storedOffPitchSpans, manifest.duration),
-    );
-    const binding = await syncIdentityBinding(userId, correction.recordingId, bundleRow.bundle, derived);
-    const isCompleted = completionAllowed(derived, binding);
-    const stickyCompleted = shouldKeepClaimCompleted(
-      existingProgress?.completed ?? false,
-      isCompleted,
-      binding?.state ?? null,
-    );
-    const storedClipsById = new Map((existingProgress?.earnedClips ?? []).map((clip) => [clip.id, clip]));
-    const earnedClips = isCompleted
-      ? await materializeClaimMoments(
-        userId,
-        bundleRow.recording,
-        manifest,
-        derived.earnedClips.map((clip) => ({
-          ...clip,
-          ...(storedClipsById.get(clip.id)?.userClipId
-            ? { userClipId: storedClipsById.get(clip.id)?.userClipId }
-            : {}),
-        })),
-      )
-      : [];
-    await db
-      .update(claimMatchProgressTable)
-      .set({
-        claimedPercent: derived.coveragePercent,
-        clipsUnlocked: earnedClips.length,
-        correctionCount: derived.correctionCount,
-        completed: stickyCompleted,
-        earnedClips,
-        stage: stickyCompleted ? "done" : "picker",
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(claimMatchProgressTable.userId, userId),
-        eq(claimMatchProgressTable.recordingId, correction.recordingId),
-      ));
-  }
-  res.json(toCorrection({ ...correction, undone: true }));
 });
 
 export function validateUploadBundle(upload: UploadBundle): string | null {
@@ -3790,6 +2139,15 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
   }
 }
 
+/**
+ * The only thing left to correct on a stored bundle is where its tracking
+ * starts in the video.
+ *
+ * It used to accept a pitch model too. That model now belongs to the camera
+ * (routes/cameras.ts) and is attached at read time, so one stored here would
+ * be overwritten on the way out -- an edit that looks like it worked and
+ * changes nothing.
+ */
 router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) {
@@ -3806,9 +2164,14 @@ router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<
     res.status(400).json({ error: body.error.message });
     return;
   }
-  const hasPitchModel = Object.prototype.hasOwnProperty.call(req.body, "pitchModel");
-  if (body.data.videoStartSeconds === undefined && !hasPitchModel) {
-    res.status(400).json({ error: "Provide videoStartSeconds or pitchModel" });
+  if (Object.prototype.hasOwnProperty.call(req.body, "pitchModel")) {
+    res.status(400).json({
+      error: "A pitch model belongs to the camera, not to one recording. Upload it at /admin/cameras/{cameraId}/pitch-model.",
+    });
+    return;
+  }
+  if (body.data.videoStartSeconds === undefined) {
+    res.status(400).json({ error: "Provide videoStartSeconds" });
     return;
   }
   const [existing] = await db
@@ -3819,56 +2182,19 @@ router.patch("/admin/recordings/:id/tracking-bundle", async (req, res): Promise<
     res.status(404).json({ error: "Tracking bundle not found" });
     return;
   }
-  let pitchModel = existing.manifest.pitchModel;
-  if (hasPitchModel) {
-    if (body.data.pitchModel === null) {
-      pitchModel = undefined;
-    } else {
-      const parsedPitchModel = parsePitchModel(body.data.pitchModel);
-      if (parsedPitchModel.error || !parsedPitchModel.model) {
-        res.status(400).json({ error: parsedPitchModel.error ?? "Invalid pitch model" });
-        return;
-      }
-      const framingError = pitchModelFramingError(
-        parsedPitchModel.model,
-        existing.manifest.width,
-        existing.manifest.height,
-      );
-      if (framingError) {
-        res.status(400).json({ error: framingError });
-        return;
-      }
-      pitchModel = parsedPitchModel.model;
-    }
-  }
   const manifest: TrackingManifest = {
     ...existing.manifest,
-    ...(body.data.videoStartSeconds === undefined
-      ? {}
-      : { videoStartSeconds: body.data.videoStartSeconds }),
+    videoStartSeconds: body.data.videoStartSeconds,
   };
-  if (hasPitchModel) {
-    if (pitchModel) manifest.pitchModel = pitchModel;
-    else delete manifest.pitchModel;
-  }
   const [saved] = await db
     .update(recordingTrackingBundlesTable)
     .set({ manifest, updatedAt: new Date(), uploadedBy: adminId })
     .where(eq(recordingTrackingBundlesTable.id, existing.id))
     .returning({ updatedAt: recordingTrackingBundlesTable.updatedAt });
-  if (hasPitchModel) {
-    logger.info({
-      recordingId,
-      adminId,
-      previousCalibrationId: existing.manifest.pitchModel?.calibrationId ?? null,
-      nextCalibrationId: manifest.pitchModel?.calibrationId ?? null,
-      action: pitchModel ? "attach" : "remove",
-    }, "Admin changed tracking bundle pitch model");
-  }
   res.json(UpdateTrackingBundleResponse.parse({
     recordingId,
     videoStartSeconds: manifest.videoStartSeconds ?? 0,
-    pitchModel: pitchModelSummary(manifest.pitchModel),
+    pitchModel: null,
     updatedAt: saved?.updatedAt?.toISOString() ?? new Date().toISOString(),
   }));
 });

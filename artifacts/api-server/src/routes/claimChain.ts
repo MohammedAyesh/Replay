@@ -648,8 +648,9 @@ async function syncChainClaim(
       .from(recordingTrackingBundlesTable)
       .where(eq(recordingTrackingBundlesTable.id, ctx.bundleId));
 
+    let binding: Awaited<ReturnType<typeof syncIdentityBinding>> = null;
     if (bundle) {
-      await syncIdentityBinding(ctx.userId, ctx.recordingId, bundle, {
+      binding = await syncIdentityBinding(ctx.userId, ctx.recordingId, bundle, {
         // The person pointed at themselves. There is no vote to be ambiguous
         // about, so there are no conflict moments and support is total --
         // which is the whole reason this model replaced the other one.
@@ -670,8 +671,14 @@ async function syncChainClaim(
     // Clips only become real user_clips on completion. Materialising earlier
     // would litter My Clips with clips from a claim the person may still
     // truncate with "that is not me".
+    //
+    // A contested binding blocks the award as well. Two people claiming the
+    // same person on one recording cannot both have played those minutes, and
+    // handing the clips to whoever tapped first would make the dispute
+    // pointless to resolve. The claim stays; the clips wait for an admin.
+    const bindingAwards = !binding || binding.state === "confirmed";
     let earnedClips = state.earnedClips.map((clip) => ({ ...clip }));
-    if (state.completed) {
+    if (state.completed && bindingAwards) {
       const [recording] = await db
         .select()
         .from(recordingsTable)
@@ -691,7 +698,7 @@ async function syncChainClaim(
       confirmedFromSeconds: state.attributed[0]?.startSeconds ?? 0,
       currentPositionSeconds: state.attributed[state.attributed.length - 1]?.endSeconds ?? 0,
       claimedPercent: state.coveragePercent,
-      clipsUnlocked: state.completed ? earnedClips.length : 0,
+      clipsUnlocked: state.completed && bindingAwards ? earnedClips.length : 0,
       correctionCount: ctx.answeredFrames.size,
       completed: state.completed,
       earnedClips,

@@ -11,8 +11,9 @@
  * Pure. No database, no clock. The award rule is the part people will argue
  * about, so it is the part that must be testable without a video.
  */
-import type { TrackingManifest } from "@workspace/db";
+import type { TrackingManifest, TrackingSegmentPayload } from "@workspace/db";
 import { chainIntervals, totalSeconds, type ChainPart } from "./claimChain";
+import { buildPlayerMetrics, type OffPitchWindow } from "./playerMetrics";
 
 /** Kept identical to the anchor flow's ids so a clip already materialised for
  * a person is recognised rather than duplicated when they re-claim. */
@@ -200,4 +201,45 @@ export function deriveChainClaimState(
     completed,
     completionReason,
   };
+}
+
+/**
+ * Minutes, distance, speed and heatmap for a chain claim.
+ *
+ * Kept apart from deriveChainClaimState because that one is pure arithmetic
+ * over intervals and this one needs the whole bundle -- every box of every
+ * claimed track -- plus the camera's pitch model to turn those boxes into
+ * metres.
+ *
+ * The translation is trivial, and that is the point: a chain part IS a claimed
+ * range. The flow this replaced stored which track a person picked at a
+ * sampled moment and had to re-derive ranges from that on every read.
+ */
+export function chainPlayerMetrics(
+  manifest: TrackingManifest,
+  fullSegments: TrackingSegmentPayload[] | undefined,
+  segments: ChainClaimSegment[],
+  chain: ChainPart[],
+  state: Pick<ChainClaimState, "coverageSeconds" | "coveragePercent" | "trackedSegments" | "matchedEvents">,
+  opts: { answeredMoments: number; offPitch?: OffPitchWindow[] },
+) {
+  return buildPlayerMetrics(
+    manifest,
+    fullSegments,
+    chain.map((part) => ({
+      trackId: part.trackId,
+      fromFrame: part.fromFrame,
+      toFrame: part.toFrame,
+    })),
+    state.coverageSeconds,
+    state.coveragePercent,
+    opts.answeredMoments,
+    // Every run in a chain is a stretch the person put themselves in. There is
+    // no rejected-but-counted case the way a vote had, so accepted == claimed.
+    chain.length,
+    state.trackedSegments,
+    segments.length,
+    state.matchedEvents,
+    opts.offPitch ?? [],
+  );
 }

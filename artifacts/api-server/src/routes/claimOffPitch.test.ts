@@ -16,7 +16,6 @@ vi.mock("../lib/clerkUserBridge", () => ({
 import { getLocalAccountUserId } from "../lib/clerkUserBridge";
 import {
   db,
-  claimMatchCorrectionsTable,
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   fieldsTable,
@@ -106,13 +105,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   mockedGetLocalAccountUserId.mockResolvedValue(userId);
   await db.delete(claimMatchOffPitchSpansTable).where(eq(claimMatchOffPitchSpansTable.recordingId, recordingId));
-  await db.delete(claimMatchCorrectionsTable).where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
   await db.delete(claimMatchIdentityBindingsTable).where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
 });
 
 afterAll(async () => {
   await db.delete(claimMatchOffPitchSpansTable).where(eq(claimMatchOffPitchSpansTable.recordingId, recordingId));
-  await db.delete(claimMatchCorrectionsTable).where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
   await db.delete(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
   await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
   await db.delete(usersTable).where(eq(usersTable.id, otherUserId));
@@ -330,59 +327,6 @@ describe("claim match off-pitch endpoints", () => {
       .from(claimMatchIdentityBindingsTable)
       .where(eq(claimMatchIdentityBindingsTable.userId, userId));
     expect(binding).toEqual({ state: "released", vouchedFragments: [] });
-  });
-
-  it("reports and undoes only the user's accepted corrections inside the period", async () => {
-    const correctionValues = [
-      {
-        userId,
-        clientId: "inside-correction",
-        momentSeconds: 25,
-        chosenTrackId: "player-1",
-      },
-      {
-        userId,
-        clientId: "outside-correction",
-        momentSeconds: 50,
-        chosenTrackId: "player-1",
-      },
-      {
-        userId: otherUserId,
-        clientId: "other-correction",
-        momentSeconds: 25,
-        chosenTrackId: "other-player",
-      },
-    ];
-    await db.insert(claimMatchCorrectionsTable).values(correctionValues.map((value) => ({
-      ...value,
-      recordingId,
-      rejectedTrackId: null,
-      answerMethod: "anchor-yes",
-      questionCount: 1,
-    })));
-    const path = `/api/recordings/${recordingId}/claim-match/off-pitch`;
-    const warning = await request(app)
-      .post(path)
-      .send({ clientId: "correction-client", fromSeconds: 20, toSeconds: 30 })
-      .expect(409);
-    expect(warning.body.correctionCount).toBe(1);
-    await request(app)
-      .post(path)
-      .send({ clientId: "correction-client", fromSeconds: 20, toSeconds: 30, confirmConflict: true })
-      .expect(201);
-    const corrections = await db
-      .select({
-        userId: claimMatchCorrectionsTable.userId,
-        clientId: claimMatchCorrectionsTable.clientId,
-        undone: claimMatchCorrectionsTable.undone,
-      })
-      .from(claimMatchCorrectionsTable)
-      .where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
-    expect(corrections).toEqual(expect.arrayContaining([
-      { userId, clientId: "inside-correction", undone: true },
-      { userId, clientId: "outside-correction", undone: false },
-      { userId: otherUserId, clientId: "other-correction", undone: false },
-    ]));
   });
 
   it("supports deletion after a confirmed conflict", async () => {

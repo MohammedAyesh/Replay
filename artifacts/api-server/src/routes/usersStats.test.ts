@@ -37,7 +37,6 @@ vi.mock("../lib/claimMatchStorage", () => ({
 
 import {
   db,
-  claimMatchCorrectionsTable,
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   fieldsTable,
@@ -94,6 +93,13 @@ const manifest = {
       events: [],
     }],
   },
+  // The claim itself. A person's stats are derived from the identity row they
+  // built on the claim page -- there is no separate answer table to consult.
+  identities: [{
+    id: "player-1",
+    name: "Stats Player",
+    parts: [{ trackId: "player-1", fromFrame: 0, toFrame: 9, tapFrame: 0, reviewedThrough: 10 }],
+  }],
 };
 
 beforeAll(async () => {
@@ -198,17 +204,6 @@ beforeAll(async () => {
     crossingCount: 0,
   });
 
-  await db.insert(claimMatchCorrectionsTable).values({
-    userId,
-    recordingId,
-    clientId: "stats-answer",
-    momentSeconds: 5,
-    rejectedTrackId: null,
-    chosenTrackId: "player-1",
-    answerMethod: "anchor-yes",
-    questionCount: 1,
-    undone: false,
-  });
   await db.insert(claimMatchOffPitchSpansTable).values({
     userId,
     recordingId,
@@ -274,7 +269,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await db.delete(claimMatchIdentityBindingsTable).where(eq(claimMatchIdentityBindingsTable.userId, userId));
   await db.delete(claimMatchOffPitchSpansTable).where(eq(claimMatchOffPitchSpansTable.userId, userId));
-  await db.delete(claimMatchCorrectionsTable).where(eq(claimMatchCorrectionsTable.userId, userId));
   await db.delete(recordingTrackingSegmentsTable).where(eq(recordingTrackingSegmentsTable.bundleId, bundleId));
   await db.delete(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, bundleId));
   await db.delete(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, disputedBundleId));
@@ -353,7 +347,7 @@ describe("public player stats", () => {
     expect(visibleSpan).toBeDefined();
   });
 
-  it("recomputes after a correction is undone", async () => {
+  it("recomputes when the claim itself changes", async () => {
     await db
       .delete(claimMatchOffPitchSpansTable)
       .where(and(
@@ -361,24 +355,29 @@ describe("public player stats", () => {
         eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
         eq(claimMatchOffPitchSpansTable.clientId, "stats-off-pitch-extra"),
       ));
-    await db
-      .update(claimMatchCorrectionsTable)
-      .set({ undone: false, updatedAt: new Date() })
-      .where(eq(claimMatchCorrectionsTable.clientId, "stats-answer"));
     const before = await request(app).get(`/api/users/${userId}/stats`);
-    const [correction] = await db
-      .select()
-      .from(claimMatchCorrectionsTable)
-      .where(eq(claimMatchCorrectionsTable.clientId, "stats-answer"));
+
+    // Give back half the claim, the way "that is not me from here" does.
     await db
-      .update(claimMatchCorrectionsTable)
-      .set({ undone: true, updatedAt: new Date() })
-      .where(eq(claimMatchCorrectionsTable.id, correction.id));
+      .update(recordingTrackingBundlesTable)
+      .set({
+        manifest: {
+          ...manifest,
+          identities: [{
+            id: "player-1",
+            name: "Stats Player",
+            parts: [{ trackId: "player-1", fromFrame: 0, toFrame: 6, tapFrame: 0, reviewedThrough: 7 }],
+          }],
+        },
+      })
+      .where(eq(recordingTrackingBundlesTable.id, bundleId));
     const after = await request(app).get(`/api/users/${userId}/stats`);
 
     expect(before.body.matches[0].minutesPlayed).toBeGreaterThan(0);
-    expect(after.body.matches[0].minutesPlayed).toBe(0);
-    expect(after.body.matches[0].humanVouchedSeconds).toBe(0);
+    expect(after.body.matches[0].minutesPlayed)
+      .toBeLessThan(before.body.matches[0].minutesPlayed);
+    expect(after.body.matches[0].humanVouchedSeconds)
+      .toBeLessThan(before.body.matches[0].humanVouchedSeconds);
   });
 
   it("returns no zero-stat rows when the player has no confirmed claims", async () => {

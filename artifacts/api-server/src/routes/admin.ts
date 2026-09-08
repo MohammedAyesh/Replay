@@ -821,61 +821,11 @@ router.delete("/admin/schedules/:id", async (req, res): Promise<void> => {
 
 // ─── Admin: Recordings ────────────────────────────────────────────────────────
 
-router.get("/admin/recordings", async (req, res): Promise<void> => {
-  const adminId = await requireAdmin(req);
-  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
-
-  const rows = await db
-    .select({
-      id: recordingsTable.id,
-      fieldId: recordingsTable.fieldId,
-      fieldName: fieldsTable.name,
-      court: recordingsTable.court,
-      date: recordingsTable.date,
-      timeSlot: recordingsTable.timeSlot,
-      duration: recordingsTable.duration,
-      score: recordingsTable.score,
-      videoUrl: recordingsTable.videoUrl,
-      isVisible: recordingsTable.isVisible,
-    })
-    .from(recordingsTable)
-    .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
-    .orderBy(fieldsTable.name, recordingsTable.date);
-
-  const bundles = await db
-    .select({ recordingId: recordingTrackingBundlesTable.recordingId, manifest: recordingTrackingBundlesTable.manifest })
-    .from(recordingTrackingBundlesTable);
-  const bundleByRecording = new Map(bundles.map((bundle) => [bundle.recordingId, bundle.manifest]));
-  res.json(rows.map((r) => {
-    const manifest = bundleByRecording.get(r.id);
-    const provenance = manifest?.provenance ?? {};
-    const hasIdentityMap = Boolean(manifest?.identities?.length);
-    const identityMapMatchesBundle = hasIdentityMap
-      && typeof provenance.bundleFingerprint === "string"
-      && provenance.bundleFingerprint === provenance.identityMapBundleFingerprint;
-    return {
-      ...r,
-      score: r.score ?? null,
-      hasTrackingBundle: Boolean(manifest),
-      trackingSegmentCount: manifest?.segmentCount ?? null,
-      trackingFrameCoverage: manifest ? `${manifest.segments[0]?.startFrame ?? 0}-${manifest.segments.at(-1)?.endFrame ?? 0}` : null,
-      trackingVideoStartSeconds: manifest?.videoStartSeconds ?? null,
-      trackingPitchModel: manifest?.pitchModel
-        ? {
-            calibrationId: manifest.pitchModel.calibrationId,
-            fittedAt: manifest.pitchModel.fittedAt,
-            calibratedAspectRatio: manifest.pitchModel.calibratedAspectRatio,
-            gridRows: manifest.pitchModel.grid.length,
-            gridColumns: manifest.pitchModel.grid[0]?.length ?? 0,
-            pitchWidthMetres: manifest.pitchModel.pitchWidthMetres,
-            pitchHeightMetres: manifest.pitchModel.pitchHeightMetres,
-          }
-        : null,
-      hasIdentityMap,
-      identityMapMatchesBundle,
-    };
-  }));
-});
+// GET /admin/recordings lived here too, and never ran: routes/index.ts
+// registers recordingsRouter before adminRouter, so recordings.ts answers
+// every request. The copy here had drifted -- it still reported a
+// per-recording pitch model, which is no longer the calibration in use.
+// Removed rather than fixed, because two of them is the actual bug.
 
 router.patch("/admin/recordings/:id", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);

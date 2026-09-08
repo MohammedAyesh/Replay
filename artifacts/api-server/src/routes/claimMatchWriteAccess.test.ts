@@ -3,28 +3,56 @@
  *
  * The read path (getClaimMatchBundleForRequest) has always had an admin
  * bypass so an admin can validate a tracking bundle before the recording is
- * scheduled for players. The three write paths -- progress PATCH, corrections
- * POST, correction undo -- used getVisibleRecordingBundle, which has none.
+ * scheduled for players. The write paths used getVisibleRecordingBundle,
+ * which has none.
  *
  * isRecordingVisible() returns false when a field has no recording_schedules
  * rows at all, so that is the DEFAULT state of every unscheduled recording.
- * The result was that an admin could open /claim-match/<id>, see all eight
- * identity checkpoints and answer every one, while each write returned 404 and
- * nothing was ever stored. The client reported those 404s as "Saved on this
- * device" and then discarded them, so the only visible symptom was the
- * first-run identity prompt reappearing on every single load.
+ * The result was that an admin could open the claim page and answer every
+ * question while each write returned 404 and nothing was ever stored. The
+ * client reported those 404s as "Saved on this device" and then discarded
+ * them, so the only visible symptom was the first-run prompt reappearing on
+ * every single load.
  *
- * These tests hold both halves: an admin can write to an unscheduled
- * recording, and an ordinary account still cannot.
+ * The flow those writes belonged to is gone; the gate is not. Both halves are
+ * still held here, now through the chain's tap, which shares the same
+ * getClaimMatchWritableBundle: an admin can write to an unscheduled recording,
+ * and an ordinary account still cannot.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import { eq } from "drizzle-orm";
 
+/** One track with real boxes, so a tap has something to land on. */
+const segment = {
+  version: 1,
+  segmentIndex: 0,
+  name: "only",
+  startFrame: 0,
+  endFrame: 249,
+  startSeconds: 0,
+  endSeconds: 10,
+  tracks: [{
+    id: "t1",
+    startFrame: 0,
+    endFrame: 249,
+    boxes: Array.from({ length: 250 }, (_, frame) => ({
+      frame,
+      x: 100 + frame,
+      y: 200,
+      w: 40,
+      h: 80,
+    })),
+  }],
+  crossings: [],
+  inPlaySpans: [],
+  events: [],
+};
+
 vi.mock("../lib/claimMatchStorage", () => ({
   deleteClaimSegment: vi.fn(),
-  readClaimSegment: vi.fn(),
+  readClaimSegment: vi.fn(async () => Buffer.from(JSON.stringify(segment))),
   readCompressedClaimSegment: vi.fn(),
   writeClaimSegment: vi.fn(),
 }));
@@ -39,11 +67,12 @@ vi.mock("../lib/clerkUserBridge", () => ({
 
 import {
   db,
-  claimMatchCorrectionsTable,
+  claimMatchIdentityBindingsTable,
   claimMatchProgressTable,
   fieldsTable,
   recordingSchedulesTable,
   recordingTrackingBundlesTable,
+  recordingTrackingSegmentsTable,
   recordingsTable,
   usersTable,
   type TrackingManifest,
@@ -54,13 +83,13 @@ const mockedAccountUser = vi.mocked(getLocalAccountUserId);
 const mockedLocalUser = vi.mocked(getLocalUserId);
 
 const TAG = `claim-write-access-${Date.now()}`;
-const EMPTY_ANCHOR_TRACK = "__none__";
 
 let app: Express;
 let fieldId: number;
 let adminId: number;
 let playerId: number;
 let recordingId: number;
+let bundleId: number;
 
 /**
  * A manifest carrying its own `summary`, so getClaimStateSegments never has to
@@ -100,28 +129,9 @@ const manifest: TrackingManifest = {
   },
 };
 
-/** An "I am not in this moment" answer, which needs no real track id. */
-function anchorNoBody(clientId: string) {
-  return {
-    clientId,
-    momentSeconds: 1,
-    chosenTrackId: EMPTY_ANCHOR_TRACK,
-    answerMethod: "anchor-no",
-    questionCount: 8,
-  };
-}
-
-function progressBody() {
-  return {
-    currentTrackId: null,
-    stage: "picker",
-    confirmedFromSeconds: 0,
-    currentPositionSeconds: 4,
-    claimedPercent: 0,
-    clipsUnlocked: 0,
-    completed: false,
-    earnedClips: [],
-  };
+/** "That is me, here" -- the only write the claim page makes. */
+function tapBody(name: string) {
+  return { trackId: "t1", frame: 10, name };
 }
 
 function actAs(userId: number) {
@@ -131,9 +141,11 @@ function actAs(userId: number) {
 
 beforeAll(async () => {
   const { default: claimMatchRouter } = await import("./claimMatch");
+  const { default: claimChainRouter } = await import("./claimChain");
   app = express();
   app.use(express.json());
   app.use("/api", claimMatchRouter);
+  app.use("/api", claimChainRouter);
 
   const [field] = await db.insert(fieldsTable).values({
     name: `${TAG} field`,
@@ -173,16 +185,31 @@ beforeAll(async () => {
   }).returning({ id: recordingsTable.id });
   recordingId = recording.id;
 
-  await db.insert(recordingTrackingBundlesTable).values({
+  const [bundle] = await db.insert(recordingTrackingBundlesTable).values({
     recordingId,
     uploadedBy: adminId,
     manifest,
+  }).returning({ id: recordingTrackingBundlesTable.id });
+  bundleId = bundle.id;
+
+  await db.insert(recordingTrackingSegmentsTable).values({
+    bundleId,
+    segmentIndex: 0,
+    name: "only",
+    startFrame: 0,
+    endFrame: 249,
+    startSeconds: 0,
+    endSeconds: 10,
+    objectPath: "/objects/write-access",
+    compressedBytes: 0,
+    trackCount: 1,
+    crossingCount: 0,
   });
 });
 
 beforeEach(async () => {
-  await db.delete(claimMatchCorrectionsTable)
-    .where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
+  await db.delete(claimMatchIdentityBindingsTable)
+    .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
   await db.delete(claimMatchProgressTable)
     .where(eq(claimMatchProgressTable.recordingId, recordingId));
   await db.delete(recordingSchedulesTable).where(eq(recordingSchedulesTable.fieldId, fieldId));
@@ -190,6 +217,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await db.delete(recordingTrackingSegmentsTable)
+    .where(eq(recordingTrackingSegmentsTable.bundleId, bundleId));
   await db.delete(recordingSchedulesTable).where(eq(recordingSchedulesTable.fieldId, fieldId));
   await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
   await db.delete(usersTable).where(eq(usersTable.id, adminId));
@@ -204,39 +233,31 @@ describe("claim-match write access on an unscheduled recording", () => {
     expect(res.status).toBe(200);
   });
 
-  it("lets an admin SAVE a correction — this returned 404 before 2026-09-06", async () => {
+  it("lets an admin CLAIM on it — this returned 404 before 2026-09-06", async () => {
     actAs(adminId);
     const res = await request(app)
-      .post(`/api/recordings/${recordingId}/claim-match/corrections`)
-      .send(anchorNoBody(`${TAG}-admin-1`));
-    expect(res.status).toBe(201);
+      .post(`/api/recordings/${recordingId}/claim-match/chain/tap`)
+      .send(tapBody(`${TAG} admin`));
+    expect(res.status).toBe(200);
 
     const stored = await db.select()
-      .from(claimMatchCorrectionsTable)
-      .where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
+      .from(claimMatchProgressTable)
+      .where(eq(claimMatchProgressTable.recordingId, recordingId));
     expect(stored).toHaveLength(1);
-  });
-
-  it("lets an admin SAVE progress — this returned 404 before 2026-09-06", async () => {
-    actAs(adminId);
-    const res = await request(app)
-      .patch(`/api/recordings/${recordingId}/claim-match`)
-      .send(progressBody());
-    expect(res.status).toBe(200);
   });
 
   it("still refuses an ordinary account, and says 403 rather than 404", async () => {
     actAs(playerId);
     const res = await request(app)
-      .post(`/api/recordings/${recordingId}/claim-match/corrections`)
-      .send(anchorNoBody(`${TAG}-player-1`));
+      .post(`/api/recordings/${recordingId}/claim-match/chain/tap`)
+      .send(tapBody(`${TAG} player`));
     // 403 matters as much as the refusal: 404 sent the client down its
     // permanent-discard path while telling the user the answer was saved.
     expect(res.status).toBe(403);
 
     const stored = await db.select()
-      .from(claimMatchCorrectionsTable)
-      .where(eq(claimMatchCorrectionsTable.recordingId, recordingId));
+      .from(claimMatchProgressTable)
+      .where(eq(claimMatchProgressTable.recordingId, recordingId));
     expect(stored).toHaveLength(0);
   });
 
@@ -250,8 +271,8 @@ describe("claim-match write access on an unscheduled recording", () => {
     });
     actAs(playerId);
     const res = await request(app)
-      .post(`/api/recordings/${recordingId}/claim-match/corrections`)
-      .send(anchorNoBody(`${TAG}-player-2`));
-    expect(res.status).toBe(201);
+      .post(`/api/recordings/${recordingId}/claim-match/chain/tap`)
+      .send(tapBody(`${TAG} player scheduled`));
+    expect(res.status).toBe(200);
   });
 });

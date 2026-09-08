@@ -1085,7 +1085,7 @@ export default function MyClips() {
                 isLoading={matchMomentsLoading}
                 userClipsById={userClipsById}
                 onPlayClip={setActiveClip}
-                onOpenMatch={(recordingId) => setLocation(`/claim-match/${recordingId}`)}
+                onOpenMatch={(recordingId) => setLocation(`/claim/${recordingId}`)}
               />
             </motion.div>
           )}
@@ -1154,7 +1154,7 @@ function MatchMomentsTab({
         </motion.div>
         <p className="font-medium text-muted-foreground">{t.myClips.momentsEmpty}</p>
         <p className="mt-1 text-sm text-muted-foreground">{t.myClips.momentsEmptyDesc}</p>
-        <Link href="/claim-match/demo">
+        <Link href="/claim/demo">
           <Button variant="outline" className="mt-6">{t.myClips.openMatch}</Button>
         </Link>
       </motion.div>

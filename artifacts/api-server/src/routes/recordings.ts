@@ -48,17 +48,10 @@ function toAdminRecording(
       ? `0-${Math.max(0, (trackingManifest.frameCount ?? 1) - 1)} (${trackingManifest.frameCount ?? 0} frames)`
       : null,
     trackingVideoStartSeconds: trackingManifest?.videoStartSeconds ?? 0,
-    trackingPitchModel: trackingManifest?.pitchModel
-      ? {
-          calibrationId: trackingManifest.pitchModel.calibrationId,
-          fittedAt: trackingManifest.pitchModel.fittedAt,
-          calibratedAspectRatio: trackingManifest.pitchModel.calibratedAspectRatio,
-          gridRows: trackingManifest.pitchModel.grid.length,
-          gridColumns: trackingManifest.pitchModel.grid[0]?.length ?? 0,
-          pitchWidthMetres: trackingManifest.pitchModel.pitchWidthMetres,
-          pitchHeightMetres: trackingManifest.pitchModel.pitchHeightMetres,
-        }
-      : null,
+    // No trackingPitchModel here on purpose: a stored per-recording model is
+    // no longer what applies. The camera's model is attached at read time and
+    // a stale stored one is stripped, so reporting the manifest's copy would
+    // name a calibration that is not in use. Ask /admin/cameras instead.
   };
 }
 

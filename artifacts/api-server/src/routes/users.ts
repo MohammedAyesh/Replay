@@ -10,7 +10,6 @@ import {
   fieldsTable,
   recordingTrackingBundlesTable,
   recordingTrackingSegmentsTable,
-  claimMatchCorrectionsTable,
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   type TrackingManifest,
@@ -21,7 +20,12 @@ import { GetPublicPlayerStatsResponse } from "@workspace/api-zod";
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { isRecordingVisible } from "../lib/recordingVisibility";
 import { readClaimSegment } from "../lib/claimMatchStorage";
-import { deriveClaimState } from "./claimMatch";
+import { chainPlayerMetrics, deriveChainClaimState } from "../lib/claimChainState";
+import {
+  cameraForRecording,
+  manifestWithPitchModel,
+  pitchModelCacheKey,
+} from "../lib/cameraPitchModel";
 import { normaliseOffPitchSpans } from "./claimOffPitch";
 
 const router: IRouter = Router();
@@ -113,39 +117,37 @@ function timestampForFingerprint(value: Date | string | null | undefined): strin
   return typeof value === "string" ? value : "";
 }
 
+/**
+ * What a cached statistic actually depends on.
+ *
+ * The bundle fingerprint alone is not enough any more. A camera's calibration
+ * lives outside every bundle, so re-fitting it changes no fingerprint -- and
+ * without the calibration in this key, every cached distance and heatmap would
+ * go on serving numbers from the grid it replaced, silently and forever.
+ */
 async function publicStatsInputFingerprint(
   userId: number,
   recordingId: number,
   bundleFingerprint: string,
+  pitchKey: string,
+  chain: Array<{ trackId: string; fromFrame: number; toFrame: number }>,
 ): Promise<string> {
-  const [correctionMeta, offPitchMeta] = await Promise.all([
-    db
-      .select({
-        count: sql<number>`count(*)`,
-        latestAt: sql<Date | null>`max(${claimMatchCorrectionsTable.updatedAt})`,
-      })
-      .from(claimMatchCorrectionsTable)
-      .where(and(
-        eq(claimMatchCorrectionsTable.userId, userId),
-        eq(claimMatchCorrectionsTable.recordingId, recordingId),
-      )),
-    db
-      .select({
-        count: sql<number>`count(*)`,
-        latestAt: sql<Date | null>`max(${claimMatchOffPitchSpansTable.createdAt})`,
-      })
-      .from(claimMatchOffPitchSpansTable)
-      .where(and(
-        eq(claimMatchOffPitchSpansTable.userId, userId),
-        eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
-      )),
-  ]);
+  const [offPitchMeta] = await db
+    .select({
+      count: sql<number>`count(*)`,
+      latestAt: sql<Date | null>`max(${claimMatchOffPitchSpansTable.createdAt})`,
+    })
+    .from(claimMatchOffPitchSpansTable)
+    .where(and(
+      eq(claimMatchOffPitchSpansTable.userId, userId),
+      eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
+    ));
   const input = [
     bundleFingerprint,
-    Number(correctionMeta[0]?.count ?? 0),
-    timestampForFingerprint(correctionMeta[0]?.latestAt),
-    Number(offPitchMeta[0]?.count ?? 0),
-    timestampForFingerprint(offPitchMeta[0]?.latestAt),
+    pitchKey,
+    chain.map((part) => `${part.trackId}:${part.fromFrame}-${part.toFrame}`).join(","),
+    Number(offPitchMeta?.count ?? 0),
+    timestampForFingerprint(offPitchMeta?.latestAt),
   ];
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
@@ -230,25 +232,35 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
     if (!row?.bundle?.manifest || !(await isRecordingVisible(row.recording))) continue;
 
     const bundleFingerprint = binding.bundleFingerprint || "legacy";
+    const camera = await cameraForRecording(binding.recordingId);
+    const manifest = manifestWithPitchModel(
+      row.bundle.manifest as TrackingManifest,
+      camera.pitchModel,
+      camera.cameraId,
+    );
+    // A claim IS the identity row the person built on the claim page. Reading
+    // it back out of the manifest is the whole derivation; the flow this
+    // replaced stored a pile of per-moment answers and had to re-resolve an
+    // identity from them on every read.
+    const identity = manifest.identities?.find((item) => item.id === binding.personId);
+    // Stored parts are already canonical -- the claim page normalises before
+    // it writes -- and normalising again here would need the track index,
+    // which is a bundle read this loop does not otherwise have to do.
+    const chain = (identity?.parts ?? []).map((part) => ({ ...part }));
     const inputFingerprint = await publicStatsInputFingerprint(
       targetId,
       binding.recordingId,
       bundleFingerprint,
+      pitchModelCacheKey(manifest.pitchModel),
+      chain,
     );
     let computedStats = binding.computedStats;
     const hasFreshStats = binding.statsInputFingerprint === inputFingerprint
       && isComputedPlayerStats(computedStats);
 
     if (!hasFreshStats) {
-      const [corrections, offPitchRows, fullSegments] = await Promise.all([
-        db
-          .select()
-          .from(claimMatchCorrectionsTable)
-          .where(and(
-            eq(claimMatchCorrectionsTable.userId, targetId),
-            eq(claimMatchCorrectionsTable.recordingId, binding.recordingId),
-          ))
-          .orderBy(desc(claimMatchCorrectionsTable.createdAt)),
+      if (!chain.length) continue;
+      const [offPitchRows, fullSegments] = await Promise.all([
         db
           .select()
           .from(claimMatchOffPitchSpansTable)
@@ -258,24 +270,39 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
           )),
         readFullBundleSegments(binding.trackingBundleId),
       ]);
-      const manifest = row.bundle.manifest as TrackingManifest;
-      const stateSegments = manifest.summary?.segments?.length
-        ? manifest.summary.segments
-        : fullSegments;
-      const derived = deriveClaimState(
+      const offPitch = normaliseOffPitchSpans(offPitchRows, manifest.duration);
+      const chainSegments = fullSegments.map((segment) => ({
+        tracks: segment.tracks,
+        events: segment.events,
+      }));
+      const state = deriveChainClaimState(manifest, chainSegments, chain, {
+        offPitch,
+        // A finished claim on someone's profile is not mid-question; this is a
+        // read of what they settled, not the page they settled it on.
+        hasOpenQuestion: false,
+      });
+      const metrics = chainPlayerMetrics(
         manifest,
-        stateSegments,
-        corrections,
         fullSegments,
-        normaliseOffPitchSpans(offPitchRows, manifest.duration),
+        chainSegments,
+        chain,
+        state,
+        { answeredMoments: chain.length, offPitch },
+      );
+      const offPitchSeconds = offPitch.reduce(
+        (sum, span) => sum + Math.max(0, span.toSeconds - span.fromSeconds),
+        0,
       );
       computedStats = {
-        minutesPlayed: derived.playerStats.minutesPlayed,
-        distanceMetres: derived.playerStats.distanceMetres,
-        humanVouchedSeconds: roundStat(derived.humanVouchedSeconds),
-        inferredSeconds: roundStat(derived.inferredSeconds),
-        offPitchSeconds: roundStat(derived.offPitchSeconds),
-        heatmap: derived.playerStats.heatmap,
+        minutesPlayed: metrics.minutesPlayed,
+        distanceMetres: metrics.distanceMetres,
+        // Every frame in a chain was put there by the person. There is no
+        // inferred remainder to separate out, which is why one of these is
+        // the whole coverage and the other is zero.
+        humanVouchedSeconds: roundStat(state.coverageSeconds),
+        inferredSeconds: 0,
+        offPitchSeconds: roundStat(offPitchSeconds),
+        heatmap: metrics.heatmap,
       };
       await db
         .update(claimMatchIdentityBindingsTable)

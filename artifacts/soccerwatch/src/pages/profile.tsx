@@ -295,7 +295,7 @@ function PlayerStatsSection({
               <MapPinned className="w-6 h-6 text-muted-foreground" />
               <h3>{t.profile.noConfirmedTitle}</h3>
               <p>{t.profile.noConfirmedDesc}</p>
-              <Link href="/claim-match/demo" className="player-stats-cta">{t.profile.viewClaimFlow}</Link>
+              <Link href="/claim/demo" className="player-stats-cta">{t.profile.viewClaimFlow}</Link>
             </>
           ) : (
             <p className="player-stats-neutral-empty">{t.profile.noConfirmedOther}</p>

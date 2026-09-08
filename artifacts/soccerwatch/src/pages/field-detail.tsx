@@ -207,7 +207,7 @@ function ClaimableRecordingRow({
       </div>
       {!isDisputed && !needsResolution && (
         <Link
-          href={`/claim-match/${recording.id}`}
+          href={`/claim/${recording.id}`}
           className="flex shrink-0 items-center gap-1 rounded-xl bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20"
         >
           <span>{actionLabel}</span>
@@ -616,7 +616,7 @@ export default function FieldDetail() {
           {canClaim && (
             <div className="mx-4 mt-3 rounded-2xl border border-border bg-card px-4 py-3">
               <Link
-                href="/claim-match/demo"
+                href="/claim/demo"
                 className="flex items-center justify-between gap-3 text-start"
               >
                 <span className="min-w-0">

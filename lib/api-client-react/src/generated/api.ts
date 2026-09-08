@@ -37,19 +37,14 @@ import type {
   ClaimChainConflict,
   ClaimChainFrameInput,
   ClaimChainTapInput,
-  ClaimCorrection,
-  ClaimCorrectionInput,
   ClaimIdentityBinding,
   ClaimMatchClipsResponse,
-  ClaimMatchDemoResetResponse,
   ClaimMatchDispute,
   ClaimMatchDisputesResponse,
   ClaimMatchResponse,
   ClaimOffPitchDeleteResponse,
   ClaimOffPitchInput,
   ClaimOffPitchSpan,
-  ClaimProgress,
-  ClaimProgressInput,
   ClaimedMatchHistoryResponse,
   Clip,
   CreateAcademyInput,
@@ -1161,147 +1156,6 @@ export function useGetClaimMatch<TData = Awaited<ReturnType<typeof getClaimMatch
 
 
 
-export const getUpdateClaimMatchProgressUrl = (id: number,) => {
-
-
-
-
-  return `/api/recordings/${id}/claim-match`
-}
-
-/**
- * @summary Save claim progress for the current player
- */
-export const updateClaimMatchProgress = async (id: number,
-    claimProgressInput: ClaimProgressInput, options?: RequestInit): Promise<ClaimProgress> => {
-
-  return customFetch<ClaimProgress>(getUpdateClaimMatchProgressUrl(id),
-  {
-    ...options,
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(claimProgressInput)
-  }
-);}
-
-
-
-
-export const getUpdateClaimMatchProgressMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateClaimMatchProgress>>, TError,{id: number;data: BodyType<ClaimProgressInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof updateClaimMatchProgress>>, TError,{id: number;data: BodyType<ClaimProgressInput>}, TContext> => {
-
-const mutationKey = ['updateClaimMatchProgress'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateClaimMatchProgress>>, {id: number;data: BodyType<ClaimProgressInput>}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  updateClaimMatchProgress(id,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdateClaimMatchProgressMutationResult = NonNullable<Awaited<ReturnType<typeof updateClaimMatchProgress>>>
-    export type UpdateClaimMatchProgressMutationBody = BodyType<ClaimProgressInput>
-    export type UpdateClaimMatchProgressMutationError = ErrorType<void>
-
-    /**
- * @summary Save claim progress for the current player
- */
-export const useUpdateClaimMatchProgress = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateClaimMatchProgress>>, TError,{id: number;data: BodyType<ClaimProgressInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof updateClaimMatchProgress>>,
-        TError,
-        {id: number;data: BodyType<ClaimProgressInput>},
-        TContext
-      > => {
-      return useMutation(getUpdateClaimMatchProgressMutationOptions(options));
-    }
-
-export const getResetClaimMatchDemoUrl = () => {
-
-
-
-
-  return `/api/claim-match/demo/reset`
-}
-
-/**
- * @summary Reset the current player's Claim Demo progress
- */
-export const resetClaimMatchDemo = async ( options?: RequestInit): Promise<ClaimMatchDemoResetResponse> => {
-
-  return customFetch<ClaimMatchDemoResetResponse>(getResetClaimMatchDemoUrl(),
-  {
-    ...options,
-    method: 'POST'
-
-
-  }
-);}
-
-
-
-
-export const getResetClaimMatchDemoMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetClaimMatchDemo>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof resetClaimMatchDemo>>, TError,void, TContext> => {
-
-const mutationKey = ['resetClaimMatchDemo'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetClaimMatchDemo>>, void> = () => {
-
-
-          return  resetClaimMatchDemo(requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ResetClaimMatchDemoMutationResult = NonNullable<Awaited<ReturnType<typeof resetClaimMatchDemo>>>
-
-    export type ResetClaimMatchDemoMutationError = ErrorType<void>
-
-    /**
- * @summary Reset the current player's Claim Demo progress
- */
-export const useResetClaimMatchDemo = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetClaimMatchDemo>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof resetClaimMatchDemo>>,
-        TError,
-        void,
-        TContext
-      > => {
-      return useMutation(getResetClaimMatchDemoMutationOptions(options));
-    }
-
 export const getListClaimMatchClipsUrl = () => {
 
 
@@ -1674,77 +1528,6 @@ export function useListClaimMatchBindings<TData = Awaited<ReturnType<typeof list
 
 
 
-export const getCreateClaimMatchCorrectionUrl = (id: number,) => {
-
-
-
-
-  return `/api/recordings/${id}/claim-match/corrections`
-}
-
-/**
- * @summary Record an identity correction, safely repeatable by client id
- */
-export const createClaimMatchCorrection = async (id: number,
-    claimCorrectionInput: ClaimCorrectionInput, options?: RequestInit): Promise<ClaimCorrection> => {
-
-  return customFetch<ClaimCorrection>(getCreateClaimMatchCorrectionUrl(id),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(claimCorrectionInput)
-  }
-);}
-
-
-
-
-export const getCreateClaimMatchCorrectionMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchCorrection>>, TError,{id: number;data: BodyType<ClaimCorrectionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchCorrection>>, TError,{id: number;data: BodyType<ClaimCorrectionInput>}, TContext> => {
-
-const mutationKey = ['createClaimMatchCorrection'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createClaimMatchCorrection>>, {id: number;data: BodyType<ClaimCorrectionInput>}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  createClaimMatchCorrection(id,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateClaimMatchCorrectionMutationResult = NonNullable<Awaited<ReturnType<typeof createClaimMatchCorrection>>>
-    export type CreateClaimMatchCorrectionMutationBody = BodyType<ClaimCorrectionInput>
-    export type CreateClaimMatchCorrectionMutationError = ErrorType<void>
-
-    /**
- * @summary Record an identity correction, safely repeatable by client id
- */
-export const useCreateClaimMatchCorrection = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createClaimMatchCorrection>>, TError,{id: number;data: BodyType<ClaimCorrectionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof createClaimMatchCorrection>>,
-        TError,
-        {id: number;data: BodyType<ClaimCorrectionInput>},
-        TContext
-      > => {
-      return useMutation(getCreateClaimMatchCorrectionMutationOptions(options));
-    }
-
 export const getGetClaimMatchSegmentUrl = (id: number,
     segmentIndex: number,) => {
 
@@ -1826,76 +1609,6 @@ export function useGetClaimMatchSegment<TData = Awaited<ReturnType<typeof getCla
 
 
 
-
-export const getUndoClaimMatchCorrectionUrl = (correctionId: number,) => {
-
-
-
-
-  return `/api/claim-match/corrections/${correctionId}`
-}
-
-/**
- * @summary Undo a previously synced correction
- */
-export const undoClaimMatchCorrection = async (correctionId: number, options?: RequestInit): Promise<ClaimCorrection> => {
-
-  return customFetch<ClaimCorrection>(getUndoClaimMatchCorrectionUrl(correctionId),
-  {
-    ...options,
-    method: 'DELETE'
-
-
-  }
-);}
-
-
-
-
-export const getUndoClaimMatchCorrectionMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof undoClaimMatchCorrection>>, TError,{correctionId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof undoClaimMatchCorrection>>, TError,{correctionId: number}, TContext> => {
-
-const mutationKey = ['undoClaimMatchCorrection'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof undoClaimMatchCorrection>>, {correctionId: number}> = (props) => {
-          const {correctionId} = props ?? {};
-
-          return  undoClaimMatchCorrection(correctionId,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UndoClaimMatchCorrectionMutationResult = NonNullable<Awaited<ReturnType<typeof undoClaimMatchCorrection>>>
-
-    export type UndoClaimMatchCorrectionMutationError = ErrorType<void>
-
-    /**
- * @summary Undo a previously synced correction
- */
-export const useUndoClaimMatchCorrection = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof undoClaimMatchCorrection>>, TError,{correctionId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof undoClaimMatchCorrection>>,
-        TError,
-        {correctionId: number},
-        TContext
-      > => {
-      return useMutation(getUndoClaimMatchCorrectionMutationOptions(options));
-    }
 
 export const getCreateClaimMatchOffPitchSpanUrl = (id: number,) => {
 

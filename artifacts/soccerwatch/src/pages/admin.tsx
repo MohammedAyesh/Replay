@@ -98,6 +98,34 @@ interface AdminField {
   cameraId: string | null;
 }
 
+/**
+ * The camera-to-pitch calibration, as the server summarises it.
+ *
+ * It belongs to the camera, not to a recording: a camera on a mast sees the
+ * same pitch the same way every night, so one upload covers every recording
+ * that camera has ever shot and every one it ever will. It used to be uploaded
+ * per recording, which meant re-uploading the same grid nightly and being
+ * unable to fix a bad calibration before the 14-day retention window ate it.
+ */
+interface PitchModelSummary {
+  calibrationId: string | null;
+  fittedAt: string | null;
+  calibratedAspectRatio?: number | null;
+  gridRows: number;
+  gridColumns: number;
+  pitchWidthMetres: number;
+  pitchHeightMetres: number;
+}
+
+interface AdminCamera {
+  id: string;
+  name: string;
+  pitchModel: PitchModelSummary | null;
+  pitchModelUpdatedAt: string | null;
+  fields: Array<{ id: number; name: string }>;
+  trackedRecordings: number;
+}
+
 interface AdminMatch {
   id: number;
   fieldId: number;
@@ -128,15 +156,6 @@ interface AdminRecording {
   trackingSegmentCount?: number | null;
   trackingFrameCoverage?: string | null;
   trackingVideoStartSeconds?: number | null;
-  trackingPitchModel?: {
-    calibrationId: string | null;
-    fittedAt: string | null;
-    calibratedAspectRatio?: number | null;
-    gridRows: number;
-    gridColumns: number;
-    pitchWidthMetres: number;
-    pitchHeightMetres: number;
-  } | null;
   hasIdentityMap?: boolean;
   identityMapMatchesBundle?: boolean;
 }
@@ -175,7 +194,7 @@ function calibrationDateLabel(value: string | null | undefined): string {
   return value ? value.slice(0, 10) : "unknown date";
 }
 
-function calibrationLabel(model: AdminRecording["trackingPitchModel"]): string {
+function calibrationLabel(model: PitchModelSummary | null | undefined): string {
   if (!model) return "No valid pitch model";
   if (!model.calibrationId || !model.fittedAt || typeof model.calibratedAspectRatio !== "number") {
     return "Legacy pitch model · reattach required";
@@ -183,7 +202,7 @@ function calibrationLabel(model: AdminRecording["trackingPitchModel"]): string {
   return `Calibration ${model.calibrationId} · fitted ${calibrationDateLabel(model.fittedAt)}`;
 }
 
-function calibrationAspectLabel(model: AdminRecording["trackingPitchModel"]): string {
+function calibrationAspectLabel(model: PitchModelSummary | null | undefined): string {
   return typeof model?.calibratedAspectRatio === "number"
     ? `${model.calibratedAspectRatio.toFixed(4)} aspect`
     : "aspect ratio unavailable";
@@ -1044,6 +1063,232 @@ function AccountsTab() {
 
 // ─── Fields Tab ───────────────────────────────────────────────────────────────
 
+/**
+ * Camera calibration.
+ *
+ * Lives in the Fields tab because a camera is only ever reached through the
+ * field that names it, and because the blast radius of an edit here is "every
+ * recording from this field", which is the thing an admin needs to see while
+ * deciding.
+ *
+ * A camera with no model is not an error state - it is one of three normal
+ * ways a recording ends up with no metres (no camera named, no model, model
+ * fitted for a different crop) - but it IS the one an admin can fix, so it is
+ * spelled out rather than left blank.
+ */
+function CameraPitchModelsSection() {
+  const [cameras, setCameras] = useState<AdminCamera[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyCamera, setBusyCamera] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputs = useRef(new Map<string, HTMLInputElement | null>());
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiFetch("/admin/cameras") as { cameras?: AdminCamera[] } | null;
+      setCameras(data?.cameras ?? []);
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not load cameras"));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  /**
+   * The PUT and DELETE replies carry the camera's calibration but not its
+   * fields or its tracked-recording count, so they are merged onto the row
+   * already on screen rather than replacing it.
+   */
+  const applyUpdate = (updated: Partial<AdminCamera> & { id: string }) => {
+    setCameras((prev) => prev.map((camera) => (
+      camera.id === updated.id ? { ...camera, ...updated } : camera
+    )));
+  };
+
+  const uploadPitchModel = async (camera: AdminCamera, file: File) => {
+    setBusyCamera(camera.id);
+    setNotice(null);
+    setError(null);
+    try {
+      // Sent as it arrived. The fitting tools emit the model both bare and
+      // wrapped in a `pitchModel` / `pitch_model` envelope; the server accepts
+      // either, so an admin does not have to know which file they have. It is
+      // parsed here only to fail on malformed JSON before the round trip.
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const updated = await apiFetch(`/admin/cameras/${encodeURIComponent(camera.id)}/pitch-model`, {
+        method: "PUT",
+        body: JSON.stringify(parsed),
+      }) as AdminCamera;
+      applyUpdate(updated);
+      setNotice(
+        `${updated.name || camera.name} · ${calibrationLabel(updated.pitchModel)}`
+        + ` · applies to ${camera.trackedRecordings} tracked recording${camera.trackedRecordings === 1 ? "" : "s"}`,
+      );
+    } catch (err) {
+      setError(err instanceof SyntaxError
+        ? "That pitch model file is not valid JSON"
+        : adminRequestErrorMessage(err, "Could not save the pitch model"));
+    } finally {
+      setBusyCamera(null);
+      const input = fileInputs.current.get(camera.id);
+      if (input) input.value = "";
+    }
+  };
+
+  const removePitchModel = async (camera: AdminCamera) => {
+    const scope = camera.trackedRecordings === 1
+      ? "1 tracked recording"
+      : `${camera.trackedRecordings} tracked recordings`;
+    if (!window.confirm(
+      `Remove the calibration for ${camera.name}? Distance and speed become unavailable for ${scope}.`,
+    )) return;
+    setBusyCamera(camera.id);
+    setNotice(null);
+    setError(null);
+    try {
+      const updated = await apiFetch(`/admin/cameras/${encodeURIComponent(camera.id)}/pitch-model`, {
+        method: "DELETE",
+      }) as AdminCamera;
+      applyUpdate(updated);
+      setNotice(`${updated.name || camera.name} · calibration removed · no distance or speed`);
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not remove the pitch model"));
+    } finally {
+      setBusyCamera(null);
+    }
+  };
+
+  return (
+    <div className="border border-zinc-800 rounded-xl bg-zinc-900 p-3 space-y-3" data-testid="camera-pitch-models">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-white font-medium text-sm">Camera calibration</p>
+          <p className="text-zinc-500 text-xs">
+            One pitch model per camera. It covers every recording that camera has shot and every one it will.
+          </p>
+        </div>
+        <button
+          onClick={() => void load()}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 rounded-xl text-sm hover:bg-zinc-700 disabled:opacity-50 flex-shrink-0"
+          data-testid="button-reload-cameras"
+        >
+          <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
+          {loading ? "Loading…" : "Refresh"}
+        </button>
+      </div>
+
+      {error && (
+        <p className="text-xs text-red-400" data-testid="camera-pitch-model-error">{error}</p>
+      )}
+      {notice && (
+        <p className="text-xs text-emerald-400" data-testid="camera-pitch-model-notice">{notice}</p>
+      )}
+
+      {loading ? (
+        <div className="text-center py-8 text-zinc-500 text-sm">Loading cameras…</div>
+      ) : cameras.length === 0 ? (
+        <p className="text-xs text-zinc-500">
+          No cameras yet. A camera appears here as soon as a field names one.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {cameras.map((camera) => {
+            const model = camera.pitchModel;
+            const usable = Boolean(
+              model && model.calibrationId && model.fittedAt
+              && typeof model.calibratedAspectRatio === "number",
+            );
+            const busy = busyCamera === camera.id;
+            return (
+              <div
+                key={camera.id}
+                className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3"
+                data-testid={`camera-${camera.id}`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={cn("h-2 w-2 rounded-full", model ? "bg-emerald-400" : "bg-amber-400")} />
+                      <p className="text-sm font-medium text-white truncate">{camera.name}</p>
+                      {camera.name !== camera.id && (
+                        <span className="text-[10px] text-zinc-500 font-mono truncate">{camera.id}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      {camera.fields.length
+                        ? `Used by ${camera.fields.map((field) => field.name).join(", ")}`
+                        : "Not named by any field"}
+                      {" · "}
+                      {camera.trackedRecordings} tracked recording{camera.trackedRecordings === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <input
+                      ref={(element) => { fileInputs.current.set(camera.id, element); }}
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      data-testid={`input-camera-pitch-model-${camera.id}`}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void uploadPitchModel(camera, file);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="flex items-center gap-1.5 rounded-lg border border-primary/40 px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+                      disabled={busy}
+                      data-testid={`button-upload-camera-pitch-model-${camera.id}`}
+                      onClick={() => fileInputs.current.get(camera.id)?.click()}
+                    >
+                      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                      {busy ? "Saving…" : model ? "Replace calibration" : "Upload calibration"}
+                    </button>
+                    {model && (
+                      <button
+                        type="button"
+                        className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-400 transition-colors hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+                        disabled={busy}
+                        data-testid={`button-remove-camera-pitch-model-${camera.id}`}
+                        onClick={() => void removePitchModel(camera)}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <p
+                  className={cn("mt-2 text-[11px]", model ? usable ? "text-emerald-400" : "text-amber-400" : "text-amber-400")}
+                  data-testid={`camera-pitch-model-${camera.id}`}
+                >
+                  {model
+                    ? `${calibrationLabel(model)} · ${calibrationAspectLabel(model)}`
+                      + ` · ${model.gridRows}×${model.gridColumns} grid`
+                      + ` · ${model.pitchWidthMetres}×${model.pitchHeightMetres} m`
+                      + (usable ? "" : " · distance and speed unavailable")
+                    : "No calibration — no distance or speed for this camera's recordings"}
+                </p>
+                {model && camera.pitchModelUpdatedAt && (
+                  <p className="mt-0.5 text-[10px] text-zinc-500">
+                    Uploaded {calibrationDateLabel(camera.pitchModelUpdatedAt)}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FieldsTab() {
   const [fields, setFields] = useState<AdminField[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1136,6 +1381,8 @@ function FieldsTab() {
 
   return (
     <div className="space-y-3">
+      <CameraPitchModelsSection />
+
       <div className="flex items-center justify-between">
         <span className="text-zinc-500 text-xs">{fields.length} field{fields.length !== 1 ? "s" : ""}</span>
         <button
@@ -4460,12 +4707,13 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
     recording.hasTrackingBundle ? String(recording.trackingVideoStartSeconds ?? 0) : "",
   );
   const [verifying, setVerifying] = useState(false);
-  const [pitchModel, setPitchModel] = useState(recording.trackingPitchModel ?? null);
-  const [pitchBusy, setPitchBusy] = useState(false);
   const [playerMetrics, setPlayerMetrics] = useState<AdminRecordingPlayerMetric[] | null>(null);
+  // The calibration that actually applies here, as the metrics endpoint
+  // resolved it from this recording's camera. Not uploaded from this panel any
+  // more - it lives on the camera, in the Fields tab.
+  const [metricsPitchModel, setMetricsPitchModel] = useState<PitchModelSummary | null>(null);
   const [loadingPlayerMetrics, setLoadingPlayerMetrics] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const pitchInputRef = useRef<HTMLInputElement | null>(null);
 
   const upload = async (file: File) => {
     setBusy(true);
@@ -4477,7 +4725,6 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         segmentCount: number;
         frameCoverage: string;
         videoStartSeconds?: number;
-        pitchModel?: NonNullable<AdminRecording["trackingPitchModel"]> | null;
       };
       // Where the tracked window starts inside THIS recording. It belongs to
       // the pairing, not to the bundle: the same tracking can be attached to a
@@ -4509,8 +4756,8 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
       setHasBundle(true);
       setHasIdentityMap(false);
       setIdentityMapMatchesBundle(false);
-      setPitchModel(result.pitchModel ?? null);
       setPlayerMetrics(null);
+      setMetricsPitchModel(null);
       setMessage(
         `Ready · ${result.segmentCount} segments · ${result.trackCount} tracks · `
         + `starts ${result.videoStartSeconds ?? 0}s into the video · ${result.frameCoverage}`,
@@ -4559,63 +4806,17 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
     }
   };
 
-  const uploadPitchModel = async (file: File) => {
-    setPitchBusy(true);
-    setMessage(null);
-    try {
-      const parsed = JSON.parse(await file.text()) as unknown;
-      const source = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        && ("pitchModel" in parsed || "pitch_model" in parsed)
-        ? (parsed as { pitchModel?: unknown; pitch_model?: unknown }).pitchModel
-          ?? (parsed as { pitch_model?: unknown }).pitch_model
-        : parsed;
-      const result = await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
-        method: "PATCH",
-        body: JSON.stringify({ pitchModel: source }),
-      }) as { pitchModel: NonNullable<AdminRecording["trackingPitchModel"]> | null };
-      setPitchModel(result.pitchModel);
-      setPlayerMetrics(null);
-      setMessage(result.pitchModel
-        ? `Pitch model saved · ${calibrationLabel(result.pitchModel)} · ${result.pitchModel.gridRows}×${result.pitchModel.gridColumns} grid · ${result.pitchModel.pitchWidthMetres}×${result.pitchModel.pitchHeightMetres} m`
-        : "Pitch model removed · distance unavailable");
-    } catch (error) {
-      setMessage(error instanceof SyntaxError
-        ? "That pitch model file is not valid JSON"
-        : "Pitch model upload failed — check dimensions and grid points");
-    } finally {
-      setPitchBusy(false);
-      if (pitchInputRef.current) pitchInputRef.current.value = "";
-    }
-  };
-
-  const removePitchModel = async () => {
-    if (!window.confirm("Remove the pitch model? Distance will become unavailable for this recording.")) return;
-    setPitchBusy(true);
-    setMessage(null);
-    try {
-      await apiFetch(`/admin/recordings/${recording.id}/tracking-bundle`, {
-        method: "PATCH",
-        body: JSON.stringify({ pitchModel: null }),
-      });
-      setPitchModel(null);
-      setPlayerMetrics(null);
-      setMessage("Pitch model removed · distance unavailable");
-    } catch {
-      setMessage("Could not remove the pitch model");
-    } finally {
-      setPitchBusy(false);
-    }
-  };
-
   const loadPlayerMetrics = async () => {
     setLoadingPlayerMetrics(true);
     try {
       const result = await apiFetch(`/admin/recordings/${recording.id}/player-metrics`) as {
         players: AdminRecordingPlayerMetric[];
+        pitchModel?: PitchModelSummary | null;
       };
       setPlayerMetrics(result.players);
-    } catch {
-      setMessage("Could not load player metrics");
+      setMetricsPitchModel(result.pitchModel ?? null);
+    } catch (error) {
+      setMessage(adminRequestErrorMessage(error, "Could not load player metrics"));
     } finally {
       setLoadingPlayerMetrics(false);
     }
@@ -4645,16 +4846,6 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
                {!hasIdentityMap ? "No identity map" : identityMapMatchesBundle ? "Identity map saved" : "Identity map needs review"}
              </p>
            )}
-           {hasBundle && (
-             <p
-               className={cn("mt-0.5 text-[10px]", pitchModel ? "text-emerald-400" : "text-zinc-500")}
-               data-testid={`tracking-pitch-model-${recording.id}`}
-             >
-               {pitchModel
-                  ? `${calibrationLabel(pitchModel)} · ${calibrationAspectLabel(pitchModel)} · ${pitchModel.gridRows}×${pitchModel.gridColumns} grid · ${pitchModel.pitchWidthMetres}×${pitchModel.pitchHeightMetres} m${pitchModel.calibrationId && pitchModel.fittedAt && typeof pitchModel.calibratedAspectRatio === "number" ? "" : " · distance unavailable"}`
-                  : "No pitch model · distance unavailable"}
-             </p>
-           )}
         </div>
       </div>
       <input
@@ -4668,19 +4859,6 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
           if (file) void upload(file);
         }}
       />
-       {hasBundle && (
-         <input
-           ref={pitchInputRef}
-           type="file"
-           accept=".json,application/json"
-           className="hidden"
-           data-testid={`input-pitch-model-${recording.id}`}
-           onChange={(event) => {
-             const file = event.target.files?.[0];
-             if (file) void uploadPitchModel(file);
-           }}
-         />
-       )}
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-[10px] text-zinc-500">
           starts
@@ -4709,31 +4887,6 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
             </button>
           )}
         </label>
-         {hasBundle && (
-           <>
-             <button
-               type="button"
-               className="flex items-center gap-1 rounded-lg border border-primary/40 px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
-               disabled={busy || savingStart || pitchBusy}
-               data-testid={`button-upload-pitch-model-${recording.id}`}
-               onClick={() => pitchInputRef.current?.click()}
-             >
-               {pitchBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-               {pitchModel ? "Replace pitch model" : "Upload pitch model"}
-             </button>
-             {pitchModel && (
-               <button
-                 type="button"
-                 className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-400 transition-colors hover:border-red-400 hover:text-red-300 disabled:opacity-50"
-                 disabled={busy || savingStart || pitchBusy}
-                 data-testid={`button-remove-pitch-model-${recording.id}`}
-                 onClick={() => void removePitchModel()}
-               >
-                 Remove model
-               </button>
-             )}
-           </>
-         )}
         <button
           type="button"
           className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
@@ -4782,10 +4935,14 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
          <div className="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-3" data-testid={`admin-player-metrics-${recording.id}`}>
            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
              <p className="text-xs font-semibold text-zinc-200">Claimed player metrics</p>
-             <p className="text-[10px] text-zinc-500">
-               {pitchModel && pitchModel.calibrationId && pitchModel.fittedAt && typeof pitchModel.calibratedAspectRatio === "number"
-                 ? `${calibrationLabel(pitchModel)} · ${calibrationAspectLabel(pitchModel)}`
-                 : "No valid pitch model · distance and speed unavailable"}
+             {/*
+               Read-only. The calibration comes from this recording's camera and
+               is changed in the Fields tab, under Camera calibration.
+             */}
+             <p className="text-[10px] text-zinc-500" data-testid={`tracking-pitch-model-${recording.id}`}>
+               {metricsPitchModel && metricsPitchModel.calibrationId && metricsPitchModel.fittedAt && typeof metricsPitchModel.calibratedAspectRatio === "number"
+                 ? `${calibrationLabel(metricsPitchModel)} · ${calibrationAspectLabel(metricsPitchModel)} · from the camera`
+                 : "No valid camera calibration · distance and speed unavailable"}
              </p>
            </div>
            {playerMetrics.length === 0 ? (

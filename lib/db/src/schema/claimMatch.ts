@@ -295,34 +295,6 @@ export const claimMatchProgressTable = pgTable(
   }),
 );
 
-export const claimMatchCorrectionsTable = pgTable(
-  "claim_match_corrections",
-  {
-    id: serial("id").primaryKey(),
-    userId: integer("user_id")
-      .notNull()
-      .references(() => usersTable.id, { onDelete: "cascade" }),
-    recordingId: integer("recording_id")
-      .notNull()
-      .references(() => recordingsTable.id, { onDelete: "cascade" }),
-    clientId: text("client_id").notNull(),
-    momentSeconds: doublePrecision("moment_seconds").notNull(),
-    rejectedTrackId: text("rejected_track_id"),
-    chosenTrackId: text("chosen_track_id").notNull(),
-    answerMethod: text("answer_method").notNull(),
-    questionCount: integer("question_count").notNull().default(0),
-    undone: boolean("undone").notNull().default(false),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => ({
-    clientUnique: uniqueIndex("claim_match_corrections_client_unique").on(
-      table.userId,
-      table.recordingId,
-      table.clientId,
-    ),
-  }),
-);
 
 export const claimMatchOffPitchSpansTable = pgTable(
   "claim_match_off_pitch_spans",
@@ -441,6 +413,5 @@ export const claimMatchIdentityBindingsTable = pgTable(
 export type TrackingBundleRow = typeof recordingTrackingBundlesTable.$inferSelect;
 export type TrackingSegmentRow = typeof recordingTrackingSegmentsTable.$inferSelect;
 export type ClaimMatchProgressRow = typeof claimMatchProgressTable.$inferSelect;
-export type ClaimMatchCorrectionRow = typeof claimMatchCorrectionsTable.$inferSelect;
 export type ClaimMatchOffPitchSpanRow = typeof claimMatchOffPitchSpansTable.$inferSelect;
 export type ClaimIdentityBindingRow = typeof claimMatchIdentityBindingsTable.$inferSelect;

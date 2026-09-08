@@ -30,11 +30,11 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import claimMatchRouter, {
-  completionAllowed,
-  deriveClaimState,
   syncIdentityBinding,
   storeUploadBundle,
   trackingBundleFingerprint,
+  type ClaimVouchedFragment,
+  type ResolvedClaimIdentity,
   type UploadBundle,
 } from "./claimMatch";
 import { deleteClaimSegment, readClaimSegment, writeClaimSegment } from "../lib/claimMatchStorage";
@@ -79,20 +79,29 @@ const bindingSegments = [{
   events: [],
 }] as never;
 
-function bindingCorrection(id: number, userId: number) {
+/**
+ * The two fields syncIdentityBinding reads, built directly instead of through
+ * the deleted anchor flow's deriveClaimState. Every fixture below used to
+ * resolve to exactly one person with total support and no conflicting moment,
+ * which is what the counts record; personId and the fragments are the parts the
+ * dispute and split assertions actually turn on.
+ */
+function claimOf(
+  personId: string,
+  fragments: ClaimVouchedFragment[],
+  answerCount = 1,
+  resolutionMethod: ResolvedClaimIdentity["resolutionMethod"] = "identity-map",
+): { identityResolution: ResolvedClaimIdentity; vouchedFragments: ClaimVouchedFragment[] } {
   return {
-    id,
-    userId,
-    recordingId,
-    clientId: `binding-${id}`,
-    momentSeconds: id * 10,
-    rejectedTrackId: null,
-    chosenTrackId: "piece-a",
-    answerMethod: "anchor-yes",
-    questionCount: 1,
-    undone: false,
-    createdAt: new Date(1_000 + id),
-    updatedAt: new Date(1_000 + id),
+    identityResolution: {
+      personId,
+      resolutionMethod,
+      supportCount: answerCount,
+      acceptedAnswerCount: answerCount,
+      supportPercent: 100,
+      conflictMoments: [],
+    },
+    vouchedFragments: fragments,
   };
 }
 
@@ -257,70 +266,38 @@ afterAll(async () => {
 });
 
 describe("Claim Match tracking bundle replacement", () => {
-  it("attaches, validates, and removes a pitch model without replacing segment objects", async () => {
+  it("refuses a pitch model, because that belongs to the camera now", async () => {
     mockedGetLocalUserId.mockResolvedValue(adminId);
-    const pitchModel = {
-      calibrationId: "replacement-calibration",
-      fittedAt: "2026-01-15T12:00:00.000Z",
-      calibratedAspectRatio: 1920 / 1080,
-      pitchWidthMetres: 105,
-      pitchHeightMetres: 68,
-      // The grid layout is normalized image space; these pitch coordinates are
-      // intentionally independent of the bundle's 1920x1080 dimensions.
-      grid: [
-        [{ x: 0, y: 0 }, { x: 105, y: 0 }],
-        [{ x: 0, y: 68 }, { x: 105, y: 68 }],
-      ],
-    };
+    const before = await currentManifest();
 
-    const attached = await request(app)
-      .patch(`/api/admin/recordings/${recordingId}/tracking-bundle`)
-      .send({ pitchModel });
-
-    expect(attached.status).toBe(200);
-    expect(attached.body.pitchModel).toEqual({
-      calibrationId: "replacement-calibration",
-      fittedAt: "2026-01-15T12:00:00.000Z",
-      calibratedAspectRatio: 1920 / 1080,
-      gridRows: 2,
-      gridColumns: 2,
-      pitchWidthMetres: 105,
-      pitchHeightMetres: 68,
-    });
-    expect((await currentManifest()).pitchModel).toEqual(pitchModel);
-
-    const framingMismatch = await request(app)
+    const refused = await request(app)
       .patch(`/api/admin/recordings/${recordingId}/tracking-bundle`)
       .send({
         pitchModel: {
-          ...pitchModel,
-          calibratedAspectRatio: 2,
-        },
-      });
-    expect(framingMismatch.status).toBe(400);
-    expect(framingMismatch.body.error).toMatch(/aspect ratio/i);
-    expect((await currentManifest()).pitchModel).toEqual(pitchModel);
-
-    const invalid = await request(app)
-      .patch(`/api/admin/recordings/${recordingId}/tracking-bundle`)
-      .send({
-        pitchModel: {
+          calibrationId: "replacement-calibration",
+          fittedAt: "2026-01-15T12:00:00.000Z",
+          calibratedAspectRatio: 1920 / 1080,
           pitchWidthMetres: 105,
           pitchHeightMetres: 68,
-          grid: [[{ x: 0, y: 0 }, { x: 105, y: 0 }], [{ x: 0, y: 68 }]],
+          grid: [
+            [{ x: 0, y: 0 }, { x: 105, y: 0 }],
+            [{ x: 0, y: 68 }, { x: 105, y: 68 }],
+          ],
         },
       });
 
-    expect(invalid.status).toBe(400);
-    expect((await currentManifest()).pitchModel).toEqual(pitchModel);
+    // Refused rather than accepted-and-ignored: a model stored here would be
+    // overwritten by the camera's on the way out, so silently taking it would
+    // be an edit that appears to work and changes nothing.
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toMatch(/camera/i);
+    expect((await currentManifest()).pitchModel).toEqual(before.pitchModel);
 
-    const removed = await request(app)
+    const timeOnly = await request(app)
       .patch(`/api/admin/recordings/${recordingId}/tracking-bundle`)
-      .send({ pitchModel: null });
-
-    expect(removed.status).toBe(200);
-    expect(removed.body.pitchModel).toBeNull();
-    expect((await currentManifest()).pitchModel).toBeUndefined();
+      .send({ videoStartSeconds: 12 });
+    expect(timeOnly.status).toBe(200);
+    expect((await currentManifest()).videoStartSeconds).toBe(12);
   });
 
   it("cleans already-written objects and preserves the previous bundle after a later write fails", async () => {
@@ -372,27 +349,29 @@ describe("Claim Match tracking bundle replacement", () => {
       .select()
       .from(recordingTrackingBundlesTable)
       .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
-    const firstAnswers = [
-      bindingCorrection(1, claimantAId),
-      bindingCorrection(2, claimantAId),
-      bindingCorrection(3, claimantAId),
-    ];
-    const derived = deriveClaimState(bindingManifest, bindingSegments, firstAnswers as never);
-
-    const first = await syncIdentityBinding(claimantAId, recordingId, bundle, derived);
+    // This bundle carries no identity map, so both claimants resolve straight
+    // to the source track: one person, two claimants.
+    const first = await syncIdentityBinding(
+      claimantAId,
+      recordingId,
+      bundle,
+      claimOf("piece-a", [], 3, "track-fallback"),
+    );
     expect(first?.state).toBe("confirmed");
     const second = await syncIdentityBinding(
       claimantBId,
       recordingId,
       bundle,
-      deriveClaimState(bindingManifest, bindingSegments, [
-        bindingCorrection(4, claimantBId),
-        bindingCorrection(5, claimantBId),
-        bindingCorrection(6, claimantBId),
-      ] as never),
+      claimOf("piece-a", [], 3, "track-fallback"),
     );
+    // Same person, so this is a contest rather than a split.
+    expect(second?.personId).toBe(first?.personId);
     expect(second?.state).toBe("disputed");
-    expect(completionAllowed(derived, second ?? null)).toBe(false);
+    // completionAllowed used to say a binding that is not confirmed cannot be
+    // awarded. That rule now lives in the chain flow as `bindingAwards`,
+    // mirrored here against the binding this claim actually produced.
+    const bindingAwards = !second || second.state === "confirmed";
+    expect(bindingAwards).toBe(false);
 
     mockedGetLocalUserId.mockResolvedValue(adminId);
     const transferred = await request(app)
@@ -423,16 +402,8 @@ describe("Claim Match tracking bundle replacement", () => {
       .from(recordingTrackingBundlesTable)
       .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
     const results = await Promise.all([
-      syncIdentityBinding(claimantAId, recordingId, bundle, deriveClaimState(
-        bindingManifest,
-        bindingSegments,
-        [bindingCorrection(7, claimantAId), bindingCorrection(8, claimantAId), bindingCorrection(9, claimantAId)] as never,
-      )),
-      syncIdentityBinding(claimantBId, recordingId, bundle, deriveClaimState(
-        bindingManifest,
-        bindingSegments,
-        [bindingCorrection(10, claimantBId), bindingCorrection(11, claimantBId), bindingCorrection(12, claimantBId)] as never,
-      )),
+      syncIdentityBinding(claimantAId, recordingId, bundle, claimOf("piece-a", [], 3, "track-fallback")),
+      syncIdentityBinding(claimantBId, recordingId, bundle, claimOf("piece-a", [], 3, "track-fallback")),
     ]);
     expect(results.map((result) => result?.state).sort()).toEqual(["confirmed", "disputed"]);
     expect(await db
@@ -485,19 +456,10 @@ describe("Claim Match tracking bundle replacement", () => {
         },
       })
       .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
-    const originalManifest = {
-      ...(bindingManifest as object),
-      provenance: {
-        bundleFingerprint: fingerprint,
-        identityMapBundleFingerprint: fingerprint,
-      },
-      identities: originalIdentities,
-    };
-    const derived = deriveClaimState(originalManifest as never, bindingSegments, [
-      bindingCorrection(13, claimantAId),
-      bindingCorrection(14, claimantAId),
-      bindingCorrection(15, claimantAId),
-    ] as never);
+    // The answers landed outside person-a's two-frame part, so the claim fell
+    // back to the source track and recorded no vouched fragment at all. That
+    // empty fragment list is what leaves the map regroupable.
+    const derived = claimOf("piece-a", [], 3, "track-fallback");
     const [bundle] = await db
       .select()
       .from(recordingTrackingBundlesTable)
@@ -545,33 +507,27 @@ describe("Claim Match tracking bundle replacement", () => {
         parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }],
       }],
     } as never;
-    const fullSegments = [{
-      ...(bindingSegments[0] as object),
-      tracks: [{
-        id: "piece-a",
-        startFrame: 0,
-        endFrame: 99,
-        boxes: [
-          ...Array.from({ length: 40 }, (_, frame) => ({ frame, x: 10, y: 10, w: 10, h: 10 })),
-          ...Array.from({ length: 40 }, (_, index) => ({ frame: index + 60, x: 10, y: 10, w: 10, h: 10 })),
-        ],
-      }],
-    }] as never;
     await db
       .update(recordingTrackingBundlesTable)
       .set({ manifest })
       .where(eq(recordingTrackingBundlesTable.id, bundle.id));
-    const firstDerived = deriveClaimState(manifest, bindingSegments, [
-      bindingCorrection(1, claimantAId),
-    ] as never, fullSegments);
-    const first = await syncIdentityBinding(claimantAId, recordingId, { ...bundle, manifest }, firstDerived);
+    // piece-a detects across frames 0-39 and again across 60-99, so the two
+    // claimants vouch for disjoint runs of the same inferred row.
+    const first = await syncIdentityBinding(
+      claimantAId,
+      recordingId,
+      { ...bundle, manifest },
+      claimOf("person-a", [{ trackId: "piece-a", fromFrame: 0, toFrame: 39 }]),
+    );
     expect(first?.state).toBe("confirmed");
     expect(first?.vouchedFragments).toEqual([{ trackId: "piece-a", fromFrame: 0, toFrame: 39 }]);
 
-    const secondDerived = deriveClaimState(manifest, bindingSegments, [
-      bindingCorrection(7, claimantBId),
-    ] as never, fullSegments);
-    const second = await syncIdentityBinding(claimantBId, recordingId, { ...bundle, manifest }, secondDerived);
+    const second = await syncIdentityBinding(
+      claimantBId,
+      recordingId,
+      { ...bundle, manifest },
+      claimOf("person-a", [{ trackId: "piece-a", fromFrame: 60, toFrame: 99 }]),
+    );
     expect(second?.state).toBe("confirmed");
     expect(second?.personId).not.toBe("person-a");
 
@@ -601,27 +557,20 @@ describe("Claim Match tracking bundle replacement", () => {
         parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }],
       }],
     } as never;
-    const fullSegments = [{
-      ...(bindingSegments[0] as object),
-      tracks: [{
-        id: "piece-a",
-        startFrame: 0,
-        endFrame: 99,
-        boxes: Array.from({ length: 100 }, (_, frame) => ({ frame, x: 10, y: 10, w: 10, h: 10 })),
-      }],
-    }] as never;
     await db.update(recordingTrackingBundlesTable).set({ manifest }).where(eq(recordingTrackingBundlesTable.id, bundle.id));
+    // piece-a detects unbroken across frames 0-99, so both claimants vouch for
+    // the same run and there is nothing to split.
     const first = await syncIdentityBinding(
       claimantAId,
       recordingId,
       { ...bundle, manifest },
-      deriveClaimState(manifest, bindingSegments, [bindingCorrection(1, claimantAId)] as never, fullSegments),
+      claimOf("person-a", [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }]),
     );
     const second = await syncIdentityBinding(
       claimantBId,
       recordingId,
       { ...bundle, manifest },
-      deriveClaimState(manifest, bindingSegments, [bindingCorrection(2, claimantBId)] as never, fullSegments),
+      claimOf("person-a", [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }]),
     );
     expect(first?.state).toBe("confirmed");
     expect(second?.state).toBe("disputed");
@@ -641,20 +590,11 @@ describe("Claim Match tracking bundle replacement", () => {
         parts: [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }],
       }],
     } as never;
-    const fullSegments = [{
-      ...(bindingSegments[0] as object),
-      tracks: [{
-        id: "piece-a",
-        startFrame: 0,
-        endFrame: 99,
-        boxes: Array.from({ length: 100 }, (_, frame) => ({ frame, x: 10, y: 10, w: 10, h: 10 })),
-      }],
-    }] as never;
     const binding = await syncIdentityBinding(
       claimantAId,
       recordingId,
       { ...bundle, manifest },
-      deriveClaimState(manifest, bindingSegments, [bindingCorrection(1, claimantAId)] as never, fullSegments),
+      claimOf("person-a", [{ trackId: "piece-a", fromFrame: 0, toFrame: 99 }]),
     );
     mockedGetLocalUserId.mockResolvedValue(claimantAId);
     const forbiddenList = await request(app).get(`/api/admin/recordings/${recordingId}/claim-match/bindings`);
