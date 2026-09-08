@@ -15,9 +15,11 @@
  * No React, no fetch, no clock -- so the rule is testable against constructed
  * chains rather than against a video.
  */
-import type { ClaimChain, ClaimChainPart } from "@workspace/api-client-react";
+import type { ClaimChain, ClaimChainPart, ClaimChainUncertainty } from "@workspace/api-client-react";
 import type { ClaimBox, ClaimBundle, ClaimTrack } from "./claim-match-engine";
 import { detectionAtFrame } from "./claim-match-bundle";
+
+export type ChainQuestion = ClaimChainUncertainty;
 
 export type ChainStage =
   /** Nothing claimed yet: seek freely, boxes on, tap yourself. */
@@ -44,28 +46,75 @@ export function chainStartFrame(chain: ClaimChainPart[]): number | null {
 }
 
 /**
- * The frame where playback must stop.
+ * Every question the chain still has open, earliest first.
  *
- * Null means there is nothing left to ask, which is what a finished claim
- * looks like -- not a special "complete" flag, just no remaining uncertainty.
+ * Older servers send only `nextUncertainty`; treat that as a list of one so
+ * the page keeps working against either.
  */
-export function stopFrame(chain: ClaimChain): number | null {
-  return chain.nextUncertainty?.frame ?? null;
+export function openQuestions(chain: ClaimChain | null): ChainQuestion[] {
+  if (!chain) return [];
+  if (Array.isArray(chain.openQuestions)) return chain.openQuestions;
+  return chain.nextUncertainty ? [chain.nextUncertainty] : [];
 }
 
-export function stopSeconds(chain: ClaimChain): number | null {
-  const frame = stopFrame(chain);
+/**
+ * The next question AHEAD of a frame -- the one playback is heading for.
+ *
+ * Ahead, not earliest. A filled gap leaves questions behind the playhead, and
+ * the one to stop at is the next one in the direction of travel. Those behind
+ * are listed, never fired on: `questionsBehind`.
+ */
+export function nextQuestionAfter(chain: ClaimChain | null, frame: number): ChainQuestion | null {
+  return openQuestions(chain).find((question) => question.frame > frame) ?? null;
+}
+
+export function questionsBehind(chain: ClaimChain | null, frame: number): ChainQuestion[] {
+  return openQuestions(chain).filter((question) => question.frame <= frame);
+}
+
+/**
+ * The frame where playback must next stop, from `afterFrame` onward.
+ *
+ * Null means there is nothing left to ask ahead. With no `afterFrame` it is
+ * the earliest open question, which is what a finished claim lacks entirely.
+ */
+export function stopFrame(chain: ClaimChain, afterFrame = -1): number | null {
+  return nextQuestionAfter(chain, afterFrame)?.frame ?? null;
+}
+
+export function stopSeconds(chain: ClaimChain, afterFrame = -1): number | null {
+  const frame = stopFrame(chain, afterFrame);
   if (frame === null) return null;
   return frame / Math.max(chain.frameRate, 0.001);
 }
 
 /**
- * Whether playback has reached the stop.
+ * The question playback has just crossed, if any.
  *
- * Deliberately >=, and checked on every timeupdate rather than by scheduling a
- * pause: timeupdate fires roughly every 250ms and a seek can jump straight
- * past the frame, so anything that waits for an exact moment will sail through
- * the question and attribute footage to the wrong person.
+ * Crossed, from before to at-or-past, checked on every reported frame: a
+ * frame report can land anywhere past the question, so "==" would sail
+ * through it and attribute footage to the wrong person.
+ *
+ * But not merely "at or past". That was the old rule, and it turned every
+ * question behind the playhead into a trap: a refetch that returned a moment
+ * already passed, an undo that reopened one, a fill that left one behind --
+ * each fired instantly, paused the video on a question about a moment
+ * minutes back, and the page wedged into play-pause-play-pause. A question
+ * behind the playhead is shown and offered, never fired.
+ */
+export function crossedStop(
+  chain: ClaimChain | null,
+  previousFrame: number,
+  frame: number,
+): ChainQuestion | null {
+  if (!chain || frame <= previousFrame) return null;
+  return openQuestions(chain).find((question) =>
+    question.frame > previousFrame && question.frame <= frame) ?? null;
+}
+
+/**
+ * Whether playback has reached the earliest open question. Kept for the
+ * anchor-era callers and tests; the page itself uses `crossedStop`.
  */
 export function reachedStop(chain: ClaimChain, trackingSeconds: number): boolean {
   const stop = stopSeconds(chain);
@@ -132,10 +181,12 @@ export function candidatesAtFrame(
   chain: ClaimChain | null,
   frame: number,
   tolerance = 2,
+  /** The question being asked right now; the earliest open one by default. */
+  question: ChainQuestion | null = chain?.nextUncertainty ?? null,
 ): ChainCandidate[] {
   const parts = chain?.chain ?? [];
   const mineId = partAtFrame(parts, frame)?.trackId ?? null;
-  const suspectId = chain?.nextUncertainty?.otherTrackId ?? null;
+  const suspectId = question?.otherTrackId ?? null;
   const out: ChainCandidate[] = [];
   for (const track of bundle.tracks) {
     const box = detectionAtFrame(track, frame, tolerance);
@@ -178,6 +229,32 @@ export function chainSpans(
 }
 
 /**
+ * The holes in the claim, as seconds, for the person to go back and fill.
+ *
+ * The complement of `chainSpans` over the whole recording, including the
+ * stretch before the first tap and after the last part. Whether a hole is
+ * really theirs to fill -- they may have been on the bench -- is theirs to
+ * judge; the list just makes every hole reachable in one tap. Holes shorter
+ * than `minSeconds` are noise from detection drop-outs and are not offered.
+ */
+export function gapsIn(
+  chain: ClaimChainPart[],
+  frameRate: number,
+  durationSeconds: number,
+  minSeconds = 1,
+): Array<{ fromSeconds: number; toSeconds: number }> {
+  const spans = chainSpans(chain, frameRate);
+  const out: Array<{ fromSeconds: number; toSeconds: number }> = [];
+  let cursor = 0;
+  for (const span of spans) {
+    if (span.fromSeconds - cursor >= minSeconds) out.push({ fromSeconds: cursor, toSeconds: span.fromSeconds });
+    cursor = Math.max(cursor, span.toSeconds);
+  }
+  if (durationSeconds - cursor >= minSeconds) out.push({ fromSeconds: cursor, toSeconds: durationSeconds });
+  return out;
+}
+
+/**
  * Where to resume from after an answer.
  *
  * One frame past the stop, so answering the same question twice is impossible.
@@ -189,10 +266,9 @@ export function resumeSecondsAfter(chain: ClaimChain, frame: number): number {
 }
 
 /** A plain sentence for the person, never a code. */
-export function questionFor(chain: ClaimChain | null): string | null {
-  const uncertainty = chain?.nextUncertainty;
-  if (!uncertainty) return null;
-  return uncertainty.reason;
+export function questionFor(source: ClaimChain | ChainQuestion | null): string | null {
+  const question = source && "reason" in source ? source : source?.nextUncertainty ?? null;
+  return question?.reason ?? null;
 }
 
 /**
@@ -206,8 +282,9 @@ export function questionFor(chain: ClaimChain | null): string | null {
  * "leave it"; a confirm there would be a label on a track with no future,
  * which teaches nothing.
  */
-export function canConfirmAtStop(chain: ClaimChain | null): boolean {
-  return chain?.nextUncertainty?.kind === "swap";
+export function canConfirmAtStop(source: ClaimChain | ChainQuestion | null): boolean {
+  const question = source && "kind" in source ? source : source?.nextUncertainty ?? null;
+  return question?.kind === "swap";
 }
 
 /**
@@ -221,49 +298,39 @@ export function canConfirmAtStop(chain: ClaimChain | null): boolean {
 export const CHECK_LEAD_IN_SECONDS = 4;
 
 /**
- * Where to jump to in order to reach the next check.
+ * Where to land to watch a particular moment arrive: a few seconds before it.
+ */
+export function leadInSeconds(
+  chain: ClaimChain,
+  frame: number,
+  leadIn = CHECK_LEAD_IN_SECONDS,
+): number {
+  return Math.max(0, frame / Math.max(chain.frameRate, 0.001) - leadIn);
+}
+
+/**
+ * Where to jump to in order to reach the next check ahead.
  *
  * The flow is "fast forward until he sees that he is lost", and playing the
  * whole stretch in real time is not that: with checks minutes apart the person
  * watches the match instead of claiming it. Jumping to just before the check
  * skips everything nobody has a question about, which is most of it.
  *
- * Null when there is nothing left to check, or when the check is already
- * behind or within the run-up -- in both cases the right move is to leave
- * playback alone rather than yank it backwards.
+ * Null when there is nothing left to check ahead, or when the check is within
+ * the run-up already -- in both cases the right move is to leave playback
+ * alone. Questions behind the playhead are not this function's business:
+ * they are listed, and the person goes to them deliberately
+ * (`leadInSeconds`), never yanked back.
  */
-/**
- * Where to put the playhead after an undo.
- *
- * An undo exposes an uncertainty that is BEHIND the playhead — the decision
- * just reversed is precisely what carried the chain past it, and reversing it
- * also makes its frame askable again. Leaving the playhead alone then wedges
- * the flow: `reachedStop` is `>=`, so the stale stop fires on the next
- * timeupdate, and `approachSeconds` refuses to seek backwards, so "skip to the
- * next check" cannot rescue it. Play becomes play-pause-play-pause on a
- * question about a moment minutes behind.
- *
- * So an undo seeks, in whichever direction the check now lies, with the same
- * run-up an ordinary check gets.
- */
-export function rewindSecondsAfterUndo(
-  chain: ClaimChain | null,
-  leadIn = CHECK_LEAD_IN_SECONDS,
-): number | null {
-  if (!chain) return null;
-  const stop = stopSeconds(chain);
-  if (stop === null) return null;
-  return Math.max(0, stop - leadIn);
-}
-
 export function approachSeconds(
   chain: ClaimChain | null,
   currentSeconds: number,
   leadIn = CHECK_LEAD_IN_SECONDS,
 ): number | null {
   if (!chain) return null;
-  const stop = stopSeconds(chain);
-  if (stop === null) return null;
-  const target = Math.max(0, stop - leadIn);
+  const currentFrame = Math.floor(currentSeconds * Math.max(chain.frameRate, 0.001));
+  const next = nextQuestionAfter(chain, currentFrame);
+  if (!next) return null;
+  const target = leadInSeconds(chain, next.frame, leadIn);
   return target > currentSeconds ? target : null;
 }

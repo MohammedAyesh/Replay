@@ -227,13 +227,17 @@ describe("the whole claim, one call after another", () => {
       .send({ frame: CROSS, decisionMs: 1400 });
 
     // The chain is unchanged by a confirm, so without suppression this comes
-    // back identical and the person answers it forever.
-    expect(confirmed.body.nextUncertainty?.frame).not.toBe(CROSS);
-    expect(confirmed.body.nextUncertainty).toMatchObject({ kind: "track-end", frame: 299 });
+    // back identical and the person answers it forever. And A runs to frame
+    // 299, the last frame of the recording: that is not "we lost you", so
+    // nothing at all is left to ask and the claim is complete.
+    expect(confirmed.body.nextUncertainty).toBeNull();
+    expect(confirmed.body.openQuestions).toEqual([]);
+    expect(confirmed.body.completed).toBe(true);
 
     // And it stays answered on a fresh read, not just in that one response.
     const reread = await request(app).get(url());
-    expect(reread.body.nextUncertainty).toMatchObject({ kind: "track-end", frame: 299 });
+    expect(reread.body.nextUncertainty).toBeNull();
+    expect(reread.body.completed).toBe(true);
   });
 
   it("does not ask it again from the other side after switching players", async () => {
@@ -245,9 +249,10 @@ describe("the whole claim, one call after another", () => {
       { trackId: "A", fromFrame: 20, toFrame: 99 },
       { trackId: "B", fromFrame: CROSS, toFrame: 299 },
     ]);
-    // The crossing involves B exactly as symmetrically as it involved A.
-    expect(switched.body.nextUncertainty?.frame).not.toBe(CROSS);
-    expect(switched.body.nextUncertainty).toMatchObject({ kind: "track-end", frame: 299 });
+    // The crossing involves B exactly as symmetrically as it involved A --
+    // and B runs to the end of the recording, so nothing is left to ask.
+    expect(switched.body.nextUncertainty).toBeNull();
+    expect(switched.body.completed).toBe(true);
   });
 
   it("records the switch as a labelled correction with its geometry", async () => {
@@ -292,13 +297,17 @@ describe("the whole claim, one call after another", () => {
     const identities = row.manifest.identities ?? [];
     expect(identities).toHaveLength(1);
     expect(identities[0].name).toBe("Mohammed");
-    // Each part carries the frame of the decision that claimed it. The client
-    // never sees it -- describe() strips it -- but it is what lets an undo
-    // reverse a whole decision instead of one part of a merged person.
+    // Each part carries the frame of the decision that claimed it and how far
+    // into it the person has answered. The client never sees either --
+    // describe() strips them -- but the stamp is what scopes a correction to
+    // one decision, and the mark is what keeps an answered question answered
+    // across a reload. A was cut at the switch, so it is answered to its end.
     expect(identities[0].parts).toEqual([
-      { trackId: "A", fromFrame: 20, toFrame: 99, tapFrame: 20 },
-      { trackId: "B", fromFrame: CROSS, toFrame: 299, tapFrame: CROSS },
+      { trackId: "A", fromFrame: 20, toFrame: 99, tapFrame: 20, reviewedThrough: 100 },
+      { trackId: "B", fromFrame: CROSS, toFrame: 299, tapFrame: CROSS, reviewedThrough: CROSS + 1 },
     ]);
+    // And the chain as it stood before each decision, for undo.
+    expect(identities[0].history?.length).toBe(2);
     // The map has to claim to belong to THIS bundle or usableIdentityMap
     // discards the whole thing and the work becomes invisible.
     expect(row.manifest.provenance?.identityMapBundleFingerprint)

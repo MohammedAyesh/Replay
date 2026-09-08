@@ -423,6 +423,13 @@
 .claim-number-chip:hover:not(:disabled), .claim-number-chip:focus-visible { border-color: #7fd1ff; background: rgba(127,209,255,.14); }
 .claim-number-chip.is-suspect b { color: var(--claim-orange); }
 .claim-number-chip:disabled { opacity: .5; cursor: default; }
+/* The end-of-recording summary: open moments to go back to, gaps to fill. */
+.claim-moment-list { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 10px; }
+.claim-moment-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px; border: 1px solid rgba(238,243,230,.18); cursor: pointer; color: var(--claim-ink); background: rgba(10,17,16,.5); font-family: var(--app-font-mono); font-size: 10px; text-align: left; }
+.claim-moment-row b { color: var(--claim-green); }
+.claim-moment-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.claim-moment-row:hover:not(:disabled), .claim-moment-row:focus-visible { border-color: #7fd1ff; background: rgba(127,209,255,.12); }
+.claim-moment-row:disabled { opacity: .5; cursor: default; }
 
 .claim-track-box.is-taken span { color: #fff; background: #a52a2a; }
 .claim-track-box span { position: absolute; top: -17px; left: -2px; padding: 2px 4px; color: #0e1513; background: var(--claim-green); font-family: var(--app-font-mono); font-size: 8px; white-space: nowrap; }

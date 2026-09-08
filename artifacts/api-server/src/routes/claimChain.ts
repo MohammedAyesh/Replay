@@ -47,24 +47,41 @@ import {
   syncIdentityBinding,
   trackingBundleFingerprint,
 } from "./claimMatch";
-import { deriveChainClaimState } from "../lib/claimChainState";
+import { deriveChainClaimState, isChainComplete, requiredCoverageFor } from "../lib/claimChainState";
 import {
   captureDecisionGeometry,
   chainIntervals,
+  cutChain,
   dropLastDecision,
   extendChain,
   isStruckOff,
-  nextUncertainty,
+  markAnswered,
   normaliseChain,
+  openUncertainties,
   scanFloor,
   totalSeconds,
-  truncateChain,
+  withMarks,
   type ChainPart,
 } from "../lib/claimChain";
 
 const router: IRouter = Router();
 
 type Track = TrackingSegmentPayload["tracks"][number];
+
+/**
+ * How many decisions "undo" can walk back.
+ *
+ * Each entry is a copy of the chain, stored on the identity row and rewritten
+ * with the manifest on every tap, so this is deliberately small. Three is
+ * enough to reverse a mis-tap and the two taps made before noticing it.
+ */
+const HISTORY_DEPTH = 3;
+
+/**
+ * Open questions the response carries. The earliest few are what the page
+ * needs -- the next one ahead to stop at, the ones behind to list.
+ */
+const OPEN_QUESTIONS_LIMIT = 25;
 
 const TapBody = z.object({
   trackId: z.string().min(1),
@@ -108,9 +125,25 @@ function crossingsFromSegments(segments: TrackingSegmentPayload[]) {
   return segments.flatMap((segment) => segment.crossings);
 }
 
+/**
+ * The claimant's chain, with every part carrying its answered frontier.
+ *
+ * Parts stored before the per-part marks existed -- and parts the identity
+ * board adds to the row -- have none. They get one from the legacy
+ * chain-wide floor, which is exactly how they were scanned before, so an old
+ * chain behaves as it did until its next write makes the marks explicit.
+ */
 function chainOf(manifest: TrackingManifest, identityId: string): ChainPart[] {
   const identity = (manifest.identities ?? []).find((item) => item.id === identityId);
-  return (identity?.parts ?? []).map((part) => ({ ...part }));
+  const parts = (identity?.parts ?? []).map((part) => ({ ...part }));
+  return withMarks(parts, scanFloor(parts, null, identity?.reviewedThroughFrame ?? null));
+}
+
+/** The last frame tracking covers, for "the recording ended, we did not lose you". */
+function trackedEndFrame(manifest: TrackingManifest): number {
+  const fromSegments = (manifest.segments ?? []).map((segment) => segment.endFrame);
+  if (fromSegments.length) return Math.max(...fromSegments);
+  return Math.max(0, Math.round(manifest.duration * manifest.frameRate) - 1);
 }
 
 /**
@@ -265,22 +298,38 @@ function describe(
   chain: ChainPart[],
   name: string | null,
   labelRecorded: boolean | null = null,
-  /** The frame answered on this request, if this is a write. */
-  afterFrame: number | null = null,
-  /** Everything before this has already been answered, across reloads. */
-  reviewedThroughFrame: number | null = null,
   /** The claimant has no chain because an administrator released it. */
   resetByAdmin = false,
 ) {
   const spans = chainIntervals(chain, ctx.manifest, ctx.offPitch);
-  const uncertainty = nextUncertainty(
+  /*
+   * Scanned from frame 0, on reads and writes alike. Every answer is written
+   * into the part it answers (`reviewedThrough`), so the write that records
+   * an answer and the GET that follows it see the same chain and return the
+   * same questions. The earlier design passed "the frame just answered" as a
+   * floor on writes only, and the write and the refetch disagreed -- which is
+   * how a stop ended up sitting on the playhead.
+   */
+  const open = openUncertainties(
     chain,
     ctx.tracksById,
     crossingsFromSegments(ctx.segments),
-    scanFloor(chain, afterFrame, reviewedThroughFrame),
+    0,
     ctx.manifest.identityDecisions,
     ctx.answeredFrames,
+    trackedEndFrame(ctx.manifest),
   );
+  const uncertainty = open[0] ?? null;
+  const offPitchSeconds = totalSeconds(ctx.offPitch.map((span) => ({
+    startSeconds: span.fromSeconds,
+    endSeconds: span.toSeconds,
+  })));
+  // Same numerator and same denominator as deriveChainClaimState, so the
+  // number on screen is the number that decides completion and clips.
+  const denominator = ctx.manifest.duration - offPitchSeconds;
+  const coveragePercent = denominator <= 0
+    ? 0
+    : Math.min(100, Math.round((totalSeconds(spans) / denominator) * 10000) / 100);
   /*
    * WHY AM I BEING STOPPED SO OFTEN
    *
@@ -338,18 +387,29 @@ function describe(
      */
     chain: chain.map(({ trackId, fromFrame, toFrame }) => ({ trackId, fromFrame, toFrame })),
     coverageSeconds: totalSeconds(spans),
-    // Same numerator and same denominator as deriveChainClaimState, so the
-    // number on screen is the number that decides completion and clips.
-    coveragePercent: (() => {
-      const offPitchSeconds = totalSeconds(ctx.offPitch.map((span) => ({
-        startSeconds: span.fromSeconds,
-        endSeconds: span.toSeconds,
-      })));
-      const denominator = ctx.manifest.duration - offPitchSeconds;
-      if (denominator <= 0) return 0;
-      return Math.min(100, Math.round((totalSeconds(spans) / denominator) * 10000) / 100);
-    })(),
+    coveragePercent,
     nextUncertainty: uncertainty,
+    /**
+     * Every question still open, earliest first.
+     *
+     * One question was enough while the chain only grew forward: the next
+     * one was always ahead. A filled gap puts questions BEHIND the playhead,
+     * and the page has to know both the next one ahead (to stop at) and the
+     * ones behind (to list, never to fire on).
+     */
+    openQuestions: open.slice(0, OPEN_QUESTIONS_LIMIT),
+    /**
+     * Whether this claim now counts as the person's match. Computed here by
+     * the same rule that awards clips, because until it was surfaced the page
+     * reached the end of the recording and said nothing at all.
+     */
+    completed: isChainComplete({
+      chainLength: chain.length,
+      coveragePercent,
+      durationSeconds: ctx.manifest.duration,
+      hasOpenQuestion: uncertainty !== null,
+    }),
+    requiredCoveragePercent: requiredCoverageFor(ctx.manifest.duration),
     /**
      * Whether this decision's training label actually landed.
      *
@@ -423,11 +483,15 @@ async function persistChain(
    */
   name: { chosen: string | null; fallback?: string | null },
   /**
-   * The frame just answered, or null to leave the mark alone. `reset` is for
-   * undo: the decision being reversed has to become askable again, so the mark
-   * drops back to just past whatever decision is now the newest.
+   * What kind of write this is.
+   *
+   * A `decision` stores `chain` and pushes the chain it replaces onto the
+   * identity's history; `answeredFrame` also advances the legacy chain-wide
+   * mark for builds that still read it. An `undo` ignores `chain` and
+   * restores the newest history entry -- inside the lock, from the row as it
+   * is now, never from a copy the request was built on.
    */
-  reviewed: { answeredFrame?: number | null; reset?: boolean } = {},
+  write: { kind: "decision"; answeredFrame: number | null } | { kind: "undo" },
 ): Promise<{ chain: ChainPart[]; name: string | null; reviewedThroughFrame: number }> {
   return db.transaction(async (tx) => {
     await tx.execute(
@@ -441,18 +505,53 @@ async function persistChain(
 
     const existing = (manifest.identities ?? []).find((item) => item.id === ctx.identityId);
     const nextName = name.chosen ?? existing?.name ?? name.fallback ?? null;
+    const priorHistory = existing?.history ?? [];
 
-    const stamps = chain
-      .map((part) => part.tapFrame)
-      .filter((frame): frame is number => typeof frame === "number");
-    const reviewedThroughFrame = reviewed.reset
-      ? (stamps.length ? Math.max(...stamps) + 1 : 0)
-      : Math.max(
+    let next: ChainPart[];
+    let reviewedThroughFrame: number;
+    let history: NonNullable<TrackingIdentity["history"]>;
+    if (write.kind === "undo") {
+      const restored = priorHistory[priorHistory.length - 1];
+      if (restored) {
+        // A snapshot taken of a chain written before per-part marks existed
+        // carries none; give it the same upgrade a load would.
+        const parts = restored.parts.map((part) => ({ ...part }));
+        next = normaliseChain(
+          withMarks(parts, scanFloor(parts, null, restored.reviewedThroughFrame ?? null)),
+          ctx.tracksById,
+        );
+        reviewedThroughFrame = restored.reviewedThroughFrame ?? 0;
+        history = priorHistory.slice(0, -1);
+      } else {
+        // A chain from before the history existed: the old grouping undo,
+        // and the old rule for the mark -- back to just past the newest
+        // remaining decision so the reversed one is askable again.
+        const current = withMarks(
+          (existing?.parts ?? []).map((part) => ({ ...part })),
+          scanFloor(existing?.parts ?? [], null, existing?.reviewedThroughFrame ?? null),
+        );
+        next = normaliseChain(dropLastDecision(current), ctx.tracksById);
+        const stamps = next
+          .map((part) => part.tapFrame)
+          .filter((frame): frame is number => typeof frame === "number");
+        reviewedThroughFrame = stamps.length ? Math.max(...stamps) + 1 : 0;
+        history = [];
+      }
+    } else {
+      next = chain;
+      reviewedThroughFrame = Math.max(
         existing?.reviewedThroughFrame ?? 0,
-        reviewed.answeredFrame === null || reviewed.answeredFrame === undefined
-          ? 0
-          : reviewed.answeredFrame + 1,
+        write.answeredFrame === null ? 0 : write.answeredFrame + 1,
       );
+      // The chain before this decision -- an empty one for the first tap, so
+      // that too can be undone.
+      history = [...priorHistory, {
+        parts: (existing?.parts ?? []).map((part) => ({ ...part })),
+        ...(existing?.reviewedThroughFrame === undefined
+          ? {}
+          : { reviewedThroughFrame: existing.reviewedThroughFrame }),
+      }].slice(-HISTORY_DEPTH);
+    }
 
     // A frame belongs to exactly one person. Anything this claim now holds is
     // taken off whoever held it before, rather than sitting in two rows at
@@ -461,15 +560,16 @@ async function persistChain(
     // claiming yourself in the video moves you on the board.
     const others = (manifest.identities ?? [])
       .filter((item) => item.id !== ctx.identityId)
-      .map((item) => ({ ...item, parts: subtractParts(item.parts, chain) }))
+      .map((item) => ({ ...item, parts: subtractParts(item.parts, next) }))
       .filter((item) => item.parts.length > 0);
 
-    const identities: TrackingIdentity[] = chain.length
+    const identities: TrackingIdentity[] = next.length
       ? [...others, {
         id: ctx.identityId,
         name: nextName,
-        parts: chain.map((p) => ({ ...p })),
+        parts: next.map((p) => ({ ...p })),
         reviewedThroughFrame,
+        ...(history.length ? { history } : {}),
       }]
       : others;
 
@@ -496,7 +596,7 @@ async function persistChain(
       })
       .where(eq(recordingTrackingBundlesTable.id, ctx.bundleId));
 
-    return { chain, name: nextName, reviewedThroughFrame };
+    return { chain: next, name: nextName, reviewedThroughFrame };
   });
 }
 
@@ -701,8 +801,7 @@ router.get("/recordings/:id/claim-match/chain", async (req, res): Promise<void> 
       ));
     resetByAdmin = own?.state === "released";
   }
-  res.json(describe(ctx, chain, identity?.name ?? null,
-    null, null, identity?.reviewedThroughFrame ?? null, resetByAdmin));
+  res.json(describe(ctx, chain, identity?.name ?? null, null, resetByAdmin));
 });
 
 /**
@@ -762,7 +861,7 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
   const saved = await persistChain(ctx, next, {
     chosen: body.data.name ?? null,
     fallback: account?.name ?? null,
-  }, { answeredFrame: frame });
+  }, { kind: "decision", answeredFrame: frame });
   const labelRecorded = await recordLabel(
     ctx,
     body.data.rejectedTrackId ? "switch" : "confirm",
@@ -777,7 +876,7 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
   // landed. Otherwise the reply to an answer re-asks the same question, and
   // the person is stuck on it for as long as they keep answering.
   ctx.answeredFrames.add(frame);
-  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, frame, saved.reviewedThroughFrame);
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded);
   await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
   res.json(body_);
 });
@@ -803,15 +902,18 @@ router.post("/recordings/:id/claim-match/chain/not-me", async (req, res): Promis
   const current = chainOf(ctx.manifest, ctx.identityId);
   const wrong = current.find((part) =>
     body.data.frame >= part.fromFrame && body.data.frame <= part.toFrame);
-  const next = normaliseChain(truncateChain(current, body.data.frame), ctx.tracksById);
+  // Cuts the decision being followed here, not the whole future: what the
+  // person claimed further on by later taps is theirs and stays.
+  const next = normaliseChain(cutChain(current, body.data.frame), ctx.tracksById);
 
-  const saved = await persistChain(ctx, next, { chosen: null }, { answeredFrame: body.data.frame });
+  const saved = await persistChain(ctx, next, { chosen: null },
+    { kind: "decision", answeredFrame: body.data.frame });
   const labelRecorded = await recordLabel(ctx, "lost", body.data.frame, {
     wrongTrackId: wrong?.trackId ?? null,
     decisionMs: body.data.decisionMs ?? null,
   });
   ctx.answeredFrames.add(body.data.frame);
-  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, body.data.frame, saved.reviewedThroughFrame);
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded);
   await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
   res.json(body_);
 });
@@ -844,26 +946,30 @@ router.post("/recordings/:id/claim-match/chain/confirm", async (req, res): Promi
   // reply carries the identical uncertainty and the person is asked the same
   // question the instant playback resumes -- forever.
   ctx.answeredFrames.add(body.data.frame);
-  const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-  // A confirm leaves the chain alone, so before this it stored nothing at all
-  // and relied entirely on the labels table to be remembered. It writes the
-  // high-water mark now, which is what makes it survive a refetch.
-  const saved = await persistChain(ctx, current, { chosen: null }, { answeredFrame: body.data.frame });
-  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded, body.data.frame, saved.reviewedThroughFrame);
-  await syncChainClaim(ctx, current, body_.nextUncertainty !== null);
+  // A confirm used to leave the chain alone and relied on the labels table to
+  // be remembered. It is written into the part it answers now, which is what
+  // makes it survive a refetch -- and a database without that table.
+  const saved = await persistChain(ctx, markAnswered(current, body.data.frame), { chosen: null },
+    { kind: "decision", answeredFrame: body.data.frame });
+  const body_ = describe(ctx, saved.chain, saved.name, labelRecorded);
+  await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);
   res.json(body_);
 });
 
-/** Undo the last link. Deliberately does not write a label — a mis-tap is not evidence. */
+/**
+ * Undo the last decision. Deliberately does not write a label — a mis-tap is
+ * not evidence.
+ *
+ * Restores the chain as it was before the newest decision, from the history
+ * the identity carries. Not "drop the parts with the newest stamp": once a
+ * gap can be filled, the newest stamp is the newest FRAME, and undoing after
+ * a fill at 2:00 would have thrown away the tap at 9:00 instead.
+ */
 router.delete("/recordings/:id/claim-match/chain/last", async (req, res): Promise<void> => {
   const ctx = await begin(req, res);
   if (!ctx) return;
-  const current = chainOf(ctx.manifest, ctx.identityId);
-  // Reverse the whole decision, not one part of it: a tap on a board-merged
-  // person adds every part of them from the tap forward.
-  const saved = await persistChain(
-    ctx, normaliseChain(dropLastDecision(current), ctx.tracksById), { chosen: null }, { reset: true });
-  const body_ = describe(ctx, saved.chain, saved.name, null, null, saved.reviewedThroughFrame);
+  const saved = await persistChain(ctx, [], { chosen: null }, { kind: "undo" });
+  const body_ = describe(ctx, saved.chain, saved.name, null);
   // An undo has to sync too, or a claim can be walked backwards while its
   // binding and its clips stay where the high-water mark left them.
   await syncChainClaim(ctx, saved.chain, body_.nextUncertainty !== null);

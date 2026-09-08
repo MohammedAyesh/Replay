@@ -39,6 +39,36 @@ export const CHAIN_COMPLETION = {
   shortMatchCoveragePercent: 55,
 };
 
+/** The coverage a claim on a recording of this length needs to count. */
+export function requiredCoverageFor(durationSeconds: number): number {
+  return durationSeconds < CHAIN_COMPLETION.shortMatchSeconds
+    ? CHAIN_COMPLETION.shortMatchCoveragePercent
+    : CHAIN_COMPLETION.requiredCoveragePercent;
+}
+
+/**
+ * Whether a chain counts as a finished claim.
+ *
+ * One rule, used by both the state that awards clips and the response the
+ * claim page reads, so the page can never say "done" about a claim the
+ * award rule disagrees with -- or, as it did, say nothing at all.
+ *
+ * An open question blocks completion on purpose. The person is mid-answer
+ * about a stretch we are not sure of, and awarding the match on the strength
+ * of a claim we are actively querying would be settling the question by
+ * ignoring it.
+ */
+export function isChainComplete(opts: {
+  chainLength: number;
+  coveragePercent: number;
+  durationSeconds: number;
+  hasOpenQuestion: boolean;
+}): boolean {
+  return opts.chainLength > 0
+    && !opts.hasOpenQuestion
+    && opts.coveragePercent >= requiredCoverageFor(opts.durationSeconds);
+}
+
 export type ChainClaimEvent = {
   type: string;
   time: number;
@@ -132,9 +162,7 @@ export function deriveChainClaimState(
     Math.round((coverageSeconds / denominator) * 10000) / 100,
   );
 
-  const required = manifest.duration < CHAIN_COMPLETION.shortMatchSeconds
-    ? CHAIN_COMPLETION.shortMatchCoveragePercent
-    : CHAIN_COMPLETION.requiredCoveragePercent;
+  const required = requiredCoverageFor(manifest.duration);
 
   const claimedTrackIds = new Set(chain.map((part) => part.trackId));
   const trackedSegments = segments.filter((segment) =>
@@ -147,13 +175,12 @@ export function deriveChainClaimState(
       event.time >= interval.startSeconds && event.time <= interval.endSeconds))
     .length;
 
-  // An open question blocks completion on purpose. The person is mid-answer
-  // about a stretch we are not sure of, and awarding the match on the strength
-  // of a claim we are actively querying would be settling the question by
-  // ignoring it.
-  const completed = chain.length > 0
-    && !opts.hasOpenQuestion
-    && coveragePercent >= required;
+  const completed = isChainComplete({
+    chainLength: chain.length,
+    coveragePercent,
+    durationSeconds: manifest.duration,
+    hasOpenQuestion: opts.hasOpenQuestion,
+  });
   const completionReason = completed
     ? `Followed for ${coverageSeconds.toFixed(1)}s (${coveragePercent}% of the match) with nothing left to check.`
     : chain.length === 0

@@ -14,18 +14,22 @@ import type { TrackingSegmentPayload } from "@workspace/db";
 import {
   CHAIN_TUNING,
   chainIntervals,
+  cutChain,
   dropLastDecision,
   dropLastPart,
   extendChain,
   identityOwning,
   isStruckOff,
+  markAnswered,
   nextUncertainty,
   normaliseChain,
+  openUncertainties,
   scanFloor,
   survivingRanges,
   swapEvidence,
   truncateChain,
   totalSeconds,
+  withMarks,
   type ChainIdentity,
   type ChainPart,
   type IdentityDecision,
@@ -73,6 +77,17 @@ function playerB(swapped: boolean, height = 80): Track {
 
 function byId(...tracks: Track[]) {
   return new Map(tracks.map((t) => [t.id, t]));
+}
+
+/**
+ * A part as a tap at `tap` writes it: stamped, and answered through the tap
+ * itself (a tap answers its own frame, nothing past it).
+ */
+function claimed(trackId: string, fromFrame: number, toFrame: number, tap: number): ChainPart {
+  return {
+    trackId, fromFrame, toFrame, tapFrame: tap,
+    reviewedThrough: Math.min(Math.max(tap + 1, fromFrame), toFrame + 1),
+  };
 }
 
 const crossing = (confidence?: number) => ([{
@@ -242,14 +257,15 @@ describe("extendChain", () => {
   const tracks = byId(playerA(false), playerB(false));
 
   it("claims from the tapped frame to the end of the track", () => {
-    expect(extendChain([], tracks, "A", 10)).toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60, tapFrame: 10 }]);
+    expect(extendChain([], tracks, "A", 10)).toEqual([claimed("A", 10, 60, 10)]);
   });
 
-  it("truncates everything after the tap — a correction replaces, never doubles up", () => {
+  it("cuts the part being corrected at the tap — a correction replaces, never doubles up", () => {
     const before: ChainPart[] = [{ trackId: "A", fromFrame: 0, toFrame: 60 }];
     expect(extendChain(before, tracks, "B", 30)).toEqual([
-      { trackId: "A", fromFrame: 0, toFrame: 29 },
-      { trackId: "B", fromFrame: 30, toFrame: 60, tapFrame: 30 },
+      // Answered up to the cut: the person has just said what happens from 30.
+      { trackId: "A", fromFrame: 0, toFrame: 29, reviewedThrough: 30 },
+      claimed("B", 30, 60, 30),
     ]);
   });
 
@@ -271,8 +287,8 @@ describe("extendChain", () => {
     gappy.boxes = gappy.boxes.filter((b) => b.frame <= 20 || b.frame >= 45);
     const result = extendChain([], byId(gappy), "G", 0);
     expect(result).toEqual([
-      { trackId: "G", fromFrame: 0, toFrame: 20, tapFrame: 0 },
-      { trackId: "G", fromFrame: 45, toFrame: 60, tapFrame: 0 },
+      claimed("G", 0, 20, 0),
+      claimed("G", 45, 60, 0),
     ]);
     // 21..44 belongs to nobody.
     const covered = chainIntervals(result, { frameRate: 1, duration: 61 });
@@ -294,7 +310,7 @@ describe("extendChain", () => {
 
   it("stops where the board struck the track off", () => {
     const d: IdentityDecision[] = [{ trackId: "A", fromFrame: 40, toFrame: 60, action: "deleted" }];
-    expect(extendChain([], tracks, "A", 0, { decisions: d })).toEqual([{ trackId: "A", fromFrame: 0, toFrame: 39, tapFrame: 0 }]);
+    expect(extendChain([], tracks, "A", 0, { decisions: d })).toEqual([claimed("A", 0, 39, 0)]);
   });
 
   it("refuses to start on a track struck off at that frame", () => {
@@ -409,8 +425,8 @@ describe("the board's merges reach the video", () => {
     // to identify a player the board had already joined to track B.
     const result = extendChain([], tracks, "A", 10, { identities });
     expect(result).toEqual([
-      { trackId: "A", fromFrame: 10, toFrame: 60, tapFrame: 10 },
-      { trackId: "B", fromFrame: 10, toFrame: 60, tapFrame: 10 },
+      claimed("A", 10, 60, 10),
+      claimed("B", 10, 60, 10),
     ]);
   });
 
@@ -424,20 +440,20 @@ describe("the board's merges reach the video", () => {
     }];
     // Tap while A is the visible piece; the person continues on B later.
     expect(extendChain([], tracks, "A", 10, { identities: late })).toEqual([
-      { trackId: "A", fromFrame: 10, toFrame: 20, tapFrame: 10 },
-      { trackId: "B", fromFrame: 40, toFrame: 60, tapFrame: 10 },
+      claimed("A", 10, 20, 10),
+      claimed("B", 40, 60, 10),
     ]);
   });
 
   it("drops a part of the person the board has struck off", () => {
     const decisions: IdentityDecision[] = [{ trackId: "B", fromFrame: 0, toFrame: 60, action: "deleted" }];
     expect(extendChain([], tracks, "A", 10, { identities, decisions }))
-      .toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60, tapFrame: 10 }]);
+      .toEqual([claimed("A", 10, 60, 10)]);
   });
 
   it("falls back to the single track when no identity owns it", () => {
     expect(extendChain([], tracks, "A", 10, { identities: [] }))
-      .toEqual([{ trackId: "A", fromFrame: 10, toFrame: 60, tapFrame: 10 }]);
+      .toEqual([claimed("A", 10, 60, 10)]);
   });
 });
 
@@ -475,7 +491,7 @@ describe("a tap on a track the person does not own at that frame", () => {
     // Frame 50 is outside the identity's part, so the board has said nothing
     // about who this is. Claim only what was tapped.
     expect(extendChain([], tracks, "A", 50, { identities: elsewhere }))
-      .toEqual([{ trackId: "A", fromFrame: 50, toFrame: 60, tapFrame: 50 }]);
+      .toEqual([claimed("A", 50, 60, 50)]);
   });
 });
 
@@ -578,5 +594,260 @@ describe("scanFloor — where the next question is looked for", () => {
     // Still asks about where B runs out -- that question is real and ahead.
     expect(fromFloor).toMatchObject({ kind: "track-end", frame: 900 });
     expect(fromFloor!.frame).toBeGreaterThan(400);
+  });
+});
+
+/*
+ * ------------------------------------------------------------------
+ * Filling a gap must never erase what follows it.
+ *
+ * Reported as: "when I go back in time and pick myself, sometimes it erases
+ * everything in front. That should never happen." Every tap used to truncate
+ * the chain from the tapped frame on, which is right for a correction made
+ * while following forward and wrong for the other thing a tap does -- scrub
+ * back into a hole in the timeline and fill it.
+ * ------------------------------------------------------------------
+ */
+describe("a tap into a gap fills it and touches nothing else", () => {
+  const flat = (id: string, from: number, to: number) => track(id, from, to, (f) => ({ x: f, y: 0 }));
+  const tracks = byId(flat("A", 0, 150), flat("B", 250, 900), flat("C", 180, 500));
+  const chain: ChainPart[] = [
+    claimed("A", 10, 150, 10),
+    claimed("B", 300, 900, 300),
+  ];
+
+  it("keeps every part after the gap", () => {
+    const after = extendChain(chain, tracks, "C", 200);
+    expect(after.find((p) => p.trackId === "B")).toEqual(claimed("B", 300, 900, 300));
+    expect(after.find((p) => p.trackId === "A")).toMatchObject({ fromFrame: 10, toFrame: 150 });
+  });
+
+  it("stops the fill just before the next part, however far the track runs", () => {
+    // C runs to 500; the person's own claim resumes at 300 on B.
+    const after = extendChain(chain, tracks, "C", 200);
+    expect(after.find((p) => p.trackId === "C")).toEqual(claimed("C", 200, 299, 200));
+  });
+
+  it("answers the stretch that led to the tap, and only that stretch", () => {
+    const after = extendChain(chain, tracks, "C", 200);
+    // A ran out at 150 and the person found themselves again at 200: that
+    // tap answers A's track end.
+    expect(after.find((p) => p.trackId === "A")?.reviewedThrough).toBe(151);
+    // B was not passed by this tap; whatever it still has to ask, it keeps.
+    expect(after.find((p) => p.trackId === "B")?.reviewedThrough).toBe(301);
+  });
+
+  it("does not settle a part on the far side of a later stretch", () => {
+    const far = byId(flat("A", 0, 150), flat("B", 500, 900), flat("D", 1200, 1500), flat("E", 950, 1300));
+    const before: ChainPart[] = [
+      { ...claimed("A", 10, 150, 10) },          // its track end at 150 is still open
+      claimed("B", 500, 900, 500),
+      claimed("D", 1200, 1500, 1200),
+    ];
+    const after = extendChain(before, far, "E", 1000);
+    expect(after.find((p) => p.trackId === "E")).toEqual(claimed("E", 1000, 1199, 1000));
+    // B led straight to the tap: answered. A did not: B stands between.
+    expect(after.find((p) => p.trackId === "B")?.reviewedThrough).toBe(901);
+    expect(after.find((p) => p.trackId === "A")?.reviewedThrough).toBe(11);
+  });
+
+  it("a fill whose track starts inside the gap claims from the tap, not from the track start", () => {
+    const after = extendChain(chain, tracks, "C", 220);
+    expect(after.find((p) => p.trackId === "C")).toEqual(claimed("C", 220, 299, 220));
+  });
+});
+
+describe("a correction replaces one decision, not the future", () => {
+  const flat = (id: string, from: number, to: number) => track(id, from, to, (f) => ({ x: f, y: 0 }));
+
+  it("cuts the part under the tap and keeps decisions made further on", () => {
+    const tracks = byId(flat("A", 0, 500), flat("B", 600, 900), flat("C", 200, 800));
+    const chain: ChainPart[] = [claimed("A", 10, 500, 10), claimed("B", 600, 900, 600)];
+    const after = extendChain(chain, tracks, "C", 250);
+    expect(after).toEqual([
+      { ...claimed("A", 10, 249, 10), reviewedThrough: 250 },
+      claimed("C", 250, 599, 250),
+      claimed("B", 600, 900, 600),
+    ]);
+  });
+
+  it("removes the later runs of the decision being corrected -- the same wrong track continued", () => {
+    const gappy = flat("A", 100, 500);
+    gappy.boxes = gappy.boxes.filter((b) => b.frame <= 200 || (b.frame >= 213 && b.frame <= 300) || b.frame >= 320);
+    const tracks = byId(gappy, flat("C", 200, 800));
+    const chain = extendChain([], tracks, "A", 100);
+    expect(chain.map((p) => [p.fromFrame, p.toFrame])).toEqual([[100, 200], [213, 300], [320, 500]]);
+
+    const after = extendChain(chain, tracks, "C", 250);
+    expect(after.filter((p) => p.trackId === "A").map((p) => [p.fromFrame, p.toFrame]))
+      .toEqual([[100, 200], [213, 249]]);
+    expect(after.find((p) => p.trackId === "C")).toEqual(claimed("C", 250, 800, 250));
+  });
+
+  it("re-tapping the same track inside its own part keeps what is ahead and re-asks where it ends", () => {
+    // B starts well past successorGapFrames from A's end, so A's end is a
+    // real question whenever it is unanswered.
+    const tracks = byId(flat("A", 0, 150), flat("B", 400, 900));
+    const chain: ChainPart[] = [
+      { ...claimed("A", 10, 150, 10), reviewedThrough: 151 },   // its end was answered once
+      claimed("B", 400, 900, 400),
+    ];
+    const after = extendChain(chain, tracks, "A", 140);
+    expect(after.find((p) => p.trackId === "B")).toEqual(claimed("B", 400, 900, 400));
+    // Two decisions on one track stay two parts: merged, a later correction
+    // of one would take the other's frames with it.
+    expect(after.filter((p) => p.trackId === "A")).toEqual([
+      { ...claimed("A", 10, 139, 10), reviewedThrough: 140 },
+      claimed("A", 140, 150, 140),
+    ]);
+    // The tap at 140 says nothing about what happens after 150, so the end
+    // is a question again -- exactly as it was the first time round.
+    expect(nextUncertainty(after, tracks, [], 0)).toMatchObject({ kind: "track-end", frame: 150 });
+  });
+
+  it("board-written parts each count as their own decision", () => {
+    // No stamps: the board grouped A, B and C into this person. Correcting A
+    // at 50 says nothing about B and C, which the admin joined deliberately.
+    const tracks = byId(flat("A", 0, 100), flat("B", 130, 240), flat("C", 260, 400), flat("D", 40, 300));
+    const chain: ChainPart[] = [
+      { trackId: "A", fromFrame: 0, toFrame: 100 },
+      { trackId: "B", fromFrame: 130, toFrame: 240 },
+      { trackId: "C", fromFrame: 260, toFrame: 400 },
+    ];
+    const after = extendChain(chain, tracks, "D", 50);
+    expect(after).toEqual([
+      { trackId: "A", fromFrame: 0, toFrame: 49, reviewedThrough: 50 },
+      claimed("D", 50, 129, 50),
+      { trackId: "B", fromFrame: 130, toFrame: 240 },
+      { trackId: "C", fromFrame: 260, toFrame: 400 },
+    ]);
+  });
+});
+
+describe("'not me from here' and 'yes, still me' write into the part they answer", () => {
+  const flat = (id: string, from: number, to: number) => track(id, from, to, (f) => ({ x: f, y: 0 }));
+  const tracks = byId(flat("A", 0, 150), flat("C", 180, 500), flat("B", 250, 900));
+
+  it("giving up inside a fill keeps the stretch claimed after it", () => {
+    const chain: ChainPart[] = [claimed("A", 10, 150, 10), claimed("C", 200, 299, 200), claimed("B", 300, 900, 300)];
+    expect(cutChain(chain, 250)).toEqual([
+      claimed("A", 10, 150, 10),
+      { ...claimed("C", 200, 249, 200), reviewedThrough: 250 },
+      claimed("B", 300, 900, 300),
+    ]);
+  });
+
+  it("giving up at the first frame of a part removes it", () => {
+    const chain: ChainPart[] = [claimed("A", 10, 150, 10), claimed("B", 300, 900, 300)];
+    expect(cutChain(chain, 300)).toEqual([claimed("A", 10, 150, 10)]);
+  });
+
+  it("a cut part does not ask about the end it was cut to", () => {
+    const chain = cutChain([claimed("A", 10, 150, 10)], 100);
+    expect(chain).toEqual([{ ...claimed("A", 10, 99, 10), reviewedThrough: 100 }]);
+    expect(nextUncertainty(chain, tracks, [], 0)).toBeNull();
+  });
+
+  it("a confirm advances only the part that was asked", () => {
+    const chain: ChainPart[] = [claimed("A", 10, 150, 10), claimed("B", 300, 900, 300)];
+    const after = markAnswered(chain, 500);
+    expect(after[0].reviewedThrough).toBe(11);
+    expect(after[1].reviewedThrough).toBe(501);
+    // Never backwards.
+    expect(markAnswered(after, 400)[1].reviewedThrough).toBe(501);
+  });
+});
+
+describe("questions are scanned per part, from each part's own answered frontier", () => {
+  const flat = (id: string, from: number, to: number) => track(id, from, to, (f) => ({ x: f, y: 0 }));
+  // Every claimed stretch here is more than successorGapFrames from the next,
+  // so each track end is a real question unless it has been answered.
+  const tracks = byId(flat("A", 0, 150), flat("C", 180, 260), flat("B", 250, 900), flat("X", 0, 900));
+  const crossings = [
+    { frame: 230, trackId: "C", otherTrackId: "X", confidence: 0.1 },
+    { frame: 600, trackId: "B", otherTrackId: "X", confidence: 0.1 },
+  ] as TrackingSegmentPayload["crossings"];
+
+  it("raises a question inside a fill even though everything after it was answered", () => {
+    const chain: ChainPart[] = [
+      { ...claimed("A", 10, 150, 10), reviewedThrough: 151 },
+      claimed("C", 200, 260, 200),
+      { ...claimed("B", 500, 900, 500), reviewedThrough: 901 },
+    ];
+    const open = openUncertainties(chain, tracks, crossings, 0);
+    expect(open.map((q) => [q.kind, q.frame])).toEqual([["swap", 230], ["track-end", 260]]);
+  });
+
+  it("does not re-raise a question a later part already answered", () => {
+    const chain: ChainPart[] = [
+      claimed("A", 10, 150, 10),
+      { ...claimed("B", 500, 900, 500), reviewedThrough: 601 },
+    ];
+    expect(openUncertainties(chain, tracks, crossings, 0).map((q) => q.frame)).toEqual([150, 900]);
+  });
+
+  it("lists every open question, earliest first, one per frame", () => {
+    const chain: ChainPart[] = [claimed("A", 10, 150, 10), claimed("B", 500, 900, 500)];
+    const open = openUncertainties(chain, tracks, crossings, 0);
+    expect(open.map((q) => q.frame)).toEqual([150, 600, 900]);
+    expect(nextUncertainty(chain, tracks, crossings, 0)?.frame).toBe(150);
+  });
+
+  it("a fill's end is not a question when the next part picks up within reach", () => {
+    // C ends at 260 and B resumes at 300: the join is the successor rule's to
+    // forgive, exactly as it would be for two parts claimed forwards.
+    const chain: ChainPart[] = [claimed("C", 200, 260, 200), { ...claimed("B", 300, 900, 300), reviewedThrough: 901 }];
+    expect(openUncertainties(chain, tracks, crossings, 0).map((q) => q.frame)).toEqual([230]);
+  });
+
+  it("does not ask 'we lost you' where the recording itself ends", () => {
+    const chain: ChainPart[] = [claimed("B", 300, 900, 300)];
+    expect(nextUncertainty(chain, tracks, [], 0, undefined, undefined, 905)).toBeNull();
+    expect(nextUncertainty(chain, tracks, [], 0, undefined, undefined, 2000)).toMatchObject({ frame: 900 });
+  });
+
+  it("a tap past a track end answers it, however far past", () => {
+    const chain = extendChain([claimed("A", 10, 150, 10)], tracks, "B", 500);
+    // 500 - 150 is well past successorGapFrames, so only the mark can save this.
+    expect(openUncertainties(chain, tracks, [], 0).map((q) => q.frame)).toEqual([900]);
+  });
+});
+
+describe("marks survive normalisation and are filled in for old chains", () => {
+  const flat = (id: string, from: number, to: number) => track(id, from, to, (f) => ({ x: f, y: 0 }));
+  const tracks = byId(flat("A", 0, 900));
+
+  it("merging a fully reviewed piece with the next carries the next piece's frontier", () => {
+    const merged = normaliseChain([
+      { trackId: "A", fromFrame: 10, toFrame: 99, reviewedThrough: 100 },
+      { trackId: "A", fromFrame: 100, toFrame: 300, reviewedThrough: 120 },
+    ], tracks);
+    expect(merged).toEqual([{ trackId: "A", fromFrame: 10, toFrame: 300, reviewedThrough: 120 }]);
+  });
+
+  it("merging an unfinished piece with the next keeps the earlier frontier -- re-ask, never skip", () => {
+    const merged = normaliseChain([
+      { trackId: "A", fromFrame: 10, toFrame: 99, reviewedThrough: 50 },
+      { trackId: "A", fromFrame: 100, toFrame: 300, reviewedThrough: 301 },
+    ], tracks);
+    expect(merged[0].reviewedThrough).toBe(50);
+  });
+
+  it("clamps a mark to what the part can express", () => {
+    expect(normaliseChain([{ trackId: "A", fromFrame: 100, toFrame: 300, reviewedThrough: 5 }], tracks)[0].reviewedThrough).toBe(100);
+    expect(normaliseChain([{ trackId: "A", fromFrame: 100, toFrame: 300, reviewedThrough: 999 }], tracks)[0].reviewedThrough).toBe(301);
+  });
+
+  it("upgrades an unmarked chain from the legacy single floor exactly", () => {
+    const chain: ChainPart[] = [
+      { trackId: "A", fromFrame: 10, toFrame: 99, tapFrame: 10 },
+      { trackId: "A", fromFrame: 200, toFrame: 300, tapFrame: 200 },
+      { trackId: "A", fromFrame: 500, toFrame: 600 },
+    ];
+    const floor = scanFloor(chain, null, 250);   // newest tap 200 -> 201; identity mark 250
+    expect(floor).toBe(250);
+    expect(withMarks(chain, floor).map((p) => p.reviewedThrough)).toEqual([100, 250, 500]);
+    // Already-marked parts are left alone.
+    expect(withMarks([{ ...chain[0], reviewedThrough: 42 }], floor)[0].reviewedThrough).toBe(42);
   });
 });

@@ -7,13 +7,18 @@ import {
   chainEndFrame,
   chainSpans,
   chainStartFrame,
+  crossedStop,
   followedTrack,
+  gapsIn,
+  leadInSeconds,
+  nextQuestionAfter,
+  openQuestions,
   partAtFrame,
   questionFor,
+  questionsBehind,
   approachSeconds,
   reachedStop,
   resumeSecondsAfter,
-  rewindSecondsAfterUndo,
   stageFor,
   stopFrame,
   stopSeconds,
@@ -52,6 +57,7 @@ const bundle = {
 } as ClaimBundle;
 
 function chainOf(overrides: Partial<ClaimChain> = {}): ClaimChain {
+  const nextUncertainty = overrides.nextUncertainty ?? null;
   return {
     recordingId: 1,
     identityId: "claim:abc",
@@ -61,8 +67,13 @@ function chainOf(overrides: Partial<ClaimChain> = {}): ClaimChain {
     chain: [{ trackId: "t1", fromFrame: 10, toFrame: 99 }],
     coverageSeconds: 3.6,
     coveragePercent: 45,
-    nextUncertainty: null,
+    nextUncertainty,
+    // The server sends the whole list; the earliest is also `nextUncertainty`.
+    openQuestions: nextUncertainty ? [nextUncertainty] : [],
+    completed: false,
+    requiredCoveragePercent: 60,
     labelRecorded: null,
+    resetByAdmin: false,
     ...overrides,
   } as ClaimChain;
 }
@@ -110,19 +121,52 @@ describe("the stop", () => {
     expect(stopFrame(chain)).toBeNull();
     expect(stopSeconds(chain)).toBeNull();
     expect(reachedStop(chain, 999)).toBe(false);
+    expect(crossedStop(chain, 0, 999)).toBeNull();
   });
 
   it("converts the uncertainty frame to tracking seconds", () => {
     expect(stopSeconds(chainOf({ nextUncertainty: swap }))).toBeCloseTo(2);
   });
 
-  it("triggers on reaching it and on sailing past it", () => {
-    // timeupdate fires every ~250ms and a seek jumps outright, so an exact
-    // comparison would let playback run on past the question.
+  it("fires when playback crosses it, wherever the next frame report lands", () => {
+    // Frame reports can land anywhere past the question, so the test is
+    // "was it before, is it at or past now" -- never equality.
     const chain = chainOf({ nextUncertainty: swap });
-    expect(reachedStop(chain, 1.9)).toBe(false);
-    expect(reachedStop(chain, 2)).toBe(true);
-    expect(reachedStop(chain, 7.5)).toBe(true);
+    expect(crossedStop(chain, 48, 49)).toBeNull();
+    expect(crossedStop(chain, 49, 50)).toEqual(swap);
+    expect(crossedStop(chain, 40, 70)).toEqual(swap);
+  });
+
+  it("does NOT fire on a question already behind the playhead", () => {
+    // A seek that lands past the question, a refetch that returns a moment
+    // already dealt with, an undo that reopens one, a fill that leaves one
+    // behind: all of these used to fire instantly and wedge the page into
+    // play-pause-play-pause on a moment minutes back.
+    const chain = chainOf({ nextUncertainty: swap });
+    expect(crossedStop(chain, 60, 61)).toBeNull();
+    expect(crossedStop(chain, 50, 51)).toBeNull();
+    // Nor when playback is not moving forward at all.
+    expect(crossedStop(chain, 70, 40)).toBeNull();
+    expect(crossedStop(chain, 50, 50)).toBeNull();
+  });
+
+  it("stops at the next question AHEAD, not the earliest one", () => {
+    const later = { ...trackEnd, frame: 99 };
+    const chain = chainOf({ nextUncertainty: swap, openQuestions: [swap, later] });
+    expect(nextQuestionAfter(chain, 50)?.frame).toBe(99);
+    expect(nextQuestionAfter(chain, 10)?.frame).toBe(50);
+    expect(nextQuestionAfter(chain, 99)).toBeNull();
+    expect(questionsBehind(chain, 50).map((q) => q.frame)).toEqual([50]);
+    expect(questionsBehind(chain, 120).map((q) => q.frame)).toEqual([50, 99]);
+    expect(crossedStop(chain, 60, 100)).toEqual(later);
+    expect(stopFrame(chain, 50)).toBe(99);
+  });
+
+  it("reads a server that sends only nextUncertainty as a list of one", () => {
+    const old = chainOf({ nextUncertainty: swap });
+    delete (old as Partial<ClaimChain>).openQuestions;
+    expect(openQuestions(old)).toEqual([swap]);
+    expect(openQuestions(null)).toEqual([]);
   });
 
   it("resumes one frame past the stop so the same question cannot repeat", () => {
@@ -178,6 +222,11 @@ describe("what we may ask at the stop", () => {
   it("gives the server's plain sentence, never a code", () => {
     expect(questionFor(chainOf({ nextUncertainty: trackEnd }))).toContain("We lost you here");
     expect(questionFor(chainOf())).toBeNull();
+    // The page asks about the question it stopped on, which need not be the
+    // earliest one once a fill has left questions behind.
+    expect(questionFor(swap)).toContain("crossed here");
+    expect(canConfirmAtStop(swap)).toBe(true);
+    expect(canConfirmAtStop(trackEnd)).toBe(false);
   });
 });
 
@@ -196,6 +245,9 @@ describe("candidates", () => {
   it("marks the other party to the crossing that stopped us", () => {
     const found = candidatesAtFrame(bundle, chainOf({ nextUncertainty: swap }), 50);
     expect(found.find((candidate) => candidate.suspect)?.id).toBe("t2");
+    // ...for the question actually being asked, not always the earliest.
+    const byQuestion = candidatesAtFrame(bundle, chainOf({ nextUncertainty: trackEnd }), 50, 2, swap);
+    expect(byQuestion.find((candidate) => candidate.suspect)?.id).toBe("t2");
   });
 
   it("offers everyone, not just the detector's two — its misses must be recoverable", () => {
@@ -247,40 +299,52 @@ describe("claimed stretches on the seek bar", () => {
   });
 });
 
-describe("rewindSecondsAfterUndo — an undo must not wedge playback", () => {
-  /*
-   * The failure it prevents: an undo reopens the check the undone decision
-   * answered, and that check sits BEHIND the playhead. reachedStop is `>=`, so
-   * the stale stop fires on the next timeupdate; approachSeconds refuses to
-   * seek backwards, so the skip button is inert. Play then pauses instantly,
-   * forever, on a question the person cannot reach.
-   */
-  it("seeks backwards to the reopened check, which approachSeconds will not do", () => {
-    const chain = chainOf({
-      frameRate: FPS,
-      nextUncertainty: { kind: "track-end", frame: 100, trackId: "A", confidence: 1, reason: "lost" },
-    });
-    const playhead = 100;   // seconds, far past the frame-100 stop at 25 fps
-
-    expect(approachSecondsIsInert(chain, playhead)).toBe(true);
-    expect(rewindSecondsAfterUndo(chain)).toBeCloseTo(100 / FPS - 4, 5);
+describe("the next check is always ahead, never behind", () => {
+  it("jumps to just before the next question ahead of the playhead", () => {
+    const later = { ...trackEnd, frame: 99 };
+    const chain = chainOf({ nextUncertainty: swap, openQuestions: [swap, later] });
+    // At 0 s the next question is the swap at frame 50 (2 s): inside the
+    // run-up, so nothing to jump to. Past it, the track end at 99 (3.96 s) is
+    // next -- and still inside the run-up from 2.1 s.
+    expect(approachSeconds(chain, 0)).toBeNull();
+    expect(approachSeconds(chain, 2.1)).toBeNull();
+    const far = { ...trackEnd, frame: 175 };
+    const long = chainOf({ nextUncertainty: swap, openQuestions: [swap, far] });
+    expect(approachSeconds(long, 2.1)).toBeCloseTo(175 / FPS - 4, 5);
   });
 
-  it("clamps at zero for a check inside the run-up", () => {
-    const chain = chainOf({
-      frameRate: FPS,
-      nextUncertainty: { kind: "track-end", frame: 10, trackId: "A", confidence: 1, reason: "lost" },
-    });
-    expect(rewindSecondsAfterUndo(chain)).toBe(0);
-  });
-
-  it("has nothing to seek to when the chain is complete", () => {
-    expect(rewindSecondsAfterUndo(chainOf({ nextUncertainty: null }))).toBeNull();
-    expect(rewindSecondsAfterUndo(null)).toBeNull();
+  it("never seeks backwards to a question behind the playhead", () => {
+    // Those are listed and gone to on purpose, with the same run-up.
+    const chain = chainOf({ nextUncertainty: swap });
+    expect(approachSeconds(chain, 100)).toBeNull();
+    expect(leadInSeconds(chain, swap.frame)).toBeCloseTo(50 / FPS - 4 < 0 ? 0 : 50 / FPS - 4, 5);
+    expect(leadInSeconds(chain, 175)).toBeCloseTo(175 / FPS - 4, 5);
   });
 });
 
-/** approachSeconds returns null once the check is behind you — the inertness. */
-function approachSecondsIsInert(chain: ClaimChain, currentSeconds: number): boolean {
-  return approachSeconds(chain, currentSeconds) === null;
-}
+describe("the holes in the claim", () => {
+  it("lists every unclaimed stretch, including before the first tap and after the last part", () => {
+    const parts = [
+      { trackId: "t1", fromFrame: 50, toFrame: 99 },   // 2 s .. 4 s
+      { trackId: "t2", fromFrame: 150, toFrame: 174 }, // 6 s .. 7 s
+    ];
+    expect(gapsIn(parts, FPS, 8)).toEqual([
+      { fromSeconds: 0, toSeconds: 2 },
+      { fromSeconds: 4, toSeconds: 6 },
+      { fromSeconds: 7, toSeconds: 8 },
+    ]);
+  });
+
+  it("ignores holes too short to be worth a trip", () => {
+    const parts = [
+      { trackId: "t1", fromFrame: 0, toFrame: 99 },
+      { trackId: "t1", fromFrame: 110, toFrame: 199 }, // 0.4 s hole: a detection drop-out
+    ];
+    expect(gapsIn(parts, FPS, 8)).toEqual([]);
+  });
+
+  it("is the whole recording for an empty chain, and nothing for a full one", () => {
+    expect(gapsIn([], FPS, 8)).toEqual([{ fromSeconds: 0, toSeconds: 8 }]);
+    expect(gapsIn([{ trackId: "t1", fromFrame: 0, toFrame: 199 }], FPS, 8)).toEqual([]);
+  });
+});

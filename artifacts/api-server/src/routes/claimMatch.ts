@@ -105,6 +105,7 @@ const IdentityMapBody = z.object({
       // `scanFloor` to scanning from the start of the chain, which is the
       // original "it stops the second after I pick myself" bug coming back.
       tapFrame: z.number().int().min(0).optional(),
+      reviewedThrough: z.number().int().min(0).optional(),
     })).min(1),
     reviewedThroughFrame: z.number().int().min(0).optional(),
   })),
@@ -4083,14 +4084,20 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
   /*
    * Carry forward what the board does not know about.
    *
-   * The claim page stores two things on an identity that the board has never
-   * loaded, edited or sent back: `reviewedThroughFrame` on the row, and
-   * `tapFrame` on each part. The board loads a row as {id, name, parts} and
-   * saves it as {id, name, parts}, so replacing identities wholesale with its
-   * payload deleted both on every save -- which quietly re-opened every
-   * crossing a claimant had already confirmed, and turned "undo the last
-   * decision" back into "undo one part". Neither field is the board's to
-   * change, so a save that omits one keeps what was there.
+   * The claim page stores things on an identity that the board has never
+   * loaded, edited or sent back: `reviewedThroughFrame` and `history` on the
+   * row, and `tapFrame` and `reviewedThrough` on each part. The board loads a
+   * row as {id, name, parts} and saves it as {id, name, parts}, so replacing
+   * identities wholesale with its payload deleted all of it on every save --
+   * which quietly re-opened every crossing a claimant had already confirmed,
+   * and turned "undo the last decision" back into "undo one part". None of it
+   * is the board's to change, so a save that omits a field keeps what was
+   * there.
+   *
+   * `history` is the exception with a condition: it is the chain BEFORE the
+   * claimant's last decisions, and restoring it over a row the board has
+   * since regrouped would undo the board's work. It survives a save only
+   * while the row's parts are exactly what they were.
    */
   const priorById = new Map(
     (row.bundle.manifest.identities ?? []).map((identity) => [identity.id, identity] as const),
@@ -4100,20 +4107,28 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
   const identities: TrackingIdentity[] = body.data.identities.map((incoming) => {
     const prior = priorById.get(incoming.id);
     if (!prior) return incoming;
-    const priorStamps = new Map(
-      prior.parts
-        .filter((part) => typeof part.tapFrame === "number")
-        .map((part) => [partKeyOf(part), part.tapFrame as number] as const),
-    );
+    const priorParts = new Map(prior.parts.map((part) => [partKeyOf(part), part] as const));
     const parts = incoming.parts.map((part) => {
-      if (typeof part.tapFrame === "number") return part;
-      const stamp = priorStamps.get(partKeyOf(part));
-      return stamp === undefined ? part : { ...part, tapFrame: stamp };
+      const stored = priorParts.get(partKeyOf(part));
+      if (!stored) return part;
+      const next = { ...part };
+      if (typeof next.tapFrame !== "number" && typeof stored.tapFrame === "number") {
+        next.tapFrame = stored.tapFrame;
+      }
+      if (typeof next.reviewedThrough !== "number" && typeof stored.reviewedThrough === "number") {
+        next.reviewedThrough = stored.reviewedThrough;
+      }
+      return next;
     });
+    const samePartsAsStored = parts.length === prior.parts.length
+      && parts.every((part) => priorParts.has(partKeyOf(part)));
     const reviewedThroughFrame = incoming.reviewedThroughFrame ?? prior.reviewedThroughFrame;
-    return reviewedThroughFrame === undefined
-      ? { ...incoming, parts }
-      : { ...incoming, parts, reviewedThroughFrame };
+    return {
+      ...incoming,
+      parts,
+      ...(reviewedThroughFrame === undefined ? {} : { reviewedThroughFrame }),
+      ...(samePartsAsStored && prior.history?.length ? { history: prior.history } : {}),
+    };
   });
   const manifest: TrackingManifest = {
     ...row.bundle.manifest,

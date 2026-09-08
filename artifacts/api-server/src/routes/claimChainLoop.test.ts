@@ -158,11 +158,13 @@ describe("a whole claim, answered the way a person answers it", () => {
     const reread = await request(app).get(url());
     const afterRefetch = reread.body.nextUncertainty?.frame ?? null;
 
-    expect(afterRefetch).not.toBeNull();
     // A refetch must not hand back a moment already dealt with. If it does,
     // reachedStop (>=) fires at once on a stop behind the playhead and the
-    // page wedges into play-pause-play-pause.
-    expect(afterRefetch!).toBeGreaterThanOrEqual(afterAnswering!);
+    // page wedges into play-pause-play-pause. Every answer is written into the
+    // chain itself, so the write and the read see the same questions.
+    expect(afterRefetch).toBe(afterAnswering);
+    expect(reread.body.openQuestions).toEqual(res.body.openQuestions);
+    for (const frame of answers) expect(reread.body.openQuestions.map((q: any) => q.frame)).not.toContain(frame);
   });
 
   /**
@@ -201,7 +203,13 @@ describe("a whole claim, answered the way a person answers it", () => {
     const fromWrite = write.body.nextUncertainty?.frame ?? null;
     const fromGet = reread.body.nextUncertainty?.frame ?? null;
     expect(fromGet).toBe(fromWrite);
-    if (fromGet !== null) expect(fromGet).toBeGreaterThan(last);
+    // Nothing may be asked AT the tapped frame, on either request shape. The
+    // crossing at 700 that this jump skipped over is still open -- it was
+    // never answered, and it is reported behind the playhead rather than
+    // silently settled by a tap made far past it.
+    for (const body of [write.body, reread.body]) {
+      expect(body.openQuestions.map((q: any) => q.frame)).not.toContain(last);
+    }
   });
 
   it('"yes, still me" survives a refetch', async () => {
@@ -339,5 +347,217 @@ describe("a whole claim, answered the way a person answers it", () => {
     const retapped = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10 });
     expect(retapped.status).toBe(200);
     expect((await request(app).get(url())).body.resetByAdmin).toBe(false);
+  });
+
+  /*
+   * ------------------------------------------------------------------
+   * Going back to fill a gap.
+   *
+   * "Look at the timeline, there are gaps, I want to be able to go back and
+   * fill these gaps" -- and, once tried: "when I go back in time and pick
+   * myself, sometimes it erases everything in front. That should never
+   * happen." Every tap truncated the chain from the tapped frame on.
+   * ------------------------------------------------------------------
+   */
+  describe("going back to fill a gap", () => {
+    const extent = (chain: any[]) => chain.map((p) => [p.fromFrame, p.toFrame]);
+
+    it("keeps everything claimed after the gap", async () => {
+      // Claimed from 1500 to the end first; then scrub back and tap at 10.
+      const late = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 1500, name: "Mohammed" });
+      const afterLate = late.body.chain;
+      expect(afterLate.length).toBeGreaterThan(0);
+
+      const fill = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10 });
+      expect(fill.status).toBe(200);
+      // Every part claimed at 1500 is still there, untouched.
+      for (const part of afterLate) expect(fill.body.chain).toContainEqual(part);
+      // And the fill runs from the tap up to where the earlier claim begins.
+      const filled = fill.body.chain.filter((p: any) => p.toFrame < 1500);
+      expect(filled[0]).toMatchObject({ fromFrame: 10 });
+      expect(Math.max(...filled.map((p: any) => p.toFrame))).toBe(1499);
+      expect(fill.body.coveragePercent).toBeGreaterThan(late.body.coveragePercent);
+    });
+
+    it("asks about the crossing inside the fill, even though the later stretch was already reviewed", async () => {
+      await request(app).post(url("/tap")).send({ trackId: "ME", frame: 1500, name: "Mohammed" });
+      const fill = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10 });
+      expect(fill.body.nextUncertainty).toMatchObject({ kind: "swap", frame: 700 });
+      // ...and the refetch agrees.
+      expect((await request(app).get(url())).body.nextUncertainty).toMatchObject({ kind: "swap", frame: 700 });
+    });
+
+    it("undo after a fill undoes the fill, not the earlier tap that has the larger frame", async () => {
+      const late = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 1500, name: "Mohammed" });
+      await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10 });
+      const undone = await request(app).delete(url("/last"));
+      expect(undone.status).toBe(200);
+      expect(extent(undone.body.chain)).toEqual(extent(late.body.chain));
+    });
+
+    it("giving up inside a fill keeps the stretch claimed after it", async () => {
+      const late = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 1500, name: "Mohammed" });
+      await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10 });
+      const cut = await request(app).post(url("/not-me")).send({ frame: 300 });
+      expect(cut.status).toBe(200);
+      for (const part of late.body.chain) expect(cut.body.chain).toContainEqual(part);
+      expect(cut.body.chain.some((p: any) => p.fromFrame <= 299 && p.toFrame >= 299)).toBe(true);
+      expect(cut.body.chain.some((p: any) => p.fromFrame >= 300 && p.toFrame < 1500)).toBe(false);
+    });
+
+    it("a fill stops just short of the next claimed part, whatever the track does", async () => {
+      // SPARSE has a box every 20 frames from 100 to 2300. Claim it from 2000
+      // first, then fill from 100: the fill must end before 2000.
+      await request(app).post(url("/tap")).send({ trackId: "SPARSE", frame: 2000, name: "Mohammed" });
+      const fill = await request(app).post(url("/tap")).send({ trackId: "SPARSE", frame: 100 });
+      const parts = fill.body.chain.filter((p: any) => p.trackId === "SPARSE");
+      expect(parts.some((p: any) => p.fromFrame === 2000)).toBe(true);
+      const before = parts.filter((p: any) => p.fromFrame < 2000);
+      expect(before.length).toBeGreaterThan(0);
+      expect(Math.max(...before.map((p: any) => p.toFrame))).toBeLessThan(2000);
+    });
+  });
+
+  /*
+   * ------------------------------------------------------------------
+   * The end of the recording.
+   *
+   * "I finished the segment and nothing happened. What should happen?" Two
+   * things were wrong: the chain asked "we lost you here" on the recording's
+   * last frame, a question with no possible answer, and nothing ever said
+   * whether the claim counted.
+   * ------------------------------------------------------------------
+   */
+  describe("reaching the end of the recording", () => {
+    it("does not ask where you went when the recording simply ended", async () => {
+      const me = segment.tracks[0];
+      let res = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10, name: "Mohammed" });
+      for (let i = 0; i < 20 && res.body.nextUncertainty; i++) {
+        const u = res.body.nextUncertainty;
+        if (u.kind === "swap") {
+          res = await request(app).post(url("/confirm")).send({ frame: u.frame });
+        } else {
+          const next = me.boxes.find((b: any) => b.frame > u.frame);
+          if (!next) break;
+          res = await request(app).post(url("/tap")).send({ trackId: "ME", frame: next.frame });
+        }
+      }
+      // ME's last box is on frame 2399, the last frame there is.
+      expect(res.body.nextUncertainty).toBeNull();
+      expect(res.body.openQuestions).toEqual([]);
+      expect(res.body.completed).toBe(true);
+      expect(res.body.requiredCoveragePercent).toBe(60);
+      expect(res.body.coveragePercent).toBeGreaterThanOrEqual(60);
+      // The same is true on a refetch.
+      const reread = await request(app).get(url());
+      expect(reread.body.completed).toBe(true);
+      expect(reread.body.nextUncertainty).toBeNull();
+    });
+
+    it("is not complete while a question is still open, however much is claimed", async () => {
+      const res = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10, name: "Mohammed" });
+      expect(res.body.coveragePercent).toBeGreaterThanOrEqual(60);
+      expect(res.body.nextUncertainty).toMatchObject({ frame: 700 });
+      expect(res.body.completed).toBe(false);
+    });
+
+    it("lists the questions left behind by a jump, rather than settling them silently", async () => {
+      await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10, name: "Mohammed" });
+      // Jump straight to the end and tap there, never answering the crossing.
+      const jumped = await request(app).post(url("/tap")).send({ trackId: "ME", frame: 2300 });
+      expect(jumped.body.openQuestions.map((q: any) => q.frame)).toContain(700);
+      expect(jumped.body.completed).toBe(false);
+      // Answering it finishes the claim.
+      const done = await request(app).post(url("/confirm")).send({ frame: 700 });
+      expect(done.body.openQuestions).toEqual([]);
+      expect(done.body.completed).toBe(true);
+    });
+  });
+
+  it("an identity-board save keeps each part's answered frontier and the undo history", async () => {
+    await request(app).post(url("/tap")).send({ trackId: "ME", frame: 10, name: "Mohammed" });
+    await request(app).post(url("/confirm")).send({ frame: 700 });
+    const chain = (await request(app).get(url())).body;
+
+    vi.mocked(getLocalUserId).mockResolvedValue(adminId);
+    const loaded = await request(app).get(`/api/recordings/${recordingId}/claim-match`);
+    const saved = await request(app)
+      .put(`/api/admin/recordings/${recordingId}/identities`)
+      .send({
+        bundleFingerprint: chain.bundleFingerprint,
+        identitiesFingerprint: loaded.body.identitiesFingerprint,
+        // The board sends parts exactly as it loaded them -- which, through
+        // the generated contract, includes the per-part mark.
+        identities: loaded.body.manifest.identities.map((i: any) => ({ id: i.id, name: i.name ?? null, parts: i.parts })),
+      });
+    expect(saved.status).toBe(200);
+    vi.mocked(getLocalUserId).mockResolvedValue(playerId);
+
+    const [after] = await db.select({ manifest: recordingTrackingBundlesTable.manifest })
+      .from(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, bundleId));
+    const mine = after.manifest.identities?.find((i: any) => i.id === chain.identityId) as any;
+    expect(mine.parts.find((p: any) => p.fromFrame <= 700 && p.toFrame >= 700).reviewedThrough).toBe(701);
+    expect(mine.history?.length).toBe(2);
+
+    // The confirm survived the board, and so did undo: the chain goes back to
+    // how it was before the confirm. (Whether the crossing is then ASKED again
+    // depends on the labels table, which remembers the confirm independently
+    // when it exists -- so the stored mark is what is checked, not the
+    // question.)
+    expect((await request(app).get(url())).body.openQuestions.map((q: any) => q.frame)).not.toContain(700);
+    const undone = await request(app).delete(url("/last"));
+    expect(undone.status).toBe(200);
+    const [rewound] = await db.select({ manifest: recordingTrackingBundlesTable.manifest })
+      .from(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, bundleId));
+    const restored = rewound.manifest.identities?.find((i: any) => i.id === chain.identityId) as any;
+    // Back to unreviewed from the part's own start.
+    expect(restored.parts.find((p: any) => p.fromFrame <= 700 && p.toFrame >= 700).reviewedThrough).toBe(630);
+  });
+
+  /*
+   * Chains already stored on Replit predate per-part marks and the undo
+   * history. They have to keep behaving as they did until their next write.
+   */
+  describe("a chain stored by the previous build", () => {
+    const legacy = async () => {
+      const identityId = (await request(app).get(url())).body.identityId;
+      await db.update(recordingTrackingBundlesTable).set({
+        manifest: {
+          ...manifest,
+          identities: [{
+            id: identityId, name: "Mohammed",
+            parts: [
+              { trackId: "ME", fromFrame: 10, toFrame: 199, tapFrame: 10 },
+              { trackId: "ME", fromFrame: 230, toFrame: 599, tapFrame: 10 },
+              { trackId: "ME", fromFrame: 630, toFrame: 999, tapFrame: 10 },
+              { trackId: "ME", fromFrame: 1030, toFrame: 1399, tapFrame: 1030 },
+            ],
+            // The old single mark: the crossing at 700 was confirmed.
+            reviewedThroughFrame: 1031,
+          }],
+          provenance: { bundleFingerprint: "x", identityMapBundleFingerprint: "x" },
+        } as never,
+      }).where(eq(recordingTrackingBundlesTable.id, bundleId));
+    };
+
+    it("reads the old single mark the way the old build did", async () => {
+      await legacy();
+      const res = await request(app).get(url());
+      expect(res.status).toBe(200);
+      // Everything before 1031 is settled, so the crossing at 700 stays
+      // answered; what is left is the track end at 1399.
+      expect(res.body.openQuestions.map((q: any) => q.frame)).toEqual([1399]);
+    });
+
+    it("makes the marks explicit on its next write, and undoes by stamp until there is history", async () => {
+      await legacy();
+      const undone = await request(app).delete(url("/last"));
+      expect(undone.status).toBe(200);
+      // No history yet: the old grouping undo drops the newest stamp.
+      expect(undone.body.chain.map((p: any) => p.fromFrame)).toEqual([10, 230, 630]);
+      const [row] = await db.select({ manifest: recordingTrackingBundlesTable.manifest })
+        .from(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.id, bundleId));
+      expect(row.manifest.identities?.[0]?.parts.every((p: any) => typeof p.reviewedThrough === "number")).toBe(true);
+    });
   });
 });

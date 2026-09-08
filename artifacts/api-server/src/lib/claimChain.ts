@@ -60,7 +60,56 @@ export type ChainPart = {
    * dropping a single part when it is absent.
    */
   tapFrame?: number;
+  /**
+   * Frames of THIS part below this one have been answered.
+   *
+   * A chain used to carry one high-water mark for the whole identity, and it
+   * was enough while a chain only ever grew forward. It cannot describe a
+   * chain with a filled gap: fill a hole at 2:00 in a claim that already runs
+   * to 10:00 and the single mark says everything before 10:00 is settled, so
+   * nothing inside the fill is ever asked. Worse, the only way to fill a hole
+   * at all was to truncate everything after it -- which is the "when I go back
+   * in time and pick myself it erases everything in front" report.
+   *
+   * So each part remembers its own answered frontier. A part with no mark is
+   * unreviewed from its first frame; a mark of `toFrame + 1` means fully
+   * reviewed. Parts stored before this existed are upgraded on load from the
+   * identity-level mark (`withMarks`), which reproduces the old behaviour for
+   * old chains exactly.
+   */
+  reviewedThrough?: number;
 };
+
+/** The frame below which this part's questions are settled. */
+export function partFloor(part: ChainPart): number {
+  return part.reviewedThrough ?? part.fromFrame;
+}
+
+/** Clamp a mark to what the part can express: [fromFrame, toFrame + 1]. */
+function clampMark(part: ChainPart, mark: number): number {
+  return Math.min(Math.max(mark, part.fromFrame), part.toFrame + 1);
+}
+
+/** A copy of the part answered through `throughFrame` (exclusive), never backwards. */
+export function markReviewed(part: ChainPart, throughFrame: number): ChainPart {
+  return { ...part, reviewedThrough: clampMark(part, Math.max(partFloor(part), throughFrame)) };
+}
+
+/**
+ * Give every unmarked part a mark derived from the legacy single floor.
+ *
+ * `legacyFloor` is what `scanFloor` used to compute for the whole chain: a
+ * part that ends before it is fully reviewed, a part that spans it is
+ * reviewed up to it, a part after it is untouched. Parts that already carry a
+ * mark keep it -- this only fills in what older builds never wrote.
+ */
+export function withMarks(chain: ChainPart[], legacyFloor: number): ChainPart[] {
+  return chain.map((part) => (
+    typeof part.reviewedThrough === "number"
+      ? { ...part }
+      : { ...part, reviewedThrough: clampMark(part, legacyFloor) }
+  ));
+}
 
 export type UncertaintyKind = "track-end" | "swap";
 
@@ -142,6 +191,13 @@ export const CHAIN_TUNING = {
    */
   maxPartsPerTap: 64,
 };
+
+/**
+ * A part ending this close to the recording's last tracked frame is treated
+ * as running to the end. One second: the detector often drops a player on the
+ * final frames as the clip is cut, and there is nothing to tap after them.
+ */
+export const END_OF_RECORDING_FRAMES = 25;
 
 /* ------------------------------------------------------------------ *
  * Board decisions
@@ -288,7 +344,7 @@ export function swapEvidence(
  * ------------------------------------------------------------------ */
 
 /**
- * Where to start looking for the next question.
+ * The legacy single floor: where an old chain's next question was looked for.
  *
  * NOT the start of the chain, which is what this used to be and which is the
  * whole of the "it stops the second after I pick myself" bug. A tap says "I am
@@ -305,6 +361,10 @@ export function swapEvidence(
  *
  * `afterFrame` is the frame just answered on this request, so a decision can
  * never re-raise itself in its own response.
+ *
+ * Since parts carry their own `reviewedThrough`, this is only used to UPGRADE
+ * a chain stored without marks (see `withMarks`): one number cannot describe
+ * a chain with a filled gap, so live scanning is per part now.
  */
 export function scanFloor(
   chain: ChainPart[],
@@ -328,15 +388,22 @@ export function scanFloor(
 }
 
 /**
- * Where playback should next stop, following `chain` forward from `fromFrame`.
+ * Every question the chain still has open, earliest first.
  *
- * Returns null when the chain runs cleanly to its end with nothing to ask —
- * which is the state a finished claim is in.
+ * Each part is scanned from its own answered frontier (`partFloor`), never
+ * from one chain-wide floor -- a filled gap sits BEHIND everything that was
+ * claimed after it, and a single floor would either hide the fill's questions
+ * or re-ask everything after it. `fromFrame` is an additional caller floor,
+ * for callers that already know everything before a point is settled.
+ *
+ * Returning the whole list rather than only the first matters once questions
+ * can be left behind: the client needs the next one AHEAD of the playhead to
+ * stop at, and the ones behind it to list as still open.
  *
  * Order matters: the earliest uncertainty wins, because stopping late means
  * the viewer has already watched footage attributed to the wrong person.
  */
-export function nextUncertainty(
+export function openUncertainties(
   chain: ChainPart[],
   tracksById: Map<string, Track>,
   crossings: Crossing[],
@@ -356,14 +423,27 @@ export function nextUncertainty(
    * An answered frame is answered. The caller passes the frames this claimant
    * has labelled on this bundle, which makes the suppression durable across a
    * reload rather than a piece of component state that a refresh forgets.
+   * The per-part marks make the same thing durable without the labels table;
+   * this stays as belt and braces.
    */
   answeredFrames?: Set<number>,
-): Uncertainty | null {
+  /**
+   * The last tracked frame of the recording.
+   *
+   * A part that runs to the end of the recording did not lose the player --
+   * the recording ended. Asking "we lost you here, tap yourself again" on the
+   * final frame is a question with no possible answer, and it is what stood
+   * where an end-of-match summary should have been. A track end within a
+   * second of this frame is not raised.
+   */
+  endFrame?: number,
+): Uncertainty[] {
   const ordered = [...chain].sort((a, b) => a.fromFrame - b.fromFrame);
   const candidates: Uncertainty[] = [];
 
   for (const part of ordered) {
-    if (part.toFrame < fromFrame) continue;
+    const floor = Math.max(fromFrame, partFloor(part));
+    if (part.toFrame < floor) continue;
     const track = tracksById.get(part.trackId);
     if (!track) continue;
 
@@ -371,7 +451,7 @@ export function nextUncertainty(
     for (const crossing of crossings) {
       const involvesMe = crossing.trackId === part.trackId || crossing.otherTrackId === part.trackId;
       if (!involvesMe) continue;
-      if (crossing.frame < Math.max(part.fromFrame, fromFrame) || crossing.frame > part.toFrame) continue;
+      if (crossing.frame < Math.max(part.fromFrame, floor) || crossing.frame > part.toFrame) continue;
 
       if (answeredFrames?.has(crossing.frame)) continue;
 
@@ -421,7 +501,10 @@ export function nextUncertainty(
     // its new end sits at answered - 1. Raising that would be telling the
     // person we lost them at the exact moment they just told us we had.
     const answeredHere = answeredFrames?.has(part.toFrame) || answeredFrames?.has(part.toFrame + 1);
-    if (!continues && part.toFrame >= fromFrame && !answeredHere) {
+    // The recording ran out, not the tracker.
+    const atRecordingEnd = typeof endFrame === "number"
+      && part.toFrame >= endFrame - END_OF_RECORDING_FRAMES;
+    if (!continues && part.toFrame >= floor && !answeredHere && !atRecordingEnd) {
       candidates.push({
         kind: "track-end",
         frame: part.toFrame,
@@ -453,10 +536,35 @@ export function nextUncertainty(
 
   // Earliest wins; at the same frame a swap outranks a link and a link
   // outranks a track end, so the most specific description of what happened
-  // is the one the person is shown.
+  // is the one the person is shown. One question per frame: the person is
+  // asked about a moment, not about each reading of it.
   const rank: Record<UncertaintyKind, number> = { swap: 0, "track-end": 1 };
   candidates.sort((a, b) => a.frame - b.frame || rank[a.kind] - rank[b.kind]);
-  return candidates.find((c) => c.frame >= fromFrame) ?? null;
+  const out: Uncertainty[] = [];
+  for (const candidate of candidates) {
+    if (candidate.frame < fromFrame) continue;
+    if (out.length && out[out.length - 1].frame === candidate.frame) continue;
+    out.push(candidate);
+  }
+  return out;
+}
+
+/**
+ * Where playback should next stop, following `chain` forward from `fromFrame`.
+ *
+ * Returns null when the chain runs cleanly to its end with nothing to ask —
+ * which is the state a finished claim is in.
+ */
+export function nextUncertainty(
+  chain: ChainPart[],
+  tracksById: Map<string, Track>,
+  crossings: Crossing[],
+  fromFrame: number,
+  decisions?: IdentityDecision[],
+  answeredFrames?: Set<number>,
+  endFrame?: number,
+): Uncertainty | null {
+  return openUncertainties(chain, tracksById, crossings, fromFrame, decisions, answeredFrames, endFrame)[0] ?? null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -617,10 +725,14 @@ export function normaliseChain(
     const fromFrame = Math.max(part.fromFrame, track.startFrame);
     const toFrame = Math.min(part.toFrame, track.endFrame);
     if (toFrame < fromFrame) continue;
-    // `tapFrame` has to survive here or undo loses the grouping it needs.
-    clamped.push(part.tapFrame === undefined
-      ? { trackId: part.trackId, fromFrame, toFrame }
-      : { trackId: part.trackId, fromFrame, toFrame, tapFrame: part.tapFrame });
+    // `tapFrame` has to survive here or a correction loses the grouping it
+    // needs; `reviewedThrough` has to survive or every answer is forgotten.
+    const next: ChainPart = { trackId: part.trackId, fromFrame, toFrame };
+    if (part.tapFrame !== undefined) next.tapFrame = part.tapFrame;
+    if (part.reviewedThrough !== undefined) {
+      next.reviewedThrough = Math.min(Math.max(part.reviewedThrough, fromFrame), toFrame + 1);
+    }
+    clamped.push(next);
   }
 
   clamped.sort((a, b) => a.fromFrame - b.fromFrame || a.trackId.localeCompare(b.trackId));
@@ -628,8 +740,24 @@ export function normaliseChain(
   const merged: ChainPart[] = [];
   for (const part of clamped) {
     const last = merged[merged.length - 1];
-    if (last && last.trackId === part.trackId && part.fromFrame <= last.toFrame + 1) {
+    // Touching pieces of one track merge only when they are the SAME
+    // decision. A fill that runs up to a later tap on the same track must
+    // stay a separate part: merged, it would carry the fill's stamp, and a
+    // later correction of the fill would take the later tap's frames with it
+    // -- the "erases everything in front" bug wearing a different hat.
+    if (last && last.trackId === part.trackId && part.fromFrame <= last.toFrame + 1
+      && last.tapFrame === part.tapFrame) {
+      // Two marks become one. If the earlier piece was fully reviewed the
+      // later piece's frontier is the frontier of the whole; otherwise the
+      // earlier piece's frontier is -- re-asking a question is recoverable,
+      // skipping one is not.
+      const fullyReviewed = partFloor(last) >= last.toFrame + 1;
       last.toFrame = Math.max(last.toFrame, part.toFrame);
+      if (fullyReviewed) {
+        last.reviewedThrough = Math.min(Math.max(partFloor(part), last.fromFrame), last.toFrame + 1);
+      } else if (last.reviewedThrough !== undefined) {
+        last.reviewedThrough = Math.min(last.reviewedThrough, last.toFrame + 1);
+      }
       continue;
     }
     merged.push({ ...part });
@@ -660,12 +788,10 @@ export function identityOwning(
 }
 
 /**
- * Everything after `frame` stops being claimed.
- *
- * The human override. However good the swap detector gets, the viewer is the
- * one who can see it is not them, and they must always be able to say so
- * without being asked first — a detector that is the ONLY way out of a wrong
- * chain is a detector whose misses are unrecoverable.
+ * Everything after `frame` stops being claimed -- the whole chain, every
+ * decision. The blunt instrument. Kept because it is the right tool for
+ * "wipe from here" and for tests; the flow itself uses `cutChain`, which
+ * respects decisions made further on.
  */
 export function truncateChain(chain: ChainPart[], frame: number): ChainPart[] {
   return chain
@@ -676,16 +802,130 @@ export function truncateChain(chain: ChainPart[], frame: number): ChainPart[] {
 }
 
 /**
+ * Which decision a part belongs to. Parts of one tap share a stamp; parts the
+ * board wrote, or that predate the stamp, are each their own decision.
+ */
+function decisionKey(part: ChainPart): number | null {
+  return typeof part.tapFrame === "number" ? part.tapFrame : null;
+}
+
+/**
+ * Open the chain at `frame` for a new decision, and say how far it may run.
+ *
+ * THE RULE THAT REPLACED "TRUNCATE EVERYTHING AFTER THE TAP"
+ *
+ * Every tap used to discard the whole chain from the tapped frame on. That is
+ * right for a correction made while following forward -- the old answer from
+ * here was wrong -- and it is catastrophically wrong for the other thing a
+ * person does with a tap: scrub back into a hole in their timeline and fill
+ * it. Filling a two-minute hole at 2:00 deleted the eight minutes they had
+ * claimed after it. Reported as "when I go back in time and pick myself it
+ * erases everything in front of it", and it must never happen.
+ *
+ * So a tap now touches exactly one decision:
+ *
+ *   - Nothing covers `frame`: it is a FILL. Nothing is removed. The new parts
+ *     stop just before the next part that already exists, so a fill can never
+ *     overwrite a decision made further on.
+ *   - A part covers `frame`: it is a CORRECTION of that part's decision. The
+ *     part is cut at `frame` and the later parts OF THAT SAME DECISION go
+ *     (the runs of the same track past a detection hole, or the rest of a
+ *     board-merged person) -- they are the same wrong answer continued.
+ *     Parts of other decisions stay, and the new parts stop before them.
+ *
+ * Either way `nextStart` is where the new claim must end, and `settled` is
+ * what survives with its marks adjusted: a part cut here is fully answered up
+ * to the cut, because the person has just said what happens from here.
+ */
+function openAt(
+  chain: ChainPart[],
+  frame: number,
+): { kept: ChainPart[]; nextStart: number } {
+  const covering = chain.filter((part) => frame >= part.fromFrame && frame <= part.toFrame);
+  const corrected = new Set(covering.map(decisionKey).filter((key): key is number => key !== null));
+
+  const kept: ChainPart[] = [];
+  for (const part of chain) {
+    const key = decisionKey(part);
+    const sameDecision = key !== null && corrected.has(key) && part.fromFrame >= frame;
+    if (sameDecision) continue;
+    if (frame >= part.fromFrame && frame <= part.toFrame) {
+      if (part.fromFrame > frame - 1) continue;
+      const cut = { ...part, toFrame: frame - 1 };
+      kept.push({ ...cut, reviewedThrough: frame });
+      continue;
+    }
+    kept.push({ ...part });
+  }
+
+  const later = kept.filter((part) => part.fromFrame > frame).map((part) => part.fromFrame);
+  return { kept, nextStart: later.length ? Math.min(...later) : Number.POSITIVE_INFINITY };
+}
+
+/**
+ * A tap at `frame` answers the stretch that led to it.
+ *
+ * The person was following a part, it ran out (or they were asked about it),
+ * and they tapped themselves again further on: that tap IS the answer to the
+ * part's open questions, and above all to its track end. Without this the
+ * track end stays open, sits behind the playhead, and the summary lists a
+ * question the person has just answered by tapping.
+ *
+ * Only the part(s) that lead straight to the tap: a part with ANOTHER part
+ * starting between its end and `frame` was not what the person was following
+ * when they tapped, so its questions were never passed and stay open. That is
+ * what keeps a fill from silently settling questions on the far side of a
+ * later stretch.
+ */
+function settleBefore(chain: ChainPart[], frame: number): ChainPart[] {
+  return chain.map((part) => {
+    if (part.toFrame >= frame) return part;
+    const interposed = chain.some((other) =>
+      other !== part && other.fromFrame > part.toFrame && other.fromFrame < frame);
+    return interposed ? part : markReviewed(part, part.toFrame + 1);
+  });
+}
+
+/**
+ * "That is not me, and has not been since here."
+ *
+ * The human override. However good the swap detector gets, the viewer is the
+ * one who can see it is not them, and they must always be able to say so
+ * without being asked first — a detector that is the ONLY way out of a wrong
+ * chain is a detector whose misses are unrecoverable.
+ *
+ * Scoped to the decision being followed at `frame`, like a correction: the
+ * part is cut here and the rest of that same decision goes. What the person
+ * claimed further on by later decisions is theirs and stays.
+ */
+export function cutChain(chain: ChainPart[], frame: number): ChainPart[] {
+  return openAt(chain, frame).kept;
+}
+
+/** "Yes, still me" at `frame`: the parts covering it are answered through it. */
+export function markAnswered(chain: ChainPart[], frame: number): ChainPart[] {
+  return chain.map((part) => (
+    frame >= part.fromFrame && frame <= part.toFrame ? markReviewed(part, frame + 1) : part
+  ));
+}
+
+/** Clamp a new part so it ends before `nextStart`; null if nothing is left. */
+function before(part: ChainPart, nextStart: number): ChainPart | null {
+  if (part.fromFrame >= nextStart) return null;
+  return part.toFrame < nextStart ? part : { ...part, toFrame: nextStart - 1 };
+}
+
+/**
  * The person tapped themselves on track `trackId` at `frame`.
  *
  * The new part runs from that frame to wherever the track stops being usable:
- * its own end, the first frame struck off on the board, or the far side of a
+ * its own end, the first frame struck off on the board, the far side of a
  * detection gap longer than `maxBridgeGapFrames` (past that gap the tracker
- * has lost continuity and we should not claim through it silently).
+ * has lost continuity and we should not claim through it silently) -- or the
+ * start of the next part the person had already claimed, see `openAt`.
  *
- * Any existing chain from `frame` onward is discarded. Tapping is a
- * correction, and a correction that left the old wrong answer in place would
- * attribute the same seconds to two people.
+ * The chain from `frame` onward is NOT discarded. Only the decision being
+ * corrected is; a tap into a gap corrects nothing and removes nothing.
  */
 export function extendChain(
   chain: ChainPart[],
@@ -699,6 +939,9 @@ export function extendChain(
   if (!track) return normaliseChain(chain, tracksById);
   if (isStruckOff(decisions, trackId, frame)) return normaliseChain(chain, tracksById);
 
+  const { kept, nextStart } = openAt(settleBefore(chain, frame), frame);
+  const stamp = { tapFrame: frame, reviewedThrough: frame + 1 };
+
   // If the board has already merged this track into a person, the tap claims
   // that PERSON from here on, not just the piece under the cursor. Otherwise
   // the viewer gets interrupted at the end of a track the board had already
@@ -711,10 +954,12 @@ export function extendChain(
       // the moment the viewer actually identified them.
       .map((part) => ({ ...part, fromFrame: Math.max(part.fromFrame, frame) }))
       .filter((part) => part.toFrame >= part.fromFrame && part.toFrame >= frame)
-      .filter((part) => !isStruckOff(decisions, part.trackId, part.fromFrame));
+      .filter((part) => !isStruckOff(decisions, part.trackId, part.fromFrame))
+      .map((part) => before(part, nextStart))
+      .filter((part): part is ChainPart => part !== null);
     if (forward.length) {
-      const stamped = forward.map((part) => ({ ...part, tapFrame: frame }));
-      return normaliseChain([...truncateChain(chain, frame), ...stamped], tracksById);
+      const stamped = forward.map((part) => ({ ...part, ...stamp }));
+      return normaliseChain([...kept, ...stamped], tracksById);
     }
   }
 
@@ -747,19 +992,23 @@ export function extendChain(
   for (let i = 1; i < boxes.length; i++) {
     const at = boxes[i].frame;
     if (isStruckOff(decisions, trackId, at)) break;
+    // Past the next existing part there is nothing more to claim.
+    if (at >= nextStart) break;
     if (at - previous > CHAIN_TUNING.maxBridgeGapFrames) {
-      runs.push({ trackId, fromFrame: runStart, toFrame: previous, tapFrame: frame });
+      runs.push({ trackId, fromFrame: runStart, toFrame: previous, ...stamp });
       runStart = at;
     }
     previous = at;
   }
-  runs.push({ trackId, fromFrame: runStart, toFrame: previous, tapFrame: frame });
+  runs.push({ trackId, fromFrame: runStart, toFrame: previous, ...stamp });
 
-  const claimed = runs.length > CHAIN_TUNING.maxPartsPerTap
-    ? [{ trackId, fromFrame: start, toFrame: previous, tapFrame: frame }]
-    : runs;
+  const claimed = (runs.length > CHAIN_TUNING.maxPartsPerTap
+    ? [{ trackId, fromFrame: start, toFrame: previous, ...stamp }]
+    : runs)
+    .map((part) => before(part, nextStart))
+    .filter((part): part is ChainPart => part !== null);
 
-  return normaliseChain([...truncateChain(chain, start), ...claimed], tracksById);
+  return normaliseChain([...kept, ...claimed], tracksById);
 }
 
 /** Remove the last part. Kept for chains with no `tapFrame` to go on. */
@@ -770,7 +1019,7 @@ export function dropLastPart(chain: ChainPart[]): ChainPart[] {
 }
 
 /**
- * Undo the last decision — all of it.
+ * Undo the last decision — all of it — for a chain with no stored history.
  *
  * A tap adds every part it claimed, stamped with the frame it was made at, so
  * reversing a decision means dropping every part carrying the newest stamp.
@@ -780,6 +1029,12 @@ export function dropLastPart(chain: ChainPart[]): ChainPart[] {
  * Parts with no stamp were written by the identity board or by a build that
  * predates the stamp; there is nothing to group them by, so those fall back to
  * removing a single part, which is what undo always did.
+ *
+ * This is the FALLBACK. Since gaps can be filled the newest stamp is no longer
+ * the newest decision -- a fill at 2:00 made after a tap at 9:00 carries the
+ * smaller frame -- so the route keeps a short history of the chain before each
+ * decision and restores that instead. Chains written before the history
+ * existed come through here.
  */
 export function dropLastDecision(chain: ChainPart[]): ChainPart[] {
   const stamps = chain

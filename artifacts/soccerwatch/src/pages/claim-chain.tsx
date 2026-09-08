@@ -43,7 +43,7 @@ import {
   type TrackingSegment,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Crosshair, FastForward, Undo2, UserX } from "lucide-react";
+import { ArrowLeft, Check, Crosshair, FastForward, Flag, Home, Undo2, UserX } from "lucide-react";
 
 import { ClaimStage, type StageCandidate } from "@/components/ClaimStage";
 import { useAuth } from "@/lib/auth";
@@ -60,13 +60,19 @@ import {
   candidatesAtFrame,
   canConfirmAtStop,
   chainSpans,
+  crossedStop,
+  gapsIn,
+  leadInSeconds,
+  nextQuestionAfter,
   questionFor,
-  reachedStop,
+  questionsBehind,
   resumeSecondsAfter,
-  rewindSecondsAfterUndo,
   stageFor,
-  stopSeconds,
+  type ChainQuestion,
 } from "@/lib/claim-chain-flow";
+
+/** How close to the end of the recording counts as having reached it. */
+const END_OF_RECORDING_SECONDS = 0.5;
 
 /**
  * How long a decision took, measured from when the question appeared.
@@ -198,13 +204,22 @@ export default function ClaimChainPage() {
 
   /* ---------------- the flow ---------------- */
 
-  const [answered, setAnswered] = useState(true);
+  /**
+   * The question playback stopped on, while it waits for an answer.
+   *
+   * The question itself, not a flag: once a filled gap can leave questions
+   * behind the playhead, "the earliest open question" and "the one we stopped
+   * at" are different things, and every answer has to be about the latter.
+   */
+  const [asking, setAsking] = useState<ChainQuestion | null>(null);
   const [pendingName, setPendingName] = useState<{ trackId: string; frame: number } | null>(null);
   const [nameDraft, setNameDraft] = useState("");
   /** Which candidate the number picker is pointing at, so its box lights up. */
   const [highlightId, setHighlightId] = useState<string | null>(null);
-  const stage = stageFor(chain, currentFrame, answered);
+  const stage = stageFor(chain, currentFrame, asking === null);
   const clock = useDecisionClock();
+  /** The last frame the video reported, so a stop fires only when crossed. */
+  const lastFrameRef = useRef(-1);
 
   const tap = useTapClaimChain();
   const reject = useRejectClaimChainFrom();
@@ -231,6 +246,9 @@ export default function ClaimChainPage() {
     const clamped = Math.max(0, Math.min(bundle.duration, seconds));
     const videoTime = clamped + (bundle.videoStartSeconds || 0);
     pendingSeekRef.current = clamped;
+    // A seek is not a crossing. Landing past a question must not fire it --
+    // that is the whole of the play-pause-play-pause wedge.
+    lastFrameRef.current = trackingSecondsToFrame(clamped, bundle);
     setCurrentTime(clamped);
     seekIdRef.current += 1;
     setSeekRequest({ id: seekIdRef.current, videoTime });
@@ -256,23 +274,33 @@ export default function ClaimChainPage() {
   /**
    * Stop where the server said to, and nowhere else.
    *
-   * Checked on every timeupdate rather than scheduled: timeupdate fires about
-   * four times a second and a seek jumps outright, so anything waiting for an
-   * exact moment sails past the question and attributes footage to the wrong
-   * person before anyone is asked about it.
+   * Checked on every reported frame rather than scheduled: reports can land
+   * anywhere past the moment, so anything waiting for an exact frame sails
+   * past the question and attributes footage to the wrong person before
+   * anyone is asked about it.
+   *
+   * And only when the playhead CROSSES the question going forward. A
+   * question behind the playhead -- left there by a fill, an undo, or a
+   * refetch -- is listed in the panel, never fired on. Firing on "at or past"
+   * paused the video instantly on a moment minutes back, with no way to
+   * reach it, forever.
    */
   const handleTimeUpdate = useCallback((videoSeconds: number) => {
     if (!bundle) return;
     const tracking = Math.max(0, videoSeconds - (bundle.videoStartSeconds || 0));
+    const frame = trackingSecondsToFrame(tracking, bundle);
+    const previous = lastFrameRef.current;
+    lastFrameRef.current = frame;
     setCurrentTime(tracking);
-    if (!chain || !answered) return;
-    if (reachedStop(chain, tracking)) {
-      setAnswered(false);
+    if (!chain || asking) return;
+    const crossed = crossedStop(chain, previous, frame);
+    if (crossed) {
+      setAsking(crossed);
       setPlaying(false);
       videoRef.current?.pause();
       clock.restart();
     }
-  }, [bundle, chain, answered, clock]);
+  }, [bundle, chain, asking, clock]);
 
   /**
    * Jump to the next check rather than playing the whole way to it.
@@ -292,12 +320,26 @@ export default function ClaimChainPage() {
   }, [seekTracking]);
 
   const askAgainFrom = useCallback((chainAfter: ClaimChain, frame: number) => {
-    setAnswered(true);
+    setAsking(null);
     const resume = resumeSecondsAfter(chainAfter, frame);
     // Past the answered frame first, so the question just answered cannot fire
     // again, then straight on to whatever is next.
     if (!skipToNextCheck(chainAfter, resume)) seekTracking(resume);
   }, [seekTracking, skipToNextCheck]);
+
+  /**
+   * Go and look at a moment: land a few seconds before it and play, so it
+   * arrives in context. Used for a question left behind the playhead and for
+   * a hole in the timeline -- both are places the person chooses to go, and
+   * neither is ever jumped to on their behalf.
+   */
+  const goTo = useCallback((frame: number) => {
+    if (!chain) return;
+    setAsking(null);
+    seekTracking(leadInSeconds(chain, frame));
+    setPlaying(true);
+    void videoRef.current?.play().catch(() => setPlaying(false));
+  }, [chain, seekTracking]);
 
   const submitTap = useCallback(async (trackId: string, frame: number, name?: string) => {
     if (!chain && !manifest) return;
@@ -370,28 +412,31 @@ export default function ClaimChainPage() {
 
   const onNotMe = useCallback(async () => {
     if (!chain) return;
+    // At a stop, "not me" is about the moment we stopped on, wherever the
+    // playhead has drifted since. Following freely, it is about right here.
+    const frame = asking ? asking.frame : currentFrame;
     try {
       const next = await reject.mutateAsync({
         id: recordingId,
         data: {
-          frame: currentFrame,
+          frame,
           decisionMs: clock.elapsed(),
           bundleFingerprint: chain.bundleFingerprint,
         },
       });
       applyChain(next);
-      setAnswered(true);
+      setAsking(null);
       setPlaying(false);
       videoRef.current?.pause();
       setNotice("Given up from here — tap yourself again when you see yourself.");
     } catch (error) {
       setNotice(errorMessage(error, "That could not be saved."));
     }
-  }, [applyChain, chain, clock, currentFrame, recordingId, reject]);
+  }, [applyChain, asking, chain, clock, currentFrame, recordingId, reject]);
 
   const onStillMe = useCallback(async () => {
-    if (!chain?.nextUncertainty) return;
-    const frame = chain.nextUncertainty.frame;
+    if (!chain || !asking) return;
+    const frame = asking.frame;
     try {
       const next = await confirm.mutateAsync({
         id: recordingId,
@@ -407,37 +452,35 @@ export default function ClaimChainPage() {
     } catch (error) {
       setNotice(errorMessage(error, "That could not be saved."));
     }
-  }, [applyChain, askAgainFrom, chain, clock, confirm, recordingId]);
+  }, [applyChain, askAgainFrom, asking, chain, clock, confirm, recordingId]);
 
   const onUndo = useCallback(async () => {
     try {
       const next = await undo.mutateAsync({ id: recordingId });
       applyChain(next);
-      setAnswered(true);
-      // An undo reopens the check the undone decision answered, and that check
-      // is behind the playhead. Staying put would fire it on the next
-      // timeupdate with no way to reach it -- see rewindSecondsAfterUndo.
-      const target = rewindSecondsAfterUndo(next);
-      if (target !== null) seekTracking(target);
+      // The playhead stays where it is. Whatever the undo reopened is behind
+      // or ahead of it; either way it is listed in the panel, and a question
+      // behind the playhead never fires on its own.
+      setAsking(null);
       setPlaying(false);
       videoRef.current?.pause();
       setNotice("Last decision undone.");
     } catch (error) {
       setNotice(errorMessage(error, "That could not be undone."));
     }
-  }, [applyChain, recordingId, seekTracking, undo]);
+  }, [applyChain, recordingId, undo]);
 
   /* ---------------- rendering ---------------- */
 
   const candidates: StageCandidate[] = useMemo(() => {
     if (!bundle) return [];
-    return candidatesAtFrame(bundle, chain, currentFrame).map((candidate) => ({
+    return candidatesAtFrame(bundle, chain, currentFrame, 2, asking).map((candidate) => ({
       id: candidate.id,
       label: candidate.mine ? `${candidate.label} (you)` : candidate.suspect ? "Crossed you here" : candidate.label,
       box: candidate.box,
       overlap: candidate.suspect,
     }));
-  }, [bundle, chain, currentFrame]);
+  }, [asking, bundle, chain, currentFrame]);
 
   /**
    * Pick by the number drawn on the box.
@@ -507,6 +550,10 @@ export default function ClaimChainPage() {
       : []),
     [chain],
   );
+  const gaps = useMemo(
+    () => (chain && bundle ? gapsIn(chain.chain, chain.frameRate, bundle.duration) : []),
+    [bundle, chain],
+  );
 
   useEffect(() => {
     if (!authLoading && (!user || isGuest)) setLocation("/login");
@@ -525,8 +572,27 @@ export default function ClaimChainPage() {
     );
   }
 
-  const question = questionFor(chain);
-  const stop = chain ? stopSeconds(chain) : null;
+  const question = questionFor(asking);
+  const ahead = nextQuestionAfter(chain, currentFrame);
+  const behind = questionsBehind(chain, currentFrame);
+  const stop = chain && ahead ? ahead.frame / Math.max(chain.frameRate, 0.001) : null;
+  const atEnd = currentTime >= bundle.duration - END_OF_RECORDING_SECONDS;
+  /*
+   * "I finished the segment and nothing happened. What should happen?"
+   *
+   * This. At the end of the recording -- or anywhere, once nothing is left to
+   * check ahead -- the page says where the claim stands: whether it counts,
+   * what is still unanswered, and every hole that can be gone back to and
+   * filled. Before this the panel at the end read "Find yourself", as if
+   * nothing had happened at all.
+   */
+  const showSummary = Boolean(chain?.chain.length)
+    && (atEnd ? stage !== "asking" : stage === "following" && ahead === null);
+  const summaryHeading = chain?.completed
+    ? "This counts as your match"
+    : atEnd
+      ? "End of the recording"
+      : "Nothing left to check ahead";
 
   const panel = (
     <>
@@ -552,7 +618,91 @@ export default function ClaimChainPage() {
         </div>
       )}
 
-      {stage === "identify" && (
+      {showSummary && chain && (
+        <div className="claim-panel" data-testid="claim-chain-summary">
+          <h2>{summaryHeading}</h2>
+          <p className="claim-muted" data-testid="claim-chain-summary-status">
+            {chain.completed
+              ? `${Math.round(chain.coveragePercent)}% of the match is yours, with nothing left to answer. Your clips and stats are ready.`
+              : behind.length
+                ? `${Math.round(chain.coveragePercent)}% claimed. ${behind.length === 1 ? "One moment" : `${behind.length} moments`} still need an answer before this counts.`
+                : `${Math.round(chain.coveragePercent)}% claimed; ${Math.round(chain.requiredCoveragePercent)}% is needed for this to count as your match. Fill the gaps below to get there.`}
+          </p>
+          {behind.length > 0 && (
+            <div className="claim-moment-list" data-testid="claim-chain-open-questions">
+              {behind.slice(0, 6).map((item) => (
+                <button
+                  key={`q-${item.frame}`}
+                  type="button"
+                  className="claim-moment-row"
+                  data-testid={`button-chain-go-question-${item.frame}`}
+                  disabled={busy}
+                  onClick={() => goTo(item.frame)}
+                >
+                  <Flag size={14} />
+                  <span>
+                    <b>{formatClaimTime(item.frame / Math.max(chain.frameRate, 0.001))}</b>
+                    {" · "}{item.kind === "swap" ? "Is this still you?" : "Where did you go?"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {gaps.length > 0 && (
+            <>
+              <p className="claim-muted">
+                {gaps.length === 1 ? "One stretch is not claimed." : `${gaps.length} stretches are not claimed.`}
+                {" "}Go to one, find yourself, and tap — what you have already claimed after it stays.
+              </p>
+              <div className="claim-moment-list" data-testid="claim-chain-gaps">
+                {gaps.slice(0, 8).map((gap) => (
+                  <button
+                    key={`gap-${gap.fromSeconds}`}
+                    type="button"
+                    className="claim-moment-row"
+                    data-testid={`button-chain-fill-gap-${Math.round(gap.fromSeconds)}`}
+                    disabled={busy}
+                    onClick={() => {
+                      setAsking(null);
+                      seekTracking(gap.fromSeconds);
+                      setPlaying(false);
+                      videoRef.current?.pause();
+                    }}
+                  >
+                    <Crosshair size={14} />
+                    <span>
+                      <b>{formatClaimTime(gap.fromSeconds)} – {formatClaimTime(gap.toSeconds)}</b>
+                      {" · "}{Math.round(gap.toSeconds - gap.fromSeconds)} s not claimed
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          <button
+            type="button"
+            className={`claim-button claim-button-wide ${chain.completed ? "claim-button-primary" : "claim-button-secondary"}`}
+            data-testid="button-chain-done"
+            onClick={() => setLocation("/home")}
+          >
+            <Home size={16} /> {chain.completed ? "Done — back to my matches" : "Leave it here for now"}
+          </button>
+          {stage === "following" && (
+            // Still being followed: the override stays within reach.
+            <button
+              type="button"
+              className="claim-button claim-button-secondary claim-button-wide"
+              data-testid="button-chain-not-me"
+              disabled={busy}
+              onClick={() => void onNotMe()}
+            >
+              <UserX size={16} /> That is not me from here
+            </button>
+          )}
+        </div>
+      )}
+
+      {stage === "identify" && !showSummary && (
         <div className="claim-panel" data-testid="claim-chain-identify">
           {chain?.resetByAdmin && !chain.chain.length ? (
             <>
@@ -575,13 +725,16 @@ export default function ClaimChainPage() {
         </div>
       )}
 
-      {stage === "following" && (
+      {stage === "following" && !showSummary && (
         <div className="claim-panel" data-testid="claim-chain-following">
           <h2>Following you</h2>
           <p className="claim-muted">
             {stop === null
-              ? "Nothing left to check — you are claimed to the end of this stretch."
+              ? "Nothing left to check ahead — you are claimed to the end of this stretch."
               : `Playing on. We will stop at ${formatClaimTime(stop)} to check.`}
+            {behind.length > 0 && (
+              ` ${behind.length === 1 ? "One earlier moment" : `${behind.length} earlier moments`} still need an answer.`
+            )}
           </p>
           {stop !== null && (
             <button
@@ -592,6 +745,17 @@ export default function ClaimChainPage() {
               onClick={() => { if (chain) skipToNextCheck(chain, currentTime); }}
             >
               <FastForward size={16} /> Skip to the next check
+            </button>
+          )}
+          {behind.length > 0 && (
+            <button
+              type="button"
+              className="claim-button claim-button-secondary claim-button-wide"
+              data-testid="button-chain-go-back-to-question"
+              disabled={busy}
+              onClick={() => goTo(behind[0].frame)}
+            >
+              <Flag size={16} /> Go back to {formatClaimTime(behind[0].frame / Math.max(chain?.frameRate ?? 1, 0.001))}
             </button>
           )}
           <button
@@ -606,11 +770,34 @@ export default function ClaimChainPage() {
         </div>
       )}
 
-      {stage === "asking" && (
+      {stage === "asking" && asking && (
         <div className="claim-panel" data-testid="claim-chain-asking">
           <h2>Is this still you?</h2>
-          <p className="claim-muted">{question}</p>
-          {canConfirmAtStop(chain) && (
+          <p className="claim-muted">
+            {question}
+            {chain && Math.abs(currentFrame - asking.frame) > chain.frameRate * 1.5 && (
+              ` This is about ${formatClaimTime(asking.frame / Math.max(chain.frameRate, 0.001))}.`
+            )}
+          </p>
+          {chain && Math.abs(currentFrame - asking.frame) > chain.frameRate * 1.5 && (
+            <button
+              type="button"
+              className="claim-button claim-button-secondary claim-button-wide"
+              data-testid="button-chain-show-moment"
+              disabled={busy}
+              onClick={() => {
+                // Look again without answering: the question stays open.
+                const keep = asking;
+                seekTracking(leadInSeconds(chain, keep.frame));
+                setAsking(keep);
+                setPlaying(true);
+                void videoRef.current?.play().catch(() => setPlaying(false));
+              }}
+            >
+              <FastForward size={16} /> Show me that moment again
+            </button>
+          )}
+          {canConfirmAtStop(asking) && (
             <button
               type="button"
               className="claim-button claim-button-primary claim-button-wide"

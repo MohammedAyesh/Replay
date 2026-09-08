@@ -17,4 +17,9 @@ export interface TrackingIdentityPart {
      * @minimum 0
      */
   tapFrame?: number;
+  /**
+     * Frames of this part below this one have been answered on the claim page. Per part, because a chain with a filled gap has no single answered frontier. Not the board's to change; declared so it survives a round trip through the board.
+     * @minimum 0
+     */
+  reviewedThrough?: number;
 }

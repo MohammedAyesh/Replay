@@ -2647,6 +2647,14 @@ components:
             undo can reverse a whole decision. Absent on parts the identity
             board wrote. Declared here so the response validator stops
             stripping it on the way to the board.
+        reviewedThrough:
+          type: integer
+          minimum: 0
+          description: >-
+            Frames of this part below this one have been answered on the
+            claim page. Per part, because a chain with a filled gap has no
+            single answered frontier. Not the board's to change; declared so
+            it survives a round trip through the board.
 
     TrackingIdentity:
       type: object
@@ -3251,9 +3259,27 @@ components:
       type: object
       required:
         [recordingId, identityId, identityMap, name, bundleFingerprint, frameRate,
-         chain, coverageSeconds, coveragePercent, nextUncertainty, labelRecorded,
-         resetByAdmin]
+         chain, coverageSeconds, coveragePercent, nextUncertainty, openQuestions,
+         completed, requiredCoveragePercent, labelRecorded, resetByAdmin]
       properties:
+        openQuestions:
+          type: array
+          description: >-
+            Every question still open on this chain, earliest first (capped).
+            The page stops at the next one AHEAD of the playhead and lists the
+            ones behind it - a filled gap leaves questions behind, and a stop
+            behind the playhead must be shown, never fired.
+          items:
+            $ref: "#/components/schemas/ClaimChainUncertainty"
+        completed:
+          type: boolean
+          description: >-
+            Whether this claim counts as the person's match - enough of it
+            claimed and nothing left to answer. The same rule that awards
+            clips.
+        requiredCoveragePercent:
+          type: number
+          description: The coverage this recording needs for a claim to count.
         resetByAdmin:
           type: boolean
           description: >-

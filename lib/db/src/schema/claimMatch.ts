@@ -139,7 +139,19 @@ export type TrackingIdentity = {
    * part of it. Optional: parts written by the identity board, and every part
    * written before 2026-09-07, do not carry it.
    */
-  parts: Array<{ trackId: string; fromFrame: number; toFrame: number; tapFrame?: number }>;
+  parts: Array<{
+    trackId: string;
+    fromFrame: number;
+    toFrame: number;
+    tapFrame?: number;
+    /**
+     * Frames of this part below this one have been answered on the claim
+     * page. Per part, because a chain with a filled gap has no single
+     * frontier: the fill is behind everything claimed after it. Absent on
+     * parts the board wrote; the claim flow fills it in on load.
+     */
+    reviewedThrough?: number;
+  }>;
   /**
    * Everything before this frame has been answered by the claimant.
    *
@@ -148,8 +160,20 @@ export type TrackingIdentity = {
    * database where that migration never ran, nothing was ever remembered as
    * answered and a "yes, still me" came straight back on the next refetch.
    * Storing it beside the parts makes the flow work on its own.
+   *
+   * Superseded by the per-part `reviewedThrough` marks; still written so a
+   * build that predates them reads the chain the way it always did.
    */
   reviewedThroughFrame?: number;
+  /**
+   * The chain as it was before each of the last few claim-page decisions,
+   * newest last. "Undo the last decision" restores the newest entry. Kept
+   * short: it is rewritten with the manifest on every tap.
+   */
+  history?: Array<{
+    parts: TrackingIdentity["parts"];
+    reviewedThroughFrame?: number;
+  }>;
 };
 
 export type TrackingIdentityDecision = {

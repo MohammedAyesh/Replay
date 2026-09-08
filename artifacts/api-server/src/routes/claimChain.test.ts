@@ -472,7 +472,17 @@ describe("not-me — the human override", () => {
     });
   });
 
+  it("gives up one decision, not what was claimed further on by another", async () => {
+    // t1 was the first tap and t2 the second. "Not me from 0" is about t1;
+    // the tap on t2 at 100 was a separate act of identification and stays.
+    // Truncating the whole future here was the "it erases everything in
+    // front" report, seen from the other button.
+    const res = await request(app).post(url("/not-me")).send({ frame: 0 });
+    expect(res.body.chain).toEqual([{ trackId: "t2", fromFrame: 100, toFrame: 199 }]);
+  });
+
   it("can empty the chain, which removes the person from the board too", async () => {
+    await request(app).post(url("/not-me")).send({ frame: 100 });
     const res = await request(app).post(url("/not-me")).send({ frame: 0 });
     expect(res.body.chain).toEqual([]);
     expect((await storedManifest()).identities ?? []).toEqual([]);
@@ -490,14 +500,17 @@ describe("confirm — because silence is not a label", () => {
     expect(res.body.chain).toEqual([{ trackId: "t1", fromFrame: 0, toFrame: 99 }]);
 
     const after = await storedManifest();
+    const extent = (parts: TrackingIdentity["parts"] | undefined) =>
+      (parts ?? []).map(({ trackId, fromFrame, toFrame }) => ({ trackId, fromFrame, toFrame }));
     // The claim itself is untouched -- a confirm says "carry on", not "this is
     // mine from somewhere else".
-    expect(after.identities?.map((i) => i.parts)).toEqual(before.identities?.map((i) => i.parts));
+    expect(after.identities?.map((i) => extent(i.parts))).toEqual(before.identities?.map((i) => extent(i.parts)));
     expect(after.identities?.map((i) => i.name)).toEqual(before.identities?.map((i) => i.name));
-    // But the answer is now stored. Before this it lived only in
-    // claim_chain_labels, which fails soft to an empty set when that table is
-    // absent -- so on such a database the confirmed crossing came straight
-    // back on the next refetch and the page wedged.
+    // But the answer is now stored, in the part it answers. Before this it
+    // lived only in claim_chain_labels, which fails soft to an empty set when
+    // that table is absent -- so on such a database the confirmed crossing
+    // came straight back on the next refetch and the page wedged.
+    expect(after.identities?.[0]?.parts[0]?.reviewedThrough).toBe(51);
     expect(after.identities?.[0]?.reviewedThroughFrame).toBe(51);
 
     const [label] = await labels();
@@ -692,8 +705,12 @@ describe("responses match the generated contract", () => {
     const rejected = await request(app).post(url("/not-me")).send({ frame: 80 });
     expect(RejectClaimChainFromResponse.parse(rejected.body).chain).toHaveLength(1);
 
+    // Undo walks the decisions back one at a time: the not-me, the confirm,
+    // then the tap. It restores the chain as it was, not "the newest stamp".
     const undone = await request(app).delete(url("/last"));
-    expect(UndoClaimChainLastResponse.parse(undone.body).chain).toEqual([]);
+    expect(UndoClaimChainLastResponse.parse(undone.body).chain).toEqual([{ trackId: "t1", fromFrame: 10, toFrame: 99 }]);
+    expect(UndoClaimChainLastResponse.parse((await request(app).delete(url("/last"))).body).chain).toHaveLength(1);
+    expect(UndoClaimChainLastResponse.parse((await request(app).delete(url("/last"))).body).chain).toEqual([]);
   });
 
   it("accepts the bodies the spec says clients may send", async () => {

@@ -705,6 +705,11 @@ export interface TrackingIdentityPart {
      * @minimum 0
      */
   tapFrame?: number;
+  /**
+     * Frames of this part below this one have been answered on the claim page. Per part, because a chain with a filled gap has no single answered frontier. Not the board's to change; declared so it survives a round trip through the board.
+     * @minimum 0
+     */
+  reviewedThrough?: number;
 }
 
 export interface TrackingIdentity {
@@ -1217,6 +1222,12 @@ export type ClaimChainIdentityMap = {
 };
 
 export interface ClaimChain {
+  /** Every question still open on this chain, earliest first (capped). The page stops at the next one AHEAD of the playhead and lists the ones behind it - a filled gap leaves questions behind, and a stop behind the playhead must be shown, never fired. */
+  openQuestions: ClaimChainUncertainty[];
+  /** Whether this claim counts as the person's match - enough of it claimed and nothing left to answer. The same rule that awards clips. */
+  completed: boolean;
+  /** The coverage this recording needs for a claim to count. */
+  requiredCoveragePercent: number;
   /** True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start. */
   resetByAdmin: boolean;
   recordingId: number;

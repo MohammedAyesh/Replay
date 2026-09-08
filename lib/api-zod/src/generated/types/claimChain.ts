@@ -10,6 +10,12 @@ import type { ClaimChainPart } from './claimChainPart';
 import type { ClaimChainUncertainty } from './claimChainUncertainty';
 
 export interface ClaimChain {
+  /** Every question still open on this chain, earliest first (capped). The page stops at the next one AHEAD of the playhead and lists the ones behind it - a filled gap leaves questions behind, and a stop behind the playhead must be shown, never fired. */
+  openQuestions: ClaimChainUncertainty[];
+  /** Whether this claim counts as the person's match - enough of it claimed and nothing left to answer. The same rule that awards clips. */
+  completed: boolean;
+  /** The coverage this recording needs for a claim to count. */
+  requiredCoveragePercent: number;
   /** True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start. */
   resetByAdmin: boolean;
   recordingId: number;
