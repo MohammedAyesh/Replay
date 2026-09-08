@@ -34,6 +34,7 @@ import {
   recordingTrackingBundlesTable,
   recordingsTable,
   usersTable,
+  type ClaimChainLabelRow,
   type TrackingIdentity,
   type TrackingManifest,
   type TrackingSegmentPayload,
@@ -1005,15 +1006,23 @@ router.get("/admin/recordings/:id/claim-chain-labels", async (req, res): Promise
   const fingerprint = typeof req.query.bundleFingerprint === "string"
     ? req.query.bundleFingerprint
     : null;
-  const rows = await db
-    .select()
-    .from(claimChainLabelsTable)
-    .where(fingerprint
-      ? and(
-        eq(claimChainLabelsTable.recordingId, recordingId),
-        eq(claimChainLabelsTable.bundleFingerprint, fingerprint),
-      )
-      : eq(claimChainLabelsTable.recordingId, recordingId));
+  // Same tolerance as the write and the answered-frame read: a deployment
+  // that has not run the labels migration yet has an empty corpus, not a
+  // broken endpoint.
+  let rows: ClaimChainLabelRow[] = [];
+  try {
+    rows = await db
+      .select()
+      .from(claimChainLabelsTable)
+      .where(fingerprint
+        ? and(
+          eq(claimChainLabelsTable.recordingId, recordingId),
+          eq(claimChainLabelsTable.bundleFingerprint, fingerprint),
+        )
+        : eq(claimChainLabelsTable.recordingId, recordingId));
+  } catch (error) {
+    console.error("[claim-chain] label export read failed", { recordingId, error });
+  }
   res.json({
     recordingId,
     bundleFingerprint: fingerprint,
