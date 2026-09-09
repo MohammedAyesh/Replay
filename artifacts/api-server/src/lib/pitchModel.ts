@@ -24,6 +24,24 @@ import { asRecord, firstNumber, firstString } from "./jsonCoerce";
  */
 export const PITCH_ASPECT_RATIO_TOLERANCE = 0.01;
 
+/**
+ * How far outside the pitch a grid point may legitimately land.
+ *
+ * The grid covers the whole image, and every real camera sees past the
+ * touchlines -- fence, stands, the next pitch, sky. So a correct calibration
+ * has negative and over-length values around its edges, and requiring every
+ * point to sit inside the pitch rejected exactly the models that were right:
+ * cam1's fitted grid has 36% of its points off-pitch, all of them in the rows
+ * above the far touchline where the camera is looking at the fence.
+ *
+ * The bound is kept only to catch nonsense. Ten times the pitch is far beyond
+ * anything a working camera produces while still failing a model fitted in
+ * centimetres by two orders of magnitude, which is the mistake worth catching.
+ * A homography sends the horizon to infinity, so a grid whose top rows cross
+ * it fails here too -- correctly, since those rows are meaningless.
+ */
+export const PITCH_MODEL_BOUND_FACTOR = 10;
+
 export function parsePitchModel(input: unknown): { model?: TrackingPitchModel; error?: string } {
   if (input === undefined || input === null) return {};
   const source = asRecord(input);
@@ -84,13 +102,11 @@ export function parsePitchModel(input: unknown): { model?: TrackingPitchModel; e
       if (
         x === undefined
         || y === undefined
-        || x < 0
-        || x > pitchWidthMetres
-        || y < 0
-        || y > pitchHeightMetres
+        || Math.abs(x) > pitchWidthMetres * PITCH_MODEL_BOUND_FACTOR
+        || Math.abs(y) > pitchHeightMetres * PITCH_MODEL_BOUND_FACTOR
       ) {
         return {
-          error: "Pitch model points must be finite and inside the declared pitch dimensions",
+          error: "Pitch model points must be finite and within a plausible distance of the pitch",
         };
       }
       row.push({ x, y });

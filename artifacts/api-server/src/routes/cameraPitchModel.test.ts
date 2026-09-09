@@ -309,6 +309,34 @@ describe("a camera owns its calibration", () => {
     expect(stored).toBeUndefined();
   });
 
+  it("accepts a grid that sees past the touchline, because every real one does", async () => {
+    // cam1's fitted model has 36% of its points outside the pitch: the rows
+    // above the far touchline are the camera looking at the fence. Requiring
+    // every point to sit inside the pitch rejected precisely the calibrations
+    // that were correct.
+    const seesPastTheLine = await uploadModel({
+      ...pitchModel,
+      grid: [
+        [{ x: -60, y: -30 }, { x: 160, y: -30 }],
+        [{ x: 0, y: 68 }, { x: 105, y: 68 }],
+      ],
+    });
+    expect(seesPastTheLine.status).toBe(200);
+  });
+
+  it("still refuses a grid fitted in the wrong units", async () => {
+    // Centimetres instead of metres: two orders of magnitude out, which is the
+    // mistake the bound is actually there to catch.
+    const centimetres = await uploadModel({
+      ...pitchModel,
+      grid: [
+        [{ x: 0, y: 0 }, { x: 10500, y: 0 }],
+        [{ x: 0, y: 6800 }, { x: 10500, y: 6800 }],
+      ],
+    });
+    expect(centimetres.status).toBe(400);
+  });
+
   it("refuses an admin-shaped request from someone who is not an admin", async () => {
     mockedLocalUser.mockResolvedValue(playerId);
     expect((await uploadModel(pitchModel)).status).toBe(403);
