@@ -1,0 +1,60 @@
+Use free mode.
+
+READ-ONLY TASK. Do not modify, create, or delete any file. Do not change any
+schema. Do not run drizzle-kit push, do not generate migrations, do not write
+to the database. If you find a problem, REPORT it — do not fix it. I will
+decide what to do. If any step is impossible, say so and move on rather than
+working around it.
+
+Context: commit ed549b6 removed the old claim-match flow and moved the pitch
+model from per-recording onto a new per-camera table. Three SQL files in
+lib/db/migrations were run by hand against the development database: 0025
+(cameras), 0026 (drop claim_match_corrections), 0024 (claim_chain_labels).
+Verify that the database and the code actually agree. Report findings as a
+checklist with PASS / FAIL / UNKNOWN per item.
+
+1. SCHEMA — run these against $DATABASE_URL and report the raw results:
+   a. \d cameras   — expect columns: id (text, primary key), name (text not
+      null), pitch_model (jsonb, nullable), pitch_model_updated_at
+      (timestamptz), pitch_model_updated_by (integer), created_at, updated_at.
+   b. select to_regclass('claim_match_corrections');  — expect NULL. Any
+      non-null result is a FAIL: the table should be gone.
+   c. \d claim_chain_labels  — expect the table plus three indexes named
+      claim_chain_labels_recording_idx, claim_chain_labels_user_idx,
+      claim_chain_labels_bundle_idx.
+   d. select to_regclass(t) from unnest(array['claim_match_identity_bindings',
+      'claim_match_progress','claim_match_off_pitch_spans',
+      'recording_tracking_bundles','recording_tracking_segments']) t;
+      — all five must still exist. Any NULL is a FAIL.
+
+2. DATA — report the rows, do not change them:
+   a. select id, name, coalesce(camera_id,'(none)') as camera from fields
+      order by id;
+   b. select id, name, pitch_model is not null as has_model,
+      pitch_model_updated_at from cameras order by id;
+   c. select count(*) from fields
+      where name ~ '^(Player stats|Off-pitch test) field [0-9]+$';
+      — expect 0. Non-zero means leftover test fixtures.
+
+3. CODE — read these files, report what you find, change nothing:
+   a. artifacts/api-server/src/routes/cameras.ts exists and defines
+      GET /admin/cameras, PUT /admin/cameras/:id/pitch-model,
+      DELETE /admin/cameras/:id/pitch-model.
+   b. artifacts/api-server/src/routes/index.ts imports camerasRouter AND calls
+      router.use(camerasRouter). Both, not just the import.
+   c. grep the whole repo for claimMatchCorrectionsTable and
+      claim_match_corrections — expect hits ONLY in lib/db/migrations/*.sql.
+      A hit in src/ is a FAIL.
+   d. artifacts/soccerwatch/src/pages/claim-match.tsx does NOT exist, and
+      App.tsx has routes for /claim/:id and /claim/demo and none for
+      /claim-match/.
+   e. git log --oneline -3  — report what HEAD actually is.
+
+4. RUNTIME — only if the dev server is already running; do not start, stop or
+   restart it:
+   curl -s -o /dev/null -w "%{http_code}" localhost:$PORT/api/admin/cameras
+   403 = route registered (PASS). 404 = server is running older code (FAIL).
+   000 = nothing listening; report UNKNOWN rather than starting anything.
+
+Finish with a plain summary: which items passed, which failed, and for each
+failure the exact evidence. Make no changes of any kind.
