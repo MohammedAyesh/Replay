@@ -601,17 +601,13 @@ export function parseUploadedBundleDetailed(input: unknown): { upload: UploadBun
   if (suppliedFrameRate === undefined) return { upload: null, error: "Manifest frame rate is required" };
   if (suppliedWidth === undefined) return { upload: null, error: "Manifest width is required" };
   if (suppliedHeight === undefined) return { upload: null, error: "Manifest height is required" };
-  const pitchModel = parsePitchModel(
-    rawMetadata.pitchModel
-      ?? rawMetadata.pitch_model
-      ?? nestedMetadata.pitchModel
-      ?? nestedMetadata.pitch_model,
-  );
-  if (pitchModel.error) return { upload: null, error: pitchModel.error };
-  if (pitchModel.model) {
-    const framingError = pitchModelFramingError(pitchModel.model, suppliedWidth, suppliedHeight);
-    if (framingError) return { upload: null, error: framingError };
-  }
+  // A pitch model in an uploaded bundle is ignored, not validated.
+  //
+  // The calibration belongs to the camera now and is attached at read time,
+  // so a copy stored here would be overwritten on the way out. Validating one
+  // meant a bundle could be refused over a field nothing would ever read --
+  // which is what happened: the fitter on vps1 emits a bare grid with no
+  // calibrationId, and every upload failed on it.
   const rawSegments = Array.isArray(rawMetadata.segments) ? rawMetadata.segments : [];
   if (rawSegments.length > 0) {
     const segments: TrackingSegmentPayload[] = [];
@@ -640,7 +636,6 @@ export function parseUploadedBundleDetailed(input: unknown): { upload: UploadBun
         frameCount: Math.max(1, Math.round(firstNumber(rawMetadata.frameCount, rawMetadata.frames) ?? (segments.at(-1)?.endFrame ?? 0) + 1)),
         duration: Math.max(firstNumber(rawMetadata.duration) ?? 0, segments.at(-1)?.endSeconds ?? 0) || 1,
         matchOffset: firstNumber(rawMetadata.matchOffset, rawMetadata.match_offset) ?? 0,
-         ...(pitchModel.model ? { pitchModel: pitchModel.model } : {}),
         ...(sanitizeUploadedProvenance(rawMetadata.provenance)
           ? { provenance: sanitizeUploadedProvenance(rawMetadata.provenance) }
           : {}),
@@ -684,7 +679,6 @@ export function parseUploadedBundleDetailed(input: unknown): { upload: UploadBun
       frameCount: Math.max(1, Math.round(firstNumber(source.frameCount, source.frames) ?? firstNumber(sourceMeta.frameCount) ?? segment.endFrame + 1)),
       duration: firstNumber(source.duration) ?? firstNumber(sourceMeta.duration) ?? segment.endSeconds,
       matchOffset: firstNumber(source.matchOffset, source.match_offset) ?? 0,
-       ...(pitchModel.model ? { pitchModel: pitchModel.model } : {}),
       videoStartSeconds: Math.max(0, firstNumber(
         source.videoStartSeconds, source.video_start_seconds, source.videoOffset,
       ) ?? 0),
@@ -739,12 +733,13 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
   if (zipFrameRate === undefined) return { upload: null, error: "Manifest frame rate is required" };
   if (zipWidth === undefined) return { upload: null, error: "Manifest width is required" };
   if (zipHeight === undefined) return { upload: null, error: "Manifest height is required" };
-  const pitchModel = parsePitchModel(rawManifest.pitchModel ?? rawManifest.pitch_model);
-  if (pitchModel.error) return { upload: null, error: pitchModel.error };
-  if (pitchModel.model) {
-    const framingError = pitchModelFramingError(pitchModel.model, zipWidth, zipHeight);
-    if (framingError) return { upload: null, error: framingError };
-  }
+  // A pitch model in an uploaded bundle is ignored, not validated.
+  //
+  // The calibration belongs to the camera now and is attached at read time,
+  // so a copy stored here would be overwritten on the way out. Validating one
+  // meant a bundle could be refused over a field nothing would ever read --
+  // which is what happened: the fitter on vps1 emits a bare grid with no
+  // calibrationId, and every upload failed on it.
   const rawSegments = Array.isArray(rawManifest.segments) ? rawManifest.segments : [];
   if (rawSegments.length === 0) {
     return { upload: null, error: "The manifest must list at least one segment" };
@@ -862,7 +857,6 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
         frameCount: Math.max(1, Math.round(firstNumber(rawManifest.frameCount, rawManifest.frames) ?? segments.at(-1)!.endFrame + 1)),
         duration: Math.max(firstNumber(rawManifest.duration) ?? 0, segments.at(-1)!.endSeconds),
         matchOffset: firstNumber(rawManifest.matchOffset, rawManifest.match_offset) ?? 0,
-         ...(pitchModel.model ? { pitchModel: pitchModel.model } : {}),
         ...(sanitizeUploadedProvenance(rawManifest.provenance)
           ? { provenance: sanitizeUploadedProvenance(rawManifest.provenance) }
           : {}),
