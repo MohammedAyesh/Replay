@@ -22,6 +22,7 @@ import { capPlaybackQuality } from "../lib/hlsQuality";
 import { exportClip, canExportVideo, triggerDownload } from "@/lib/exportClip";
 import { saveLocalClip, getLocalClip, listLocalClips, deleteLocalClip, createLocalBlobUrl, revokeLocalBlobUrl, type LocalClipRecord } from "@/lib/localClips";
 import { cn } from "@/lib/utils";
+import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { applyFrameToVideo, frameToVideoStyle, interpolateFrame } from "@/lib/cropFrame";
 import {
   fetchDownloadQuota,
@@ -1154,9 +1155,11 @@ function MatchMomentsTab({
         </motion.div>
         <p className="font-medium text-muted-foreground">{t.myClips.momentsEmpty}</p>
         <p className="mt-1 text-sm text-muted-foreground">{t.myClips.momentsEmptyDesc}</p>
-        <Link href="/claim/demo">
-          <Button variant="outline" className="mt-6">{t.myClips.openMatch}</Button>
-        </Link>
+        {CLAIM_YOUR_MATCH_ENABLED && (
+          <Link href="/claim/demo">
+            <Button variant="outline" className="mt-6">{t.myClips.openMatch}</Button>
+          </Link>
+        )}
       </motion.div>
     );
   }

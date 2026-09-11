@@ -23,6 +23,7 @@ import {
   shouldShowEmptyStatsCta,
   shouldShowPerMatchHeatmaps,
 } from "@/lib/player-stats";
+import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 
 function getInitials(name: string): string {
   return name
@@ -224,7 +225,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
           loading={statsLoading}
           error={statsError}
           locale={locale}
-          canClaim={shouldShowEmptyStatsCta(profile.id, user?.id, isGuest)}
+          canClaim={CLAIM_YOUR_MATCH_ENABLED && shouldShowEmptyStatsCta(profile.id, user?.id, isGuest)}
         />
       </div>
     </div>

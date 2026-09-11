@@ -27,6 +27,7 @@ import Hls from "hls.js";
 import { capPlaybackQuality } from "../lib/hlsQuality";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import {
   DEFAULT_SRC_ASPECT,
   OUT_ASPECT,
@@ -385,7 +386,7 @@ export default function FieldDetail() {
   const guid = params?.id ?? "";
   const { t, locale } = useTranslation();
   const { user, isGuest } = useAuth();
-  const canClaim = Boolean(user) && !isGuest;
+  const canClaim = CLAIM_YOUR_MATCH_ENABLED && Boolean(user) && !isGuest;
 
   const { data: collections } = useGetBunnyCollections({
     query: {
