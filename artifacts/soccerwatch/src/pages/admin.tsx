@@ -5175,8 +5175,18 @@ function RecordingsTab() {
     setImporting(true);
     setImportResult(null);
     try {
-      const data = await apiFetch("/admin/recordings/import", { method: "POST" }) as { imported: number };
-      setImportResult(`Imported ${data.imported} new recording${data.imported !== 1 ? "s" : ""}`);
+      const data = await apiFetch("/admin/recordings/import", { method: "POST" }) as {
+        imported: number;
+        updated: number;
+        deleted: number;
+        warnings?: string[];
+      };
+      const summary = [
+        `Imported ${data.imported} new`,
+        `refreshed ${data.updated}`,
+        `removed ${data.deleted} deleted from Bunny`,
+      ].join(" · ");
+      setImportResult(data.warnings?.length ? `${summary} · Warnings: ${data.warnings.join(" ")}` : summary);
       await load();
     } catch {
       setImportResult("Import failed");
@@ -5245,7 +5255,9 @@ function RecordingsTab() {
       {importResult && (
         <div className={cn(
           "px-3 py-2 rounded-xl text-sm",
-          importResult.includes("failed") ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"
+          importResult.includes("failed") || importResult.includes("Warnings:")
+            ? "bg-amber-500/10 text-amber-300"
+            : "bg-emerald-500/10 text-emerald-400"
         )}>
           {importResult}
         </div>

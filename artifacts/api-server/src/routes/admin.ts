@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, count, and, desc, sql } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable } from "@workspace/db";
+import { eq, count, and, desc, sql, inArray } from "drizzle-orm";
+import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academyRecordingsTable, clipsTable } from "@workspace/db";
 import {
   UpdateAdParams,
   UpdateAdBody,
@@ -845,9 +845,9 @@ router.patch("/admin/recordings/:id", async (req, res): Promise<void> => {
 
 /**
  * POST /admin/recordings/import
- * Pulls all videos from every synced Bunny collection and registers any that
- * are not yet in the recordings table. New entries default to isVisible=false
- * so nothing appears publicly until the admin explicitly enables it.
+ * Reconciles all videos from every synced Bunny collection with the recordings
+ * table. The Bunny video GUID is the durable identity: titles, URLs, dates,
+ * times, and durations are refreshed without changing admin visibility.
  */
 router.post("/admin/recordings/import", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
@@ -857,35 +857,59 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
     res.status(503).json({ error: "Bunny not configured" }); return;
   }
 
-  // Fetch all collections from Bunny
-  const collectionsRes = await fetch(
-    `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/collections?page=1&itemsPerPage=100&orderBy=date`,
-    { headers: { AccessKey: BUNNY_API_KEY, accept: "application/json" } }
-  );
-  if (!collectionsRes.ok) { res.status(502).json({ error: "Bunny API error" }); return; }
+  type BunnyCollection = { guid?: string };
+  type BunnyVideo = { guid?: string; title?: string; length?: number; status?: number };
+  type BunnyPage<T> = { items?: T[]; totalItems?: number; hasMoreItems?: boolean };
 
-  const collectionsData = (await collectionsRes.json()) as { items?: Array<{ guid?: string }> };
-  const collectionGuids = (collectionsData.items ?? []).map((c) => c.guid).filter((g): g is string => typeof g === "string");
+  const bunnyHeaders = { AccessKey: BUNNY_API_KEY, accept: "application/json" };
+  const fetchAllBunnyItems = async <T,>(path: string): Promise<T[] | null> => {
+    const items: T[] = [];
+    for (let page = 1; page <= 1000; page += 1) {
+      const separator = path.includes("?") ? "&" : "?";
+      const response = await fetch(
+        `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/${path}${separator}page=${page}&itemsPerPage=100&orderBy=date`,
+        { headers: bunnyHeaders },
+      );
+      if (!response.ok) return null;
 
-  // Map Bunny collection GUID → DB field
+      const data = (await response.json()) as BunnyPage<T> | T[];
+      const pageItems = Array.isArray(data) ? data : (data.items ?? []);
+      items.push(...pageItems);
+
+      if (
+        pageItems.length < 100
+        || (Array.isArray(data) ? false : data.hasMoreItems === false)
+        || (Array.isArray(data) ? false : typeof data.totalItems === "number" && items.length >= data.totalItems)
+      ) {
+        return items;
+      }
+    }
+    return items;
+  };
+
+  // Fetch the complete remote snapshot before touching the database. A failed
+  // collections request must never turn into a mass local deletion.
+  const collections = await fetchAllBunnyItems<BunnyCollection>("collections");
+  if (!collections) { res.status(502).json({ error: "Bunny collections API error" }); return; }
+
   const dbFields = await db.select().from(fieldsTable);
   const fieldByGuid = new Map(dbFields.filter((f) => f.bunnyGuid).map((f) => [f.bunnyGuid!, f]));
-
-  // Fetch existing recordings; track which ones have empty timeSlots so we can repair them
-  const existingRecordings = await db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl, timeSlot: recordingsTable.timeSlot }).from(recordingsTable);
-  const existingByUrl = new Map(existingRecordings.map((r) => [r.videoUrl, r]));
+  const collectionGuids = new Set(
+    collections.map((collection) => collection.guid).filter((guid): guid is string => typeof guid === "string"),
+  );
 
   /**
    * Parse date and timeSlot from a Bunny video title.
-   * Supports two formats:
-   *   cam{N}_{YYYY-MM-DD}_{HH:MM}[.mp4]   (current format)
-   *   cam{N}_{...}_{YYYYMMDDHHmmss}         (legacy compact format)
+   * Supports the current ISO format and the legacy compact format.
    */
   function parseTitleTimestamp(title: string): { date: string; timeSlot: string } {
-    // Format 1: cam1_2026-08-02_20:19  or  cam1_2026-08-02_20:19.mp4
-    const isoMatch = title.match(/(\d{4}-\d{2}-\d{2})_(\d{2}:\d{2})/);
-    if (isoMatch) return { date: isoMatch[1], timeSlot: isoMatch[2] };
-    // Format 2: any 8 digits immediately followed by 6 digits
+    const isoMatch = title.match(/(\d{4}-\d{2}-\d{2})_(\d{1,2}:\d{2})/);
+    if (isoMatch) {
+      return {
+        date: isoMatch[1],
+        timeSlot: `${isoMatch[2].split(":")[0].padStart(2, "0")}:${isoMatch[2].split(":")[1]}`,
+      };
+    }
     const compactMatch = title.match(/(\d{8})(\d{6})/);
     if (compactMatch) {
       const date = `${compactMatch[1].slice(0, 4)}-${compactMatch[1].slice(4, 6)}-${compactMatch[1].slice(6, 8)}`;
@@ -895,59 +919,157 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
     return { date: new Date().toISOString().slice(0, 10), timeSlot: "" };
   }
 
-  let imported = 0;
-  let updated = 0;
+  function bunnyGuidFromUrl(url: string): string | null {
+    try {
+      const guid = new URL(url).pathname.split("/").filter(Boolean)[0];
+      return guid || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function recordingFromBunny(video: BunnyVideo, fieldId: number) {
+    const guid = video.guid as string;
+    const title = video.title ?? "";
+    const { date, timeSlot } = parseTitleTimestamp(title);
+    const camMatch = title.match(/^(cam\d+)/i);
+    const court = camMatch?.[1] ?? "";
+    const durationSecs = video.length ?? 0;
+    const mins = Math.floor(durationSecs / 60);
+    const secs = durationSecs % 60;
+    return {
+      guid,
+      fieldId,
+      court,
+      date,
+      timeSlot,
+      duration: `${mins}:${String(secs).padStart(2, "0")}`,
+      videoUrl: `https://${BUNNY_CDN_HOSTNAME}/${guid}/playlist.m3u8`,
+    };
+  }
+
+  type RemoteRecording = ReturnType<typeof recordingFromBunny>;
+  const remoteByGuid = new Map<string, RemoteRecording>();
+  const knownRemoteGuids = new Set<string>();
+  const successfullyReadFieldIds = new Set<number>();
+  const warnings: string[] = [];
+
   for (const collectionGuid of collectionGuids) {
     const field = fieldByGuid.get(collectionGuid);
     if (!field) continue; // not synced to a DB field
 
-    const videosRes = await fetch(
-      `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos?collection=${encodeURIComponent(collectionGuid)}&page=1&itemsPerPage=100&orderBy=date`,
-      { headers: { AccessKey: BUNNY_API_KEY, accept: "application/json" } }
+    const videos = await fetchAllBunnyItems<BunnyVideo>(
+      `videos?collection=${encodeURIComponent(collectionGuid)}`,
     );
-    if (!videosRes.ok) continue;
+    if (!videos) {
+      warnings.push(`Could not read Bunny videos for ${field.name || collectionGuid}; existing recordings were kept.`);
+      continue;
+    }
 
-    const videosData = (await videosRes.json()) as { items?: Array<{ guid?: string; title?: string; length?: number; status?: number }> };
-    const videos = (videosData.items ?? []).filter((v) => typeof v.guid === "string" && (v.status === undefined || v.status === 4));
-
+    successfullyReadFieldIds.add(field.id);
     for (const video of videos) {
-      const videoUrl = `https://${BUNNY_CDN_HOSTNAME}/${video.guid}/playlist.m3u8`;
-      const title = video.title ?? "";
-      const { date, timeSlot } = parseTitleTimestamp(title);
-      const camMatch = title.match(/^(cam\d+)/i);
-      const court = camMatch?.[1] ?? "";
-      const durationSecs = video.length ?? 0;
-      const mins = Math.floor(durationSecs / 60);
-      const secs = durationSecs % 60;
-      const duration = `${mins}:${String(secs).padStart(2, "0")}`;
-
-      const existing = existingByUrl.get(videoUrl);
-      if (existing) {
-        // Repair existing records that were imported before the parser was fixed
-        if (!existing.timeSlot && timeSlot) {
-          await db.update(recordingsTable)
-            .set({ date, timeSlot, court, duration })
-            .where(eq(recordingsTable.id, existing.id));
-          updated++;
-        }
-        continue;
+      if (typeof video.guid !== "string") continue;
+      knownRemoteGuids.add(video.guid);
+      if (video.status === undefined || video.status === 4) {
+        remoteByGuid.set(video.guid, recordingFromBunny(video, field.id));
       }
-
-      await db.insert(recordingsTable).values({
-        fieldId: field.id,
-        court,
-        date,
-        timeSlot,
-        duration,
-        videoUrl,
-        isVisible: false,
-      });
-      existingByUrl.set(videoUrl, { id: 0, videoUrl, timeSlot });
-      imported++;
     }
   }
 
-  res.json({ imported, updated });
+  // A field whose Bunny collection disappeared is a confirmed empty source,
+  // unlike a field whose video request failed. It is safe to reconcile its
+  // Bunny-backed recordings as deleted, while preserving non-Bunny/manual rows.
+  const missingCollectionFieldIds = new Set(
+    dbFields
+      .filter((field) => field.bunnyGuid && !collectionGuids.has(field.bunnyGuid))
+      .map((field) => field.id),
+  );
+
+  const existingRecordings = await db
+    .select()
+    .from(recordingsTable);
+  const existingByGuid = new Map<string, typeof existingRecordings>();
+  for (const recording of existingRecordings) {
+    const guid = bunnyGuidFromUrl(recording.videoUrl);
+    if (!guid) continue;
+    const rows = existingByGuid.get(guid) ?? [];
+    rows.push(recording);
+    existingByGuid.set(guid, rows);
+  }
+
+  let imported = 0;
+  let updated = 0;
+  let deleted = 0;
+
+  await db.transaction(async (tx) => {
+    for (const remote of remoteByGuid.values()) {
+      const matches = existingByGuid.get(remote.guid) ?? [];
+      if (matches.length === 0) {
+        await tx.insert(recordingsTable).values({
+          fieldId: remote.fieldId,
+          court: remote.court,
+          date: remote.date,
+          timeSlot: remote.timeSlot,
+          duration: remote.duration,
+          videoUrl: remote.videoUrl,
+          isVisible: false,
+        });
+        imported++;
+        continue;
+      }
+
+      for (const existing of matches) {
+        const changed = existing.fieldId !== remote.fieldId
+          || existing.court !== remote.court
+          || existing.date !== remote.date
+          || existing.timeSlot !== remote.timeSlot
+          || existing.duration !== remote.duration
+          || existing.videoUrl !== remote.videoUrl;
+        if (!changed) continue;
+
+        await tx.update(recordingsTable)
+          .set({
+            fieldId: remote.fieldId,
+            court: remote.court,
+            date: remote.date,
+            timeSlot: remote.timeSlot,
+            duration: remote.duration,
+            videoUrl: remote.videoUrl,
+          })
+          .where(eq(recordingsTable.id, existing.id));
+        updated++;
+      }
+    }
+
+    for (const existing of existingRecordings) {
+      const guid = bunnyGuidFromUrl(existing.videoUrl);
+      if (!guid || knownRemoteGuids.has(guid)) continue;
+      if (!successfullyReadFieldIds.has(existing.fieldId) && !missingCollectionFieldIds.has(existing.fieldId)) continue;
+
+      // clips.recording_id predates cascade deletion. Remove only those
+      // derived clip rows and their join rows before removing the source
+      // recording, so stale Bunny recordings cannot leave broken references.
+      const clipRows = await tx
+        .select({ id: clipsTable.id })
+        .from(clipsTable)
+        .where(eq(clipsTable.recordingId, existing.id));
+      const clipIds = clipRows.map((clip) => clip.id);
+      if (clipIds.length > 0) {
+        await tx.delete(savedClipsTable).where(inArray(savedClipsTable.clipId, clipIds));
+        await tx.delete(likesTable).where(inArray(likesTable.clipId, clipIds));
+        await tx.delete(clipsTable).where(eq(clipsTable.recordingId, existing.id));
+      }
+      await tx.delete(recordingsTable).where(eq(recordingsTable.id, existing.id));
+      deleted++;
+    }
+  });
+
+  res.json({
+    imported,
+    updated,
+    deleted,
+    warnings,
+  });
 });
 
 export default router;
