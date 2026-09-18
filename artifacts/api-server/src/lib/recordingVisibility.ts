@@ -33,9 +33,16 @@ export function matchesRecordingSchedule(
       || !Number.isInteger(endHour)
       || !Number.isInteger(endMinute)
     ) return false;
+    // In the admin UI, 00:00 is used to mean midnight at the end of the
+    // selected date for evening windows such as 20:00–00:00.
+    const startMinutes = startHour * 60 + startMinute;
+    const rawEndMinutes = endHour * 60 + endMinute;
+    const endMinutes = rawEndMinutes === 0 && startMinutes > 0
+      ? 24 * 60
+      : rawEndMinutes;
     return schedule.allowedDate === date
-      && recordingMinutes >= startHour * 60 + startMinute
-      && recordingMinutes < endHour * 60 + endMinute;
+      && recordingMinutes >= startMinutes
+      && recordingMinutes < endMinutes;
   });
 }
 

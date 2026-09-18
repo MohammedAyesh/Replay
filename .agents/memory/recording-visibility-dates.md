@@ -7,4 +7,4 @@ Recording visibility is controlled by per-field entries containing an exact cale
 
 **Why:** Recurring weekday rules could expose the wrong recording dates and did not support scheduling a specific future event.
 
-**How to apply:** Keep server-side and admin preview matching on `allowedDate`, `startTime`, and `endTime`. The public Bunny collection route should parse current ISO-style and legacy compact titles, with imported database rows retained only as compatibility support. The admin Recordings tab should remain calendar-first and should not reintroduce a long recording list or weekday selector.
+**How to apply:** Keep server-side and admin preview matching on `allowedDate`, `startTime`, and `endTime`. Treat `00:00` as the end of the selected date for evening windows such as `20:00–00:00`, in both implementations. The public Bunny collection route should parse current ISO-style and legacy compact titles, with imported database rows retained only as compatibility support. The admin Recordings tab should remain calendar-first and should not reintroduce a long recording list or weekday selector.

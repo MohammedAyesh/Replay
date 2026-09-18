@@ -17,4 +17,14 @@ describe("recording visibility schedules", () => {
     expect(matchesRecordingSchedule("2026-09-02", "19:00", [])).toBe(false);
     expect(matchesRecordingSchedule("2026-09-02", "not-a-time", schedules)).toBe(false);
   });
+
+  it("treats 00:00 as the end of an evening window", () => {
+    const evening = [
+      { allowedDate: "2026-09-17", startTime: "20:00", endTime: "00:00" },
+    ];
+    expect(matchesRecordingSchedule("2026-09-17", "20:00", evening)).toBe(true);
+    expect(matchesRecordingSchedule("2026-09-17", "22:00", evening)).toBe(true);
+    expect(matchesRecordingSchedule("2026-09-17", "23:59", evening)).toBe(true);
+    expect(matchesRecordingSchedule("2026-09-17", "00:00", evening)).toBe(false);
+  });
 });

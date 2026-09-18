@@ -4607,7 +4607,8 @@ function recMatchesSchedules(rec: AdminRecording, schedules: AdminSchedule[]): b
     const sp = s.startTime.split(":");
     const ep = s.endTime.split(":");
     const startMins = Number(sp[0] ?? 0) * 60 + Number(sp[1] ?? 0);
-    const endMins = Number(ep[0] ?? 0) * 60 + Number(ep[1] ?? 0);
+    const rawEndMins = Number(ep[0] ?? 0) * 60 + Number(ep[1] ?? 0);
+    const endMins = rawEndMins === 0 && startMins > 0 ? 24 * 60 : rawEndMins;
     return s.allowedDate === rec.date && recMins >= startMins && recMins < endMins;
   });
 }
