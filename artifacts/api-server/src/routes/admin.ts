@@ -997,6 +997,21 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
     existingByGuid.set(guid, rows);
   }
 
+  // Academy recordings are an explicit join, so importing a recording row
+  // alone is not enough for it to appear on the public academy recordings
+  // screen. A synced Bunny collection maps to a field, and every academy
+  // configured for that field should see the recording. Keep existing manual
+  // links intact; the unique constraint makes this idempotent.
+  const academies = await db
+    .select({ id: academiesTable.id, fieldId: academiesTable.fieldId })
+    .from(academiesTable);
+  const academyIdsByField = new Map<number, number[]>();
+  for (const academy of academies) {
+    const ids = academyIdsByField.get(academy.fieldId) ?? [];
+    ids.push(academy.id);
+    academyIdsByField.set(academy.fieldId, ids);
+  }
+
   let imported = 0;
   let updated = 0;
   let deleted = 0;
@@ -1004,40 +1019,53 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
   await db.transaction(async (tx) => {
     for (const remote of remoteByGuid.values()) {
       const matches = existingByGuid.get(remote.guid) ?? [];
+      const recordingIds: number[] = [];
       if (matches.length === 0) {
-        await tx.insert(recordingsTable).values({
-          fieldId: remote.fieldId,
-          court: remote.court,
-          date: remote.date,
-          timeSlot: remote.timeSlot,
-          duration: remote.duration,
-          videoUrl: remote.videoUrl,
-          isVisible: false,
-        });
-        imported++;
-        continue;
-      }
-
-      for (const existing of matches) {
-        const changed = existing.fieldId !== remote.fieldId
-          || existing.court !== remote.court
-          || existing.date !== remote.date
-          || existing.timeSlot !== remote.timeSlot
-          || existing.duration !== remote.duration
-          || existing.videoUrl !== remote.videoUrl;
-        if (!changed) continue;
-
-        await tx.update(recordingsTable)
-          .set({
+        const [inserted] = await tx.insert(recordingsTable).values({
             fieldId: remote.fieldId,
             court: remote.court,
             date: remote.date,
             timeSlot: remote.timeSlot,
             duration: remote.duration,
             videoUrl: remote.videoUrl,
+            isVisible: false,
           })
-          .where(eq(recordingsTable.id, existing.id));
-        updated++;
+          .returning({ id: recordingsTable.id });
+        if (inserted) recordingIds.push(inserted.id);
+        imported++;
+      } else {
+        for (const existing of matches) {
+          recordingIds.push(existing.id);
+          const changed = existing.fieldId !== remote.fieldId
+            || existing.court !== remote.court
+            || existing.date !== remote.date
+            || existing.timeSlot !== remote.timeSlot
+            || existing.duration !== remote.duration
+            || existing.videoUrl !== remote.videoUrl;
+          if (!changed) continue;
+
+          await tx.update(recordingsTable)
+            .set({
+              fieldId: remote.fieldId,
+              court: remote.court,
+              date: remote.date,
+              timeSlot: remote.timeSlot,
+              duration: remote.duration,
+              videoUrl: remote.videoUrl,
+            })
+            .where(eq(recordingsTable.id, existing.id));
+          updated++;
+        }
+      }
+
+      const academyIds = academyIdsByField.get(remote.fieldId) ?? [];
+      for (const recordingId of recordingIds) {
+        for (const academyId of academyIds) {
+          await tx
+            .insert(academyRecordingsTable)
+            .values({ academyId, recordingId })
+            .onConflictDoNothing();
+        }
       }
     }
 
