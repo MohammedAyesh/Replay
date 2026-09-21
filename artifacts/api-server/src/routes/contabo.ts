@@ -69,7 +69,7 @@ const recordingJobs: RecordingJob[] = [];
 
 // ─── Control-server proxy helper ──────────────────────────────────────────────
 
-async function controlFetch(
+export async function controlFetch(
   path: string,
   opts: RequestInit = {},
   timeoutMs = 15_000,

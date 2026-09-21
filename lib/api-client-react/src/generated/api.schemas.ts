@@ -38,6 +38,7 @@ export interface User {
   /** @nullable */
   socialMediaConsentAt?: string | null;
   consentRequired: boolean;
+  ownedFieldIds?: number[];
 }
 
 export interface MediaConsentInput {
@@ -47,6 +48,76 @@ export interface MediaConsentInput {
 
 export interface AuthResponse {
   user: User;
+}
+
+export interface OwnerField {
+  id: number;
+  name: string;
+  cameraId: string;
+  balanceFils: number;
+}
+
+export interface OwnerAvailability { [key: string]: unknown }
+
+export interface OwnerRequestInput {
+  /** @pattern ^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$ */
+  startLocal: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$ */
+  endLocal: string;
+}
+
+export interface OwnerRequest {
+  id: number;
+  startLocal: string;
+  endLocal: string;
+  requestedSeconds: number;
+  status: string;
+  progress: number;
+  /** @nullable */
+  message?: string | null;
+  billableHours: number;
+  amountFils: number;
+  /** @nullable */
+  readyAt: string | null;
+  /** @nullable */
+  shareUrl: string | null;
+  /** @nullable */
+  shareExpiresAt: string | null;
+  /** @nullable */
+  playbackManifestUrl: string | null;
+}
+
+export interface OwnerLinkResult {
+  /** @nullable */
+  shareUrl: string | null;
+  /** @nullable */
+  shareExpiresAt: string | null;
+  revoked: boolean;
+}
+
+export type OwnerLedgerChargesItem = {
+  id: number;
+  startLocal: string;
+  endLocal: string;
+  billableHours: number;
+  amountFils: number;
+};
+
+export type OwnerLedgerPaymentsItem = {
+  id: number;
+  amountFils: number;
+  method: string;
+  /** @nullable */
+  note?: string | null;
+  createdAt: string;
+};
+
+export interface OwnerLedger {
+  charges: OwnerLedgerChargesItem[];
+  payments: OwnerLedgerPaymentsItem[];
+  totalChargedFils: number;
+  paidFils: number;
+  balanceFils: number;
 }
 
 export interface Field {

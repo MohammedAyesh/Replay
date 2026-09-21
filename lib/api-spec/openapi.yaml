@@ -35,6 +35,8 @@ tags:
     description: Soccer academies
   - name: claimMatch
     description: Claim Your Match tracking and player identity
+  - name: owner
+    description: Field owner footage console
 
 paths:
   /healthz:
@@ -107,6 +109,199 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           description: Unauthenticated
+
+  /owner/fields:
+    get:
+      operationId: listOwnerFields
+      tags: [owner]
+      summary: List fields owned by the current user
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Owned fields
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OwnerField"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Owner or admin access required
+
+  /owner/fields/{fieldId}/availability/{date}:
+    get:
+      operationId: getOwnerFieldAvailability
+      tags: [owner]
+      summary: Get camera availability for an owned field and date
+      security:
+        - clerkSession: []
+      parameters:
+        - name: fieldId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+      responses:
+        "200":
+          description: Camera availability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerAvailability"
+        "400":
+          description: Invalid field or date
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Field or camera not found
+        "503":
+          description: Camera unreachable
+
+  /owner/fields/{fieldId}/requests:
+    get:
+      operationId: listOwnerFieldRequests
+      tags: [owner]
+      summary: List footage requests for an owned field
+      security:
+        - clerkSession: []
+      parameters:
+        - name: fieldId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Footage requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OwnerRequest"
+        "400":
+          description: Invalid field id
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Field not found
+    post:
+      operationId: createOwnerFieldRequest
+      tags: [owner]
+      summary: Request footage from an owned field
+      security:
+        - clerkSession: []
+      parameters:
+        - name: fieldId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerRequestInput"
+      responses:
+        "201":
+          description: Footage request created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerRequest"
+        "400":
+          description: Invalid request
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Field not found
+        "503":
+          description: Camera unavailable
+
+  /owner/requests/{id}/revoke-link:
+    post:
+      operationId: revokeOwnerRequestLink
+      tags: [owner]
+      summary: Revoke a footage share link
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Link revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerLinkResult"
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Request not found
+
+  /owner/requests/{id}/new-link:
+    post:
+      operationId: createOwnerRequestLink
+      tags: [owner]
+      summary: Create a new footage share link
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: New link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerLinkResult"
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Request not found
+
+  /owner/fields/{fieldId}/ledger:
+    get:
+      operationId: getOwnerFieldLedger
+      tags: [owner]
+      summary: Get charges, payments, and balance for an owned field
+      security:
+        - clerkSession: []
+      parameters:
+        - name: fieldId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Field ledger
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerLedger"
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Field not found
 
   /account/consents:
     patch:
@@ -1613,6 +1808,10 @@ components:
           format: date-time
         consentRequired:
           type: boolean
+        ownedFieldIds:
+          type: array
+          items:
+            type: integer
 
     MediaConsentInput:
       type: object
@@ -1629,6 +1828,126 @@ components:
       properties:
         user:
           $ref: "#/components/schemas/User"
+
+    OwnerField:
+      type: object
+      required: [id, name, cameraId, balanceFils]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        cameraId:
+          type: string
+        balanceFils:
+          type: integer
+
+    OwnerAvailability:
+      type: object
+      additionalProperties: true
+
+    OwnerRequestInput:
+      type: object
+      required: [startLocal, endLocal]
+      properties:
+        startLocal:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$'
+        endLocal:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$'
+
+    OwnerRequest:
+      type: object
+      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl]
+      properties:
+        id:
+          type: integer
+        startLocal:
+          type: string
+        endLocal:
+          type: string
+        requestedSeconds:
+          type: integer
+        status:
+          type: string
+        progress:
+          type: integer
+        message:
+          type: ["string", "null"]
+        billableHours:
+          type: integer
+        amountFils:
+          type: integer
+        readyAt:
+          type: ["string", "null"]
+          format: date-time
+        shareUrl:
+          type: ["string", "null"]
+          format: uri
+        shareExpiresAt:
+          type: ["string", "null"]
+          format: date-time
+        playbackManifestUrl:
+          type: ["string", "null"]
+          format: uri
+
+    OwnerLinkResult:
+      type: object
+      required: [shareUrl, shareExpiresAt, revoked]
+      properties:
+        shareUrl:
+          type: ["string", "null"]
+          format: uri
+        shareExpiresAt:
+          type: ["string", "null"]
+          format: date-time
+        revoked:
+          type: boolean
+
+    OwnerLedger:
+      type: object
+      required: [charges, payments, totalChargedFils, paidFils, balanceFils]
+      properties:
+        charges:
+          type: array
+          items:
+            type: object
+            required: [id, startLocal, endLocal, billableHours, amountFils]
+            properties:
+              id:
+                type: integer
+              startLocal:
+                type: string
+              endLocal:
+                type: string
+              billableHours:
+                type: integer
+              amountFils:
+                type: integer
+        payments:
+          type: array
+          items:
+            type: object
+            required: [id, amountFils, method, createdAt]
+            properties:
+              id:
+                type: integer
+              amountFils:
+                type: integer
+              method:
+                type: string
+              note:
+                type: ["string", "null"]
+              createdAt:
+                type: string
+                format: date-time
+        totalChargedFils:
+          type: integer
+        paidFils:
+          type: integer
+        balanceFils:
+          type: integer
 
     Field:
       type: object

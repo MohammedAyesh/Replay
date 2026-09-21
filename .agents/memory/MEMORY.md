@@ -27,3 +27,4 @@
 - [Claim identity ownership](identity-binding-ownership.md) — confirmed bindings own exact vouched fragments; unvouched regrouping is allowed, disjoint claims split, and overlaps remain disputes.
 - [Export rendition geometry](export-rendition-geometry.md) — select Bunny variants by declared 3840×1080 pixels, never folder labels or adaptive master fallback.
 - [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.
+- [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.

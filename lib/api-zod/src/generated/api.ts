@@ -41,7 +41,8 @@ export const LoginResponse = zod.object({
   "recordingConsentAt": zod.coerce.date().nullish(),
   "socialMediaConsent": zod.boolean(),
   "socialMediaConsentAt": zod.coerce.date().nullish(),
-  "consentRequired": zod.boolean()
+  "consentRequired": zod.boolean(),
+  "ownedFieldIds": zod.array(zod.number()).optional()
 })
 })
 
@@ -66,7 +67,8 @@ export const LoginAsGuestResponse = zod.object({
   "recordingConsentAt": zod.coerce.date().nullish(),
   "socialMediaConsent": zod.boolean(),
   "socialMediaConsentAt": zod.coerce.date().nullish(),
-  "consentRequired": zod.boolean()
+  "consentRequired": zod.boolean(),
+  "ownedFieldIds": zod.array(zod.number()).optional()
 })
 })
 
@@ -96,7 +98,148 @@ export const GetMeResponse = zod.object({
   "recordingConsentAt": zod.coerce.date().nullish(),
   "socialMediaConsent": zod.boolean(),
   "socialMediaConsentAt": zod.coerce.date().nullish(),
-  "consentRequired": zod.boolean()
+  "consentRequired": zod.boolean(),
+  "ownedFieldIds": zod.array(zod.number()).optional()
+})
+
+
+/**
+ * @summary List fields owned by the current user
+ */
+export const ListOwnerFieldsResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "cameraId": zod.string(),
+  "balanceFils": zod.number()
+})
+export const ListOwnerFieldsResponse = zod.array(ListOwnerFieldsResponseItem)
+
+
+/**
+ * @summary Get camera availability for an owned field and date
+ */
+export const getOwnerFieldAvailabilityPathDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetOwnerFieldAvailabilityParams = zod.object({
+  "fieldId": zod.coerce.number(),
+  "date": zod.coerce.string().regex(getOwnerFieldAvailabilityPathDateRegExp)
+})
+
+export const GetOwnerFieldAvailabilityResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary List footage requests for an owned field
+ */
+export const ListOwnerFieldRequestsParams = zod.object({
+  "fieldId": zod.coerce.number()
+})
+
+export const ListOwnerFieldRequestsResponseItem = zod.object({
+  "id": zod.number(),
+  "startLocal": zod.string(),
+  "endLocal": zod.string(),
+  "requestedSeconds": zod.number(),
+  "status": zod.string(),
+  "progress": zod.number(),
+  "message": zod.string().nullish(),
+  "billableHours": zod.number(),
+  "amountFils": zod.number(),
+  "readyAt": zod.coerce.date().nullable(),
+  "shareUrl": zod.string().url().nullable(),
+  "shareExpiresAt": zod.coerce.date().nullable(),
+  "playbackManifestUrl": zod.string().url().nullable()
+})
+export const ListOwnerFieldRequestsResponse = zod.array(ListOwnerFieldRequestsResponseItem)
+
+
+/**
+ * @summary Request footage from an owned field
+ */
+export const CreateOwnerFieldRequestParams = zod.object({
+  "fieldId": zod.coerce.number()
+})
+
+export const createOwnerFieldRequestBodyStartLocalRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$');
+export const createOwnerFieldRequestBodyEndLocalRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$');
+
+
+export const CreateOwnerFieldRequestBody = zod.object({
+  "startLocal": zod.string().regex(createOwnerFieldRequestBodyStartLocalRegExp),
+  "endLocal": zod.string().regex(createOwnerFieldRequestBodyEndLocalRegExp)
+})
+
+export const CreateOwnerFieldRequestResponse = zod.object({
+  "id": zod.number(),
+  "startLocal": zod.string(),
+  "endLocal": zod.string(),
+  "requestedSeconds": zod.number(),
+  "status": zod.string(),
+  "progress": zod.number(),
+  "message": zod.string().nullish(),
+  "billableHours": zod.number(),
+  "amountFils": zod.number(),
+  "readyAt": zod.coerce.date().nullable(),
+  "shareUrl": zod.string().url().nullable(),
+  "shareExpiresAt": zod.coerce.date().nullable(),
+  "playbackManifestUrl": zod.string().url().nullable()
+})
+
+
+/**
+ * @summary Revoke a footage share link
+ */
+export const RevokeOwnerRequestLinkParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RevokeOwnerRequestLinkResponse = zod.object({
+  "shareUrl": zod.string().url().nullable(),
+  "shareExpiresAt": zod.coerce.date().nullable(),
+  "revoked": zod.boolean()
+})
+
+
+/**
+ * @summary Create a new footage share link
+ */
+export const CreateOwnerRequestLinkParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const CreateOwnerRequestLinkResponse = zod.object({
+  "shareUrl": zod.string().url().nullable(),
+  "shareExpiresAt": zod.coerce.date().nullable(),
+  "revoked": zod.boolean()
+})
+
+
+/**
+ * @summary Get charges, payments, and balance for an owned field
+ */
+export const GetOwnerFieldLedgerParams = zod.object({
+  "fieldId": zod.coerce.number()
+})
+
+export const GetOwnerFieldLedgerResponse = zod.object({
+  "charges": zod.array(zod.object({
+  "id": zod.number(),
+  "startLocal": zod.string(),
+  "endLocal": zod.string(),
+  "billableHours": zod.number(),
+  "amountFils": zod.number()
+})),
+  "payments": zod.array(zod.object({
+  "id": zod.number(),
+  "amountFils": zod.number(),
+  "method": zod.string(),
+  "note": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
+})),
+  "totalChargedFils": zod.number(),
+  "paidFils": zod.number(),
+  "balanceFils": zod.number()
 })
 
 
@@ -124,7 +267,8 @@ export const UpdateConsentsResponse = zod.object({
   "recordingConsentAt": zod.coerce.date().nullish(),
   "socialMediaConsent": zod.boolean(),
   "socialMediaConsentAt": zod.coerce.date().nullish(),
-  "consentRequired": zod.boolean()
+  "consentRequired": zod.boolean(),
+  "ownedFieldIds": zod.array(zod.number()).optional()
 })
 
 
@@ -1591,7 +1735,8 @@ export const UpdateLocaleResponse = zod.object({
   "recordingConsentAt": zod.coerce.date().nullish(),
   "socialMediaConsent": zod.boolean(),
   "socialMediaConsentAt": zod.coerce.date().nullish(),
-  "consentRequired": zod.boolean()
+  "consentRequired": zod.boolean(),
+  "ownedFieldIds": zod.array(zod.number()).optional()
 })
 
 
@@ -1627,7 +1772,8 @@ export const UpdateProfileResponse = zod.object({
   "recordingConsentAt": zod.coerce.date().nullish(),
   "socialMediaConsent": zod.boolean(),
   "socialMediaConsentAt": zod.coerce.date().nullish(),
-  "consentRequired": zod.boolean()
+  "consentRequired": zod.boolean(),
+  "ownedFieldIds": zod.array(zod.number()).optional()
 })
 
 

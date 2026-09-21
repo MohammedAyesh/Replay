@@ -30,4 +30,5 @@ export interface User {
   /** @nullable */
   socialMediaConsentAt?: Date | null;
   consentRequired: boolean;
+  ownedFieldIds?: number[];
 }

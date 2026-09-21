@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import crypto from "crypto";
 import { eq } from "drizzle-orm";
-import { db, usersTable, academiesTable } from "@workspace/db";
+import { db, usersTable, academiesTable, fieldOwnersTable } from "@workspace/db";
 import { GetMeResponse, LoginAsGuestResponse } from "@workspace/api-zod";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { GUEST_COOKIE_OPTIONS } from "../lib/cookies";
@@ -24,6 +24,11 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     liveAccess = academy?.liveAccess ?? false;
   }
 
+  const ownedFields = await db
+    .select({ fieldId: fieldOwnersTable.fieldId })
+    .from(fieldOwnersTable)
+    .where(eq(fieldOwnersTable.userId, user.id));
+
   res.setHeader("Cache-Control", "no-store");
   res.json(GetMeResponse.parse({
     id: user.id,
@@ -44,6 +49,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     consentRequired: user.consentRequired,
     academyId: user.academyId ?? null,
     liveAccess,
+    ownedFieldIds: ownedFields.map(({ fieldId }) => fieldId),
   }));
 });
 

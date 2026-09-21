@@ -61,6 +61,12 @@ import type {
   LocaleInput,
   LoginInput,
   MediaConsentInput,
+  OwnerAvailability,
+  OwnerField,
+  OwnerLedger,
+  OwnerLinkResult,
+  OwnerRequest,
+  OwnerRequestInput,
   PatchAdInput,
   ProfileInput,
   PublicPlayerStats,
@@ -458,6 +464,530 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Err
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetMeQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListOwnerFieldsUrl = () => {
+
+
+
+
+  return `/api/owner/fields`
+}
+
+/**
+ * @summary List fields owned by the current user
+ */
+export const listOwnerFields = async ( options?: RequestInit): Promise<OwnerField[]> => {
+
+  return customFetch<OwnerField[]>(getListOwnerFieldsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListOwnerFieldsQueryKey = () => {
+    return [
+    `/api/owner/fields`
+    ] as const;
+    }
+
+
+export const getListOwnerFieldsQueryOptions = <TData = Awaited<ReturnType<typeof listOwnerFields>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listOwnerFields>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListOwnerFieldsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listOwnerFields>>> = ({ signal }) => listOwnerFields({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listOwnerFields>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListOwnerFieldsQueryResult = NonNullable<Awaited<ReturnType<typeof listOwnerFields>>>
+export type ListOwnerFieldsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List fields owned by the current user
+ */
+
+export function useListOwnerFields<TData = Awaited<ReturnType<typeof listOwnerFields>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listOwnerFields>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListOwnerFieldsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetOwnerFieldAvailabilityUrl = (fieldId: number,
+    date: string,) => {
+
+
+
+
+  return `/api/owner/fields/${fieldId}/availability/${date}`
+}
+
+/**
+ * @summary Get camera availability for an owned field and date
+ */
+export const getOwnerFieldAvailability = async (fieldId: number,
+    date: string, options?: RequestInit): Promise<OwnerAvailability> => {
+
+  return customFetch<OwnerAvailability>(getGetOwnerFieldAvailabilityUrl(fieldId,date),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetOwnerFieldAvailabilityQueryKey = (fieldId: number,
+    date: string,) => {
+    return [
+    `/api/owner/fields/${fieldId}/availability/${date}`
+    ] as const;
+    }
+
+
+export const getGetOwnerFieldAvailabilityQueryOptions = <TData = Awaited<ReturnType<typeof getOwnerFieldAvailability>>, TError = ErrorType<void>>(fieldId: number,
+    date: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOwnerFieldAvailability>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOwnerFieldAvailabilityQueryKey(fieldId,date);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOwnerFieldAvailability>>> = ({ signal }) => getOwnerFieldAvailability(fieldId,date, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: fieldId !== null && fieldId !== undefined && date !== null && date !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOwnerFieldAvailability>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetOwnerFieldAvailabilityQueryResult = NonNullable<Awaited<ReturnType<typeof getOwnerFieldAvailability>>>
+export type GetOwnerFieldAvailabilityQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get camera availability for an owned field and date
+ */
+
+export function useGetOwnerFieldAvailability<TData = Awaited<ReturnType<typeof getOwnerFieldAvailability>>, TError = ErrorType<void>>(
+ fieldId: number,
+    date: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOwnerFieldAvailability>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetOwnerFieldAvailabilityQueryOptions(fieldId,date,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListOwnerFieldRequestsUrl = (fieldId: number,) => {
+
+
+
+
+  return `/api/owner/fields/${fieldId}/requests`
+}
+
+/**
+ * @summary List footage requests for an owned field
+ */
+export const listOwnerFieldRequests = async (fieldId: number, options?: RequestInit): Promise<OwnerRequest[]> => {
+
+  return customFetch<OwnerRequest[]>(getListOwnerFieldRequestsUrl(fieldId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListOwnerFieldRequestsQueryKey = (fieldId: number,) => {
+    return [
+    `/api/owner/fields/${fieldId}/requests`
+    ] as const;
+    }
+
+
+export const getListOwnerFieldRequestsQueryOptions = <TData = Awaited<ReturnType<typeof listOwnerFieldRequests>>, TError = ErrorType<void>>(fieldId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listOwnerFieldRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListOwnerFieldRequestsQueryKey(fieldId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listOwnerFieldRequests>>> = ({ signal }) => listOwnerFieldRequests(fieldId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: fieldId !== null && fieldId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listOwnerFieldRequests>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListOwnerFieldRequestsQueryResult = NonNullable<Awaited<ReturnType<typeof listOwnerFieldRequests>>>
+export type ListOwnerFieldRequestsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List footage requests for an owned field
+ */
+
+export function useListOwnerFieldRequests<TData = Awaited<ReturnType<typeof listOwnerFieldRequests>>, TError = ErrorType<void>>(
+ fieldId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listOwnerFieldRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListOwnerFieldRequestsQueryOptions(fieldId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateOwnerFieldRequestUrl = (fieldId: number,) => {
+
+
+
+
+  return `/api/owner/fields/${fieldId}/requests`
+}
+
+/**
+ * @summary Request footage from an owned field
+ */
+export const createOwnerFieldRequest = async (fieldId: number,
+    ownerRequestInput: OwnerRequestInput, options?: RequestInit): Promise<OwnerRequest> => {
+
+  return customFetch<OwnerRequest>(getCreateOwnerFieldRequestUrl(fieldId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(ownerRequestInput)
+  }
+);}
+
+
+
+
+export const getCreateOwnerFieldRequestMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOwnerFieldRequest>>, TError,{fieldId: number;data: BodyType<OwnerRequestInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createOwnerFieldRequest>>, TError,{fieldId: number;data: BodyType<OwnerRequestInput>}, TContext> => {
+
+const mutationKey = ['createOwnerFieldRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createOwnerFieldRequest>>, {fieldId: number;data: BodyType<OwnerRequestInput>}> = (props) => {
+          const {fieldId,data} = props ?? {};
+
+          return  createOwnerFieldRequest(fieldId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateOwnerFieldRequestMutationResult = NonNullable<Awaited<ReturnType<typeof createOwnerFieldRequest>>>
+    export type CreateOwnerFieldRequestMutationBody = BodyType<OwnerRequestInput>
+    export type CreateOwnerFieldRequestMutationError = ErrorType<void>
+
+    /**
+ * @summary Request footage from an owned field
+ */
+export const useCreateOwnerFieldRequest = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOwnerFieldRequest>>, TError,{fieldId: number;data: BodyType<OwnerRequestInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createOwnerFieldRequest>>,
+        TError,
+        {fieldId: number;data: BodyType<OwnerRequestInput>},
+        TContext
+      > => {
+      return useMutation(getCreateOwnerFieldRequestMutationOptions(options));
+    }
+
+export const getRevokeOwnerRequestLinkUrl = (id: number,) => {
+
+
+
+
+  return `/api/owner/requests/${id}/revoke-link`
+}
+
+/**
+ * @summary Revoke a footage share link
+ */
+export const revokeOwnerRequestLink = async (id: number, options?: RequestInit): Promise<OwnerLinkResult> => {
+
+  return customFetch<OwnerLinkResult>(getRevokeOwnerRequestLinkUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRevokeOwnerRequestLinkMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeOwnerRequestLink>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeOwnerRequestLink>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['revokeOwnerRequestLink'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeOwnerRequestLink>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  revokeOwnerRequestLink(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeOwnerRequestLinkMutationResult = NonNullable<Awaited<ReturnType<typeof revokeOwnerRequestLink>>>
+
+    export type RevokeOwnerRequestLinkMutationError = ErrorType<void>
+
+    /**
+ * @summary Revoke a footage share link
+ */
+export const useRevokeOwnerRequestLink = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeOwnerRequestLink>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof revokeOwnerRequestLink>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getRevokeOwnerRequestLinkMutationOptions(options));
+    }
+
+export const getCreateOwnerRequestLinkUrl = (id: number,) => {
+
+
+
+
+  return `/api/owner/requests/${id}/new-link`
+}
+
+/**
+ * @summary Create a new footage share link
+ */
+export const createOwnerRequestLink = async (id: number, options?: RequestInit): Promise<OwnerLinkResult> => {
+
+  return customFetch<OwnerLinkResult>(getCreateOwnerRequestLinkUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getCreateOwnerRequestLinkMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOwnerRequestLink>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createOwnerRequestLink>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['createOwnerRequestLink'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createOwnerRequestLink>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  createOwnerRequestLink(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateOwnerRequestLinkMutationResult = NonNullable<Awaited<ReturnType<typeof createOwnerRequestLink>>>
+
+    export type CreateOwnerRequestLinkMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a new footage share link
+ */
+export const useCreateOwnerRequestLink = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOwnerRequestLink>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createOwnerRequestLink>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getCreateOwnerRequestLinkMutationOptions(options));
+    }
+
+export const getGetOwnerFieldLedgerUrl = (fieldId: number,) => {
+
+
+
+
+  return `/api/owner/fields/${fieldId}/ledger`
+}
+
+/**
+ * @summary Get charges, payments, and balance for an owned field
+ */
+export const getOwnerFieldLedger = async (fieldId: number, options?: RequestInit): Promise<OwnerLedger> => {
+
+  return customFetch<OwnerLedger>(getGetOwnerFieldLedgerUrl(fieldId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetOwnerFieldLedgerQueryKey = (fieldId: number,) => {
+    return [
+    `/api/owner/fields/${fieldId}/ledger`
+    ] as const;
+    }
+
+
+export const getGetOwnerFieldLedgerQueryOptions = <TData = Awaited<ReturnType<typeof getOwnerFieldLedger>>, TError = ErrorType<void>>(fieldId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOwnerFieldLedger>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOwnerFieldLedgerQueryKey(fieldId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOwnerFieldLedger>>> = ({ signal }) => getOwnerFieldLedger(fieldId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: fieldId !== null && fieldId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOwnerFieldLedger>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetOwnerFieldLedgerQueryResult = NonNullable<Awaited<ReturnType<typeof getOwnerFieldLedger>>>
+export type GetOwnerFieldLedgerQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get charges, payments, and balance for an owned field
+ */
+
+export function useGetOwnerFieldLedger<TData = Awaited<ReturnType<typeof getOwnerFieldLedger>>, TError = ErrorType<void>>(
+ fieldId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOwnerFieldLedger>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetOwnerFieldLedgerQueryOptions(fieldId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

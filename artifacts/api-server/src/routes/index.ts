@@ -28,6 +28,7 @@ import brandingRouter from "./branding";
 import claimOffPitchRouter from "./claimOffPitch";
 import claimChainRouter from "./claimChain";
 import camerasRouter from "./cameras";
+import ownerRouter from "./owner";
 
 const router: IRouter = Router();
 
@@ -60,5 +61,6 @@ router.use(brandingRouter);
 router.use(claimOffPitchRouter);
 router.use(claimChainRouter);
 router.use(camerasRouter);
+router.use(ownerRouter);
 
 export default router;
