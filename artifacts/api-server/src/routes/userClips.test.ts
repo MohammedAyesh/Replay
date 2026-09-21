@@ -238,6 +238,19 @@ describe("POST /api/user-clips", () => {
     });
   });
 
+  it("creates an owner-share clip without a client-supplied videoId", async () => {
+    mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+
+    const { videoId: _videoId, ...ownerShareBody } = SAMPLE_CLIP_BODY;
+    const res = await request(app)
+      .post("/api/user-clips")
+      .send({ ...ownerShareBody, ownerShareToken: OWNER_SHARE_TOKEN });
+
+    expect(res.status).toBe(201);
+    expect(res.body.videoId).toBe(`owner-video-${TEST_TAG}`);
+    expect(res.body.footageRequestId).toBe(ownerRequestIds[0]);
+  });
+
   it.each([
     ["revoked", REVOKED_SHARE_TOKEN],
     ["expired", EXPIRED_SHARE_TOKEN],

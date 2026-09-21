@@ -33,6 +33,7 @@ import IdentityBoard from "@/pages/identity-board";
 import Owner from "@/pages/owner";
 import OwnerShare from "@/pages/owner-share";
 import { useAuth } from "@/lib/auth";
+import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from "@/lib/auth-redirect";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
 
@@ -239,13 +240,15 @@ function AuthHeroLayout({
 }
 
 function SignInPage() {
+  const redirectPath = getRedirectPathFromSearch();
+
   return (
     <AuthHeroLayout>
       <SignIn
         routing="path"
         path={`${basePath}/sign-in`}
-        signUpUrl={`${basePath}/sign-up`}
-        forceRedirectUrl={`${basePath}/home`}
+        signUpUrl={withRedirectPath(`${basePath}/sign-up`, redirectPath)}
+        forceRedirectUrl={redirectPath}
       />
     </AuthHeroLayout>
   );
@@ -257,6 +260,7 @@ function SignUpPage() {
   const [socialMediaConsent, setSocialMediaConsent] = useState(false);
   const [showConsentError, setShowConsentError] = useState(false);
   const isArabic = locale === "ar";
+  const redirectPath = getRedirectPathFromSearch();
   const copy = isArabic
     ? {
         recordingTitle: "أوافق على أن يتم تصويري",
@@ -300,8 +304,8 @@ function SignUpPage() {
         <SignUp
           routing="path"
           path={`${basePath}/sign-up`}
-          signInUrl={`${basePath}/sign-in`}
-          forceRedirectUrl={`${basePath}/home`}
+          signInUrl={withRedirectPath(`${basePath}/sign-in`, redirectPath)}
+          forceRedirectUrl={redirectPath}
           unsafeMetadata={{
             soccerwatchRecordingConsent: recordingConsent,
             soccerwatchSocialMediaConsent: socialMediaConsent,
@@ -401,6 +405,9 @@ function AuthRedirectGuard() {
 
   useEffect(() => {
     if (isLoading) return;
+    const pathname = location.split("?")[0];
+    const isOwnerShare = pathname.startsWith("/w/");
+    const isAuthPage = pathname === "/" || pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up");
 
     // If Clerk says the user IS signed in but our local user record isn't
     // ready yet (common right after sign-in), don't do anything — let the
@@ -409,13 +416,22 @@ function AuthRedirectGuard() {
 
     if (!user || isGuest) return;
 
-    const isPublicPage = location === "/" || location.startsWith("/sign-in") || location.startsWith("/sign-up") || location.startsWith("/w/");
-    if (isPublicPage) {
-      setLocation("/home");
+    // Public owner links must remain usable for signed-in users, including
+    // users whose profile still needs onboarding.
+    if (isOwnerShare) return;
+
+    if (isAuthPage) {
+      if (pathname !== "/" && !user.profileComplete) {
+        const returnPath = getRedirectPathFromSearch();
+        setLocation(withRedirectPath("/onboarding", returnPath));
+        return;
+      }
+      setLocation(pathname === "/" ? "/home" : getRedirectPathFromSearch());
       return;
     }
-    if (!user.profileComplete && location !== "/onboarding") {
-      setLocation("/onboarding");
+
+    if (!user.profileComplete && pathname !== "/onboarding") {
+      setLocation(withRedirectPath("/onboarding", getSafeRedirectPath(pathname)));
     }
   }, [isLoading, user, isGuest, isSignedIn, location, setLocation]);
 

@@ -1439,7 +1439,7 @@ export const RemoveAcademyRecordingResponse = zod.void()
  * @summary Create a user clip from a full match video
  */
 export const CreateUserClipBody = zod.object({
-  "videoId": zod.string(),
+  "videoId": zod.string().optional(),
   "title": zod.string(),
   "startTime": zod.number(),
   "endTime": zod.number(),

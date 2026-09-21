@@ -10,7 +10,7 @@ import type { CreateUserClipInputVisibility } from './createUserClipInputVisibil
 import type { CropKeyframe } from './cropKeyframe';
 
 export interface CreateUserClipInput {
-  videoId: string;
+  videoId?: string;
   title: string;
   startTime: number;
   endTime: number;

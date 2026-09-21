@@ -30,3 +30,4 @@
 - [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.
 - [Public footage access](public-footage-access.md) — all public recording, clip, Bunny, and media-proxy routes share visibility, schedule, and owner-footage authorization.
 - [SoccerWatch build environment](soccerwatch-build-environment.md) — direct Vite builds require both PORT and BASE_PATH; the workflow supplies them automatically.
+- [Orval input path](orval-input-path.md) — use an absolute OpenAPI target or codegen can clean generated outputs before failing from the workspace root.

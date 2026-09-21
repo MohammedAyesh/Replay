@@ -2640,7 +2640,7 @@ components:
 
     CreateUserClipInput:
       type: object
-      required: [videoId, title, startTime, endTime, cropPath]
+      required: [title, startTime, endTime, cropPath]
       properties:
         videoId:
           type: string

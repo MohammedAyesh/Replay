@@ -544,7 +544,7 @@ export const CreateUserClipInputAspectRatio = {
 } as const;
 
 export interface CreateUserClipInput {
-  videoId: string;
+  videoId?: string;
   title: string;
   startTime: number;
   endTime: number;

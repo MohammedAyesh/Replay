@@ -10,6 +10,7 @@ import { useUser } from "@clerk/react";
 import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
+import { getRedirectPathFromSearch } from "@/lib/auth-redirect";
 
 const POSITION_VALUES = ["goalkeeper", "defender", "midfielder", "forward"] as const;
 const GENDER_VALUES = [
@@ -44,6 +45,7 @@ export default function Onboarding() {
   const copy = t.onboarding;
   const isArabic = locale === "ar";
   const textDirection = isArabic ? "rtl" : "ltr";
+  const returnPath = getRedirectPathFromSearch();
 
   // Guard: only kick truly unauthenticated users to login. If Clerk says
   // the user IS signed in, wait for the local user record to arrive instead
@@ -60,9 +62,9 @@ export default function Onboarding() {
   useEffect(() => {
     if (authLoading) return;
     if (user?.profileComplete) {
-      setLocation("/home");
+      setLocation(returnPath);
     }
-  }, [authLoading, user, setLocation]);
+  }, [authLoading, user, returnPath, setLocation]);
 
   const allFilled = name.trim() && phone.trim() && position && age && gender;
 
@@ -84,7 +86,7 @@ export default function Onboarding() {
         onSuccess: (data) => {
           // Update the cached user immediately so the auth guard sees profileComplete=true
           queryClient.setQueryData(getGetMeQueryKey(), data);
-          setLocation("/home");
+          setLocation(returnPath);
         },
         onError: () => {
           toast({

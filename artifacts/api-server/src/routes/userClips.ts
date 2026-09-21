@@ -614,6 +614,10 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   // Owner-share clips must use the request's server-resolved Bunny source.
   // A client-supplied videoId is deliberately ignored in this branch.
   const videoId = ownerShare?.videoId ?? body.data.videoId;
+  if (!videoId) {
+    res.status(400).json({ error: "videoId is required unless ownerShareToken resolves an active share" });
+    return;
+  }
   const footageRequestId = ownerShare?.id ?? null;
   if (!(await canCreateClipFromVideo(req, videoId))) {
     res.status(403).json({ error: "You cannot create a clip from this video" });
