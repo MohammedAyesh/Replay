@@ -26,6 +26,11 @@ import type {
   AdStats,
   AddAcademyRecordingInput,
   AdminAdEntry,
+  AdminFootageBilling,
+  AdminFootageOwner,
+  AdminFootageOwnerInput,
+  AdminFootagePayment,
+  AdminFootagePaymentInput,
   AdminRecordingPlayerMetricsResponse,
   AdminTrackingBundlePatchBody,
   AdminTrackingBundlePatchResponse,
@@ -923,6 +928,76 @@ export const useCreateOwnerRequestLink = <TError = ErrorType<void>,
       return useMutation(getCreateOwnerRequestLinkMutationOptions(options));
     }
 
+export const getCancelOwnerRequestUrl = (id: number,) => {
+
+
+
+
+  return `/api/owner/requests/${id}/cancel`
+}
+
+/**
+ * @summary Cancel scheduled owner footage before recording starts
+ */
+export const cancelOwnerRequest = async (id: number, options?: RequestInit): Promise<OwnerRequest> => {
+
+  return customFetch<OwnerRequest>(getCancelOwnerRequestUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getCancelOwnerRequestMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelOwnerRequest>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelOwnerRequest>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['cancelOwnerRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelOwnerRequest>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  cancelOwnerRequest(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelOwnerRequestMutationResult = NonNullable<Awaited<ReturnType<typeof cancelOwnerRequest>>>
+
+    export type CancelOwnerRequestMutationError = ErrorType<void>
+
+    /**
+ * @summary Cancel scheduled owner footage before recording starts
+ */
+export const useCancelOwnerRequest = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelOwnerRequest>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelOwnerRequest>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getCancelOwnerRequestMutationOptions(options));
+    }
+
 export const getGetOwnerFieldLedgerUrl = (fieldId: number,) => {
 
 
@@ -999,6 +1074,371 @@ export function useGetOwnerFieldLedger<TData = Awaited<ReturnType<typeof getOwne
 
 
 
+
+export const getListAdminFootageOwnersUrl = () => {
+
+
+
+
+  return `/api/admin/footage-owners`
+}
+
+/**
+ * @summary List field footage owner assignments
+ */
+export const listAdminFootageOwners = async ( options?: RequestInit): Promise<AdminFootageOwner[]> => {
+
+  return customFetch<AdminFootageOwner[]>(getListAdminFootageOwnersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminFootageOwnersQueryKey = () => {
+    return [
+    `/api/admin/footage-owners`
+    ] as const;
+    }
+
+
+export const getListAdminFootageOwnersQueryOptions = <TData = Awaited<ReturnType<typeof listAdminFootageOwners>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageOwners>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminFootageOwnersQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminFootageOwners>>> = ({ signal }) => listAdminFootageOwners({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageOwners>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminFootageOwnersQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminFootageOwners>>>
+export type ListAdminFootageOwnersQueryError = ErrorType<void>
+
+
+/**
+ * @summary List field footage owner assignments
+ */
+
+export function useListAdminFootageOwners<TData = Awaited<ReturnType<typeof listAdminFootageOwners>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageOwners>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminFootageOwnersQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getAddAdminFootageOwnerUrl = () => {
+
+
+
+
+  return `/api/admin/footage-owners`
+}
+
+/**
+ * @summary Assign a field footage owner by email
+ */
+export const addAdminFootageOwner = async (adminFootageOwnerInput: AdminFootageOwnerInput, options?: RequestInit): Promise<AdminFootageOwner> => {
+
+  return customFetch<AdminFootageOwner>(getAddAdminFootageOwnerUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminFootageOwnerInput)
+  }
+);}
+
+
+
+
+export const getAddAdminFootageOwnerMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAdminFootageOwner>>, TError,{data: BodyType<AdminFootageOwnerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addAdminFootageOwner>>, TError,{data: BodyType<AdminFootageOwnerInput>}, TContext> => {
+
+const mutationKey = ['addAdminFootageOwner'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addAdminFootageOwner>>, {data: BodyType<AdminFootageOwnerInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  addAdminFootageOwner(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddAdminFootageOwnerMutationResult = NonNullable<Awaited<ReturnType<typeof addAdminFootageOwner>>>
+    export type AddAdminFootageOwnerMutationBody = BodyType<AdminFootageOwnerInput>
+    export type AddAdminFootageOwnerMutationError = ErrorType<void>
+
+    /**
+ * @summary Assign a field footage owner by email
+ */
+export const useAddAdminFootageOwner = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAdminFootageOwner>>, TError,{data: BodyType<AdminFootageOwnerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addAdminFootageOwner>>,
+        TError,
+        {data: BodyType<AdminFootageOwnerInput>},
+        TContext
+      > => {
+      return useMutation(getAddAdminFootageOwnerMutationOptions(options));
+    }
+
+export const getRemoveAdminFootageOwnerUrl = () => {
+
+
+
+
+  return `/api/admin/footage-owners`
+}
+
+/**
+ * @summary Remove a field footage owner by email
+ */
+export const removeAdminFootageOwner = async (adminFootageOwnerInput: AdminFootageOwnerInput, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRemoveAdminFootageOwnerUrl(),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminFootageOwnerInput)
+  }
+);}
+
+
+
+
+export const getRemoveAdminFootageOwnerMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAdminFootageOwner>>, TError,{data: BodyType<AdminFootageOwnerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeAdminFootageOwner>>, TError,{data: BodyType<AdminFootageOwnerInput>}, TContext> => {
+
+const mutationKey = ['removeAdminFootageOwner'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeAdminFootageOwner>>, {data: BodyType<AdminFootageOwnerInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  removeAdminFootageOwner(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveAdminFootageOwnerMutationResult = NonNullable<Awaited<ReturnType<typeof removeAdminFootageOwner>>>
+    export type RemoveAdminFootageOwnerMutationBody = BodyType<AdminFootageOwnerInput>
+    export type RemoveAdminFootageOwnerMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove a field footage owner by email
+ */
+export const useRemoveAdminFootageOwner = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAdminFootageOwner>>, TError,{data: BodyType<AdminFootageOwnerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeAdminFootageOwner>>,
+        TError,
+        {data: BodyType<AdminFootageOwnerInput>},
+        TContext
+      > => {
+      return useMutation(getRemoveAdminFootageOwnerMutationOptions(options));
+    }
+
+export const getGetAdminFootageBillingUrl = () => {
+
+
+
+
+  return `/api/admin/footage-billing`
+}
+
+/**
+ * @summary Get footage charges, payments, balances, and recent payments
+ */
+export const getAdminFootageBilling = async ( options?: RequestInit): Promise<AdminFootageBilling> => {
+
+  return customFetch<AdminFootageBilling>(getGetAdminFootageBillingUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminFootageBillingQueryKey = () => {
+    return [
+    `/api/admin/footage-billing`
+    ] as const;
+    }
+
+
+export const getGetAdminFootageBillingQueryOptions = <TData = Awaited<ReturnType<typeof getAdminFootageBilling>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminFootageBilling>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminFootageBillingQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminFootageBilling>>> = ({ signal }) => getAdminFootageBilling({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminFootageBilling>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminFootageBillingQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminFootageBilling>>>
+export type GetAdminFootageBillingQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get footage charges, payments, balances, and recent payments
+ */
+
+export function useGetAdminFootageBilling<TData = Awaited<ReturnType<typeof getAdminFootageBilling>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminFootageBilling>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminFootageBillingQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRecordAdminFootagePaymentUrl = (fieldId: number,) => {
+
+
+
+
+  return `/api/admin/fields/${fieldId}/payments`
+}
+
+/**
+ * @summary Record a field footage payment in JOD
+ */
+export const recordAdminFootagePayment = async (fieldId: number,
+    adminFootagePaymentInput: AdminFootagePaymentInput, options?: RequestInit): Promise<AdminFootagePayment> => {
+
+  return customFetch<AdminFootagePayment>(getRecordAdminFootagePaymentUrl(fieldId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminFootagePaymentInput)
+  }
+);}
+
+
+
+
+export const getRecordAdminFootagePaymentMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordAdminFootagePayment>>, TError,{fieldId: number;data: BodyType<AdminFootagePaymentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordAdminFootagePayment>>, TError,{fieldId: number;data: BodyType<AdminFootagePaymentInput>}, TContext> => {
+
+const mutationKey = ['recordAdminFootagePayment'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordAdminFootagePayment>>, {fieldId: number;data: BodyType<AdminFootagePaymentInput>}> = (props) => {
+          const {fieldId,data} = props ?? {};
+
+          return  recordAdminFootagePayment(fieldId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordAdminFootagePaymentMutationResult = NonNullable<Awaited<ReturnType<typeof recordAdminFootagePayment>>>
+    export type RecordAdminFootagePaymentMutationBody = BodyType<AdminFootagePaymentInput>
+    export type RecordAdminFootagePaymentMutationError = ErrorType<void>
+
+    /**
+ * @summary Record a field footage payment in JOD
+ */
+export const useRecordAdminFootagePayment = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordAdminFootagePayment>>, TError,{fieldId: number;data: BodyType<AdminFootagePaymentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordAdminFootagePayment>>,
+        TError,
+        {fieldId: number;data: BodyType<AdminFootagePaymentInput>},
+        TContext
+      > => {
+      return useMutation(getRecordAdminFootagePaymentMutationOptions(options));
+    }
 
 export const getUpdateConsentsUrl = () => {
 

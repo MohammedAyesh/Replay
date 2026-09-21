@@ -278,6 +278,35 @@ paths:
         "404":
           description: Request not found
 
+  /owner/requests/{id}/cancel:
+    post:
+      operationId: cancelOwnerRequest
+      tags: [owner]
+      summary: Cancel scheduled owner footage before recording starts
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scheduled request cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerRequest"
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Request not found
+        "409":
+          description: Request is not scheduled
+        "502":
+          description: Camera pull cancellation failed
+
   /owner/fields/{fieldId}/ledger:
     get:
       operationId: getOwnerFieldLedger
@@ -300,6 +329,119 @@ paths:
                 $ref: "#/components/schemas/OwnerLedger"
         "403":
           description: Owner or admin access required
+        "404":
+          description: Field not found
+
+  /admin/footage-owners:
+    get:
+      operationId: listAdminFootageOwners
+      tags: [admin]
+      summary: List field footage owner assignments
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Owner assignments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminFootageOwner"
+        "403":
+          description: Admin access required
+    post:
+      operationId: addAdminFootageOwner
+      tags: [admin]
+      summary: Assign a field footage owner by email
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminFootageOwnerInput"
+      responses:
+        "201":
+          description: Owner assignment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFootageOwner"
+        "403":
+          description: Admin access required
+        "404":
+          description: Field or user not found
+        "409":
+          description: Assignment already exists
+    delete:
+      operationId: removeAdminFootageOwner
+      tags: [admin]
+      summary: Remove a field footage owner by email
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminFootageOwnerInput"
+      responses:
+        "200":
+          description: Owner assignment removed
+        "403":
+          description: Admin access required
+        "404":
+          description: Assignment not found
+
+  /admin/footage-billing:
+    get:
+      operationId: getAdminFootageBilling
+      tags: [admin]
+      summary: Get footage charges, payments, balances, and recent payments
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Footage billing overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFootageBilling"
+        "403":
+          description: Admin access required
+
+  /admin/fields/{fieldId}/payments:
+    post:
+      operationId: recordAdminFootagePayment
+      tags: [admin]
+      summary: Record a field footage payment in JOD
+      security:
+        - clerkSession: []
+      parameters:
+        - name: fieldId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminFootagePaymentInput"
+      responses:
+        "201":
+          description: Payment recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFootagePayment"
+        "400":
+          description: Invalid amount or payment method
+        "403":
+          description: Admin access required
         "404":
           description: Field not found
 
@@ -1947,6 +2089,123 @@ components:
         paidFils:
           type: integer
         balanceFils:
+          type: integer
+
+    AdminFootageOwnerInput:
+      type: object
+      required: [fieldId, email]
+      properties:
+        fieldId:
+          type: integer
+        email:
+          type: string
+          format: email
+
+    AdminFootageOwner:
+      type: object
+      required: [id, fieldId, fieldName, userId, name, email, createdAt]
+      properties:
+        id:
+          type: integer
+        fieldId:
+          type: integer
+        fieldName:
+          type: string
+        userId:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        createdAt:
+          type: string
+          format: date-time
+
+    AdminFootagePaymentInput:
+      type: object
+      required: [amountJod, method]
+      properties:
+        amountJod:
+          type: number
+          exclusiveMinimum: 0
+        method:
+          type: string
+          enum: [CliQ, Cash, Other]
+        note:
+          type: ["string", "null"]
+
+    AdminFootagePayment:
+      type: object
+      required: [id, fieldId, amountFils, amountJod, method, note, createdAt]
+      properties:
+        id:
+          type: integer
+        fieldId:
+          type: integer
+        amountFils:
+          type: integer
+        amountJod:
+          type: number
+        method:
+          type: string
+          enum: [CliQ, Cash, Other]
+        note:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    AdminFootageBillingField:
+      type: object
+      required: [fieldId, fieldName, owner, chargedFils, paidFils, balanceFils]
+      properties:
+        fieldId:
+          type: integer
+        fieldName:
+          type: string
+        owner:
+          oneOf:
+            - $ref: "#/components/schemas/AdminFootageOwnerSummary"
+            - type: "null"
+        chargedFils:
+          type: integer
+        paidFils:
+          type: integer
+        balanceFils:
+          type: integer
+
+    AdminFootageOwnerSummary:
+      type: object
+      required: [fieldId, userId, name, email]
+      properties:
+        fieldId:
+          type: integer
+        userId:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+
+    AdminFootageBilling:
+      type: object
+      required: [fields, payments, totalChargedFils, totalPaidFils, totalBalanceFils]
+      properties:
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminFootageBillingField"
+        payments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminFootagePayment"
+        totalChargedFils:
+          type: integer
+        totalPaidFils:
+          type: integer
+        totalBalanceFils:
           type: integer
 
     Field:

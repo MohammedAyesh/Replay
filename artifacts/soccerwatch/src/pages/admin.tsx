@@ -42,7 +42,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "analysis" | "branding" | "settings";
+type Tab = "clips" | "accounts" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "analysis" | "branding" | "settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -96,6 +96,35 @@ interface AdminField {
   lastRecordedAt: string | null;
   bunnyGuid: string | null;
   cameraId: string | null;
+}
+
+interface FootageOwnerAssignment {
+  id: number;
+  fieldId: number;
+  fieldName: string;
+  userId: number;
+  name: string;
+  email: string;
+  createdAt: string;
+}
+
+interface FootageBillingField {
+  fieldId: number;
+  fieldName: string;
+  owner: { fieldId: number; userId: number; name: string; email: string } | null;
+  chargedFils: number;
+  paidFils: number;
+  balanceFils: number;
+}
+
+interface FootagePayment {
+  id: number;
+  fieldId: number;
+  amountFils: number;
+  method: string;
+  note: string | null;
+  createdAt: string;
+  recordedBy: string;
 }
 
 /**
@@ -378,7 +407,7 @@ interface PlaybackJob {
   source?: string;
   title?: string;
   // status: new engine uses "running"/"done"/"failed"; old engine had more values
-  status: "running" | "done" | "failed" | "queued" | "searching" | "downloading" | "waiting_for_camera" | "assembling" | "uploading";
+  status: "running" | "done" | "failed" | "cancelled" | "queued" | "searching" | "downloading" | "waiting_for_camera" | "assembling" | "uploading";
   phase?: JobPhase;
   percent?: number;
   // requested window — new engine wraps in {start,end}; old engine has top-level start/end
@@ -3672,7 +3701,9 @@ function RecordingsList({
 
 // ─── Live Job Card helpers ────────────────────────────────────────────────────
 
-function phaseLabel(phase: JobPhase | undefined): string {
+function phaseLabel(phase: JobPhase | undefined, status?: PlaybackJob["status"]): string {
+  if (status === "queued") return "Queued";
+  if (status === "cancelled") return "Cancelled";
   switch (phase) {
     case "search":   return "Searching the SD card";
     case "download": return "Pulling from camera";
@@ -3731,7 +3762,7 @@ function LiveJobCard({
     initialData: initialJob,
     refetchInterval: (query) => {
       const s = (query.state.data as PlaybackJob | undefined)?.status;
-      return s === "done" || s === "failed" ? false : 2_000;
+      return s === "done" || s === "failed" || s === "cancelled" ? false : 2_000;
     },
     staleTime: 1_000,
   });
@@ -3740,6 +3771,8 @@ function LiveJobCard({
 
   const isDone   = job.status === "done";
   const isFailed = job.status === "failed";
+  const isCancelled = job.status === "cancelled";
+  const isTerminal = isDone || isFailed || isCancelled;
   const isEncode = job.phase === "encode";
   const percent  = job.percent ?? 0;
 
@@ -3764,17 +3797,20 @@ function LiveJobCard({
   return (
     <div className={cn(
       "rounded-xl border p-3.5 space-y-3",
-      isDone   ? "border-green-700/40 bg-green-900/10"
-      : isFailed ? "border-red-700/40 bg-red-900/10"
+       isDone   ? "border-green-700/40 bg-green-900/10"
+       : isFailed ? "border-red-700/40 bg-red-900/10"
+       : isCancelled ? "border-zinc-700/40 bg-zinc-900/50"
       : "border-blue-700/40 bg-blue-900/10",
     )}>
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          {isDone
+           {isDone
             ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
             : isFailed
               ? <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+               : isCancelled
+                 ? <X className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
               : <Loader2 className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 animate-spin" />}
           <div className="min-w-0">
             <p className="text-white text-sm font-medium truncate">{job.title || "Footage request"}</p>
@@ -3800,12 +3836,12 @@ function LiveJobCard({
       </div>
 
       {/* In-progress */}
-      {!isDone && !isFailed && (
+       {!isTerminal && (
         <div className="space-y-2">
           {/* Phase + percent */}
           <div className="flex items-center justify-between text-xs">
             <span className={cn("font-medium", isEncode ? "text-violet-400" : "text-blue-400")}>
-              {phaseLabel(job.phase)}
+               {phaseLabel(job.phase, job.status)}
             </span>
             <span className="text-zinc-500 tabular-nums">{percent}%</span>
           </div>
@@ -3907,6 +3943,10 @@ function LiveJobCard({
             </button>
           )}
         </div>
+      )}
+
+      {isCancelled && (
+        <p className="text-zinc-500 text-xs">This request was cancelled.</p>
       )}
     </div>
   );
@@ -5527,6 +5567,284 @@ function MatchesTab() {
   );
 }
 
+// ─── Footage owners and billing ────────────────────────────────────────────────
+
+function formatJod(fils: number): string {
+  return `${(fils / 1000).toFixed(3)} JOD`;
+}
+
+function OwnersBillingTab() {
+  const [owners, setOwners] = useState<FootageOwnerAssignment[]>([]);
+  const [billingFields, setBillingFields] = useState<FootageBillingField[]>([]);
+  const [payments, setPayments] = useState<FootagePayment[]>([]);
+  const [totals, setTotals] = useState({ totalChargedFils: 0, totalPaidFils: 0, totalBalanceFils: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerFieldId, setOwnerFieldId] = useState<number | "">("");
+  const [paymentFieldId, setPaymentFieldId] = useState<number | "">("");
+  const [amountJod, setAmountJod] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"CliQ" | "Cash" | "Other">("CliQ");
+  const [paymentNote, setPaymentNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [ownerRows, billing] = await Promise.all([
+        apiFetch("/admin/footage-owners") as Promise<FootageOwnerAssignment[]>,
+        apiFetch("/admin/footage-billing") as Promise<{
+          fields: FootageBillingField[];
+          payments: FootagePayment[];
+          totalChargedFils: number;
+          totalPaidFils: number;
+          totalBalanceFils: number;
+        }>,
+      ]);
+      setOwners(ownerRows);
+      setBillingFields(billing.fields);
+      setPayments(billing.payments);
+      setTotals({
+        totalChargedFils: billing.totalChargedFils,
+        totalPaidFils: billing.totalPaidFils,
+        totalBalanceFils: billing.totalBalanceFils,
+      });
+      setOwnerFieldId((current) => current || billing.fields[0]?.fieldId || "");
+      setPaymentFieldId((current) => current || billing.fields[0]?.fieldId || "");
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not load footage owners and billing"));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const addOwner = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!ownerFieldId || !ownerEmail.trim()) return;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await apiFetch("/admin/footage-owners", {
+        method: "POST",
+        body: JSON.stringify({ fieldId: Number(ownerFieldId), email: ownerEmail.trim() }),
+      });
+      setOwnerEmail("");
+      setNotice("Owner added");
+      await load();
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not add owner"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeOwner = async (owner: FootageOwnerAssignment) => {
+    if (!window.confirm(`Remove ${owner.email} from ${owner.fieldName}?`)) return;
+    setError(null);
+    setNotice(null);
+    try {
+      await apiFetch("/admin/footage-owners", {
+        method: "DELETE",
+        body: JSON.stringify({ fieldId: owner.fieldId, email: owner.email }),
+      });
+      setNotice("Owner removed");
+      await load();
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not remove owner"));
+    }
+  };
+
+  const addPayment = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const amount = Number(amountJod);
+    if (!paymentFieldId || !Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a positive payment amount");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await apiFetch(`/admin/fields/${paymentFieldId}/payments`, {
+        method: "POST",
+        body: JSON.stringify({
+          amountJod: amount,
+          method: paymentMethod,
+          note: paymentNote.trim() || null,
+        }),
+      });
+      setAmountJod("");
+      setPaymentNote("");
+      setNotice("Payment recorded");
+      await load();
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not record payment"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-white text-sm font-semibold">Field owners and footage billing</p>
+          <p className="text-zinc-500 text-xs mt-0.5">Manage access, record JOD payments, and review the current balance.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void load()}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 rounded-xl text-sm hover:bg-zinc-700 disabled:opacity-50"
+        >
+          <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
+          Refresh
+        </button>
+      </div>
+
+      {error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
+      {notice && <p className="rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">{notice}</p>}
+
+      {loading ? (
+        <div className="py-16 text-center text-zinc-500">Loading…</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              ["Charged", totals.totalChargedFils],
+              ["Paid", totals.totalPaidFils],
+              ["Balance", totals.totalBalanceFils],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</p>
+                <p className={cn("mt-1 text-sm font-semibold", label === "Balance" && Number(value) > 0 ? "text-amber-300" : "text-white")}>
+                  {formatJod(Number(value))}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+              <h2 className="text-sm font-semibold text-white">Add owner</h2>
+              <form onSubmit={addOwner} className="mt-3 space-y-2">
+                <select
+                  value={ownerFieldId}
+                  onChange={(event) => setOwnerFieldId(event.target.value ? Number(event.target.value) : "")}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white"
+                >
+                  <option value="">Choose a field</option>
+                  {billingFields.map((field) => <option key={field.fieldId} value={field.fieldId}>{field.fieldName}</option>)}
+                </select>
+                <input
+                  type="email"
+                  value={ownerEmail}
+                  onChange={(event) => setOwnerEmail(event.target.value)}
+                  placeholder="owner@example.com"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600"
+                />
+                <button type="submit" disabled={saving || !ownerFieldId || !ownerEmail.trim()} className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-black disabled:opacity-50">
+                  Add owner
+                </button>
+              </form>
+              <div className="mt-4 space-y-2">
+                {owners.length === 0 ? <p className="text-xs text-zinc-600">No owner assignments yet.</p> : owners.map((owner) => (
+                  <div key={owner.id} className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-white">{owner.email}</p>
+                      <p className="truncate text-[11px] text-zinc-500">{owner.fieldName}</p>
+                    </div>
+                    <button type="button" onClick={() => void removeOwner(owner)} className="shrink-0 rounded-md p-1.5 text-zinc-500 hover:bg-red-500/10 hover:text-red-300" aria-label={`Remove ${owner.email}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+              <h2 className="text-sm font-semibold text-white">Record payment</h2>
+              <form onSubmit={addPayment} className="mt-3 space-y-2">
+                <select
+                  value={paymentFieldId}
+                  onChange={(event) => setPaymentFieldId(event.target.value ? Number(event.target.value) : "")}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white"
+                >
+                  <option value="">Choose a field</option>
+                  {billingFields.map((field) => <option key={field.fieldId} value={field.fieldId}>{field.fieldName}</option>)}
+                </select>
+                <input
+                  type="number"
+                  min="0.001"
+                  step="0.001"
+                  value={amountJod}
+                  onChange={(event) => setAmountJod(event.target.value)}
+                  placeholder="Amount in JOD"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  {(["CliQ", "Cash", "Other"] as const).map((method) => (
+                    <button key={method} type="button" onClick={() => setPaymentMethod(method)} className={cn("rounded-lg border px-2 py-2 text-xs", paymentMethod === method ? "border-primary bg-primary/10 text-primary" : "border-zinc-700 text-zinc-400")}>
+                      {method}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={paymentNote}
+                  onChange={(event) => setPaymentNote(event.target.value)}
+                  placeholder="Note (optional)"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white placeholder:text-zinc-600"
+                />
+                <button type="submit" disabled={saving || !paymentFieldId || !amountJod} className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-black disabled:opacity-50">
+                  Record payment
+                </button>
+              </form>
+            </section>
+          </div>
+
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+            <h2 className="text-sm font-semibold text-white">Field balances</h2>
+            <div className="mt-3 space-y-2">
+              {billingFields.map((field) => (
+                <div key={field.fieldId} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-white">{field.fieldName}</p>
+                    <p className="truncate text-[11px] text-zinc-500">{field.owner ? field.owner.email : "No owner assigned"}</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className={cn("text-sm font-semibold", field.balanceFils > 0 ? "text-amber-300" : "text-emerald-300")}>{formatJod(field.balanceFils)}</p>
+                    <p className="text-[10px] text-zinc-500">{formatJod(field.chargedFils)} charged · {formatJod(field.paidFils)} paid</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+            <h2 className="text-sm font-semibold text-white">Recent payments</h2>
+            <div className="mt-3 space-y-2">
+              {payments.length === 0 ? <p className="text-xs text-zinc-600">No payments recorded yet.</p> : payments.map((payment) => (
+                <div key={payment.id} className="flex items-center justify-between gap-3 border-b border-zinc-800/70 pb-2 last:border-0 last:pb-0">
+                  <div className="min-w-0">
+                    <p className="text-xs text-white">{billingFields.find((field) => field.fieldId === payment.fieldId)?.fieldName ?? `Field ${payment.fieldId}`} · {payment.method}</p>
+                    <p className="truncate text-[10px] text-zinc-500">{payment.note || "No note"} · {new Date(payment.createdAt).toLocaleString()}</p>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold text-emerald-300">{formatJod(payment.amountFils)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Admin Console ───────────────────────────────────────────────────────
 
 /**
@@ -5545,6 +5863,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   clips: { label: "Clips", render: () => <ClipsTab /> },
   accounts: { label: "Accounts", render: () => <AccountsTab /> },
   fields: { label: "Fields", render: () => <FieldsTab /> },
+  owners: { label: "Owners & Billing", render: () => <OwnersBillingTab /> },
   academies: { label: "Academies", render: () => <AcademiesTab /> },
   banners: { label: "Banners", render: () => <BannersTab /> },
   recordings: { label: "Recordings", render: () => <RecordingsTab /> },

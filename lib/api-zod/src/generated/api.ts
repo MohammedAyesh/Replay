@@ -216,6 +216,30 @@ export const CreateOwnerRequestLinkResponse = zod.object({
 
 
 /**
+ * @summary Cancel scheduled owner footage before recording starts
+ */
+export const CancelOwnerRequestParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const CancelOwnerRequestResponse = zod.object({
+  "id": zod.number(),
+  "startLocal": zod.string(),
+  "endLocal": zod.string(),
+  "requestedSeconds": zod.number(),
+  "status": zod.string(),
+  "progress": zod.number(),
+  "message": zod.string().nullish(),
+  "billableHours": zod.number(),
+  "amountFils": zod.number(),
+  "readyAt": zod.coerce.date().nullable(),
+  "shareUrl": zod.string().url().nullable(),
+  "shareExpiresAt": zod.coerce.date().nullable(),
+  "playbackManifestUrl": zod.string().url().nullable()
+})
+
+
+/**
  * @summary Get charges, payments, and balance for an owned field
  */
 export const GetOwnerFieldLedgerParams = zod.object({
@@ -240,6 +264,111 @@ export const GetOwnerFieldLedgerResponse = zod.object({
   "totalChargedFils": zod.number(),
   "paidFils": zod.number(),
   "balanceFils": zod.number()
+})
+
+
+/**
+ * @summary List field footage owner assignments
+ */
+export const ListAdminFootageOwnersResponseItem = zod.object({
+  "id": zod.number(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "userId": zod.number(),
+  "name": zod.string(),
+  "email": zod.string().email(),
+  "createdAt": zod.coerce.date()
+})
+export const ListAdminFootageOwnersResponse = zod.array(ListAdminFootageOwnersResponseItem)
+
+
+/**
+ * @summary Assign a field footage owner by email
+ */
+export const AddAdminFootageOwnerBody = zod.object({
+  "fieldId": zod.number(),
+  "email": zod.string().email()
+})
+
+export const AddAdminFootageOwnerResponse = zod.object({
+  "id": zod.number(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "userId": zod.number(),
+  "name": zod.string(),
+  "email": zod.string().email(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove a field footage owner by email
+ */
+export const RemoveAdminFootageOwnerBody = zod.object({
+  "fieldId": zod.number(),
+  "email": zod.string().email()
+})
+
+export const RemoveAdminFootageOwnerResponse = zod.unknown()
+
+
+/**
+ * @summary Get footage charges, payments, balances, and recent payments
+ */
+export const GetAdminFootageBillingResponse = zod.object({
+  "fields": zod.array(zod.object({
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "owner": zod.union([zod.object({
+  "fieldId": zod.number(),
+  "userId": zod.number(),
+  "name": zod.string(),
+  "email": zod.string().email()
+}),zod.null()]),
+  "chargedFils": zod.number(),
+  "paidFils": zod.number(),
+  "balanceFils": zod.number()
+})),
+  "payments": zod.array(zod.object({
+  "id": zod.number(),
+  "fieldId": zod.number(),
+  "amountFils": zod.number(),
+  "amountJod": zod.number(),
+  "method": zod.enum(['CliQ', 'Cash', 'Other']),
+  "note": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})),
+  "totalChargedFils": zod.number(),
+  "totalPaidFils": zod.number(),
+  "totalBalanceFils": zod.number()
+})
+
+
+/**
+ * @summary Record a field footage payment in JOD
+ */
+export const RecordAdminFootagePaymentParams = zod.object({
+  "fieldId": zod.coerce.number()
+})
+
+export const recordAdminFootagePaymentBodyAmountJodExclusiveMin = 0;
+
+
+
+export const RecordAdminFootagePaymentBody = zod.object({
+  "amountJod": zod.number().gt(recordAdminFootagePaymentBodyAmountJodExclusiveMin),
+  "method": zod.enum(['CliQ', 'Cash', 'Other']),
+  "note": zod.string().nullish()
+})
+
+export const RecordAdminFootagePaymentResponse = zod.object({
+  "id": zod.number(),
+  "fieldId": zod.number(),
+  "amountFils": zod.number(),
+  "amountJod": zod.number(),
+  "method": zod.enum(['CliQ', 'Cash', 'Other']),
+  "note": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
 })
 
 

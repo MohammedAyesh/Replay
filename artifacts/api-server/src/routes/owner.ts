@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNotNull, lt } from "drizzle-orm";
 import {
   db,
   fieldOwnersTable,
@@ -22,6 +22,8 @@ const SHARE_LIFETIME_MS = 14 * 24 * 60 * 60 * 1000;
 const AVAILABILITY_CACHE_MS = 2 * 60 * 1000;
 const REQUEST_REFRESH_MS = 10 * 1000;
 const MAX_UNFINISHED_REQUESTS = 2;
+const MAX_SCHEDULED_REQUESTS = 10;
+const ACTIVE_REQUEST_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
 
 type OwnerUser = NonNullable<Awaited<ReturnType<typeof getLocalUserRecord>>>;
 type FootageRequest = typeof footageRequestsTable.$inferSelect;
@@ -50,15 +52,6 @@ function rawParam(value: string | string[] | undefined): string {
 function parseId(value: string | string[] | undefined): number | null {
   const parsed = Number.parseInt(rawParam(value), 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: AMMAN_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
 }
 
 function getAmmanNow(): { local: string; date: string } {
@@ -205,6 +198,19 @@ async function requireOwnerUser(req: Request, res: Response): Promise<OwnerUser 
   return user;
 }
 
+async function requireAdminUser(req: Request, res: Response): Promise<OwnerUser | null> {
+  const user = await getLocalUserRecord(req);
+  if (!user) {
+    unauthenticatedResponse(res, req);
+    return null;
+  }
+  if (!user.isAdmin) {
+    res.status(403).json({ error: "Admin access required" });
+    return null;
+  }
+  return user;
+}
+
 async function requireFieldAccess(
   req: Request,
   res: Response,
@@ -279,9 +285,16 @@ async function getAvailability(camera: string, date: string): Promise<Availabili
   return body;
 }
 
-async function validateAvailability(camera: string, startMs: number, endMs: number): Promise<void> {
+async function validateAvailability(camera: string, startMs: number, endMs: number, nowMs = Date.now()): Promise<void> {
   const byDate = new Map<string, Availability>();
   for (const { date, hour } of getTouchedHours(startMs, endMs)) {
+    // Future and currently-recording hours are valid booking targets even
+    // though the SD-card availability endpoint cannot report them yet.
+    const hourStart = ammanLocalEpoch(
+      `${date} ${hour.toString().padStart(2, "0")}:00`,
+    );
+    if (!Number.isFinite(hourStart) || hourStart + 60 * 60 * 1000 > nowMs) continue;
+
     const body = byDate.get(date) ?? await getAvailability(camera, date);
     byDate.set(date, body);
     if (!availabilityHasHour(body, hour)) {
@@ -315,11 +328,14 @@ function bodyNumber(body: unknown, ...keys: string[]): number | null {
   return null;
 }
 
-function mappedStatus(body: unknown): "queued" | "running" | "ready" | "partial" | "failed" {
+function mappedStatus(body: unknown): "scheduled" | "recording" | "queued" | "running" | "ready" | "partial" | "failed" | "cancelled" {
   const status = (bodyString(body, "status", "state") ?? "").toLowerCase();
   if (status === "done" || status === "completed" || status === "ready") return "ready";
   if (status === "partial") return "partial";
   if (status === "failed" || status === "error") return "failed";
+  if (status === "cancelled" || status === "canceled") return "cancelled";
+  if (status === "scheduled") return "scheduled";
+  if (status === "recording") return "recording";
   if (status === "queued") return "queued";
   return "running";
 }
@@ -363,7 +379,7 @@ async function completeRequest(row: FootageRequest, body: unknown, status: "read
     })
     .where(and(
       eq(footageRequestsTable.id, row.id),
-      inArray(footageRequestsTable.status, ["queued", "running"]),
+      inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES),
     ));
 }
 
@@ -390,7 +406,11 @@ export async function refreshOwnerRequest(
   }
 
   if (!result.ok) {
-    if (result.status === 404 && now - row.createdAt.getTime() > 10 * 60 * 1000) {
+    if (
+      result.status === 404
+      && (row.status === "queued" || row.status === "running")
+      && now - row.createdAt.getTime() > 10 * 60 * 1000
+    ) {
       await failRequest(row.id, "The camera pull could not be found — not charged");
     }
     return;
@@ -408,11 +428,12 @@ export async function refreshOwnerRequest(
   }
   syncState.set(row.id, state);
 
-  if (
-    next === "running"
-    && remoteUpdatedAt
-    && now - state.remoteChangedAt > 45 * 60 * 1000
-  ) {
+  const endEpoch = ammanLocalEpoch(row.endLocal);
+  const pastStaleWindow = Number.isFinite(endEpoch)
+    && now > endEpoch + 90 * 60 * 1000;
+  const staleLimitApplies = next === "running"
+    || ((next === "scheduled" || next === "recording") && pastStaleWindow);
+  if (staleLimitApplies && remoteUpdatedAt && now - state.remoteChangedAt > 45 * 60 * 1000) {
     await failRequest(row.id, "The camera pull stopped — not charged");
     return;
   }
@@ -427,6 +448,16 @@ export async function refreshOwnerRequest(
     syncState.delete(row.id);
     return;
   }
+  if (next === "cancelled") {
+    await db.update(footageRequestsTable)
+      .set({ status: "cancelled", message: bodyString(result.body, "message", "note") ?? "Cancelled", updatedAt: new Date() })
+      .where(and(
+        eq(footageRequestsTable.id, row.id),
+        inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES),
+      ));
+    syncState.delete(row.id);
+    return;
+  }
 
   const progress = Math.max(0, Math.min(100, bodyNumber(result.body, "progress", "percent") ?? row.progress));
   await db.update(footageRequestsTable)
@@ -438,7 +469,7 @@ export async function refreshOwnerRequest(
     })
     .where(and(
       eq(footageRequestsTable.id, row.id),
-      inArray(footageRequestsTable.status, ["queued", "running"]),
+      inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES),
     ));
 }
 
@@ -462,7 +493,7 @@ export async function runOwnerStatusSync(): Promise<void> {
       .select({ request: footageRequestsTable, camera: fieldsTable.cameraId })
       .from(footageRequestsTable)
       .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
-      .where(inArray(footageRequestsTable.status, ["queued", "running"]));
+      .where(inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES));
     await Promise.allSettled(
       rows
         .filter(({ camera }) => Boolean(camera))
@@ -505,6 +536,171 @@ async function balanceForField(fieldId: number): Promise<{ chargedFils: number; 
   const paidFils = payments.reduce((sum, row) => sum + row.amountFils, 0);
   return { chargedFils, paidFils, balanceFils: chargedFils - paidFils };
 }
+
+router.get("/admin/footage-owners", async (req, res): Promise<void> => {
+  if (!await requireAdminUser(req, res)) return;
+  const rows = await db
+    .select({
+      id: fieldOwnersTable.id,
+      fieldId: fieldsTable.id,
+      fieldName: fieldsTable.name,
+      userId: usersTable.id,
+      name: usersTable.name,
+      email: usersTable.email,
+      createdAt: fieldOwnersTable.createdAt,
+    })
+    .from(fieldOwnersTable)
+    .innerJoin(fieldsTable, eq(fieldsTable.id, fieldOwnersTable.fieldId))
+    .innerJoin(usersTable, eq(usersTable.id, fieldOwnersTable.userId))
+    .orderBy(fieldsTable.name, usersTable.email);
+  res.json(rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })));
+});
+
+router.post("/admin/footage-owners", async (req, res): Promise<void> => {
+  if (!await requireAdminUser(req, res)) return;
+  const fieldId = Number(req.body?.fieldId);
+  const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+  if (!Number.isSafeInteger(fieldId) || fieldId <= 0 || !email) {
+    res.status(400).json({ error: "fieldId and email are required" });
+    return;
+  }
+  const [field] = await db.select({ id: fieldsTable.id }).from(fieldsTable).where(eq(fieldsTable.id, fieldId));
+  if (!field) {
+    res.status(404).json({ error: "Field not found" });
+    return;
+  }
+  const [user] = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+    .from(usersTable)
+    .where(ilike(usersTable.email, email))
+    .limit(1);
+  if (!user) {
+    res.status(404).json({ error: "No user found with that email" });
+    return;
+  }
+  const [existing] = await db.select({ id: fieldOwnersTable.id })
+    .from(fieldOwnersTable)
+    .where(and(eq(fieldOwnersTable.fieldId, fieldId), eq(fieldOwnersTable.userId, user.id)))
+    .limit(1);
+  if (existing) {
+    res.status(409).json({ error: "That user already owns this field" });
+    return;
+  }
+  const [created] = await db.insert(fieldOwnersTable).values({ fieldId, userId: user.id }).returning();
+  res.status(201).json({
+    id: created.id,
+    fieldId,
+    fieldName: (await db.select({ name: fieldsTable.name }).from(fieldsTable).where(eq(fieldsTable.id, fieldId)))[0]?.name ?? "",
+    userId: user.id,
+    name: user.name,
+    email: user.email,
+    createdAt: created.createdAt.toISOString(),
+  });
+});
+
+router.delete("/admin/footage-owners", async (req, res): Promise<void> => {
+  if (!await requireAdminUser(req, res)) return;
+  const fieldId = Number(req.body?.fieldId);
+  const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+  if (!Number.isSafeInteger(fieldId) || fieldId <= 0 || !email) {
+    res.status(400).json({ error: "fieldId and email are required" });
+    return;
+  }
+  const [user] = await db.select({ id: usersTable.id }).from(usersTable).where(ilike(usersTable.email, email)).limit(1);
+  if (!user) {
+    res.status(404).json({ error: "No user found with that email" });
+    return;
+  }
+  const deleted = await db.delete(fieldOwnersTable)
+    .where(and(eq(fieldOwnersTable.fieldId, fieldId), eq(fieldOwnersTable.userId, user.id)))
+    .returning({ id: fieldOwnersTable.id });
+  if (!deleted.length) {
+    res.status(404).json({ error: "Owner assignment not found" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+router.get("/admin/footage-billing", async (req, res): Promise<void> => {
+  if (!await requireAdminUser(req, res)) return;
+  await expireOwnerShares();
+  const fields = await db.select().from(fieldsTable).where(isNotNull(fieldsTable.cameraId)).orderBy(fieldsTable.name);
+  const owners = await db
+    .select({
+      fieldId: fieldOwnersTable.fieldId,
+      userId: usersTable.id,
+      name: usersTable.name,
+      email: usersTable.email,
+    })
+    .from(fieldOwnersTable)
+    .innerJoin(usersTable, eq(usersTable.id, fieldOwnersTable.userId));
+  const ownerByField = new Map<number, typeof owners[number]>();
+  for (const owner of owners) ownerByField.set(owner.fieldId, owner);
+  const payments = await db.select({
+    id: footagePaymentsTable.id,
+    fieldId: footagePaymentsTable.fieldId,
+    amountFils: footagePaymentsTable.amountFils,
+    method: footagePaymentsTable.method,
+    note: footagePaymentsTable.note,
+    createdAt: footagePaymentsTable.createdAt,
+    recordedBy: usersTable.email,
+  })
+    .from(footagePaymentsTable)
+    .innerJoin(usersTable, eq(usersTable.id, footagePaymentsTable.recordedBy))
+    .orderBy(desc(footagePaymentsTable.createdAt))
+    .limit(50);
+  const balances = await Promise.all(fields.map(async (field) => ({
+    fieldId: field.id,
+    fieldName: field.name,
+    owner: ownerByField.get(field.id) ?? null,
+    ...(await balanceForField(field.id)),
+  })));
+  res.json({
+    fields: balances,
+    payments: payments.map((payment) => ({ ...payment, createdAt: payment.createdAt.toISOString() })),
+    totalChargedFils: balances.reduce((sum, field) => sum + field.chargedFils, 0),
+    totalPaidFils: balances.reduce((sum, field) => sum + field.paidFils, 0),
+    totalBalanceFils: balances.reduce((sum, field) => sum + field.balanceFils, 0),
+  });
+});
+
+router.post("/admin/fields/:fieldId/payments", async (req, res): Promise<void> => {
+  const admin = await requireAdminUser(req, res);
+  if (!admin) return;
+  const fieldId = parseId(req.params.fieldId);
+  const amountJod = Number(req.body?.amountJod);
+  const method = req.body?.method;
+  const note = typeof req.body?.note === "string" ? req.body.note.trim() : null;
+  if (!fieldId || !Number.isFinite(amountJod) || amountJod <= 0 || !["CliQ", "Cash", "Other"].includes(method)) {
+    res.status(400).json({ error: "amountJod, method (CliQ, Cash, or Other), and optional note are required" });
+    return;
+  }
+  const [field] = await db.select({ id: fieldsTable.id }).from(fieldsTable).where(eq(fieldsTable.id, fieldId));
+  if (!field) {
+    res.status(404).json({ error: "Field not found" });
+    return;
+  }
+  const amountFils = Math.round(amountJod * 1000);
+  if (amountFils < 1) {
+    res.status(400).json({ error: "Payment must be at least 0.001 JOD" });
+    return;
+  }
+  const [payment] = await db.insert(footagePaymentsTable).values({
+    fieldId,
+    amountFils,
+    method,
+    note: note || null,
+    recordedBy: admin.id,
+  }).returning();
+  res.status(201).json({
+    id: payment.id,
+    fieldId: payment.fieldId,
+    amountFils: payment.amountFils,
+    amountJod: payment.amountFils / 1000,
+    method: payment.method,
+    note: payment.note,
+    createdAt: payment.createdAt.toISOString(),
+  });
+});
 
 router.get("/owner/fields", async (req, res): Promise<void> => {
   const user = await requireOwnerUser(req, res);
@@ -601,8 +797,9 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     return;
   }
   const now = getAmmanNow();
-  if (end.epochMs > ammanLocalEpoch(now.local) - 10 * 60 * 1000) {
-    res.status(400).json({ error: "The footage window must end at least 10 minutes ago" });
+  const nowMs = ammanLocalEpoch(now.local);
+  if (start.epochMs > nowMs + 14 * 24 * 60 * 60 * 1000) {
+    res.status(400).json({ error: "Footage can only be booked up to 14 days ahead" });
     return;
   }
 
@@ -618,8 +815,42 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     return;
   }
 
+  const scheduled = await db
+    .select({ id: footageRequestsTable.id })
+    .from(footageRequestsTable)
+    .where(and(
+      eq(footageRequestsTable.requestedBy, user.id),
+      inArray(footageRequestsTable.status, ["scheduled", "recording"]),
+    ));
+  if (scheduled.length >= MAX_SCHEDULED_REQUESTS) {
+    res.status(400).json({ error: "You already have 10 scheduled footage bookings" });
+    return;
+  }
+
+  const overlapping = await db
+    .select({
+      startLocal: footageRequestsTable.startLocal,
+      endLocal: footageRequestsTable.endLocal,
+    })
+    .from(footageRequestsTable)
+    .where(and(
+      eq(footageRequestsTable.fieldId, fieldId),
+      inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES),
+    ));
+  if (overlapping.some((existing) => {
+    const existingStart = ammanLocalEpoch(existing.startLocal);
+    const existingEnd = ammanLocalEpoch(existing.endLocal);
+    return Number.isFinite(existingStart)
+      && Number.isFinite(existingEnd)
+      && start.epochMs < existingEnd
+      && existingStart < end.epochMs;
+  })) {
+    res.status(400).json({ error: "You already booked footage for this time" });
+    return;
+  }
+
   try {
-    await validateAvailability(field.cameraId, start.epochMs, end.epochMs);
+    await validateAvailability(field.cameraId, start.epochMs, end.epochMs, nowMs);
   } catch (error) {
     if (error instanceof CameraUnavailableError) {
       res.status(503).json({ error: error.message });
@@ -637,7 +868,7 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     endLocal: end.value,
     requestedSeconds: durationSeconds,
     rateFils: REQUEST_RATE_FILS,
-    status: "queued",
+    status: end.epochMs > nowMs ? "scheduled" : "queued",
   }).returning();
 
   const title = `${field.name} ${start.value}–${end.hour.toString().padStart(2, "0")}:${end.minute.toString().padStart(2, "0")} (owner request #${created.id})`;
@@ -651,8 +882,12 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     if (!result.ok || !jobId) {
       await failRequest(created.id, errorMessage(result.body, "The camera pull could not be started — not charged"));
     } else {
+      const remoteStatus = bodyString(result.body, "status", "state");
+      const status = remoteStatus
+        ? mappedStatus(result.body)
+        : (end.epochMs > nowMs ? "scheduled" : "queued");
       await db.update(footageRequestsTable)
-        .set({ vpsJobId: jobId, status: "queued", updatedAt: new Date() })
+        .set({ vpsJobId: jobId, status, updatedAt: new Date() })
         .where(eq(footageRequestsTable.id, created.id));
     }
   } catch (error) {
@@ -679,7 +914,7 @@ router.get("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =>
     .where(eq(footageRequestsTable.fieldId, fieldId))
     .orderBy(desc(footageRequestsTable.createdAt));
   await Promise.all(rows
-    .filter((row) => row.status === "queued" || row.status === "running")
+    .filter((row) => ACTIVE_REQUEST_STATUSES.includes(row.status as typeof ACTIVE_REQUEST_STATUSES[number]))
     .map((row) => field.cameraId ? refreshUnfinishedRequest(row, field.cameraId) : Promise.resolve()));
   await expireOwnerShares();
 
@@ -707,6 +942,60 @@ async function requireRequestAccess(req: Request, res: Response, id: number): Pr
   if (!user) return null;
   return { user, request: found.request };
 }
+
+router.post("/owner/requests/:id/cancel", async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  if (!id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const found = await requireRequestAccess(req, res, id);
+  if (!found) return;
+
+  if (found.request.status !== "scheduled") {
+    res.status(409).json({
+      error: found.request.status === "recording"
+        ? "This footage is already recording and cannot be cancelled"
+        : "Only scheduled footage can be cancelled",
+    });
+    return;
+  }
+
+  if (found.request.vpsJobId) {
+    let result;
+    try {
+      result = await controlFetch(
+        `/record-hq/${encodeURIComponent(found.request.cameraId)}/${encodeURIComponent(found.request.vpsJobId)}`,
+        { method: "DELETE" },
+        30_000,
+      );
+    } catch (error) {
+      logger.warn({ requestId: id, error }, "Scheduled footage cancellation failed");
+      res.status(502).json({ error: "The camera pull could not be cancelled" });
+      return;
+    }
+    if (!result.ok) {
+      res.status(result.status >= 400 && result.status < 500 ? result.status : 502).json({
+        error: errorMessage(result.body, "The camera pull could not be cancelled"),
+      });
+      return;
+    }
+  }
+
+  const [cancelled] = await db.update(footageRequestsTable)
+    .set({ status: "cancelled", message: "Cancelled by owner", updatedAt: new Date() })
+    .where(and(
+      eq(footageRequestsTable.id, id),
+      eq(footageRequestsTable.status, "scheduled"),
+    ))
+    .returning();
+  if (!cancelled) {
+    res.status(409).json({ error: "The footage booking has already started" });
+    return;
+  }
+  syncState.delete(id);
+  res.json(requestToResponse(cancelled, req));
+});
 
 router.post("/owner/requests/:id/revoke-link", async (req, res): Promise<void> => {
   const id = parseId(req.params.id);

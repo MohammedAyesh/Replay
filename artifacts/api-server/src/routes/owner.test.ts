@@ -5,6 +5,7 @@ import {
   db,
   fieldOwnersTable,
   fieldsTable,
+  footagePaymentsTable,
   footageRequestsTable,
   usersTable,
 } from "@workspace/db";
@@ -30,6 +31,7 @@ let adminId: number;
 let fieldAId: number;
 let fieldBId: number;
 let requestIds: number[] = [];
+let paymentIds: number[] = [];
 let realFetch: typeof fetch;
 let availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
 
@@ -38,6 +40,18 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function futureLocalWindow(daysAhead: number): { startLocal: string; endLocal: string } {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Amman",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000))
+    .map((part) => [part.type, part.value]));
+  const startLocal = `${parts.year}-${parts.month}-${parts.day} 10:00`;
+  return { startLocal, endLocal: `${parts.year}-${parts.month}-${parts.day} 10:15` };
 }
 
 beforeAll(async () => {
@@ -117,7 +131,10 @@ afterAll(async () => {
   if (requestIds.length) {
     await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds));
   }
-  await db.delete(fieldOwnersTable).where(eq(fieldOwnersTable.userId, ownerId));
+  if (paymentIds.length) {
+    await db.delete(footagePaymentsTable).where(inArray(footagePaymentsTable.id, paymentIds));
+  }
+  await db.delete(fieldOwnersTable).where(inArray(fieldOwnersTable.fieldId, [fieldAId, fieldBId]));
   await db.delete(fieldsTable).where(inArray(fieldsTable.id, [fieldAId, fieldBId]));
   await db.delete(usersTable).where(inArray(usersTable.id, [ownerId, otherUserId, adminId]));
 });
@@ -155,7 +172,7 @@ describe("owner request validation", () => {
     ["more than 4 hours", "2020-01-01 00:00", "2020-01-01 04:15", "Footage requests cannot exceed 4 hours"],
     ["less than 15 minutes", "2020-01-01 00:00", "2020-01-01 00:00", "Footage requests must be at least 15 minutes"],
     ["not a 15-minute step", "2020-01-01 00:00", "2020-01-01 00:10", "Start and end must be on a 15-minute step"],
-    ["a future end", "2999-01-01 10:00", "2999-01-01 10:15", "The footage window must end at least 10 minutes ago"],
+    ["too far ahead", "2999-01-01 10:00", "2999-01-01 10:15", "Footage can only be booked up to 14 days ahead"],
   ])("rejects %s with 400", async (_name, startLocal, endLocal, message) => {
     const response = await request(app)
       .post(`/api/owner/fields/${fieldAId}/requests`)
@@ -203,6 +220,44 @@ describe("owner request validation", () => {
       .send({ startLocal: oldStart, endLocal: oldEnd })
       .expect(400);
     expect(response.body.error).toBe("You already have 2 unfinished footage requests");
+    await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, inserted.map(({ id }) => id)));
+    requestIds = requestIds.filter((id) => !inserted.some((row) => row.id === id));
+  });
+
+  it("accepts a future window without checking historical SD availability", async () => {
+    availableHours = [];
+    const window = futureLocalWindow(1);
+    const response = await request(app)
+      .post(`/api/owner/fields/${fieldAId}/requests`)
+      .send(window)
+      .expect(201);
+    requestIds.push(response.body.id);
+    expect(response.body).toMatchObject({
+      status: "scheduled",
+      startLocal: window.startLocal,
+      endLocal: window.endLocal,
+    });
+  });
+
+  it("rejects an overlapping active booking", async () => {
+    const window = futureLocalWindow(2);
+    const [existing] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: `owner-camera-a-${TAG}`,
+      requestedBy: ownerId,
+      startLocal: window.startLocal,
+      endLocal: window.endLocal,
+      requestedSeconds: 900,
+      status: "scheduled",
+      vpsJobId: "scheduled-overlap",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(existing.id);
+
+    const response = await request(app)
+      .post(`/api/owner/fields/${fieldAId}/requests`)
+      .send(window)
+      .expect(400);
+    expect(response.body.error).toBe("You already booked footage for this time");
   });
 });
 
@@ -235,5 +290,76 @@ describe("owner request status sync", () => {
     expect(result.playbackManifestUrl).toBe(
       `https://owner.example.test/w/${result.shareUrl.split("/").pop()}/manifest.m3u8`,
     );
+  });
+
+  it("cancels a scheduled request only after the remote delete succeeds", async () => {
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: `owner-camera-a-${TAG}`,
+      requestedBy: ownerId,
+      startLocal: futureLocalWindow(3).startLocal,
+      endLocal: futureLocalWindow(3).endLocal,
+      requestedSeconds: 900,
+      status: "scheduled",
+      vpsJobId: "scheduled-to-cancel",
+    }).returning();
+    requestIds.push(inserted.id);
+
+    const response = await request(app)
+      .post(`/api/owner/requests/${inserted.id}/cancel`)
+      .expect(200);
+    expect(response.body).toMatchObject({ id: inserted.id, status: "cancelled" });
+  });
+});
+
+describe("admin owner and billing management", () => {
+  beforeEach(() => {
+    mockedGetLocalUserRecord.mockResolvedValue({
+      id: adminId,
+      isGuest: false,
+      isAdmin: true,
+    } as Awaited<ReturnType<typeof getLocalUserRecord>>);
+  });
+
+  it("assigns and removes an owner by email", async () => {
+    const created = await request(app)
+      .post("/api/admin/footage-owners")
+      .send({ fieldId: fieldBId, email: `${TAG}_other@test.local` })
+      .expect(201);
+    expect(created.body).toMatchObject({ fieldId: fieldBId, userId: otherUserId });
+
+    const listed = await request(app).get("/api/admin/footage-owners").expect(200);
+    expect(listed.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fieldId: fieldBId, email: `${TAG}_other@test.local` }),
+    ]));
+
+    await request(app)
+      .delete("/api/admin/footage-owners")
+      .send({ fieldId: fieldBId, email: `${TAG}_other@test.local` })
+      .expect(200);
+  });
+
+  it("converts JOD payments to fils and returns billing totals", async () => {
+    const created = await request(app)
+      .post(`/api/admin/fields/${fieldAId}/payments`)
+      .send({ amountJod: 12.345, method: "CliQ", note: "March balance" })
+      .expect(201);
+    paymentIds.push(created.body.id);
+    expect(created.body).toMatchObject({
+      fieldId: fieldAId,
+      amountFils: 12345,
+      amountJod: 12.345,
+      method: "CliQ",
+      note: "March balance",
+    });
+
+    const overview = await request(app).get("/api/admin/footage-billing").expect(200);
+    expect(overview.body).toMatchObject({
+      totalPaidFils: expect.any(Number),
+      totalBalanceFils: expect.any(Number),
+    });
+    expect(overview.body.payments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: created.body.id, amountFils: 12345 }),
+    ]));
   });
 });

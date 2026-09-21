@@ -120,6 +120,82 @@ export interface OwnerLedger {
   balanceFils: number;
 }
 
+export interface AdminFootageOwnerInput {
+  fieldId: number;
+  email: string;
+}
+
+export interface AdminFootageOwner {
+  id: number;
+  fieldId: number;
+  fieldName: string;
+  userId: number;
+  name: string;
+  email: string;
+  createdAt: string;
+}
+
+export type AdminFootagePaymentInputMethod = typeof AdminFootagePaymentInputMethod[keyof typeof AdminFootagePaymentInputMethod];
+
+
+export const AdminFootagePaymentInputMethod = {
+  CliQ: 'CliQ',
+  Cash: 'Cash',
+  Other: 'Other',
+} as const;
+
+export interface AdminFootagePaymentInput {
+  /** @exclusiveMinimum 0 */
+  amountJod: number;
+  method: AdminFootagePaymentInputMethod;
+  /** @nullable */
+  note?: string | null;
+}
+
+export type AdminFootagePaymentMethod = typeof AdminFootagePaymentMethod[keyof typeof AdminFootagePaymentMethod];
+
+
+export const AdminFootagePaymentMethod = {
+  CliQ: 'CliQ',
+  Cash: 'Cash',
+  Other: 'Other',
+} as const;
+
+export interface AdminFootagePayment {
+  id: number;
+  fieldId: number;
+  amountFils: number;
+  amountJod: number;
+  method: AdminFootagePaymentMethod;
+  /** @nullable */
+  note: string | null;
+  createdAt: string;
+}
+
+export interface AdminFootageOwnerSummary {
+  fieldId: number;
+  userId: number;
+  name: string;
+  email: string;
+}
+
+export interface AdminFootageBillingField {
+  fieldId: number;
+  fieldName: string;
+  owner: AdminFootageOwnerSummary | null;
+  chargedFils: number;
+  paidFils: number;
+  balanceFils: number;
+}
+
+export interface AdminFootageBilling {
+  fields: AdminFootageBillingField[];
+  payments: AdminFootagePayment[];
+  totalChargedFils: number;
+  totalPaidFils: number;
+  totalBalanceFils: number;
+}
+
 export interface Field {
   id: number;
   name: string;

@@ -21,10 +21,11 @@ process.env.BUNNY_STORAGE_HOSTNAME = "fake-storage.local";
 process.env.BUNNY_STORAGE_ZONE = "galaxyfield";
 process.env.BUNNY_STORAGE_API_KEY = "storage-key";
 process.env.BUNNY_STORAGE_CDN_URL = "https://fake-cdn.local";
+process.env.BUNNY_CDN_HOSTNAME = "private-cdn.local";
 process.env.CLIP_SHARE_URL_SECRET = "share-secret";
 process.env.PUBLIC_SHARE_BASE_URL = "https://replayjo.test";
 
-const { db, usersTable, userClipsTable } = await import("@workspace/db");
+const { db, usersTable, userClipsTable, fieldsTable, footageRequestsTable } = await import("@workspace/db");
 const { inArray, eq } = await import("drizzle-orm");
 const { shareToken } = await import("../lib/shareCard");
 
@@ -36,6 +37,8 @@ let userId: number;
 let readyClipId: number;
 let pendingClipId: number;
 let hiddenClipId: number;
+let ownerFieldId: number;
+let ownerRequestIds: number[] = [];
 let dir: string;
 let mp4: Buffer;
 
@@ -77,6 +80,18 @@ beforeAll(async () => {
   realFetch = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : input.url;
+    if (url === "https://private-cdn.local/private-video-guid/playlist.m3u8") {
+      return new Response("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo/segment-001.ts\n", {
+        status: 200,
+        headers: { "content-type": "application/vnd.apple.mpegurl" },
+      });
+    }
+    if (url === "https://private-cdn.local/private-video-guid/video/segment-001.ts") {
+      return new Response("segment-bytes", {
+        status: 200,
+        headers: { "content-type": "video/mp2t", "content-length": "13" },
+      });
+    }
     if (!url.startsWith("https://fake-storage.local/")) return realFetch(input, init);
     if (init?.headers?.AccessKey !== "storage-key") return new Response("no key", { status: 401 });
 
@@ -124,11 +139,62 @@ beforeAll(async () => {
   readyClipId = await mk({ exportStatus: "done", exportedUrl: `${originUrl}/clip.mp4` });
   pendingClipId = await mk({ title: "Still rendering" });
   hiddenClipId = await mk({ exportStatus: "done", exportedUrl: `${originUrl}/clip.mp4`, isHidden: true });
+
+  const [ownerField] = await db.insert(fieldsTable).values({
+    name: `Owner Share Field ${TAG}`,
+    location: "Test",
+  }).returning({ id: fieldsTable.id });
+  ownerFieldId = ownerField.id;
+  const now = new Date();
+  const ownerRows = await db.insert(footageRequestsTable).values([
+    {
+      fieldId: ownerFieldId,
+      cameraId: "share-camera",
+      requestedBy: userId,
+      startLocal: "2026-09-21 10:00",
+      endLocal: "2026-09-21 10:15",
+      requestedSeconds: 900,
+      status: "ready",
+      videoId: "private-video-guid",
+      shareToken: "0123456789abcdef0123456789abcdef",
+      shareExpiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+    },
+    {
+      fieldId: ownerFieldId,
+      cameraId: "share-camera",
+      requestedBy: userId,
+      startLocal: "2026-09-21 11:00",
+      endLocal: "2026-09-21 11:15",
+      requestedSeconds: 900,
+      status: "ready",
+      videoId: "private-revoked-video",
+      shareToken: "abcdefabcdefabcdefabcdefabcdefab",
+      shareExpiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+      shareRevoked: true,
+    },
+    {
+      fieldId: ownerFieldId,
+      cameraId: "share-camera",
+      requestedBy: userId,
+      startLocal: "2026-09-21 12:00",
+      endLocal: "2026-09-21 12:15",
+      requestedSeconds: 900,
+      status: "ready",
+      videoId: "private-expired-video",
+      shareToken: "fedcbafedcbafedcbafedcbafedcbafe",
+      shareExpiresAt: new Date(now.getTime() - 60 * 1000),
+    },
+  ]).returning({ id: footageRequestsTable.id });
+  ownerRequestIds = ownerRows.map(({ id }) => id);
 }, 180_000);
 
 afterAll(async () => {
   vi.restoreAllMocks();
   await db.delete(userClipsTable).where(inArray(userClipsTable.userId, [userId]));
+  if (ownerRequestIds.length) {
+    await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, ownerRequestIds));
+  }
+  await db.delete(fieldsTable).where(eq(fieldsTable.id, ownerFieldId));
   await db.delete(usersTable).where(inArray(usersTable.id, [userId]));
   await new Promise<void>((r) => origin.close(() => r()));
   fs.rmSync(dir, { recursive: true, force: true });
@@ -284,5 +350,47 @@ describe("the assets", () => {
   it("404s assets on a wrong token too", async () => {
     expect((await request(app).get(`${cardUrl(readyClipId, "0".repeat(20))}/poster.jpg`)).status).toBe(404);
     expect((await request(app).get(`${cardUrl(readyClipId, "0".repeat(20))}/clip.mp4`)).status).toBe(404);
+  });
+});
+
+describe("public owner watch links", () => {
+  const token = "0123456789abcdef0123456789abcdef";
+
+  it("serves a bilingual watch page without exposing the private CDN URL", async () => {
+    const res = await request(app).get(`/w/${token}`);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("English");
+    expect(res.text).toContain("العربية");
+    expect(res.text).toContain("controlsList=\"nodownload noplaybackrate\"");
+    expect(res.text).toContain("og:title");
+    expect(res.text).toContain("https://replayjo.test");
+    expect(res.text).not.toContain("private-video-guid");
+    expect(res.text).not.toContain("private-cdn.local");
+  });
+
+  it("rewrites manifests and segments through opaque token-bound resources", async () => {
+    const manifest = await request(app).get(`/w/${token}/manifest.m3u8`);
+    expect(manifest.status).toBe(200);
+    expect(manifest.headers["content-type"]).toContain("mpegurl");
+    expect(manifest.text).not.toContain("private-video-guid");
+    expect(manifest.text).not.toContain("private-cdn.local");
+    const resourcePath = manifest.text.trim().split("\n").at(-1);
+    expect(resourcePath).toMatch(new RegExp(`/w/${token}/resource/[0-9a-f]{24}$`));
+
+    const segment = await request(app).get(resourcePath!);
+    expect(segment.status).toBe(200);
+    expect(Buffer.isBuffer(segment.body)).toBe(true);
+    expect(segment.body.toString()).toBe("segment-bytes");
+  });
+
+  it.each([
+    "0123456789abcdef0123456789abcde0",
+    "abcdefabcdefabcdefabcdefabcdefab",
+    "fedcbafedcbafedcbafedcbafedcbafe",
+    "not-a-token",
+  ])("collapses unknown, revoked, and expired tokens to the same 404", async (invalidToken) => {
+    const res = await request(app).get(`/w/${invalidToken}`);
+    expect(res.status).toBe(404);
+    expect(res.text).toBe("Not found");
   });
 });
