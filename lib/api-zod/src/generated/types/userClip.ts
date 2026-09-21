@@ -32,6 +32,8 @@ export interface UserClip {
   createdAt: string;
   /** @nullable */
   academyId?: number | null;
+  /** @nullable */
+  footageRequestId?: number | null;
   /**
      * Branding intro to play before this clip, if its academy has one set.
      * @nullable

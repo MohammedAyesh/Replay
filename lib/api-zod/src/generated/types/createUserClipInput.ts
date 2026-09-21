@@ -22,4 +22,6 @@ export interface CreateUserClipInput {
      * @nullable
      */
   academyId?: number | null;
+  /** Active owner footage share token; when present, the server resolves the video source. */
+  ownerShareToken?: string;
 }

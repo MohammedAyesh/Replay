@@ -2,7 +2,19 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { eq, and, desc, inArray, count, sql, like } from "drizzle-orm";
-import { db, userClipsTable, usersTable, likesTable, followsTable, academiesTable, recordingsTable, academyRecordingsTable, clipDownloadsTable, brandingAssetsTable } from "@workspace/db";
+import {
+  db,
+  userClipsTable,
+  usersTable,
+  likesTable,
+  followsTable,
+  academiesTable,
+  recordingsTable,
+  academyRecordingsTable,
+  clipDownloadsTable,
+  brandingAssetsTable,
+  footageRequestsTable,
+} from "@workspace/db";
 import {
   CreateUserClipBody,
   CreateUserClipResponse,
@@ -48,7 +60,7 @@ import {
 } from "../lib/downloadQuota";
 import { shareCardPath } from "../lib/shareCard";
 import { getAllSettings, getSettingValue, type SettingsContext } from "../lib/settings";
-import { ensureClipPoster } from "./share";
+import { ensureClipPoster, resolveOwnerShare } from "./share";
 import { introPlaybackPath } from "./clipIntro";
 import { canCreateClipFromVideo, createPublicFootageContext } from "../lib/publicFootage";
 
@@ -572,22 +584,37 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
-  const [account] = await db
-    .select({ isGuest: usersTable.isGuest })
-    .from(usersTable)
-    .where(eq(usersTable.id, userId));
-  if (!account || account.isGuest) {
-    res.status(403).json({ error: "Sign in with a real account to create clips" });
-    return;
-  }
-
   const body = CreateUserClipBody.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ error: body.error.message });
     return;
   }
 
-  const { videoId, title, startTime, endTime, cropPath, visibility, aspectRatio, academyId } = body.data;
+  const hasOwnerShareToken = Boolean(body.data.ownerShareToken);
+  const [account] = await db
+    .select({ isGuest: usersTable.isGuest })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+  if (!account || account.isGuest) {
+    res.status(hasOwnerShareToken ? 401 : 403).json({
+      error: "Sign in with a real account to create clips",
+    });
+    return;
+  }
+
+  const { title, startTime, endTime, cropPath, visibility, aspectRatio, academyId } = body.data;
+  const ownerShare = body.data.ownerShareToken
+    ? await resolveOwnerShare(body.data.ownerShareToken)
+    : null;
+  if (body.data.ownerShareToken && !ownerShare) {
+    res.status(404).json({ error: "This link is no longer available" });
+    return;
+  }
+
+  // Owner-share clips must use the request's server-resolved Bunny source.
+  // A client-supplied videoId is deliberately ignored in this branch.
+  const videoId = ownerShare?.videoId ?? body.data.videoId;
+  const footageRequestId = ownerShare?.id ?? null;
   if (!(await canCreateClipFromVideo(req, videoId))) {
     res.status(403).json({ error: "You cannot create a clip from this video" });
     return;
@@ -605,7 +632,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   // Auto-detect academy from the recording this video belongs to, so the
   // academy's intro video is prepended on export even when the client doesn't
   // know the academy context (e.g. clips created via field-detail player).
-  if (validAcademyId === null && videoId && !videoId.startsWith("live:")) {
+  if (!ownerShare && validAcademyId === null && videoId && !videoId.startsWith("live:")) {
     const [recAcademy] = await db
       .select({ academyId: academyRecordingsTable.academyId })
       .from(recordingsTable)
@@ -627,6 +654,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       visibility: visibility ?? "private",
       aspectRatio: aspectRatio ?? "16:9",
       academyId: validAcademyId,
+      footageRequestId,
     })
     .returning();
 
@@ -675,6 +703,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
+      footageRequestId: row.footageRequestId ?? null,
       introVideoUrl,
     })
   );
@@ -1273,12 +1302,20 @@ async function fieldIdForClip(clipId?: number): Promise<number | null> {
   if (!clipId) return null;
   try {
     const [row] = await db
-      .select({ fieldId: recordingsTable.fieldId })
+      .select({ videoId: userClipsTable.videoId, fieldId: recordingsTable.fieldId })
       .from(userClipsTable)
       .innerJoin(recordingsTable, like(recordingsTable.videoUrl, sql`'%' || ${userClipsTable.videoId} || '%'`))
       .where(eq(userClipsTable.id, clipId))
       .limit(1);
-    return row?.fieldId ?? null;
+    if (row?.fieldId != null) return row.fieldId;
+
+    const [ownerRequest] = await db
+      .select({ fieldId: footageRequestsTable.fieldId })
+      .from(userClipsTable)
+      .innerJoin(footageRequestsTable, eq(footageRequestsTable.videoId, userClipsTable.videoId))
+      .where(eq(userClipsTable.id, clipId))
+      .limit(1);
+    return ownerRequest?.fieldId ?? null;
   } catch {
     return null;
   }

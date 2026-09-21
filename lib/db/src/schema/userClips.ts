@@ -2,6 +2,7 @@ import { pgTable, serial, integer, text, numeric, timestamp, jsonb, boolean } fr
 import { usersTable } from "./users";
 import { fieldsTable } from "./fields";
 import { academiesTable } from "./academies";
+import { footageRequestsTable } from "./footageRequests";
 
 export type CropKeyframe = {
   t: number;
@@ -28,6 +29,8 @@ export const userClipsTable = pgTable("user_clips", {
    * from playing, it never blocks or cascades into deleting the clip itself.
    */
   academyId: integer("academy_id").references(() => academiesTable.id, { onDelete: "set null" }),
+  /** Owner footage request that supplied this clip's source, if any. */
+  footageRequestId: integer("footage_request_id").references(() => footageRequestsTable.id, { onDelete: "set null" }),
   visibility: text("visibility").notNull().default("private"),
   thumbnailTime: numeric("thumbnail_time", { precision: 10, scale: 3 }),
   likeCount: integer("like_count").notNull().default(0),

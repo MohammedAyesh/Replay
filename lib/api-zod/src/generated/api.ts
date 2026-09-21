@@ -1452,7 +1452,8 @@ export const CreateUserClipBody = zod.object({
 })),
   "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "aspectRatio": zod.enum(['16:9', '9:16']).optional(),
-  "academyId": zod.number().nullish().describe('Academy context this clip was created under (from the page the user was viewing), if any.')
+  "academyId": zod.number().nullish().describe('Academy context this clip was created under (from the page the user was viewing), if any.'),
+  "ownerShareToken": zod.string().optional().describe('Active owner footage share token; when present, the server resolves the video source.')
 })
 
 export const CreateUserClipResponse = zod.object({
@@ -1479,6 +1480,7 @@ export const CreateUserClipResponse = zod.object({
   "exportedUrl": zod.string().nullish(),
   "createdAt": zod.string(),
   "academyId": zod.number().nullish(),
+  "footageRequestId": zod.number().nullish(),
   "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 
@@ -1510,6 +1512,7 @@ export const ListUserClipsResponseItem = zod.object({
   "exportedUrl": zod.string().nullish(),
   "createdAt": zod.string(),
   "academyId": zod.number().nullish(),
+  "footageRequestId": zod.number().nullish(),
   "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 export const ListUserClipsResponse = zod.array(ListUserClipsResponseItem)
@@ -1562,6 +1565,7 @@ export const UpdateUserClipResponse = zod.object({
   "exportedUrl": zod.string().nullish(),
   "createdAt": zod.string(),
   "academyId": zod.number().nullish(),
+  "footageRequestId": zod.number().nullish(),
   "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
 })
 

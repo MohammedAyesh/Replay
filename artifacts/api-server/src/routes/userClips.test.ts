@@ -2,7 +2,15 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import cookieParser from "cookie-parser";
-import { db, usersTable, userClipsTable, fieldsTable, recordingsTable, recordingSchedulesTable } from "@workspace/db";
+import {
+  db,
+  usersTable,
+  userClipsTable,
+  fieldsTable,
+  recordingsTable,
+  recordingSchedulesTable,
+  footageRequestsTable,
+} from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -33,6 +41,10 @@ let userAId: number;
 let userBId: number;
 let fieldId: number;
 let recordingId: number;
+let ownerRequestIds: number[] = [];
+const OWNER_SHARE_TOKEN = "1234567890abcdef1234567890abcdef";
+const REVOKED_SHARE_TOKEN = "abcdef0123456789abcdef0123456789";
+const EXPIRED_SHARE_TOKEN = "fedcba9876543210fedcba9876543210";
 let app: Express;
 
 beforeAll(async () => {
@@ -85,6 +97,47 @@ beforeAll(async () => {
     startTime: "00:00",
     endTime: "23:59",
   });
+
+  const ownerRows = await db.insert(footageRequestsTable).values([
+    {
+      fieldId,
+      cameraId: `owner-camera-${TEST_TAG}`,
+      requestedBy: userAId,
+      startLocal: "2026-09-21 10:00",
+      endLocal: "2026-09-21 10:15",
+      requestedSeconds: 900,
+      status: "ready",
+      videoId: `owner-video-${TEST_TAG}`,
+      shareToken: OWNER_SHARE_TOKEN,
+      shareExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    },
+    {
+      fieldId,
+      cameraId: `owner-camera-revoked-${TEST_TAG}`,
+      requestedBy: userAId,
+      startLocal: "2026-09-21 11:00",
+      endLocal: "2026-09-21 11:15",
+      requestedSeconds: 900,
+      status: "ready",
+      videoId: `revoked-video-${TEST_TAG}`,
+      shareToken: REVOKED_SHARE_TOKEN,
+      shareExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      shareRevoked: true,
+    },
+    {
+      fieldId,
+      cameraId: `owner-camera-expired-${TEST_TAG}`,
+      requestedBy: userAId,
+      startLocal: "2026-09-21 12:00",
+      endLocal: "2026-09-21 12:15",
+      requestedSeconds: 900,
+      status: "ready",
+      videoId: `expired-video-${TEST_TAG}`,
+      shareToken: EXPIRED_SHARE_TOKEN,
+      shareExpiresAt: new Date(Date.now() - 60 * 1000),
+    },
+  ]).returning({ id: footageRequestsTable.id });
+  ownerRequestIds = ownerRows.map(({ id }) => id);
 });
 
 afterAll(async () => {
@@ -92,6 +145,9 @@ afterAll(async () => {
     .delete(userClipsTable)
     .where(inArray(userClipsTable.userId, [userAId, userBId]));
 
+  if (ownerRequestIds.length) {
+    await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, ownerRequestIds));
+  }
   await db
     .delete(usersTable)
     .where(inArray(usersTable.id, [userAId, userBId]));
@@ -152,6 +208,58 @@ describe("POST /api/user-clips", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.userId).toBe(userAId);
+  });
+
+  it("creates an owner-share clip from the server-resolved footage request", async () => {
+    mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+
+    const res = await request(app)
+      .post("/api/user-clips")
+      .send({
+        ...SAMPLE_CLIP_BODY,
+        videoId: "client-supplied-video-must-be-ignored",
+        ownerShareToken: OWNER_SHARE_TOKEN,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.videoId).toBe(`owner-video-${TEST_TAG}`);
+    expect(res.body.footageRequestId).toBe(ownerRequestIds[0]);
+
+    const [row] = await db
+      .select({
+        videoId: userClipsTable.videoId,
+        footageRequestId: userClipsTable.footageRequestId,
+      })
+      .from(userClipsTable)
+      .where(eq(userClipsTable.id, res.body.id));
+    expect(row).toEqual({
+      videoId: `owner-video-${TEST_TAG}`,
+      footageRequestId: ownerRequestIds[0],
+    });
+  });
+
+  it.each([
+    ["revoked", REVOKED_SHARE_TOKEN],
+    ["expired", EXPIRED_SHARE_TOKEN],
+  ])("returns 404 for a %s owner share", async (_label, ownerShareToken) => {
+    mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+
+    const res = await request(app)
+      .post("/api/user-clips")
+      .send({ ...SAMPLE_CLIP_BODY, ownerShareToken });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("This link is no longer available");
+  });
+
+  it("returns 401 for an owner-share clip when signed out", async () => {
+    mockedGetLocalUserId.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .post("/api/user-clips")
+      .send({ ...SAMPLE_CLIP_BODY, ownerShareToken: OWNER_SHARE_TOKEN });
+
+    expect(res.status).toBe(401);
   });
 });
 

@@ -476,6 +476,8 @@ export interface UserClip {
   createdAt: string;
   /** @nullable */
   academyId?: number | null;
+  /** @nullable */
+  footageRequestId?: number | null;
   /**
      * Branding intro to play before this clip, if its academy has one set.
      * @nullable
@@ -554,6 +556,8 @@ export interface CreateUserClipInput {
      * @nullable
      */
   academyId?: number | null;
+  /** Active owner footage share token; when present, the server resolves the video source. */
+  ownerShareToken?: string;
 }
 
 export type UpdateUserClipInputVisibility = typeof UpdateUserClipInputVisibility[keyof typeof UpdateUserClipInputVisibility];

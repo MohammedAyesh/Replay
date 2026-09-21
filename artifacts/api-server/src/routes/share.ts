@@ -61,7 +61,7 @@ function htmlEscape(value: string): string {
 
 type OwnerShareRow = typeof footageRequestsTable.$inferSelect;
 
-async function resolveOwnerShare(token: string): Promise<(OwnerShareRow & { fieldName: string }) | null> {
+export async function resolveOwnerShare(token: string): Promise<(OwnerShareRow & { fieldName: string }) | null> {
   if (!/^[a-f0-9]{32}$/.test(token)) return null;
   const [row] = await db
     .select({ request: footageRequestsTable, fieldName: fieldsTable.name })
