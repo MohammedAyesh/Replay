@@ -265,7 +265,7 @@ export const GetRecordingResponse = zod.object({
 
 
 /**
- * @summary Get a recording tracking bundle and the current player's claim progress
+ * @summary Get a recording tracking bundle
  */
 export const GetClaimMatchParams = zod.object({
   "id": zod.coerce.number()

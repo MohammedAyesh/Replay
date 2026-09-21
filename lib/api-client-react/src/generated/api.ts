@@ -1088,7 +1088,7 @@ export const getGetClaimMatchUrl = (id: number,) => {
 }
 
 /**
- * @summary Get a recording tracking bundle and the current player's claim progress
+ * @summary Get a recording tracking bundle
  */
 export const getClaimMatch = async (id: number, options?: RequestInit): Promise<ClaimMatchResponse> => {
 
@@ -1135,7 +1135,7 @@ export type GetClaimMatchQueryError = ErrorType<void>
 
 
 /**
- * @summary Get a recording tracking bundle and the current player's claim progress
+ * @summary Get a recording tracking bundle
  */
 
 export function useGetClaimMatch<TData = Awaited<ReturnType<typeof getClaimMatch>>, TError = ErrorType<void>>(
