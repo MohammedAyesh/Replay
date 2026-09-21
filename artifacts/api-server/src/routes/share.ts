@@ -223,7 +223,7 @@ function ownerShareHtml(
 </html>`;
 }
 
-router.get("/w/:token", async (req, res): Promise<void> => {
+router.get(["/w/:token", "/api/w/:token"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
   const share = await resolveOwnerShare(token);
   if (!share) {
@@ -235,7 +235,7 @@ router.get("/w/:token", async (req, res): Promise<void> => {
   res.type("text/html").send(ownerShareHtml(req, share));
 });
 
-router.get("/w/:token/manifest.m3u8", async (req, res): Promise<void> => {
+router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
   const share = await resolveOwnerShare(token);
   if (!share) {
@@ -258,7 +258,7 @@ router.get("/w/:token/manifest.m3u8", async (req, res): Promise<void> => {
   res.send(rewriteOwnerManifest(token, manifest, rawUrl));
 });
 
-router.get("/w/:token/resource/:resourceId", async (req, res): Promise<void> => {
+router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceId"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
   const share = await resolveOwnerShare(token);
   if (!share) {

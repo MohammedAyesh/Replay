@@ -293,7 +293,7 @@ const strings = {
     },
     owner: {
       title: "OWNER CONSOLE",
-      subtitle: "Keep every pitch recording on schedule.",
+      subtitle: "Request footage, share it with your players, and see what you owe.",
       request: "Request",
       myFootage: "My footage",
       billing: "Billing",
@@ -394,6 +394,7 @@ const strings = {
       linkCreated: "New share link created",
       actionFailed: "Action failed",
       requestCancelled: "Booking cancelled",
+      chargeDisclaimer: "Charged only when the footage is delivered — failed or cancelled requests are free.",
     },
     onboarding: {
       title: "Complete your profile",
@@ -752,7 +753,7 @@ const strings = {
     },
     owner: {
       title: "لوحة المالك",
-      subtitle: "حافظ على تسجيل كل مباراة في ملعبك في موعدها.",
+      subtitle: "اطلب تسجيلات ملعبك، شاركها مع اللاعبين، وتابع المستحقات.",
       request: "طلب",
       myFootage: "تسجيلاتي",
       billing: "الفوترة",
@@ -853,6 +854,7 @@ const strings = {
       linkCreated: "تم إنشاء رابط مشاركة جديد",
       actionFailed: "فشل الإجراء",
       requestCancelled: "تم إلغاء الحجز",
+      chargeDisclaimer: "تُحتسب الرسوم فقط عند تسليم التسجيل — الطلبات الفاشلة أو الملغاة مجانية.",
     },
     onboarding: {
       title: "أكمل ملفك الشخصي",

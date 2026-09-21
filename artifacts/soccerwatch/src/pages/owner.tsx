@@ -130,6 +130,7 @@ type OwnerCopy = {
   linkCreated: string;
   actionFailed: string;
   requestCancelled: string;
+  chargeDisclaimer: string;
 };
 
 const ownerCopy = (t: Strings): OwnerCopy =>
@@ -573,7 +574,7 @@ export default function Owner() {
         <div className="mt-3 grid grid-cols-3 gap-2" data-testid="owner-live-summary">
           <OwnerMetric icon={<span className="h-1.5 w-1.5 rounded-full bg-orange-300" />} label={copy.status.recording ?? copy.active} value={recordingCount} testId="recording" />
           <OwnerMetric icon={<Check className="h-3.5 w-3.5" />} label={copy.status.ready ?? copy.myFootage} value={readyCount} testId="ready" />
-          <OwnerMetric icon={<Banknote className="h-3.5 w-3.5" />} label={copy.due} value={selectedField?.balanceFils ? formatJod(selectedField.balanceFils) : "0.000"} testId="due" />
+          <OwnerMetric icon={<Banknote className="h-3.5 w-3.5" />} label={copy.due} value={formatJod(selectedField?.balanceFils ?? 0)} testId="due" />
         </div>
       </section>
 
@@ -822,6 +823,7 @@ function RequestPanel({
             <p className="mt-1 font-mono text-lg font-semibold text-primary" data-testid="text-request-cost">{formatJod(amountFils)} <span className="text-xs">{copy.currency}</span></p>
           </div>
         </div>
+        <p className="mt-3 rounded-xl border border-primary/15 bg-primary/[0.05] p-3 text-[11px] leading-5 text-muted-foreground" data-testid="text-owner-charge-disclaimer">{copy.chargeDisclaimer}</p>
 
         {(formError || serverError) && (
           <p className="mt-3 flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs leading-5 text-destructive" role="alert" data-testid="error-owner-request">

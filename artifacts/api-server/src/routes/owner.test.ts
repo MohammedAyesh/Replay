@@ -34,6 +34,7 @@ let requestIds: number[] = [];
 let paymentIds: number[] = [];
 let realFetch: typeof fetch;
 let availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
+let recordPostUrls: string[] = [];
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -104,6 +105,7 @@ beforeAll(async () => {
       return jsonResponse({ hours: availableHours });
     }
     if (url.includes("/record-hq/") && init?.method === "POST") {
+      recordPostUrls.push(url);
       return jsonResponse({ jobId: "job-owner-test" });
     }
     if (url.includes("/record-hq/")) {
@@ -119,6 +121,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
+  recordPostUrls = [];
   mockedGetLocalUserRecord.mockResolvedValue({
     id: ownerId,
     isGuest: false,
@@ -237,6 +240,10 @@ describe("owner request validation", () => {
       startLocal: window.startLocal,
       endLocal: window.endLocal,
     });
+    const remoteUrl = recordPostUrls.at(-1);
+    expect(remoteUrl).toBeTruthy();
+    expect(new URL(remoteUrl!).searchParams.get("start")).toBe(`${window.startLocal}:00`);
+    expect(new URL(remoteUrl!).searchParams.get("end")).toBe(`${window.endLocal}:00`);
   });
 
   it("rejects an overlapping active booking", async () => {

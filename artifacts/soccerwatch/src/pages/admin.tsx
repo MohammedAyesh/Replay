@@ -499,6 +499,9 @@ function adminRequestErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiFetchError && (error.status === 401 || error.status === 403)) {
     return "Not signed in as an admin — sign in again and retry";
   }
+  if (error instanceof ApiFetchError && error.message === "No user found with that email") {
+    return "No user with that email — ask them to sign up first";
+  }
   return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 

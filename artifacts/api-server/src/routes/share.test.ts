@@ -281,6 +281,17 @@ describe("path prefixes", () => {
     expect(mp4.status).toBe(206);
   }, 180_000);
 
+  it("answers owner watch pages and manifests on the /api fallback prefix", async () => {
+    const ownerToken = "0123456789abcdef0123456789abcdef";
+    const page = await request(app).get(`/api/w/${ownerToken}`);
+    expect(page.status).toBe(200);
+    expect(page.headers["content-type"]).toMatch(/text\/html/);
+
+    const manifest = await request(app).get(`/api/w/${ownerToken}/manifest.m3u8`);
+    expect(manifest.status).toBe(200);
+    expect(manifest.text).toMatch(/^#EXTM3U/);
+  });
+
   it("escapes the /api no-store block even when served under /api", async () => {
     // Reproduces app.ts's ordering: the share router is mounted before the
     // middleware that stamps no-store and Vary on everything under /api. Get

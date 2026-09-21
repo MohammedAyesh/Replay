@@ -873,8 +873,12 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
 
   const title = `${field.name} ${start.value}–${end.hour.toString().padStart(2, "0")}:${end.minute.toString().padStart(2, "0")} (owner request #${created.id})`;
   try {
+    // The camera service expects seconds, while the owner-facing and database
+    // contract intentionally stays at minute precision.
+    const remoteStart = `${start.value}:00`;
+    const remoteEnd = `${end.value}:00`;
     const result = await controlFetch(
-      `/record-hq/${encodeURIComponent(field.cameraId)}?start=${encodeURIComponent(start.value)}&end=${encodeURIComponent(end.value)}&title=${encodeURIComponent(title)}`,
+      `/record-hq/${encodeURIComponent(field.cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}`,
       { method: "POST" },
       90_000,
     );
