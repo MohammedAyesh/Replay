@@ -149,7 +149,11 @@ export const ListOwnerFieldRequestsResponseItem = zod.object({
   "readyAt": zod.coerce.date().nullable(),
   "shareUrl": zod.string().url().nullable(),
   "shareExpiresAt": zod.coerce.date().nullable(),
-  "playbackManifestUrl": zod.string().url().nullable()
+  "playbackManifestUrl": zod.string().url().nullable(),
+  "varOpensAt": zod.coerce.date().nullable(),
+  "varClosesAt": zod.coerce.date().nullable(),
+  "varState": zod.string().nullable(),
+  "varActive": zod.boolean()
 })
 export const ListOwnerFieldRequestsResponse = zod.array(ListOwnerFieldRequestsResponseItem)
 
@@ -183,7 +187,11 @@ export const CreateOwnerFieldRequestResponse = zod.object({
   "readyAt": zod.coerce.date().nullable(),
   "shareUrl": zod.string().url().nullable(),
   "shareExpiresAt": zod.coerce.date().nullable(),
-  "playbackManifestUrl": zod.string().url().nullable()
+  "playbackManifestUrl": zod.string().url().nullable(),
+  "varOpensAt": zod.coerce.date().nullable(),
+  "varClosesAt": zod.coerce.date().nullable(),
+  "varState": zod.string().nullable(),
+  "varActive": zod.boolean()
 })
 
 
@@ -235,7 +243,11 @@ export const CancelOwnerRequestResponse = zod.object({
   "readyAt": zod.coerce.date().nullable(),
   "shareUrl": zod.string().url().nullable(),
   "shareExpiresAt": zod.coerce.date().nullable(),
-  "playbackManifestUrl": zod.string().url().nullable()
+  "playbackManifestUrl": zod.string().url().nullable(),
+  "varOpensAt": zod.coerce.date().nullable(),
+  "varClosesAt": zod.coerce.date().nullable(),
+  "varState": zod.string().nullable(),
+  "varActive": zod.boolean()
 })
 
 

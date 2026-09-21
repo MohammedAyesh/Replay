@@ -85,6 +85,13 @@ export interface OwnerRequest {
   shareExpiresAt: string | null;
   /** @nullable */
   playbackManifestUrl: string | null;
+  /** @nullable */
+  varOpensAt: string | null;
+  /** @nullable */
+  varClosesAt: string | null;
+  /** @nullable */
+  varState: string | null;
+  varActive: boolean;
 }
 
 export interface OwnerLinkResult {

@@ -25,4 +25,11 @@ export interface OwnerRequest {
   shareExpiresAt: Date | null;
   /** @nullable */
   playbackManifestUrl: string | null;
+  /** @nullable */
+  varOpensAt: Date | null;
+  /** @nullable */
+  varClosesAt: Date | null;
+  /** @nullable */
+  varState: string | null;
+  varActive: boolean;
 }
