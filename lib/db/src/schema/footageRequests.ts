@@ -14,6 +14,7 @@ export const footageRequestsTable = pgTable("footage_requests", {
   progress: integer("progress").notNull().default(0),
   message: text("message"),
   vpsJobId: text("vps_job_id"),
+  varState: text("var_state"),
   videoId: text("video_id"),
   deliveredSeconds: integer("delivered_seconds"),
   rateFils: integer("rate_fils").notNull().default(1000),

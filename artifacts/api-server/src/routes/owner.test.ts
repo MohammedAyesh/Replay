@@ -18,6 +18,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
 import ownerRouter from "./owner";
+import { isVarActive } from "./owner";
 
 const mockedGetLocalUserRecord = vi.mocked(getLocalUserRecord);
 const TAG = `owner_${Date.now()}`;
@@ -269,6 +270,23 @@ describe("owner request validation", () => {
 });
 
 describe("owner request status sync", () => {
+  it("marks VAR active only inside the Amman-adjusted window and for supported states", () => {
+    const row = {
+      startLocal: "2026-09-21 10:00",
+      endLocal: "2026-09-21 10:15",
+      status: "scheduled",
+      varState: "on",
+    } as const;
+    const opensAt = Date.parse("2026-09-21T06:57:00.000Z");
+    const closesAt = Date.parse("2026-09-21T07:20:00.000Z");
+
+    expect(isVarActive(row, opensAt)).toBe(true);
+    expect(isVarActive(row, opensAt - 1)).toBe(false);
+    expect(isVarActive(row, closesAt + 1)).toBe(false);
+    expect(isVarActive({ ...row, varState: "unsupported" }, opensAt)).toBe(false);
+    expect(isVarActive({ ...row, varState: "ftp-failed" }, opensAt)).toBe(false);
+  });
+
   it("transitions a completed VPS request to ready with a charge and token", async () => {
     const [inserted] = await db.insert(footageRequestsTable).values({
       fieldId: fieldAId,

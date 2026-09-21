@@ -24,6 +24,7 @@ const REQUEST_REFRESH_MS = 10 * 1000;
 const MAX_UNFINISHED_REQUESTS = 2;
 const MAX_SCHEDULED_REQUESTS = 10;
 const ACTIVE_REQUEST_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
+const AMMAN_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 type OwnerUser = NonNullable<Awaited<ReturnType<typeof getLocalUserRecord>>>;
 type FootageRequest = typeof footageRequestsTable.$inferSelect;
@@ -130,6 +131,11 @@ function ammanLocalEpoch(value: string): number {
   return parsed?.epochMs ?? Number.NaN;
 }
 
+function ammanLocalInstant(value: string): number {
+  const epoch = ammanLocalEpoch(value);
+  return Number.isFinite(epoch) ? epoch - AMMAN_UTC_OFFSET_MS : Number.NaN;
+}
+
 function publicBaseUrl(req: Request): string {
   const configured = process.env.PUBLIC_SHARE_BASE_URL || process.env.PUBLIC_BASE_URL;
   if (configured) return configured.replace(/\/$/, "");
@@ -156,8 +162,24 @@ function isActiveShare(row: FootageRequest, now = Date.now()): boolean {
   );
 }
 
+export function isVarActive(row: Pick<FootageRequest, "startLocal" | "endLocal" | "status" | "varState">, now = Date.now()): boolean {
+  const opensAt = ammanLocalInstant(row.startLocal) - 3 * 60 * 1000;
+  const closesAt = ammanLocalInstant(row.endLocal) + 5 * 60 * 1000;
+  return (
+    Number.isFinite(opensAt)
+    && Number.isFinite(closesAt)
+    && now >= opensAt
+    && now <= closesAt
+    && ACTIVE_REQUEST_STATUSES.includes(row.status as typeof ACTIVE_REQUEST_STATUSES[number])
+    && row.varState !== "unsupported"
+    && row.varState !== "ftp-failed"
+  );
+}
+
 function requestToResponse(row: FootageRequest, req: Request) {
   const active = isActiveShare(row);
+  const varOpenMs = ammanLocalInstant(row.startLocal) - 3 * 60 * 1000;
+  const varCloseMs = ammanLocalInstant(row.endLocal) + 5 * 60 * 1000;
   const base = publicBaseUrl(req);
   const shareUrl = active ? `${base}/w/${row.shareToken}` : null;
   const playbackManifestUrl = active ? `${base}/w/${row.shareToken}/manifest.m3u8` : null;
@@ -175,6 +197,10 @@ function requestToResponse(row: FootageRequest, req: Request) {
     shareUrl,
     shareExpiresAt: row.shareExpiresAt?.toISOString() ?? null,
     playbackManifestUrl,
+    varOpensAt: Number.isFinite(varOpenMs) ? new Date(varOpenMs).toISOString() : null,
+    varClosesAt: Number.isFinite(varCloseMs) ? new Date(varCloseMs).toISOString() : null,
+    varState: row.varState,
+    varActive: isVarActive(row),
   };
 }
 
@@ -328,6 +354,14 @@ function bodyNumber(body: unknown, ...keys: string[]): number | null {
   return null;
 }
 
+function varStateFromJob(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const value = (body as Record<string, unknown>).var;
+  if (!value || typeof value !== "object") return null;
+  const state = (value as Record<string, unknown>).state;
+  return typeof state === "string" && state ? state : null;
+}
+
 function mappedStatus(body: unknown): "scheduled" | "recording" | "queued" | "running" | "ready" | "partial" | "failed" | "cancelled" {
   const status = (bodyString(body, "status", "state") ?? "").toLowerCase();
   if (status === "done" || status === "completed" || status === "ready") return "ready";
@@ -417,6 +451,11 @@ export async function refreshOwnerRequest(
   }
 
   const next = mappedStatus(result.body);
+  const nextVarState = varStateFromJob(result.body);
+  await db.update(footageRequestsTable)
+    .set({ varState: nextVarState, updatedAt: new Date() })
+    .where(eq(footageRequestsTable.id, row.id));
+  row = { ...row, varState: nextVarState };
   const remoteUpdatedAt = bodyString(result.body, "updatedAt", "updated_at");
   const state = syncState.get(row.id) ?? {
     remoteUpdatedAt: null,

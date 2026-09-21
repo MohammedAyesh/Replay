@@ -2001,7 +2001,7 @@ components:
 
     OwnerRequest:
       type: object
-      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl]
+      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, varOpensAt, varClosesAt, varState, varActive]
       properties:
         id:
           type: integer
@@ -2033,6 +2033,16 @@ components:
         playbackManifestUrl:
           type: ["string", "null"]
           format: uri
+        varOpensAt:
+          type: ["string", "null"]
+          format: date-time
+        varClosesAt:
+          type: ["string", "null"]
+          format: date-time
+        varState:
+          type: ["string", "null"]
+        varActive:
+          type: boolean
 
     OwnerLinkResult:
       type: object
