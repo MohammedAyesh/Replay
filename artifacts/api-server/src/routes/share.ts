@@ -119,6 +119,132 @@ function rewriteOwnerManifest(token: string, rawManifest: string, sourceUrl: str
   }).join("\n");
 }
 
+const ENGLISH_MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const ARABIC_MONTHS = [
+  "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+  "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر",
+];
+const ENGLISH_WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const ARABIC_WEEKDAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+
+function localCalendarDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 12));
+}
+
+function localDateLabel(value: string, language: "en" | "ar"): string {
+  const date = localCalendarDate(value);
+  if (!date) return value;
+  const day = date.getUTCDate();
+  const month = language === "ar" ? ARABIC_MONTHS[date.getUTCMonth()] : ENGLISH_MONTHS[date.getUTCMonth()];
+  const weekday = language === "ar" ? ARABIC_WEEKDAYS[date.getUTCDay()] : ENGLISH_WEEKDAYS[date.getUTCDay()];
+  return `${weekday} ${day} ${month}`;
+}
+
+function ownerWindowLabel(
+  startLocal: string,
+  endLocal: string,
+  language: "en" | "ar",
+): string {
+  const startDate = localDateLabel(startLocal, language);
+  const endDate = localDateLabel(endLocal, language);
+  const startTime = startLocal.slice(11, 16);
+  const endTime = endLocal.slice(11, 16);
+  return startDate === endDate
+    ? `${startDate} · ${startTime}–${endTime}`
+    : `${startDate} · ${startTime}–${endDate} · ${endTime}`;
+}
+
+function expiryDateLabel(value: Date, language: "en" | "ar"): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Amman",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value).map((part) => [part.type, part.value]));
+  const monthIndex = Number(parts.month) - 1;
+  const month = language === "ar" ? ARABIC_MONTHS[monthIndex] : ENGLISH_MONTHS[monthIndex];
+  return `${Number(parts.day)} ${month}`;
+}
+
+function ownerShareUnavailableHtml(req: Request): string {
+  const base = publicBaseUrl(req);
+  const e = htmlEscape;
+  return `<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>This link is no longer available. · Replay</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@500;600;700&family=Rajdhani:wght@500;600;700&display=swap');
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #0B0F1A; color: #eef4f8;
+    font: 15px/1.5 "Rajdhani", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { width: min(100%, 560px); min-height: 100vh; display: grid; place-content: center;
+    margin: 0 auto; padding: 2rem 1.25rem; text-align: center; }
+  .brand { margin-bottom: 2rem; color: #D4FF4F; font-size: .8rem; font-weight: 700; letter-spacing: .28em; }
+  .card { border: 1px solid rgba(255,255,255,.1); border-radius: 1.5rem; padding: 2rem 1.25rem;
+    background: rgba(20,27,43,.78); box-shadow: 0 24px 80px rgba(0,0,0,.28); }
+  h1 { margin: 0; color: #f5f8fb; font-size: clamp(1.8rem, 7vw, 2.6rem); line-height: 1; }
+  p { margin: .75rem 0 0; color: #a7b4c2; font-family: "Cairo", sans-serif; }
+  .ar { display: none; direction: rtl; }
+  .language { display: flex; justify-content: center; gap: .45rem; margin-top: 1.5rem; }
+  button, a { border: 0; border-radius: .7rem; padding: .65rem .9rem; background: #17212c;
+    color: #d9e6f0; text-decoration: none; font: inherit; cursor: pointer; }
+  button.active, .home { background: #D4FF4F; color: #0B0F1A; font-weight: 700; }
+  .home { display: inline-block; margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">REPLAY</div>
+  <div class="card">
+    <div class="en">
+      <h1>This link is no longer available.</h1>
+      <a class="home" href="${e(base)}">Open Replay</a>
+    </div>
+    <div class="ar">
+      <h1>هذا الرابط لم يعد متاحاً.</h1>
+      <a class="home" href="${e(base)}">فتح Replay</a>
+    </div>
+    <div class="language" aria-label="Language">
+      <button id="en-button" type="button">English</button>
+      <button id="ar-button" type="button">العربية</button>
+    </div>
+  </div>
+</main>
+<script>
+(() => {
+  const en = document.querySelector(".en");
+  const ar = document.querySelector(".ar");
+  const enButton = document.getElementById("en-button");
+  const arButton = document.getElementById("ar-button");
+  const setLanguage = (language) => {
+    const arabic = language === "ar";
+    document.documentElement.lang = language;
+    document.documentElement.dir = arabic ? "rtl" : "ltr";
+    en.style.display = arabic ? "none" : "block";
+    ar.style.display = arabic ? "block" : "none";
+    enButton.classList.toggle("active", !arabic);
+    arButton.classList.toggle("active", arabic);
+  };
+  enButton.addEventListener("click", () => setLanguage("en"));
+  arButton.addEventListener("click", () => setLanguage("ar"));
+  setLanguage(new URLSearchParams(location.search).get("lang") === "ar"
+    || navigator.language.toLowerCase().startsWith("ar") ? "ar" : "en");
+})();
+</script>
+</body>
+</html>`;
+}
+
 function ownerShareHtml(
   req: Request,
   share: OwnerShareRow & { fieldName: string },
@@ -127,57 +253,74 @@ function ownerShareHtml(
   const base = publicBaseUrl(req);
   const pageUrl = `${base}/w/${token}`;
   const manifestUrl = `${pageUrl}/manifest.m3u8`;
-  const title = `${share.fieldName} · Replay`;
-  const description = `Owner footage from ${share.fieldName}, ${share.startLocal}–${share.endLocal}.`;
+  const title = share.fieldName;
+  const windowEnglish = ownerWindowLabel(share.startLocal, share.endLocal, "en");
+  const windowArabic = ownerWindowLabel(share.startLocal, share.endLocal, "ar");
+  const expiryEnglish = `Available until ${expiryDateLabel(share.shareExpiresAt!, "en")}`;
+  const expiryArabic = `متاح حتى ${expiryDateLabel(share.shareExpiresAt!, "ar")}`;
   const e = htmlEscape;
   return `<!doctype html>
 <html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>${e(title)}</title>
-<meta name="description" content="${e(description)}" />
+<title>${e(title)} · Replay</title>
+<meta name="description" content="${e(windowEnglish)}" />
 <link rel="canonical" href="${e(pageUrl)}" />
 <meta property="og:type" content="video.other" />
 <meta property="og:site_name" content="Replay" />
 <meta property="og:title" content="${e(title)}" />
-<meta property="og:description" content="${e(description)}" />
+<meta property="og:description" content="${e(windowEnglish)}" />
 <meta property="og:url" content="${e(pageUrl)}" />
 <meta name="twitter:card" content="summary" />
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@500;600;700&family=Rajdhani:wght@500;600;700&display=swap');
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; background: #080b10; color: #eef4f8;
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  body { margin: 0; min-height: 100vh; background: #0B0F1A; color: #eef4f8;
+    font: 15px/1.5 "Rajdhani", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   main { width: min(100%, 980px); margin: 0 auto; padding: 0 0 2rem; }
   .stage { background: #000; }
   video { display: block; width: 100%; max-height: 78vh; background: #000; }
   .content { padding: 1.1rem 1rem; }
-  h1 { margin: 0 0 .35rem; font-size: 1.2rem; }
+  .brand { padding: 1rem 1rem .65rem; color: #D4FF4F; font-size: .75rem; font-weight: 700;
+    letter-spacing: .28em; }
+  h1 { margin: 0 0 .35rem; font-size: clamp(1.45rem, 5vw, 2rem); line-height: 1; }
   p { margin: 0; color: #a7b4c2; }
-  .ar { display: none; direction: rtl; }
+  .window { font-size: 1rem; font-weight: 600; }
+  .ar { display: none; direction: rtl; font-family: "Cairo", sans-serif; }
+  .ar h1, .ar p, .ar a, .ar button { font-family: "Cairo", sans-serif; }
+  .expiry { display: inline-block; margin-top: .75rem; border: 1px solid rgba(212,255,79,.25);
+    border-radius: 999px; padding: .25rem .65rem; color: #D4FF4F; font-size: .78rem; font-weight: 600; }
   .language { display: flex; gap: .45rem; margin: 1rem 0 0; }
   button, a { border: 0; border-radius: .65rem; padding: .65rem .9rem;
     background: #17212c; color: #d9e6f0; text-decoration: none; font: inherit; cursor: pointer; }
-  button.active { background: #20a566; color: white; }
-  .home { display: inline-block; margin-top: 1.2rem; background: #20a566; color: white; font-weight: 700; }
+  button.active { background: #D4FF4F; color: #0B0F1A; }
+  .cta { display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    margin-top: 1.25rem; border: 1px solid rgba(255,255,255,.1); border-radius: 1rem;
+    padding: .85rem 1rem; background: rgba(20,27,43,.78); }
+  .cta p { color: #eef4f8; font-weight: 600; }
+  .home { display: inline-block; flex-shrink: 0; background: #D4FF4F; color: #0B0F1A; font-weight: 700; }
 </style>
 </head>
 <body>
 <main>
+  <div class="brand">REPLAY</div>
   <div class="stage">
     <video id="owner-video" controls controlsList="nodownload noplaybackrate" playsinline preload="metadata"></video>
   </div>
   <div class="content">
     <div class="en">
       <h1>${e(title)}</h1>
-      <p>${e(description)}</p>
-      <a class="home" href="${e(base)}">Open Replay</a>
+      <p class="window">${e(windowEnglish)}</p>
+      <span class="expiry">${e(expiryEnglish)}</span>
+      <div class="cta"><p>Want your own clips?</p><a class="home" href="${e(base)}">Open Replay</a></div>
     </div>
     <div class="ar">
-      <h1>${e(share.fieldName)} · Replay</h1>
-      <p>لقطات الملعب من ${e(share.startLocal)} إلى ${e(share.endLocal)}.</p>
-      <a class="home" href="${e(base)}">فتح Replay</a>
+      <h1>${e(title)}</h1>
+      <p class="window">${e(windowArabic)}</p>
+      <span class="expiry">${e(expiryArabic)}</span>
+      <div class="cta"><p>بدك مقاطعك الخاصة؟</p><a class="home" href="${e(base)}">افتح Replay</a></div>
     </div>
     <div class="language" aria-label="Language">
       <button id="en-button" type="button">English</button>
@@ -227,10 +370,12 @@ router.get(["/w/:token", "/api/w/:token"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
   const share = await resolveOwnerShare(token);
   if (!share) {
-    res.status(404).type("text/plain").send("Not found");
+    res.setHeader("Cache-Control", "no-store");
+    res.removeHeader("Vary");
+    res.status(404).type("text/html").send(ownerShareUnavailableHtml(req));
     return;
   }
-  res.setHeader("Cache-Control", "public, max-age=60");
+  res.setHeader("Cache-Control", "no-store");
   res.removeHeader("Vary");
   res.type("text/html").send(ownerShareHtml(req, share));
 });

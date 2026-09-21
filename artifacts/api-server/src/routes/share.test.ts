@@ -370,11 +370,21 @@ describe("public owner watch links", () => {
   it("serves a bilingual watch page without exposing the private CDN URL", async () => {
     const res = await request(app).get(`/w/${token}`);
     expect(res.status).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
     expect(res.text).toContain("English");
     expect(res.text).toContain("العربية");
+    expect(res.text).toContain("REPLAY");
+    expect(res.text).toContain("#D4FF4F");
+    expect(res.text).toContain("#0B0F1A");
+    expect(res.text).toContain("Owner Share Field");
+    expect(res.text).toContain("Monday 21 September · 10:00–10:15");
+    expect(res.text).toContain("متاح حتى");
+    expect(res.text).toContain("Want your own clips?");
+    expect(res.text).toContain("بدك مقاطعك الخاصة؟");
     expect(res.text).toContain("controlsList=\"nodownload noplaybackrate\"");
     expect(res.text).toContain("og:title");
     expect(res.text).toContain("https://replayjo.test");
+    expect(res.text).not.toContain("Owner footage from");
     expect(res.text).not.toContain("private-video-guid");
     expect(res.text).not.toContain("private-cdn.local");
   });
@@ -402,6 +412,9 @@ describe("public owner watch links", () => {
   ])("collapses unknown, revoked, and expired tokens to the same 404", async (invalidToken) => {
     const res = await request(app).get(`/w/${invalidToken}`);
     expect(res.status).toBe(404);
-    expect(res.text).toBe("Not found");
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.headers["content-type"]).toMatch(/text\/html/);
+    expect(res.text).toContain("This link is no longer available.");
+    expect(res.text).toContain("هذا الرابط لم يعد متاحاً.");
   });
 });

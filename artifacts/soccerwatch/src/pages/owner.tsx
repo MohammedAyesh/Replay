@@ -972,14 +972,14 @@ function RequestCard({
 }) {
   const key = statusKey(request.status);
   const label = copy.status[key] ?? copy.unknownStatus;
-  const message = copy.statusMessage[key] ?? request.message ?? copy.unknownStatus;
+  const message = copy.statusMessage[key] ?? copy.unknownStatus;
   const isReady = key === "ready" || key === "partial";
   const isFailed = key === "failed";
   const isScheduled = key === "scheduled";
   const showPreview = previewId === request.id;
   const progress = Math.max(0, Math.min(100, Math.round(request.progress)));
   const isProgressing = key === "recording" || key === "running" || key === "preparing";
-  const statusMessage = request.message || message;
+  const statusMessage = message;
   const requestedDuration = formatDuration(request.requestedSeconds, copy);
 
   return (
