@@ -31,6 +31,7 @@ import ClaimDemo from "@/pages/claim-demo";
 import ClaimChain from "@/pages/claim-chain";
 import IdentityBoard from "@/pages/identity-board";
 import Owner from "@/pages/owner";
+import OwnerShare from "@/pages/owner-share";
 import { useAuth } from "@/lib/auth";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
@@ -408,7 +409,7 @@ function AuthRedirectGuard() {
 
     if (!user || isGuest) return;
 
-    const isPublicPage = location === "/" || location.startsWith("/sign-in") || location.startsWith("/sign-up");
+    const isPublicPage = location === "/" || location.startsWith("/sign-in") || location.startsWith("/sign-up") || location.startsWith("/w/");
     if (isPublicPage) {
       setLocation("/home");
       return;
@@ -448,6 +449,7 @@ function AppRouter() {
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
         <Route path="/owner" component={Owner} />
+        <Route path="/w/:token" component={OwnerShare} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />

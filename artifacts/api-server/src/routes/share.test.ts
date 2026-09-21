@@ -389,6 +389,28 @@ describe("public owner watch links", () => {
     expect(res.text).not.toContain("private-cdn.local");
   });
 
+  it("returns active owner-share metadata as JSON", async () => {
+    const res = await request(app).get(`/w/${token}/meta`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/application\/json/);
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.body).toMatchObject({
+      token,
+      fieldName: expect.stringContaining("Owner Share Field"),
+      startLocal: "2026-09-21 10:00",
+      endLocal: "2026-09-21 10:15",
+    });
+    expect(res.body.expiresAt).toBeTruthy();
+  });
+
+  it("uses the branded bilingual 404 for inactive owner-share metadata", async () => {
+    const res = await request(app).get("/w/fedcbafedcbafedcbafedcbafedcbafe/meta");
+    expect(res.status).toBe(404);
+    expect(res.headers["content-type"]).toMatch(/text\/html/);
+    expect(res.text).toContain("This link is no longer available.");
+    expect(res.text).toContain("هذا الرابط لم يعد متاحاً.");
+  });
+
   it("rewrites manifests and segments through opaque token-bound resources", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {

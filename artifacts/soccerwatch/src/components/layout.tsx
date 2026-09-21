@@ -17,10 +17,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isLogin = location === "/";
   const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/");
   const isWatchFeed = location === "/home";
+  const isOwnerShare = location.startsWith("/w/");
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
-  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || location === "/owner";
+  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || location === "/owner" || isOwnerShare;
   const hasOwnedField = (user?.ownedFieldIds?.length ?? 0) > 0;
   const useTranslucentBar = isWatchFeed;
 

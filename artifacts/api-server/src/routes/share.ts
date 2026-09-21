@@ -1,5 +1,7 @@
 import { Router, type IRouter, type Request } from "express";
 import crypto from "node:crypto";
+import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { and, eq, gt, inArray } from "drizzle-orm";
@@ -60,6 +62,13 @@ function htmlEscape(value: string): string {
 }
 
 type OwnerShareRow = typeof footageRequestsTable.$inferSelect;
+export type OwnerShareMeta = {
+  token: string;
+  fieldName: string;
+  startLocal: string;
+  endLocal: string;
+  expiresAt: string;
+};
 
 export async function resolveOwnerShare(token: string): Promise<(OwnerShareRow & { fieldName: string }) | null> {
   if (!/^[a-f0-9]{32}$/.test(token)) return null;
@@ -198,6 +207,16 @@ function ownerWindowLabel(
     : `${startDate} · ${startTime}–${endDate} · ${endTime}`;
 }
 
+function ownerShareMeta(share: OwnerShareRow & { fieldName: string }): OwnerShareMeta {
+  return {
+    token: share.shareToken!,
+    fieldName: share.fieldName,
+    startLocal: share.startLocal,
+    endLocal: share.endLocal,
+    expiresAt: share.shareExpiresAt!.toISOString(),
+  };
+}
+
 function expiryDateLabel(value: Date, language: "en" | "ar"): string {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Amman",
@@ -281,6 +300,88 @@ function ownerShareUnavailableHtml(req: Request): string {
 </script>
 </body>
 </html>`;
+}
+
+/**
+ * The API owns the public share URL, but the interactive page belongs to the
+ * web artifact. In production the built file is available beside the API
+ * process; in development the API asks Vite for its current index so HMR
+ * module URLs remain valid. Tests deliberately use the existing HTML fallback.
+ */
+async function getSpaIndexHtml(): Promise<string | null> {
+  if (process.env.NODE_ENV === "production") {
+    const candidates = [
+      path.resolve(process.cwd(), "artifacts/soccerwatch/dist/public/index.html"),
+      path.resolve(process.cwd(), "../soccerwatch/dist/public/index.html"),
+      path.resolve(process.cwd(), "../../artifacts/soccerwatch/dist/public/index.html"),
+    ];
+    for (const candidate of candidates) {
+      try {
+        return await readFile(candidate, "utf8");
+      } catch {
+        // Try the next deployment layout.
+      }
+    }
+  }
+
+  if (process.env.NODE_ENV !== "test") {
+    const webPort = process.env.SOCCERWATCH_PORT ?? process.env.WEB_PORT ?? "20097";
+    try {
+      const response = await fetch(`http://127.0.0.1:${webPort}/`, {
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (response.ok) {
+        const html = await response.text();
+        if (/<head[\s>]/i.test(html) && /<\/head>/i.test(html)) return html;
+      }
+    } catch {
+      // The old server-rendered page is the explicit fallback below.
+    }
+  }
+
+  return null;
+}
+
+function injectOwnerShareTags(
+  indexHtml: string,
+  req: Request,
+  share: OwnerShareRow & { fieldName: string },
+): string | null {
+  const meta = ownerShareMeta(share);
+  const base = publicBaseUrl(req);
+  const pageUrl = `${base}/w/${meta.token}`;
+  const posterUrl = `${pageUrl}/poster.jpg`;
+  const description = ownerWindowLabel(meta.startLocal, meta.endLocal, "en");
+  const escapedJson = JSON.stringify(meta)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
+  const e = htmlEscape;
+  const tags = [
+    `<title>${e(`${meta.fieldName} · Replay`)}</title>`,
+    `<meta name="description" content="${e(description)}" />`,
+    `<meta property="og:title" content="${e(`${meta.fieldName} · Replay`)}" />`,
+    `<meta property="og:description" content="${e(description)}" />`,
+    `<meta property="og:type" content="video.other" />`,
+    `<meta property="og:url" content="${e(pageUrl)}" />`,
+    `<meta property="og:image" content="${e(posterUrl)}" />`,
+    `<meta name="twitter:card" content="summary_large_image" />`,
+    `<meta name="twitter:title" content="${e(`${meta.fieldName} · Replay`)}" />`,
+    `<meta name="twitter:description" content="${e(description)}" />`,
+    `<meta name="twitter:image" content="${e(posterUrl)}" />`,
+    `<script>window.__OWNER_SHARE__ = ${escapedJson};</script>`,
+  ].join("\n");
+  const head = indexHtml.match(/<head[^>]*>/i);
+  if (!head || head.index == null) return null;
+
+  // Remove the generic title/description and let the share-specific values
+  // win for crawlers that use the first matching tag.
+  const withoutGenericTags = indexHtml
+    .replace(/<title>[\s\S]*?<\/title>/i, "")
+    .replace(/<meta\s+name=["']description["'][^>]*\/?>/gi, "")
+    .replace(/<meta\s+property=["']og:(?:title|description|type|url|image)["'][^>]*\/?>/gi, "")
+    .replace(/<meta\s+name=["']twitter:(?:card|title|description|image)["'][^>]*\/?>/gi, "");
+  return withoutGenericTags.replace(/<\/head>/i, `${tags}\n</head>`);
 }
 
 function ownerShareHtml(
@@ -415,7 +516,113 @@ router.get(["/w/:token", "/api/w/:token"], async (req, res): Promise<void> => {
   }
   res.setHeader("Cache-Control", "no-store");
   res.removeHeader("Vary");
-  res.type("text/html").send(ownerShareHtml(req, share));
+  const indexHtml = await getSpaIndexHtml();
+  const spaHtml = indexHtml ? injectOwnerShareTags(indexHtml, req, share) : null;
+  res.type("text/html").send(spaHtml ?? ownerShareHtml(req, share));
+});
+
+router.get(["/w/:token/meta", "/api/w/:token/meta"], async (req, res): Promise<void> => {
+  const token = String(req.params.token ?? "");
+  const share = await resolveOwnerShare(token);
+  if (!share) {
+    res.setHeader("Cache-Control", "no-store");
+    res.removeHeader("Vary");
+    res.status(404).type("text/html").send(ownerShareUnavailableHtml(req));
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.removeHeader("Vary");
+  res.json(ownerShareMeta(share));
+});
+
+const ownerPosterCache = new Map<string, string>();
+const ownerPosterInFlight = new Map<string, Promise<string | null>>();
+
+function ownerPosterPath(token: string): string {
+  return `posters/owner-${token}.jpg`;
+}
+
+async function ownerPosterExists(storagePath: string): Promise<boolean> {
+  if (!isBunnyStorageConfigured()) return false;
+  try {
+    const response = await fetch(
+      `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${storagePath}`,
+      {
+        method: "HEAD",
+        headers: { AccessKey: BUNNY_STORAGE_API_KEY },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureOwnerSharePoster(
+  share: OwnerShareRow & { fieldName: string },
+): Promise<string | null> {
+  const token = share.shareToken!;
+  const cached = ownerPosterCache.get(token);
+  if (cached) return cached;
+
+  const existingPath = ownerPosterPath(token);
+  if (await ownerPosterExists(existingPath)) {
+    ownerPosterCache.set(token, existingPath);
+    return existingPath;
+  }
+
+  const running = ownerPosterInFlight.get(token);
+  if (running) return running;
+
+  const generation = (async (): Promise<string | null> => {
+    try {
+      const { duration, hasMP4Fallback, availableResolutions } = await getBunnyVideoInfo(share.videoId!);
+      const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
+      const source = await selectExportSource({
+        videoId: share.videoId!,
+        hasMP4Fallback,
+        availableResolutions,
+        referer,
+      });
+      const result = await generatePosterFrame({
+        sourceUrl: source.url,
+        referer,
+        startSec: 0,
+        endSec: duration,
+        crop: null,
+        sourceAspect: 32 / 9,
+      });
+      await uploadBufferToBunnyStorage(result.buffer, existingPath, "image/jpeg");
+      ownerPosterCache.set(token, existingPath);
+      logger.info({ token, path: existingPath, atSec: result.atSec }, "Generated owner share poster");
+      return existingPath;
+    } catch (err) {
+      logger.error({ err, token }, "Owner share poster generation failed");
+      return null;
+    } finally {
+      ownerPosterInFlight.delete(token);
+    }
+  })();
+  ownerPosterInFlight.set(token, generation);
+  return generation;
+}
+
+router.get(["/w/:token/poster.jpg", "/api/w/:token/poster.jpg"], async (req, res): Promise<void> => {
+  const token = String(req.params.token ?? "");
+  const share = await resolveOwnerShare(token);
+  if (!share) {
+    res.setHeader("Cache-Control", "no-store");
+    res.removeHeader("Vary");
+    res.status(404).type("text/html").send(ownerShareUnavailableHtml(req));
+    return;
+  }
+  const posterPath = await ensureOwnerSharePoster(share);
+  if (!posterPath) {
+    res.status(404).end();
+    return;
+  }
+  await proxyStorageObject(req, res, posterPath, "image/jpeg", 31536000);
 });
 
 router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (req, res): Promise<void> => {
