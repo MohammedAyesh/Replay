@@ -5,6 +5,7 @@ import multer from "multer";
 import { db, academiesTable, academyRecordingsTable, fieldsTable, recordingsTable, usersTable } from "@workspace/db";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { isBunnyStorageConfigured, uploadBufferToBunnyStorage, BUNNY_STORAGE_HOSTNAME, BUNNY_STORAGE_ZONE, BUNNY_STORAGE_API_KEY } from "../lib/bunny";
+import { createPublicFootageContext, isPublicRecordingInContext } from "../lib/publicFootage";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 // Intro videos are much bigger than a logo image. Buffering the whole file in
@@ -39,12 +40,18 @@ function parseCameras(raw: string): string[] {
   return raw ? raw.split(",").map((c) => c.trim()).filter(Boolean) : [];
 }
 
-async function buildSummary(academy: typeof academiesTable.$inferSelect) {
+async function buildSummary(academy: typeof academiesTable.$inferSelect, req: Parameters<typeof getLocalUserId>[0]) {
   const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, academy.fieldId));
-  const [recCount] = await db
-    .select({ value: count() })
+  const context = await createPublicFootageContext(req, [academy.fieldId]);
+  if (field && !context.isAdmin && field.isHidden) return null;
+  const academyRecordings = await db
+    .select({ recording: recordingsTable })
     .from(academyRecordingsTable)
+    .innerJoin(recordingsTable, eq(academyRecordingsTable.recordingId, recordingsTable.id))
     .where(eq(academyRecordingsTable.academyId, academy.id));
+  const visibleRecordings = field
+    ? academyRecordings.filter(({ recording }) => isPublicRecordingInContext(recording, field, context))
+    : [];
   return {
     id: academy.id,
     name: academy.name,
@@ -57,16 +64,16 @@ async function buildSummary(academy: typeof academiesTable.$inferSelect) {
     introVideoUrl: academy.introVideoUrl ?? null,
     liveAccess: academy.liveAccess,
     cameraIds: parseCameras(academy.cameraIds),
-    recordingCount: Number(recCount?.value ?? 0),
+    recordingCount: visibleRecordings.length,
   };
 }
 
 // ── Public routes ────────────────────────────────────────────────────────────
 
-router.get("/academies", async (_req, res): Promise<void> => {
+router.get("/academies", async (req, res): Promise<void> => {
   const academies = (await db.select().from(academiesTable).orderBy(academiesTable.name))
     .filter((academy) => !isHiddenAcademy(academy));
-  const summaries = await Promise.all(academies.map(buildSummary));
+  const summaries = (await Promise.all(academies.map((academy) => buildSummary(academy, req)))).filter(Boolean);
   res.json(summaries);
 });
 
@@ -77,7 +84,9 @@ router.get("/academies/:id", async (req, res): Promise<void> => {
   const [academy] = await db.select().from(academiesTable).where(eq(academiesTable.id, id));
   if (!academy || isHiddenAcademy(academy)) { res.status(404).json({ error: "Academy not found" }); return; }
 
-  res.json(await buildSummary(academy));
+  const summary = await buildSummary(academy, req);
+  if (!summary) { res.status(404).json({ error: "Academy not found" }); return; }
+  res.json(summary);
 });
 
 router.get("/academies/:id/recordings", async (req, res): Promise<void> => {
@@ -86,6 +95,12 @@ router.get("/academies/:id/recordings", async (req, res): Promise<void> => {
 
   const [academy] = await db.select().from(academiesTable).where(eq(academiesTable.id, id));
   if (!academy || isHiddenAcademy(academy)) { res.status(404).json({ error: "Academy not found" }); return; }
+  const context = await createPublicFootageContext(req, [academy.fieldId]);
+  const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, academy.fieldId));
+  if (!field || (!context.isAdmin && field.isHidden)) {
+    res.status(404).json({ error: "Academy not found" });
+    return;
+  }
 
   const rows = await db
     .select({ recording: recordingsTable, field: fieldsTable })
@@ -95,7 +110,9 @@ router.get("/academies/:id/recordings", async (req, res): Promise<void> => {
     .where(eq(academyRecordingsTable.academyId, id))
     .orderBy(recordingsTable.date);
 
-  res.json(rows.map(({ recording: r, field: f }) => ({
+  res.json(rows
+    .filter(({ recording: r, field: f }) => isPublicRecordingInContext(r, f, context))
+    .map(({ recording: r, field: f }) => ({
     id: r.id,
     fieldId: r.fieldId,
     court: r.court,
@@ -106,7 +123,7 @@ router.get("/academies/:id/recordings", async (req, res): Promise<void> => {
     videoUrl: r.videoUrl,
     highlightMoment: r.highlightMoment ?? null,
     fieldName: f?.name ?? null,
-  })));
+    })));
 });
 
 // ── Admin routes ─────────────────────────────────────────────────────────────
@@ -142,7 +159,7 @@ router.get("/admin/academies", async (req, res): Promise<void> => {
 
   const academies = (await db.select().from(academiesTable).orderBy(academiesTable.name))
     .filter((academy) => !isHiddenAcademy(academy));
-  const summaries = await Promise.all(academies.map(buildSummary));
+  const summaries = await Promise.all(academies.map((academy) => buildSummary(academy, req)));
   res.json(summaries);
 });
 
@@ -170,7 +187,7 @@ router.post("/admin/academies", async (req, res): Promise<void> => {
     })
     .returning();
 
-  res.status(201).json(await buildSummary(academy));
+  res.status(201).json(await buildSummary(academy, req));
 });
 
 router.patch("/admin/academies/:id", async (req, res): Promise<void> => {
@@ -200,7 +217,7 @@ router.patch("/admin/academies/:id", async (req, res): Promise<void> => {
 
   if (!academy) { res.status(404).json({ error: "Academy not found" }); return; }
 
-  res.json(await buildSummary(academy));
+  res.json(await buildSummary(academy, req));
 });
 
 router.delete("/admin/academies/:id", async (req, res): Promise<void> => {

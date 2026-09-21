@@ -1,7 +1,13 @@
 import { Router, type IRouter } from "express";
-import { db, fieldsTable } from "@workspace/db";
+import { db, fieldsTable, recordingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, isBunnyConfigured } from "../lib/bunny.js";
+import {
+  createPublicFootageContext,
+  extractBunnyVideoId,
+  isPublicBunnyVideoInContext,
+  parseRecordingTitleTimestamp,
+} from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
@@ -22,6 +28,12 @@ router.get("/fields/:id/videos", async (req, res): Promise<void> => {
 
   const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, fieldId));
   if (!field) {
+    res.status(404).json({ error: "Field not found" });
+    return;
+  }
+
+  const context = await createPublicFootageContext(req, [field.id]);
+  if (!context.isAdmin && field.isHidden) {
     res.status(404).json({ error: "Field not found" });
     return;
   }
@@ -59,9 +71,47 @@ router.get("/fields/:id/videos", async (req, res): Promise<void> => {
   const data = (await bunnyRes.json()) as { items?: BunnyApiItem[] } | BunnyApiItem[];
   const raw: BunnyApiItem[] = Array.isArray(data) ? data : (data.items ?? []);
 
+  const importedRecordings = await db
+    .select({
+      videoUrl: recordingsTable.videoUrl,
+      date: recordingsTable.date,
+      timeSlot: recordingsTable.timeSlot,
+      isVisible: recordingsTable.isVisible,
+    })
+    .from(recordingsTable)
+    .where(eq(recordingsTable.fieldId, field.id));
+  const visibleGuids = new Set(
+    importedRecordings
+      .filter((recording) => recording.isVisible)
+      .filter((recording) => context.isAdmin || (
+        (context.schedulesByField.get(field.id) ?? []).length > 0
+        && (recording.date && recording.timeSlot)
+      ))
+      .filter((recording) => context.isAdmin || isPublicBunnyVideoInContext(
+        field,
+        extractBunnyVideoId(recording.videoUrl) ?? "",
+        "",
+        context,
+        recording.date,
+        recording.timeSlot,
+      ))
+      .map((recording) => extractBunnyVideoId(recording.videoUrl))
+      .filter((videoId): videoId is string => Boolean(videoId))
+  );
+
   const videos = raw
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
     .filter((v) => v.status === undefined || v.status === 4)
+    .filter((v) => {
+      const guid = v.guid as string;
+      if (context.isAdmin) return true;
+      if (visibleGuids.has(guid)) return true;
+      const timestamp = parseRecordingTitleTimestamp(v.title as string);
+      return Boolean(
+        timestamp
+        && isPublicBunnyVideoInContext(field, guid, v.title as string, context, timestamp.date, timestamp.timeSlot)
+      );
+    })
     .map((v) => ({
       guid: v.guid as string,
       title: v.title as string,

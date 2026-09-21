@@ -50,6 +50,7 @@ import { shareCardPath } from "../lib/shareCard";
 import { getAllSettings, getSettingValue, type SettingsContext } from "../lib/settings";
 import { ensureClipPoster } from "./share";
 import { introPlaybackPath } from "./clipIntro";
+import { canCreateClipFromVideo, createPublicFootageContext } from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
@@ -571,6 +572,15 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
+  const [account] = await db
+    .select({ isGuest: usersTable.isGuest })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+  if (!account || account.isGuest) {
+    res.status(403).json({ error: "Sign in with a real account to create clips" });
+    return;
+  }
+
   const body = CreateUserClipBody.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ error: body.error.message });
@@ -578,6 +588,10 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   }
 
   const { videoId, title, startTime, endTime, cropPath, visibility, aspectRatio, academyId } = body.data;
+  if (!(await canCreateClipFromVideo(req, videoId))) {
+    res.status(403).json({ error: "You cannot create a clip from this video" });
+    return;
+  }
 
   // Validate rather than trust blindly: a nonexistent id would just silently
   // resolve to no intro later, but storing it anyway would be confusing to
@@ -986,6 +1000,7 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
 
 router.get("/feed", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
+  const visibilityContext = await createPublicFootageContext(req);
 
   // Get the set of creator IDs the current user follows
   let followedIds: number[] = [];
@@ -1026,6 +1041,7 @@ router.get("/feed", async (req, res): Promise<void> => {
   // Filter by visibility and admin-hidden status
   const visible = rows.filter((row) => {
     if ((row as { isHidden?: boolean }).isHidden) return false;
+    if (visibilityContext.ownerVideoIds.has(row.videoId)) return false;
     if (row.visibility === "public") return true;
     if (row.visibility === "private") return row.creatorId === userId;
     if (!userId) return false;

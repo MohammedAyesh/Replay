@@ -11,6 +11,7 @@ import {
   recordingTrackingSegmentsTable,
   claimMatchProgressTable,
   claimMatchIdentityBindingsTable,
+  recordingSchedulesTable,
 } from "@workspace/db";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -26,6 +27,7 @@ let fieldId: number;
 let viewerId: number;
 let recordingIds: number[] = [];
 let bundleIds: number[] = [];
+let scheduleIds: number[] = [];
 
 beforeAll(async () => {
   const [{ default: fieldsRouter }] = await Promise.all([
@@ -92,8 +94,19 @@ beforeAll(async () => {
         isVisible: true,
       },
     ])
-    .returning({ id: recordingsTable.id });
+    .returning({ id: recordingsTable.id, date: recordingsTable.date });
   recordingIds = recordings.map((recording) => recording.id);
+
+  const schedules = await db
+    .insert(recordingSchedulesTable)
+    .values(recordings.map((recording) => ({
+      fieldId,
+      allowedDate: recording.date,
+      startTime: "00:00",
+      endTime: "23:59",
+    })))
+    .returning({ id: recordingSchedulesTable.id });
+  scheduleIds = schedules.map((schedule) => schedule.id);
 
   const bundles = await db
     .insert(recordingTrackingBundlesTable)
@@ -176,6 +189,9 @@ afterAll(async () => {
   }
   if (recordingIds.length) {
     await db.delete(recordingsTable).where(inArray(recordingsTable.id, recordingIds));
+  }
+  if (scheduleIds.length) {
+    await db.delete(recordingSchedulesTable).where(inArray(recordingSchedulesTable.id, scheduleIds));
   }
   await db.delete(usersTable).where(eq(usersTable.id, viewerId));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));

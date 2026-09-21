@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, desc, eq, ilike, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import {
   db,
   fieldOwnersTable,
@@ -571,7 +571,7 @@ router.post("/admin/footage-owners", async (req, res): Promise<void> => {
   }
   const [user] = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
     .from(usersTable)
-    .where(ilike(usersTable.email, email))
+    .where(sql`lower(${usersTable.email}) = lower(${email})`)
     .limit(1);
   if (!user) {
     res.status(404).json({ error: "No user found with that email" });
@@ -605,7 +605,10 @@ router.delete("/admin/footage-owners", async (req, res): Promise<void> => {
     res.status(400).json({ error: "fieldId and email are required" });
     return;
   }
-  const [user] = await db.select({ id: usersTable.id }).from(usersTable).where(ilike(usersTable.email, email)).limit(1);
+  const [user] = await db.select({ id: usersTable.id })
+    .from(usersTable)
+    .where(sql`lower(${usersTable.email}) = lower(${email})`)
+    .limit(1);
   if (!user) {
     res.status(404).json({ error: "No user found with that email" });
     return;

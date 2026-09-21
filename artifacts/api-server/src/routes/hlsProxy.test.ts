@@ -14,6 +14,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 
+vi.mock("../lib/clerkUserBridge", () => ({
+  getLocalUserRecord: vi.fn().mockResolvedValue({ id: 1, isAdmin: true, isGuest: false }),
+}));
+
 import router from "./hlsProxy";
 
 const UPSTREAM = "https://vz-test.b-cdn.net/abc/1080p/video.m3u8";

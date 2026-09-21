@@ -42,7 +42,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "analysis" | "branding" | "settings";
+type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "matches" | "var" | "claim-disputes" | "analysis" | "branding" | "settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,6 +83,24 @@ interface AdminUser {
   clerkId: string | null;
   createdAt: string;
   academyId: number | null;
+}
+
+interface AdminAccessUser {
+  id: number;
+  name: string;
+  email: string;
+  isAdmin: boolean;
+  isDisabled: boolean;
+  isGuest: boolean;
+  academyId: number | null;
+  fieldIds: number[];
+  lastSeenAt: string | null;
+}
+
+interface AdminAccessField {
+  id: number;
+  name: string;
+  owners: Array<{ userId: number; name: string; email: string }>;
 }
 
 interface AdminField {
@@ -1088,6 +1106,177 @@ function AccountsTab() {
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Access Tab ───────────────────────────────────────────────────────────────
+
+function AccessTab() {
+  const { user: me } = useAuth();
+  const [users, setUsers] = useState<AdminAccessUser[]>([]);
+  const [fields, setFields] = useState<AdminAccessField[]>([]);
+  const [academies, setAcademies] = useState<Array<{ id: number; name: string }>>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [access, academyRows] = await Promise.all([
+        apiFetch("/admin/access") as Promise<{ users: AdminAccessUser[]; fields: AdminAccessField[] }>,
+        apiFetch("/admin/academies") as Promise<AdminAcademy[]>,
+      ]);
+      setUsers(access.users ?? []);
+      setFields(access.fields ?? []);
+      setAcademies((academyRows ?? []).map((academy) => ({ id: academy.id, name: academy.name })));
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not load access settings"));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const updateUser = async (
+    target: AdminAccessUser,
+    patch: { isAdmin?: boolean; fieldIds?: number[]; academyId?: number | null },
+  ) => {
+    setSaving(target.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await apiFetch(`/admin/access/users/${target.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }) as AdminAccessUser;
+      setUsers((current) => current.map((item) => item.id === target.id ? { ...item, ...updated } : item));
+      setNotice(`Saved access for ${target.name}`);
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not save access"));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const filteredUsers = users.filter((target) => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return true;
+    return target.name.toLowerCase().includes(needle) || target.email.toLowerCase().includes(needle);
+  });
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-white text-sm font-semibold">Access</p>
+        <p className="mt-0.5 text-xs text-zinc-500">Assign admin access, field ownership, and academy links. Changes save immediately.</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search name or email…"
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-900 py-2.5 pl-9 pr-4 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-primary"
+          />
+        </div>
+        <button type="button" onClick={() => void load()} disabled={loading} className="rounded-xl bg-zinc-800 p-2.5 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50" aria-label="Refresh access">
+          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+        </button>
+      </div>
+      {error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
+      {notice && <p className="rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">{notice}</p>}
+
+      {loading ? (
+        <div className="py-16 text-center text-zinc-500">Loading…</div>
+      ) : (
+        <div className="space-y-3">
+          {filteredUsers.map((target) => {
+            const isSelf = target.id === me?.id;
+            const isSaving = saving === target.id;
+            return (
+              <section key={target.id} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="truncate text-sm font-semibold text-white">{target.name}</p>
+                      {target.isAdmin && <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">Admin</span>}
+                      {isSelf && <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">You</span>}
+                    </div>
+                    <p className="truncate text-xs text-zinc-500">{target.email}</p>
+                    {target.lastSeenAt && <p className="mt-1 text-[10px] text-zinc-600">Last seen {new Date(target.lastSeenAt).toLocaleString()}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isSelf || isSaving}
+                    onClick={() => void updateUser(target, { isAdmin: !target.isAdmin })}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                      target.isAdmin ? "border-primary/40 bg-primary/10 text-primary" : "border-zinc-700 bg-zinc-800 text-zinc-400",
+                    )}
+                    title={isSelf ? "You cannot remove your own admin access" : undefined}
+                  >
+                    {target.isAdmin ? "Admin on" : "Admin off"}
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs text-zinc-400">
+                    Academy
+                    <select
+                      value={target.academyId ?? ""}
+                      disabled={isSaving}
+                      onChange={(event) => void updateUser(target, { academyId: event.target.value ? Number(event.target.value) : null })}
+                      className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white"
+                    >
+                      <option value="">No academy</option>
+                      {academies.map((academy) => <option key={academy.id} value={academy.id}>{academy.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs text-zinc-400">
+                    Fields owned
+                    <select
+                      multiple
+                      value={target.fieldIds.map(String)}
+                      disabled={isSaving}
+                      onChange={(event) => void updateUser(target, {
+                        fieldIds: Array.from(event.target.selectedOptions).map((option) => Number(option.value)),
+                      })}
+                      className="mt-1 min-h-[86px] w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white"
+                    >
+                      {fields.map((field) => <option key={field.id} value={field.id}>{field.name}</option>)}
+                    </select>
+                  </label>
+                </div>
+              </section>
+            );
+          })}
+          {filteredUsers.length === 0 && <p className="py-10 text-center text-sm text-zinc-500">No matching users.</p>}
+        </div>
+      )}
+
+      {!loading && (
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+          <h2 className="text-sm font-semibold text-white">Owners by field</h2>
+          <p className="mt-0.5 text-xs text-zinc-500">Read-only summary of current field ownership.</p>
+          <div className="mt-3 space-y-2">
+            {fields.map((field) => (
+              <div key={field.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+                <p className="text-sm text-white">{field.name}</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {field.owners.length > 0 ? field.owners.map((owner) => `${owner.name} (${owner.email})`).join(", ") : "No owners assigned"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );
@@ -5865,6 +6054,7 @@ function OwnersBillingTab() {
 const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   clips: { label: "Clips", render: () => <ClipsTab /> },
   accounts: { label: "Accounts", render: () => <AccountsTab /> },
+  access: { label: "Access", render: () => <AccessTab /> },
   fields: { label: "Fields", render: () => <FieldsTab /> },
   owners: { label: "Owners & Billing", render: () => <OwnersBillingTab /> },
   academies: { label: "Academies", render: () => <AcademiesTab /> },
@@ -5901,7 +6091,16 @@ export default function Admin() {
       {/* Header */}
       <div className="admin-page-header pt-safe px-4 pt-5 pb-3 bg-zinc-950 border-b border-zinc-800/60 flex-shrink-0">
         <p className="text-zinc-500 text-xs uppercase tracking-widest font-semibold mb-0.5">Admin Console</p>
-        <h1 className="font-display font-black text-3xl text-white uppercase tracking-tight">REPLAY</h1>
+          <div className="flex items-end justify-between gap-3">
+            <h1 className="font-display font-black text-3xl text-white uppercase tracking-tight">REPLAY</h1>
+            <button
+              type="button"
+              onClick={() => setLocation("/owner")}
+              className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-black"
+            >
+              Owner console
+            </button>
+          </div>
       </div>
 
       {/* Tabs */}

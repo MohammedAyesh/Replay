@@ -3,6 +3,7 @@ import { eq, desc } from "drizzle-orm";
 import { db, recordingsTable, fieldsTable, usersTable, recordingTrackingBundlesTable } from "@workspace/db";
 import { GetRecordingParams, GetRecordingResponse } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { createPublicFootageContext, isPublicRecordingInContext } from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
@@ -133,6 +134,15 @@ router.get("/recordings/:id", async (req, res): Promise<void> => {
   }
 
   const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, recording.fieldId));
+  if (!field) {
+    res.status(404).json({ error: "Recording not found" });
+    return;
+  }
+  const context = await createPublicFootageContext(req, [field.id]);
+  if (!isPublicRecordingInContext(recording, field, context)) {
+    res.status(404).json({ error: "Recording not found" });
+    return;
+  }
 
   res.json(
     GetRecordingResponse.parse({

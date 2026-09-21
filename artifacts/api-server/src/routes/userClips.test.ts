@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import cookieParser from "cookie-parser";
-import { db, usersTable, userClipsTable } from "@workspace/db";
+import { db, usersTable, userClipsTable, fieldsTable, recordingsTable, recordingSchedulesTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -31,6 +31,8 @@ async function buildApp(): Promise<Express> {
 const TEST_TAG = `test_${Date.now()}`;
 let userAId: number;
 let userBId: number;
+let fieldId: number;
+let recordingId: number;
 let app: Express;
 
 beforeAll(async () => {
@@ -58,6 +60,31 @@ beforeAll(async () => {
 
   userAId = userA.id;
   userBId = userB.id;
+
+  const [field] = await db
+    .insert(fieldsTable)
+    .values({ name: `Clip source ${TEST_TAG}`, location: "Test" })
+    .returning({ id: fieldsTable.id });
+  fieldId = field.id;
+  const [recording] = await db
+    .insert(recordingsTable)
+    .values({
+      fieldId,
+      court: "1",
+      date: "2026-09-21",
+      timeSlot: "12:00",
+      duration: "00:30:00",
+      videoUrl: "https://cdn.test/test-video-abc123/playlist.m3u8",
+      isVisible: true,
+    })
+    .returning({ id: recordingsTable.id });
+  recordingId = recording.id;
+  await db.insert(recordingSchedulesTable).values({
+    fieldId,
+    allowedDate: "2026-09-21",
+    startTime: "00:00",
+    endTime: "23:59",
+  });
 });
 
 afterAll(async () => {
@@ -68,6 +95,9 @@ afterAll(async () => {
   await db
     .delete(usersTable)
     .where(inArray(usersTable.id, [userAId, userBId]));
+  await db.delete(recordingSchedulesTable).where(eq(recordingSchedulesTable.fieldId, fieldId));
+  await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
+  await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
 });
 
 const SAMPLE_CLIP_BODY = {

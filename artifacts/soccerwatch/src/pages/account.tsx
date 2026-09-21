@@ -228,7 +228,7 @@ export default function Account() {
           {/* Language toggle */}
           <LanguageToggle />
 
-          {((displayUser?.ownedFieldIds?.length ?? 0) > 0 || isAdmin) && (
+          {(displayUser?.ownedFieldIds?.length ?? 0) > 0 && (
             <Link
               href="/owner"
               data-testid="link-owner-console"

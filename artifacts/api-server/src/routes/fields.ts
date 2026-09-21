@@ -18,20 +18,27 @@ import {
   GetFieldRecordingsResponse,
 } from "@workspace/api-zod";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
+import { createPublicFootageContext, isPublicRecordingInContext } from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
 router.get("/fields", async (req, res): Promise<void> => {
-  const fields = (await db.select().from(fieldsTable).orderBy(fieldsTable.name)).filter((f) => !f.isHidden);
+  const allFields = await db.select().from(fieldsTable).orderBy(fieldsTable.name);
+  const context = await createPublicFootageContext(req, allFields.map((field) => field.id));
+  const fields = allFields.filter((field) => context.isAdmin || !field.isHidden);
 
   const fieldsWithCounts = await Promise.all(
     fields.map(async (f) => {
       const recordings = await db.select().from(recordingsTable).where(eq(recordingsTable.fieldId, f.id));
+      const visibleRecordings = recordings.filter((recording) => isPublicRecordingInContext(recording, f, context));
+      const visibleRecordingIds = visibleRecordings.map((recording) => recording.id);
       const clips = await db
         .select({ count: sql<number>`count(*)` })
         .from(clipsTable)
         .innerJoin(recordingsTable, eq(clipsTable.recordingId, recordingsTable.id))
-        .where(eq(recordingsTable.fieldId, f.id));
+        .where(visibleRecordingIds.length > 0
+          ? and(eq(recordingsTable.fieldId, f.id), sql`${recordingsTable.id} in (${sql.join(visibleRecordingIds.map((id) => sql`${id}`), sql`, `)})`)
+          : sql`false`);
       const clipCount = Number(clips[0]?.count ?? 0);
       return {
         id: f.id,
@@ -65,12 +72,24 @@ router.get("/fields/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Field not found" });
     return;
   }
+  const context = await createPublicFootageContext(req, [field.id]);
+  if (!context.isAdmin && field.isHidden) {
+    res.status(404).json({ error: "Field not found" });
+    return;
+  }
 
+  const fieldRecordings = await db.select().from(recordingsTable).where(eq(recordingsTable.fieldId, field.id));
+  const visibleRecordings = fieldRecordings.filter((recording) => isPublicRecordingInContext(recording, field, context));
   const clips = await db
     .select({ count: sql<number>`count(*)` })
     .from(clipsTable)
     .innerJoin(recordingsTable, eq(clipsTable.recordingId, recordingsTable.id))
-    .where(eq(recordingsTable.fieldId, field.id));
+    .where(visibleRecordings.length > 0
+      ? and(
+        eq(recordingsTable.fieldId, field.id),
+        sql`${recordingsTable.id} in (${sql.join(visibleRecordings.map((recording) => sql`${recording.id}`), sql`, `)})`,
+      )
+      : sql`false`);
 
   res.json(
     GetFieldResponse.parse({
@@ -99,6 +118,16 @@ router.get("/fields/:id/recordings", async (req, res): Promise<void> => {
 
   const viewer = await getLocalUserRecord(req);
   const viewerId = viewer && !viewer.isGuest ? viewer.id : null;
+  const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, params.data.id));
+  if (!field) {
+    res.status(404).json({ error: "Field not found" });
+    return;
+  }
+  const context = await createPublicFootageContext(req, [field.id]);
+  if (!context.isAdmin && field.isHidden) {
+    res.status(404).json({ error: "Field not found" });
+    return;
+  }
   const viewerProgressJoin = viewerId
     ? and(eq(claimMatchProgressTable.userId, viewerId), eq(claimMatchProgressTable.recordingId, recordingsTable.id))
     : sql`false`;
@@ -144,11 +173,11 @@ router.get("/fields/:id/recordings", async (req, res): Promise<void> => {
     .leftJoin(claimMatchIdentityBindingsTable, viewerBindingJoin)
     .orderBy(recordingsTable.date);
 
-  const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, params.data.id));
+  const visibleRecordings = recordings.filter(({ recording }) => isPublicRecordingInContext(recording, field, context));
 
   res.json(
     GetFieldRecordingsResponse.parse(
-      recordings.map(({ recording, hasTrackingBundle, trackingSegmentCount, viewerProgressId, viewerClaimState }) => ({
+      visibleRecordings.map(({ recording, hasTrackingBundle, trackingSegmentCount, viewerProgressId, viewerClaimState }) => ({
         id: recording.id,
         fieldId: recording.fieldId,
         court: recording.court,

@@ -11,6 +11,7 @@ import {
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { getBunnyPlaybackUrl, getBunnyProxiedPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
 import { introPlaybackPath } from "./clipIntro";
+import { createPublicFootageContext, isPublicRecordingInContext, type PublicFootageContext } from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
@@ -40,12 +41,23 @@ async function loadClipLookups(): Promise<ClipLookups> {
   return { academyByField, globalIntro: settings[0]?.introVideoUrl ?? null };
 }
 
-async function buildClip(clipId: number, userId: number | null, lookups?: ClipLookups) {
+async function buildClip(
+  clipId: number,
+  userId: number | null,
+  lookups?: ClipLookups,
+  visibilityContext?: PublicFootageContext,
+) {
   const [clip] = await db.select().from(clipsTable).where(eq(clipsTable.id, clipId));
   if (!clip) return null;
 
   const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, clip.recordingId));
   const [field] = recording ? await db.select().from(fieldsTable).where(eq(fieldsTable.id, recording.fieldId)) : [null];
+  if (
+    visibilityContext
+    && (!recording || !field || !isPublicRecordingInContext(recording, field, visibilityContext))
+  ) {
+    return null;
+  }
 
   let isLiked = false;
   let isSaved = false;
@@ -138,10 +150,11 @@ async function buildClip(clipId: number, userId: number | null, lookups?: ClipLo
 
 router.get("/clips", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
+  const visibilityContext = await createPublicFootageContext(req);
   const clips = await db.select().from(clipsTable).orderBy(desc(clipsTable.likeCount), clipsTable.rank);
 
   const lookups = await loadClipLookups();
-  const result = await Promise.all(clips.map((c) => buildClip(c.id, userId, lookups)));
+  const result = await Promise.all(clips.map((c) => buildClip(c.id, userId, lookups, visibilityContext)));
   res.json(ListClipsResponse.parse(result.filter(Boolean)));
 });
 
@@ -154,7 +167,8 @@ router.get("/clips/:id", async (req, res): Promise<void> => {
   }
 
   const userId = await getLocalUserId(req);
-  const clip = await buildClip(params.data.id, userId);
+  const visibilityContext = await createPublicFootageContext(req);
+  const clip = await buildClip(params.data.id, userId, undefined, visibilityContext);
   if (!clip) {
     res.status(404).json({ error: "Clip not found" });
     return;

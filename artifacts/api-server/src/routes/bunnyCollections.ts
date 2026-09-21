@@ -1,8 +1,14 @@
 import { Router, type IRouter } from "express";
 import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny.js";
 import { db, fieldsTable, recordingsTable, recordingSchedulesTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { matchesRecordingSchedule } from "../lib/recordingVisibility";
+import {
+  createPublicFootageContext,
+  extractBunnyVideoId,
+  isPublicBunnyVideoInContext,
+} from "../lib/publicFootage";
+import { getLocalUserRecord } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
 
@@ -107,6 +113,7 @@ router.get("/bunny/collections", async (req, res): Promise<void> => {
 
   // Pull DB overrides
   const dbFields = await db.select().from(fieldsTable);
+  const context = await createPublicFootageContext(req, dbFields.map((field) => field.id));
   const dbByGuid = new Map(dbFields.map((f) => [f.bunnyGuid, f]));
 
   const collections = (raw as BunnyApiCollection[])
@@ -125,13 +132,19 @@ router.get("/bunny/collections", async (req, res): Promise<void> => {
         clipsVisible: dbField?.clipsVisible ?? false,
       };
     })
-    .filter((c) => !c.isHidden);
+     .filter((c) => context.isAdmin || !c.isHidden);
 
   res.json(collections);
 });
 
 // All videos across every collection — used by admin Import from Bunny
 router.get("/bunny/all-videos", async (req, res): Promise<void> => {
+  const viewer = await getLocalUserRecord(req);
+  if (!viewer?.isAdmin) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
   if (!isBunnyConfigured()) {
     res.json([]);
     return;
@@ -204,7 +217,7 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
   // Only return recordings that fall within an admin-configured time window.
   // Look up the DB field for this collection.
   const [dbField] = await db
-    .select({ id: fieldsTable.id })
+    .select()
     .from(fieldsTable)
     .where(eq(fieldsTable.bunnyGuid, guid));
 
@@ -217,13 +230,19 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
   // Fetch schedules and registered recordings in parallel. Registered rows are
   // kept for compatibility with older imported titles, but visibility must not
   // depend on the admin having manually run "Import from Bunny" first.
+  const context = await createPublicFootageContext(req, [dbField.id]);
   const [schedules, dbRecordings] = await Promise.all([
     db
       .select()
       .from(recordingSchedulesTable)
       .where(eq(recordingSchedulesTable.fieldId, dbField.id)),
     db
-      .select({ videoUrl: recordingsTable.videoUrl, date: recordingsTable.date, timeSlot: recordingsTable.timeSlot })
+    .select({
+      videoUrl: recordingsTable.videoUrl,
+      date: recordingsTable.date,
+      timeSlot: recordingsTable.timeSlot,
+      isVisible: recordingsTable.isVisible,
+    })
       .from(recordingsTable)
       .where(eq(recordingsTable.fieldId, dbField.id)),
   ]);
@@ -240,20 +259,30 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
   const visibleGuids = new Set<string>();
   for (const r of dbRecordings) {
     if (!r.date || !r.timeSlot) continue;
-    if (!matchesRecordingSchedule(r.date, r.timeSlot, schedules)) continue;
-    try {
-      const g = new URL(r.videoUrl).pathname.split("/").filter(Boolean)[0];
-      if (g) visibleGuids.add(g);
-    } catch { /* ignore malformed URLs */ }
+    if (!r.isVisible || !matchesRecordingSchedule(r.date, r.timeSlot, schedules)) continue;
+    const g = extractBunnyVideoId(r.videoUrl);
+    if (g) visibleGuids.add(g);
   }
 
   const videos = (raw as BunnyApiVideo[])
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
     .filter((v) => v.status === undefined || v.status === 4)
     .filter((v) => {
-      if (visibleGuids.has(v.guid as string)) return true;
+      const guid = v.guid as string;
+      if (context.isAdmin) return true;
+      if (visibleGuids.has(guid)) return true;
       const timestamp = parseBunnyTitleTimestamp(v.title as string);
-      return Boolean(timestamp && matchesRecordingSchedule(timestamp.date, timestamp.timeSlot, schedules));
+      return Boolean(
+        timestamp
+        && isPublicBunnyVideoInContext(
+          dbField,
+          guid,
+          v.title as string,
+          context,
+          timestamp.date,
+          timestamp.timeSlot,
+        )
+      );
     })
     .map((v) => ({
       guid: v.guid as string,

@@ -95,13 +95,28 @@ router.post("/auth/logout", async (req, res): Promise<void> => {
 // environment variables. Call this once from your browser console or curl
 // after signing in, then delete the secret so the route is disabled.
 router.post("/auth/admin-setup", async (req, res): Promise<void> => {
+  const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+  const now = Date.now();
+  const existing = adminSetupAttempts.get(ip);
+  if (!existing || existing.resetAt <= now) {
+    adminSetupAttempts.set(ip, { count: 1, resetAt: now + ADMIN_SETUP_WINDOW_MS });
+  } else if (existing.count >= ADMIN_SETUP_MAX_ATTEMPTS) {
+    res.status(429).json({ error: "Too many admin setup attempts. Try again later." });
+    return;
+  } else {
+    existing.count += 1;
+  }
+
   const expectedToken = process.env.ADMIN_SETUP_SECRET;
   if (!expectedToken) {
     res.status(403).json({ error: "Admin setup is disabled (no token configured)" });
     return;
   }
   const { token } = req.body as { token?: string };
-  if (token !== expectedToken) {
+  const provided = Buffer.from(typeof token === "string" ? token : "", "utf8");
+  const expected = Buffer.from(expectedToken, "utf8");
+  const tokenMatches = provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+  if (!tokenMatches) {
     res.status(403).json({ error: "Invalid token" });
     return;
   }
@@ -132,5 +147,9 @@ router.post("/auth/admin-setup", async (req, res): Promise<void> => {
 
   res.json({ ok: true, isAdmin: updated.isAdmin });
 });
+
+const ADMIN_SETUP_MAX_ATTEMPTS = 5;
+const ADMIN_SETUP_WINDOW_MS = 15 * 60 * 1000;
+const adminSetupAttempts = new Map<string, { count: number; resetAt: number }>();
 
 export default router;

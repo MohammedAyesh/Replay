@@ -12,6 +12,7 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
+import { canViewBunnyVideo, extractBunnyVideoId } from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
@@ -24,6 +25,11 @@ function isBunnyUrl(raw: string): boolean {
   } catch {
     return false;
   }
+}
+
+async function isAuthorizedMediaRequest(req: Parameters<typeof canViewBunnyVideo>[0], raw: string): Promise<boolean> {
+  const videoId = extractBunnyVideoId(raw);
+  return Boolean(videoId && await canViewBunnyVideo(req, videoId));
 }
 
 /**
@@ -97,6 +103,10 @@ router.get("/hls-proxy/manifest", async (req, res): Promise<void> => {
     res.status(400).send("Missing or disallowed url");
     return;
   }
+  if (!await isAuthorizedMediaRequest(req, raw)) {
+    res.status(404).send("Media not found");
+    return;
+  }
 
   const cached = cachedManifest(raw);
   if (cached !== null) {
@@ -167,6 +177,10 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
   const raw = req.query.url as string | undefined;
   if (!raw || !isBunnyUrl(raw)) {
     res.status(400).send("Missing or disallowed url");
+    return;
+  }
+  if (!await isAuthorizedMediaRequest(req, raw)) {
+    res.status(404).send("Media not found");
     return;
   }
 

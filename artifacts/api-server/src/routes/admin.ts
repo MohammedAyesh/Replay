@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { eq, count, and, desc, sql, inArray } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable } from "@workspace/db";
+import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable } from "@workspace/db";
 import {
   UpdateAdParams,
   UpdateAdBody,
@@ -30,6 +30,46 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
   if (!user?.isAdmin) return null;
 
   return userId;
+}
+
+async function validateAdminRoleChange(
+  adminId: number,
+  targetId: number,
+  nextIsAdmin: boolean | undefined,
+): Promise<string | null> {
+  if (nextIsAdmin !== false) return null;
+
+  const [target] = await db
+    .select({ id: usersTable.id, isAdmin: usersTable.isAdmin })
+    .from(usersTable)
+    .where(eq(usersTable.id, targetId));
+  if (!target) return "User not found";
+  if (!target.isAdmin) return null;
+  if (target.id === adminId) return "Cannot remove your own admin access";
+
+  const [adminCount] = await db
+    .select({ value: count() })
+    .from(usersTable)
+    .where(eq(usersTable.isAdmin, true));
+  if (Number(adminCount?.value ?? 0) <= 1) return "Cannot remove the last admin";
+  return null;
+}
+
+function accessUserResponse(
+  user: typeof usersTable.$inferSelect,
+  fieldIds: number[],
+) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    isAdmin: user.isAdmin,
+    isDisabled: user.isDisabled,
+    isGuest: user.isGuest,
+    academyId: user.academyId ?? null,
+    fieldIds,
+    lastSeenAt: null,
+  };
 }
 
 function adToEntry(ad: typeof adsTable.$inferSelect) {
@@ -355,6 +395,135 @@ router.get("/admin/users", async (req, res): Promise<void> => {
   })));
 });
 
+// ─── Admin: unified access management ─────────────────────────────────────────
+
+router.get("/admin/access", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const [users, fields, assignments] = await Promise.all([
+    db.select().from(usersTable).where(eq(usersTable.isGuest, false)).orderBy(desc(usersTable.createdAt)),
+    db.select({ id: fieldsTable.id, name: fieldsTable.name }).from(fieldsTable).orderBy(fieldsTable.name),
+    db
+      .select({
+        userId: fieldOwnersTable.userId,
+        fieldId: fieldOwnersTable.fieldId,
+        name: usersTable.name,
+        email: usersTable.email,
+      })
+      .from(fieldOwnersTable)
+      .innerJoin(usersTable, eq(fieldOwnersTable.userId, usersTable.id)),
+  ]);
+
+  const fieldIdsByUser = new Map<number, number[]>();
+  const ownersByField = new Map<number, Array<{ userId: number; name: string; email: string }>>();
+  for (const assignment of assignments) {
+    const userFields = fieldIdsByUser.get(assignment.userId) ?? [];
+    userFields.push(assignment.fieldId);
+    fieldIdsByUser.set(assignment.userId, userFields);
+
+    const fieldOwners = ownersByField.get(assignment.fieldId) ?? [];
+    fieldOwners.push({
+      userId: assignment.userId,
+      name: assignment.name,
+      email: assignment.email,
+    });
+    ownersByField.set(assignment.fieldId, fieldOwners);
+  }
+
+  res.json({
+    users: users.map((user) => accessUserResponse(user, fieldIdsByUser.get(user.id) ?? [])),
+    fields: fields.map((field) => ({
+      id: field.id,
+      name: field.name,
+      owners: ownersByField.get(field.id) ?? [],
+    })),
+  });
+});
+
+router.patch("/admin/access/users/:id", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const body = req.body as {
+    isAdmin?: unknown;
+    fieldIds?: unknown;
+    academyId?: unknown;
+  };
+  if (body.isAdmin !== undefined && typeof body.isAdmin !== "boolean") {
+    res.status(400).json({ error: "isAdmin must be a boolean" });
+    return;
+  }
+  if (body.fieldIds !== undefined && (
+    !Array.isArray(body.fieldIds)
+    || body.fieldIds.some((fieldId) => !Number.isInteger(fieldId) || Number(fieldId) <= 0)
+  )) {
+    res.status(400).json({ error: "fieldIds must be an array of positive integers" });
+    return;
+  }
+  if (body.academyId !== undefined && body.academyId !== null && (
+    typeof body.academyId !== "number" || !Number.isInteger(body.academyId) || body.academyId <= 0
+  )) {
+    res.status(400).json({ error: "academyId must be a positive integer or null" });
+    return;
+  }
+
+  const [target] = await db.select().from(usersTable).where(eq(usersTable.id, id));
+  if (!target || target.isGuest) { res.status(404).json({ error: "User not found" }); return; }
+
+  const roleError = await validateAdminRoleChange(adminId, id, body.isAdmin as boolean | undefined);
+  if (roleError) {
+    res.status(roleError === "User not found" ? 404 : 409).json({ error: roleError });
+    return;
+  }
+
+  if (body.academyId !== undefined && body.academyId !== null) {
+    const [academy] = await db
+      .select({ id: academiesTable.id })
+      .from(academiesTable)
+      .where(eq(academiesTable.id, body.academyId as number));
+    if (!academy) { res.status(400).json({ error: "Academy not found" }); return; }
+  }
+
+  const fieldIds = body.fieldIds as number[] | undefined;
+  if (fieldIds) {
+    const uniqueFieldIds = [...new Set(fieldIds)];
+    const existingFields = uniqueFieldIds.length === 0
+      ? []
+      : await db.select({ id: fieldsTable.id }).from(fieldsTable).where(inArray(fieldsTable.id, uniqueFieldIds));
+    if (existingFields.length !== uniqueFieldIds.length) {
+      res.status(400).json({ error: "One or more fields were not found" });
+      return;
+    }
+  }
+
+  await db.transaction(async (tx) => {
+    const userUpdates: Partial<typeof usersTable.$inferInsert> = {};
+    if (body.isAdmin !== undefined) userUpdates.isAdmin = body.isAdmin as boolean;
+    if (body.academyId !== undefined) userUpdates.academyId = body.academyId as number | null;
+    if (Object.keys(userUpdates).length > 0) {
+      await tx.update(usersTable).set(userUpdates).where(eq(usersTable.id, id));
+    }
+    if (fieldIds) {
+      await tx.delete(fieldOwnersTable).where(eq(fieldOwnersTable.userId, id));
+      const uniqueFieldIds = [...new Set(fieldIds)];
+      if (uniqueFieldIds.length > 0) {
+        await tx.insert(fieldOwnersTable).values(uniqueFieldIds.map((fieldId) => ({ userId: id, fieldId })));
+      }
+    }
+  });
+
+  const [updated] = await db.select().from(usersTable).where(eq(usersTable.id, id));
+  const updatedFieldRows = await db
+    .select({ fieldId: fieldOwnersTable.fieldId })
+    .from(fieldOwnersTable)
+    .where(eq(fieldOwnersTable.userId, id));
+  res.json(accessUserResponse(updated!, updatedFieldRows.map(({ fieldId }) => fieldId)));
+});
+
 router.patch("/admin/users/:id", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
@@ -377,6 +546,12 @@ router.patch("/admin/users/:id", async (req, res): Promise<void> => {
   if (body.isDisabled !== undefined) updates.isDisabled = body.isDisabled;
   if (body.isAdmin !== undefined) updates.isAdmin = body.isAdmin;
   if (body.academyId !== undefined) updates.academyId = body.academyId ?? null;
+
+  const roleError = await validateAdminRoleChange(adminId, id, body.isAdmin);
+  if (roleError) {
+    res.status(roleError === "User not found" ? 404 : 409).json({ error: roleError });
+    return;
+  }
 
   const [user] = await db.update(usersTable).set(updates).where(eq(usersTable.id, id)).returning();
   if (!user) { res.status(404).json({ error: "User not found" }); return; }

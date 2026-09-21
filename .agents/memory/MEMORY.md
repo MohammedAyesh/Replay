@@ -28,3 +28,5 @@
 - [Export rendition geometry](export-rendition-geometry.md) — select Bunny variants by declared 3840×1080 pixels, never folder labels or adaptive master fallback.
 - [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.
 - [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.
+- [Public footage access](public-footage-access.md) — all public recording, clip, Bunny, and media-proxy routes share visibility, schedule, and owner-footage authorization.
+- [SoccerWatch build environment](soccerwatch-build-environment.md) — direct Vite builds require both PORT and BASE_PATH; the workflow supplies them automatically.
