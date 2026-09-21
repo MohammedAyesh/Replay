@@ -74,22 +74,11 @@ export async function controlFetch(
   opts: RequestInit = {},
   timeoutMs = 15_000,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
-  const base = CONTROL_URL();
-  const key  = CONTROL_KEY();
-
   // Every other outbound call in this codebase is bounded; this one was not, so
   // a control API that accepts the connection and never answers (hung ffmpeg,
   // camera off WiFi) held the admin's request open until the platform edge
   // timeout, and each retry added another.
-  const res = await fetch(`${base}${path}`, {
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Api-Key": key,
-      ...(opts.headers as Record<string, string> ?? {}),
-    },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const res = await controlResponse(path, opts, timeoutMs);
 
   let body: unknown = null;
   const ct = res.headers.get("content-type") ?? "";
@@ -98,6 +87,25 @@ export async function controlFetch(
   } catch { /* non-JSON body */ }
 
   return { ok: res.ok, status: res.status, body };
+}
+
+/** Fetch a control-server response without consuming its body. */
+export async function controlResponse(
+  path: string,
+  opts: RequestInit = {},
+  timeoutMs = 15_000,
+): Promise<Response> {
+  const base = CONTROL_URL();
+  const key = CONTROL_KEY();
+  return fetch(`${base}${path}`, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": key,
+      ...(opts.headers as Record<string, string> ?? {}),
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────

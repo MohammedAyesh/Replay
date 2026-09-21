@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { Readable } from "node:stream";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import {
@@ -12,7 +13,7 @@ import {
 import { z } from "zod/v4";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { computeAmountFils, computeBillableHours } from "../lib/footageBilling";
-import { controlFetch } from "./contabo";
+import { controlFetch, controlResponse } from "./contabo";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -202,6 +203,98 @@ function requestToResponse(row: FootageRequest, req: Request) {
     varState: row.varState,
     varActive: isVarActive(row),
   };
+}
+
+type VarVariant = "hls" | "hevc";
+
+function parseVarVariant(value: string | string[] | undefined): VarVariant | null {
+  const variant = rawParam(value);
+  return variant === "hls" || variant === "hevc" ? variant : null;
+}
+
+function validVarSegmentName(value: string | string[] | undefined): string | null {
+  const name = rawParam(value);
+  return /^[A-Za-z0-9._-]+\.(ts|m4s|mp4)$/.test(name) ? name : null;
+}
+
+function varPath(camera: string, variant: VarVariant, suffix: string): string {
+  return `/var/${encodeURIComponent(camera)}/${variant}/${suffix}`;
+}
+
+function rewriteVarPlaylist(
+  playlist: string,
+  camera: string,
+  variant: VarVariant,
+  proxyPrefix: string,
+): string {
+  const sourcePrefix = `/var/${camera}/${variant}/seg/`;
+  return playlist.replaceAll(sourcePrefix, `${proxyPrefix}/`);
+}
+
+function varWindowSummary(body: unknown): { live: boolean; newestAgeSec: number | null } {
+  if (!body || typeof body !== "object") return { live: false, newestAgeSec: null };
+  const value = body as Record<string, unknown>;
+  const newestAgeSec = value.newestAgeSec ?? value.newest_age_sec;
+  return {
+    live: value.live === true,
+    newestAgeSec: typeof newestAgeSec === "number" && Number.isFinite(newestAgeSec) ? newestAgeSec : null,
+  };
+}
+
+async function sendVarPlaylist(
+  res: Response,
+  camera: string,
+  variant: VarVariant,
+  proxyPrefix: string,
+  since?: number,
+): Promise<void> {
+  const query = since === undefined ? "" : `?since=${Math.floor(since / 1000)}`;
+  let upstream: Response;
+  try {
+    upstream = await controlResponse(`${varPath(camera, variant, "playlist.m3u8")}${query}`, {}, 30_000);
+  } catch (error) {
+    logger.warn({ error, camera, variant }, "VAR playlist proxy failed");
+    res.status(502).json({ error: "VAR control server unreachable" });
+    return;
+  }
+  if (!upstream.ok) {
+    res.status(upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502)
+      .json({ error: "VAR playlist unavailable" });
+    return;
+  }
+
+  const playlist = await upstream.text();
+  const rewritten = rewriteVarPlaylist(playlist, camera, variant, proxyPrefix);
+  res
+    .set("Cache-Control", "no-store")
+    .type("application/vnd.apple.mpegurl")
+    .send(rewritten);
+}
+
+async function sendVarSegment(
+  res: Response,
+  camera: string,
+  variant: VarVariant,
+  name: string,
+): Promise<void> {
+  let upstream: Response;
+  try {
+    upstream = await controlResponse(varPath(camera, variant, `seg/${encodeURIComponent(name)}`), {}, 30_000);
+  } catch (error) {
+    logger.warn({ error, camera, variant, name }, "VAR segment proxy failed");
+    res.status(502).json({ error: "VAR control server unreachable" });
+    return;
+  }
+  if (!upstream.ok || !upstream.body) {
+    res.status(upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502)
+      .json({ error: "VAR segment unavailable" });
+    return;
+  }
+
+  const contentType = upstream.headers.get("content-type");
+  if (contentType) res.set("Content-Type", contentType);
+  res.set("Cache-Control", "private, max-age=3600");
+  Readable.fromWeb(upstream.body as globalThis.ReadableStream<Uint8Array>).pipe(res);
 }
 
 async function requireOwnerUser(req: Request, res: Response): Promise<OwnerUser | null> {
@@ -988,6 +1081,160 @@ async function requireRequestAccess(req: Request, res: Response, id: number): Pr
   if (!user) return null;
   return { user, request: found.request };
 }
+
+router.get("/owner/requests/:id/var/:variant/playlist.m3u8", async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  const variant = parseVarVariant(req.params.variant);
+  if (!id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  if (!variant) {
+    res.status(400).json({ error: "Invalid VAR variant" });
+    return;
+  }
+
+  const found = await requireRequestAccess(req, res, id);
+  if (!found) return;
+  if (!isVarActive(found.request)) {
+    res.status(404).json({ error: "VAR is not active for this request" });
+    return;
+  }
+
+  const startInstant = ammanLocalInstant(found.request.startLocal);
+  if (!Number.isFinite(startInstant)) {
+    res.status(404).json({ error: "VAR is not active for this request" });
+    return;
+  }
+  await sendVarPlaylist(
+    res,
+    found.request.cameraId,
+    variant,
+    `/api/owner/requests/${id}/var/${variant}/seg`,
+    startInstant - 3 * 60 * 1000,
+  );
+});
+
+router.get("/owner/requests/:id/var/:variant/seg/:name", async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  const variant = parseVarVariant(req.params.variant);
+  if (!id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  if (!variant) {
+    res.status(400).json({ error: "Invalid VAR variant" });
+    return;
+  }
+
+  const found = await requireRequestAccess(req, res, id);
+  if (!found) return;
+  if (!isVarActive(found.request)) {
+    res.status(404).json({ error: "VAR is not active for this request" });
+    return;
+  }
+
+  const name = validVarSegmentName(req.params.name);
+  if (!name) {
+    res.status(400).json({ error: "Invalid VAR segment name" });
+    return;
+  }
+  await sendVarSegment(res, found.request.cameraId, variant, name);
+});
+
+router.get("/owner/requests/:id/var/status", async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  if (!id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const found = await requireRequestAccess(req, res, id);
+  if (!found) return;
+
+  let result;
+  try {
+    result = await controlFetch(`/var/${encodeURIComponent(found.request.cameraId)}/window`, {}, 30_000);
+  } catch (error) {
+    logger.warn({ error, requestId: id }, "VAR window status proxy failed");
+    res.status(502).json({ error: "VAR control server unreachable" });
+    return;
+  }
+  if (!result.ok) {
+    res.status(result.status >= 400 && result.status < 600 ? result.status : 502)
+      .json({ error: "VAR window unavailable" });
+    return;
+  }
+
+  const summary = varWindowSummary(result.body);
+  res.json({
+    varActive: isVarActive(found.request),
+    varState: found.request.varState,
+    live: summary.live,
+    newestAgeSec: summary.newestAgeSec,
+  });
+});
+
+router.get("/admin/var/:camera/:variant/playlist.m3u8", async (req, res): Promise<void> => {
+  const user = await requireAdminUser(req, res);
+  if (!user) return;
+  const camera = rawParam(req.params.camera);
+  const variant = parseVarVariant(req.params.variant);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid camera" });
+    return;
+  }
+  if (!variant) {
+    res.status(400).json({ error: "Invalid VAR variant" });
+    return;
+  }
+  await sendVarPlaylist(
+    res,
+    camera,
+    variant,
+    `/api/admin/var/${encodeURIComponent(camera)}/${variant}/seg`,
+  );
+});
+
+router.get("/admin/var/:camera/:variant/seg/:name", async (req, res): Promise<void> => {
+  const user = await requireAdminUser(req, res);
+  if (!user) return;
+  const camera = rawParam(req.params.camera);
+  const variant = parseVarVariant(req.params.variant);
+  const name = validVarSegmentName(req.params.name);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid camera" });
+    return;
+  }
+  if (!variant) {
+    res.status(400).json({ error: "Invalid VAR variant" });
+    return;
+  }
+  if (!name) {
+    res.status(400).json({ error: "Invalid VAR segment name" });
+    return;
+  }
+  await sendVarSegment(res, camera, variant, name);
+});
+
+router.get("/admin/var/:camera/window", async (req, res): Promise<void> => {
+  const user = await requireAdminUser(req, res);
+  if (!user) return;
+  const camera = rawParam(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid camera" });
+    return;
+  }
+  let result;
+  try {
+    result = await controlFetch(`/var/${encodeURIComponent(camera)}/window`, {}, 30_000);
+  } catch (error) {
+    logger.warn({ error, camera }, "Admin VAR window proxy failed");
+    res.status(502).json({ error: "VAR control server unreachable" });
+    return;
+  }
+  res.status(result.ok ? 200 : (result.status >= 400 && result.status < 600 ? result.status : 502))
+    .json(result.body);
+});
 
 router.post("/owner/requests/:id/cancel", async (req, res): Promise<void> => {
   const id = parseId(req.params.id);
