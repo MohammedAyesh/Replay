@@ -390,18 +390,39 @@ describe("public owner watch links", () => {
   });
 
   it("rewrites manifests and segments through opaque token-bound resources", async () => {
-    const manifest = await request(app).get(`/w/${token}/manifest.m3u8`);
-    expect(manifest.status).toBe(200);
-    expect(manifest.headers["content-type"]).toContain("mpegurl");
-    expect(manifest.text).not.toContain("private-video-guid");
-    expect(manifest.text).not.toContain("private-cdn.local");
-    const resourcePath = manifest.text.trim().split("\n").at(-1);
-    expect(resourcePath).toMatch(new RegExp(`/w/${token}/resource/[0-9a-f]{24}$`));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const manifest = await request(app).get(`/w/${token}/manifest.m3u8`);
+      expect(manifest.status).toBe(200);
+      expect(manifest.headers["content-type"]).toContain("mpegurl");
+      expect(manifest.text).not.toContain("private-video-guid");
+      expect(manifest.text).not.toContain("private-cdn.local");
+      const resourcePath = manifest.text.trim().split("\n").at(-1);
+      expect(resourcePath).toMatch(
+        new RegExp(`/w/${token}/resource/[A-Za-z0-9_-]+\\.[0-9a-f]{32}$`),
+      );
 
-    const segment = await request(app).get(resourcePath!);
-    expect(segment.status).toBe(200);
-    expect(Buffer.isBuffer(segment.body)).toBe(true);
-    expect(segment.body.toString()).toBe("segment-bytes");
+      const tampered = `${resourcePath!.slice(0, -1)}${resourcePath!.endsWith("0") ? "1" : "0"}`;
+      expect((await request(app).get(tampered)).status).toBe(404);
+
+      vi.advanceTimersByTime(20 * 60 * 1000);
+      const segment = await request(app).get(resourcePath!);
+      expect(segment.status).toBe(200);
+      expect(Buffer.isBuffer(segment.body)).toBe(true);
+      expect(segment.body.toString()).toBe("segment-bytes");
+
+      await db
+        .update(footageRequestsTable)
+        .set({ shareRevoked: true })
+        .where(eq(footageRequestsTable.shareToken, token));
+      expect((await request(app).get(resourcePath!)).status).toBe(404);
+    } finally {
+      await db
+        .update(footageRequestsTable)
+        .set({ shareRevoked: false })
+        .where(eq(footageRequestsTable.shareToken, token));
+      vi.useRealTimers();
+    }
   });
 
   it.each([

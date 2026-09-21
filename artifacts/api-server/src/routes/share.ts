@@ -27,8 +27,6 @@ import { buildShareCardHtml, shareCardPath, shareToken, verifyShareToken } from 
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
-const PUBLIC_STREAM_TTL_MS = 15 * 60 * 1000;
-const publicStreamResources = new Map<string, { token: string; url: string; expiresAt: number }>();
 
 /**
  * Public origin the share links are built against.
@@ -80,16 +78,56 @@ async function resolveOwnerShare(token: string): Promise<(OwnerShareRow & { fiel
 }
 
 function streamResourceId(token: string, url: string): string {
-  const id = crypto.randomBytes(12).toString("hex");
-  publicStreamResources.set(id, { token, url, expiresAt: Date.now() + PUBLIC_STREAM_TTL_MS });
-  return id;
+  const upstream = new URL(url);
+  const upstreamPath = `${upstream.pathname}${upstream.search}`;
+  const encodedPath = Buffer.from(upstreamPath, "utf8").toString("base64url");
+  const signature = crypto
+    .createHmac(
+      "sha256",
+      process.env.CLIP_SHARE_URL_SECRET ||
+        process.env.CLIP_EXPORT_URL_SECRET ||
+        BUNNY_STORAGE_API_KEY ||
+        "replay-dev-share-secret",
+    )
+    .update(`${token}\n${upstreamPath}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `${encodedPath}.${signature}`;
 }
 
-function cleanStreamResources(): void {
-  const now = Date.now();
-  for (const [id, resource] of publicStreamResources) {
-    if (resource.expiresAt <= now) publicStreamResources.delete(id);
+function verifyStreamResourceId(token: string, resourceId: string): string | null {
+  const separator = resourceId.lastIndexOf(".");
+  if (separator <= 0 || separator === resourceId.length - 1) return null;
+
+  const encodedPath = resourceId.slice(0, separator);
+  const presentedSignature = resourceId.slice(separator + 1);
+  if (!/^[0-9a-f]{32}$/.test(presentedSignature)) return null;
+
+  let upstreamPath: string;
+  try {
+    upstreamPath = Buffer.from(encodedPath, "base64url").toString("utf8");
+  } catch {
+    return null;
   }
+  if (!upstreamPath.startsWith("/") || upstreamPath.includes("\0")) return null;
+
+  const expectedSignature = crypto
+    .createHmac(
+      "sha256",
+      process.env.CLIP_SHARE_URL_SECRET ||
+        process.env.CLIP_EXPORT_URL_SECRET ||
+        BUNNY_STORAGE_API_KEY ||
+        "replay-dev-share-secret",
+    )
+    .update(`${token}\n${upstreamPath}`)
+    .digest("hex")
+    .slice(0, 32);
+  const expected = Buffer.from(expectedSignature, "hex");
+  const presented = Buffer.from(presentedSignature, "hex");
+  if (expected.length !== presented.length || !crypto.timingSafeEqual(expected, presented)) {
+    return null;
+  }
+  return upstreamPath;
 }
 
 function publicResourcePath(token: string, id: string): string {
@@ -387,7 +425,6 @@ router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (re
     res.status(404).type("text/plain").send("Not found");
     return;
   }
-  cleanStreamResources();
   const rawUrl = getBunnyPlaybackUrl(share.videoId!);
   const response = await fetch(rawUrl, {
     headers: { Referer: `https://${new URL(rawUrl).hostname}/` },
@@ -405,22 +442,22 @@ router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (re
 
 router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceId"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
+  const upstreamPath = verifyStreamResourceId(token, String(req.params.resourceId ?? ""));
+  if (!upstreamPath) {
+    res.status(404).type("text/plain").send("Not found");
+    return;
+  }
   const share = await resolveOwnerShare(token);
   if (!share) {
     res.status(404).type("text/plain").send("Not found");
     return;
   }
-  cleanStreamResources();
-  const resource = publicStreamResources.get(String(req.params.resourceId ?? ""));
-  if (!resource || resource.token !== token || resource.expiresAt <= Date.now()) {
-    res.status(404).type("text/plain").send("Not found");
-    return;
-  }
+  const upstreamUrl = `https://${BUNNY_CDN_HOSTNAME}${upstreamPath}`;
 
   const abort = new AbortController();
   res.on("close", () => abort.abort());
-  const response = await fetch(resource.url, {
-    headers: { Referer: `https://${new URL(resource.url).hostname}/` },
+  const response = await fetch(upstreamUrl, {
+    headers: { Referer: `https://${BUNNY_CDN_HOSTNAME}/` },
     signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30_000)]),
   }).catch(() => null);
   if (!response?.ok || !response.body) {
@@ -429,11 +466,11 @@ router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceI
   }
 
   const contentType = response.headers.get("content-type") ?? "";
-  if (resource.url.includes(".m3u8") || contentType.includes("mpegurl")) {
+  if (upstreamPath.includes(".m3u8") || contentType.includes("mpegurl")) {
     const manifest = await response.text();
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.setHeader("Cache-Control", "no-store");
-    res.send(rewriteOwnerManifest(token, manifest, resource.url));
+    res.send(rewriteOwnerManifest(token, manifest, upstreamUrl));
     return;
   }
 
