@@ -61,6 +61,7 @@ type OwnerCopy = {
   pastFootage: string;
   bookMatch: string;
   date: string;
+  today: string;
   from: string;
   to: string;
   recordedHours: string;
@@ -76,6 +77,8 @@ type OwnerCopy = {
   requestFootage: string;
   submitting: string;
   required: string;
+  tooShort: string;
+  tooLong: string;
   invalidWindow: string;
   pastDateOnly: string;
   bookingDateRange: string;
@@ -107,6 +110,11 @@ type OwnerCopy = {
   readyAt: string;
   linkExpires: string;
   playerLabel: string;
+  charged: string;
+  whatsappMessage: string;
+  billingNote: string;
+  footageLabel: string;
+  paymentLabel: string;
   billingTitle: string;
   totalCharged: string;
   paid: string;
@@ -168,7 +176,15 @@ function getErrorMessage(error: unknown, fallback: string): string {
 }
 
 function formatJod(fils: number): string {
-  return (fils / 1000).toFixed(3);
+  return (fils / 1000).toFixed(3).replace(/\.?0+$/, "");
+}
+
+function formatDuration(seconds: number, copy: OwnerCopy): string {
+  const minutes = Math.max(0, Math.round(seconds / 60));
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (!hours) return `${remainder}${copy.minutes}`;
+  return remainder ? `${hours}${copy.hours} ${remainder}${copy.minutes}` : `${hours}${copy.hours}`;
 }
 
 function statusKey(status: string): string {
@@ -238,8 +254,8 @@ function requestSort(a: OwnerRequest, b: OwnerRequest): number {
 export default function Owner() {
   const { t, locale } = useTranslation();
   const copy = ownerCopy(t);
-  const { isGuest, isLoading: authLoading } = useAuth();
-  const [location] = useLocation();
+  const { isGuest, isLoading: authLoading, isSignedIn } = useAuth();
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"request" | "footage" | "billing">("request");
@@ -253,9 +269,13 @@ export default function Owner() {
   const [confirmingCancel, setConfirmingCancel] = useState<number | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
 
+  useEffect(() => {
+    if (!authLoading && !isSignedIn) setLocation("/sign-in");
+  }, [authLoading, isSignedIn, setLocation]);
+
   const fieldsQuery = useListOwnerFields({
     query: {
-      enabled: !isGuest,
+      enabled: isSignedIn && !isGuest,
       queryKey: getListOwnerFieldsQueryKey(),
     },
   });
@@ -271,7 +291,7 @@ export default function Owner() {
 
   const availabilityQuery = useGetOwnerFieldAvailability(fieldId, date, {
     query: {
-      enabled: !isGuest && requestMode === "past" && fieldId > 0 && Boolean(date),
+      enabled: isSignedIn && !isGuest && requestMode === "past" && fieldId > 0 && Boolean(date),
       queryKey: getGetOwnerFieldAvailabilityQueryKey(fieldId, date),
     },
   });
@@ -282,7 +302,7 @@ export default function Owner() {
 
   const requestsQuery = useListOwnerFieldRequests(fieldId, {
     query: {
-      enabled: !isGuest && fieldId > 0,
+      enabled: isSignedIn && !isGuest && fieldId > 0,
       queryKey: getListOwnerFieldRequestsQueryKey(fieldId),
       refetchInterval: (query) => {
         const requestData = query.state.data as OwnerRequest[] | undefined;
@@ -301,7 +321,7 @@ export default function Owner() {
 
   const ledgerQuery = useGetOwnerFieldLedger(fieldId, {
     query: {
-      enabled: !isGuest && fieldId > 0 && tab === "billing",
+      enabled: isSignedIn && !isGuest && fieldId > 0 && tab === "billing",
       queryKey: getGetOwnerFieldLedgerQueryKey(fieldId),
       refetchInterval: 60_000,
     },
@@ -353,6 +373,14 @@ export default function Owner() {
       setFormError(copy.invalidWindow);
       return;
     }
+    if (durationMinutes < 15) {
+      setFormError(copy.tooShort);
+      return;
+    }
+    if (durationMinutes > 4 * 60) {
+      setFormError(copy.tooLong);
+      return;
+    }
     if (requestMode === "past" && date > today) {
       setFormError(copy.pastDateOnly);
       return;
@@ -368,7 +396,7 @@ export default function Owner() {
         minute: "2-digit",
         hour12: false,
       }).format(new Date());
-      if (to > now) {
+      if (timeToMinutes(to) > timeToMinutes(now) - 10) {
         setFormError(copy.unavailableTime);
         return;
       }
@@ -490,14 +518,21 @@ export default function Owner() {
     );
   }
 
+  if (!isSignedIn) {
+    return (
+      <main className="flex min-h-0 flex-1 items-center justify-center px-6 pb-24 text-center" data-testid="page-owner-sign-in">
+        <LoaderCircle className="h-6 w-6 animate-spin text-primary" aria-label={copy.loading} />
+      </main>
+    );
+  }
+
   if (!fieldsQuery.isLoading && !fields.length) {
     return (
       <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto px-6 pb-24 text-center" data-testid="page-owner-empty">
         <div className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary">
           <MapPin className="h-6 w-6" aria-hidden="true" />
         </div>
-        <h1 className="font-display text-xl font-semibold text-foreground" data-testid="text-owner-empty-title">{copy.noFields}</h1>
-        <p className="max-w-xs text-sm leading-6 text-muted-foreground" data-testid="text-owner-empty-desc">{copy.chooseField}</p>
+        <p className="max-w-xs text-sm leading-6 text-foreground" data-testid="text-owner-empty-desc">{copy.noFields}</p>
       </main>
     );
   }
@@ -579,6 +614,7 @@ export default function Owner() {
           hours={hours}
           availabilityLoading={availabilityQuery.isLoading}
           availabilityError={availabilityQuery.error}
+           onRetryAvailability={() => void availabilityQuery.refetch()}
           onHourClick={selectHour}
           durationMinutes={durationMinutes}
           billableHours={billableHours}
@@ -612,7 +648,7 @@ export default function Owner() {
         />
       )}
       {tab === "billing" && (
-        <BillingPanel copy={copy} ledger={ledgerQuery.data} isLoading={ledgerQuery.isLoading} isError={ledgerQuery.isError} />
+        <BillingPanel copy={copy} locale={locale} ledger={ledgerQuery.data} isLoading={ledgerQuery.isLoading} isError={ledgerQuery.isError} />
       )}
 
       <div className="mt-4 flex items-center justify-center gap-2 text-[10px] text-muted-foreground/70" data-testid="owner-secure-note">
@@ -648,6 +684,7 @@ function RequestPanel({
   hours,
   availabilityLoading,
   availabilityError,
+  onRetryAvailability,
   onHourClick,
   durationMinutes,
   billableHours,
@@ -672,6 +709,7 @@ function RequestPanel({
   hours: Set<number>;
   availabilityLoading: boolean;
   availabilityError: unknown;
+  onRetryAvailability: () => void;
   onHourClick: (hour: number) => void;
   durationMinutes: number;
   billableHours: number;
@@ -699,6 +737,25 @@ function RequestPanel({
 
         <label className="mt-4 block" htmlFor="owner-request-date">
           <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{copy.date}</span>
+          {mode === "past" && (
+            <div className="mb-2 grid grid-cols-3 gap-2" data-testid="owner-date-chips">
+              {[0, 1, 2].map((offset) => {
+                const chipDate = addDays(today, -offset);
+                return (
+                  <button
+                    key={chipDate}
+                    type="button"
+                    onClick={() => setDate(chipDate)}
+                    aria-pressed={date === chipDate}
+                    data-testid={`button-owner-date-${offset}`}
+                    className={`min-h-11 rounded-xl border px-2 text-xs font-semibold transition-colors ${date === chipDate ? "border-primary/40 bg-primary/15 text-primary" : "border-white/[0.10] bg-background/40 text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {offset === 0 ? copy.today : friendlyLocalDate(chipDate, locale)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <Input
             id="owner-request-date"
             type="date"
@@ -719,7 +776,10 @@ function RequestPanel({
               {availabilityLoading && <LoaderCircle className="h-3.5 w-3.5 animate-spin text-primary" aria-label={copy.availabilityLoading} />}
             </div>
             {availabilityError ? (
-              <p className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs leading-5 text-destructive" role="alert" data-testid="error-owner-availability">{getErrorMessage(availabilityError, copy.noAvailability)}</p>
+              <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs leading-5 text-destructive" role="alert" data-testid="error-owner-availability">
+                <p>{getErrorMessage(availabilityError, copy.noAvailability)}</p>
+                <Button type="button" variant="outline" onClick={onRetryAvailability} data-testid="button-retry-owner-availability" className="mt-3 min-h-11 rounded-xl border-destructive/30 px-3 text-xs text-destructive">{copy.retry}</Button>
+              </div>
             ) : (
               <div className="grid grid-cols-6 gap-1.5" data-testid="grid-owner-availability">
                 {HOURS.map((hour) => {
@@ -772,7 +832,7 @@ function RequestPanel({
 
         <Button type="button" onClick={onSubmit} disabled={isSubmitting} data-testid="button-submit-owner-request" className="mt-4 min-h-12 w-full rounded-xl font-semibold">
           {isSubmitting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Sparkles className="h-4 w-4" aria-hidden="true" />}
-          {isSubmitting ? copy.submitting : copy.requestFootage}
+          {isSubmitting ? copy.submitting : mode === "book" ? copy.bookMatch : copy.requestFootage}
         </Button>
       </div>
     </section>
@@ -916,31 +976,41 @@ function RequestCard({
   const isScheduled = key === "scheduled";
   const showPreview = previewId === request.id;
   const progress = Math.max(0, Math.min(100, Math.round(request.progress)));
+  const isProgressing = key === "recording" || key === "running" || key === "preparing";
+  const statusMessage = request.message || message;
+  const requestedDuration = formatDuration(request.requestedSeconds, copy);
 
   return (
-    <article className="overflow-hidden rounded-[22px] border border-white/[0.08] bg-card/85" data-testid={`card-owner-request-${request.id}`}>
+    <article className={`overflow-hidden rounded-[22px] border border-white/[0.08] bg-card/85 ${key === "expired" ? "opacity-65" : ""}`} data-testid={`card-owner-request-${request.id}`}>
       <div className="flex items-start justify-between gap-3 p-4 pb-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${isReady ? "bg-primary/15 text-primary" : key === "failed" ? "bg-destructive/15 text-destructive" : key === "recording" ? "bg-orange-400/15 text-orange-300" : "bg-white/[0.08] text-muted-foreground"}`} data-testid={`status-owner-request-${request.id}`}>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${isReady ? "bg-primary/15 text-primary" : key === "failed" ? "bg-destructive/15 text-destructive" : isProgressing ? "bg-accent/15 text-accent" : "bg-white/[0.08] text-muted-foreground"}`} data-testid={`status-owner-request-${request.id}`}>
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {label}
             </span>
-            {key === "recording" && <span className="font-mono text-[10px] text-orange-300">{progress}%</span>}
+            {isProgressing && <span className="font-mono text-[10px] text-accent">{progress}%</span>}
           </div>
           <p className="mt-2 font-mono text-xs font-medium text-foreground" data-testid={`text-owner-request-window-${request.id}`}>
             {friendlyLocalDate(request.startLocal.slice(0, 10), locale)} · {request.startLocal.slice(11)}–{request.endLocal.slice(11)}
           </p>
         </div>
         <div className="shrink-0 text-end">
-          <p className="font-mono text-sm font-semibold text-foreground" data-testid={`text-owner-request-amount-${request.id}`}>{formatJod(request.amountFils)} <span className="text-[10px] font-normal text-muted-foreground">{copy.currency}</span></p>
+           <p className="font-mono text-sm font-semibold text-foreground" data-testid={`text-owner-request-amount-${request.id}`}>{formatJod(request.amountFils)} <span className="text-[10px] font-normal text-muted-foreground">{copy.currency}</span></p>
           <p className="mt-1 text-[10px] text-muted-foreground">{request.billableHours} {copy.hours}</p>
         </div>
       </div>
 
       <div className="border-t border-white/[0.07] px-4 py-3">
-        {key === "recording" && <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-white/[0.08]" aria-label={copy.progress} data-testid={`progress-owner-request-${request.id}`}><span className="block h-full rounded-full bg-orange-300 transition-[width]" style={{ width: `${progress}%` }} /></div>}
-        <p className="text-xs leading-5 text-muted-foreground" data-testid={`message-owner-request-${request.id}`}>{request.message || message}</p>
+        {isProgressing && <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-white/[0.08]" aria-label={copy.progress} data-testid={`progress-owner-request-${request.id}`}><span className="block h-full rounded-full bg-accent transition-[width]" style={{ width: `${progress}%` }} /></div>}
+        <p className="text-xs leading-5 text-muted-foreground" data-testid={`message-owner-request-${request.id}`}>
+          {isScheduled ? `${message} ${request.startLocal.slice(11)}` : statusMessage}
+        </p>
+        {isReady && (
+          <p className="mt-2 text-[11px] font-medium text-foreground" data-testid={`summary-owner-request-${request.id}`}>
+            {copy.playerLabel} · {requestedDuration} · {copy.charged} {formatJod(request.amountFils)} {copy.currency}
+          </p>
+        )}
         {request.readyAt && isReady && <p className="mt-2 flex items-center gap-1.5 text-[10px] text-muted-foreground" data-testid={`ready-at-owner-request-${request.id}`}><Check className="h-3 w-3 text-primary" aria-hidden="true" />{copy.readyAt} {new Date(request.readyAt).toLocaleString(locale === "ar" ? "ar-JO" : "en-JO")}</p>}
       </div>
 
@@ -959,8 +1029,9 @@ function RequestCard({
         {isReady && request.shareUrl && (
           <>
             <Button type="button" variant="outline" onClick={() => onCopy(request.shareUrl as string)} data-testid={`button-copy-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs"><Copy className="h-3.5 w-3.5" aria-hidden="true" />{copy.copyLink}</Button>
-            <Button type="button" variant="outline" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(request.shareUrl as string)}`, "_blank", "noopener,noreferrer")} data-testid={`button-whatsapp-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs"><ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />{copy.whatsapp}</Button>
+            <Button type="button" variant="outline" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`${copy.whatsappMessage} ${request.shareUrl as string}`)}`, "_blank", "noopener,noreferrer")} data-testid={`button-whatsapp-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs"><ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />{copy.whatsapp}</Button>
             <Button type="button" variant="ghost" onClick={() => onRevoke(request)} disabled={isLinkActionPending} data-testid={`button-revoke-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs text-muted-foreground"><X className="h-3.5 w-3.5" aria-hidden="true" />{copy.revoke}</Button>
+            <Button type="button" variant="ghost" onClick={() => onNewLink(request)} disabled={isLinkActionPending} data-testid={`button-new-link-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs text-muted-foreground"><RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />{copy.newLink}</Button>
           </>
         )}
         {isReady && !request.shareUrl && (
@@ -985,7 +1056,7 @@ function RequestCard({
   );
 }
 
-function BillingPanel({ copy, ledger, isLoading, isError }: { copy: OwnerCopy; ledger: OwnerLedger | undefined; isLoading: boolean; isError: boolean }) {
+function BillingPanel({ copy, locale, ledger, isLoading, isError }: { copy: OwnerCopy; locale: string; ledger: OwnerLedger | undefined; isLoading: boolean; isError: boolean }) {
   if (isLoading) {
     return <section className="mt-4 space-y-3" data-testid="owner-billing-loading"><div className="h-32 animate-pulse rounded-2xl bg-white/[0.06]" /><div className="h-56 animate-pulse rounded-2xl bg-white/[0.06]" /></section>;
   }
@@ -1003,8 +1074,30 @@ function BillingPanel({ copy, ledger, isLoading, isError }: { copy: OwnerCopy; l
         <LedgerTotal label={copy.paid} value={ledger.paidFils} testId="total-paid" />
         <LedgerTotal label={copy.due} value={ledger.balanceFils} testId="total-due" emphasis />
       </div>
-      <LedgerList title={copy.charges} icon={<Clock3 className="h-4 w-4" />} empty={copy.noCharges} items={ledger.charges.map((charge) => ({ id: charge.id, title: `${charge.startLocal}–${charge.endLocal}`, meta: `${charge.billableHours} ${copy.hours}`, amount: charge.amountFils }))} kind="charge" copy={copy} />
-      <LedgerList title={copy.payments} icon={<Check className="h-4 w-4" />} empty={copy.noPayments} items={ledger.payments.map((payment) => ({ id: payment.id, title: payment.createdAt, meta: payment.method || copy.paymentMethod, amount: payment.amountFils, note: payment.note ?? undefined }))} kind="payment" copy={copy} />
+      <p className="rounded-2xl border border-secondary/20 bg-secondary/[0.06] p-3 text-xs leading-5 text-muted-foreground" data-testid="text-owner-billing-note">{copy.billingNote}</p>
+      <LedgerList
+        copy={copy}
+        locale={locale}
+        empty={ledger.charges.length || ledger.payments.length ? "" : copy.noCharges}
+        items={[
+          ...ledger.charges.map((charge) => ({
+            id: `charge-${charge.id}`,
+            kind: "charge" as const,
+            sortKey: charge.startLocal,
+            title: `${copy.footageLabel} · ${friendlyLocalDate(charge.startLocal.slice(0, 10), locale)} ${charge.startLocal.slice(11)}–${charge.endLocal.slice(11)}`,
+            meta: `${charge.billableHours} ${copy.hours} × 1 ${copy.currency}`,
+            amount: charge.amountFils,
+          })),
+          ...ledger.payments.map((payment) => ({
+            id: `payment-${payment.id}`,
+            kind: "payment" as const,
+            sortKey: payment.createdAt,
+            title: `${copy.paymentLabel} · ${payment.method || copy.paymentMethod} — ${new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-JO", { day: "numeric", month: "short" }).format(new Date(payment.createdAt))}`,
+            meta: payment.note || copy.paymentMethod,
+            amount: payment.amountFils,
+          })),
+        ].sort((a, b) => b.sortKey.localeCompare(a.sortKey))}
+      />
     </section>
   );
 }
@@ -1013,9 +1106,35 @@ function LedgerTotal({ label, value, testId, emphasis = false }: { label: string
   return <div className={`rounded-2xl border p-3 ${emphasis ? "border-primary/25 bg-primary/[0.08]" : "border-white/[0.07] bg-card/80"}`}><p className="min-h-7 text-[10px] leading-4 text-muted-foreground">{label}</p><p className={`mt-1 font-mono text-sm font-semibold ${emphasis ? "text-primary" : "text-foreground"}`} data-testid={`text-ledger-${testId}`}>{formatJod(value)}</p></div>;
 }
 
-function LedgerList({ title, icon, empty, items, kind, copy }: { title: string; icon: ReactNode; empty: string; items: Array<{ id: number; title: string; meta: string; amount: number; note?: string }>; kind: "charge" | "payment"; copy: OwnerCopy }) {
-  return <div className="rounded-2xl border border-white/[0.08] bg-card/80 p-4" data-testid={`owner-ledger-${kind}s`}>
-    <div className="flex items-center gap-2 border-b border-white/[0.07] pb-3 text-sm font-semibold text-foreground">{icon}{title}</div>
-    {items.length === 0 ? <p className="py-5 text-center text-xs text-muted-foreground" data-testid={`text-owner-no-${kind}s`}>{empty}</p> : <div className="divide-y divide-white/[0.06]">{items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-3" data-testid={`row-owner-${kind}-${item.id}`}><div className="min-w-0"><p className="truncate font-mono text-xs text-foreground" data-testid={`title-owner-${kind}-${item.id}`}>{item.title}</p><p className="mt-1 truncate text-[10px] text-muted-foreground" data-testid={`meta-owner-${kind}-${item.id}`}>{item.meta}{item.note ? ` · ${item.note}` : ""}</p></div><p className="shrink-0 font-mono text-xs font-semibold text-foreground" data-testid={`amount-owner-${kind}-${item.id}`}>{formatJod(item.amount)} <span className="text-[9px] font-normal text-muted-foreground">{copy.currency}</span></p></div>)}</div>}
-  </div>;
+function LedgerList({ locale, empty, items, copy }: {
+  locale: string;
+  empty: string;
+  items: Array<{ id: string; kind: "charge" | "payment"; sortKey: string; title: string; meta: string; amount: number }>;
+  copy: OwnerCopy;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/[0.08] bg-card/80 p-4" data-testid="owner-ledger">
+      <div className="flex items-center gap-2 border-b border-white/[0.07] pb-3 text-sm font-semibold text-foreground">
+        <Clock3 className="h-4 w-4" aria-hidden="true" />
+        {copy.billing}
+      </div>
+      {items.length === 0 ? (
+        <p className="py-5 text-center text-xs text-muted-foreground" data-testid="text-owner-empty-ledger">{empty}</p>
+      ) : (
+        <div className="divide-y divide-white/[0.06]">
+          {items.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-3 py-3" data-testid={`row-owner-ledger-${item.id}`}>
+              <div className="min-w-0">
+                <p className="truncate text-xs text-foreground" data-testid={`title-owner-ledger-${item.id}`}>{item.title}</p>
+                <p className="mt-1 truncate text-[10px] text-muted-foreground" data-testid={`meta-owner-ledger-${item.id}`}>{item.meta}</p>
+              </div>
+              <p className={`shrink-0 font-mono text-xs font-semibold ${item.kind === "charge" ? "text-primary" : "text-secondary"}`} data-testid={`amount-owner-ledger-${item.id}`}>
+                {item.kind === "charge" ? "+" : "−"}{formatJod(item.amount)} <span className="text-[9px] font-normal text-muted-foreground">{copy.currency}</span>
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

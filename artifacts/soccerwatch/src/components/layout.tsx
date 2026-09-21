@@ -18,7 +18,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
-  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo;
+  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || location === "/owner";
   const useTranslucentBar = isWatchFeed;
 
   return (

@@ -30,6 +30,7 @@ import Live from "@/pages/live";
 import ClaimDemo from "@/pages/claim-demo";
 import ClaimChain from "@/pages/claim-chain";
 import IdentityBoard from "@/pages/identity-board";
+import Owner from "@/pages/owner";
 import { useAuth } from "@/lib/auth";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
@@ -446,6 +447,7 @@ function AppRouter() {
         <Route path="/claim/demo" component={ClaimDemo} />
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
+        <Route path="/owner" component={Owner} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />

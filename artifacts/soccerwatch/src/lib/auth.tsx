@@ -28,7 +28,7 @@ export function useAuth() {
 
   const setUser = (_u: User | null) => {};
 
-  return { user, isLoading, isGuest, isAdmin, setUser };
+  return { user, isLoading, isGuest, isAdmin, isSignedIn: isSignedIn === true, setUser };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
