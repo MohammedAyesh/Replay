@@ -170,6 +170,217 @@
   @apply inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-border text-foreground transition-colors hover:bg-muted;
 }
 
+/* VAR uses the same full-bleed panorama viewport as the View player.  The
+   fallback class is for iPhone Safari, where arbitrary elements cannot enter
+   native fullscreen. */
+.var-player {
+  min-height: min(72vh, 42rem);
+  isolation: isolate;
+}
+.var-player-fullscreen,
+.var-player-css-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 0;
+  border-radius: 0;
+  background: #000;
+}
+.var-player-css-fullscreen {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+.var-player-zoom-layer {
+  transform-origin: center center;
+  transition: transform .22s ease;
+  will-change: transform;
+}
+.var-player-frame-centre {
+  min-height: min(72vh, 42rem);
+}
+.var-player-fullscreen .var-player-frame-centre,
+.var-player-css-fullscreen .var-player-frame-centre {
+  min-height: 100%;
+}
+.var-player-frame-box {
+  aspect-ratio: 16 / 9;
+  max-width: min(100%, calc(100dvh * 16 / 9));
+}
+.var-player-hls-shell,
+.var-player-hls-shell > div {
+  position: relative;
+  height: 100%;
+  width: 100%;
+}
+.var-player-hls-shell > div {
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+}
+.var-player-hls-shell video {
+  display: block;
+  object-fit: fill;
+}
+.var-player-topbar,
+.var-player-bottom-bar {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  pointer-events: none;
+  transition: opacity .25s ease;
+}
+.var-player-topbar {
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+  background: linear-gradient(rgba(0,0,0,.7), transparent);
+}
+.var-player-topbar > * {
+  pointer-events: auto;
+}
+.var-player-topbar > p {
+  flex: 1;
+  min-width: 0;
+  padding-top: 8px;
+}
+.var-player-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 55%;
+  padding: 6px 9px;
+  border: 1px solid rgba(248,113,113,.3);
+  border-radius: 999px;
+  color: #fecaca;
+  background: rgba(127,29,29,.45);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.var-player-icon,
+.var-player-control,
+.var-player-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(0,0,0,.5);
+  backdrop-filter: blur(10px);
+  font-size: 11px;
+  font-weight: 600;
+  transition: background-color .15s ease, opacity .15s ease;
+}
+.var-player-icon {
+  min-width: 32px;
+  padding: 0 8px;
+}
+.var-player-control {
+  gap: 6px;
+  padding: 0 11px;
+  white-space: nowrap;
+}
+.var-player-control:hover,
+.var-player-icon:hover,
+.var-player-pill:hover {
+  background: rgba(255,255,255,.18);
+}
+.var-player-control-play {
+  min-width: 42px;
+  color: #111827;
+  background: #fff;
+}
+.var-player-control-live {
+  color: #fecaca;
+  border-color: rgba(248,113,113,.35);
+}
+.var-player-control-mark {
+  color: #fde68a;
+  border-color: rgba(253,230,138,.3);
+}
+.var-player-control-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 7px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  color: rgba(255,255,255,.7);
+  background: rgba(0,0,0,.45);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.var-player-pill {
+  min-height: 25px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 10px;
+}
+.var-player-pill.is-active {
+  color: #111827;
+  background: hsl(var(--primary));
+}
+.var-player-bottom-bar {
+  bottom: 0;
+  display: grid;
+  gap: 8px;
+  padding: 24px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: linear-gradient(transparent, rgba(0,0,0,.9));
+}
+.var-player-timeline,
+.var-player-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+.var-player-timeline {
+  color: rgba(255,255,255,.7);
+}
+.var-player-controls {
+  flex-wrap: wrap;
+}
+.var-player-topbar.is-hidden,
+.var-player-bottom-bar.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 700px) {
+  .var-player {
+    min-height: min(62vh, 30rem);
+  }
+  .var-player-controls {
+    gap: 5px;
+  }
+  .var-player-control {
+    min-height: 30px;
+    padding-inline: 8px;
+    font-size: 10px;
+  }
+  .var-player-control-group {
+    min-height: 30px;
+    padding-inline: 5px;
+  }
+  .var-player-control-group > span:first-child {
+    display: none;
+  }
+  .var-player-control-mark > span {
+    display: none;
+  }
+}
+
 /* Safe-area utilities — used throughout the app with viewport-fit=cover */
 @utility pt-safe {
   padding-top: env(safe-area-inset-top);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface PinchZoomOptions {
   initialScale?: number;
@@ -17,6 +17,7 @@ export function usePinchZoom(
 ) {
   const { initialScale = 1, onTap } = options;
   const [isZoomed, setIsZoomed] = useState(initialScale > 1.05);
+  const [zoom, setZoomState] = useState(initialScale);
 
   const s = useRef<TransformState & {
     lastDist: number | null;
@@ -78,6 +79,7 @@ export function usePinchZoom(
       st.panY = 0;
       applyTransform(true);
       setIsZoomed(false);
+      setZoomState(1);
     }
 
     if (initialScale > 1.05) {
@@ -124,8 +126,9 @@ export function usePinchZoom(
         st.lastMidY = newMidY;
 
         applyTransform();
-        if (st.scale > 1.05) setIsZoomed(true);
-        else setIsZoomed(false);
+          if (st.scale > 1.05) setIsZoomed(true);
+          else setIsZoomed(false);
+          setZoomState(st.scale);
       } else if (e.touches.length === 1 && st.scale > 1.05) {
         e.preventDefault();
         st.panX += e.touches[0].clientX - st.lastMidX;
@@ -165,5 +168,118 @@ export function usePinchZoom(
     };
   }, [containerRef, initialScale]);
 
-  return { isZoomed, transformRef: s };
+  const setZoom = useCallback((next: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const st = s.current;
+    st.scale = Math.max(1, Math.min(5, next));
+    if (st.scale <= 1.05) {
+      st.scale = 1;
+      st.panX = 0;
+      st.panY = 0;
+      setIsZoomed(false);
+    } else {
+      setIsZoomed(true);
+    }
+    const maxX = (el.clientWidth * (st.scale - 1)) / 2;
+    const maxY = (el.clientHeight * (st.scale - 1)) / 2;
+    st.panX = Math.max(-maxX, Math.min(maxX, st.panX));
+    st.panY = Math.max(-maxY, Math.min(maxY, st.panY));
+    el.style.transform = `scale(${st.scale}) translate(${st.panX / st.scale}px, ${st.panY / st.scale}px)`;
+    setZoomState(st.scale);
+  }, [containerRef]);
+
+  return { isZoomed, zoom, setZoom, transformRef: s };
+}
+
+type FullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+};
+
+type FullscreenDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void> | void;
+};
+
+/**
+ * Fullscreen behavior shared by panorama viewers. Safari on iPhone cannot
+ * fullscreen arbitrary elements, so it falls back to a fixed viewport class.
+ */
+export function usePanoramaFullscreen(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+) {
+  const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
+  const [isCssFullscreen, setIsCssFullscreen] = useState(false);
+
+  const syncFullscreen = useCallback(() => {
+    const fullscreenDocument = document as FullscreenDocument;
+    const element = fullscreenDocument.fullscreenElement ?? fullscreenDocument.webkitFullscreenElement;
+    setIsNativeFullscreen(element === containerRef.current);
+  }, [containerRef]);
+
+  useEffect(() => {
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    document.addEventListener("webkitfullscreenchange", syncFullscreen);
+    syncFullscreen();
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+      document.removeEventListener("webkitfullscreenchange", syncFullscreen);
+    };
+  }, [syncFullscreen]);
+
+  const lockLandscape = useCallback(() => {
+    const orientation = screen.orientation as (ScreenOrientation & {
+      lock?: (orientation: string) => Promise<void>;
+    }) | undefined;
+    orientation?.lock?.("landscape").catch(() => {});
+  }, []);
+
+  const exitFullscreen = useCallback(() => {
+    const fullscreenDocument = document as FullscreenDocument;
+    const exit = document.exitFullscreen ?? fullscreenDocument.webkitExitFullscreen;
+    setIsCssFullscreen(false);
+    if (exit) void Promise.resolve(exit.call(document)).catch(() => {});
+  }, []);
+
+  const enterFullscreen = useCallback(() => {
+    const element = containerRef.current as FullscreenElement | null;
+    if (!element) return;
+    const request = element.requestFullscreen ?? element.webkitRequestFullscreen;
+    if (!request) {
+      setIsCssFullscreen(true);
+      lockLandscape();
+      return;
+    }
+    setIsCssFullscreen(false);
+    void Promise.resolve(request.call(element))
+      .then(() => lockLandscape())
+      .catch(() => {
+        setIsCssFullscreen(true);
+        lockLandscape();
+      });
+  }, [containerRef, lockLandscape]);
+
+  const toggleFullscreen = useCallback(() => {
+    const fullscreenDocument = document as FullscreenDocument;
+    const isNative = Boolean(
+      fullscreenDocument.fullscreenElement ?? fullscreenDocument.webkitFullscreenElement,
+    );
+    if (isNative || isCssFullscreen) exitFullscreen();
+    else enterFullscreen();
+  }, [enterFullscreen, exitFullscreen, isCssFullscreen]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && isCssFullscreen) setIsCssFullscreen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isCssFullscreen]);
+
+  return {
+    isFullscreen: isNativeFullscreen || isCssFullscreen,
+    isCssFullscreen,
+    toggleFullscreen,
+    exitFullscreen,
+  };
 }

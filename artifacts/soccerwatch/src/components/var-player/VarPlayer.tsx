@@ -4,14 +4,13 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
   Circle,
   Flag,
+  Maximize,
+  Minimize,
   Pause,
   Play,
   RotateCcw,
@@ -19,6 +18,9 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { HlsPlayer, type HlsPlayerProps } from "@/components/HlsPlayer";
+import { usePanoramaFullscreen, usePinchZoom } from "@/hooks/use-pinch-zoom";
+import { frameToVideoStyle } from "@/lib/cropFrame";
+import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 
@@ -102,26 +104,28 @@ export function VarPlayer({
   const { t } = useTranslation();
   const copy = t.varPlayer;
   const panelRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const { zoom, setZoom } = usePinchZoom(zoomRef);
+  const { isFullscreen, isCssFullscreen, toggleFullscreen } = usePanoramaFullscreen(panelRef);
+  const { setFullscreenVideo } = useFullscreenVideo();
   const [variant, setVariant] = useState<"hls" | "hevc">("hls");
   const [usingProxy, setUsingProxy] = useState(false);
   const [timeline, setTimeline] = useState<VarTimeline | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>(DEFAULT_PLAYER_STATE);
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [scrub, setScrub] = useState<number | null>(null);
-  const [lastAdvancedAt, setLastAdvancedAt] = useState<number | null>(null);
+  const [pictureStalled, setPictureStalled] = useState(false);
+  const [showControls, setShowControls] = useState(true);
   const lastSeekTargetRef = useRef<number | null>(null);
   const lastLiveEdgeRef = useRef<number | null>(null);
   const autoLiveEdgeStartedRef = useRef(false);
   const userScrubbedRef = useRef(false);
   const hasMediaRef = useRef(false);
   const fallbackWarningRef = useRef(false);
-  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
-  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
+  const controlsTimerRef = useRef<number | null>(null);
+  const stallTimerRef = useRef<number | null>(null);
   const hevcSupported = useMemo(isHevcSupported, []);
   const cdnManifestUrl = useMemo(
     () => variant === "hevc" ? hevcSrc ?? getVarManifestUrl(src, variant) : src,
@@ -134,6 +138,11 @@ export function VarPlayer({
     [fallbackSrc, variant],
   );
   const manifestUrl = usingProxy && proxyManifestUrl ? proxyManifestUrl : cdnManifestUrl;
+
+  useEffect(() => {
+    setFullscreenVideo(isFullscreen);
+    return () => setFullscreenVideo(false);
+  }, [isFullscreen, setFullscreenVideo]);
 
   useEffect(() => {
     setUsingProxy(false);
@@ -157,17 +166,14 @@ export function VarPlayer({
   }, [fallbackToProxy]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     setTimeline(null);
     setPlayerState(DEFAULT_PLAYER_STATE);
     hasMediaRef.current = false;
+    setPictureStalled(false);
     setScrub(null);
     setPlaying(false);
     setSpeed(1);
+    setShowControls(true);
     autoLiveEdgeStartedRef.current = false;
   }, [manifestUrl]);
 
@@ -176,7 +182,6 @@ export function VarPlayer({
     const previous = lastLiveEdgeRef.current;
     if (previous == null || Math.abs(previous - timeline.liveEdge) > 0.05) {
       lastLiveEdgeRef.current = timeline.liveEdge;
-      setLastAdvancedAt(Date.now());
     }
   }, [timeline?.liveEdge]);
 
@@ -198,6 +203,7 @@ export function VarPlayer({
 
   const onPlaybackState = useCallback((next: PlayerState) => {
     hasMediaRef.current = next.hasFirstSegment;
+    if (!next.hasFirstSegment) setPictureStalled(false);
     setPlayerState(next);
   }, []);
 
@@ -231,25 +237,12 @@ export function VarPlayer({
       && Number.isFinite(currentProgramTime),
   );
   const isReplay = Boolean(hasFrames && behindSeconds > 10);
-  const stale = Boolean(
-    timeline
-    && playerState.hasFirstSegment
-    && lastAdvancedAt != null
-    && nowMs - lastAdvancedAt > 60_000,
-  );
   const showStarting = !hasFrames;
   const liveRange = timeline ? Math.max(0.001, timeline.liveEdge - scrubStart) : 1;
-  const zoomStyle: CSSProperties = {
-    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-    transformOrigin: "center center",
-    transition: dragRef.current ? "none" : "transform 160ms ease-out",
-  };
-
-  const setZoomLevel = useCallback((next: number) => {
-    const clamped = clamp(Math.round(next * 4) / 4, 1, 4);
-    setZoom(clamped);
-    if (clamped === 1) setPan({ x: 0, y: 0 });
-  }, []);
+  const panoramaFrameStyle = useMemo(
+    () => frameToVideoStyle({ x: 0.25, y: 0, w: 0.5, h: 1 }),
+    [],
+  );
 
   const seekTo = useCallback((next: number, pause = false) => {
     const video = videoRef.current;
@@ -319,68 +312,6 @@ export function VarPlayer({
     }
   }, [seekBy, togglePlayback]);
 
-  const limitPan = useCallback((value: number) => {
-    const max = 180 * (zoom - 1);
-    return clamp(value, -max, max);
-  }, [zoom]);
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (zoom <= 1 || event.pointerType === "touch") return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
-  };
-
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current) return;
-    setPan({
-      x: limitPan(dragRef.current.panX + event.clientX - dragRef.current.x),
-      y: limitPan(dragRef.current.panY + event.clientY - dragRef.current.y),
-    });
-  };
-
-  const endPointerDrag = () => {
-    dragRef.current = null;
-  };
-
-  const distanceBetweenTouches = (event: ReactTouchEvent<HTMLDivElement>): number => {
-    const [first, second] = [event.touches[0], event.touches[1]];
-    return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
-  };
-
-  const onTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
-    if (event.touches.length === 2) {
-      pinchRef.current = { distance: distanceBetweenTouches(event), zoom };
-    } else if (event.touches.length === 1 && zoom > 1) {
-      dragRef.current = {
-        x: event.touches[0].clientX,
-        y: event.touches[0].clientY,
-        panX: pan.x,
-        panY: pan.y,
-      };
-    }
-  };
-
-  const onTouchMove = (event: ReactTouchEvent<HTMLDivElement>) => {
-    if (pinchRef.current && event.touches.length === 2) {
-      event.preventDefault();
-      const ratio = distanceBetweenTouches(event) / Math.max(1, pinchRef.current.distance);
-      setZoomLevel(pinchRef.current.zoom * ratio);
-      return;
-    }
-    if (dragRef.current && event.touches.length === 1) {
-      event.preventDefault();
-      setPan({
-        x: limitPan(dragRef.current.panX + event.touches[0].clientX - dragRef.current.x),
-        y: limitPan(dragRef.current.panY + event.touches[0].clientY - dragRef.current.y),
-      });
-    }
-  };
-
-  const finishTouch = () => {
-    pinchRef.current = null;
-    dragRef.current = null;
-  };
-
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -393,6 +324,58 @@ export function VarPlayer({
       video.removeEventListener("pause", onPause);
     };
   }, [manifestUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const clearStall = () => {
+      if (stallTimerRef.current != null) {
+        window.clearTimeout(stallTimerRef.current);
+        stallTimerRef.current = null;
+      }
+      setPictureStalled(false);
+    };
+    const checkStall = () => {
+      if (stallTimerRef.current != null) window.clearTimeout(stallTimerRef.current);
+      if (!hasMediaRef.current || video.paused) return;
+      stallTimerRef.current = window.setTimeout(() => {
+        if (!video.paused && video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+          setPictureStalled(true);
+        }
+      }, 1_500);
+    };
+    video.addEventListener("playing", clearStall);
+    video.addEventListener("timeupdate", clearStall);
+    video.addEventListener("progress", clearStall);
+    video.addEventListener("waiting", checkStall);
+    video.addEventListener("stalled", checkStall);
+    return () => {
+      clearStall();
+      video.removeEventListener("playing", clearStall);
+      video.removeEventListener("timeupdate", clearStall);
+      video.removeEventListener("progress", clearStall);
+      video.removeEventListener("waiting", checkStall);
+      video.removeEventListener("stalled", checkStall);
+    };
+  }, [manifestUrl]);
+
+  const pokeControls = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimerRef.current != null) window.clearTimeout(controlsTimerRef.current);
+    controlsTimerRef.current = window.setTimeout(() => setShowControls(false), 4_000);
+  }, []);
+
+  useEffect(() => {
+    pokeControls();
+    return () => {
+      if (controlsTimerRef.current != null) window.clearTimeout(controlsTimerRef.current);
+    };
+  }, [pokeControls]);
+
+  useEffect(() => {
+    if (!playing) setShowControls(true);
+    else pokeControls();
+  }, [playing, pokeControls]);
 
   useEffect(() => {
     if (!fallbackSrc || usingProxy || cdnManifestUrl === proxyManifestUrl) return;
@@ -423,168 +406,182 @@ export function VarPlayer({
       ref={panelRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      className="var-player space-y-3 outline-none"
+      onPointerMove={pokeControls}
+      onTouchStart={pokeControls}
+      className={cn(
+        "var-player relative min-h-[min(72vh,42rem)] overflow-hidden rounded-2xl bg-black outline-none",
+        isFullscreen && "var-player-fullscreen",
+        isCssFullscreen && "var-player-css-fullscreen",
+      )}
       aria-label={title}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-mono text-xs tabular-nums text-muted-foreground" dir="ltr">
-            {currentProgramTime == null ? "—" : formatVarWallClock(currentProgramTime)} {copy.clockZone}
-          </p>
-        </div>
-        <span className="shrink-0 rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-300" dir="ltr">
-          <Circle className="mr-1 inline h-2.5 w-2.5 fill-current" aria-hidden="true" />
-           {hasFrames
-             ? `${isReplay ? copy.replay : copy.live} · ${isReplay
-               ? copy.secondsBehindLive(Math.round(behindSeconds))
-               : copy.secondsBehind(Math.round(behindSeconds))}`
-             : copy.starting}
-        </span>
-      </div>
-
       <div
-        className="relative overflow-hidden rounded-2xl border border-border bg-black touch-none"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endPointerDrag}
-        onPointerCancel={endPointerDrag}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={finishTouch}
+        ref={zoomRef}
+        className={cn("var-player-zoom-layer absolute inset-0", zoom > 1.05 && "is-zoomed")}
+        onClick={pokeControls}
       >
-        <HlsPlayer
-          key={manifestUrl}
-          ref={videoRef}
-          url={manifestUrl}
-          label={title}
-          windowSeconds={undefined}
-          retryOnNetworkError
-          showDvrControls={false}
-          showStatusOverlays={false}
-          controls={false}
-          videoStyle={zoomStyle}
-          onTimelineChange={onTimelineChange}
-          useProgramDateTime
-          recoverLiveDiscontinuities
-          onPlaybackState={onPlaybackState}
-           onManifestFailure={onManifestFailure}
-        />
-        {(showStarting || playerState.waiting) && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/75 px-5 text-center">
-            <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            <p className="text-sm font-semibold text-white">
-              {copy.starting}
-            </p>
+        <div className="var-player-frame-centre absolute inset-0 flex items-center justify-center bg-black">
+          <div className="var-player-frame-box relative h-auto w-full overflow-hidden bg-black">
+            <div className="var-player-hls-shell h-full w-full">
+              <HlsPlayer
+                key={manifestUrl}
+                ref={videoRef}
+                url={manifestUrl}
+                label={title}
+                windowSeconds={undefined}
+                retryOnNetworkError
+                showDvrControls={false}
+                showStatusOverlays={false}
+                controls={false}
+                videoStyle={panoramaFrameStyle}
+                onTimelineChange={onTimelineChange}
+                useProgramDateTime
+                recoverLiveDiscontinuities
+                onPlaybackState={onPlaybackState}
+                onManifestFailure={onManifestFailure}
+              />
+            </div>
           </div>
-        )}
-        {stale && !playerState.waiting && (
-          <div className="absolute inset-x-3 top-3 rounded-xl border border-amber-400/30 bg-black/75 px-3 py-2 text-center text-xs font-semibold text-amber-100">
-            {copy.noPicture}
-          </div>
-        )}
-        {playerState.error && !playerState.waiting && (
-          <div className="absolute inset-x-3 bottom-3 rounded-xl bg-black/80 px-3 py-2 text-center text-xs text-white">
-            {playerState.error}
-          </div>
-        )}
+        </div>
       </div>
 
-      <div className="rounded-2xl border border-border bg-card p-3">
-        <div className="relative px-1">
-          <input
-            aria-label={copy.timeline}
-            type="range"
-            min={scrubStart}
-            max={timeline?.liveEdge ?? scrubStart + 1}
-            step={0.05}
-            value={currentPosition}
-            disabled={!timeline}
-            onChange={(event) => handleScrub(Number(event.target.value))}
-            onPointerUp={() => setScrub(null)}
-            onKeyUp={() => setScrub(null)}
-            className="relative z-10 min-h-11 w-full accent-primary"
-          />
-          {timeline && (
-            <div className="pointer-events-none absolute inset-x-1 top-1/2 z-20 h-5 -translate-y-1/2">
-              {markPositions.map((mark) => (
-                <span
-                  key={`${mark.atUtcMs}-${mark.kind}`}
-                  className="absolute top-0 h-5 w-0.5 rounded-full bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,.8)]"
-                  style={{ left: `${((mark.position - scrubStart) / liveRange) * 100}%` }}
-                  title={mark.kind}
-                />
+      <div className={cn("var-player-topbar", !showControls && "is-hidden")}>
+        <p className="font-mono text-xs tabular-nums text-white/80" dir="ltr">
+          {currentProgramTime == null ? "—" : formatVarWallClock(currentProgramTime)} {copy.clockZone}
+        </p>
+        <span className="var-player-badge" dir="ltr">
+          <Circle className="h-2.5 w-2.5 fill-current" aria-hidden="true" />
+          {hasFrames
+            ? `${isReplay ? copy.replay : copy.live} · ${isReplay
+              ? copy.secondsBehindLive(Math.round(behindSeconds))
+              : copy.secondsBehind(Math.round(behindSeconds))}`
+            : copy.starting}
+        </span>
+        <button
+          type="button"
+          className="var-player-icon"
+          onClick={(event) => { event.stopPropagation(); toggleFullscreen(); pokeControls(); }}
+          aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        >
+          {isFullscreen ? <Minimize className="h-4 w-4" aria-hidden="true" /> : <Maximize className="h-4 w-4" aria-hidden="true" />}
+        </button>
+      </div>
+
+      {(showStarting || playerState.waiting) && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/65 px-5 text-center">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm font-semibold text-white">{copy.starting}</p>
+        </div>
+      )}
+      {pictureStalled && !playerState.waiting && hasFrames && (
+        <div className="pointer-events-none absolute inset-x-3 top-16 z-10 rounded-xl border border-amber-400/30 bg-black/75 px-3 py-2 text-center text-xs font-semibold text-amber-100">
+          {copy.noPicture}
+        </div>
+      )}
+      {playerState.error && !playerState.waiting && (
+        <div className="pointer-events-none absolute inset-x-3 bottom-28 z-10 rounded-xl bg-black/80 px-3 py-2 text-center text-xs text-white">
+          {playerState.error}
+        </div>
+      )}
+
+      <div className={cn("var-player-bottom-bar", !showControls && "is-hidden")} onClick={(event) => event.stopPropagation()}>
+        <div className="var-player-timeline">
+          <div className="relative flex-1 px-1">
+            <input
+              aria-label={copy.timeline}
+              type="range"
+              min={scrubStart}
+              max={timeline?.liveEdge ?? scrubStart + 1}
+              step={0.05}
+              value={currentPosition}
+              disabled={!timeline}
+              onChange={(event) => handleScrub(Number(event.target.value))}
+              onPointerUp={() => setScrub(null)}
+              onKeyUp={() => setScrub(null)}
+              className="relative z-10 min-h-8 w-full accent-primary"
+            />
+            {timeline && (
+              <div className="pointer-events-none absolute inset-x-1 top-1/2 z-20 h-5 -translate-y-1/2">
+                {markPositions.map((mark) => (
+                  <span
+                    key={`${mark.atUtcMs}-${mark.kind}`}
+                    className="absolute top-0 h-5 w-0.5 rounded-full bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,.8)]"
+                    style={{ left: `${((mark.position - scrubStart) / liveRange) * 100}%` }}
+                    title={mark.kind}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+          <span className="shrink-0 text-[10px] text-white/60" dir="ltr">
+            {timeline ? copy.timelineRange(Math.max(0, Math.round(timeline.liveEdge - scrubStart))) : "—"}
+          </span>
+        </div>
+
+        <div className="var-player-controls">
+          <button type="button" onClick={() => { seekBy(-30); pokeControls(); }} className="var-player-control" aria-label={copy.back30}>{copy.back30Short}</button>
+          <button type="button" onClick={() => { seekBy(-10); pokeControls(); }} className="var-player-control" aria-label={copy.back10}>{copy.back10Short}</button>
+          <button type="button" onClick={() => { seekBy(-FRAME_SECONDS, true); pokeControls(); }} className="var-player-control" aria-label={copy.backFrame}>{copy.backFrameShort}</button>
+          <button type="button" onClick={() => { togglePlayback(); pokeControls(); }} className="var-player-control var-player-control-play" aria-label={playing ? copy.pause : copy.play}>
+            {playing ? <Pause className="h-4 w-4" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
+          </button>
+          <button type="button" onClick={() => { seekBy(FRAME_SECONDS, true); pokeControls(); }} className="var-player-control" aria-label={copy.forwardFrame}>{copy.forwardFrameShort}</button>
+          <button type="button" onClick={() => { goLive(); pokeControls(); }} className="var-player-control var-player-control-live" aria-label={copy.goLive}>
+            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+            <span>{copy.goLive}</span>
+          </button>
+          <div className="var-player-control-group">
+            <span>{copy.speed}</span>
+            {[0.25, 0.5, 1].map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => {
+                  setSpeed(value);
+                  if (videoRef.current) videoRef.current.playbackRate = value;
+                  pokeControls();
+                }}
+                className={cn("var-player-pill", speed === value && "is-active")}
+              >
+                {value}×
+              </button>
+            ))}
+          </div>
+          <div className="var-player-control-group">
+            <span>{copy.zoom}</span>
+            <button type="button" onClick={() => { setZoom(zoom - 0.25); pokeControls(); }} className="var-player-icon" aria-label={copy.zoomOut}><ZoomOut className="h-4 w-4" /></button>
+            <span className="min-w-9 text-center tabular-nums">{zoom.toFixed(2)}×</span>
+            <button type="button" onClick={() => { setZoom(zoom + 0.25); pokeControls(); }} className="var-player-icon" aria-label={copy.zoomIn}><ZoomIn className="h-4 w-4" /></button>
+          </div>
+          {hevcSupported && (
+            <div className="var-player-control-group">
+              <span>{copy.quality}</span>
+              {(["hls", "hevc"] as const).map((nextVariant) => (
+                <button
+                  key={nextVariant}
+                  type="button"
+                  onClick={() => { setVariant(nextVariant); pokeControls(); }}
+                  className={cn("var-player-pill", variant === nextVariant && "is-active")}
+                >
+                  {nextVariant === "hls" ? copy.standard : copy.fullDetail}
+                </button>
               ))}
             </div>
           )}
-        </div>
-        <div className="flex justify-between text-[10px] text-muted-foreground" dir="ltr">
-          <span>{timeline ? copy.timelineRange(Math.max(0, Math.round(timeline.liveEdge - scrubStart))) : "—"}</span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-        <button type="button" onClick={() => seekBy(-30)} className="var-control" aria-label={copy.back30}>{copy.back30Short}</button>
-        <button type="button" onClick={() => seekBy(-10)} className="var-control" aria-label={copy.back10}>{copy.back10Short}</button>
-        <button type="button" onClick={() => seekBy(-FRAME_SECONDS, true)} className="var-control" aria-label={copy.backFrame}>{copy.backFrameShort}</button>
-        <button type="button" onClick={togglePlayback} className="var-control bg-primary text-primary-foreground" aria-label={playing ? copy.pause : copy.play}>
-          {playing ? <Pause className="h-4 w-4" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
-          <span>{playing ? copy.pause : copy.play}</span>
-        </button>
-        <button type="button" onClick={() => seekBy(FRAME_SECONDS, true)} className="var-control" aria-label={copy.forwardFrame}>{copy.forwardFrameShort}</button>
-        <button type="button" onClick={goLive} className="var-control border-red-500/30 text-red-300" aria-label={copy.goLive}>
-          <RotateCcw className="h-4 w-4" aria-hidden="true" />
-          <span>{copy.goLive}</span>
-        </button>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-muted-foreground">{copy.speed}</span>
-        {[0.25, 0.5, 1].map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => {
-              setSpeed(value);
-              if (videoRef.current) videoRef.current.playbackRate = value;
-            }}
-            className={cn("min-h-11 min-w-16 rounded-xl border px-3 text-xs font-semibold", speed === value ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground")}
-          >
-            {value}×
-          </button>
-        ))}
-        <span className="ms-2 text-xs font-semibold text-muted-foreground">{copy.zoom}</span>
-        <button type="button" onClick={() => setZoomLevel(zoom - 0.25)} className="var-icon-control" aria-label={copy.zoomOut}><ZoomOut className="h-4 w-4" /></button>
-        <span className="min-w-10 text-center text-xs font-semibold text-foreground" dir="ltr">{zoom}×</span>
-        <button type="button" onClick={() => setZoomLevel(zoom + 0.25)} className="var-icon-control" aria-label={copy.zoomIn}><ZoomIn className="h-4 w-4" /></button>
-        {onMark && (
-          <button
-            type="button"
-            onClick={() => currentProgramTime != null && onMark(currentProgramTime)}
-            disabled={currentProgramTime == null}
-            className="ms-auto inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-amber-300/30 px-3 text-xs font-semibold text-amber-200 disabled:opacity-40"
-            aria-label={copy.markMoment}
-          >
-            <Flag className="h-4 w-4" aria-hidden="true" />
-            {copy.markMoment}
-          </button>
-        )}
-      </div>
-
-      {hevcSupported && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>{copy.quality}</span>
-          {(["hls", "hevc"] as const).map((nextVariant) => (
+          {onMark && (
             <button
-              key={nextVariant}
               type="button"
-              onClick={() => setVariant(nextVariant)}
-              className={cn("min-h-11 rounded-xl border px-3 font-semibold", variant === nextVariant ? "border-primary bg-primary/15 text-primary" : "border-border")}
+              onClick={() => currentProgramTime != null && onMark(currentProgramTime)}
+              disabled={currentProgramTime == null}
+              className="var-player-control var-player-control-mark"
+              aria-label={copy.markMoment}
             >
-              {nextVariant === "hls" ? copy.standard : copy.fullDetail}
+              <Flag className="h-4 w-4" aria-hidden="true" />
+              <span>{copy.markMoment}</span>
             </button>
-          ))}
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
