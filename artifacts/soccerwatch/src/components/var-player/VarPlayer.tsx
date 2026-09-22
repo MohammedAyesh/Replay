@@ -58,6 +58,16 @@ export function getVarManifestUrl(src: string, variant: "hls" | "hevc"): string 
   return src.replace(/\/hls(\/playlist\.m3u8(?:\?.*)?)$/, "/hevc$1");
 }
 
+export function getVarLiveEdgeTarget(liveEdge: number, liveSyncPosition?: number): number {
+  const threeSecondsBehind = liveEdge - 3;
+  return Math.max(
+    threeSecondsBehind,
+    typeof liveSyncPosition === "number" && Number.isFinite(liveSyncPosition)
+      ? liveSyncPosition
+      : threeSecondsBehind,
+  );
+}
+
 export function formatVarWallClock(atUtcMs: number): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Amman",
@@ -105,6 +115,8 @@ export function VarPlayer({
   const [lastAdvancedAt, setLastAdvancedAt] = useState<number | null>(null);
   const lastSeekTargetRef = useRef<number | null>(null);
   const lastLiveEdgeRef = useRef<number | null>(null);
+  const autoLiveEdgeStartedRef = useRef(false);
+  const userScrubbedRef = useRef(false);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
   const hevcSupported = useMemo(isHevcSupported, []);
@@ -121,6 +133,7 @@ export function VarPlayer({
     setScrub(null);
     setPlaying(false);
     setSpeed(1);
+    autoLiveEdgeStartedRef.current = false;
   }, [manifestUrl]);
 
   useEffect(() => {
@@ -134,6 +147,18 @@ export function VarPlayer({
 
   const onTimelineChange = useCallback((next: VarTimeline) => {
     setTimeline(next);
+    if (autoLiveEdgeStartedRef.current || userScrubbedRef.current) return;
+
+    const video = videoRef.current;
+    if (!video?.seekable.length) return;
+    const seekableStart = video.seekable.start(0);
+    const seekableEnd = video.seekable.end(video.seekable.length - 1);
+    const target = getVarLiveEdgeTarget(seekableEnd, next.liveSyncPosition);
+    if (!Number.isFinite(target)) return;
+
+    autoLiveEdgeStartedRef.current = true;
+    video.currentTime = clamp(target, seekableStart, seekableEnd);
+    video.play().catch(() => {});
   }, []);
 
   const onPlaybackState = useCallback((next: PlayerState) => {
@@ -220,10 +245,7 @@ export function VarPlayer({
       ?? (video.seekable.length ? video.seekable.end(video.seekable.length - 1) : null);
     if (edge == null) return;
     const syncPosition = timeline?.liveSyncPosition;
-    const target = Math.max(
-      edge - 3,
-      typeof syncPosition === "number" && Number.isFinite(syncPosition) ? syncPosition : edge - 3,
-    );
+    const target = getVarLiveEdgeTarget(edge, syncPosition);
     setSpeed(1);
     video.playbackRate = 1;
     seekTo(target);
@@ -344,6 +366,7 @@ export function VarPlayer({
   }, [marks, scrubStart, timeline, windowStartUtcMs]);
 
   const handleScrub = (value: number) => {
+    userScrubbedRef.current = true;
     setScrub(value);
     seekTo(value);
   };

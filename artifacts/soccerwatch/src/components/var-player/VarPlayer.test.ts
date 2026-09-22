@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatVarWallClock, getVarManifestUrl } from "./VarPlayer";
+import { formatVarWallClock, getVarLiveEdgeTarget, getVarManifestUrl } from "./VarPlayer";
 
 describe("VarPlayer helpers", () => {
   it("switches the shared proxy manifest between standard and full-detail variants", () => {
@@ -14,5 +14,11 @@ describe("VarPlayer helpers", () => {
     expect(formatVarWallClock(Date.parse("2026-09-21T06:07:08.340Z"))).toBe(
       "09:07:08.34",
     );
+  });
+
+  it("uses the same three-second-or-HLS-sync target as Go live", () => {
+    expect(getVarLiveEdgeTarget(100)).toBe(97);
+    expect(getVarLiveEdgeTarget(100, 95)).toBe(97);
+    expect(getVarLiveEdgeTarget(100, 98)).toBe(98);
   });
 });
