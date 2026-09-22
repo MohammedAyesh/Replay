@@ -14,6 +14,7 @@ import Hls from "hls.js";
 import AdminVarTab from "@/components/admin/AdminVarTab";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
+import { parseFormatCVideoTitle } from "@workspace/api-zod";
 import SettingsTab from "@/components/admin/SettingsTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
 import BrandingTab from "@/components/admin/BrandingTab";
@@ -2023,7 +2024,7 @@ function secondsToMinStr(secs: number): string {
  * Falls back to today's date only if none of these match, which should only
  * happen for a title that was never machine-generated in the first place.
  */
-function parseVideoTitle(title: string): { court: string; date: string; timeSlot: string; duration: string } {
+export function parseVideoTitle(title: string): { court: string; date: string; timeSlot: string; duration: string } {
   const name = title.replace(/\.\w+$/, "");
   const parts = name.split("_");
   const camMatch = parts[0]?.match(/^cam(\d+)$/i);
@@ -2040,8 +2041,9 @@ function parseVideoTitle(title: string): { court: string; date: string; timeSlot
     }
 
     // Format C: YYYY-MM-DD + HH:MM
-    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart) && /^\d{1,2}:\d{2}$/.test(timePart)) {
-      return { court, date: datePart, timeSlot: timePart, duration: "" };
+    const formatC = parseFormatCVideoTitle(title);
+    if (formatC) {
+      return { court, date: formatC.date, timeSlot: formatC.time, duration: "" };
     }
   }
 

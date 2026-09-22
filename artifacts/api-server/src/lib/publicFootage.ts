@@ -31,7 +31,7 @@ export function extractBunnyVideoId(value: string | null | undefined): string | 
 }
 
 export function isOwnerFootageTitle(title: string | null | undefined): boolean {
-  return typeof title === "string" && /\(owner request #\d+\)/i.test(title);
+  return typeof title === "string" && (/\(owner request #\d+\)/i.test(title) || /^cam\d+_owner-\d+_\d{4}-\d{2}-\d{2}_\d{1,2}:\d{2}$/i.test(title.replace(/\.\w+$/, "")));
 }
 
 export function parseRecordingTitleTimestamp(title: string): { date: string; timeSlot: string } | null {

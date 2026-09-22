@@ -29,6 +29,7 @@ export interface VarMark {
 
 export interface VarPlayerProps {
   src: string;
+  hevcSrc?: string;
   title: string;
   onMark?: (atUtcMs: number) => void;
   onCurrentTimeChange?: (atUtcMs: number | null) => void;
@@ -92,6 +93,7 @@ function isHevcSupported(): boolean {
 
 export function VarPlayer({
   src,
+  hevcSrc,
   title,
   onMark,
   onCurrentTimeChange,
@@ -120,7 +122,10 @@ export function VarPlayer({
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
   const hevcSupported = useMemo(isHevcSupported, []);
-  const manifestUrl = useMemo(() => getVarManifestUrl(src, variant), [src, variant]);
+  const manifestUrl = useMemo(
+    () => variant === "hevc" ? hevcSrc ?? getVarManifestUrl(src, variant) : src,
+    [hevcSrc, src, variant],
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);

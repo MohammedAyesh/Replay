@@ -17,6 +17,7 @@ import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBri
 import { computeAmountFils, computeBillableHours } from "../lib/footageBilling";
 import { controlFetch, controlResponse } from "./contabo";
 import { logger } from "../lib/logger";
+import { buildOwnerFootageTitle } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -1218,7 +1219,7 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     status: end.epochMs > nowMs ? "scheduled" : "queued",
   }).returning();
 
-  const title = `${field.name} ${start.value}–${end.hour.toString().padStart(2, "0")}:${end.minute.toString().padStart(2, "0")} (owner request #${created.id})`;
+  const title = buildOwnerFootageTitle(field.cameraId, created.id, start.value);
   try {
     // The camera service expects seconds, while the owner-facing and database
     // contract intentionally stays at minute precision.
@@ -1374,8 +1375,13 @@ router.get("/owner/requests/:id/var/status", async (req, res): Promise<void> => 
   if (!found) return;
 
   let result;
+  let stateResult;
   try {
-    result = await controlFetch(`/var/${encodeURIComponent(vpsVarCamera(found.request.cameraId))}/window`, {}, 30_000);
+    const camera = encodeURIComponent(vpsVarCamera(found.request.cameraId));
+    [result, stateResult] = await Promise.all([
+      controlFetch(`/var/${camera}/window`, {}, 30_000),
+      controlFetch(`/var/${camera}/state`, {}, 30_000),
+    ]);
   } catch (error) {
     logger.warn({ error, requestId: id }, "VAR window status proxy failed");
     res.status(502).json({ error: "VAR control server unreachable" });
@@ -1388,14 +1394,24 @@ router.get("/owner/requests/:id/var/status", async (req, res): Promise<void> => 
   }
 
   const summary = varWindowSummary(result.body);
+  const varActive = isVarActive(found.request);
+  const rawCdnUrl = stateResult.ok && stateResult.body && typeof stateResult.body === "object"
+    ? (stateResult.body as Record<string, unknown>).cdnUrl
+    : null;
+  const cdnUrl = varActive
+    && typeof rawCdnUrl === "string"
+    && /^https:\/\/[^/]+\/var\/cam\d+\/[a-f0-9]{32}\/index\.m3u8$/i.test(rawCdnUrl)
+    ? rawCdnUrl
+    : undefined;
   res.json({
     fieldName: found.fieldName,
     startLocal: found.request.startLocal,
     endLocal: found.request.endLocal,
-    varActive: isVarActive(found.request),
+    varActive,
     varState: found.request.varState,
     live: summary.live,
     newestAgeSec: summary.newestAgeSec,
+    ...(cdnUrl ? { cdnUrl } : {}),
   });
 });
 

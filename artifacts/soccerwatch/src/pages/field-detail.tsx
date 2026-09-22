@@ -21,6 +21,7 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
+import { parseFormatCVideoTitle } from "@workspace/api-zod";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -43,7 +44,7 @@ interface VideoMeta {
 //   e.g. "cam1_2026072714"  (14 = 14:00 / 2 pm)
 //   second segment is exactly 10 digits: first 8 = YYYYMMDD, last 2 = HH
 //   start time = HH:00; end time is derived from the video's duration field
-function parseVideoFilename(title: string): VideoMeta | null {
+export function parseVideoFilename(title: string): VideoMeta | null {
   const name = title.replace(/\.mp4$/i, "");
   const parts = name.split("_");
 
@@ -70,13 +71,11 @@ function parseVideoFilename(title: string): VideoMeta | null {
   // cam2_2026-07-27_17:00  →  parts = ["cam2", "2026-07-27", "17:00"]
   //   last two segments = ISO date (YYYY-MM-DD) + HH:MM time
   if (parts.length >= 3) {
-    const datePart = parts[parts.length - 2];
-    const timePart = parts[parts.length - 1];
-    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart) && /^\d{1,2}:\d{2}$/.test(timePart)) {
-      const [hh, mm] = timePart.split(":").map(Number);
+    const formatC = parseFormatCVideoTitle(title);
+    if (formatC) {
       return {
-        isoDate: datePart,
-        startSeconds: hh * 3600 + mm * 60,
+        isoDate: formatC.date,
+        startSeconds: Number(formatC.time.slice(0, 2)) * 3600 + Number(formatC.time.slice(3)) * 60,
       };
     }
   }

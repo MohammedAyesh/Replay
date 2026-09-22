@@ -18,6 +18,7 @@ interface VarState {
   until?: unknown;
   endsAt?: unknown;
   end?: unknown;
+  cdnUrl?: string | null;
   [key: string]: unknown;
 }
 
@@ -291,7 +292,8 @@ function VarCameraCard({ camera }: { camera: Camera }) {
 
             {showPlayer ? (
               <VarPlayer
-                src={`${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
+                src={state?.cdnUrl ?? `${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
+                hevcSrc={`${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
                 title={`${copy.camera(cameraNumber(camera))} · VAR`}
               />
             ) : (

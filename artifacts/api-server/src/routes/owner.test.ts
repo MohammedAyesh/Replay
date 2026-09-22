@@ -163,6 +163,15 @@ beforeAll(async () => {
           },
         });
       }
+      if (url.includes("/state")) {
+        return jsonResponse({
+          cam: "cam1",
+          supported: true,
+          on: true,
+          live: true,
+          cdnUrl: "https://cdn.example.test/var/cam1/0123456789abcdef0123456789abcdef/index.m3u8",
+        });
+      }
     }
     if (url.includes("/sd/")) {
       const date = new URL(url).searchParams.get("date") ?? "";
@@ -311,6 +320,7 @@ describe("owner request validation", () => {
     expect(remoteUrl).toBeTruthy();
     expect(new URL(remoteUrl!).searchParams.get("start")).toBe(`${window.startLocal}:00`);
     expect(new URL(remoteUrl!).searchParams.get("end")).toBe(`${window.endLocal}:00`);
+    expect(new URL(remoteUrl!).searchParams.get("title")).toBe(`cam1_owner-${response.body.id}_${window.startLocal.replace(" ", "_")}`);
   });
 
   it("accepts a cross-midnight window and checks both calendar dates", async () => {
@@ -325,6 +335,7 @@ describe("owner request validation", () => {
       endLocal: "2020-02-02 00:15",
     });
     expect(recordPostUrls.at(-1)).toContain("end=2020-02-02%2000%3A15%3A00");
+    expect(new URL(recordPostUrls.at(-1)!).searchParams.get("title")).toBe(`cam1_owner-${response.body.id}_2020-02-01_23:00`);
   });
 
   it("rejects a cross-midnight window when the next date has no footage", async () => {
@@ -428,6 +439,11 @@ describe("owner request status sync", () => {
     await request(app)
       .get(`/api/owner/requests/${inserted.id}/var/hls/playlist.m3u8`)
       .expect(403);
+
+    const status = await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/status`)
+      .expect(403);
+    expect(status.body.cdnUrl).toBeUndefined();
   });
 
   it("returns 404 for VAR outside the request window", async () => {
@@ -497,8 +513,29 @@ describe("owner request status sync", () => {
       live: true,
       newestAgeSec: 4.3,
       varActive: true,
+      cdnUrl: "https://cdn.example.test/var/cam1/0123456789abcdef0123456789abcdef/index.m3u8",
     });
-    expect(varUrls.at(-1)).toContain("/var/cam1/window");
+    expect(varUrls).toContain("https://owner-control.test/var/cam1/window");
+  });
+
+  it("does not expose the CDN URL outside the active VAR window", async () => {
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "camera1",
+      requestedBy: ownerId,
+      startLocal: oldStart,
+      endLocal: oldEnd,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+
+    const response = await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/status`)
+      .expect(200);
+    expect(response.body.varActive).toBe(false);
+    expect(response.body.cdnUrl).toBeUndefined();
   });
 
   it("streams VAR segments and rejects unsafe segment names", async () => {
