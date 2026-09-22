@@ -92,6 +92,14 @@ function describeStillOnFor(value: unknown): string {
   return firstValue(record, ["until", "end", "endLocal", "title", "name", "fieldName"]);
 }
 
+export function hasActiveOwnerHold(stillOnFor: unknown): boolean {
+  return Array.isArray(stillOnFor) && stillOnFor.length > 0;
+}
+
+export function shouldShowAdminVarPlayer(on: boolean | undefined, live: boolean | undefined): boolean {
+  return on === true && live === true;
+}
+
 function windowStart(window: VarWindow): string {
   return firstValue(window, ["startLocal", "start", "from", "startsAt"]);
 }
@@ -179,10 +187,14 @@ function VarCameraCard({ camera }: { camera: Camera }) {
       const result = await apiFetch(path, init);
       if (action === "stop") {
         const stillOnFor = (result as StopResult | null)?.stillOnFor;
+        const hasOwnerHold = hasActiveOwnerHold(stillOnFor);
         const details = Array.isArray(stillOnFor)
           ? stillOnFor.map(describeStillOnFor).filter(Boolean).join(", ")
           : describeStillOnFor(stillOnFor);
-        setStopNotice(stillOnFor ? copy.ownerStillOnFor(details) : null);
+        setStopNotice(hasOwnerHold ? copy.ownerStillOnFor(details) : copy.stopped);
+        if (!hasOwnerHold) {
+          setState((current) => current ? { ...current, on: false } : current);
+        }
         setStopConfirm(false);
       }
       if (action === "start") {
@@ -219,6 +231,7 @@ function VarCameraCard({ camera }: { camera: Camera }) {
   const isSupported = state?.supported !== false;
   const isLive = state?.live === true;
   const isOn = state?.on === true;
+  const showPlayer = shouldShowAdminVarPlayer(state?.on, state?.live);
   const since = state ? firstValue(state, ["since", "startedAt", "start"]) : "";
   const until = state ? firstValue(state, ["until", "endsAt", "end"]) : "";
   const adminWindows = Array.isArray(windows.adminWindows) ? windows.adminWindows : [];
@@ -231,20 +244,20 @@ function VarCameraCard({ camera }: { camera: Camera }) {
   return (
     <section className={cn(
       "rounded-2xl border overflow-hidden",
-      isLive ? "border-red-600/60 bg-zinc-900" : "border-zinc-800 bg-zinc-900/60",
+      showPlayer ? "border-red-600/60 bg-zinc-900" : "border-zinc-800 bg-zinc-900/60",
     )}>
       <header className="flex items-center gap-3 border-b border-zinc-800/70 px-4 py-3">
         <span className={cn(
           "h-2.5 w-2.5 rounded-full",
-          loading ? "bg-zinc-600 animate-pulse" : isLive ? "bg-red-500 animate-pulse" : isOn ? "bg-amber-400" : "bg-zinc-600",
+          loading ? "bg-zinc-600 animate-pulse" : showPlayer ? "bg-red-500 animate-pulse" : isOn ? "bg-amber-400" : "bg-zinc-600",
         )} />
         <h2 className="text-sm font-semibold text-white">{copy.camera(cameraNumber(camera))}</h2>
         {!loading && isSupported && (
           <span className={cn(
             "ml-auto rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-            isLive ? "border-red-600/40 bg-red-600/10 text-red-300" : isOn ? "border-amber-600/40 bg-amber-600/10 text-amber-300" : "border-zinc-700 text-zinc-500",
+            showPlayer ? "border-red-600/40 bg-red-600/10 text-red-300" : isOn ? "border-amber-600/40 bg-amber-600/10 text-amber-300" : "border-zinc-700 text-zinc-500",
           )}>
-            {isLive ? copy.live : isOn ? (state?.live === false ? copy.starting : copy.on) : copy.off}
+            {!isOn ? copy.off : isLive ? copy.live : state?.live === false ? copy.starting : copy.on}
           </span>
         )}
       </header>
@@ -273,7 +286,7 @@ function VarCameraCard({ camera }: { camera: Camera }) {
             {since && <p className="flex items-center gap-1.5 text-xs text-zinc-400"><Clock className="h-3.5 w-3.5" />{copy.startedAt(since)}</p>}
             {until && <p className="flex items-center gap-1.5 text-xs text-zinc-400"><Clock className="h-3.5 w-3.5" />{copy.until(until)}</p>}
 
-            {isLive ? (
+            {showPlayer ? (
               <VarPlayer
                 src={`${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
                 title={`${copy.camera(cameraNumber(camera))} · VAR`}
