@@ -11,7 +11,7 @@ import {
   Download, Upload,
 } from "lucide-react";
 import Hls from "hls.js";
-import { VarPlayer } from "@/components/var-player/VarPlayer";
+import AdminVarTab from "@/components/admin/AdminVarTab";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import SettingsTab from "@/components/admin/SettingsTab";
@@ -3400,39 +3400,6 @@ function CameraCard({
   );
 }
 
-// ─── VAR Review Tab ───────────────────────────────────────────────────────────
-
-function VarTab() {
-  const [camera, setCamera] = useState<Camera>("camera1");
-
-  return (
-    <div className="space-y-4 outline-none" aria-label="VAR review controls">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <p className="text-white text-lg font-semibold">VAR Review</p>
-          <p className="text-zinc-500 text-xs mt-0.5">Review the live DVR window with frame-accurate controls.</p>
-        </div>
-        <select
-          value={camera}
-          onChange={(event) => {
-            setCamera(event.target.value as Camera);
-          }}
-          aria-label="VAR camera"
-          className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary"
-        >
-          <option value="camera1">Camera 1</option>
-          <option value="camera2">Camera 2</option>
-        </select>
-      </div>
-
-      <VarPlayer
-        src={`${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
-        title={`${camera === "camera1" ? "Camera 1" : "Camera 2"} · VAR`}
-      />
-    </div>
-  );
-}
-
 function RecordingRequestForm({
   adminPassword,
   onSubmitted,
@@ -5816,7 +5783,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   banners: { label: "Banners", render: () => <BannersTab /> },
   recordings: { label: "Recordings", render: () => <RecordingsTab /> },
   live: { label: "Live Control", render: () => <LiveTab /> },
-  var: { label: "VAR", render: () => <VarTab /> },
+  var: { label: "VAR", render: () => <AdminVarTab /> },
   "claim-disputes": { label: "Claim Disputes", render: () => <ClaimDisputesTab /> },
   analysis: { label: "Analysis", render: () => <AnalysisTab /> },
   branding: { label: "Branding", render: () => <BrandingTab /> },

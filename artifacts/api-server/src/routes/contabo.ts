@@ -51,6 +51,44 @@ function contaboAuth() {
 
 const requireContaboAuth = contaboAuth();
 
+type VarControlCamera = "cam1" | "cam2" | "cam3";
+
+function parseVarControlCamera(value: string | string[] | undefined): VarControlCamera | null {
+  const camera = Array.isArray(value) ? value[0] : value;
+  if (camera === "camera1" || camera === "cam1") return "cam1";
+  if (camera === "camera2" || camera === "cam2") return "cam2";
+  if (camera === "camera3" || camera === "cam3") return "cam3";
+  return null;
+}
+
+function sendControlResult(
+  res: import("express").Response,
+  result: { ok: boolean; status: number; body: unknown },
+): void {
+  if (result.status === 204) {
+    res.status(204).send();
+    return;
+  }
+  res.status(result.ok ? 200 : result.status).json(result.body);
+}
+
+function parseAmmanLocal(value: unknown): number | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value)) return null;
+  const parsed = Date.parse(`${value.replace(" ", "T")}:00.000Z`) - 3 * 60 * 60 * 1000;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function scheduleWindowError(start: unknown, end: unknown): string | null {
+  const startMs = parseAmmanLocal(start);
+  const endMs = parseAmmanLocal(end);
+  if (startMs == null || endMs == null) return "start and end must be YYYY-MM-DD HH:MM in Amman time";
+  if (endMs <= startMs) return "end must be after start";
+  if (endMs - startMs > 6 * 60 * 60 * 1000) return "VAR windows cannot exceed 6 hours";
+  if (startMs < Date.now() - 60 * 1000) return "start must be in the future";
+  if (startMs > Date.now() + 30 * 24 * 60 * 60 * 1000) return "start cannot be more than 30 days ahead";
+  return null;
+}
+
 // ─── In-memory recording request log ─────────────────────────────────────────
 
 interface RecordingJob {
@@ -109,6 +147,155 @@ export async function controlResponse(
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
+
+/**
+ * Admin VAR control proxy.
+ *
+ * The control API uses cam1/cam2/cam3 while the admin UI and existing routes
+ * use camera1/camera2/camera3. Keep the alias conversion at this boundary.
+ */
+router.get("/admin/var/:camera/state", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const camera = parseVarControlCamera(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid VAR camera" });
+    return;
+  }
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  try {
+    sendControlResult(res, await controlFetch(`/var/${camera}/state`));
+  } catch (err) {
+    logger.error({ err, camera }, "Failed to reach VAR control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+router.post("/admin/var/:camera/start", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const camera = parseVarControlCamera(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid VAR camera" });
+    return;
+  }
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  const rawMinutes = req.query.minutes;
+  const minutes = rawMinutes == null || rawMinutes === ""
+    ? 240
+    : Number(Array.isArray(rawMinutes) ? rawMinutes[0] : rawMinutes);
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 240) {
+    res.status(400).json({ error: "minutes must be an integer from 5 to 240" });
+    return;
+  }
+
+  try {
+    sendControlResult(res, await controlFetch(`/var/${camera}/start?minutes=${minutes}`, { method: "POST" }));
+  } catch (err) {
+    logger.error({ err, camera }, "Failed to reach VAR control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+router.post("/admin/var/:camera/stop", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const camera = parseVarControlCamera(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid VAR camera" });
+    return;
+  }
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  try {
+    sendControlResult(res, await controlFetch(`/var/${camera}/stop`, { method: "POST" }));
+  } catch (err) {
+    logger.error({ err, camera }, "Failed to reach VAR control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+router.post("/admin/var/:camera/schedule", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const camera = parseVarControlCamera(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid VAR camera" });
+    return;
+  }
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  const start = req.body?.start;
+  const end = req.body?.end;
+  const validationError = scheduleWindowError(start, end);
+  if (validationError) {
+    res.status(400).json({ error: validationError });
+    return;
+  }
+
+  try {
+    const query = `?start=${encodeURIComponent(start as string)}&end=${encodeURIComponent(end as string)}`;
+    sendControlResult(res, await controlFetch(`/var/${camera}/schedule${query}`, { method: "POST" }));
+  } catch (err) {
+    logger.error({ err, camera }, "Failed to reach VAR control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+router.get("/admin/var/:camera/windows", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const camera = parseVarControlCamera(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid VAR camera" });
+    return;
+  }
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  try {
+    sendControlResult(res, await controlFetch(`/var/${camera}/windows`));
+  } catch (err) {
+    logger.error({ err, camera }, "Failed to reach VAR control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+router.delete("/admin/var/:camera/windows/:id", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const camera = parseVarControlCamera(req.params.camera);
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  if (!camera) {
+    res.status(400).json({ error: "Invalid VAR camera" });
+    return;
+  }
+  if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) {
+    res.status(400).json({ error: "Invalid VAR window id" });
+    return;
+  }
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  try {
+    sendControlResult(res, await controlFetch(`/var/${camera}/windows/${encodeURIComponent(id)}`, { method: "DELETE" }));
+  } catch (err) {
+    logger.error({ err, camera, id }, "Failed to reach VAR control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
 
 /**
  * GET /admin/contabo/config
