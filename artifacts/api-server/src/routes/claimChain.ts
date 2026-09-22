@@ -90,16 +90,20 @@ const TapBody = z.object({
   /** The track we were following and that turned out to be wrong, if any. */
   rejectedTrackId: z.string().min(1).nullish(),
   name: z.string().trim().min(1).max(60).nullish(),
-  decisionMs: z.number().int().min(0).max(600_000).nullish(),
+  decisionMs: z.number().int().min(0).nullish(),
   /** Fingerprint the client was working from; a mismatch is a 409, not a merge. */
   bundleFingerprint: z.string().min(1).nullish(),
 });
 
 const FrameBody = z.object({
   frame: z.number().int().min(0),
-  decisionMs: z.number().int().min(0).max(600_000).nullish(),
+  decisionMs: z.number().int().min(0).nullish(),
   bundleFingerprint: z.string().min(1).nullish(),
 });
+
+function boundedDecisionMs(value: number | null | undefined): number | null {
+  return value == null ? null : Math.min(600_000, value);
+}
 
 /**
  * A claimant's identity id on a recording.
@@ -319,6 +323,7 @@ function describe(
     ctx.manifest.identityDecisions,
     ctx.answeredFrames,
     trackedEndFrame(ctx.manifest),
+    ctx.manifest.frameRate,
   );
   const uncertainty = open[0] ?? null;
   const offPitchSeconds = totalSeconds(ctx.offPitch.map((span) => ({
@@ -877,7 +882,7 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
     {
       wrongTrackId: body.data.rejectedTrackId ?? null,
       rightTrackId: trackId,
-      decisionMs: body.data.decisionMs ?? null,
+      decisionMs: boundedDecisionMs(body.data.decisionMs),
     },
   );
   // The response has to reflect the answer just given, whether or not the row
@@ -918,7 +923,7 @@ router.post("/recordings/:id/claim-match/chain/not-me", async (req, res): Promis
     { kind: "decision", answeredFrame: body.data.frame });
   const labelRecorded = await recordLabel(ctx, "lost", body.data.frame, {
     wrongTrackId: wrong?.trackId ?? null,
-    decisionMs: body.data.decisionMs ?? null,
+    decisionMs: boundedDecisionMs(body.data.decisionMs),
   });
   ctx.answeredFrames.add(body.data.frame);
   const body_ = describe(ctx, saved.chain, saved.name, labelRecorded);
@@ -948,7 +953,7 @@ router.post("/recordings/:id/claim-match/chain/confirm", async (req, res): Promi
   const part = current.find((p) => body.data.frame >= p.fromFrame && body.data.frame <= p.toFrame);
   const labelRecorded = await recordLabel(ctx, "confirm", body.data.frame, {
     rightTrackId: part?.trackId ?? null,
-    decisionMs: body.data.decisionMs ?? null,
+    decisionMs: boundedDecisionMs(body.data.decisionMs),
   });
   // "Yes, still me" changes nothing about the chain, so without this the
   // reply carries the identical uncertainty and the person is asked the same

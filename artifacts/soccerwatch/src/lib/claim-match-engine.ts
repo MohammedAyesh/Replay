@@ -1,3 +1,5 @@
+import type { TrackingPitchModel } from "@workspace/api-client-react";
+
 export interface ClaimBox {
   frame: number;
   x: number;
@@ -38,6 +40,7 @@ export interface ClaimBundle {
   matchOffset: number;
   /** where tracking frame 0 sits inside the video file, in seconds */
   videoStartSeconds: number;
+  pitchModel?: TrackingPitchModel;
   tracks: ClaimTrack[];
   crossings: ClaimCrossing[];
   inPlaySpans: ClaimInPlaySpan[];

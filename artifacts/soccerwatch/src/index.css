@@ -423,6 +423,23 @@
    without being mistaken for the "this is you" state. */
 .claim-track-box.is-highlighted { border: 2px solid #7fd1ff; background: rgba(127,209,255,.18); box-shadow: 0 0 0 4px rgba(127,209,255,.16); }
 .claim-track-box.is-highlighted span { color: #06202e; background: #7fd1ff; }
+.claim-candidate-arrows { position: absolute; inset: 0; z-index: 31; pointer-events: none; }
+.claim-candidate-arrow {
+  position: absolute;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid #7fd1ff;
+  border-radius: 50%;
+  color: #06202e;
+  background: #7fd1ff;
+  box-shadow: 0 0 0 3px rgba(127,209,255,.2);
+  font-family: var(--app-font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  transform: translate(-50%, -50%);
+}
 /* Pick your player by the number drawn on the box, for a mouse. */
 .claim-number-picker .claim-number-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .claim-number-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 5px 9px; border: 1px solid rgba(238,243,230,.22); cursor: pointer; color: var(--claim-ink); background: rgba(10,17,16,.6); font-family: var(--app-font-mono); font-size: 10px; }
@@ -1154,3 +1171,64 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-name-prompt .claim-panel { width: min(420px, 100%); padding: 22px; }
 .claim-name-input { width: 100%; margin-top: 16px; padding: 12px 14px; color: var(--claim-ink); border: 1px solid var(--claim-line); border-radius: 10px; background: rgba(196,224,184,.06); font-size: 14px; }
 .claim-name-input:focus { outline: none; border-color: var(--claim-green); }
+.claim-decision-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+  max-width: min(420px, calc(100% - 36px));
+  padding: 12px 14px;
+  border: 1px solid rgba(255,131,95,.55);
+  color: #ffe2d9;
+  background: rgba(75, 25, 19, .96);
+  box-shadow: 0 12px 30px rgba(0,0,0,.35);
+  font-family: var(--app-font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .claim-page-stage {
+    position: relative;
+    min-height: 100dvh;
+    height: auto;
+    overflow: visible;
+  }
+  .claim-page-stage .claim-stage {
+    position: relative;
+    inset: auto;
+    min-height: 100dvh;
+    height: auto;
+    overflow: visible;
+  }
+  .claim-page-stage .claim-stage-centre {
+    position: relative;
+    inset: auto;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 56px;
+  }
+  .claim-page-stage .claim-frame-box {
+    width: 100% !important;
+    flex: 0 0 auto;
+  }
+  .claim-page-stage .claim-stage-panel {
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+    border-radius: 0;
+  }
+  .claim-page-stage .claim-stage-panel .claim-panel {
+    max-height: none;
+    border-right: 0;
+    border-left: 0;
+  }
+  .claim-page-stage .claim-candidate-arrows {
+    display: none;
+  }
+}

@@ -811,6 +811,43 @@ describe("questions are scanned per part, from each part's own answered frontier
     // 500 - 150 is well past successorGapFrames, so only the mark can save this.
     expect(openUncertainties(chain, tracks, [], 0).map((q) => q.frame)).toEqual([900]);
   });
+
+  it("asks at the first detection after a long gap inside one source track", () => {
+    const gappy = track("G", 0, 120, (f) => ({ x: f, y: 0 }));
+    gappy.boxes = gappy.boxes.filter((box) => box.frame <= 20 || box.frame >= 80);
+    const tracks = byId(gappy);
+    const chain = [
+      { ...claimed("G", 0, 20, 0) },
+      { ...claimed("G", 80, 120, 80) },
+    ];
+    expect(openUncertainties(chain, tracks, [], 0, undefined, undefined, 120, 25))
+      .toContainEqual(expect.objectContaining({
+        kind: "continuity",
+        frame: 80,
+        trackId: "G",
+      }));
+  });
+
+  it("asks when optional per-track kit readings change", () => {
+    const changing = track("K", 0, 100, (f) => ({ x: f, y: 0 })) as Track & {
+      kitReadings: Array<{ frame: number; value: string }>;
+    };
+    changing.kitReadings = [
+      { frame: 0, value: "blue" },
+      { frame: 60, value: "red" },
+    ];
+    const question = nextUncertainty(
+      [{ ...claimed("K", 0, 100, 0) }],
+      byId(changing),
+      [],
+      0,
+      undefined,
+      undefined,
+      120,
+      25,
+    );
+    expect(question).toMatchObject({ kind: "continuity", frame: 60, trackId: "K" });
+  });
 });
 
 describe("marks survive normalisation and are filled in for old chains", () => {

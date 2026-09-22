@@ -51,6 +51,7 @@ export function segmentAsBundle(
     duration: totalDuration,
     matchOffset: manifest.matchOffset,
     videoStartSeconds: manifest.videoStartSeconds ?? 0,
+    pitchModel: manifest.pitchModel,
     tracks: applied.tracks,
     crossings: applied.crossings,
     inPlaySpans: segment.inPlaySpans,

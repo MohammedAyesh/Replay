@@ -382,6 +382,7 @@ export function ClaimStage({
   bundle,
   candidates,
   highlightedId,
+  fitCandidates = false,
   showBoxes,
   viewKey,
   currentTime,
@@ -414,6 +415,8 @@ export function ClaimStage({
   /** Candidate to light up while the number picker points at it. Optional, so
    * the anchor page is unaffected. */
   highlightedId?: string | null;
+  /** During a question, prefer a crop that contains every offered box. */
+  fitCandidates?: boolean;
   showBoxes: boolean;
   /** changes when the selected review view changes; resets a manual pan */
   viewKey: string;
@@ -445,7 +448,10 @@ export function ClaimStage({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const frameBoxRef = useRef<HTMLDivElement | null>(null);
   const layerRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const minimapFrameRef = useRef<HTMLDivElement | null>(null);
+  const arrowSignatureRef = useRef("");
+  const [candidateArrows, setCandidateArrows] = useState<Array<{ id: string; left: number; top: number }>>([]);
 
   const playbackUrl = browserSafeVideoUrl(videoUrl);
   const startVideoTime = Math.max(0, currentTime + (bundle.videoStartSeconds || 0));
@@ -532,9 +538,11 @@ export function ClaimStage({
   /** Where the frame wants to be, from the tracking data, when nobody is dragging. */
   const computeTarget = useCallback((): { cx: number; cy: number; zoom: number } | null => {
     const boxes = candidatesRef.current.map((c) => c.box);
-    if (boxes.length) return frameContaining(boxes, bundle, srcAspectRef.current, MIN_ZOOM);
+    if (boxes.length) {
+      return frameContaining(boxes, bundle, srcAspectRef.current, fitCandidates ? 0.2 : MIN_ZOOM);
+    }
     return null;
-  }, [bundle]);
+  }, [bundle, fitCandidates]);
 
   useEffect(() => { setManualPan(false); }, [viewKey, setManualPan]);
 
@@ -589,6 +597,35 @@ export function ClaimStage({
           mm.style.top = `${f.y * 100}%`;
           mm.style.width = `${f.w * 100}%`;
           mm.style.height = `${f.h * 100}%`;
+        }
+      }
+      const stage = containerRef.current?.getBoundingClientRect();
+      const frameBox = frameBoxRef.current?.getBoundingClientRect();
+      const panel = panelRef.current?.getBoundingClientRect();
+      if (stage && frameBox) {
+        const nextArrows: Array<{ id: string; left: number; top: number }> = [];
+        for (const candidate of candidatesRef.current) {
+          const left = frameBox.left + ((candidate.box.x / bundle.width - f.x) / f.w) * frameBox.width;
+          const top = frameBox.top + ((candidate.box.y / bundle.height - f.y) / f.h) * frameBox.height;
+          const right = frameBox.left + (((candidate.box.x + candidate.box.w) / bundle.width - f.x) / f.w) * frameBox.width;
+          const bottom = frameBox.top + (((candidate.box.y + candidate.box.h) / bundle.height - f.y) / f.h) * frameBox.height;
+          const covered = panel
+            && right > panel.left && left < panel.right && bottom > panel.top && top < panel.bottom;
+          const hidden = left < frameBox.left || right > frameBox.right
+            || top < frameBox.top || bottom > frameBox.bottom || covered;
+          if (!hidden) continue;
+          const rawLeft = covered && panel ? panel.left - 12 : (left + right) / 2;
+          const rawTop = (top + bottom) / 2;
+          nextArrows.push({
+            id: candidate.id,
+            left: Math.max(10, Math.min(stage.width - 10, rawLeft - stage.left)),
+            top: Math.max(40, Math.min(stage.height - 40, rawTop - stage.top)),
+          });
+        }
+        const signature = nextArrows.map((arrow) => `${arrow.id}:${Math.round(arrow.left)}:${Math.round(arrow.top)}`).join("|");
+        if (signature !== arrowSignatureRef.current) {
+          arrowSignatureRef.current = signature;
+          setCandidateArrows(nextArrows);
         }
       }
     };
@@ -864,7 +901,27 @@ export function ClaimStage({
       </div>
 
       {/* Stage panel: find / following / still / picker / look / done */}
-      {panel && <div className="claim-stage-panel" onClick={(e) => e.stopPropagation()}>{panel}</div>}
+      {candidateArrows.length > 0 && (
+        <div className="claim-candidate-arrows" aria-hidden="true">
+          {candidateArrows.map((arrow) => {
+            const index = candidates.findIndex((candidate) => candidate.id === arrow.id);
+            return (
+              <span
+                key={arrow.id}
+                className="claim-candidate-arrow"
+                style={{ left: arrow.left, top: arrow.top }}
+              >
+                {index + 1}
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {panel && (
+        <div ref={panelRef} className="claim-stage-panel" onClick={(e) => e.stopPropagation()}>
+          {panel}
+        </div>
+      )}
     </div>
   );
 }

@@ -12,4 +12,5 @@ export type ClaimChainUncertaintyKind = typeof ClaimChainUncertaintyKind[keyof t
 export const ClaimChainUncertaintyKind = {
   'track-end': 'track-end',
   swap: 'swap',
+  continuity: 'continuity',
 } as const;

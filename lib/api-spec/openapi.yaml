@@ -3865,7 +3865,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [track-end, swap]
+          enum: [track-end, swap, continuity]
         frame:
           type: integer
         trackId:

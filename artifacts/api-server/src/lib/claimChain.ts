@@ -111,7 +111,7 @@ export function withMarks(chain: ChainPart[], legacyFloor: number): ChainPart[] 
   ));
 }
 
-export type UncertaintyKind = "track-end" | "swap";
+export type UncertaintyKind = "track-end" | "swap" | "continuity";
 
 export type Uncertainty = {
   kind: UncertaintyKind;
@@ -126,6 +126,38 @@ export type Uncertainty = {
   /** Plain sentence for the UI and the logs. Never a code. */
   reason: string;
 };
+
+type KitReading = { frame: number; value: string | number | boolean };
+
+/**
+ * Kit metadata is optional and has existed in a few bundle exporters. Keep
+ * this reader tolerant so the claim flow can use published readings without
+ * changing the tracking payload contract.
+ */
+function optionalKitReadings(track: Track): KitReading[] {
+  const source = track as Track & Record<string, unknown>;
+  const raw = source.kitReadings ?? source.kitClasses ?? source.kitClassReadings
+    ?? source.kit_class_readings;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item): KitReading | null => {
+      if (Array.isArray(item) && typeof item[0] === "number"
+        && (typeof item[1] === "string" || typeof item[1] === "number" || typeof item[1] === "boolean")) {
+        return { frame: item[0], value: item[1] };
+      }
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const frame = record.frame ?? record.atFrame;
+      const value = record.value ?? record.class ?? record.kitClass ?? record.kit_class;
+      if (typeof frame !== "number"
+        || (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean")) {
+        return null;
+      }
+      return { frame, value };
+    })
+    .filter((item): item is KitReading => item !== null)
+    .sort((a, b) => a.frame - b.frame);
+}
 
 /* ------------------------------------------------------------------ *
  * Tunables. Exported so tests pin them and so a recording with unusual
@@ -190,6 +222,8 @@ export const CHAIN_TUNING = {
    * over one track and far below anything that would bloat the row.
    */
   maxPartsPerTap: 64,
+  /** A long internal detection gap is a possible identity break. */
+  continuityGapSeconds: 2,
 };
 
 /**
@@ -437,6 +471,7 @@ export function openUncertainties(
    * second of this frame is not raised.
    */
   endFrame?: number,
+  frameRate = 25,
 ): Uncertainty[] {
   const ordered = [...chain].sort((a, b) => a.fromFrame - b.fromFrame);
   const candidates: Uncertainty[] = [];
@@ -446,6 +481,56 @@ export function openUncertainties(
     if (part.toFrame < floor) continue;
     const track = tracksById.get(part.trackId);
     if (!track) continue;
+
+    /*
+     * A source track can survive a long detector gap and then resume on a
+     * different player. The track id alone is not evidence of continuity.
+     * Ask at the first detection after the gap, where the viewer can compare
+     * the visible player and use the same tap/confirm flow as a swap.
+     */
+    const boxes = [...track.boxes].sort((a, b) => a.frame - b.frame);
+    const nextPart = ordered.find((other) => other !== part && other.fromFrame > part.toFrame);
+    for (let i = 1; i < boxes.length; i++) {
+      const before = boxes[i - 1];
+      const after = boxes[i];
+      const insidePart = after.frame <= part.toFrame;
+      const isPartBoundary = nextPart?.trackId === part.trackId
+        && nextPart.fromFrame === after.frame;
+      if (after.frame < Math.max(part.fromFrame, floor) || (!insidePart && !isPartBoundary)) continue;
+      if (before.frame > part.toFrame) continue;
+      if ((after.frame - before.frame) / Math.max(frameRate, 0.001) <= CHAIN_TUNING.continuityGapSeconds) continue;
+      if (answeredFrames?.has(after.frame)) continue;
+      candidates.push({
+        kind: "continuity",
+        frame: after.frame,
+        trackId: part.trackId,
+        confidence: 0.8,
+        reason: "The tracker lost this player for a while. Is this still the same player?",
+      });
+      break;
+    }
+
+    /*
+     * Published bundles may carry kit readings on a track even though the
+     * tracking payload contract intentionally does not require them. Read the
+     * optional metadata defensively; no VPS format or database schema change is
+     * needed for bundles that do not have it.
+     */
+    const kitReadings = optionalKitReadings(track);
+    for (let i = 1; i < kitReadings.length; i++) {
+      const before = kitReadings[i - 1];
+      const after = kitReadings[i];
+      if (after.frame < Math.max(part.fromFrame, floor) || after.frame > part.toFrame) continue;
+      if (before.value === after.value || answeredFrames?.has(after.frame)) continue;
+      candidates.push({
+        kind: "continuity",
+        frame: after.frame,
+        trackId: part.trackId,
+        confidence: 0.85,
+        reason: "The player's kit reading changed here. Is this still the same player?",
+      });
+      break;
+    }
 
     // A swap inside the part we are actually watching.
     for (const crossing of crossings) {
@@ -538,7 +623,7 @@ export function openUncertainties(
   // outranks a track end, so the most specific description of what happened
   // is the one the person is shown. One question per frame: the person is
   // asked about a moment, not about each reading of it.
-  const rank: Record<UncertaintyKind, number> = { swap: 0, "track-end": 1 };
+  const rank: Record<UncertaintyKind, number> = { swap: 0, continuity: 1, "track-end": 2 };
   candidates.sort((a, b) => a.frame - b.frame || rank[a.kind] - rank[b.kind]);
   const out: Uncertainty[] = [];
   for (const candidate of candidates) {
@@ -563,8 +648,11 @@ export function nextUncertainty(
   decisions?: IdentityDecision[],
   answeredFrames?: Set<number>,
   endFrame?: number,
+  frameRate = 25,
 ): Uncertainty | null {
-  return openUncertainties(chain, tracksById, crossings, fromFrame, decisions, answeredFrames, endFrame)[0] ?? null;
+  return openUncertainties(
+    chain, tracksById, crossings, fromFrame, decisions, answeredFrames, endFrame, frameRate,
+  )[0] ?? null;
 }
 
 /* ------------------------------------------------------------------ *

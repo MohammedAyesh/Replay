@@ -2345,7 +2345,7 @@ export const GetClaimChainParams = zod.object({
 
 export const GetClaimChainResponse = zod.object({
   "openQuestions": zod.array(zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2375,7 +2375,7 @@ export const GetClaimChainResponse = zod.object({
   "coverageSeconds": zod.number(),
   "coveragePercent": zod.number(),
   "nextUncertainty": zod.union([zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2413,7 +2413,7 @@ export const TapClaimChainBody = zod.object({
 
 export const TapClaimChainResponse = zod.object({
   "openQuestions": zod.array(zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2443,7 +2443,7 @@ export const TapClaimChainResponse = zod.object({
   "coverageSeconds": zod.number(),
   "coveragePercent": zod.number(),
   "nextUncertainty": zod.union([zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2475,7 +2475,7 @@ export const RejectClaimChainFromBody = zod.object({
 
 export const RejectClaimChainFromResponse = zod.object({
   "openQuestions": zod.array(zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2505,7 +2505,7 @@ export const RejectClaimChainFromResponse = zod.object({
   "coverageSeconds": zod.number(),
   "coveragePercent": zod.number(),
   "nextUncertainty": zod.union([zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2537,7 +2537,7 @@ export const ConfirmClaimChainAtBody = zod.object({
 
 export const ConfirmClaimChainAtResponse = zod.object({
   "openQuestions": zod.array(zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2567,7 +2567,7 @@ export const ConfirmClaimChainAtResponse = zod.object({
   "coverageSeconds": zod.number(),
   "coveragePercent": zod.number(),
   "nextUncertainty": zod.union([zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2587,7 +2587,7 @@ export const UndoClaimChainLastParams = zod.object({
 
 export const UndoClaimChainLastResponse = zod.object({
   "openQuestions": zod.array(zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
@@ -2617,7 +2617,7 @@ export const UndoClaimChainLastResponse = zod.object({
   "coverageSeconds": zod.number(),
   "coveragePercent": zod.number(),
   "nextUncertainty": zod.union([zod.object({
-  "kind": zod.enum(['track-end', 'swap']),
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
   "frame": zod.number(),
   "trackId": zod.string(),
   "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),

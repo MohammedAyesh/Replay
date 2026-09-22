@@ -57,6 +57,7 @@ import {
 import { segmentIndexAtTime, retainNearbySegments } from "@/lib/claim-match-segments";
 import {
   approachSeconds,
+  candidateForNumber,
   candidatesAtFrame,
   canConfirmAtStop,
   chainSpans,
@@ -122,6 +123,7 @@ export default function ClaimChainPage() {
   const pendingSeekRef = useRef<number | null>(null);
   const [seekRequest, setSeekRequest] = useState<{ id: number; videoTime: number } | null>(null);
   const [notice, setNotice] = useState("");
+  const [decisionError, setDecisionError] = useState("");
 
   /* ---------------- tracking segments ---------------- */
 
@@ -226,9 +228,19 @@ export default function ClaimChainPage() {
   const confirm = useConfirmClaimChainAt();
   const undo = useUndoClaimChainLast();
   const busy = tap.isPending || reject.isPending || confirm.isPending || undo.isPending;
+  const [undoLocked, setUndoLocked] = useState(false);
+  const undoLockRef = useRef(false);
+  const decisionMs = useCallback(() => Math.min(600_000, clock.elapsed()), [clock]);
+
+  useEffect(() => {
+    if (!decisionError) return;
+    const timer = window.setTimeout(() => setDecisionError(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [decisionError]);
 
   const applyChain = useCallback((next: ClaimChain) => {
     queryClient.setQueryData(chainQueryKey, next);
+    setDecisionError("");
     setNotice(next.labelRecorded === false ? "Saved — but the training label could not be stored" : "");
   }, [chainQueryKey, queryClient]);
 
@@ -367,16 +379,18 @@ export default function ClaimChainPage() {
           frame,
           rejectedTrackId: rejectedTrackId === trackId ? null : rejectedTrackId,
           name: name ?? null,
-          decisionMs: clock.elapsed(),
+           decisionMs: decisionMs(),
           bundleFingerprint: chain?.bundleFingerprint ?? null,
         },
       });
       applyChain(next);
       askAgainFrom(next, frame);
     } catch (error) {
-      setNotice(errorMessage(error, "That tap could not be saved."));
+      const message = errorMessage(error, "That tap could not be saved.");
+      setNotice(message);
+      setDecisionError(message);
     }
-  }, [applyChain, askAgainFrom, bundle, chain, clock, manifest, recordingId, tap]);
+  }, [applyChain, askAgainFrom, bundle, chain, decisionMs, manifest, recordingId, tap]);
 
   /**
    * Claim a track as yourself at the current frame.
@@ -420,7 +434,7 @@ export default function ClaimChainPage() {
         id: recordingId,
         data: {
           frame,
-          decisionMs: clock.elapsed(),
+          decisionMs: decisionMs(),
           bundleFingerprint: chain.bundleFingerprint,
         },
       });
@@ -430,9 +444,11 @@ export default function ClaimChainPage() {
       videoRef.current?.pause();
       setNotice("Given up from here — tap yourself again when you see yourself.");
     } catch (error) {
-      setNotice(errorMessage(error, "That could not be saved."));
+      const message = errorMessage(error, "That could not be saved.");
+      setNotice(message);
+      setDecisionError(message);
     }
-  }, [applyChain, asking, chain, clock, currentFrame, recordingId, reject]);
+  }, [applyChain, asking, chain, currentFrame, decisionMs, recordingId, reject]);
 
   const onStillMe = useCallback(async () => {
     if (!chain || !asking) return;
@@ -442,7 +458,7 @@ export default function ClaimChainPage() {
         id: recordingId,
         data: {
           frame,
-          decisionMs: clock.elapsed(),
+          decisionMs: decisionMs(),
           bundleFingerprint: chain.bundleFingerprint,
         },
       });
@@ -450,11 +466,16 @@ export default function ClaimChainPage() {
       askAgainFrom(next, frame);
       setPlaying(true);
     } catch (error) {
-      setNotice(errorMessage(error, "That could not be saved."));
+      const message = errorMessage(error, "That could not be saved.");
+      setNotice(message);
+      setDecisionError(message);
     }
-  }, [applyChain, askAgainFrom, asking, chain, clock, confirm, recordingId]);
+  }, [applyChain, askAgainFrom, asking, chain, confirm, decisionMs, recordingId]);
 
   const onUndo = useCallback(async () => {
+    if (undoLockRef.current) return;
+    undoLockRef.current = true;
+    setUndoLocked(true);
     try {
       const next = await undo.mutateAsync({ id: recordingId });
       applyChain(next);
@@ -466,7 +487,12 @@ export default function ClaimChainPage() {
       videoRef.current?.pause();
       setNotice("Last decision undone.");
     } catch (error) {
-      setNotice(errorMessage(error, "That could not be undone."));
+      const message = errorMessage(error, "That could not be undone.");
+      setNotice(message);
+      setDecisionError(message);
+    } finally {
+      undoLockRef.current = false;
+      setUndoLocked(false);
     }
   }, [applyChain, recordingId, undo]);
 
@@ -496,11 +522,12 @@ export default function ClaimChainPage() {
    * number is never stored anywhere: it is a target, not a name.
    */
   const claimNumber = useCallback((n: number) => {
-    const candidate = candidates[n - 1];
+    const candidate = candidateForNumber(candidates, n);
     if (!candidate) {
       setNotice(`There is no player ${n} on screen right now.`);
       return;
     }
+    setHighlightId(candidate.id);
     claimTrack(candidate.id);
   }, [candidates, claimTrack]);
 
@@ -642,7 +669,7 @@ export default function ClaimChainPage() {
                   <Flag size={14} />
                   <span>
                     <b>{formatClaimTime(item.frame / Math.max(chain.frameRate, 0.001))}</b>
-                    {" · "}{item.kind === "swap" ? "Is this still you?" : "Where did you go?"}
+                     {" · "}{item.kind === "track-end" ? "Where did you go?" : "Is this still you?"}
                   </span>
                 </button>
               ))}
@@ -661,7 +688,7 @@ export default function ClaimChainPage() {
                     type="button"
                     className="claim-moment-row"
                     data-testid={`button-chain-fill-gap-${Math.round(gap.fromSeconds)}`}
-                    disabled={busy}
+           disabled={busy || undoLocked}
                     onClick={() => {
                       setAsking(null);
                       seekTracking(gap.fromSeconds);
@@ -865,7 +892,7 @@ export default function ClaimChainPage() {
           type="button"
           className="claim-text-button"
           data-testid="button-chain-undo"
-          disabled={busy}
+          disabled={busy || undoLocked}
           onClick={() => void onUndo()}
         >
           <Undo2 size={14} /> Undo the last link
@@ -881,6 +908,7 @@ export default function ClaimChainPage() {
         bundle={bundle}
         candidates={candidates}
         highlightedId={highlightId}
+        fitCandidates={stage === "asking"}
         showBoxes
         viewKey={`${stage}:${currentSegmentIndex}`}
         currentTime={currentTime}
@@ -925,6 +953,12 @@ export default function ClaimChainPage() {
         )}
         panel={panel}
       />
+
+      {decisionError && (
+        <div className="claim-decision-toast" role="alert" data-testid="claim-decision-error">
+          {decisionError}
+        </div>
+      )}
 
       {pendingName && (
         <div className="claim-name-prompt" role="dialog" aria-modal="true" data-testid="dialog-chain-name">

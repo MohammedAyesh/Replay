@@ -167,6 +167,75 @@ export type ChainCandidate = {
   suspect: boolean;
 };
 
+export function candidateForNumber<T extends { id: string }>(
+  candidates: T[],
+  number: number,
+): T | null {
+  return number > 0 ? candidates[number - 1] ?? null : null;
+}
+
+function boxCentre(box: ClaimBox) {
+  return { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+}
+
+function pitchPosition(bundle: ClaimBundle, box: ClaimBox): { x: number; y: number } | null {
+  const model = bundle.pitchModel;
+  if (!model || model.grid.length < 2 || model.grid[0]?.length < 2) return null;
+  const columns = model.grid[0].length;
+  if (model.grid.some((row) => row.length !== columns || row.length < 2)) return null;
+  const u = Math.max(0, Math.min(1, boxCentre(box).x / Math.max(bundle.width, 1)));
+  const v = Math.max(0, Math.min(1, boxCentre(box).y / Math.max(bundle.height, 1)));
+  const column = u * (columns - 1);
+  const row = v * (model.grid.length - 1);
+  const left = Math.floor(column);
+  const top = Math.floor(row);
+  const right = Math.min(columns - 1, left + 1);
+  const bottom = Math.min(model.grid.length - 1, top + 1);
+  const tx = column - left;
+  const ty = row - top;
+  const a = model.grid[top][left];
+  const b = model.grid[top][right];
+  const c = model.grid[bottom][left];
+  const d = model.grid[bottom][right];
+  return {
+    x: (a.x * (1 - tx) + b.x * tx) * (1 - ty) + (c.x * (1 - tx) + d.x * tx) * ty,
+    y: (a.y * (1 - tx) + b.y * tx) * (1 - ty) + (c.y * (1 - tx) + d.y * tx) * ty,
+  };
+}
+
+function previousKnownBox(track: ClaimTrack, frame: number): ClaimBox | null {
+  let previous: ClaimBox | null = null;
+  for (const box of track.boxes) {
+    if (box.frame >= frame) break;
+    previous = box;
+  }
+  return previous;
+}
+
+/** Keep a gap-fill choice within a plausible human movement envelope. */
+export function candidateIsReachable(
+  bundle: ClaimBundle,
+  question: ChainQuestion | null,
+  candidate: ChainCandidate,
+): boolean {
+  if (!question) return true;
+  const followed = bundle.tracks.find((track) => track.id === question.trackId);
+  const previous = followed ? previousKnownBox(followed, question.frame) : null;
+  if (!previous) return true;
+  const elapsed = Math.max(0, (question.frame - previous.frame) / Math.max(bundle.frameRate, 0.001));
+  const from = pitchPosition(bundle, previous);
+  const to = pitchPosition(bundle, candidate.box);
+  if (from && to) {
+    const metres = Math.hypot(to.x - from.x, to.y - from.y);
+    return metres <= Math.max(15, elapsed * 8);
+  }
+  // Without calibration, image-space distance is only a conservative proxy.
+  const fromPixels = boxCentre(previous);
+  const toPixels = boxCentre(candidate.box);
+  return Math.hypot(toPixels.x - fromPixels.x, toPixels.y - fromPixels.y)
+    <= bundle.width * 0.25;
+}
+
 /**
  * Everyone visible at this frame, with the followed track and the suspected
  * swap partner marked.
@@ -191,13 +260,14 @@ export function candidatesAtFrame(
   for (const track of bundle.tracks) {
     const box = detectionAtFrame(track, frame, tolerance);
     if (!box) continue;
-    out.push({
+    const candidate = {
       id: track.id,
       label: track.id === mineId ? (chain?.name ?? "You") : (track.label ?? "Player"),
       box,
       mine: track.id === mineId,
       suspect: suspectId !== null && track.id === suspectId,
-    });
+    };
+    if (candidateIsReachable(bundle, question, candidate)) out.push(candidate);
   }
   return out.sort((a, b) => a.box.x - b.box.x);
 }
@@ -284,7 +354,7 @@ export function questionFor(source: ClaimChain | ChainQuestion | null): string |
  */
 export function canConfirmAtStop(source: ClaimChain | ChainQuestion | null): boolean {
   const question = source && "kind" in source ? source : source?.nextUncertainty ?? null;
-  return question?.kind === "swap";
+  return question?.kind === "swap" || question?.kind === "continuity";
 }
 
 /**

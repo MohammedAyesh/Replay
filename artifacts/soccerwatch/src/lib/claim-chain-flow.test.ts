@@ -3,6 +3,8 @@ import type { ClaimChain } from "@workspace/api-client-react";
 import type { ClaimBundle } from "./claim-match-engine";
 import {
   candidatesAtFrame,
+  candidateForNumber,
+  candidateIsReachable,
   canConfirmAtStop,
   chainEndFrame,
   chainSpans,
@@ -263,6 +265,20 @@ describe("candidates", () => {
     const found = candidatesAtFrame(bundle, null, 50);
     expect(found).toHaveLength(2);
     expect(found.every((candidate) => !candidate.mine && !candidate.suspect)).toBe(true);
+  });
+
+  it("uses the same ordered candidate for a number and its highlighted box", () => {
+    const found = candidatesAtFrame(bundle, null, 50);
+    expect(candidateForNumber(found, 1)?.id).toBe(found[0].id);
+    expect(candidateForNumber(found, 2)?.id).toBe(found[1].id);
+  });
+
+  it("rejects a far-side candidate after a short gap", () => {
+    const question = { ...trackEnd, frame: 50 };
+    const near = { ...candidatesAtFrame(bundle, null, 50)[0], box: { ...candidatesAtFrame(bundle, null, 50)[0].box, x: 520 } };
+    const far = { ...near, id: "far", box: { ...near.box, x: 1500 } };
+    expect(candidateIsReachable(bundle, question, near)).toBe(true);
+    expect(candidateIsReachable(bundle, question, far)).toBe(false);
   });
 });
 
