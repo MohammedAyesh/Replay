@@ -4669,7 +4669,13 @@ function CalendarMonth({
   );
 }
 
-function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
+function TrackingBundleUpload({
+  recording,
+  onVisibilityChange,
+}: {
+  recording: AdminRecording;
+  onVisibilityChange: (recordingId: number, isVisible: boolean) => Promise<void>;
+}) {
   const [, setLocation] = useLocation();
   const [hasBundle, setHasBundle] = useState(Boolean(recording.hasTrackingBundle));
   const [hasIdentityMap, setHasIdentityMap] = useState(Boolean(recording.hasIdentityMap));
@@ -4687,6 +4693,8 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
   // more - it lives on the camera, in the Fields tab.
   const [metricsPitchModel, setMetricsPitchModel] = useState<PitchModelSummary | null>(null);
   const [loadingPlayerMetrics, setLoadingPlayerMetrics] = useState(false);
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
+  const [visibilityError, setVisibilityError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const upload = async (file: File) => {
@@ -4812,6 +4820,9 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
               ? `${recording.trackingSegmentCount ?? "—"} segments · ${recording.trackingFrameCoverage ?? "coverage unavailable"}`
               : "No tracking bundle")}
           </p>
+          {visibilityError && (
+            <p className="text-[10px] text-red-400">{visibilityError}</p>
+          )}
            {hasBundle && (
              <p className={cn(
                "mt-0.5 text-[10px]",
@@ -4834,6 +4845,31 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
         }}
       />
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={cn(
+            "rounded border px-2 py-1.5 text-[10px] font-semibold transition-colors disabled:opacity-50",
+            recording.isVisible
+              ? "border-emerald-400/40 text-emerald-300 hover:bg-emerald-400/10"
+              : "border-zinc-700 text-zinc-400 hover:border-primary hover:text-primary",
+          )}
+          disabled={visibilityBusy}
+          aria-pressed={recording.isVisible}
+          aria-label={recording.isVisible ? "Hide recording from players" : "Show recording to players"}
+          title={recording.isVisible ? "Hide from players" : "Show to players"}
+          data-testid={`button-toggle-recording-visibility-${recording.id}`}
+          onClick={() => {
+            setVisibilityBusy(true);
+            setVisibilityError(null);
+            void onVisibilityChange(recording.id, !recording.isVisible)
+              .catch((error) => {
+                setVisibilityError(adminRequestErrorMessage(error, "Could not update visibility"));
+              })
+              .finally(() => setVisibilityBusy(false));
+          }}
+        >
+          {visibilityBusy ? "Saving…" : recording.isVisible ? "Visible" : "Hidden"}
+        </button>
         <label className="flex items-center gap-1.5 text-[10px] text-zinc-500">
           starts
           <input
@@ -4948,13 +4984,14 @@ function TrackingBundleUpload({ recording }: { recording: AdminRecording }) {
 }
 
 function FieldScheduleSection({
-  fieldId, fieldName, recordings, schedules, onSchedulesChange,
+  fieldId, fieldName, recordings, schedules, onSchedulesChange, onVisibilityChange,
 }: {
   fieldId: number;
   fieldName: string;
   recordings: AdminRecording[];
   schedules: AdminSchedule[];
   onSchedulesChange: (updated: AdminSchedule[]) => void;
+  onVisibilityChange: (recordingId: number, isVisible: boolean) => Promise<void>;
 }) {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [month, setMonth] = useState(() => {
@@ -4967,7 +5004,7 @@ function FieldScheduleSection({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
 
-  const matchedCount = recordings.filter((r) => recMatchesSchedules(r, schedules)).length;
+  const matchedCount = recordings.filter((r) => r.isVisible && recMatchesSchedules(r, schedules)).length;
   const selectedSchedules = schedules.filter((s) => s.allowedDate === selectedDate);
   const allowedDates = new Set(
     schedules.map((s) => s.allowedDate).filter((date): date is string => Boolean(date)),
@@ -5026,7 +5063,11 @@ function FieldScheduleSection({
             Claim Your Match bundles
           </p>
           {recordings.map((recording) => (
-            <TrackingBundleUpload key={recording.id} recording={recording} />
+            <TrackingBundleUpload
+              key={recording.id}
+              recording={recording}
+              onVisibilityChange={onVisibilityChange}
+            />
           ))}
         </div>
         <p className="text-zinc-500 text-[11px] uppercase tracking-wider font-semibold">
@@ -5168,6 +5209,18 @@ function RecordingsTab() {
     setImporting(false);
   };
 
+  const updateRecordingVisibility = async (recordingId: number, isVisible: boolean) => {
+    await apiFetch(`/admin/recordings/${recordingId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ isVisible }),
+    });
+    setRecordings((current) =>
+      current.map((recording) =>
+        recording.id === recordingId ? { ...recording, isVisible } : recording,
+      ),
+    );
+  };
+
   const fieldGroups = useMemo(() => {
     const map = new Map<number, { fieldId: number; fieldName: string; recordings: AdminRecording[] }>(
       fields.map((field) => [
@@ -5195,7 +5248,7 @@ function RecordingsTab() {
   }, [schedules]);
 
   const visibleCount = useMemo(() =>
-    recordings.filter((r) => recMatchesSchedules(r, schedulesByField.get(r.fieldId) ?? [])).length,
+    recordings.filter((r) => r.isVisible && recMatchesSchedules(r, schedulesByField.get(r.fieldId) ?? [])).length,
     [recordings, schedulesByField]
   );
 
@@ -5252,6 +5305,7 @@ function RecordingsTab() {
             fieldName={fieldName}
             recordings={fieldRecs}
             schedules={schedulesByField.get(fieldId) ?? []}
+            onVisibilityChange={updateRecordingVisibility}
             onSchedulesChange={(updated) =>
               setSchedules((prev) => [
                 ...prev.filter((s) => s.fieldId !== fieldId),

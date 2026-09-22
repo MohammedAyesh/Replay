@@ -42,6 +42,7 @@ function toAdminRecording(
     duration: r.duration,
     score: r.score ?? null,
     videoUrl: r.videoUrl,
+    isVisible: r.isVisible,
     fieldName,
     hasTrackingBundle,
     trackingSegmentCount: trackingManifest?.segmentCount ?? null,
