@@ -1,0 +1,26 @@
+Use free mode for this task.
+
+Fix these issues on the claim page (/claim/:recordingId) of the Replay app. Do not change the tracking data format or the VPS/analysis side. Keep each fix small and testable.
+
+1. Question gaps inside a track, not only between tracks.
+   When the followed track has a gap longer than 2 s, or its kit class changes (the bundle's per-track kit readings differ before and after a point), stop playback at that point and ask "Is this still the same player?" with Yes / No / Not sure. Today only track ends are questioned, so silent identity switches inside one track are never shown to the user.
+
+2. Exclude implausible gap-fill candidates.
+   When offering "which box is him now?", drop candidates whose position is more than ~15 m (or ~25% of frame width if there is no pitch model) from the last known position, adjusted for elapsed time at 8 m/s. Never offer a box on the far side of the pitch after a short gap.
+
+3. Fix the number-to-track mapping.
+   The numbered candidate list in the side panel must refer to the same tracks as the numbers drawn on the boxes in the video. Derive both from one array, in one order, and use the same index. Add a unit test that picks candidate N from the list and asserts the highlighted box is candidate N.
+
+4. decisionMs validation.
+   The API returns a silent 400 when decisionMs > 600000 (e.g. a user leaves the tab paused). Clamp decisionMs to 600000 on the client before sending, and accept larger values on the server by clamping instead of rejecting. Show an error toast on any failed decision request instead of failing silently.
+
+5. Undo sends two DELETEs.
+   One click on Undo must send exactly one DELETE. Debounce the button and disable it until the request resolves.
+
+6. Candidate visibility.
+   The candidate box can be hidden under the side panel or cut off by the follow crop. When asking a question, pan or zoom out the crop so every candidate box is fully visible and not under any overlay. Also add a small off-screen arrow for any candidate that still can't be shown.
+
+7. Narrow layout.
+   At widths under ~900 px the panel overlaps the video. Stack the panel below the video instead, and keep the Yes/No buttons reachable without scrolling.
+
+After the changes, test on a recording with a published bundle: follow one player for a full segment, answer at least one gap question, use Undo once, and confirm in the network tab that each action sends exactly one request and none return 4xx.
