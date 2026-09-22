@@ -14,7 +14,7 @@ import {
   type FieldRecording,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Play, CheckCircle2, Video, Clock, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, CheckCircle2, Video, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
