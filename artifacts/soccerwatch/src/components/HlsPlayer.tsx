@@ -18,7 +18,14 @@
  * The component is a forwardRef so the parent can hold a ref to the underlying
  * <video> element and drive review controls (seek, playbackRate, etc.).
  */
-import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  forwardRef,
+  useImperativeHandle,
+  type CSSProperties,
+} from "react";
 import Hls from "hls.js";
 import { capPlaybackQuality } from "../lib/hlsQuality";
 import { RotateCcw } from "lucide-react";
@@ -31,6 +38,18 @@ export interface HlsPlayerProps {
   label: string;
   windowSeconds?: number;
   retryOnNetworkError?: boolean;
+  /** Let a parent render a custom VAR control surface. */
+  showDvrControls?: boolean;
+  showStatusOverlays?: boolean;
+  controls?: boolean;
+  videoClassName?: string;
+  videoStyle?: CSSProperties;
+  onPlaybackState?: (state: {
+    ready: boolean;
+    waiting: boolean;
+    hasFirstSegment: boolean;
+    error: string | null;
+  }) => void;
   onTimelineChange?: (timeline: {
     position: number;
     liveEdge: number;
@@ -53,6 +72,12 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
     label,
     windowSeconds,
     retryOnNetworkError = false,
+    showDvrControls = true,
+    showStatusOverlays = true,
+    controls = true,
+    videoClassName,
+    videoStyle,
+    onPlaybackState,
     onTimelineChange,
   }, forwardedRef) {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -77,6 +102,12 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
       setWaiting(false);
       setTimeline({ start: 0, end: 0, position: 0 });
       programAnchorRef.current = null;
+      onPlaybackState?.({
+        ready: false,
+        waiting: false,
+        hasFirstSegment: false,
+        error: null,
+      });
 
       let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -98,6 +129,12 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setReady(true);
           setWaiting(false);
+          onPlaybackState?.({
+            ready: true,
+            waiting: false,
+            hasFirstSegment: false,
+            error: null,
+          });
           el.play().catch(() => {});
         });
         hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
@@ -113,8 +150,15 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           }
         });
 
-        const clearTransientError = () =>
+        const clearTransientError = () => {
           setError((e) => (e === FATAL_ERROR ? e : null));
+          onPlaybackState?.({
+            ready: true,
+            waiting: false,
+            hasFirstSegment: true,
+            error: null,
+          });
+        };
         hls.on(Hls.Events.FRAG_BUFFERED, clearTransientError);
         el.addEventListener("playing", clearTransientError);
 
@@ -125,17 +169,41 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
               // Stream not running — wait and retry
               setWaiting(true);
               setError(null);
+              onPlaybackState?.({
+                ready: false,
+                waiting: true,
+                hasFirstSegment: false,
+                error: null,
+              });
               hls.destroy();
               retryTimer = setTimeout(() => setRetryAttempt((a) => a + 1), 5_000);
             } else {
               setError("Live connection interrupted. Reconnecting…");
+              onPlaybackState?.({
+                ready: true,
+                waiting: false,
+                hasFirstSegment: true,
+                error: "Live connection interrupted. Reconnecting…",
+              });
               hls.startLoad();
             }
           } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
             setError("Recovering video…");
+            onPlaybackState?.({
+              ready: true,
+              waiting: false,
+              hasFirstSegment: true,
+              error: "Recovering video…",
+            });
             hls.recoverMediaError();
           } else {
             setError(FATAL_ERROR);
+            onPlaybackState?.({
+              ready: false,
+              waiting: false,
+              hasFirstSegment: false,
+              error: FATAL_ERROR,
+            });
             hls.destroy();
           }
         });
@@ -152,12 +220,24 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         const onMetadata = () => {
           setReady(true);
           setWaiting(false);
+          onPlaybackState?.({
+            ready: true,
+            waiting: false,
+            hasFirstSegment: true,
+            error: null,
+          });
           el.play().catch(() => {});
         };
         const onError = () => {
           if (retryOnNetworkError) {
             setWaiting(true);
             setError(null);
+            onPlaybackState?.({
+              ready: false,
+              waiting: true,
+              hasFirstSegment: false,
+              error: null,
+            });
             retryTimer = setTimeout(() => {
               el.src = url;
               el.load();
@@ -165,6 +245,12 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
             }, 5_000);
           } else {
             setError("This camera is currently unavailable.");
+            onPlaybackState?.({
+              ready: false,
+              waiting: false,
+              hasFirstSegment: false,
+              error: "This camera is currently unavailable.",
+            });
           }
         };
 
@@ -182,7 +268,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
       return undefined;
       // retryAttempt in deps causes the effect to re-run after a scheduled retry
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [url, retryAttempt, retryOnNetworkError]);
+    }, [url, retryAttempt, retryOnNetworkError, onPlaybackState]);
 
     // ── Timeline polling ───────────────────────────────────────────────────────
     useEffect(() => {
@@ -246,15 +332,17 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
 
         <video
           ref={videoRef}
-          className="w-full aspect-video bg-black"
+          className={`w-full aspect-video bg-black${videoClassName ? ` ${videoClassName}` : ""}`}
+          style={videoStyle}
           playsInline
           muted
-          controls
+          controls={controls}
         />
 
         {/* DVR scrubber */}
-        {hasDvrWindow && (
-          <div className="bg-zinc-950 px-3 py-2 space-y-1.5">
+        {showDvrControls && (
+          hasDvrWindow && (
+            <div className="bg-zinc-950 px-3 py-2 space-y-1.5">
             <input
               aria-label={`${label} timeline`}
               type="range"
@@ -287,18 +375,19 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
                 </button>
               )}
             </div>
-          </div>
+            </div>
+          )
         )}
 
         {/* Loading overlay */}
-        {!ready && !waiting && (
+        {showStatusOverlays && !ready && !waiting && (
           <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60">
             <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
           </div>
         )}
 
         {/* Waiting-for-stream overlay (retryOnNetworkError mode only) */}
-        {waiting && (
+        {showStatusOverlays && waiting && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950/80">
             <div className="w-6 h-6 rounded-full border-2 border-zinc-500 border-t-transparent animate-spin" />
             <p className="text-zinc-400 text-sm font-medium">Waiting for stream…</p>
@@ -307,7 +396,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         )}
 
         {/* Error toast */}
-        {error && (
+        {showStatusOverlays && error && (
           <div className="absolute inset-x-0 bottom-12 flex justify-center px-3">
             <span className="rounded-lg bg-black/80 px-3 py-2 text-xs text-white">
               {error}

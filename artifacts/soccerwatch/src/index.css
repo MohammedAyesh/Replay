@@ -162,6 +162,14 @@
   scrollbar-width: none;
 }
 
+.var-control {
+  @apply inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-border px-2 text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+.var-icon-control {
+  @apply inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-border text-foreground transition-colors hover:bg-muted;
+}
+
 /* Safe-area utilities — used throughout the app with viewport-fit=cover */
 @utility pt-safe {
   padding-top: env(safe-area-inset-top);

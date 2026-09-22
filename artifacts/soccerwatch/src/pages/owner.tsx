@@ -42,12 +42,15 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { HlsPlayer } from "@/components/HlsPlayer";
+import { VarPlayer } from "@/components/var-player/VarPlayer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/i18n";
 import type { Strings } from "@/i18n/strings";
 import { useToast } from "@/hooks/use-toast";
+
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type OwnerCopy = {
   title: string;
@@ -1015,6 +1018,16 @@ function RequestCard({
         )}
         {request.readyAt && isReady && <p className="mt-2 flex items-center gap-1.5 text-[10px] text-muted-foreground" data-testid={`ready-at-owner-request-${request.id}`}><Check className="h-3 w-3 text-primary" aria-hidden="true" />{copy.readyAt} {new Date(request.readyAt).toLocaleString(locale === "ar" ? "ar-JO" : "en-JO")}</p>}
       </div>
+
+      {request.varActive && (
+        <div className="border-t border-white/[0.07] p-3" data-testid={`var-owner-request-${request.id}`}>
+          <VarPlayer
+            src={`${basePath}/api/owner/requests/${request.id}/var/hls/playlist.m3u8`}
+            title={`${copy.playerLabel} · VAR`}
+            minStartUtcMs={request.varOpensAt ? Date.parse(request.varOpensAt) : undefined}
+          />
+        </div>
+      )}
 
       {isReady && request.playbackManifestUrl && showPreview && (
         <div className="border-t border-white/[0.07] p-3" data-testid={`preview-owner-request-${request.id}`}>
