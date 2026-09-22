@@ -249,31 +249,47 @@ function parseVarVariant(value: string | string[] | undefined): VarVariant | nul
   return variant === "hls" || variant === "hevc" ? variant : null;
 }
 
+function vpsVarCamera(camera: string): string {
+  if (camera === "camera1") return "cam1";
+  if (camera === "camera2") return "cam2";
+  return camera;
+}
+
 function validVarSegmentName(value: string | string[] | undefined): string | null {
   const name = rawParam(value);
   return /^[A-Za-z0-9._-]+\.(ts|m4s|mp4)$/.test(name) ? name : null;
 }
 
 function varPath(camera: string, variant: VarVariant, suffix: string): string {
-  return `/var/${encodeURIComponent(camera)}/${variant}/${suffix}`;
+  return `/var/${encodeURIComponent(vpsVarCamera(camera))}/${variant}/${suffix}`;
 }
 
 function rewriteVarPlaylist(
   playlist: string,
-  camera: string,
   variant: VarVariant,
   proxyPrefix: string,
 ): string {
-  const sourcePrefix = `/var/${camera}/${variant}/seg/`;
-  return playlist.replaceAll(sourcePrefix, `${proxyPrefix}/`);
+  const sourcePath = new RegExp(
+    `/var/[^/\\s"]+/${variant}/seg/([A-Za-z0-9._-]+\\.(?:ts|m4s|mp4))`,
+    "g",
+  );
+  return playlist.replace(sourcePath, `${proxyPrefix}/$1`);
 }
 
 function varWindowSummary(body: unknown): { live: boolean; newestAgeSec: number | null } {
   if (!body || typeof body !== "object") return { live: false, newestAgeSec: null };
   const value = body as Record<string, unknown>;
-  const newestAgeSec = value.newestAgeSec ?? value.newest_age_sec;
+  const variants = value.variants;
+  const hls = variants && typeof variants === "object"
+    ? (variants as Record<string, unknown>).hls
+    : null;
+  const hlsValue = hls && typeof hls === "object" ? hls as Record<string, unknown> : null;
+  const newestAgeSec = hlsValue?.newestAgeSec
+    ?? hlsValue?.newest_age_sec
+    ?? value.newestAgeSec
+    ?? value.newest_age_sec;
   return {
-    live: value.live === true,
+    live: hlsValue?.live === true || (!hlsValue && value.live === true),
     newestAgeSec: typeof newestAgeSec === "number" && Number.isFinite(newestAgeSec) ? newestAgeSec : null,
   };
 }
@@ -301,7 +317,7 @@ async function sendVarPlaylist(
   }
 
   const playlist = await upstream.text();
-  const rewritten = rewriteVarPlaylist(playlist, camera, variant, proxyPrefix);
+  const rewritten = rewriteVarPlaylist(playlist, variant, proxyPrefix);
   res
     .set("Cache-Control", "no-store")
     .type("application/vnd.apple.mpegurl")
@@ -1194,7 +1210,7 @@ router.get("/owner/requests/:id/var/status", async (req, res): Promise<void> => 
 
   let result;
   try {
-    result = await controlFetch(`/var/${encodeURIComponent(found.request.cameraId)}/window`, {}, 30_000);
+    result = await controlFetch(`/var/${encodeURIComponent(vpsVarCamera(found.request.cameraId))}/window`, {}, 30_000);
   } catch (error) {
     logger.warn({ error, requestId: id }, "VAR window status proxy failed");
     res.status(502).json({ error: "VAR control server unreachable" });
@@ -1356,7 +1372,7 @@ router.get("/admin/var/:camera/window", async (req, res): Promise<void> => {
   }
   let result;
   try {
-    result = await controlFetch(`/var/${encodeURIComponent(camera)}/window`, {}, 30_000);
+    result = await controlFetch(`/var/${encodeURIComponent(vpsVarCamera(camera))}/window`, {}, 30_000);
   } catch (error) {
     logger.warn({ error, camera }, "Admin VAR window proxy failed");
     res.status(502).json({ error: "VAR control server unreachable" });

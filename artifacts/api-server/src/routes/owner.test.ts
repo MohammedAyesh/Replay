@@ -130,10 +130,10 @@ beforeAll(async () => {
       if (url.includes("/playlist.m3u8")) {
         return new Response([
           "#EXTM3U",
-          '#EXT-X-MAP:URI="/var/owner-camera-a-var/hls/seg/init.mp4"',
+          '#EXT-X-MAP:URI="/var/cam1/hls/seg/init.mp4"',
           "#EXTINF:1.0,",
-          "/var/owner-camera-a-var/hls/seg/one.m4s",
-          "/var/owner-camera-a-var/hls/seg/two.m4s",
+          "/var/cam1/hls/seg/one.m4s",
+          "/var/cam1/hls/seg/two.m4s",
           "",
         ].join("\n"), {
           headers: { "content-type": "application/vnd.apple.mpegurl" },
@@ -145,7 +145,13 @@ beforeAll(async () => {
         });
       }
       if (url.includes("/window")) {
-        return jsonResponse({ live: true, newestAgeSec: 2 });
+        return jsonResponse({
+          cam: "cam1",
+          variants: {
+            hls: { present: true, segments: 3, newestAgeSec: 4.3, live: true },
+            hevc: { present: true, segments: 3, newestAgeSec: 4.3, live: true },
+          },
+        });
       }
     }
     if (url.includes("/sd/")) {
@@ -410,7 +416,7 @@ describe("owner request status sync", () => {
     const window = activeLocalWindow();
     const [inserted] = await db.insert(footageRequestsTable).values({
       fieldId: fieldAId,
-      cameraId: "owner-camera-a-var",
+      cameraId: "camera1",
       requestedBy: ownerId,
       startLocal: window.startLocal,
       endLocal: window.endLocal,
@@ -430,6 +436,33 @@ describe("owner request status sync", () => {
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(new URL(varUrls.at(-1)!).searchParams.get("since"))
       .toBe(String(localInstantSeconds(window.startLocal) - 3 * 60));
+    expect(varUrls.at(-1)).toContain("/var/cam1/hls/playlist.m3u8");
+  });
+
+  it("reads live status from the VPS hls variant payload", async () => {
+    const window = activeLocalWindow();
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "camera1",
+      requestedBy: ownerId,
+      startLocal: window.startLocal,
+      endLocal: window.endLocal,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+
+    const response = await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/status`)
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      live: true,
+      newestAgeSec: 4.3,
+      varActive: true,
+    });
+    expect(varUrls.at(-1)).toContain("/var/cam1/window");
   });
 
   it("streams VAR segments and rejects unsafe segment names", async () => {
@@ -600,7 +633,24 @@ describe("admin owner and billing management", () => {
     const response = await request(app)
       .get("/api/admin/var/camera1/window")
       .expect(200);
-    expect(response.body).toEqual({ live: true, newestAgeSec: 2 });
-    expect(varUrls.at(-1)).toContain("/var/camera1/window");
+    expect(response.body).toEqual({
+      cam: "cam1",
+      variants: {
+        hls: { present: true, segments: 3, newestAgeSec: 4.3, live: true },
+        hevc: { present: true, segments: 3, newestAgeSec: 4.3, live: true },
+      },
+    });
+    expect(varUrls.at(-1)).toContain("/var/cam1/window");
+  });
+
+  it("rewrites admin VAR playlists from the VPS camera name", async () => {
+    const response = await request(app)
+      .get("/api/admin/var/camera1/hls/playlist.m3u8")
+      .expect(200);
+    const proxyPrefix = "/api/admin/var/camera1/hls/seg/";
+    expect(response.text).toContain(`#EXT-X-MAP:URI="${proxyPrefix}init.mp4"`);
+    expect(response.text).toContain(`${proxyPrefix}one.m4s`);
+    expect(response.text).toContain(`${proxyPrefix}two.m4s`);
+    expect(varUrls.at(-1)).toContain("/var/cam1/hls/playlist.m3u8");
   });
 });
