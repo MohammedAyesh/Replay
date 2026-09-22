@@ -2047,6 +2047,24 @@ export function parseVideoTitle(title: string): { court: string; date: string; t
     }
   }
 
+  // Imported Bunny recordings can omit the camera prefix:
+  // 2026-09-21_22:00.
+  if (
+    parts.length === 2
+    && /^\d{4}-\d{2}-\d{2}$/.test(parts[0] ?? "")
+    && /^\d{1,2}:\d{2}$/.test(parts[1] ?? "")
+  ) {
+    const [hour, minute] = (parts[1] ?? "").split(":").map(Number);
+    if (hour <= 23 && minute <= 59) {
+      return {
+        court,
+        date: parts[0] as string,
+        timeSlot: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+        duration: "",
+      };
+    }
+  }
+
   // Format B: cam{N}_YYYYMMDDHH (10 digits, no separate time segment)
   if (parts.length === 2 && /^\d{10}$/.test(parts[1])) {
     const chunk = parts[1];

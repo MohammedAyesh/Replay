@@ -80,6 +80,19 @@ export function parseVideoFilename(title: string): VideoMeta | null {
     }
   }
 
+  // Some Bunny recordings use the date/time pair without a camera prefix:
+  // 2026-09-21_22:00. The recording's DB row still supplies the field and
+  // visibility decision; the title only needs to provide the archive date.
+  if (parts.length === 2 && /^\d{4}-\d{2}-\d{2}$/.test(parts[0] ?? "") && /^\d{1,2}:\d{2}$/.test(parts[1] ?? "")) {
+    const [hour, minute] = (parts[1] ?? "").split(":").map(Number);
+    if (hour <= 23 && minute <= 59) {
+      return {
+        isoDate: parts[0] as string,
+        startSeconds: hour * 3600 + minute * 60,
+      };
+    }
+  }
+
   // ── Format B ──────────────────────────────────────────────────────────────
   // cam1_2026072714  →  parts = ["cam1", "2026072714"]
   if (parts.length === 2 && /^\d{10}$/.test(parts[1])) {

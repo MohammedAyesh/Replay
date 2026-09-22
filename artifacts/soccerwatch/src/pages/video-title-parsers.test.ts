@@ -18,4 +18,17 @@ describe("owner footage Format C titles", () => {
       duration: "",
     });
   });
+
+  it("accepts Bunny titles without a camera prefix", () => {
+    expect(parseVideoFilename("2026-09-21_22:00")).toEqual({
+      isoDate: "2026-09-21",
+      startSeconds: 22 * 60 * 60,
+    });
+    expect(parseVideoTitle("2026-09-21_22:00")).toEqual({
+      court: "Court 1",
+      date: "2026-09-21",
+      timeSlot: "22:00",
+      duration: "",
+    });
+  });
 });
