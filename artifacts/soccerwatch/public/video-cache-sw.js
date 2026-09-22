@@ -29,6 +29,7 @@ function streamScope(urlLike) {
 function cacheableResource(request) {
   if (request.method !== "GET") return null;
   const url = new URL(request.url);
+  if (url.pathname.startsWith("/proto/")) return null;
   if (url.origin !== self.location.origin || !url.pathname.includes("/api/hls-proxy/")) return null;
   if (url.pathname.includes("/manifest")) return { kind: "manifest", scope: streamScope(url.href) };
   if (url.pathname.includes("/segment")) return { kind: "segment", scope: streamScope(url.href) };
