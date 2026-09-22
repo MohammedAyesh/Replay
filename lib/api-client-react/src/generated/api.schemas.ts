@@ -192,6 +192,7 @@ export type OwnerLedgerChargesItem = {
   endLocal: string;
   billableHours: number;
   amountFils: number;
+  status: string;
 };
 
 export type OwnerLedgerPaymentsItem = {

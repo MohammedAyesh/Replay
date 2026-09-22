@@ -153,6 +153,7 @@ export default function OwnerVar() {
       {open && (
         <div className="p-3 sm:p-5">
           <VarPlayer
+            fallbackSrc={`${basePath}/api/owner/requests/${requestId}/var/hls/playlist.m3u8`}
             src={statusState.status?.cdnUrl ?? `${basePath}/api/owner/requests/${requestId}/var/hls/playlist.m3u8`}
             hevcSrc={`${basePath}/api/owner/requests/${requestId}/var/hls/playlist.m3u8`}
             title={statusState.status?.fieldName ?? "VAR"}

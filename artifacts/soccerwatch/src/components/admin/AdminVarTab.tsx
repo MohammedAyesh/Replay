@@ -293,6 +293,7 @@ function VarCameraCard({ camera }: { camera: Camera }) {
             {showPlayer ? (
               <VarPlayer
                 src={state?.cdnUrl ?? `${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
+                fallbackSrc={`${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
                 hevcSrc={`${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
                 title={`${copy.camera(cameraNumber(camera))} · VAR`}
               />

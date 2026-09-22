@@ -5787,7 +5787,7 @@ function OwnersBillingTab() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-white">Refund requests / طلبات الاسترداد</h2>
-                <p className="mt-1 text-xs text-zinc-500">Review delivered-footage cancellation requests. Approval revokes the share link and creates a negative ledger entry.</p>
+               <p className="mt-1 text-xs text-zinc-500">Review delivered-footage cancellation requests. Approval revokes the share link and records one refunded footage line.</p>
               </div>
               <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">{cancellations.filter((item) => item.status === "pending").length} pending</span>
             </div>
@@ -5823,7 +5823,7 @@ function OwnersBillingTab() {
                     <p className="text-xs text-white">{billingFields.find((field) => field.fieldId === payment.fieldId)?.fieldName ?? `Field ${payment.fieldId}`} · {payment.method}</p>
                     <p className="truncate text-[10px] text-zinc-500">{payment.note || "No note"} · {new Date(payment.createdAt).toLocaleString()}</p>
                   </div>
-                  <span className="shrink-0 text-sm font-semibold text-emerald-300">{formatJod(payment.amountFils)}</span>
+                   <span className={cn("shrink-0 text-sm font-semibold", payment.amountFils < 0 ? "text-red-300" : "text-emerald-300")}>{formatJod(payment.amountFils)}</span>
                 </div>
               ))}
             </div>

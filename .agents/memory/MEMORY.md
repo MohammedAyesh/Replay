@@ -33,3 +33,4 @@
 - [SoccerWatch build environment](soccerwatch-build-environment.md) — direct Vite builds require both PORT and BASE_PATH; the workflow supplies them automatically.
 - [Orval input path](orval-input-path.md) — use an absolute OpenAPI target or codegen can clean generated outputs before failing from the workspace root.
 - [Claim continuity questions](claim-continuity-questions.md) — internal long gaps and optional kit changes use continuity questions without changing the tracking payload.
+- [Footage refund accounting](footage-refund-accounting.md) — approved footage cancellations use a zero-valued refunded request and must not add negative payment rows.

@@ -1000,13 +1000,6 @@ router.patch("/admin/footage-cancellation-requests/:id", async (req, res): Promi
         eq(footageRequestsTable.id, footage.id),
         inArray(footageRequestsTable.status, ["ready", "partial"]),
       ));
-    await tx.insert(footagePaymentsTable).values({
-      fieldId: footage.fieldId,
-      amountFils: -Math.max(0, footage.amountFils),
-      method: "Refund",
-      note: note || `Refund for footage request #${footage.id}`,
-      recordedBy: admin.id,
-    });
   });
   res.json({ id: pending.id, status: "approved", adminNote: note, refundedFils: footage.amountFils });
 });
@@ -1715,9 +1708,9 @@ router.get("/owner/fields/:fieldId/ledger", async (req, res): Promise<void> => {
   await expireOwnerShares();
   const [charges, payments] = await Promise.all([
     db.select().from(footageRequestsTable)
-      .where(and(
+    .where(and(
         eq(footageRequestsTable.fieldId, fieldId),
-        inArray(footageRequestsTable.status, ["ready", "partial", "expired"]),
+        inArray(footageRequestsTable.status, ["ready", "partial", "expired", "refunded"]),
       ))
       .orderBy(desc(footageRequestsTable.createdAt)),
     db.select().from(footagePaymentsTable)
@@ -1732,7 +1725,8 @@ router.get("/owner/fields/:fieldId/ledger", async (req, res): Promise<void> => {
       startLocal: row.startLocal,
       endLocal: row.endLocal,
       billableHours: row.billableHours,
-      amountFils: row.amountFils,
+       amountFils: row.amountFils,
+       status: row.status,
     })),
     payments: payments.map((row) => ({
       id: row.id,

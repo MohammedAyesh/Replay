@@ -157,6 +157,23 @@ const TIME_OPTIONS = Array.from({ length: 96 }, (_, index) => {
   return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
 });
 
+export function buildOwnerEndTimeOptions(from: string, locale: string): Array<{ value: string; label: string }> {
+  const fromMinutes = timeToMinutes(from);
+  return TIME_OPTIONS
+    .map((value) => {
+      const raw = timeToMinutes(value) - fromMinutes;
+      const minutes = raw > 0 ? raw : raw + 24 * 60;
+      return {
+        value,
+        label: `${value}${minutes > raw ? (locale === "ar" ? " (اليوم التالي)" : " (next day)") : ""}`,
+        minutes,
+      };
+    })
+    .filter((option) => option.minutes >= 15 && option.minutes <= 4 * 60)
+    .sort((a, b) => a.minutes - b.minutes)
+    .map(({ value, label }) => ({ value, label }));
+}
+
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
 function ammanDate(): string {
@@ -889,11 +906,7 @@ function RequestPanel({
             value={to}
             onChange={setTo}
             testId="select-request-to"
-            options={TIME_OPTIONS.filter((time) => {
-              const raw = timeToMinutes(time) - timeToMinutes(from);
-              const minutes = raw > 0 ? raw : raw + 24 * 60;
-              return minutes >= 15 && minutes <= 4 * 60;
-            })}
+             options={buildOwnerEndTimeOptions(from, locale)}
           />
         </div>
         {crossMidnight && <p className="mt-2 text-[11px] text-muted-foreground">{copy.nextDayNote}</p>}
@@ -926,12 +939,12 @@ function RequestPanel({
   );
 }
 
-function TimeSelect({ id, label, value, onChange, testId, options = TIME_OPTIONS }: { id: string; label: string; value: string; onChange: (value: string) => void; testId: string; options?: string[] }) {
+function TimeSelect({ id, label, value, onChange, testId, options = TIME_OPTIONS.map((time) => ({ value: time, label: time })) }: { id: string; label: string; value: string; onChange: (value: string) => void; testId: string; options?: Array<{ value: string; label: string }> }) {
   return (
     <label className="block" htmlFor={id}>
       <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</span>
       <select id={id} value={value} onChange={(event) => onChange(event.target.value)} data-testid={testId} aria-label={label} className="h-11 w-full rounded-xl border border-white/[0.12] bg-background/50 px-3 text-sm font-mono text-foreground outline-none focus:border-primary">
-        {options.map((time) => <option key={time} value={time}>{time}</option>)}
+        {options.map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}
       </select>
     </label>
   );
@@ -1278,8 +1291,8 @@ function BillingPanel({ copy, locale, ledger, isLoading, isError }: { copy: Owne
             id: `charge-${charge.id}`,
             kind: "charge" as const,
             sortKey: charge.startLocal,
-            title: `${copy.footageLabel} · ${friendlyLocalDate(charge.startLocal.slice(0, 10), locale)} ${charge.startLocal.slice(11)}–${charge.endLocal.slice(11)}`,
-            meta: `${charge.billableHours} ${copy.hours} × 1 ${copy.currency}`,
+            title: `${copy.footageLabel} · ${friendlyLocalDate(charge.startLocal.slice(0, 10), locale)} ${charge.startLocal.slice(11)}–${charge.endLocal.slice(11)}${charge.status === "refunded" ? " · Refunded / مسترد" : ""}`,
+            meta: charge.status === "refunded" ? "Refunded / مسترد" : `${charge.billableHours} ${copy.hours} × 1 ${copy.currency}`,
             amount: charge.amountFils,
           })),
           ...ledger.payments.map((payment) => ({
@@ -1288,7 +1301,7 @@ function BillingPanel({ copy, locale, ledger, isLoading, isError }: { copy: Owne
             sortKey: payment.createdAt,
             title: `${copy.paymentLabel} · ${payment.method || copy.paymentMethod} — ${new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-JO", { day: "numeric", month: "short" }).format(new Date(payment.createdAt))}`,
             meta: payment.note || copy.paymentMethod,
-            amount: payment.amountFils,
+             amount: payment.amountFils,
           })),
         ].sort((a, b) => b.sortKey.localeCompare(a.sortKey))}
       />
@@ -1322,7 +1335,7 @@ function LedgerList({ locale, empty, items, copy }: {
                 <p className="truncate text-xs text-foreground" data-testid={`title-owner-ledger-${item.id}`}>{item.title}</p>
                 <p className="mt-1 truncate text-[10px] text-muted-foreground" data-testid={`meta-owner-ledger-${item.id}`}>{item.meta}</p>
               </div>
-              <p className={`shrink-0 font-mono text-xs font-semibold ${item.kind === "charge" ? "text-primary" : "text-secondary"}`} data-testid={`amount-owner-ledger-${item.id}`}>
+               <p className={`shrink-0 font-mono text-xs font-semibold ${item.id.startsWith("charge-") && item.amount === 0 ? "text-emerald-300" : item.kind === "charge" ? "text-primary" : "text-secondary"}`} data-testid={`amount-owner-ledger-${item.id}`}>
                 {item.kind === "charge" ? "+" : "−"}{formatJod(item.amount)} <span className="text-[9px] font-normal text-muted-foreground">{copy.currency}</span>
               </p>
             </div>

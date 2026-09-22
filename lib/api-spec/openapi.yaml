@@ -2304,7 +2304,7 @@ components:
           type: array
           items:
             type: object
-            required: [id, startLocal, endLocal, billableHours, amountFils]
+             required: [id, startLocal, endLocal, billableHours, amountFils, status]
             properties:
               id:
                 type: integer
@@ -2316,6 +2316,8 @@ components:
                 type: integer
               amountFils:
                 type: integer
+               status:
+                 type: string
         payments:
           type: array
           items:

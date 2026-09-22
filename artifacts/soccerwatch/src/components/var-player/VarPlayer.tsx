@@ -29,6 +29,7 @@ export interface VarMark {
 
 export interface VarPlayerProps {
   src: string;
+  fallbackSrc?: string;
   hevcSrc?: string;
   title: string;
   onMark?: (atUtcMs: number) => void;
@@ -93,6 +94,7 @@ function isHevcSupported(): boolean {
 
 export function VarPlayer({
   src,
+  fallbackSrc,
   hevcSrc,
   title,
   onMark,
@@ -106,6 +108,7 @@ export function VarPlayer({
   const panelRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [variant, setVariant] = useState<"hls" | "hevc">("hls");
+  const [usingProxy, setUsingProxy] = useState(false);
   const [timeline, setTimeline] = useState<VarTimeline | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>(DEFAULT_PLAYER_STATE);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -119,13 +122,43 @@ export function VarPlayer({
   const lastLiveEdgeRef = useRef<number | null>(null);
   const autoLiveEdgeStartedRef = useRef(false);
   const userScrubbedRef = useRef(false);
+  const hasMediaRef = useRef(false);
+  const fallbackWarningRef = useRef(false);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
   const hevcSupported = useMemo(isHevcSupported, []);
-  const manifestUrl = useMemo(
+  const cdnManifestUrl = useMemo(
     () => variant === "hevc" ? hevcSrc ?? getVarManifestUrl(src, variant) : src,
     [hevcSrc, src, variant],
   );
+  const proxyManifestUrl = useMemo(
+    () => fallbackSrc
+      ? (variant === "hevc" ? getVarManifestUrl(fallbackSrc, variant) : fallbackSrc)
+      : null,
+    [fallbackSrc, variant],
+  );
+  const manifestUrl = usingProxy && proxyManifestUrl ? proxyManifestUrl : cdnManifestUrl;
+
+  useEffect(() => {
+    setUsingProxy(false);
+    fallbackWarningRef.current = false;
+  }, [src, fallbackSrc]);
+
+  const fallbackToProxy = useCallback((reason: string): boolean => {
+    if (!proxyManifestUrl || usingProxy || cdnManifestUrl === proxyManifestUrl) return false;
+    if (!fallbackWarningRef.current) {
+      fallbackWarningRef.current = true;
+      console.warn("[VarPlayer] CDN playback failed; switching to the proxy manifest.", {
+        title,
+        reason,
+      });
+    }
+    setUsingProxy(true);
+    return true;
+  }, [cdnManifestUrl, proxyManifestUrl, title, usingProxy]);
+  const onManifestFailure = useCallback((reason: string) => {
+    fallbackToProxy(reason);
+  }, [fallbackToProxy]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
@@ -135,6 +168,7 @@ export function VarPlayer({
   useEffect(() => {
     setTimeline(null);
     setPlayerState(DEFAULT_PLAYER_STATE);
+    hasMediaRef.current = false;
     setScrub(null);
     setPlaying(false);
     setSpeed(1);
@@ -167,6 +201,7 @@ export function VarPlayer({
   }, []);
 
   const onPlaybackState = useCallback((next: PlayerState) => {
+    hasMediaRef.current = next.hasFirstSegment;
     setPlayerState(next);
   }, []);
 
@@ -196,14 +231,21 @@ export function VarPlayer({
     : timeline
       ? Math.max(0, timeline.liveEdge - currentPosition)
       : 0;
-  const isReplay = Boolean(timeline && timeline.liveEdge - currentPosition > 10);
+  const hasFrames = Boolean(
+    playerState.hasFirstSegment
+      && videoRef.current?.readyState != null
+      && videoRef.current.readyState >= 2
+      && currentProgramTime != null
+      && Number.isFinite(currentProgramTime),
+  );
+  const isReplay = Boolean(hasFrames && timeline && timeline.liveEdge - currentPosition > 10);
   const stale = Boolean(
     timeline
     && playerState.hasFirstSegment
     && lastAdvancedAt != null
     && nowMs - lastAdvancedAt > 60_000,
   );
-  const showStarting = !playerState.hasFirstSegment && !timeline;
+  const showStarting = !hasFrames;
   const liveRange = timeline ? Math.max(0.001, timeline.liveEdge - scrubStart) : 1;
   const zoomStyle: CSSProperties = {
     transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
@@ -360,6 +402,14 @@ export function VarPlayer({
     };
   }, [manifestUrl]);
 
+  useEffect(() => {
+    if (!fallbackSrc || usingProxy || cdnManifestUrl === proxyManifestUrl) return;
+    const timer = window.setTimeout(() => {
+      if (!hasMediaRef.current) fallbackToProxy("15 seconds elapsed without media");
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [cdnManifestUrl, fallbackSrc, fallbackToProxy, proxyManifestUrl, usingProxy]);
+
   const markPositions = useMemo(() => {
     if (!timeline || windowStartUtcMs == null) return [];
     return marks
@@ -392,9 +442,11 @@ export function VarPlayer({
         </div>
         <span className="shrink-0 rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-300" dir="ltr">
           <Circle className="mr-1 inline h-2.5 w-2.5 fill-current" aria-hidden="true" />
-          {isReplay ? copy.replay : copy.live} · {isReplay
-            ? copy.secondsBehindLive(Math.round(behindSeconds))
-            : copy.secondsBehind(Math.round(behindSeconds))}
+           {hasFrames
+             ? `${isReplay ? copy.replay : copy.live} · ${isReplay
+               ? copy.secondsBehindLive(Math.round(behindSeconds))
+               : copy.secondsBehind(Math.round(behindSeconds))}`
+             : copy.starting}
         </span>
       </div>
 
@@ -421,6 +473,7 @@ export function VarPlayer({
           videoStyle={zoomStyle}
           onTimelineChange={onTimelineChange}
           onPlaybackState={onPlaybackState}
+           onManifestFailure={onManifestFailure}
         />
         {(showStarting || playerState.waiting) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/75 px-5 text-center">

@@ -50,6 +50,7 @@ export interface HlsPlayerProps {
     hasFirstSegment: boolean;
     error: string | null;
   }) => void;
+  onManifestFailure?: (reason: string) => void;
   onTimelineChange?: (timeline: {
     position: number;
     liveEdge: number;
@@ -80,6 +81,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
     videoClassName,
     videoStyle,
     onPlaybackState,
+    onManifestFailure,
     onTimelineChange,
   }, forwardedRef) {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -170,6 +172,10 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (!data.fatal) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            if (onManifestFailure?.("fatal HLS network error")) {
+              hls.destroy();
+              return;
+            }
             if (retryOnNetworkError) {
               // Stream not running — wait and retry
               setWaiting(true);
@@ -202,6 +208,10 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
             });
             hls.recoverMediaError();
           } else {
+            if (onManifestFailure?.("fatal HLS error")) {
+              hls.destroy();
+              return;
+            }
             setError(FATAL_ERROR);
             onPlaybackState?.({
               ready: false,
@@ -235,6 +245,9 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           el.play().catch(() => {});
         };
         const onError = () => {
+          if (onManifestFailure?.("native HLS error")) {
+            return;
+          }
           if (retryOnNetworkError) {
             setWaiting(true);
             setError(null);
@@ -275,7 +288,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
       return undefined;
       // retryAttempt in deps causes the effect to re-run after a scheduled retry
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [url, retryAttempt, retryOnNetworkError, onPlaybackState]);
+    }, [url, retryAttempt, retryOnNetworkError, onPlaybackState, onManifestFailure]);
 
     // ── Timeline polling ───────────────────────────────────────────────────────
     useEffect(() => {
