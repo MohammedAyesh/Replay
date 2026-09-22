@@ -25,11 +25,11 @@ type VarStatus = {
 };
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-const kinds: Array<{ value: VarMarkKind; en: string; ar: string; color: string }> = [
-  { value: "goal", en: "Goal", ar: "هدف", color: "border-emerald-300/40 bg-emerald-400/15 text-emerald-100" },
-  { value: "foul", en: "Foul", ar: "خطأ", color: "border-amber-300/40 bg-amber-400/15 text-amber-100" },
-  { value: "offside", en: "Offside", ar: "تسلل", color: "border-sky-300/40 bg-sky-400/15 text-sky-100" },
-  { value: "other", en: "Other", ar: "أخرى", color: "border-violet-300/40 bg-violet-400/15 text-violet-100" },
+const kinds: Array<{ value: VarMarkKind; color: string }> = [
+  { value: "goal", color: "border-emerald-300/40 bg-emerald-400/15 text-emerald-100" },
+  { value: "foul", color: "border-amber-300/40 bg-amber-400/15 text-amber-100" },
+  { value: "offside", color: "border-sky-300/40 bg-sky-400/15 text-sky-100" },
+  { value: "other", color: "border-violet-300/40 bg-violet-400/15 text-violet-100" },
 ];
 
 function localStartUtcMs(value: string): number | null {
@@ -66,52 +66,12 @@ function useVarStatus(requestId: number, enabled: boolean) {
 export default function OwnerVar() {
   const [, params] = useRoute("/owner/var/:requestId");
   const [, setLocation] = useLocation();
-  const { locale } = useTranslation();
+  const { t, locale } = useTranslation();
   const { isSignedIn, isGuest, isLoading: authLoading } = useAuth();
   const queryClient = useQueryClient();
   const requestId = Number(params?.requestId ?? 0);
   const isArabic = locale === "ar";
-  const copy = isArabic
-    ? {
-        back: "العودة إلى لقطاتي",
-        loading: "جاري تحميل VAR…",
-        unavailable: "تعذر تحميل VAR الآن.",
-        closed: "انتهت مراجعة VAR",
-        closedDesc: "يمكنك العثور على اللقطات المحفوظة في لقطاتي.",
-        error: "تعذر الاتصال بخدمة VAR.",
-        retry: "إعادة المحاولة",
-        markMoment: "ضع علامة على هذه اللحظة",
-        currentFrame: "الوقت الحالي",
-        note: "ملاحظة اختيارية",
-        notePlaceholder: "أضف سياقًا قصيرًا…",
-        saving: "جاري الحفظ…",
-        marked: "اللحظات المحددة",
-        delete: "حذف",
-        noMarks: "لم تحدد أي لحظات بعد.",
-        matchOver: "انتهت المباراة",
-        matchOverDesc: "تم إغلاق نافذة VAR. يمكنك مراجعة لقطاتك المحفوظة.",
-        openFootage: "فتح لقطاتي",
-      }
-    : {
-        back: "Back to My footage",
-        loading: "Loading VAR…",
-        unavailable: "VAR is unavailable right now.",
-        closed: "VAR review has ended",
-        closedDesc: "You can find saved footage in My footage.",
-        error: "VAR service could not be reached.",
-        retry: "Retry",
-        markMoment: "Mark this moment",
-        currentFrame: "Current frame",
-        note: "Optional note",
-        notePlaceholder: "Add a short note…",
-        saving: "Saving…",
-        marked: "Marked moments",
-        delete: "Delete",
-        noMarks: "No moments marked yet.",
-        matchOver: "Match over",
-        matchOverDesc: "The VAR window is closed. Review your saved footage in My footage.",
-        openFootage: "Open My footage",
-      };
+  const copy = t.ownerVar;
 
   const statusState = useVarStatus(requestId, isSignedIn && !isGuest && requestId > 0);
   const marksQuery = useListOwnerVarMarks(requestId, {
@@ -210,7 +170,7 @@ export default function OwnerVar() {
         </div>
         <label className="mt-3 block text-xs text-muted-foreground">{copy.note}<textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} placeholder={copy.notePlaceholder} className="mt-1 min-h-16 w-full resize-none rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-foreground outline-none focus:border-primary" /></label>
         <div className="mt-3 grid grid-cols-2 gap-2">
-          {kinds.map((kind) => <button key={kind.value} type="button" disabled={!open || currentFrameMs == null || createMark.isPending} onClick={() => markMoment(kind.value)} className={`min-h-11 rounded-xl border text-xs font-bold transition-opacity disabled:opacity-40 ${kind.color}`}>{isArabic ? kind.ar : kind.en}</button>)}
+           {kinds.map((kind) => <button key={kind.value} type="button" disabled={!open || currentFrameMs == null || createMark.isPending} onClick={() => markMoment(kind.value)} className={`min-h-11 rounded-xl border text-xs font-bold transition-opacity disabled:opacity-40 ${kind.color}`}>{copy.marks[kind.value]}</button>)}
         </div>
       </section>
 
@@ -220,7 +180,7 @@ export default function OwnerVar() {
           {marks.length === 0 ? <p className="text-xs text-muted-foreground">{copy.noMarks}</p> : marks.map((mark) => (
             <div key={mark.id} className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-black/15 p-2.5">
               <button type="button" onClick={() => setSelectedMomentMs(Date.parse(mark.atUtc))} className="min-w-0 flex-1 text-start">
-                <span className="block text-xs font-bold capitalize">{isArabic ? kinds.find((kind) => kind.value === mark.kind)?.ar : mark.kind}</span>
+                 <span className="block text-xs font-bold capitalize">{copy.marks[mark.kind as VarMarkKind] ?? mark.kind}</span>
                 <span className="font-mono text-[11px] text-primary">{formatVarWallClock(Date.parse(mark.atUtc)).slice(0, 8)}</span>
                 {mark.note && <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{mark.note}</span>}
               </button>

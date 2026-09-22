@@ -53,6 +53,8 @@ export interface HlsPlayerProps {
   onTimelineChange?: (timeline: {
     position: number;
     liveEdge: number;
+    /** HLS.js's configured live sync target, when the HLS engine exposes it. */
+    liveSyncPosition?: number;
     /**
      * Low end of the reviewable window, already clamped to `windowSeconds`.
      *
@@ -82,6 +84,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
   }, forwardedRef) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const programAnchorRef = useRef<{ mediaTime: number; wallTime: number } | null>(null);
+    const hlsRef = useRef<Hls | null>(null);
 
     // Expose the internal video element via forwardRef
     useImperativeHandle(forwardedRef, () => videoRef.current!, []);
@@ -102,6 +105,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
       setWaiting(false);
       setTimeline({ start: 0, end: 0, position: 0 });
       programAnchorRef.current = null;
+      hlsRef.current = null;
       onPlaybackState?.({
         ready: false,
         waiting: false,
@@ -121,6 +125,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           maxMaxBufferLength: 60,
           backBufferLength: 90,
         });
+        hlsRef.current = hls;
         // Live is ordinary playback: same ceiling as VOD.
         capPlaybackQuality(hls);
         hls.loadSource(url);
@@ -212,6 +217,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           el.removeEventListener("playing", clearTransientError);
           if (retryTimer) clearTimeout(retryTimer);
           hls.destroy();
+          hlsRef.current = null;
         };
       } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
         // Native HLS (Safari / iOS)
@@ -262,6 +268,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           if (retryTimer) clearTimeout(retryTimer);
           el.removeAttribute("src");
           el.load();
+          hlsRef.current = null;
         };
       }
 
@@ -286,10 +293,14 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
             : rawStart;
         setTimeline({ start, end: rawEnd, position: el.currentTime });
         const anchor = programAnchorRef.current;
+        const liveSyncPosition = hlsRef.current?.liveSyncPosition;
         onTimelineChange?.({
           position: el.currentTime,
           liveEdge: rawEnd,
           start,
+          liveSyncPosition: typeof liveSyncPosition === "number" && Number.isFinite(liveSyncPosition)
+            ? liveSyncPosition
+            : undefined,
           programTime: anchor
             ? anchor.wallTime + (el.currentTime - anchor.mediaTime) * 1000
             : undefined,

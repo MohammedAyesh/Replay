@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { HlsPlayer, type HlsPlayerProps } from "@/components/HlsPlayer";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 
 export interface VarMark {
   atUtcMs: number;
@@ -79,14 +80,6 @@ function isHevcSupported(): boolean {
   return MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L153.B0"');
 }
 
-function formatBehind(seconds: number): string {
-  return `${Math.max(0, Math.round(seconds))} s behind`;
-}
-
-function buttonLabel(label: string, arabic: string): string {
-  return `${label} / ${arabic}`;
-}
-
 export function VarPlayer({
   src,
   title,
@@ -96,6 +89,8 @@ export function VarPlayer({
   marks = [],
   minStartUtcMs,
 }: VarPlayerProps) {
+  const { t } = useTranslation();
+  const copy = t.varPlayer;
   const panelRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [variant, setVariant] = useState<"hls" | "hevc">("hls");
@@ -171,6 +166,7 @@ export function VarPlayer({
     : timeline
       ? Math.max(0, timeline.liveEdge - currentPosition)
       : 0;
+  const isReplay = Boolean(timeline && timeline.liveEdge - currentPosition > 10);
   const stale = Boolean(
     timeline
     && playerState.hasFirstSegment
@@ -223,11 +219,16 @@ export function VarPlayer({
     const edge = timeline?.liveEdge
       ?? (video.seekable.length ? video.seekable.end(video.seekable.length - 1) : null);
     if (edge == null) return;
+    const syncPosition = timeline?.liveSyncPosition;
+    const target = Math.max(
+      edge - 3,
+      typeof syncPosition === "number" && Number.isFinite(syncPosition) ? syncPosition : edge - 3,
+    );
     setSpeed(1);
     video.playbackRate = 1;
-    seekTo(edge - 0.25);
+    seekTo(target);
     video.play().catch(() => {});
-  }, [seekTo, timeline?.liveEdge]);
+  }, [seekTo, timeline?.liveEdge, timeline?.liveSyncPosition]);
 
   const togglePlayback = useCallback(() => {
     const video = videoRef.current;
@@ -357,14 +358,15 @@ export function VarPlayer({
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-foreground">{title}</p>
           <p className="font-mono text-xs tabular-nums text-muted-foreground" dir="ltr">
-            {currentProgramTime == null ? "—" : formatVarWallClock(currentProgramTime)} Amman
+            {currentProgramTime == null ? "—" : formatVarWallClock(currentProgramTime)} {copy.clockZone}
           </p>
         </div>
         <span className="shrink-0 rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-300" dir="ltr">
           <Circle className="mr-1 inline h-2.5 w-2.5 fill-current" aria-hidden="true" />
-          LIVE · {formatBehind(behindSeconds)}
+          {isReplay ? copy.replay : copy.live} · {isReplay
+            ? copy.secondsBehindLive(Math.round(behindSeconds))
+            : copy.secondsBehind(Math.round(behindSeconds))}
         </span>
       </div>
 
@@ -396,13 +398,13 @@ export function VarPlayer({
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/75 px-5 text-center">
             <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             <p className="text-sm font-semibold text-white">
-              Starting VAR — the camera is connecting (up to a minute)
+              {copy.starting}
             </p>
           </div>
         )}
         {stale && !playerState.waiting && (
           <div className="absolute inset-x-3 top-3 rounded-xl border border-amber-400/30 bg-black/75 px-3 py-2 text-center text-xs font-semibold text-amber-100">
-            No picture from the camera — retrying
+            {copy.noPicture}
           </div>
         )}
         {playerState.error && !playerState.waiting && (
@@ -415,7 +417,7 @@ export function VarPlayer({
       <div className="rounded-2xl border border-border bg-card p-3">
         <div className="relative px-1">
           <input
-            aria-label={buttonLabel("VAR timeline", "خط زمني للمراجعة")}
+            aria-label={copy.timeline}
             type="range"
             min={scrubStart}
             max={timeline?.liveEdge ?? scrubStart + 1}
@@ -441,29 +443,27 @@ export function VarPlayer({
           )}
         </div>
         <div className="flex justify-between text-[10px] text-muted-foreground" dir="ltr">
-          <span>{timeline ? `−${Math.max(0, Math.round(timeline.liveEdge - scrubStart))} s` : "—"}</span>
-          <span>{timeline ? `${Math.max(0, Math.round(timeline.liveEdge - currentPosition))} s behind` : "Waiting"}</span>
-          <span>LIVE</span>
+          <span>{timeline ? copy.timelineRange(Math.max(0, Math.round(timeline.liveEdge - scrubStart))) : "—"}</span>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-        <button type="button" onClick={() => seekBy(-30)} className="var-control" aria-label={buttonLabel("Back 30 seconds", "رجوع ٣٠ ثانية")}>−30 s</button>
-        <button type="button" onClick={() => seekBy(-10)} className="var-control" aria-label={buttonLabel("Back 10 seconds", "رجوع ١٠ ثوان")}>−10 s</button>
-        <button type="button" onClick={() => seekBy(-FRAME_SECONDS, true)} className="var-control" aria-label={buttonLabel("Back one frame", "إطار للخلف")}>−1 frame</button>
-        <button type="button" onClick={togglePlayback} className="var-control bg-primary text-primary-foreground" aria-label={buttonLabel(playing ? "Pause" : "Play", playing ? "إيقاف" : "تشغيل")}>
+        <button type="button" onClick={() => seekBy(-30)} className="var-control" aria-label={copy.back30}>{copy.back30Short}</button>
+        <button type="button" onClick={() => seekBy(-10)} className="var-control" aria-label={copy.back10}>{copy.back10Short}</button>
+        <button type="button" onClick={() => seekBy(-FRAME_SECONDS, true)} className="var-control" aria-label={copy.backFrame}>{copy.backFrameShort}</button>
+        <button type="button" onClick={togglePlayback} className="var-control bg-primary text-primary-foreground" aria-label={playing ? copy.pause : copy.play}>
           {playing ? <Pause className="h-4 w-4" aria-hidden="true" /> : <Play className="h-4 w-4" aria-hidden="true" />}
-          <span>{playing ? "Pause" : "Play"}</span>
+          <span>{playing ? copy.pause : copy.play}</span>
         </button>
-        <button type="button" onClick={() => seekBy(FRAME_SECONDS, true)} className="var-control" aria-label={buttonLabel("Forward one frame", "إطار للأمام")}>+1 frame</button>
-        <button type="button" onClick={goLive} className="var-control border-red-500/30 text-red-300" aria-label={buttonLabel("Go live", "العودة للبث")}>
+        <button type="button" onClick={() => seekBy(FRAME_SECONDS, true)} className="var-control" aria-label={copy.forwardFrame}>{copy.forwardFrameShort}</button>
+        <button type="button" onClick={goLive} className="var-control border-red-500/30 text-red-300" aria-label={copy.goLive}>
           <RotateCcw className="h-4 w-4" aria-hidden="true" />
-          <span>Go live</span>
+          <span>{copy.goLive}</span>
         </button>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-muted-foreground">Speed / السرعة</span>
+        <span className="text-xs font-semibold text-muted-foreground">{copy.speed}</span>
         {[0.25, 0.5, 1].map((value) => (
           <button
             key={value}
@@ -477,27 +477,27 @@ export function VarPlayer({
             {value}×
           </button>
         ))}
-        <span className="ms-2 text-xs font-semibold text-muted-foreground">Zoom / التكبير</span>
-        <button type="button" onClick={() => setZoomLevel(zoom - 0.25)} className="var-icon-control" aria-label={buttonLabel("Zoom out", "تصغير")}><ZoomOut className="h-4 w-4" /></button>
+        <span className="ms-2 text-xs font-semibold text-muted-foreground">{copy.zoom}</span>
+        <button type="button" onClick={() => setZoomLevel(zoom - 0.25)} className="var-icon-control" aria-label={copy.zoomOut}><ZoomOut className="h-4 w-4" /></button>
         <span className="min-w-10 text-center text-xs font-semibold text-foreground" dir="ltr">{zoom}×</span>
-        <button type="button" onClick={() => setZoomLevel(zoom + 0.25)} className="var-icon-control" aria-label={buttonLabel("Zoom in", "تكبير")}><ZoomIn className="h-4 w-4" /></button>
+        <button type="button" onClick={() => setZoomLevel(zoom + 0.25)} className="var-icon-control" aria-label={copy.zoomIn}><ZoomIn className="h-4 w-4" /></button>
         {onMark && (
           <button
             type="button"
             onClick={() => currentProgramTime != null && onMark(currentProgramTime)}
             disabled={currentProgramTime == null}
             className="ms-auto inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-amber-300/30 px-3 text-xs font-semibold text-amber-200 disabled:opacity-40"
-            aria-label={buttonLabel("Mark this moment", "تحديد هذه اللحظة")}
+            aria-label={copy.markMoment}
           >
             <Flag className="h-4 w-4" aria-hidden="true" />
-            Mark / تحديد
+            {copy.markMoment}
           </button>
         )}
       </div>
 
       {hevcSupported && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>Quality / الجودة</span>
+          <span>{copy.quality}</span>
           {(["hls", "hevc"] as const).map((nextVariant) => (
             <button
               key={nextVariant}
@@ -505,7 +505,7 @@ export function VarPlayer({
               onClick={() => setVariant(nextVariant)}
               className={cn("min-h-11 rounded-xl border px-3 font-semibold", variant === nextVariant ? "border-primary bg-primary/15 text-primary" : "border-border")}
             >
-              {nextVariant === "hls" ? "Standard / عادي" : "Full detail / تفاصيل كاملة"}
+              {nextVariant === "hls" ? copy.standard : copy.fullDetail}
             </button>
           ))}
         </div>
