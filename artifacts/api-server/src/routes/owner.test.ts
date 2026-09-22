@@ -453,7 +453,7 @@ describe("owner request status sync", () => {
     expect(segment.headers["cache-control"]).toBe("private, max-age=3600");
 
     await request(app)
-      .get(`/api/owner/requests/${inserted.id}/var/hls/seg/../secret.txt`)
+      .get(`/api/owner/requests/${inserted.id}/var/hls/seg/bad!.m4s`)
       .expect(400);
   });
 
