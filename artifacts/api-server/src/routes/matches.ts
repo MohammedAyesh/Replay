@@ -460,9 +460,6 @@ export async function runMatchScheduler(now: Date = new Date()) {
   }
 }
 
-// Kick off immediately on import, then every 30 s — same cadence as liveSchedules.
-// Guard suppressed in test environments so imports don't fire live DB/VPS calls.
-if (process.env.NODE_ENV !== "test") {
-  runMatchScheduler().catch(() => {});
-  setInterval(() => runMatchScheduler().catch(() => {}), 30_000);
-}
+// Retired: owner bookings now own the live stream lifecycle. Do not start the
+// legacy in-process scheduler, or it can call /live/start|stop and fight owner
+// bookings. The Matches table/API remain available for historical/admin data.

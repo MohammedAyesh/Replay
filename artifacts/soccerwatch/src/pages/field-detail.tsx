@@ -13,17 +13,14 @@ import {
   BunnyVideo,
   type FieldRecording,
 } from "@workspace/api-client-react";
-import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Play, CheckCircle2, Video, Clock, RotateCcw } from "lucide-react";
-import { HlsPlayer } from "@/components/HlsPlayer";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
-
-const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -343,25 +340,6 @@ function RecordingRow({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-interface MatchInfo {
-  id: number;
-  fieldId: number;
-  title: string;
-  scheduledStart: string;
-  scheduledEnd: string;
-  status: string;
-  autoStartLive: boolean;
-  liveStartedAt: string | null;
-  liveStoppedAt: string | null;
-  createdAt: string;
-}
-
-interface CurrentMatchResponse {
-  match: MatchInfo | null;
-  cameraId: string | null;
-  varEnabled: boolean;
-}
-
 export default function FieldDetail() {
   const [, params] = useRoute("/fields/:id");
   const [, setLocation] = useLocation();
@@ -403,53 +381,6 @@ export default function FieldDetail() {
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
   const createUserClip = useCreateUserClip();
   const queryClient = useQueryClient();
-
-  // ── VAR / match state ──────────────────────────────────────────────────────
-  const [currentTab, setCurrentTab] = useState<"recordings" | "var">("recordings");
-  const varVideoRef = useRef<HTMLVideoElement>(null);
-
-  // Poll the current-match endpoint every 30 s so the VAR tab appears at
-  // kickoff without requiring a page reload.
-  const { data: matchData } = useQuery<CurrentMatchResponse>({
-    queryKey: ["matches-current", guid],
-    queryFn: async () => {
-      const res = await fetch(
-        `${basePath}/api/matches/current?collectionGuid=${encodeURIComponent(guid)}`,
-        { credentials: "include" },
-      );
-      if (!res.ok) throw new Error(`${res.status}`);
-      return res.json();
-    },
-    refetchInterval: 30_000,
-    staleTime: 25_000,
-    enabled: !!guid,
-  });
-
-  const varEnabled = matchData?.varEnabled ?? false;
-
-  // Reset to recordings tab when the match ends (varEnabled → false)
-  useEffect(() => {
-    if (!varEnabled) setCurrentTab("recordings");
-  }, [varEnabled]);
-
-  // ── Review-control helpers ─────────────────────────────────────────────────
-  const seekBy = (delta: number) => {
-    const el = varVideoRef.current;
-    if (!el) return;
-    el.currentTime = Math.max(0, el.currentTime + delta);
-  };
-  const setRate = (rate: number) => {
-    const el = varVideoRef.current;
-    if (!el) return;
-    el.playbackRate = rate;
-  };
-  const goLiveVar = () => {
-    const el = varVideoRef.current;
-    if (!el || !el.seekable.length) return;
-    el.currentTime = el.seekable.end(el.seekable.length - 1) - 1;
-    el.playbackRate = 1;
-    el.play().catch(() => {});
-  };
 
   // Group videos by ISO date
   const videosByDate = useMemo(() => {
@@ -546,32 +477,7 @@ export default function FieldDetail() {
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/30 to-black/70" />
       </motion.div>
 
-      {/* Tab strip — only rendered when a live match is active on camera1 */}
-      {varEnabled && (
-        <div className="field-detail-tabs flex border-b border-border bg-card shrink-0">
-          {(["recordings", "var"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setCurrentTab(tab)}
-              className={cn(
-                "flex-1 py-3 text-sm font-semibold transition-colors relative",
-                currentTab === tab
-                  ? "text-primary"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab === "recordings" ? t.fieldDetail.tabs.recordings : t.fieldDetail.tabs.var}
-              {currentTab === tab && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* ── Recordings tab (default / always shown when no live match) ──────── */}
-      {(!varEnabled || currentTab === "recordings") && (
-        <div className="field-detail-recordings flex-1 overflow-y-auto no-scrollbar pb-24">
+      <div className="field-detail-recordings flex-1 overflow-y-auto no-scrollbar pb-24">
           {canClaim && (fieldRecordingsLoading || claimableRecordings.length > 0) && (
             <section className="mx-4 mt-4 overflow-hidden rounded-[22px] border border-primary/20 bg-card">
               <div className="border-b border-border px-4 py-4">
@@ -699,83 +605,7 @@ export default function FieldDetail() {
               </AnimatePresence>
             </>
           )}
-        </div>
-      )}
-
-      {/* ── VAR tab ──────────────────────────────────────────────────────────── */}
-      {varEnabled && currentTab === "var" && (
-        <div className="field-detail-var flex-1 overflow-y-auto no-scrollbar pb-24 px-4 py-4 space-y-4">
-          {/* Match title + LIVE badge */}
-          {matchData?.match && (
-            <div className="flex items-center gap-2">
-              <h2 className="font-semibold text-foreground text-base truncate flex-1">
-                {matchData.match.title}
-              </h2>
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 text-xs font-bold border border-red-500/30">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                LIVE
-              </span>
-            </div>
-          )}
-
-          {/* DVR player — 5-minute window, retries automatically when stream is down */}
-          <HlsPlayer
-            ref={varVideoRef}
-            url={`${basePath}/api/live/camera1/index.m3u8`}
-            label="VAR"
-            windowSeconds={300}
-            retryOnNetworkError
-          />
-
-          {/* Review controls */}
-          <div className="bg-card border border-border rounded-2xl px-4 py-3 space-y-3">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Review Controls</p>
-
-            {/* Jump + frame step */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => seekBy(-30)}
-                className="flex-1 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-muted/70 transition-colors"
-              >
-                −30s
-              </button>
-              <button
-                onClick={() => seekBy(-10)}
-                className="flex-1 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-muted/70 transition-colors"
-              >
-                −10s
-              </button>
-              <button
-                onClick={() => seekBy(-0.05)}
-                title="Step back one frame (20 fps)"
-                className="flex-1 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-muted/70 transition-colors"
-              >
-                −1f
-              </button>
-            </div>
-
-            {/* Playback rate + Go live */}
-            <div className="flex items-center gap-2">
-              {([0.25, 0.5, 1] as const).map((rate) => (
-                <button
-                  key={rate}
-                  onClick={() => setRate(rate)}
-                  className="flex-1 py-2 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-muted/70 transition-colors"
-                >
-                  {rate === 1 ? "1×" : `${rate}×`}
-                </button>
-              ))}
-              <button
-                onClick={goLiveVar}
-                className="flex-1 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-semibold hover:bg-red-500/20 transition-colors flex items-center justify-center gap-1"
-              >
-                <RotateCcw className="w-3 h-3" />
-                Live
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
 
       <AnimatePresence>
         {activeVideo && (
