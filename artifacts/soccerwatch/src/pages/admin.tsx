@@ -5511,6 +5511,7 @@ function OwnersBillingTab() {
   const [billingFields, setBillingFields] = useState<FootageBillingField[]>([]);
   const [payments, setPayments] = useState<FootagePayment[]>([]);
   const [cancellations, setCancellations] = useState<FootageCancellationRequest[]>([]);
+  const [cancellationError, setCancellationError] = useState<string | null>(null);
   const [totals, setTotals] = useState({ totalChargedFils: 0, totalPaidFils: 0, totalBalanceFils: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -5526,22 +5527,34 @@ function OwnersBillingTab() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try {
-      const [ownerRows, billing, cancellationRows] = await Promise.all([
-        apiFetch("/admin/footage-owners") as Promise<FootageOwnerAssignment[]>,
-        apiFetch("/admin/footage-billing") as Promise<{
-          fields: FootageBillingField[];
-          payments: FootagePayment[];
-          totalChargedFils: number;
-          totalPaidFils: number;
-          totalBalanceFils: number;
-        }>,
-        apiFetch("/admin/footage-cancellation-requests") as Promise<FootageCancellationRequest[]>,
-      ]);
-      setOwners(ownerRows);
+    setCancellationError(null);
+
+    const ownerRequest = apiFetch("/admin/footage-owners") as Promise<FootageOwnerAssignment[]>;
+    const billingRequest = apiFetch("/admin/footage-billing") as Promise<{
+      fields: FootageBillingField[];
+      payments: FootagePayment[];
+      totalChargedFils: number;
+      totalPaidFils: number;
+      totalBalanceFils: number;
+    }>;
+    const cancellationRequest = apiFetch("/admin/footage-cancellation-requests") as Promise<FootageCancellationRequest[]>;
+    const [ownerResult, billingResult, cancellationResult] = await Promise.allSettled([
+      ownerRequest,
+      billingRequest,
+      cancellationRequest,
+    ]);
+
+    const sectionErrors: string[] = [];
+    if (ownerResult.status === "fulfilled") {
+      setOwners(ownerResult.value);
+    } else {
+      sectionErrors.push(adminRequestErrorMessage(ownerResult.reason, "Could not load footage owners"));
+    }
+
+    if (billingResult.status === "fulfilled") {
+      const billing = billingResult.value;
       setBillingFields(billing.fields);
       setPayments(billing.payments);
-      setCancellations(cancellationRows);
       setTotals({
         totalChargedFils: billing.totalChargedFils,
         totalPaidFils: billing.totalPaidFils,
@@ -5549,11 +5562,18 @@ function OwnersBillingTab() {
       });
       setOwnerFieldId((current) => current || billing.fields[0]?.fieldId || "");
       setPaymentFieldId((current) => current || billing.fields[0]?.fieldId || "");
-    } catch (err) {
-      setError(adminRequestErrorMessage(err, "Could not load footage owners and billing"));
-    } finally {
-      setLoading(false);
+    } else {
+      sectionErrors.push(adminRequestErrorMessage(billingResult.reason, "Could not load footage billing"));
     }
+
+    if (cancellationResult.status === "fulfilled") {
+      setCancellations(cancellationResult.value);
+    } else {
+      setCancellationError("Refund requests are temporarily unavailable. Owners and billing data are still shown.");
+    }
+
+    setError(sectionErrors.length > 0 ? sectionErrors.join(" · ") : null);
+    setLoading(false);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -5792,7 +5812,9 @@ function OwnersBillingTab() {
               <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">{cancellations.filter((item) => item.status === "pending").length} pending</span>
             </div>
             <div className="mt-3 space-y-2">
-              {cancellations.length === 0 ? <p className="text-xs text-zinc-600">No refund requests / لا توجد طلبات استرداد.</p> : cancellations.map((item) => (
+              {cancellationError ? (
+                <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{cancellationError}</p>
+              ) : cancellations.length === 0 ? <p className="text-xs text-zinc-600">No refund requests / لا توجد طلبات استرداد.</p> : cancellations.map((item) => (
                 <div key={item.id} className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
