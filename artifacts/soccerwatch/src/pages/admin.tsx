@@ -11,6 +11,7 @@ import {
   Download, Upload,
 } from "lucide-react";
 import Hls from "hls.js";
+import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import AdminVarTab from "@/components/admin/AdminVarTab";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
@@ -316,49 +317,39 @@ function AdminClipPlayer({
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [renderStatus, setRenderStatus] = useState(clip.exportStatus ?? "idle");
-  const playbackUrl = `${basePath}/api/admin/clips/${clip.id}/playback`;
-  const [renderedUrl, setRenderedUrl] = useState<string | null>(
-    clip.exportedUrl ? playbackUrl : null,
-  );
-  const [renderError, setRenderError] = useState<string | null>(null);
+  const didSeekRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    const video = videoRef.current;
+    if (!video) return;
+    didSeekRef.current = false;
 
-    const poll = async () => {
-      try {
-        if (!clip.exportedUrl) {
-          setRenderStatus("pending");
-          await apiFetch(`/user-clips/${clip.id}/export`, { method: "POST" });
-        }
-        const status = await apiFetch(`/user-clips/${clip.id}/export-status`) as {
-          status: string;
-          url?: string | null;
-        };
-        if (cancelled) return;
-        setRenderStatus(status.status);
-        if (status.status === "done" && status.url) {
-          setRenderedUrl(playbackUrl);
-          return;
-        }
-        if (status.status === "error") {
-          setRenderError("Could not render this clip.");
-          return;
-        }
-        timer = setTimeout(poll, 2000);
-      } catch {
-        if (!cancelled) setRenderError("Could not prepare this clip for playback.");
+    const start = () => {
+      if (didSeekRef.current) return;
+      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+      const startTime = Math.min(video.duration, Math.max(0, clip.startTime * video.duration));
+      video.currentTime = startTime;
+      didSeekRef.current = true;
+    };
+
+    const stopAtEnd = () => {
+      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+      const endTime = Math.min(video.duration, Math.max(0, clip.endTime * video.duration));
+      if (endTime > 0 && video.currentTime >= endTime) {
+        video.pause();
+        video.currentTime = Math.min(video.duration, Math.max(0, clip.startTime * video.duration));
       }
     };
 
-    if (!clip.exportedUrl) void poll();
+    video.addEventListener("loadedmetadata", start);
+    video.addEventListener("durationchange", start);
+    video.addEventListener("timeupdate", stopAtEnd);
     return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
+      video.removeEventListener("loadedmetadata", start);
+      video.removeEventListener("durationchange", start);
+      video.removeEventListener("timeupdate", stopAtEnd);
     };
-  }, [clip.id, clip.exportedUrl, playbackUrl]);
+  }, [clip.startTime, clip.endTime]);
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4">
@@ -377,30 +368,21 @@ function AdminClipPlayer({
           </button>
         </div>
         <div className="aspect-video bg-black flex items-center justify-center">
-          {renderedUrl ? (
-            <video
+          {clip.playbackUrl ? (
+            <SharedHlsPlayer
               ref={videoRef}
-              src={renderedUrl}
+              url={clip.playbackUrl}
+              label="Clip preview"
               controls
-              playsInline
-              className="w-full h-full"
-              preload="metadata"
+              showDvrControls={false}
+              showStatusOverlays={false}
+              videoClassName="!aspect-auto h-full"
             />
           ) : (
             <div className="px-6 text-center">
-              {renderError ? (
-                <p className="text-red-400 text-sm">{renderError}</p>
-              ) : (
-                <>
-                  <p className="text-white text-sm font-medium">Preparing clip…</p>
-                  <p className="text-zinc-500 text-xs mt-1">
-                    The selected segment is being rendered for playback.
-                  </p>
-                  {renderStatus === "pending" && (
-                    <div className="mt-3 mx-auto w-5 h-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                  )}
-                </>
-              )}
+              <p className="text-red-400 text-sm">
+                Live-source clips cannot be previewed until their recording is uploaded.
+              </p>
             </div>
           )}
         </div>

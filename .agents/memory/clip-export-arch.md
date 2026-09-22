@@ -22,6 +22,13 @@ Background export: FFmpeg render → Bunny Storage upload → DB stores exported
 ## Dedup / in-flight guard
 `inFlight: Set<number>` in route module prevents concurrent renders for same clip. DB `exportStatus` column: `null` → `pending` → `done` / `error`.
 
+## Admin preview
+Admin clip viewing should use the authenticated Bunny HLS proxy and the source clip window directly. It must not require a background FFmpeg export, because export-only branding or FFmpeg failures can make an otherwise playable clip appear unavailable.
+
+**Why:** The admin modal previously ignored its available HLS URL and waited for an MP4 export; a production export failed in the branding filter while the source video remained playable.
+
+**How to apply:** Keep FFmpeg export for downloads and sharing, but use a proxied HLS `playbackUrl` for staff preview and seek/stop at the stored normalized clip bounds.
+
 ## Diagnostic caution
 Current workspace secret-presence checks may not describe the environment that produced an older workflow or deployment log. Treat historical successful uploads as evidence of that runtime only, and verify the active process environment before attributing a failure to missing Bunny credentials.
 
