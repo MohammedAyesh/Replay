@@ -21,6 +21,7 @@ import {
 } from "@workspace/api-client-react";
 import {
   AlertTriangle,
+  ArrowLeft,
   Banknote,
   CalendarDays,
   Check,
@@ -608,13 +609,24 @@ export default function Owner() {
       )}
       <section className="rounded-[26px] border border-white/[0.08] bg-[linear-gradient(145deg,rgba(212,255,79,.13),rgba(20,27,43,.45)_52%,rgba(123,92,255,.10))] p-4 sm:p-5" data-testid="owner-header">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-start gap-3">
+            <button
+              type="button"
+              onClick={() => setLocation("/home")}
+              aria-label={locale === "ar" ? "رجوع" : "Back"}
+              data-testid="button-owner-back"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-foreground transition-colors hover:bg-white/[0.1]"
+            >
+              <ArrowLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+            </button>
+            <div className="min-w-0">
             <p className="mb-2 flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-primary" data-testid="text-owner-eyebrow">
               <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_0_4px_rgba(212,255,79,.12)]" />
               {copy.active}
             </p>
             <h1 className="font-display text-[clamp(27px,8vw,40px)] font-semibold leading-[0.95] tracking-[-0.05em] text-foreground" data-testid="text-owner-title">{copy.title}</h1>
             <p className="mt-2 max-w-[29rem] text-xs leading-5 text-muted-foreground" data-testid="text-owner-subtitle">{copy.subtitle}</p>
+            </div>
           </div>
           <div className="hidden shrink-0 rounded-2xl border border-primary/20 bg-background/30 p-3 sm:block" data-testid="owner-trust-mark">
             <ShieldCheck className="h-6 w-6 text-primary" aria-hidden="true" />
