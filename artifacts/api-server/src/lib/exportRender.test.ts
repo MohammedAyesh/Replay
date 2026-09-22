@@ -235,6 +235,29 @@ describe("branding burned into the export", () => {
     expect(plain).toContain("crop=1920:1080:960:0");
   });
 
+  it("composites branding when the crop path uses a filter script", async () => {
+    const overlay = buildOverlayPng(1920, 1080, "overlay-multi-keyframe.png");
+    const out = await renderClip({
+      videoUrl: source3840,
+      totalDuration: 3,
+      startTime: 0,
+      endTime: 1,
+      cropPath: [
+        { t: 0, x: 0, y: 0, w: 0.5, h: 1 },
+        { t: 1, x: 0.25, y: 0, w: 0.5, h: 1 },
+      ],
+      aspectRatio: "16:9",
+      title: "branded multi-keyframe",
+      overlayUrl: overlay,
+    } as Parameters<typeof renderClip>[0]);
+
+    const patch = meanRegion(out, "100:50:10:10");
+    expect(patch.r).toBeGreaterThan(180);
+    expect(patch.b).toBeGreaterThan(180);
+    expect(patch.g).toBeLessThan(80);
+    cleanupTempFile(out);
+  }, 180_000);
+
   it("appends the end card after the clip", async () => {
     // Two seconds of clip plus a one-second card should come back longer than
     // the clip alone. Duration is the only honest check here: a concat that

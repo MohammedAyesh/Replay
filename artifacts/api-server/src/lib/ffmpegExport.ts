@@ -1100,7 +1100,19 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   let overlayScriptPath: string | null = null;
   if (options.overlayUrl) {
     overlayScriptPath = path.join(os.tmpdir(), `soccerwatch-brand-${randomUUID()}.txt`);
-    await fs.promises.writeFile(overlayScriptPath, buildOverlayFilterComplex(cropFilter), "utf8");
+    // Multi-keyframe crop graphs are written to a separate script by
+    // buildCropCommands, which returns an empty inline filter in that case.
+    // Reading that script here is required before adding the overlay graph;
+    // otherwise the generated graph starts with `[0:v][base];...` and FFmpeg
+    // reports `No such filter: ''`.
+    const cropGraph = filterScriptPath
+      ? (await fs.promises.readFile(filterScriptPath, "utf8")).trim()
+      : cropFilter;
+    if (!cropGraph) {
+      if (filterScriptPath) cleanupTempFile(filterScriptPath);
+      throw new Error("Cannot build branded export: crop filter graph is empty");
+    }
+    await fs.promises.writeFile(overlayScriptPath, buildOverlayFilterComplex(cropGraph), "utf8");
   }
   // -headers only for a remote overlay. ffmpeg's file demuxer rejects the option
   // outright — "Option headers not found", exit 8 — and the overlay is a local
