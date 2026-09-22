@@ -66,6 +66,47 @@ export interface OwnerRequestInput {
   endLocal: string;
 }
 
+export interface OwnerCancellationInput {
+  /**
+     * @minLength 1
+     * @maxLength 1000
+     */
+  reason: string;
+}
+
+export type OwnerCancellationRequestStatus = typeof OwnerCancellationRequestStatus[keyof typeof OwnerCancellationRequestStatus];
+
+
+export const OwnerCancellationRequestStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  declined: 'declined',
+} as const;
+
+export interface OwnerCancellationRequest {
+  id: number;
+  footageRequestId: number;
+  reason: string;
+  status: OwnerCancellationRequestStatus;
+  /** @nullable */
+  adminNote: string | null;
+  /** @nullable */
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * @nullable
+ */
+export type OwnerRequestCancellationStatus = typeof OwnerRequestCancellationStatus[keyof typeof OwnerRequestCancellationStatus] | null;
+
+
+export const OwnerRequestCancellationStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  declined: 'declined',
+} as const;
+
 export type VarMarkKind = typeof VarMarkKind[keyof typeof VarMarkKind];
 
 
@@ -112,6 +153,8 @@ export interface OwnerRequest {
   /** @nullable */
   varState: string | null;
   varActive: boolean;
+  /** @nullable */
+  cancellationStatus: OwnerRequestCancellationStatus;
   marks: VarMark[];
 }
 
@@ -166,6 +209,51 @@ export interface OwnerLedger {
   totalChargedFils: number;
   paidFils: number;
   balanceFils: number;
+}
+
+export type AdminFootageCancellationRequestStatus = typeof AdminFootageCancellationRequestStatus[keyof typeof AdminFootageCancellationRequestStatus];
+
+
+export const AdminFootageCancellationRequestStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  declined: 'declined',
+} as const;
+
+export interface AdminFootageCancellationRequest {
+  id: number;
+  footageRequestId: number;
+  fieldId: number;
+  fieldName: string;
+  ownerName: string;
+  ownerEmail: string;
+  startLocal: string;
+  endLocal: string;
+  amountFils: number;
+  reason: string;
+  status: AdminFootageCancellationRequestStatus;
+  /** @nullable */
+  adminNote: string | null;
+  createdAt: string;
+  /** @nullable */
+  reviewedAt: string | null;
+}
+
+export type AdminFootageCancellationReviewStatus = typeof AdminFootageCancellationReviewStatus[keyof typeof AdminFootageCancellationReviewStatus];
+
+
+export const AdminFootageCancellationReviewStatus = {
+  approved: 'approved',
+  declined: 'declined',
+} as const;
+
+export interface AdminFootageCancellationReview {
+  status: AdminFootageCancellationReviewStatus;
+  /**
+     * @maxLength 1000
+     * @nullable
+     */
+  note?: string | null;
 }
 
 export interface AdminFootageOwnerInput {

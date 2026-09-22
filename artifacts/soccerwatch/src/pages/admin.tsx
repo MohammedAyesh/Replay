@@ -137,6 +137,23 @@ interface FootagePayment {
   recordedBy: string;
 }
 
+interface FootageCancellationRequest {
+  id: number;
+  footageRequestId: number;
+  fieldId: number;
+  fieldName: string;
+  ownerName: string;
+  ownerEmail: string;
+  startLocal: string;
+  endLocal: string;
+  amountFils: number;
+  reason: string;
+  status: "pending" | "approved" | "declined";
+  adminNote: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
 /**
  * The camera-to-pitch calibration, as the server summarises it.
  *
@@ -5491,6 +5508,7 @@ function OwnersBillingTab() {
   const [owners, setOwners] = useState<FootageOwnerAssignment[]>([]);
   const [billingFields, setBillingFields] = useState<FootageBillingField[]>([]);
   const [payments, setPayments] = useState<FootagePayment[]>([]);
+  const [cancellations, setCancellations] = useState<FootageCancellationRequest[]>([]);
   const [totals, setTotals] = useState({ totalChargedFils: 0, totalPaidFils: 0, totalBalanceFils: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -5507,7 +5525,7 @@ function OwnersBillingTab() {
     setLoading(true);
     setError(null);
     try {
-      const [ownerRows, billing] = await Promise.all([
+      const [ownerRows, billing, cancellationRows] = await Promise.all([
         apiFetch("/admin/footage-owners") as Promise<FootageOwnerAssignment[]>,
         apiFetch("/admin/footage-billing") as Promise<{
           fields: FootageBillingField[];
@@ -5516,10 +5534,12 @@ function OwnersBillingTab() {
           totalPaidFils: number;
           totalBalanceFils: number;
         }>,
+        apiFetch("/admin/footage-cancellation-requests") as Promise<FootageCancellationRequest[]>,
       ]);
       setOwners(ownerRows);
       setBillingFields(billing.fields);
       setPayments(billing.payments);
+      setCancellations(cancellationRows);
       setTotals({
         totalChargedFils: billing.totalChargedFils,
         totalPaidFils: billing.totalPaidFils,
@@ -5600,6 +5620,28 @@ function OwnersBillingTab() {
       setError(adminRequestErrorMessage(err, "Could not record payment"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const reviewCancellation = async (request: FootageCancellationRequest, status: "approved" | "declined") => {
+    const note = window.prompt(
+      status === "approved"
+        ? "Admin note for approval / ملاحظة الموافقة (optional)"
+        : "Reason for declining / سبب الرفض (optional)",
+      "",
+    );
+    if (note === null) return;
+    setError(null);
+    setNotice(null);
+    try {
+      await apiFetch(`/admin/footage-cancellation-requests/${request.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, note: note.trim() || null }),
+      });
+      setNotice(status === "approved" ? "Refund approved / تمت الموافقة على الاسترداد" : "Refund declined / تم رفض الاسترداد");
+      await load();
+    } catch (err) {
+      setError(adminRequestErrorMessage(err, "Could not review refund request"));
     }
   };
 
@@ -5734,6 +5776,37 @@ function OwnersBillingTab() {
                     <p className={cn("text-sm font-semibold", field.balanceFils > 0 ? "text-amber-300" : "text-emerald-300")}>{formatJod(field.balanceFils)}</p>
                     <p className="text-[10px] text-zinc-500">{formatJod(field.chargedFils)} charged · {formatJod(field.paidFils)} paid</p>
                   </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-white">Refund requests / طلبات الاسترداد</h2>
+                <p className="mt-1 text-xs text-zinc-500">Review delivered-footage cancellation requests. Approval revokes the share link and creates a negative ledger entry.</p>
+              </div>
+              <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">{cancellations.filter((item) => item.status === "pending").length} pending</span>
+            </div>
+            <div className="mt-3 space-y-2">
+              {cancellations.length === 0 ? <p className="text-xs text-zinc-600">No refund requests / لا توجد طلبات استرداد.</p> : cancellations.map((item) => (
+                <div key={item.id} className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-white">{item.fieldName} · {item.ownerEmail}</p>
+                      <p className="mt-1 text-[11px] text-zinc-500">{item.startLocal} → {item.endLocal} · {formatJod(item.amountFils)} JOD</p>
+                    </div>
+                    <span className={cn("shrink-0 rounded-full px-2 py-1 text-[10px]", item.status === "pending" ? "bg-amber-500/10 text-amber-300" : item.status === "approved" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300")}>{item.status}</span>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-zinc-300">{item.reason}</p>
+                  {item.adminNote && <p className="mt-1 text-[11px] text-zinc-500">Note: {item.adminNote}</p>}
+                  {item.status === "pending" && (
+                    <div className="mt-3 flex gap-2">
+                      <button type="button" onClick={() => void reviewCancellation(item, "approved")} className="rounded-lg bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/25">Approve / موافقة</button>
+                      <button type="button" onClick={() => void reviewCancellation(item, "declined")} className="rounded-lg bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/25">Decline / رفض</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

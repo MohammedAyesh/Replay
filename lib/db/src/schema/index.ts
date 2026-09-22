@@ -23,4 +23,5 @@ export * from "./analysisJobs";
 export * from "./fieldOwners";
 export * from "./footageRequests";
 export * from "./footagePayments";
+export * from "./footageCancellationRequests";
 export * from "./varMarks";

@@ -27,6 +27,8 @@ import type {
   AddAcademyRecordingInput,
   AdminAdEntry,
   AdminFootageBilling,
+  AdminFootageCancellationRequest,
+  AdminFootageCancellationReview,
   AdminFootageOwner,
   AdminFootageOwnerInput,
   AdminFootagePayment,
@@ -67,6 +69,8 @@ import type {
   LoginInput,
   MediaConsentInput,
   OwnerAvailability,
+  OwnerCancellationInput,
+  OwnerCancellationRequest,
   OwnerField,
   OwnerLedger,
   OwnerLinkResult,
@@ -939,7 +943,7 @@ export const getCancelOwnerRequestUrl = (id: number,) => {
 }
 
 /**
- * @summary Cancel scheduled owner footage before recording starts
+ * @summary Cancel an active owner footage request before delivery
  */
 export const cancelOwnerRequest = async (id: number, options?: RequestInit): Promise<OwnerRequest> => {
 
@@ -987,7 +991,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type CancelOwnerRequestMutationError = ErrorType<void>
 
     /**
- * @summary Cancel scheduled owner footage before recording starts
+ * @summary Cancel an active owner footage request before delivery
  */
 export const useCancelOwnerRequest = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelOwnerRequest>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -998,6 +1002,77 @@ export const useCancelOwnerRequest = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getCancelOwnerRequestMutationOptions(options));
+    }
+
+export const getCreateOwnerFootageCancellationRequestUrl = (id: number,) => {
+
+
+
+
+  return `/api/owner/requests/${id}/cancellation`
+}
+
+/**
+ * @summary Ask for a delivered footage refund
+ */
+export const createOwnerFootageCancellationRequest = async (id: number,
+    ownerCancellationInput: OwnerCancellationInput, options?: RequestInit): Promise<OwnerCancellationRequest> => {
+
+  return customFetch<OwnerCancellationRequest>(getCreateOwnerFootageCancellationRequestUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(ownerCancellationInput)
+  }
+);}
+
+
+
+
+export const getCreateOwnerFootageCancellationRequestMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOwnerFootageCancellationRequest>>, TError,{id: number;data: BodyType<OwnerCancellationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createOwnerFootageCancellationRequest>>, TError,{id: number;data: BodyType<OwnerCancellationInput>}, TContext> => {
+
+const mutationKey = ['createOwnerFootageCancellationRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createOwnerFootageCancellationRequest>>, {id: number;data: BodyType<OwnerCancellationInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  createOwnerFootageCancellationRequest(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateOwnerFootageCancellationRequestMutationResult = NonNullable<Awaited<ReturnType<typeof createOwnerFootageCancellationRequest>>>
+    export type CreateOwnerFootageCancellationRequestMutationBody = BodyType<OwnerCancellationInput>
+    export type CreateOwnerFootageCancellationRequestMutationError = ErrorType<void>
+
+    /**
+ * @summary Ask for a delivered footage refund
+ */
+export const useCreateOwnerFootageCancellationRequest = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOwnerFootageCancellationRequest>>, TError,{id: number;data: BodyType<OwnerCancellationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createOwnerFootageCancellationRequest>>,
+        TError,
+        {id: number;data: BodyType<OwnerCancellationInput>},
+        TContext
+      > => {
+      return useMutation(getCreateOwnerFootageCancellationRequestMutationOptions(options));
     }
 
 export const getListOwnerVarMarksUrl = (id: number,) => {
@@ -1588,6 +1663,154 @@ export function useGetAdminFootageBilling<TData = Awaited<ReturnType<typeof getA
 
 
 
+
+export const getListAdminFootageCancellationRequestsUrl = () => {
+
+
+
+
+  return `/api/admin/footage-cancellation-requests`
+}
+
+/**
+ * @summary List owner delivered-footage cancellation requests
+ */
+export const listAdminFootageCancellationRequests = async ( options?: RequestInit): Promise<AdminFootageCancellationRequest[]> => {
+
+  return customFetch<AdminFootageCancellationRequest[]>(getListAdminFootageCancellationRequestsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminFootageCancellationRequestsQueryKey = () => {
+    return [
+    `/api/admin/footage-cancellation-requests`
+    ] as const;
+    }
+
+
+export const getListAdminFootageCancellationRequestsQueryOptions = <TData = Awaited<ReturnType<typeof listAdminFootageCancellationRequests>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageCancellationRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminFootageCancellationRequestsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminFootageCancellationRequests>>> = ({ signal }) => listAdminFootageCancellationRequests({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageCancellationRequests>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminFootageCancellationRequestsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminFootageCancellationRequests>>>
+export type ListAdminFootageCancellationRequestsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List owner delivered-footage cancellation requests
+ */
+
+export function useListAdminFootageCancellationRequests<TData = Awaited<ReturnType<typeof listAdminFootageCancellationRequests>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageCancellationRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminFootageCancellationRequestsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getReviewAdminFootageCancellationRequestUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/footage-cancellation-requests/${id}`
+}
+
+/**
+ * @summary Approve or decline an owner footage cancellation request
+ */
+export const reviewAdminFootageCancellationRequest = async (id: number,
+    adminFootageCancellationReview: AdminFootageCancellationReview, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getReviewAdminFootageCancellationRequestUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminFootageCancellationReview)
+  }
+);}
+
+
+
+
+export const getReviewAdminFootageCancellationRequestMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewAdminFootageCancellationRequest>>, TError,{id: number;data: BodyType<AdminFootageCancellationReview>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reviewAdminFootageCancellationRequest>>, TError,{id: number;data: BodyType<AdminFootageCancellationReview>}, TContext> => {
+
+const mutationKey = ['reviewAdminFootageCancellationRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reviewAdminFootageCancellationRequest>>, {id: number;data: BodyType<AdminFootageCancellationReview>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  reviewAdminFootageCancellationRequest(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReviewAdminFootageCancellationRequestMutationResult = NonNullable<Awaited<ReturnType<typeof reviewAdminFootageCancellationRequest>>>
+    export type ReviewAdminFootageCancellationRequestMutationBody = BodyType<AdminFootageCancellationReview>
+    export type ReviewAdminFootageCancellationRequestMutationError = ErrorType<void>
+
+    /**
+ * @summary Approve or decline an owner footage cancellation request
+ */
+export const useReviewAdminFootageCancellationRequest = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewAdminFootageCancellationRequest>>, TError,{id: number;data: BodyType<AdminFootageCancellationReview>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reviewAdminFootageCancellationRequest>>,
+        TError,
+        {id: number;data: BodyType<AdminFootageCancellationReview>},
+        TContext
+      > => {
+      return useMutation(getReviewAdminFootageCancellationRequestMutationOptions(options));
+    }
 
 export const getRecordAdminFootagePaymentUrl = (fieldId: number,) => {
 

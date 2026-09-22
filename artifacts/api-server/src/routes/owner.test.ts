@@ -6,6 +6,7 @@ import {
   fieldOwnersTable,
   fieldsTable,
   footagePaymentsTable,
+  footageCancellationRequestsTable,
   footageRequestsTable,
   varMarksTable,
   usersTable,
@@ -36,8 +37,10 @@ let requestIds: number[] = [];
 let paymentIds: number[] = [];
 let realFetch: typeof fetch;
 let availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
+let availabilityByDate = new Map<string, Array<{ hour: number }>>();
 let recordPostUrls: string[] = [];
 let varUrls: string[] = [];
+let abortedSegment = false;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -140,6 +143,13 @@ beforeAll(async () => {
         });
       }
       if (url.includes("/seg/")) {
+        if (abortedSegment) {
+          return new Response(new ReadableStream({
+            start(controller) {
+              controller.error(new Error("upstream segment timeout"));
+            },
+          }), { headers: { "content-type": "video/mp4" } });
+        }
         return new Response("segment-bytes", {
           headers: { "content-type": "video/mp4" },
         });
@@ -155,7 +165,8 @@ beforeAll(async () => {
       }
     }
     if (url.includes("/sd/")) {
-      return jsonResponse({ hours: availableHours });
+      const date = new URL(url).searchParams.get("date") ?? "";
+      return jsonResponse({ hours: availabilityByDate.get(date) ?? availableHours });
     }
     if (url.includes("/record-hq/") && init?.method === "POST") {
       recordPostUrls.push(url);
@@ -174,8 +185,10 @@ beforeAll(async () => {
 
 beforeEach(() => {
   availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
+  availabilityByDate = new Map();
   recordPostUrls = [];
   varUrls = [];
+  abortedSegment = false;
   mockedGetLocalUserRecord.mockResolvedValue({
     id: ownerId,
     isGuest: false,
@@ -298,6 +311,29 @@ describe("owner request validation", () => {
     expect(remoteUrl).toBeTruthy();
     expect(new URL(remoteUrl!).searchParams.get("start")).toBe(`${window.startLocal}:00`);
     expect(new URL(remoteUrl!).searchParams.get("end")).toBe(`${window.endLocal}:00`);
+  });
+
+  it("accepts a cross-midnight window and checks both calendar dates", async () => {
+    availabilityByDate.set("2020-02-02", [{ hour: 0 }]);
+    const response = await request(app)
+      .post(`/api/owner/fields/${fieldAId}/requests`)
+      .send({ startLocal: "2020-02-01 23:00", endLocal: "2020-02-02 00:15" })
+      .expect(201);
+    requestIds.push(response.body.id);
+    expect(response.body).toMatchObject({
+      startLocal: "2020-02-01 23:00",
+      endLocal: "2020-02-02 00:15",
+    });
+    expect(recordPostUrls.at(-1)).toContain("end=2020-02-02%2000%3A15%3A00");
+  });
+
+  it("rejects a cross-midnight window when the next date has no footage", async () => {
+    availabilityByDate.set("2020-03-02", []);
+    const response = await request(app)
+      .post(`/api/owner/fields/${fieldAId}/requests`)
+      .send({ startLocal: "2020-03-01 23:00", endLocal: "2020-03-02 00:15" })
+      .expect(400);
+    expect(response.body.error).toBe("No footage on the camera for 00:00");
   });
 
   it("rejects an overlapping active booking", async () => {
@@ -491,6 +527,29 @@ describe("owner request status sync", () => {
       .expect(400);
   });
 
+  it("turns an aborted upstream VAR segment into a request error without crashing the server", async () => {
+    const window = activeLocalWindow();
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "owner-camera-a-var",
+      requestedBy: ownerId,
+      startLocal: window.startLocal,
+      endLocal: window.endLocal,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+    abortedSegment = true;
+    await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/hls/seg/timeout.m4s`)
+      .expect(502);
+    abortedSegment = false;
+    await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/hls/seg/one.m4s`)
+      .expect(200);
+  });
+
   it("creates VAR marks with request-relative offsets and restricts deletion", async () => {
     const window = activeLocalWindow();
     const [inserted] = await db.insert(footageRequestsTable).values({
@@ -558,7 +617,7 @@ describe("owner request status sync", () => {
       .expect(409);
   });
 
-  it("cancels a scheduled request only after the remote delete succeeds", async () => {
+  it("cancels a queued request through the remote delete without charging", async () => {
     const [inserted] = await db.insert(footageRequestsTable).values({
       fieldId: fieldAId,
       cameraId: `owner-camera-a-${TAG}`,
@@ -566,7 +625,7 @@ describe("owner request status sync", () => {
       startLocal: futureLocalWindow(3).startLocal,
       endLocal: futureLocalWindow(3).endLocal,
       requestedSeconds: 900,
-      status: "scheduled",
+      status: "queued",
       vpsJobId: "scheduled-to-cancel",
     }).returning();
     requestIds.push(inserted.id);
@@ -626,6 +685,57 @@ describe("admin owner and billing management", () => {
     });
     expect(overview.body.payments).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: created.body.id, amountFils: 12345 }),
+    ]));
+  });
+
+  it("approves a delivered-footage refund, revokes access, and writes a negative ledger entry", async () => {
+    mockedGetLocalUserRecord.mockResolvedValue({
+      id: ownerId,
+      isGuest: false,
+      isAdmin: false,
+    } as Awaited<ReturnType<typeof getLocalUserRecord>>);
+    const [delivered] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: `owner-camera-a-${TAG}`,
+      requestedBy: ownerId,
+      startLocal: oldStart,
+      endLocal: oldEnd,
+      requestedSeconds: 900,
+      status: "ready",
+      billableHours: 1,
+      amountFils: 1000,
+      shareToken: `refund-token-${TAG}`,
+      shareExpiresAt: new Date(Date.now() + 86_400_000),
+    }).returning();
+    requestIds.push(delivered.id);
+    await request(app)
+      .post(`/api/owner/requests/${delivered.id}/cancellation`)
+      .send({ reason: "The delivered footage is not usable" })
+      .expect(201);
+
+    mockedGetLocalUserRecord.mockResolvedValue({
+      id: adminId,
+      isGuest: false,
+      isAdmin: true,
+    } as Awaited<ReturnType<typeof getLocalUserRecord>>);
+    const pending = await request(app).get("/api/admin/footage-cancellation-requests").expect(200);
+    const cancellation = pending.body.find((row: { footageRequestId: number }) => row.footageRequestId === delivered.id);
+    expect(cancellation).toMatchObject({ status: "pending", reason: "The delivered footage is not usable" });
+
+    await request(app)
+      .patch(`/api/admin/footage-cancellation-requests/${cancellation.id}`)
+      .send({ status: "approved", note: "Refunded after review" })
+      .expect(200);
+    const listed = await request(app).get(`/api/owner/fields/${fieldAId}/requests`).expect(200);
+    expect(listed.body.find((row: { id: number }) => row.id === delivered.id)).toMatchObject({
+      status: "refunded",
+      amountFils: 0,
+      shareUrl: null,
+      cancellationStatus: "approved",
+    });
+    const overview = await request(app).get("/api/admin/footage-billing").expect(200);
+    expect(overview.body.payments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ amountFils: -1000, method: "Refund" }),
     ]));
   });
 

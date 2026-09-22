@@ -167,7 +167,10 @@ function VarCameraCard({ camera }: { camera: Camera }) {
       setWindows((nextWindows as VarWindows) ?? { adminWindows: [], bookings: [] });
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : copy.actionFailed);
+      // Background polling can briefly fail while the control server is
+      // restarting. Keep the last good state and avoid turning that transient
+      // refresh failure into a persistent user-facing error.
+      if (initial) setError(err instanceof Error ? err.message : copy.actionFailed);
     } finally {
       if (initial) setLoading(false);
     }

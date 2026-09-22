@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { OwnerRequestCancellationStatus } from './ownerRequestCancellationStatus';
 import type { VarMark } from './varMark';
 
 export interface OwnerRequest {
@@ -33,5 +34,7 @@ export interface OwnerRequest {
   /** @nullable */
   varState: string | null;
   varActive: boolean;
+  /** @nullable */
+  cancellationStatus: OwnerRequestCancellationStatus;
   marks: VarMark[];
 }

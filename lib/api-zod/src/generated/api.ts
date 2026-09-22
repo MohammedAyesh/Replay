@@ -154,6 +154,7 @@ export const ListOwnerFieldRequestsResponseItem = zod.object({
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
   "varActive": zod.boolean(),
+  "cancellationStatus": zod.union([zod.literal('pending'),zod.literal('approved'),zod.literal('declined'),zod.literal(null)]).nullable(),
   "marks": zod.array(zod.object({
   "id": zod.number(),
   "atUtc": zod.coerce.date(),
@@ -200,6 +201,7 @@ export const CreateOwnerFieldRequestResponse = zod.object({
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
   "varActive": zod.boolean(),
+  "cancellationStatus": zod.union([zod.literal('pending'),zod.literal('approved'),zod.literal('declined'),zod.literal(null)]).nullable(),
   "marks": zod.array(zod.object({
   "id": zod.number(),
   "atUtc": zod.coerce.date(),
@@ -240,7 +242,7 @@ export const CreateOwnerRequestLinkResponse = zod.object({
 
 
 /**
- * @summary Cancel scheduled owner footage before recording starts
+ * @summary Cancel an active owner footage request before delivery
  */
 export const CancelOwnerRequestParams = zod.object({
   "id": zod.coerce.number()
@@ -264,6 +266,7 @@ export const CancelOwnerRequestResponse = zod.object({
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
   "varActive": zod.boolean(),
+  "cancellationStatus": zod.union([zod.literal('pending'),zod.literal('approved'),zod.literal('declined'),zod.literal(null)]).nullable(),
   "marks": zod.array(zod.object({
   "id": zod.number(),
   "atUtc": zod.coerce.date(),
@@ -272,6 +275,32 @@ export const CancelOwnerRequestResponse = zod.object({
   "createdBy": zod.number(),
   "offsetSeconds": zod.number()
 }))
+})
+
+
+/**
+ * @summary Ask for a delivered footage refund
+ */
+export const CreateOwnerFootageCancellationRequestParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const createOwnerFootageCancellationRequestBodyReasonMax = 1000;
+
+
+
+export const CreateOwnerFootageCancellationRequestBody = zod.object({
+  "reason": zod.string().min(1).max(createOwnerFootageCancellationRequestBodyReasonMax)
+})
+
+export const CreateOwnerFootageCancellationRequestResponse = zod.object({
+  "id": zod.number(),
+  "footageRequestId": zod.number(),
+  "reason": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'declined']),
+  "adminNote": zod.string().nullable(),
+  "reviewedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date()
 })
 
 
@@ -433,6 +462,47 @@ export const GetAdminFootageBillingResponse = zod.object({
   "totalPaidFils": zod.number(),
   "totalBalanceFils": zod.number()
 })
+
+
+/**
+ * @summary List owner delivered-footage cancellation requests
+ */
+export const ListAdminFootageCancellationRequestsResponseItem = zod.object({
+  "id": zod.number(),
+  "footageRequestId": zod.number(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "ownerName": zod.string(),
+  "ownerEmail": zod.string().email(),
+  "startLocal": zod.string(),
+  "endLocal": zod.string(),
+  "amountFils": zod.number(),
+  "reason": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'declined']),
+  "adminNote": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "reviewedAt": zod.coerce.date().nullable()
+})
+export const ListAdminFootageCancellationRequestsResponse = zod.array(ListAdminFootageCancellationRequestsResponseItem)
+
+
+/**
+ * @summary Approve or decline an owner footage cancellation request
+ */
+export const ReviewAdminFootageCancellationRequestParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const reviewAdminFootageCancellationRequestBodyNoteMax = 1000;
+
+
+
+export const ReviewAdminFootageCancellationRequestBody = zod.object({
+  "status": zod.enum(['approved', 'declined']),
+  "note": zod.string().max(reviewAdminFootageCancellationRequestBodyNoteMax).nullish()
+})
+
+export const ReviewAdminFootageCancellationRequestResponse = zod.unknown()
 
 
 /**

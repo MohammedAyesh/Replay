@@ -7,6 +7,7 @@ import {
   fieldOwnersTable,
   fieldsTable,
   footagePaymentsTable,
+  footageCancellationRequestsTable,
   footageRequestsTable,
   varMarksTable,
   usersTable,
@@ -26,6 +27,7 @@ const REQUEST_REFRESH_MS = 10 * 1000;
 const MAX_UNFINISHED_REQUESTS = 2;
 const MAX_SCHEDULED_REQUESTS = 10;
 const ACTIVE_REQUEST_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
+const CANCELLABLE_REQUEST_STATUSES = ACTIVE_REQUEST_STATUSES;
 const AMMAN_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 type OwnerUser = NonNullable<Awaited<ReturnType<typeof getLocalUserRecord>>>;
@@ -198,7 +200,12 @@ function markToResponse(mark: VarMarkRow, request: FootageRequest) {
   };
 }
 
-function requestToResponse(row: FootageRequest, req: Request, marks: VarMarkRow[] = []) {
+function requestToResponse(
+  row: FootageRequest,
+  req: Request,
+  marks: VarMarkRow[] = [],
+  cancellationStatus: string | null = null,
+) {
   const active = isActiveShare(row);
   const varOpenMs = ammanLocalInstant(row.startLocal) - 3 * 60 * 1000;
   const varCloseMs = ammanLocalInstant(row.endLocal) + 5 * 60 * 1000;
@@ -223,6 +230,7 @@ function requestToResponse(row: FootageRequest, req: Request, marks: VarMarkRow[
     varClosesAt: Number.isFinite(varCloseMs) ? new Date(varCloseMs).toISOString() : null,
     varState: row.varState,
     varActive: isVarActive(row),
+    cancellationStatus,
     marks: marks.map((mark) => markToResponse(mark, row)),
   };
 }
@@ -240,6 +248,17 @@ async function marksForRequests(rows: FootageRequest[]): Promise<Map<number, Var
     grouped.set(mark.footageRequestId, current);
   }
   return grouped;
+}
+
+async function cancellationStatusForRequests(rows: FootageRequest[]): Promise<Map<number, string>> {
+  const ids = rows.map((row) => row.id);
+  if (!ids.length) return new Map();
+  const cancellations = await db.select({
+    footageRequestId: footageCancellationRequestsTable.footageRequestId,
+    status: footageCancellationRequestsTable.status,
+  }).from(footageCancellationRequestsTable)
+    .where(inArray(footageCancellationRequestsTable.footageRequestId, ids));
+  return new Map(cancellations.map((row) => [row.footageRequestId, row.status]));
 }
 
 type VarVariant = "hls" | "hevc";
@@ -347,7 +366,29 @@ async function sendVarSegment(
   const contentType = upstream.headers.get("content-type");
   if (contentType) res.set("Content-Type", contentType);
   res.set("Cache-Control", "private, max-age=3600");
-  Readable.fromWeb(upstream.body as globalThis.ReadableStream<Uint8Array>).pipe(res);
+  const stream = Readable.fromWeb(upstream.body as globalThis.ReadableStream<Uint8Array>);
+  let closed = false;
+  const cleanup = () => {
+    closed = true;
+    stream.removeListener("error", onStreamError);
+  };
+  const onStreamError = (error: unknown) => {
+    if (closed) return;
+    logger.warn({ error, camera, variant, name }, "VAR segment stream ended before completion");
+    closed = true;
+    if (!res.headersSent && !res.destroyed) {
+      res.status(502).json({ error: "VAR segment unavailable" });
+    } else if (!res.destroyed) {
+      res.destroy();
+    }
+  };
+  stream.once("error", onStreamError);
+  res.once("finish", cleanup);
+  res.once("close", () => {
+    if (!res.writableFinished) stream.destroy();
+    cleanup();
+  });
+  stream.pipe(res);
 }
 
 async function requireOwnerUser(req: Request, res: Response): Promise<OwnerUser | null> {
@@ -718,7 +759,13 @@ async function balanceForField(fieldId: number): Promise<{ chargedFils: number; 
       .where(eq(footagePaymentsTable.fieldId, fieldId)),
   ]);
   const chargedFils = charges.reduce((sum, row) => sum + row.amountFils, 0);
-  const paidFils = payments.reduce((sum, row) => sum + row.amountFils, 0);
+  // Refund entries are deliberately negative in the ledger, but they are not
+  // payments made against the field balance. A refunded delivery is removed
+  // from charges by its request status, while the negative entry remains
+  // visible for audit purposes.
+  const paidFils = payments
+    .filter((row) => row.amountFils > 0)
+    .reduce((sum, row) => sum + row.amountFils, 0);
   return { chargedFils, paidFils, balanceFils: chargedFils - paidFils };
 }
 
@@ -849,6 +896,118 @@ router.get("/admin/footage-billing", async (req, res): Promise<void> => {
     totalPaidFils: balances.reduce((sum, field) => sum + field.paidFils, 0),
     totalBalanceFils: balances.reduce((sum, field) => sum + field.balanceFils, 0),
   });
+});
+
+router.get("/admin/footage-cancellation-requests", async (req, res): Promise<void> => {
+  if (!await requireAdminUser(req, res)) return;
+  const rows = await db.select({
+    request: footageCancellationRequestsTable,
+    footage: footageRequestsTable,
+    fieldName: fieldsTable.name,
+    ownerName: usersTable.name,
+    ownerEmail: usersTable.email,
+  })
+    .from(footageCancellationRequestsTable)
+    .innerJoin(footageRequestsTable, eq(footageRequestsTable.id, footageCancellationRequestsTable.footageRequestId))
+    .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
+    .innerJoin(usersTable, eq(usersTable.id, footageCancellationRequestsTable.requestedBy))
+    .orderBy(desc(footageCancellationRequestsTable.createdAt));
+  res.json(rows.map(({ request, footage, fieldName, ownerName, ownerEmail }) => ({
+    id: request.id,
+    footageRequestId: request.footageRequestId,
+    fieldId: footage.fieldId,
+    fieldName,
+    ownerName,
+    ownerEmail,
+    startLocal: footage.startLocal,
+    endLocal: footage.endLocal,
+    amountFils: footage.amountFils,
+    reason: request.reason,
+    status: request.status,
+    adminNote: request.adminNote,
+    createdAt: request.createdAt.toISOString(),
+    reviewedAt: request.reviewedAt?.toISOString() ?? null,
+  })));
+});
+
+const cancellationReviewSchema = z.object({
+  status: z.enum(["approved", "declined"]),
+  note: z.string().trim().max(1000).nullable().optional(),
+});
+
+router.patch("/admin/footage-cancellation-requests/:id", async (req, res): Promise<void> => {
+  const admin = await requireAdminUser(req, res);
+  if (!admin) return;
+  const id = parseId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid cancellation request id" });
+    return;
+  }
+  const parsed = cancellationReviewSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "status must be approved or declined" });
+    return;
+  }
+  const [pending] = await db.select()
+    .from(footageCancellationRequestsTable)
+    .where(and(
+      eq(footageCancellationRequestsTable.id, id),
+      eq(footageCancellationRequestsTable.status, "pending"),
+    ));
+  if (!pending) {
+    res.status(409).json({ error: "This cancellation request has already been reviewed" });
+    return;
+  }
+  const [footage] = await db.select().from(footageRequestsTable)
+    .where(eq(footageRequestsTable.id, pending.footageRequestId));
+  if (!footage) {
+    res.status(404).json({ error: "Footage request not found" });
+    return;
+  }
+  const now = new Date();
+  const note = parsed.data.note?.trim() || null;
+  if (parsed.data.status === "declined") {
+    const [updated] = await db.update(footageCancellationRequestsTable)
+      .set({ status: "declined", adminNote: note, reviewedBy: admin.id, reviewedAt: now, updatedAt: now })
+      .where(and(
+        eq(footageCancellationRequestsTable.id, id),
+        eq(footageCancellationRequestsTable.status, "pending"),
+      ))
+      .returning();
+    res.json({ id: updated.id, status: updated.status, adminNote: updated.adminNote });
+    return;
+  }
+  await db.transaction(async (tx) => {
+    await tx.update(footageCancellationRequestsTable)
+      .set({ status: "approved", adminNote: note, reviewedBy: admin.id, reviewedAt: now, updatedAt: now })
+      .where(and(
+        eq(footageCancellationRequestsTable.id, id),
+        eq(footageCancellationRequestsTable.status, "pending"),
+      ));
+    await tx.update(footageRequestsTable)
+      .set({
+        status: "refunded",
+        amountFils: 0,
+        billableHours: 0,
+        shareRevoked: true,
+        shareToken: null,
+        shareExpiresAt: null,
+        message: note || "Refund approved",
+        updatedAt: now,
+      })
+      .where(and(
+        eq(footageRequestsTable.id, footage.id),
+        inArray(footageRequestsTable.status, ["ready", "partial"]),
+      ));
+    await tx.insert(footagePaymentsTable).values({
+      fieldId: footage.fieldId,
+      amountFils: -Math.max(0, footage.amountFils),
+      method: "Refund",
+      note: note || `Refund for footage request #${footage.id}`,
+      recordedBy: admin.id,
+    });
+  });
+  res.json({ id: pending.id, status: "approved", adminNote: note, refundedFils: footage.amountFils });
 });
 
 router.post("/admin/fields/:fieldId/payments", async (req, res): Promise<void> => {
@@ -1114,7 +1273,13 @@ router.get("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =>
     .where(eq(footageRequestsTable.fieldId, fieldId))
     .orderBy(desc(footageRequestsTable.createdAt));
   const marksByRequest = await marksForRequests(refreshed);
-  res.json(refreshed.map((row) => requestToResponse(row, req, marksByRequest.get(row.id) ?? [])));
+  const cancellationByRequest = await cancellationStatusForRequests(refreshed);
+  res.json(refreshed.map((row) => requestToResponse(
+    row,
+    req,
+    marksByRequest.get(row.id) ?? [],
+    cancellationByRequest.get(row.id) ?? null,
+  )));
 });
 
 async function requestWithField(id: number): Promise<{ request: FootageRequest; fieldId: number; fieldName: string } | null> {
@@ -1391,11 +1556,9 @@ router.post("/owner/requests/:id/cancel", async (req, res): Promise<void> => {
   const found = await requireRequestAccess(req, res, id);
   if (!found) return;
 
-  if (found.request.status !== "scheduled") {
+  if (!CANCELLABLE_REQUEST_STATUSES.includes(found.request.status as typeof CANCELLABLE_REQUEST_STATUSES[number])) {
     res.status(409).json({
-      error: found.request.status === "recording"
-        ? "This footage is already recording and cannot be cancelled"
-        : "Only scheduled footage can be cancelled",
+      error: "Only queued, scheduled, recording, or running footage can be cancelled",
     });
     return;
   }
@@ -1425,7 +1588,7 @@ router.post("/owner/requests/:id/cancel", async (req, res): Promise<void> => {
     .set({ status: "cancelled", message: "Cancelled by owner", updatedAt: new Date() })
     .where(and(
       eq(footageRequestsTable.id, id),
-      eq(footageRequestsTable.status, "scheduled"),
+      inArray(footageRequestsTable.status, CANCELLABLE_REQUEST_STATUSES),
     ))
     .returning();
   if (!cancelled) {
@@ -1434,6 +1597,50 @@ router.post("/owner/requests/:id/cancel", async (req, res): Promise<void> => {
   }
   syncState.delete(id);
   res.json(requestToResponse(cancelled, req));
+});
+
+const cancellationBodySchema = z.object({
+  reason: z.string().trim().min(1).max(1000),
+});
+
+router.post("/owner/requests/:id/cancellation", async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  if (!id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const found = await requireRequestAccess(req, res, id);
+  if (!found) return;
+  if (found.request.status !== "ready" && found.request.status !== "partial") {
+    res.status(409).json({ error: "Cancellation requests are only available for delivered footage" });
+    return;
+  }
+  const parsed = cancellationBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Please provide a reason for the cancellation request" });
+    return;
+  }
+  const [existing] = await db.select({ id: footageCancellationRequestsTable.id, status: footageCancellationRequestsTable.status })
+    .from(footageCancellationRequestsTable)
+    .where(eq(footageCancellationRequestsTable.footageRequestId, id));
+  if (existing) {
+    res.status(409).json({ error: existing.status === "declined" ? "A cancellation request was already declined" : "A cancellation request already exists" });
+    return;
+  }
+  const [created] = await db.insert(footageCancellationRequestsTable).values({
+    footageRequestId: id,
+    requestedBy: found.user.id,
+    reason: parsed.data.reason,
+  }).returning();
+  res.status(201).json({
+    id: created.id,
+    footageRequestId: id,
+    reason: created.reason,
+    status: created.status,
+    adminNote: created.adminNote,
+    reviewedAt: null,
+    createdAt: created.createdAt.toISOString(),
+  });
 });
 
 router.post("/owner/requests/:id/revoke-link", async (req, res): Promise<void> => {

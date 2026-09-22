@@ -6,6 +6,7 @@ import {
   getListOwnerFieldRequestsQueryKey,
   getListOwnerFieldsQueryKey,
   useCancelOwnerRequest,
+  useCreateOwnerFootageCancellationRequest,
   useCreateOwnerFieldRequest,
   useCreateOwnerRequestLink,
   useGetOwnerFieldAvailability,
@@ -68,6 +69,7 @@ type OwnerCopy = {
   today: string;
   from: string;
   to: string;
+  nextDayNote: string;
   recordedHours: string;
   availabilityLoading: string;
   noRecordedHours: string;
@@ -135,6 +137,15 @@ type OwnerCopy = {
   actionFailed: string;
   requestCancelled: string;
   chargeDisclaimer: string;
+  cancellationRequest: string;
+  cancellationReason: string;
+  cancellationReasonPlaceholder: string;
+  submitCancellation: string;
+  cancellationSubmitted: string;
+  cancellationPending: string;
+  cancellationApproved: string;
+  cancellationDeclined: string;
+  refundNote: string;
 };
 
 const ownerCopy = (t: Strings): OwnerCopy =>
@@ -302,9 +313,21 @@ export default function Owner() {
       queryKey: getGetOwnerFieldAvailabilityQueryKey(fieldId, date),
     },
   });
+  const crossMidnight = timeToMinutes(to) <= timeToMinutes(from);
+  const nextDate = addDays(date, 1);
+  const nextAvailabilityQuery = useGetOwnerFieldAvailability(fieldId, nextDate, {
+    query: {
+      enabled: isSignedIn && !isGuest && requestMode === "past" && fieldId > 0 && crossMidnight,
+      queryKey: getGetOwnerFieldAvailabilityQueryKey(fieldId, nextDate),
+    },
+  });
   const hours = useMemo(
     () => availabilityHours(availabilityQuery.data),
     [availabilityQuery.data],
+  );
+  const nextHours = useMemo(
+    () => availabilityHours(nextAvailabilityQuery.data),
+    [nextAvailabilityQuery.data],
   );
 
   const requestsQuery = useListOwnerFieldRequests(fieldId, {
@@ -340,10 +363,12 @@ export default function Owner() {
 
   const createRequest = useCreateOwnerFieldRequest();
   const cancelRequest = useCancelOwnerRequest();
+  const createCancellation = useCreateOwnerFootageCancellationRequest();
   const revokeLink = useRevokeOwnerRequestLink();
   const createLink = useCreateOwnerRequestLink();
 
-  const durationMinutes = Math.max(0, timeToMinutes(to) - timeToMinutes(from));
+  const rawDurationMinutes = timeToMinutes(to) - timeToMinutes(from);
+  const durationMinutes = rawDurationMinutes > 0 ? rawDurationMinutes : rawDurationMinutes + 24 * 60;
   const billableHours = Math.ceil(durationMinutes / 60);
   const amountFils = billableHours * 1000;
   const today = ammanDate();
@@ -381,10 +406,6 @@ export default function Owner() {
       setFormError(copy.required);
       return;
     }
-    if (from >= to) {
-      setFormError(copy.invalidWindow);
-      return;
-    }
     if (durationMinutes < 15) {
       setFormError(copy.tooShort);
       return;
@@ -413,18 +434,21 @@ export default function Owner() {
         return;
       }
     }
-    if (requestMode === "past" && hours.size > 0) {
-      const firstHour = Math.floor(timeToMinutes(from) / 60);
-      const lastHour = Math.ceil(timeToMinutes(to) / 60);
-      for (let hour = firstHour; hour < lastHour; hour += 1) {
-        if (!hours.has(hour)) {
+    if (requestMode === "past" && (hours.size > 0 || nextHours.size > 0)) {
+      const startMinutes = timeToMinutes(from);
+      for (let offset = 0; offset < durationMinutes; offset += 60) {
+        const absoluteMinutes = startMinutes + offset;
+        const hour = Math.floor((absoluteMinutes % (24 * 60)) / 60);
+        const dayOffset = Math.floor(absoluteMinutes / (24 * 60));
+        const source = dayOffset ? nextHours : hours;
+        if (!source.has(hour)) {
           setFormError(copy.unavailableTime);
           return;
         }
       }
     }
     const startLocal = `${date} ${from}`;
-    const endLocal = `${date} ${to}`;
+    const endLocal = `${crossMidnight ? nextDate : date} ${to}`;
     createRequest.mutate(
       { fieldId, data: { startLocal, endLocal } },
       {
@@ -638,6 +662,8 @@ export default function Owner() {
           today={today}
           maxBookDate={maxBookDate}
           hours={hours}
+           nextHours={nextHours}
+           crossMidnight={crossMidnight}
           availabilityLoading={availabilityQuery.isLoading}
           availabilityError={availabilityQuery.error}
            onRetryAvailability={() => void availabilityQuery.refetch()}
@@ -670,6 +696,23 @@ export default function Owner() {
           onNewLink={(request) => runLinkAction(request, "new")}
           onOpenVar={(requestId) => setLocation(`/owner/var/${requestId}`)}
           isCancelling={cancelRequest.isPending}
+           onCancellationSubmit={(request, reason) => {
+             createCancellation.mutate(
+               { id: request.id, data: { reason } },
+               {
+                 onSuccess: () => {
+                   queryClient.invalidateQueries({ queryKey: getListOwnerFieldRequestsQueryKey(fieldId) });
+                   toast({ title: copy.cancellationSubmitted });
+                 },
+                 onError: (error) => toast({
+                   title: copy.actionFailed,
+                   description: getErrorMessage(error, copy.requestFailed),
+                   variant: "destructive",
+                 }),
+               },
+             );
+           }}
+           isSubmittingCancellation={createCancellation.isPending}
           isLinkActionPending={revokeLink.isPending || createLink.isPending}
           onRefresh={() => requestsQuery.refetch()}
         />
@@ -709,6 +752,8 @@ function RequestPanel({
   today,
   maxBookDate,
   hours,
+  nextHours,
+  crossMidnight,
   availabilityLoading,
   availabilityError,
   onRetryAvailability,
@@ -734,6 +779,8 @@ function RequestPanel({
   today: string;
   maxBookDate: string;
   hours: Set<number>;
+  nextHours: Set<number>;
+  crossMidnight: boolean;
   availabilityLoading: boolean;
   availabilityError: unknown;
   onRetryAvailability: () => void;
@@ -836,8 +883,20 @@ function RequestPanel({
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           <TimeSelect id="owner-request-from" label={copy.from} value={from} onChange={setFrom} testId="select-request-from" />
-          <TimeSelect id="owner-request-to" label={copy.to} value={to} onChange={setTo} testId="select-request-to" />
+          <TimeSelect
+            id="owner-request-to"
+            label={copy.to}
+            value={to}
+            onChange={setTo}
+            testId="select-request-to"
+            options={TIME_OPTIONS.filter((time) => {
+              const raw = timeToMinutes(time) - timeToMinutes(from);
+              const minutes = raw > 0 ? raw : raw + 24 * 60;
+              return minutes >= 15 && minutes <= 4 * 60;
+            })}
+          />
         </div>
+        {crossMidnight && <p className="mt-2 text-[11px] text-muted-foreground">{copy.nextDayNote}</p>}
 
         <div className="mt-4 grid grid-cols-2 gap-2" data-testid="owner-request-estimate">
           <div className="rounded-xl border border-white/[0.07] bg-background/40 p-3">
@@ -867,12 +926,12 @@ function RequestPanel({
   );
 }
 
-function TimeSelect({ id, label, value, onChange, testId }: { id: string; label: string; value: string; onChange: (value: string) => void; testId: string }) {
+function TimeSelect({ id, label, value, onChange, testId, options = TIME_OPTIONS }: { id: string; label: string; value: string; onChange: (value: string) => void; testId: string; options?: string[] }) {
   return (
     <label className="block" htmlFor={id}>
       <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</span>
       <select id={id} value={value} onChange={(event) => onChange(event.target.value)} data-testid={testId} aria-label={label} className="h-11 w-full rounded-xl border border-white/[0.12] bg-background/50 px-3 text-sm font-mono text-foreground outline-none focus:border-primary">
-        {TIME_OPTIONS.map((time) => <option key={time} value={time}>{time}</option>)}
+        {options.map((time) => <option key={time} value={time}>{time}</option>)}
       </select>
     </label>
   );
@@ -890,12 +949,14 @@ function FootagePanel({
   confirmingCancel,
   setConfirmingCancel,
   onCancel,
+  onCancellationSubmit,
   onRetry,
   onCopy,
   onRevoke,
   onNewLink,
   onOpenVar,
   isCancelling,
+  isSubmittingCancellation,
   isLinkActionPending,
   onRefresh,
 }: {
@@ -910,12 +971,14 @@ function FootagePanel({
   confirmingCancel: number | null;
   setConfirmingCancel: (id: number | null) => void;
   onCancel: (id: number) => void;
+  onCancellationSubmit: (request: OwnerRequest, reason: string) => void;
   onRetry: (request: OwnerRequest) => void;
   onCopy: (url: string) => void;
   onRevoke: (request: OwnerRequest) => void;
   onNewLink: (request: OwnerRequest) => void;
   onOpenVar: (requestId: number) => void;
   isCancelling: boolean;
+  isSubmittingCancellation: boolean;
   isLinkActionPending: boolean;
   onRefresh: () => void;
 }) {
@@ -953,12 +1016,14 @@ function FootagePanel({
               confirmingCancel={confirmingCancel}
               setConfirmingCancel={setConfirmingCancel}
               onCancel={onCancel}
+              onCancellationSubmit={onCancellationSubmit}
               onRetry={onRetry}
               onCopy={onCopy}
               onRevoke={onRevoke}
               onNewLink={onNewLink}
               onOpenVar={onOpenVar}
               isCancelling={isCancelling}
+              isSubmittingCancellation={isSubmittingCancellation}
               isLinkActionPending={isLinkActionPending}
             />
           ))}
@@ -982,7 +1047,9 @@ function RequestCard({
   onRevoke,
   onNewLink,
   onOpenVar,
+  onCancellationSubmit,
   isCancelling,
+  isSubmittingCancellation,
   isLinkActionPending,
 }: {
   copy: OwnerCopy;
@@ -998,7 +1065,9 @@ function RequestCard({
   onRevoke: (request: OwnerRequest) => void;
   onNewLink: (request: OwnerRequest) => void;
   onOpenVar: (requestId: number) => void;
+  onCancellationSubmit: (request: OwnerRequest, reason: string) => void;
   isCancelling: boolean;
+  isSubmittingCancellation: boolean;
   isLinkActionPending: boolean;
 }) {
   const key = statusKey(request.status);
@@ -1007,6 +1076,9 @@ function RequestCard({
   const isReady = key === "ready" || key === "partial";
   const isFailed = key === "failed";
   const isScheduled = key === "scheduled";
+  const isCancellable = ["scheduled", "recording", "queued", "running", "preparing"].includes(key);
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [showCancellationForm, setShowCancellationForm] = useState(false);
   const showPreview = previewId === request.id;
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const pendingSeekRef = useRef<number | null>(null);
@@ -1033,6 +1105,7 @@ function RequestCard({
           </div>
           <p className="mt-2 font-mono text-xs font-medium text-foreground" data-testid={`text-owner-request-window-${request.id}`}>
             {friendlyLocalDate(request.startLocal.slice(0, 10), locale)} · {request.startLocal.slice(11)}–{request.endLocal.slice(11)}
+            {request.endLocal.slice(0, 10) !== request.startLocal.slice(0, 10) && " (+1)"}
           </p>
         </div>
         <div className="shrink-0 text-end">
@@ -1118,15 +1191,56 @@ function RequestCard({
           <Button type="button" variant="secondary" onClick={() => onNewLink(request)} disabled={isLinkActionPending} data-testid={`button-new-link-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs"><RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />{copy.newLink}</Button>
         )}
         {isFailed && <Button type="button" variant="secondary" onClick={() => onRetry(request)} data-testid={`button-retry-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{copy.retry}</Button>}
-        {isScheduled && confirmingCancel !== request.id && <Button type="button" variant="ghost" onClick={() => setConfirmingCancel(request.id)} data-testid={`button-cancel-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs text-muted-foreground"><X className="h-3.5 w-3.5" aria-hidden="true" />{copy.cancel}</Button>}
+        {isCancellable && confirmingCancel !== request.id && <Button type="button" variant="ghost" onClick={() => setConfirmingCancel(request.id)} data-testid={`button-cancel-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs text-muted-foreground"><X className="h-3.5 w-3.5" aria-hidden="true" />{copy.cancel}</Button>}
+        {isReady && !request.cancellationStatus && !showCancellationForm && (
+          <Button type="button" variant="ghost" onClick={() => setShowCancellationForm(true)} data-testid={`button-request-refund-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs text-muted-foreground">
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{copy.cancellationRequest}
+          </Button>
+        )}
+        {isReady && request.cancellationStatus && (
+          <p className="w-full rounded-xl border border-secondary/20 bg-secondary/[0.06] px-3 py-2 text-xs text-secondary" data-testid={`status-refund-owner-request-${request.id}`}>
+            {request.cancellationStatus === "pending" ? copy.cancellationPending : request.cancellationStatus === "approved" ? copy.cancellationApproved : copy.cancellationDeclined}
+          </p>
+        )}
       </div>
 
-      {isScheduled && confirmingCancel === request.id && (
+      {isCancellable && confirmingCancel === request.id && (
         <div className="grid gap-3 border-t border-destructive/20 bg-destructive/[0.06] p-3" data-testid={`confirm-cancel-owner-request-${request.id}`}>
           <p className="text-xs leading-5 text-foreground">{copy.cancelPrompt}</p>
           <div className="flex gap-2">
             <Button type="button" variant="destructive" onClick={() => onCancel(request.id)} disabled={isCancelling} data-testid={`button-confirm-cancel-owner-request-${request.id}`} className="min-h-11 flex-1 rounded-xl text-xs">{isCancelling ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}{copy.confirmCancel}</Button>
             <Button type="button" variant="ghost" onClick={() => setConfirmingCancel(null)} data-testid={`button-keep-owner-request-${request.id}`} className="min-h-11 rounded-xl text-xs">{copy.keepRequest}</Button>
+          </div>
+        </div>
+      )}
+
+      {isReady && showCancellationForm && !request.cancellationStatus && (
+        <div className="grid gap-3 border-t border-secondary/20 bg-secondary/[0.05] p-3" data-testid={`form-refund-owner-request-${request.id}`}>
+          <label className="text-xs leading-5 text-foreground">
+            {copy.cancellationReason}
+            <textarea
+              value={cancellationReason}
+              onChange={(event) => setCancellationReason(event.target.value)}
+              placeholder={copy.cancellationReasonPlaceholder}
+              rows={3}
+              className="mt-2 w-full rounded-xl border border-white/[0.12] bg-background/50 p-3 text-xs text-foreground outline-none focus:border-primary"
+              data-testid={`input-refund-reason-${request.id}`}
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              onClick={() => onCancellationSubmit(request, cancellationReason.trim())}
+              disabled={isSubmittingCancellation || !cancellationReason.trim()}
+              data-testid={`button-submit-refund-${request.id}`}
+              className="min-h-11 flex-1 rounded-xl text-xs"
+            >
+              {isSubmittingCancellation ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              {copy.submitCancellation}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setShowCancellationForm(false)} className="min-h-11 rounded-xl text-xs">
+              {copy.keepRequest}
+            </Button>
           </div>
         </div>
       )}

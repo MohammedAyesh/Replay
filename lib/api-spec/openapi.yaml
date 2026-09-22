@@ -282,7 +282,7 @@ paths:
     post:
       operationId: cancelOwnerRequest
       tags: [owner]
-      summary: Cancel scheduled owner footage before recording starts
+      summary: Cancel an active owner footage request before delivery
       security:
         - clerkSession: []
       parameters:
@@ -293,7 +293,7 @@ paths:
             type: integer
       responses:
         "200":
-          description: Scheduled request cancelled
+          description: Active request cancelled
           content:
             application/json:
               schema:
@@ -303,9 +303,44 @@ paths:
         "404":
           description: Request not found
         "409":
-          description: Request is not scheduled
+          description: Request cannot be cancelled
         "502":
           description: Camera pull cancellation failed
+
+  /owner/requests/{id}/cancellation:
+    post:
+      operationId: createOwnerFootageCancellationRequest
+      tags: [owner]
+      summary: Ask for a delivered footage refund
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerCancellationInput"
+      responses:
+        "201":
+          description: Cancellation request submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerCancellationRequest"
+        "400":
+          description: Invalid reason
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Request not found
+        "409":
+          description: Cancellation request unavailable
 
   /owner/requests/{id}/var-marks:
     get:
@@ -494,6 +529,56 @@ paths:
                 $ref: "#/components/schemas/AdminFootageBilling"
         "403":
           description: Admin access required
+
+  /admin/footage-cancellation-requests:
+    get:
+      operationId: listAdminFootageCancellationRequests
+      tags: [admin]
+      summary: List owner delivered-footage cancellation requests
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Cancellation requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminFootageCancellationRequest"
+        "403":
+          description: Admin access required
+
+  /admin/footage-cancellation-requests/{id}:
+    patch:
+      operationId: reviewAdminFootageCancellationRequest
+      tags: [admin]
+      summary: Approve or decline an owner footage cancellation request
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminFootageCancellationReview"
+      responses:
+        "200":
+          description: Cancellation request reviewed
+        "400":
+          description: Invalid review
+        "403":
+          description: Admin access required
+        "404":
+          description: Request not found
+        "409":
+          description: Request already reviewed
 
   /admin/fields/{fieldId}/payments:
     post:
@@ -2082,9 +2167,40 @@ components:
           type: string
           pattern: '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$'
 
+    OwnerCancellationInput:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+
+    OwnerCancellationRequest:
+      type: object
+      required: [id, footageRequestId, reason, status, adminNote, reviewedAt, createdAt]
+      properties:
+        id:
+          type: integer
+        footageRequestId:
+          type: integer
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, declined]
+        adminNote:
+          type: ["string", "null"]
+        reviewedAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
     OwnerRequest:
       type: object
-      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, varOpensAt, varClosesAt, varState, varActive, marks]
+      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, varOpensAt, varClosesAt, varState, varActive, cancellationStatus, marks]
       properties:
         id:
           type: integer
@@ -2126,6 +2242,9 @@ components:
           type: ["string", "null"]
         varActive:
           type: boolean
+        cancellationStatus:
+          type: ["string", "null"]
+          enum: [pending, approved, declined, null]
         marks:
           type: array
           items:
@@ -2220,6 +2339,54 @@ components:
           type: integer
         balanceFils:
           type: integer
+
+    AdminFootageCancellationRequest:
+      type: object
+      required: [id, footageRequestId, fieldId, fieldName, ownerName, ownerEmail, startLocal, endLocal, amountFils, reason, status, adminNote, createdAt, reviewedAt]
+      properties:
+        id:
+          type: integer
+        footageRequestId:
+          type: integer
+        fieldId:
+          type: integer
+        fieldName:
+          type: string
+        ownerName:
+          type: string
+        ownerEmail:
+          type: string
+          format: email
+        startLocal:
+          type: string
+        endLocal:
+          type: string
+        amountFils:
+          type: integer
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, declined]
+        adminNote:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: ["string", "null"]
+          format: date-time
+
+    AdminFootageCancellationReview:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [approved, declined]
+        note:
+          type: ["string", "null"]
+          maxLength: 1000
 
     AdminFootageOwnerInput:
       type: object
