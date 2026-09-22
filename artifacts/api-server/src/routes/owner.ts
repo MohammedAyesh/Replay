@@ -249,7 +249,7 @@ async function sendVarPlaylist(
   since?: number,
 ): Promise<void> {
   const query = since === undefined ? "" : `?since=${Math.floor(since / 1000)}`;
-  let upstream: Response;
+  let upstream: globalThis.Response;
   try {
     upstream = await controlResponse(`${varPath(camera, variant, "playlist.m3u8")}${query}`, {}, 30_000);
   } catch (error) {
@@ -277,7 +277,7 @@ async function sendVarSegment(
   variant: VarVariant,
   name: string,
 ): Promise<void> {
-  let upstream: Response;
+  let upstream: globalThis.Response;
   try {
     upstream = await controlResponse(varPath(camera, variant, `seg/${encodeURIComponent(name)}`), {}, 30_000);
   } catch (error) {

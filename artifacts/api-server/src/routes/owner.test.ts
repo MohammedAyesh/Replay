@@ -36,6 +36,7 @@ let paymentIds: number[] = [];
 let realFetch: typeof fetch;
 let availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
 let recordPostUrls: string[] = [];
+let varUrls: string[] = [];
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -54,6 +55,27 @@ function futureLocalWindow(daysAhead: number): { startLocal: string; endLocal: s
     .map((part) => [part.type, part.value]));
   const startLocal = `${parts.year}-${parts.month}-${parts.day} 10:00`;
   return { startLocal, endLocal: `${parts.year}-${parts.month}-${parts.day} 10:15` };
+}
+
+function activeLocalWindow(): { startLocal: string; endLocal: string } {
+  const startMs = Math.floor((Date.now() - 60 * 1000) / (60 * 1000)) * (60 * 1000);
+  const format = (value: number) => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Amman",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(value)).map((part) => [part.type, part.value]));
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+  };
+  return { startLocal: format(startMs), endLocal: format(startMs + 15 * 60 * 1000) };
+}
+
+function localInstantSeconds(value: string): number {
+  return Math.floor(Date.parse(`${value.replace(" ", "T")}:00.000Z`) / 1000) - 3 * 60 * 60;
 }
 
 beforeAll(async () => {
@@ -102,6 +124,29 @@ beforeAll(async () => {
   realFetch = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/var/")) {
+      varUrls.push(url);
+      if (url.includes("/playlist.m3u8")) {
+        return new Response([
+          "#EXTM3U",
+          '#EXT-X-MAP:URI="/var/owner-camera-a-var/hls/seg/init.mp4"',
+          "#EXTINF:1.0,",
+          "/var/owner-camera-a-var/hls/seg/one.m4s",
+          "/var/owner-camera-a-var/hls/seg/two.m4s",
+          "",
+        ].join("\n"), {
+          headers: { "content-type": "application/vnd.apple.mpegurl" },
+        });
+      }
+      if (url.includes("/seg/")) {
+        return new Response("segment-bytes", {
+          headers: { "content-type": "video/mp4" },
+        });
+      }
+      if (url.includes("/window")) {
+        return jsonResponse({ live: true, newestAgeSec: 2 });
+      }
+    }
     if (url.includes("/sd/")) {
       return jsonResponse({ hours: availableHours });
     }
@@ -123,6 +168,7 @@ beforeAll(async () => {
 beforeEach(() => {
   availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
   recordPostUrls = [];
+  varUrls = [];
   mockedGetLocalUserRecord.mockResolvedValue({
     id: ownerId,
     isGuest: false,
@@ -317,6 +363,100 @@ describe("owner request status sync", () => {
     );
   });
 
+  it("rejects VAR playlist access for a non-owner", async () => {
+    const window = activeLocalWindow();
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "owner-camera-a-var",
+      requestedBy: ownerId,
+      startLocal: window.startLocal,
+      endLocal: window.endLocal,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+    mockedGetLocalUserRecord.mockResolvedValue({
+      id: otherUserId,
+      isGuest: false,
+      isAdmin: false,
+    } as Awaited<ReturnType<typeof getLocalUserRecord>>);
+
+    await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/hls/playlist.m3u8`)
+      .expect(403);
+  });
+
+  it("returns 404 for VAR outside the request window", async () => {
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "owner-camera-a-var",
+      requestedBy: ownerId,
+      startLocal: oldStart,
+      endLocal: oldEnd,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+
+    await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/hls/playlist.m3u8`)
+      .expect(404);
+  });
+
+  it("rewrites VAR playlist segments and EXT-X-MAP and forwards the since window", async () => {
+    const window = activeLocalWindow();
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "owner-camera-a-var",
+      requestedBy: ownerId,
+      startLocal: window.startLocal,
+      endLocal: window.endLocal,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+
+    const response = await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/hls/playlist.m3u8`)
+      .expect(200);
+    const proxyPrefix = `/api/owner/requests/${inserted.id}/var/hls/seg/`;
+    expect(response.text).toContain(`#EXT-X-MAP:URI="${proxyPrefix}init.mp4"`);
+    expect(response.text).toContain(`${proxyPrefix}one.m4s`);
+    expect(response.text).toContain(`${proxyPrefix}two.m4s`);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(new URL(varUrls.at(-1)!).searchParams.get("since"))
+      .toBe(String(localInstantSeconds(window.startLocal) - 3 * 60));
+  });
+
+  it("streams VAR segments and rejects unsafe segment names", async () => {
+    const window = activeLocalWindow();
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "owner-camera-a-var",
+      requestedBy: ownerId,
+      startLocal: window.startLocal,
+      endLocal: window.endLocal,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+
+    const segment = await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/hls/seg/one.m4s`)
+      .expect(200);
+    expect(segment.body.toString()).toBe("segment-bytes");
+    expect(segment.headers["content-type"]).toContain("video/mp4");
+    expect(segment.headers["cache-control"]).toBe("private, max-age=3600");
+
+    await request(app)
+      .get(`/api/owner/requests/${inserted.id}/var/hls/seg/../secret.txt`)
+      .expect(400);
+  });
+
   it("cancels a scheduled request only after the remote delete succeeds", async () => {
     const [inserted] = await db.insert(footageRequestsTable).values({
       fieldId: fieldAId,
@@ -386,5 +526,13 @@ describe("admin owner and billing management", () => {
     expect(overview.body.payments).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: created.body.id, amountFils: 12345 }),
     ]));
+  });
+
+  it("proxies the admin VAR window without an owner request", async () => {
+    const response = await request(app)
+      .get("/api/admin/var/camera1/window")
+      .expect(200);
+    expect(response.body).toEqual({ live: true, newestAgeSec: 2 });
+    expect(varUrls.at(-1)).toContain("/var/camera1/window");
   });
 });
