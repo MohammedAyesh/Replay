@@ -42,6 +42,10 @@ export interface HlsPlayerProps {
   showDvrControls?: boolean;
   showStatusOverlays?: boolean;
   controls?: boolean;
+  /** Use fragment/program-date-time clock data for callers that need a wall clock. */
+  useProgramDateTime?: boolean;
+  /** Recover short buffered holes and playlist sequence resets for live review. */
+  recoverLiveDiscontinuities?: boolean;
   videoClassName?: string;
   videoStyle?: CSSProperties;
   onPlaybackState?: (state: {
@@ -66,7 +70,63 @@ export interface HlsPlayerProps {
      */
     start: number;
     programTime?: number;
+    windowStartProgramTime?: number;
+    liveEdgeProgramTime?: number;
   }) => void;
+}
+
+export type TimelineFragment = {
+  start: number;
+  duration: number;
+  programDateTime?: number | null;
+};
+
+export function programTimeAtPosition(
+  fragments: TimelineFragment[],
+  position: number,
+): number | undefined {
+  let wallStart: number | undefined;
+  for (const fragment of fragments) {
+    if (Number.isFinite(fragment.programDateTime)) {
+      wallStart = fragment.programDateTime as number;
+    }
+    if (wallStart == null) continue;
+    const fragmentEnd = fragment.start + fragment.duration;
+    if (position >= fragment.start && position <= fragmentEnd) {
+      return wallStart + (position - fragment.start) * 1000;
+    }
+    wallStart += fragment.duration * 1000;
+  }
+  return undefined;
+}
+
+export function programTimeAtPlaylistEnd(fragments: TimelineFragment[]): number | undefined {
+  let wallEnd: number | undefined;
+  for (const fragment of fragments) {
+    if (Number.isFinite(fragment.programDateTime)) {
+      wallEnd = fragment.programDateTime as number;
+    }
+    if (wallEnd == null) continue;
+    wallEnd += fragment.duration * 1000;
+  }
+  return wallEnd;
+}
+
+export type BufferedRange = { start: number; end: number };
+
+export function findBufferedHoleStart(
+  currentTime: number,
+  ranges: BufferedRange[],
+  maxAheadSeconds = 60,
+): number | null {
+  if (!Number.isFinite(currentTime)) return null;
+  for (const range of ranges) {
+    if (currentTime >= range.start && currentTime <= range.end) return null;
+    if (range.start > currentTime && range.start - currentTime <= maxAheadSeconds) {
+      return range.start;
+    }
+  }
+  return null;
 }
 
 export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
@@ -78,6 +138,8 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
     showDvrControls = true,
     showStatusOverlays = true,
     controls = true,
+    useProgramDateTime = false,
+    recoverLiveDiscontinuities = false,
     videoClassName,
     videoStyle,
     onPlaybackState,
@@ -86,6 +148,8 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
   }, forwardedRef) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const programAnchorRef = useRef<{ mediaTime: number; wallTime: number } | null>(null);
+    const levelDetailsRef = useRef<{ fragments: TimelineFragment[]; startSN: number } | null>(null);
+    const mediaSequenceRef = useRef<number | null>(null);
     const hlsRef = useRef<Hls | null>(null);
 
     // Expose the internal video element via forwardRef
@@ -107,6 +171,8 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
       setWaiting(false);
       setTimeline({ start: 0, end: 0, position: 0 });
       programAnchorRef.current = null;
+      levelDetailsRef.current = null;
+      mediaSequenceRef.current = null;
       hlsRef.current = null;
       onPlaybackState?.({
         ready: false,
@@ -145,6 +211,29 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           el.play().catch(() => {});
         });
         hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => {
+          levelDetailsRef.current = data.details;
+          const mediaSequence = data.details.startSN;
+          const previousMediaSequence = mediaSequenceRef.current;
+          if (
+            recoverLiveDiscontinuities
+            && previousMediaSequence != null
+            && mediaSequence < previousMediaSequence
+          ) {
+            const seekableEnd = el.seekable.length
+              ? el.seekable.end(el.seekable.length - 1)
+              : null;
+            const liveSyncPosition = hls.liveSyncPosition;
+            const restartPosition = typeof liveSyncPosition === "number" && Number.isFinite(liveSyncPosition)
+              ? liveSyncPosition
+              : typeof seekableEnd === "number" && Number.isFinite(seekableEnd)
+                ? Math.max(0, seekableEnd - 1)
+                : -1;
+            hls.loadSource(url);
+            hls.startLoad(restartPosition);
+            if (restartPosition >= 0) el.currentTime = restartPosition;
+          }
+          mediaSequenceRef.current = mediaSequence;
+
           const fragment = data.details?.fragments?.find(
             (candidate: { programDateTime?: number | null }) =>
               Number.isFinite(candidate.programDateTime),
@@ -288,7 +377,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
       return undefined;
       // retryAttempt in deps causes the effect to re-run after a scheduled retry
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [url, retryAttempt, retryOnNetworkError, onPlaybackState, onManifestFailure]);
+    }, [url, retryAttempt, retryOnNetworkError, onPlaybackState, onManifestFailure, recoverLiveDiscontinuities]);
 
     // ── Timeline polling ───────────────────────────────────────────────────────
     useEffect(() => {
@@ -306,7 +395,24 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
             : rawStart;
         setTimeline({ start, end: rawEnd, position: el.currentTime });
         const anchor = programAnchorRef.current;
-        const liveSyncPosition = hlsRef.current?.liveSyncPosition;
+        const hls = hlsRef.current;
+        const details = levelDetailsRef.current;
+        const fragments = details?.fragments ?? [];
+        const playingDate = useProgramDateTime ? hls?.playingDate?.getTime() : undefined;
+        const currentProgramTime = useProgramDateTime
+          ? (typeof playingDate === "number" && Number.isFinite(playingDate)
+            ? playingDate
+            : programTimeAtPosition(fragments, el.currentTime))
+          : anchor
+            ? anchor.wallTime + (el.currentTime - anchor.mediaTime) * 1000
+            : undefined;
+        const liveEdgeProgramTime = useProgramDateTime
+          ? programTimeAtPlaylistEnd(fragments)
+          : undefined;
+        const windowStartProgramTime = useProgramDateTime
+          ? programTimeAtPosition(fragments, start)
+          : undefined;
+        const liveSyncPosition = hls?.liveSyncPosition;
         onTimelineChange?.({
           position: el.currentTime,
           liveEdge: rawEnd,
@@ -314,9 +420,9 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
           liveSyncPosition: typeof liveSyncPosition === "number" && Number.isFinite(liveSyncPosition)
             ? liveSyncPosition
             : undefined,
-          programTime: anchor
-            ? anchor.wallTime + (el.currentTime - anchor.mediaTime) * 1000
-            : undefined,
+          programTime: currentProgramTime,
+          windowStartProgramTime,
+          liveEdgeProgramTime,
         });
       };
 
@@ -327,7 +433,45 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         window.clearInterval(timer);
         el.removeEventListener("timeupdate", updateTimeline);
       };
-    }, [url, ready, windowSeconds, onTimelineChange]);
+    }, [url, ready, useProgramDateTime, windowSeconds, onTimelineChange]);
+
+    useEffect(() => {
+      if (!recoverLiveDiscontinuities) return;
+      const el = videoRef.current;
+      if (!el) return;
+      let lastHoleStart: number | null = null;
+
+      const recoverBufferedHole = () => {
+        if (!Number.isFinite(el.currentTime) || !el.buffered.length) return;
+        const ranges: BufferedRange[] = [];
+        for (let index = 0; index < el.buffered.length; index += 1) {
+          ranges.push({ start: el.buffered.start(index), end: el.buffered.end(index) });
+        }
+        const nextRangeStart = findBufferedHoleStart(el.currentTime, ranges);
+        if (nextRangeStart == null) {
+          lastHoleStart = null;
+          return;
+        }
+        if (lastHoleStart != null && Math.abs(lastHoleStart - nextRangeStart) < 0.25) return;
+        lastHoleStart = nextRangeStart;
+        el.currentTime = nextRangeStart;
+        if (!el.paused) el.play().catch(() => {});
+      };
+
+      recoverBufferedHole();
+      const timer = window.setInterval(recoverBufferedHole, 500);
+      el.addEventListener("timeupdate", recoverBufferedHole);
+      el.addEventListener("progress", recoverBufferedHole);
+      el.addEventListener("waiting", recoverBufferedHole);
+      el.addEventListener("stalled", recoverBufferedHole);
+      return () => {
+        window.clearInterval(timer);
+        el.removeEventListener("timeupdate", recoverBufferedHole);
+        el.removeEventListener("progress", recoverBufferedHole);
+        el.removeEventListener("waiting", recoverBufferedHole);
+        el.removeEventListener("stalled", recoverBufferedHole);
+      };
+    }, [url, recoverLiveDiscontinuities]);
 
     const hasDvrWindow = timeline.end - timeline.start > 3;
     const isLive = hasDvrWindow && timeline.end - timeline.position < 8;

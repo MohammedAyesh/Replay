@@ -61,13 +61,9 @@ export function getVarManifestUrl(src: string, variant: "hls" | "hevc"): string 
 }
 
 export function getVarLiveEdgeTarget(liveEdge: number, liveSyncPosition?: number): number {
-  const threeSecondsBehind = liveEdge - 3;
-  return Math.max(
-    threeSecondsBehind,
-    typeof liveSyncPosition === "number" && Number.isFinite(liveSyncPosition)
-      ? liveSyncPosition
-      : threeSecondsBehind,
-  );
+  return typeof liveSyncPosition === "number" && Number.isFinite(liveSyncPosition)
+    ? liveSyncPosition
+    : liveEdge;
 }
 
 export function formatVarWallClock(atUtcMs: number): string {
@@ -205,9 +201,7 @@ export function VarPlayer({
     setPlayerState(next);
   }, []);
 
-  const windowStartUtcMs = timeline?.programTime != null
-    ? timeline.programTime - (timeline.position - timeline.start) * 1_000
-    : null;
+  const windowStartUtcMs = timeline?.windowStartProgramTime ?? null;
   const scrubStart = timeline
     ? clamp(
       minStartUtcMs != null && windowStartUtcMs != null
@@ -218,16 +212,14 @@ export function VarPlayer({
     )
     : 0;
   const currentPosition = scrub ?? (timeline ? clamp(timeline.position, scrubStart, timeline.liveEdge) : 0);
-  const currentProgramTime = timeline?.programTime != null && timeline
-    ? timeline.programTime + (currentPosition - timeline.position) * 1_000
-    : null;
+  const currentProgramTime = scrub == null ? timeline?.programTime ?? null : null;
 
   useEffect(() => {
     onCurrentTimeChange?.(currentProgramTime);
   }, [currentProgramTime, onCurrentTimeChange]);
 
-  const behindSeconds = currentProgramTime != null
-    ? Math.max(0, (nowMs - currentProgramTime) / 1_000)
+  const behindSeconds = currentProgramTime != null && timeline?.liveEdgeProgramTime != null
+    ? Math.max(0, (timeline.liveEdgeProgramTime - currentProgramTime) / 1_000)
     : timeline
       ? Math.max(0, timeline.liveEdge - currentPosition)
       : 0;
@@ -238,7 +230,7 @@ export function VarPlayer({
       && currentProgramTime != null
       && Number.isFinite(currentProgramTime),
   );
-  const isReplay = Boolean(hasFrames && timeline && timeline.liveEdge - currentPosition > 10);
+  const isReplay = Boolean(hasFrames && behindSeconds > 10);
   const stale = Boolean(
     timeline
     && playerState.hasFirstSegment
@@ -472,6 +464,8 @@ export function VarPlayer({
           controls={false}
           videoStyle={zoomStyle}
           onTimelineChange={onTimelineChange}
+          useProgramDateTime
+          recoverLiveDiscontinuities
           onPlaybackState={onPlaybackState}
            onManifestFailure={onManifestFailure}
         />
