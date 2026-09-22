@@ -153,7 +153,15 @@ export const ListOwnerFieldRequestsResponseItem = zod.object({
   "varOpensAt": zod.coerce.date().nullable(),
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
-  "varActive": zod.boolean()
+  "varActive": zod.boolean(),
+  "marks": zod.array(zod.object({
+  "id": zod.number(),
+  "atUtc": zod.coerce.date(),
+  "kind": zod.enum(['goal', 'foul', 'offside', 'other']),
+  "note": zod.string().nullable(),
+  "createdBy": zod.number(),
+  "offsetSeconds": zod.number()
+}))
 })
 export const ListOwnerFieldRequestsResponse = zod.array(ListOwnerFieldRequestsResponseItem)
 
@@ -191,7 +199,15 @@ export const CreateOwnerFieldRequestResponse = zod.object({
   "varOpensAt": zod.coerce.date().nullable(),
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
-  "varActive": zod.boolean()
+  "varActive": zod.boolean(),
+  "marks": zod.array(zod.object({
+  "id": zod.number(),
+  "atUtc": zod.coerce.date(),
+  "kind": zod.enum(['goal', 'foul', 'offside', 'other']),
+  "note": zod.string().nullable(),
+  "createdBy": zod.number(),
+  "offsetSeconds": zod.number()
+}))
 })
 
 
@@ -247,8 +263,71 @@ export const CancelOwnerRequestResponse = zod.object({
   "varOpensAt": zod.coerce.date().nullable(),
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
-  "varActive": zod.boolean()
+  "varActive": zod.boolean(),
+  "marks": zod.array(zod.object({
+  "id": zod.number(),
+  "atUtc": zod.coerce.date(),
+  "kind": zod.enum(['goal', 'foul', 'offside', 'other']),
+  "note": zod.string().nullable(),
+  "createdBy": zod.number(),
+  "offsetSeconds": zod.number()
+}))
 })
+
+
+/**
+ * @summary List VAR marks for an owned footage request
+ */
+export const ListOwnerVarMarksParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ListOwnerVarMarksResponseItem = zod.object({
+  "id": zod.number(),
+  "atUtc": zod.coerce.date(),
+  "kind": zod.enum(['goal', 'foul', 'offside', 'other']),
+  "note": zod.string().nullable(),
+  "createdBy": zod.number(),
+  "offsetSeconds": zod.number()
+})
+export const ListOwnerVarMarksResponse = zod.array(ListOwnerVarMarksResponseItem)
+
+
+/**
+ * @summary Mark a moment in an owned VAR request
+ */
+export const CreateOwnerVarMarkParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const createOwnerVarMarkBodyNoteMax = 500;
+
+
+
+export const CreateOwnerVarMarkBody = zod.object({
+  "atUtc": zod.coerce.date(),
+  "kind": zod.enum(['goal', 'foul', 'offside', 'other']),
+  "note": zod.string().max(createOwnerVarMarkBodyNoteMax).nullish()
+})
+
+export const CreateOwnerVarMarkResponse = zod.object({
+  "id": zod.number(),
+  "atUtc": zod.coerce.date(),
+  "kind": zod.enum(['goal', 'foul', 'offside', 'other']),
+  "note": zod.string().nullable(),
+  "createdBy": zod.number(),
+  "offsetSeconds": zod.number()
+})
+
+
+/**
+ * @summary Delete a VAR mark created by the current user
+ */
+export const DeleteOwnerVarMarkParams = zod.object({
+  "markId": zod.coerce.number()
+})
+
+export const DeleteOwnerVarMarkResponse = zod.void()
 
 
 /**

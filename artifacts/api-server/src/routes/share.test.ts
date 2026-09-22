@@ -25,7 +25,7 @@ process.env.BUNNY_CDN_HOSTNAME = "private-cdn.local";
 process.env.CLIP_SHARE_URL_SECRET = "share-secret";
 process.env.PUBLIC_SHARE_BASE_URL = "https://replayjo.test";
 
-const { db, usersTable, userClipsTable, fieldsTable, footageRequestsTable } = await import("@workspace/db");
+const { db, usersTable, userClipsTable, fieldsTable, footageRequestsTable, varMarksTable } = await import("@workspace/db");
 const { inArray, eq } = await import("drizzle-orm");
 const { shareToken } = await import("../lib/shareCard");
 
@@ -186,6 +186,13 @@ beforeAll(async () => {
     },
   ]).returning({ id: footageRequestsTable.id });
   ownerRequestIds = ownerRows.map(({ id }) => id);
+  await db.insert(varMarksTable).values({
+    footageRequestId: ownerRequestIds[0],
+    atUtc: new Date("2026-09-21T07:01:30.000Z"),
+    kind: "goal",
+    note: "Top corner",
+    createdBy: userId,
+  });
 }, 180_000);
 
 afterAll(async () => {
@@ -401,6 +408,9 @@ describe("public owner watch links", () => {
       endLocal: "2026-09-21 10:15",
     });
     expect(res.body.expiresAt).toBeTruthy();
+    expect(res.body.keyMoments).toEqual([
+      { kind: "goal", note: "Top corner", offsetSeconds: 90 },
+    ]);
   });
 
   it("uses the branded bilingual 404 for inactive owner-share metadata", async () => {

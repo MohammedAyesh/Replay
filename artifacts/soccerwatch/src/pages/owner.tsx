@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   getGetOwnerFieldAvailabilityQueryKey,
@@ -24,6 +24,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  CircleAlert,
   Clock3,
   Copy,
   ExternalLink,
@@ -262,7 +263,9 @@ export default function Owner() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"request" | "footage" | "billing">("request");
+  const [tab, setTab] = useState<"request" | "footage" | "billing">(() =>
+    new URLSearchParams(window.location.search).get("tab") === "footage" ? "footage" : "request",
+  );
   const [requestMode, setRequestMode] = useState<"past" | "book">("past");
   const [selectedFieldId, setSelectedFieldId] = useState<number | null>(null);
   const [date, setDate] = useState(ammanDate);
@@ -310,11 +313,15 @@ export default function Owner() {
       queryKey: getListOwnerFieldRequestsQueryKey(fieldId),
       refetchInterval: (query) => {
         const requestData = query.state.data as OwnerRequest[] | undefined;
+        const varSoon = requestData?.some((request) => {
+          if (!request.varOpensAt) return false;
+          return Math.abs(Date.parse(request.varOpensAt) - Date.now()) <= 10 * 60 * 1000;
+        });
         const fast = requestData?.some(
           (request) =>
             isActiveStatus(request.status) && (statusKey(request.status) !== "scheduled" || isScheduledSoon(request)),
         );
-        return fast ? 5_000 : 60_000;
+        return varSoon ? 15_000 : fast ? 5_000 : 60_000;
       },
     },
   });
@@ -347,6 +354,7 @@ export default function Owner() {
   const readyCount = requests.filter((request) =>
     ["ready", "partial"].includes(statusKey(request.status)),
   ).length;
+  const activeVarRequests = requests.filter((request) => request.varActive);
 
   const selectField = (value: string) => {
     const next = Number(value);
@@ -543,6 +551,20 @@ export default function Owner() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-28 pt-2 sm:px-5" data-testid="page-owner" data-route={location}>
+      {activeVarRequests.length > 0 && (
+        <section className="mb-3 rounded-2xl border border-red-400/40 bg-red-500/[0.12] p-3" data-testid="owner-var-live-banner">
+          <div className="flex items-start gap-2">
+            <span className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-400" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-red-100">{locale === "ar" ? "مراجعة VAR متاحة الآن" : "VAR review is live now"}</p>
+              <p className="mt-1 text-[11px] leading-4 text-red-100/70">{locale === "ar" ? "افتح المباراة لوضع العلامات على اللحظات المهمة." : "Open the match to mark the important moments."}</p>
+            </div>
+            <button type="button" onClick={() => setLocation(`/owner/var/${activeVarRequests[0].id}`)} className="shrink-0 rounded-xl bg-red-400 px-3 py-2 text-[11px] font-bold text-red-950">
+              {locale === "ar" ? "فتح VAR" : "Open VAR"}
+            </button>
+          </div>
+        </section>
+      )}
       <section className="rounded-[26px] border border-white/[0.08] bg-[linear-gradient(145deg,rgba(212,255,79,.13),rgba(20,27,43,.45)_52%,rgba(123,92,255,.10))] p-4 sm:p-5" data-testid="owner-header">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -646,6 +668,7 @@ export default function Owner() {
           onCopy={copyShareLink}
           onRevoke={(request) => runLinkAction(request, "revoke")}
           onNewLink={(request) => runLinkAction(request, "new")}
+          onOpenVar={(requestId) => setLocation(`/owner/var/${requestId}`)}
           isCancelling={cancelRequest.isPending}
           isLinkActionPending={revokeLink.isPending || createLink.isPending}
           onRefresh={() => requestsQuery.refetch()}
@@ -871,6 +894,7 @@ function FootagePanel({
   onCopy,
   onRevoke,
   onNewLink,
+  onOpenVar,
   isCancelling,
   isLinkActionPending,
   onRefresh,
@@ -890,6 +914,7 @@ function FootagePanel({
   onCopy: (url: string) => void;
   onRevoke: (request: OwnerRequest) => void;
   onNewLink: (request: OwnerRequest) => void;
+  onOpenVar: (requestId: number) => void;
   isCancelling: boolean;
   isLinkActionPending: boolean;
   onRefresh: () => void;
@@ -932,6 +957,7 @@ function FootagePanel({
               onCopy={onCopy}
               onRevoke={onRevoke}
               onNewLink={onNewLink}
+              onOpenVar={onOpenVar}
               isCancelling={isCancelling}
               isLinkActionPending={isLinkActionPending}
             />
@@ -955,6 +981,7 @@ function RequestCard({
   onCopy,
   onRevoke,
   onNewLink,
+  onOpenVar,
   isCancelling,
   isLinkActionPending,
 }: {
@@ -970,6 +997,7 @@ function RequestCard({
   onCopy: (url: string) => void;
   onRevoke: (request: OwnerRequest) => void;
   onNewLink: (request: OwnerRequest) => void;
+  onOpenVar: (requestId: number) => void;
   isCancelling: boolean;
   isLinkActionPending: boolean;
 }) {
@@ -980,6 +1008,13 @@ function RequestCard({
   const isFailed = key === "failed";
   const isScheduled = key === "scheduled";
   const showPreview = previewId === request.id;
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!showPreview || pendingSeekRef.current == null || !previewVideoRef.current) return;
+    previewVideoRef.current.currentTime = pendingSeekRef.current;
+    pendingSeekRef.current = null;
+  }, [showPreview]);
   const progress = Math.max(0, Math.min(100, Math.round(request.progress)));
   const isProgressing = key === "recording" || key === "running" || key === "preparing";
   const statusMessage = message;
@@ -1021,6 +1056,10 @@ function RequestCard({
 
       {request.varActive && (
         <div className="border-t border-white/[0.07] p-3" data-testid={`var-owner-request-${request.id}`}>
+          <button type="button" onClick={() => onOpenVar(request.id)} className="mb-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-red-400 px-3 py-2 text-xs font-bold text-red-950">
+            <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />
+            {locale === "ar" ? "فتح مراجعة VAR بملء الشاشة" : "Open full-screen VAR review"}
+          </button>
           <VarPlayer
             src={`${basePath}/api/owner/requests/${request.id}/var/hls/playlist.m3u8`}
             title={`${copy.playerLabel} · VAR`}
@@ -1031,11 +1070,37 @@ function RequestCard({
 
       {isReady && request.playbackManifestUrl && showPreview && (
         <div className="border-t border-white/[0.07] p-3" data-testid={`preview-owner-request-${request.id}`}>
-          <HlsPlayer url={request.playbackManifestUrl} label={copy.playerLabel} />
+          <HlsPlayer ref={previewVideoRef} url={request.playbackManifestUrl} label={copy.playerLabel} />
         </div>
       )}
 
       <div className="flex flex-wrap gap-2 border-t border-white/[0.07] p-3">
+        {isScheduled && request.varOpensAt && (
+          <div className="w-full rounded-xl border border-red-300/25 bg-red-500/[0.08] px-3 py-2 text-[11px] text-red-100/80">
+            {locale === "ar" ? "يفتح VAR الساعة" : "VAR opens at"} {new Date(request.varOpensAt).toLocaleTimeString(locale === "ar" ? "ar-JO" : "en-JO", { hour: "2-digit", minute: "2-digit" })}
+          </div>
+        )}
+        {isReady && request.marks.length > 0 && (
+          <div className="w-full rounded-xl border border-primary/20 bg-primary/[0.06] p-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">{locale === "ar" ? "اللحظات المهمة" : "Key moments"}</p>
+            <div className="flex flex-wrap gap-2">
+              {request.marks.map((mark) => (
+                <button
+                  key={mark.id}
+                  type="button"
+                  onClick={() => {
+                    pendingSeekRef.current = Math.max(0, mark.offsetSeconds);
+                    setPreviewId(request.id);
+                  }}
+                  className="rounded-lg border border-primary/25 bg-primary/10 px-2.5 py-2 text-start text-[11px] text-primary"
+                >
+                  <span className="block font-semibold capitalize">{mark.kind}</span>
+                  <span className="font-mono">{Math.floor(mark.offsetSeconds / 60).toString().padStart(2, "0")}:{Math.round(mark.offsetSeconds % 60).toString().padStart(2, "0")}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {isReady && request.playbackManifestUrl && (
           <Button type="button" variant="secondary" onClick={() => setPreviewId(showPreview ? null : request.id)} data-testid={`button-preview-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs">
             <Play className="h-3.5 w-3.5" aria-hidden="true" />{showPreview ? copy.hidePreview : copy.preview}

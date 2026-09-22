@@ -66,6 +66,26 @@ export interface OwnerRequestInput {
   endLocal: string;
 }
 
+export type VarMarkKind = typeof VarMarkKind[keyof typeof VarMarkKind];
+
+
+export const VarMarkKind = {
+  goal: 'goal',
+  foul: 'foul',
+  offside: 'offside',
+  other: 'other',
+} as const;
+
+export interface VarMark {
+  id: number;
+  atUtc: string;
+  kind: VarMarkKind;
+  /** @nullable */
+  note: string | null;
+  createdBy: number;
+  offsetSeconds: number;
+}
+
 export interface OwnerRequest {
   id: number;
   startLocal: string;
@@ -92,6 +112,27 @@ export interface OwnerRequest {
   /** @nullable */
   varState: string | null;
   varActive: boolean;
+  marks: VarMark[];
+}
+
+export type VarMarkInputKind = typeof VarMarkInputKind[keyof typeof VarMarkInputKind];
+
+
+export const VarMarkInputKind = {
+  goal: 'goal',
+  foul: 'foul',
+  offside: 'offside',
+  other: 'other',
+} as const;
+
+export interface VarMarkInput {
+  atUtc: string;
+  kind: VarMarkInputKind;
+  /**
+     * @maxLength 500
+     * @nullable
+     */
+  note?: string | null;
 }
 
 export interface OwnerLinkResult {

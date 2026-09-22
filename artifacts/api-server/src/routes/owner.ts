@@ -1,13 +1,14 @@
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import {
   db,
   fieldOwnersTable,
   fieldsTable,
   footagePaymentsTable,
   footageRequestsTable,
+  varMarksTable,
   usersTable,
 } from "@workspace/db";
 import { z } from "zod/v4";
@@ -29,11 +30,17 @@ const AMMAN_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 type OwnerUser = NonNullable<Awaited<ReturnType<typeof getLocalUserRecord>>>;
 type FootageRequest = typeof footageRequestsTable.$inferSelect;
+type VarMarkRow = typeof varMarksTable.$inferSelect;
 type Availability = Record<string, unknown>;
 
 const requestBodySchema = z.object({
   startLocal: z.string(),
   endLocal: z.string(),
+});
+const varMarkBodySchema = z.object({
+  atUtc: z.coerce.date(),
+  kind: z.enum(["goal", "foul", "offside", "other"]),
+  note: z.string().trim().max(500).nullable().optional(),
 });
 
 const availabilityCache = new Map<string, { expiresAt: number; body: Availability }>();
@@ -177,7 +184,21 @@ export function isVarActive(row: Pick<FootageRequest, "startLocal" | "endLocal" 
   );
 }
 
-function requestToResponse(row: FootageRequest, req: Request) {
+function markToResponse(mark: VarMarkRow, request: FootageRequest) {
+  const startInstant = ammanLocalInstant(request.startLocal);
+  return {
+    id: mark.id,
+    atUtc: mark.atUtc.toISOString(),
+    kind: mark.kind,
+    note: mark.note,
+    createdBy: mark.createdBy,
+    offsetSeconds: Number.isFinite(startInstant)
+      ? (mark.atUtc.getTime() - startInstant) / 1000
+      : null,
+  };
+}
+
+function requestToResponse(row: FootageRequest, req: Request, marks: VarMarkRow[] = []) {
   const active = isActiveShare(row);
   const varOpenMs = ammanLocalInstant(row.startLocal) - 3 * 60 * 1000;
   const varCloseMs = ammanLocalInstant(row.endLocal) + 5 * 60 * 1000;
@@ -202,7 +223,23 @@ function requestToResponse(row: FootageRequest, req: Request) {
     varClosesAt: Number.isFinite(varCloseMs) ? new Date(varCloseMs).toISOString() : null,
     varState: row.varState,
     varActive: isVarActive(row),
+    marks: marks.map((mark) => markToResponse(mark, row)),
   };
+}
+
+async function marksForRequests(rows: FootageRequest[]): Promise<Map<number, VarMarkRow[]>> {
+  const ids = rows.map((row) => row.id);
+  if (!ids.length) return new Map();
+  const marks = await db.select().from(varMarksTable)
+    .where(inArray(varMarksTable.footageRequestId, ids))
+    .orderBy(asc(varMarksTable.atUtc), asc(varMarksTable.id));
+  const grouped = new Map<number, VarMarkRow[]>();
+  for (const mark of marks) {
+    const current = grouped.get(mark.footageRequestId) ?? [];
+    current.push(mark);
+    grouped.set(mark.footageRequestId, current);
+  }
+  return grouped;
 }
 
 type VarVariant = "hls" | "hevc";
@@ -1060,18 +1097,22 @@ router.get("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =>
   const refreshed = await db.select().from(footageRequestsTable)
     .where(eq(footageRequestsTable.fieldId, fieldId))
     .orderBy(desc(footageRequestsTable.createdAt));
-  res.json(refreshed.map((row) => requestToResponse(row, req)));
+  const marksByRequest = await marksForRequests(refreshed);
+  res.json(refreshed.map((row) => requestToResponse(row, req, marksByRequest.get(row.id) ?? [])));
 });
 
-async function requestWithField(id: number): Promise<{ request: FootageRequest; fieldId: number } | null> {
+async function requestWithField(id: number): Promise<{ request: FootageRequest; fieldId: number; fieldName: string } | null> {
   const [row] = await db.select({
     request: footageRequestsTable,
     fieldId: footageRequestsTable.fieldId,
-  }).from(footageRequestsTable).where(eq(footageRequestsTable.id, id));
+    fieldName: fieldsTable.name,
+  }).from(footageRequestsTable)
+    .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
+    .where(eq(footageRequestsTable.id, id));
   return row ?? null;
 }
 
-async function requireRequestAccess(req: Request, res: Response, id: number): Promise<{ user: OwnerUser; request: FootageRequest } | null> {
+async function requireRequestAccess(req: Request, res: Response, id: number): Promise<{ user: OwnerUser; request: FootageRequest; fieldName: string } | null> {
   const found = await requestWithField(id);
   if (!found) {
     res.status(404).json({ error: "Request not found" });
@@ -1079,7 +1120,7 @@ async function requireRequestAccess(req: Request, res: Response, id: number): Pr
   }
   const user = await requireFieldAccess(req, res, found.fieldId);
   if (!user) return null;
-  return { user, request: found.request };
+  return { user, request: found.request, fieldName: found.fieldName };
 }
 
 router.get("/owner/requests/:id/var/:variant/playlist.m3u8", async (req, res): Promise<void> => {
@@ -1167,11 +1208,100 @@ router.get("/owner/requests/:id/var/status", async (req, res): Promise<void> => 
 
   const summary = varWindowSummary(result.body);
   res.json({
+    fieldName: found.fieldName,
+    startLocal: found.request.startLocal,
+    endLocal: found.request.endLocal,
     varActive: isVarActive(found.request),
     varState: found.request.varState,
     live: summary.live,
     newestAgeSec: summary.newestAgeSec,
   });
+});
+
+router.get("/owner/requests/:id/var-marks", async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  if (!id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const found = await requireRequestAccess(req, res, id);
+  if (!found) return;
+  const marks = await db.select().from(varMarksTable)
+    .where(eq(varMarksTable.footageRequestId, id))
+    .orderBy(asc(varMarksTable.atUtc), asc(varMarksTable.id));
+  res.json(marks.map((mark) => markToResponse(mark, found.request)));
+});
+
+router.post("/owner/requests/:id/var-marks", async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  if (!id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const found = await requireRequestAccess(req, res, id);
+  if (!found) return;
+
+  const parsed = varMarkBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid VAR mark" });
+    return;
+  }
+
+  const startInstant = ammanLocalInstant(found.request.startLocal);
+  const endInstant = ammanLocalInstant(found.request.endLocal);
+  const now = Date.now();
+  if (
+    !Number.isFinite(startInstant)
+    || !Number.isFinite(endInstant)
+    || now < startInstant - 3 * 60 * 1000
+    || now > endInstant + 30 * 60 * 1000
+  ) {
+    res.status(409).json({ error: "VAR marking is closed for this request" });
+    return;
+  }
+
+  const atUtcMs = parsed.data.atUtc.getTime();
+  if (
+    !Number.isFinite(atUtcMs)
+    || atUtcMs < startInstant - 3 * 60 * 1000
+    || atUtcMs > endInstant + 5 * 60 * 1000
+  ) {
+    res.status(400).json({ error: "The marked time is outside the request window" });
+    return;
+  }
+
+  const [mark] = await db.insert(varMarksTable).values({
+    footageRequestId: id,
+    atUtc: parsed.data.atUtc,
+    kind: parsed.data.kind,
+    note: parsed.data.note || null,
+    createdBy: found.user.id,
+  }).returning();
+  res.status(201).json(markToResponse(mark, found.request));
+});
+
+router.delete("/owner/var-marks/:markId", async (req, res): Promise<void> => {
+  const markId = parseId(req.params.markId);
+  if (!markId) {
+    res.status(404).json({ error: "Mark not found" });
+    return;
+  }
+  const user = await getLocalUserRecord(req);
+  if (!user) {
+    unauthenticatedResponse(res, req);
+    return;
+  }
+  const [mark] = await db.select().from(varMarksTable).where(eq(varMarksTable.id, markId));
+  if (!mark) {
+    res.status(404).json({ error: "Mark not found" });
+    return;
+  }
+  if (!user.isAdmin && mark.createdBy !== user.id) {
+    res.status(403).json({ error: "You cannot delete this mark" });
+    return;
+  }
+  await db.delete(varMarksTable).where(eq(varMarksTable.id, markId));
+  res.status(204).send();
 });
 
 router.get("/admin/var/:camera/:variant/playlist.m3u8", async (req, res): Promise<void> => {

@@ -87,6 +87,8 @@ import type {
   UpdateUserClipInput,
   User,
   UserClip,
+  VarMark,
+  VarMarkInput,
   ViewInput
 } from './api.schemas';
 
@@ -996,6 +998,224 @@ export const useCancelOwnerRequest = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getCancelOwnerRequestMutationOptions(options));
+    }
+
+export const getListOwnerVarMarksUrl = (id: number,) => {
+
+
+
+
+  return `/api/owner/requests/${id}/var-marks`
+}
+
+/**
+ * @summary List VAR marks for an owned footage request
+ */
+export const listOwnerVarMarks = async (id: number, options?: RequestInit): Promise<VarMark[]> => {
+
+  return customFetch<VarMark[]>(getListOwnerVarMarksUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListOwnerVarMarksQueryKey = (id: number,) => {
+    return [
+    `/api/owner/requests/${id}/var-marks`
+    ] as const;
+    }
+
+
+export const getListOwnerVarMarksQueryOptions = <TData = Awaited<ReturnType<typeof listOwnerVarMarks>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listOwnerVarMarks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListOwnerVarMarksQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listOwnerVarMarks>>> = ({ signal }) => listOwnerVarMarks(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listOwnerVarMarks>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListOwnerVarMarksQueryResult = NonNullable<Awaited<ReturnType<typeof listOwnerVarMarks>>>
+export type ListOwnerVarMarksQueryError = ErrorType<void>
+
+
+/**
+ * @summary List VAR marks for an owned footage request
+ */
+
+export function useListOwnerVarMarks<TData = Awaited<ReturnType<typeof listOwnerVarMarks>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listOwnerVarMarks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListOwnerVarMarksQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateOwnerVarMarkUrl = (id: number,) => {
+
+
+
+
+  return `/api/owner/requests/${id}/var-marks`
+}
+
+/**
+ * @summary Mark a moment in an owned VAR request
+ */
+export const createOwnerVarMark = async (id: number,
+    varMarkInput: VarMarkInput, options?: RequestInit): Promise<VarMark> => {
+
+  return customFetch<VarMark>(getCreateOwnerVarMarkUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(varMarkInput)
+  }
+);}
+
+
+
+
+export const getCreateOwnerVarMarkMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOwnerVarMark>>, TError,{id: number;data: BodyType<VarMarkInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createOwnerVarMark>>, TError,{id: number;data: BodyType<VarMarkInput>}, TContext> => {
+
+const mutationKey = ['createOwnerVarMark'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createOwnerVarMark>>, {id: number;data: BodyType<VarMarkInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  createOwnerVarMark(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateOwnerVarMarkMutationResult = NonNullable<Awaited<ReturnType<typeof createOwnerVarMark>>>
+    export type CreateOwnerVarMarkMutationBody = BodyType<VarMarkInput>
+    export type CreateOwnerVarMarkMutationError = ErrorType<void>
+
+    /**
+ * @summary Mark a moment in an owned VAR request
+ */
+export const useCreateOwnerVarMark = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOwnerVarMark>>, TError,{id: number;data: BodyType<VarMarkInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createOwnerVarMark>>,
+        TError,
+        {id: number;data: BodyType<VarMarkInput>},
+        TContext
+      > => {
+      return useMutation(getCreateOwnerVarMarkMutationOptions(options));
+    }
+
+export const getDeleteOwnerVarMarkUrl = (markId: number,) => {
+
+
+
+
+  return `/api/owner/var-marks/${markId}`
+}
+
+/**
+ * @summary Delete a VAR mark created by the current user
+ */
+export const deleteOwnerVarMark = async (markId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteOwnerVarMarkUrl(markId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteOwnerVarMarkMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteOwnerVarMark>>, TError,{markId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteOwnerVarMark>>, TError,{markId: number}, TContext> => {
+
+const mutationKey = ['deleteOwnerVarMark'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteOwnerVarMark>>, {markId: number}> = (props) => {
+          const {markId} = props ?? {};
+
+          return  deleteOwnerVarMark(markId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteOwnerVarMarkMutationResult = NonNullable<Awaited<ReturnType<typeof deleteOwnerVarMark>>>
+
+    export type DeleteOwnerVarMarkMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a VAR mark created by the current user
+ */
+export const useDeleteOwnerVarMark = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteOwnerVarMark>>, TError,{markId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteOwnerVarMark>>,
+        TError,
+        {markId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteOwnerVarMarkMutationOptions(options));
     }
 
 export const getGetOwnerFieldLedgerUrl = (fieldId: number,) => {

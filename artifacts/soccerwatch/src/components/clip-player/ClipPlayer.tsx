@@ -56,6 +56,7 @@ export type ClipPlayerProps = {
   canSave: boolean;
   onRequireAuth: (draft: ClipDraft) => void;
   onSave: (draft: ClipDraft) => Promise<void>;
+  seekToSeconds?: number | null;
 };
 
 type ClipMode = "idle" | "recording" | "review";
@@ -232,6 +233,7 @@ export function ClipPlayer({
   canSave,
   onRequireAuth,
   onSave,
+  seekToSeconds,
 }: ClipPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -252,6 +254,7 @@ export function ClipPlayer({
     interval: null,
     keyframes: [],
   });
+  const lastExternalSeekRef = useRef<number | null>(null);
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -277,6 +280,16 @@ export function ClipPlayer({
   const sourceKey = source.kind === "bunny" ? source.videoId : source.token;
   const outAspect = OUT_ASPECT[selectedRatio];
   const frame = makeFrame(frameOrigin.x, frameOrigin.y, frameZoom, srcAspect, outAspect);
+
+  useEffect(() => {
+    if (seekToSeconds == null) {
+      lastExternalSeekRef.current = null;
+      return;
+    }
+    if (lastExternalSeekRef.current === seekToSeconds || !videoRef.current) return;
+    lastExternalSeekRef.current = seekToSeconds;
+    videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.duration || Infinity, seekToSeconds));
+  }, [seekToSeconds]);
 
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);

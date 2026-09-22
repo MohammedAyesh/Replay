@@ -7,6 +7,7 @@ import {
   fieldsTable,
   footagePaymentsTable,
   footageRequestsTable,
+  varMarksTable,
   usersTable,
 } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
@@ -455,6 +456,73 @@ describe("owner request status sync", () => {
     await request(app)
       .get(`/api/owner/requests/${inserted.id}/var/hls/seg/bad!.m4s`)
       .expect(400);
+  });
+
+  it("creates VAR marks with request-relative offsets and restricts deletion", async () => {
+    const window = activeLocalWindow();
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "owner-camera-a-var",
+      requestedBy: ownerId,
+      startLocal: window.startLocal,
+      endLocal: window.endLocal,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+
+    const atUtc = new Date(localInstantSeconds(window.startLocal) * 1000 + 90_000).toISOString();
+    const created = await request(app)
+      .post(`/api/owner/requests/${inserted.id}/var-marks`)
+      .send({ atUtc, kind: "goal", note: "Good finish" })
+      .expect(201);
+    expect(created.body).toMatchObject({
+      kind: "goal",
+      note: "Good finish",
+      offsetSeconds: 90,
+      createdBy: ownerId,
+    });
+
+    const listed = await request(app)
+      .get(`/api/owner/fields/${fieldAId}/requests`)
+      .expect(200);
+    expect(listed.body.find((row: { id: number }) => row.id === inserted.id).marks)
+      .toEqual([expect.objectContaining({ id: created.body.id, offsetSeconds: 90 })]);
+
+    mockedGetLocalUserRecord.mockResolvedValue({
+      id: otherUserId,
+      isGuest: false,
+      isAdmin: false,
+    } as Awaited<ReturnType<typeof getLocalUserRecord>>);
+    await request(app).delete(`/api/owner/var-marks/${created.body.id}`).expect(403);
+
+    mockedGetLocalUserRecord.mockResolvedValue({
+      id: ownerId,
+      isGuest: false,
+      isAdmin: false,
+    } as Awaited<ReturnType<typeof getLocalUserRecord>>);
+    await request(app).delete(`/api/owner/var-marks/${created.body.id}`).expect(204);
+    expect(await db.select().from(varMarksTable).where(eq(varMarksTable.id, created.body.id))).toHaveLength(0);
+  });
+
+  it("closes VAR mark creation after the grace period", async () => {
+    const [inserted] = await db.insert(footageRequestsTable).values({
+      fieldId: fieldAId,
+      cameraId: "owner-camera-a-var",
+      requestedBy: ownerId,
+      startLocal: oldStart,
+      endLocal: oldEnd,
+      requestedSeconds: 900,
+      status: "recording",
+      varState: "on",
+    }).returning({ id: footageRequestsTable.id });
+    requestIds.push(inserted.id);
+
+    await request(app)
+      .post(`/api/owner/requests/${inserted.id}/var-marks`)
+      .send({ atUtc: new Date(`${oldStart.replace(" ", "T")}:00.000Z`).toISOString(), kind: "other" })
+      .expect(409);
   });
 
   it("cancels a scheduled request only after the remote delete succeeds", async () => {

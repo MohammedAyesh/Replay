@@ -30,6 +30,8 @@ export interface VarPlayerProps {
   src: string;
   title: string;
   onMark?: (atUtcMs: number) => void;
+  onCurrentTimeChange?: (atUtcMs: number | null) => void;
+  seekToUtcMs?: number | null;
   marks?: VarMark[];
   minStartUtcMs?: number;
 }
@@ -85,7 +87,15 @@ function buttonLabel(label: string, arabic: string): string {
   return `${label} / ${arabic}`;
 }
 
-export function VarPlayer({ src, title, onMark, marks = [], minStartUtcMs }: VarPlayerProps) {
+export function VarPlayer({
+  src,
+  title,
+  onMark,
+  onCurrentTimeChange,
+  seekToUtcMs,
+  marks = [],
+  minStartUtcMs,
+}: VarPlayerProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [variant, setVariant] = useState<"hls" | "hevc">("hls");
@@ -98,6 +108,7 @@ export function VarPlayer({ src, title, onMark, marks = [], minStartUtcMs }: Var
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [scrub, setScrub] = useState<number | null>(null);
   const [lastAdvancedAt, setLastAdvancedAt] = useState<number | null>(null);
+  const lastSeekTargetRef = useRef<number | null>(null);
   const lastLiveEdgeRef = useRef<number | null>(null);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
@@ -150,6 +161,11 @@ export function VarPlayer({ src, title, onMark, marks = [], minStartUtcMs }: Var
   const currentProgramTime = timeline?.programTime != null && timeline
     ? timeline.programTime + (currentPosition - timeline.position) * 1_000
     : null;
+
+  useEffect(() => {
+    onCurrentTimeChange?.(currentProgramTime);
+  }, [currentProgramTime, onCurrentTimeChange]);
+
   const behindSeconds = currentProgramTime != null
     ? Math.max(0, (nowMs - currentProgramTime) / 1_000)
     : timeline
@@ -184,6 +200,16 @@ export function VarPlayer({ src, title, onMark, marks = [], minStartUtcMs }: Var
     if (pause) video.pause();
     video.currentTime = clamp(next, lower, upper);
   }, [scrubStart, timeline]);
+
+  useEffect(() => {
+    if (seekToUtcMs == null) {
+      lastSeekTargetRef.current = null;
+      return;
+    }
+    if (lastSeekTargetRef.current === seekToUtcMs || currentProgramTime == null) return;
+    lastSeekTargetRef.current = seekToUtcMs;
+    seekTo(currentPosition + (seekToUtcMs - currentProgramTime) / 1_000, true);
+  }, [currentPosition, currentProgramTime, seekTo, seekToUtcMs]);
 
   const seekBy = useCallback((seconds: number, pause = false) => {
     const video = videoRef.current;

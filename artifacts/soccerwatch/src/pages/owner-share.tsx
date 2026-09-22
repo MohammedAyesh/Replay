@@ -24,6 +24,11 @@ export type OwnerShareMeta = {
   startLocal: string;
   endLocal: string;
   expiresAt: string;
+  keyMoments: Array<{
+    kind: string;
+    note: string | null;
+    offsetSeconds: number;
+  }>;
 };
 
 declare global {
@@ -110,6 +115,7 @@ export default function OwnerShare() {
   const [unavailable, setUnavailable] = useState(false);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [isRestoringDraft, setIsRestoringDraft] = useState(false);
+  const [selectedMomentSeconds, setSelectedMomentSeconds] = useState<number | null>(null);
   const restoringRef = useRef(false);
   const isArabic = locale === "ar";
   const copy = isArabic
@@ -126,6 +132,8 @@ export default function OwnerShare() {
         signIn: "تسجيل الدخول",
         unavailable: "هذا الرابط لم يعد متاحاً.",
         loading: "جاري تحميل المقطع…",
+        keyMoments: "اللحظات المهمة",
+        noKeyMoments: "لم يتم تحديد لحظات مهمة بعد.",
       }
     : {
         availableUntil: "Available until",
@@ -140,6 +148,8 @@ export default function OwnerShare() {
         signIn: "Sign in",
         unavailable: "This link is no longer available.",
         loading: "Loading clip…",
+        keyMoments: "Key moments",
+        noKeyMoments: "No key moments marked yet.",
       };
 
   useEffect(() => {
@@ -292,8 +302,31 @@ export default function OwnerShare() {
           onSave={async (draft) => {
             await saveOwnerClip(draft);
           }}
+          seekToSeconds={selectedMomentSeconds}
         />
       </div>
+
+      <section className="mx-3 mb-5 rounded-2xl border border-white/[0.08] bg-[#141B2C] p-4 sm:mx-5">
+        <h2 className="text-sm font-bold">{copy.keyMoments}</h2>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(meta.keyMoments ?? []).length === 0 ? (
+            <p className="text-xs text-muted-foreground">{copy.noKeyMoments}</p>
+          ) : (
+            (meta.keyMoments ?? []).map((moment, index) => (
+              <button
+                key={`${moment.offsetSeconds}-${index}`}
+                type="button"
+                onClick={() => setSelectedMomentSeconds(moment.offsetSeconds)}
+                className="rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-start text-xs text-primary"
+              >
+                <span className="block font-bold capitalize">{moment.kind}</span>
+                <span className="font-mono text-[11px]">{formatShareOffset(moment.offsetSeconds)}</span>
+                {moment.note && <span className="mt-0.5 block max-w-40 truncate text-[10px] text-foreground/70">{moment.note}</span>}
+              </button>
+            ))
+          )}
+        </div>
+      </section>
 
       <div className="mx-3 mb-6 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-[#141B2C] p-4 sm:mx-5">
         <p className="text-sm font-semibold">{copy.wantClips}</p>
@@ -334,4 +367,12 @@ export default function OwnerShare() {
       </Dialog>
     </main>
   );
+}
+
+function formatShareOffset(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const remainder = safe % 60;
+  return `${hours ? `${hours}:` : ""}${minutes.toString().padStart(2, "0")}:${remainder.toString().padStart(2, "0")}`;
 }

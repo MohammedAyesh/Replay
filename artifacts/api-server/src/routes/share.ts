@@ -4,8 +4,8 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { and, eq, gt, inArray } from "drizzle-orm";
-import { db, fieldsTable, footageRequestsTable, userClipsTable, usersTable } from "@workspace/db";
+import { and, asc, eq, gt, inArray } from "drizzle-orm";
+import { db, fieldsTable, footageRequestsTable, userClipsTable, usersTable, varMarksTable } from "@workspace/db";
 import {
   BUNNY_STORAGE_API_KEY,
   BUNNY_STORAGE_HOSTNAME,
@@ -68,6 +68,11 @@ export type OwnerShareMeta = {
   startLocal: string;
   endLocal: string;
   expiresAt: string;
+  keyMoments: Array<{
+    kind: string;
+    note: string | null;
+    offsetSeconds: number;
+  }>;
 };
 
 export async function resolveOwnerShare(token: string): Promise<(OwnerShareRow & { fieldName: string }) | null> {
@@ -207,13 +212,35 @@ function ownerWindowLabel(
     : `${startDate} · ${startTime}–${endDate} · ${endTime}`;
 }
 
-function ownerShareMeta(share: OwnerShareRow & { fieldName: string }): OwnerShareMeta {
+function ammanLocalInstant(value: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(value);
+  if (!match) return Number.NaN;
+  const [, year, month, day, hour, minute] = match;
+  return Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)) - 3 * 60 * 60 * 1000;
+}
+
+async function ownerShareMeta(share: OwnerShareRow & { fieldName: string }): Promise<OwnerShareMeta> {
+  const marks = await db.select({
+    kind: varMarksTable.kind,
+    note: varMarksTable.note,
+    atUtc: varMarksTable.atUtc,
+  }).from(varMarksTable)
+    .where(eq(varMarksTable.footageRequestId, share.id))
+    .orderBy(asc(varMarksTable.atUtc), asc(varMarksTable.id));
+  const startInstant = ammanLocalInstant(share.startLocal);
   return {
     token: share.shareToken!,
     fieldName: share.fieldName,
     startLocal: share.startLocal,
     endLocal: share.endLocal,
     expiresAt: share.shareExpiresAt!.toISOString(),
+    keyMoments: marks
+      .filter((mark) => Number.isFinite(startInstant))
+      .map((mark) => ({
+        kind: mark.kind,
+        note: mark.note,
+        offsetSeconds: (mark.atUtc.getTime() - startInstant) / 1000,
+      })),
   };
 }
 
@@ -342,12 +369,12 @@ async function getSpaIndexHtml(): Promise<string | null> {
   return null;
 }
 
-function injectOwnerShareTags(
+async function injectOwnerShareTags(
   indexHtml: string,
   req: Request,
   share: OwnerShareRow & { fieldName: string },
-): string | null {
-  const meta = ownerShareMeta(share);
+): Promise<string | null> {
+  const meta = await ownerShareMeta(share);
   const base = publicBaseUrl(req);
   const pageUrl = `${base}/w/${meta.token}`;
   const posterUrl = `${pageUrl}/poster.jpg`;
@@ -517,7 +544,7 @@ router.get(["/w/:token", "/api/w/:token"], async (req, res): Promise<void> => {
   res.setHeader("Cache-Control", "no-store");
   res.removeHeader("Vary");
   const indexHtml = await getSpaIndexHtml();
-  const spaHtml = indexHtml ? injectOwnerShareTags(indexHtml, req, share) : null;
+  const spaHtml = indexHtml ? await injectOwnerShareTags(indexHtml, req, share) : null;
   res.type("text/html").send(spaHtml ?? ownerShareHtml(req, share));
 });
 
@@ -532,7 +559,7 @@ router.get(["/w/:token/meta", "/api/w/:token/meta"], async (req, res): Promise<v
   }
   res.setHeader("Cache-Control", "no-store");
   res.removeHeader("Vary");
-  res.json(ownerShareMeta(share));
+  res.json(await ownerShareMeta(share));
 });
 
 const ownerPosterCache = new Map<string, string>();

@@ -127,4 +127,8 @@ export * from './updateUserClipInputVisibility';
 export * from './user';
 export * from './userClip';
 export * from './userClipVisibility';
+export * from './varMark';
+export * from './varMarkInput';
+export * from './varMarkInputKind';
+export * from './varMarkKind';
 export * from './viewInput';

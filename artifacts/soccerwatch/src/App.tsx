@@ -31,6 +31,7 @@ import ClaimDemo from "@/pages/claim-demo";
 import ClaimChain from "@/pages/claim-chain";
 import IdentityBoard from "@/pages/identity-board";
 import Owner from "@/pages/owner";
+import OwnerVar from "@/pages/owner-var";
 import OwnerShare from "@/pages/owner-share";
 import { useAuth } from "@/lib/auth";
 import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from "@/lib/auth-redirect";
@@ -465,6 +466,7 @@ function AppRouter() {
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
         <Route path="/owner" component={Owner} />
+        <Route path="/owner/var/:requestId" component={OwnerVar} />
         <Route path="/w/:token" component={OwnerShare} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />

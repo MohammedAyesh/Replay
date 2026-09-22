@@ -307,6 +307,89 @@ paths:
         "502":
           description: Camera pull cancellation failed
 
+  /owner/requests/{id}/var-marks:
+    get:
+      operationId: listOwnerVarMarks
+      tags: [owner]
+      summary: List VAR marks for an owned footage request
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: VAR marks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VarMark"
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Request not found
+    post:
+      operationId: createOwnerVarMark
+      tags: [owner]
+      summary: Mark a moment in an owned VAR request
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VarMarkInput"
+      responses:
+        "201":
+          description: VAR mark created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VarMark"
+        "400":
+          description: Invalid mark or marked time
+        "403":
+          description: Owner or admin access required
+        "404":
+          description: Request not found
+        "409":
+          description: VAR marking window is closed
+
+  /owner/var-marks/{markId}:
+    delete:
+      operationId: deleteOwnerVarMark
+      tags: [owner]
+      summary: Delete a VAR mark created by the current user
+      security:
+        - clerkSession: []
+      parameters:
+        - name: markId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: VAR mark deleted
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Only the creator or an admin can delete this mark
+        "404":
+          description: Mark not found
+
   /owner/fields/{fieldId}/ledger:
     get:
       operationId: getOwnerFieldLedger
@@ -2001,7 +2084,7 @@ components:
 
     OwnerRequest:
       type: object
-      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, varOpensAt, varClosesAt, varState, varActive]
+      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, varOpensAt, varClosesAt, varState, varActive, marks]
       properties:
         id:
           type: integer
@@ -2043,6 +2126,43 @@ components:
           type: ["string", "null"]
         varActive:
           type: boolean
+        marks:
+          type: array
+          items:
+            $ref: "#/components/schemas/VarMark"
+
+    VarMarkInput:
+      type: object
+      required: [atUtc, kind]
+      properties:
+        atUtc:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum: [goal, foul, offside, other]
+        note:
+          type: ["string", "null"]
+          maxLength: 500
+
+    VarMark:
+      type: object
+      required: [id, atUtc, kind, note, createdBy, offsetSeconds]
+      properties:
+        id:
+          type: integer
+        atUtc:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum: [goal, foul, offside, other]
+        note:
+          type: ["string", "null"]
+        createdBy:
+          type: integer
+        offsetSeconds:
+          type: number
 
     OwnerLinkResult:
       type: object

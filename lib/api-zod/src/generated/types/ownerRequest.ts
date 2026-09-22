@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { VarMark } from './varMark';
 
 export interface OwnerRequest {
   id: number;
@@ -32,4 +33,5 @@ export interface OwnerRequest {
   /** @nullable */
   varState: string | null;
   varActive: boolean;
+  marks: VarMark[];
 }
