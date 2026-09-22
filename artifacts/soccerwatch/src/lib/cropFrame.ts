@@ -19,6 +19,7 @@
 export type AspectRatio = "16:9" | "9:16";
 
 export type CropKeyframe = { t: number; x: number; y: number; w: number; h: number };
+export type Frame = { x: number; y: number; w: number; h: number };
 
 /** Fallback source aspect (Reolink Duo 3 stitched panorama) until metadata loads. */
 export const DEFAULT_SRC_ASPECT = 3840 / 1080;
@@ -63,7 +64,7 @@ export function makeFrame(
   zoom: number,
   srcAspect: number,
   outAspect: number
-): { x: number; y: number; w: number; h: number } {
+): Frame {
   const w = baseWidth(srcAspect, outAspect) * Math.max(0.05, zoom);
   const h = frameHeight(w, srcAspect, outAspect);
   return { x: clampOrigin(x, w), y: clampOrigin(y, h), w, h };

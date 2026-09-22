@@ -117,7 +117,7 @@ export type BufferedRange = { start: number; end: number };
 export function findBufferedHoleStart(
   currentTime: number,
   ranges: BufferedRange[],
-  maxAheadSeconds = 60,
+  maxAheadSeconds = 5,
 ): number | null {
   if (!Number.isFinite(currentTime)) return null;
   for (const range of ranges) {
@@ -440,8 +440,15 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
       const el = videoRef.current;
       if (!el) return;
       let lastHoleStart: number | null = null;
+      let lastSeekingAt = Number.NEGATIVE_INFINITY;
 
       const recoverBufferedHole = () => {
+        if (
+          el.seeking
+          || Date.now() - lastSeekingAt < 5_000
+          || el.paused
+          || el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+        ) return;
         if (!Number.isFinite(el.currentTime) || !el.buffered.length) return;
         const ranges: BufferedRange[] = [];
         for (let index = 0; index < el.buffered.length; index += 1) {
@@ -458,14 +465,21 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         if (!el.paused) el.play().catch(() => {});
       };
 
+      const onSeeking = () => {
+        lastSeekingAt = Date.now();
+        lastHoleStart = null;
+      };
+
       recoverBufferedHole();
       const timer = window.setInterval(recoverBufferedHole, 500);
+      el.addEventListener("seeking", onSeeking);
       el.addEventListener("timeupdate", recoverBufferedHole);
       el.addEventListener("progress", recoverBufferedHole);
       el.addEventListener("waiting", recoverBufferedHole);
       el.addEventListener("stalled", recoverBufferedHole);
       return () => {
         window.clearInterval(timer);
+        el.removeEventListener("seeking", onSeeking);
         el.removeEventListener("timeupdate", recoverBufferedHole);
         el.removeEventListener("progress", recoverBufferedHole);
         el.removeEventListener("waiting", recoverBufferedHole);

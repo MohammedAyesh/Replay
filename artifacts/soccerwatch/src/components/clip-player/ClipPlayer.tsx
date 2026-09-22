@@ -13,19 +13,20 @@ import {
   X,
 } from "lucide-react";
 import Hls from "hls.js";
+import { FrameSizeSlider } from "@/components/panorama/FrameSizeSlider";
 import { SkipFlash } from "@/components/skip-flash";
+import { usePanoramaFrame, maxZoomFor } from "@/hooks/use-panorama-frame";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import {
   DEFAULT_SRC_ASPECT,
-  OUT_ASPECT,
   formatElapsed,
   frameToVideoStyle,
-  makeFrame,
   type AspectRatio,
   type CropKeyframe,
+  type Frame,
 } from "@/lib/cropFrame";
 import { capPlaybackQuality } from "@/lib/hlsQuality";
 import { cn } from "@/lib/utils";
@@ -60,15 +61,6 @@ export type ClipPlayerProps = {
 };
 
 type ClipMode = "idle" | "recording" | "review";
-type Frame = { x: number; y: number; w: number; h: number };
-
-const MIN_FRAME_ZOOM = 0.4;
-const MAX_FRAME_ZOOM = 4;
-
-function maxZoomFor(ratio: AspectRatio): number {
-  return ratio === "9:16" ? MAX_FRAME_ZOOM : 1;
-}
-
 function formatDuration(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return "0:00";
   const m = Math.floor(seconds / 60);
@@ -83,51 +75,6 @@ function FullscreenBridge() {
     return () => setFullscreenVideo(false);
   }, [setFullscreenVideo]);
   return null;
-}
-
-function FrameSizeSlider({
-  zoom,
-  onChange,
-  frame,
-  maxZoom,
-  compact,
-}: {
-  zoom: number;
-  onChange: (zoom: number) => void;
-  frame: Frame;
-  maxZoom: number;
-  compact?: boolean;
-}) {
-  const coveredW = Math.max(0, Math.min(1, (Math.min(1, frame.x + frame.w) - Math.max(0, frame.x)) / frame.w));
-  const coveredH = Math.max(0, Math.min(1, (Math.min(1, frame.y + frame.h) - Math.max(0, frame.y)) / frame.h));
-  const blackPct = Math.round((1 - coveredW * coveredH) * 100);
-  return (
-    <div
-      className={cn(
-        "pointer-events-auto rounded-2xl bg-black/60 backdrop-blur-sm px-3 py-2",
-        compact ? "w-56" : "w-full max-w-sm",
-      )}
-      onClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] uppercase tracking-wide text-white/60 font-semibold">Frame size</span>
-        <span className="text-[10px] text-white/70 tabular-nums">
-          {zoom.toFixed(2)}x{blackPct > 0 ? ` · ${blackPct}% black` : ""}
-        </span>
-      </div>
-      <input
-        type="range"
-        min={MIN_FRAME_ZOOM}
-        max={maxZoom}
-        step={0.02}
-        value={zoom}
-        onChange={(event) => onChange(parseFloat(event.target.value))}
-        className="w-full accent-primary"
-        aria-label="Frame size"
-      />
-    </div>
-  );
 }
 
 function MiniMap({ frame, srcAspect }: { frame: Frame; srcAspect: number }) {
@@ -238,18 +185,29 @@ export function ClipPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const frameBoxRef = useRef<HTMLDivElement>(null);
+  const {
+    frameBoxRef,
+    frameZoomRef,
+    selectedRatioRef,
+    srcAspectRef,
+    frameOriginRef,
+    draggedRef,
+    frame,
+    frameZoom,
+    selectedRatio,
+    srcAspect,
+    readFrame,
+    applyFrameChange,
+    setSourceAspect,
+    handleFramePointerDown,
+    handleFramePointerMove,
+    handleFramePointerUp,
+  } = usePanoramaFrame();
   const seekDraggingRef = useRef(false);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clipModeRef = useRef<ClipMode>("idle");
   const stopRecordingRef = useRef<(overrideEndTime?: number) => void>(() => {});
   const clipStartRef = useRef(0);
-  const frameZoomRef = useRef(1);
-  const selectedRatioRef = useRef<AspectRatio>("16:9");
-  const srcAspectRef = useRef(DEFAULT_SRC_ASPECT);
-  const frameOriginRef = useRef({ x: 0.25, y: 0 });
-  const draggedRef = useRef(false);
-  const dragRef = useRef({ active: false, startX: 0, startY: 0, originX: 0, originY: 0 });
   const recordingRef = useRef<{ interval: ReturnType<typeof setInterval> | null; keyframes: CropKeyframe[] }>({
     interval: null,
     keyframes: [],
@@ -272,14 +230,8 @@ export function ClipPlayer({
   const [clipTitle, setClipTitle] = useState("");
   const [isSavingClip, setIsSavingClip] = useState(false);
   const [recElapsed, setRecElapsed] = useState(0);
-  const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("16:9");
-  const [srcAspect, setSrcAspect] = useState(DEFAULT_SRC_ASPECT);
-  const [frameZoom, setFrameZoom] = useState(1);
-  const [frameOrigin, setFrameOrigin] = useState({ x: 0.25, y: 0 });
 
   const sourceKey = source.kind === "bunny" ? source.videoId : source.token;
-  const outAspect = OUT_ASPECT[selectedRatio];
-  const frame = makeFrame(frameOrigin.x, frameOrigin.y, frameZoom, srcAspect, outAspect);
 
   useEffect(() => {
     if (seekToSeconds == null) {
@@ -295,41 +247,6 @@ export function ClipPlayer({
     setShowControls(true);
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     controlsTimerRef.current = setTimeout(() => setShowControls(false), 4000);
-  }, []);
-
-  const readFrame = useCallback(() => makeFrame(
-    frameOriginRef.current.x,
-    frameOriginRef.current.y,
-    frameZoomRef.current,
-    srcAspectRef.current,
-    OUT_ASPECT[selectedRatioRef.current],
-  ), []);
-
-  const setOrigin = useCallback((x: number, y: number) => {
-    const next = makeFrame(x, y, frameZoomRef.current, srcAspectRef.current, OUT_ASPECT[selectedRatioRef.current]);
-    frameOriginRef.current = { x: next.x, y: next.y };
-    setFrameOrigin({ x: next.x, y: next.y });
-  }, []);
-
-  const applyFrameChange = useCallback((requestedZoom: number, nextRatio: AspectRatio) => {
-    const nextZoom = Math.max(MIN_FRAME_ZOOM, Math.min(maxZoomFor(nextRatio), requestedZoom));
-    const previous = makeFrame(
-      frameOriginRef.current.x,
-      frameOriginRef.current.y,
-      frameZoomRef.current,
-      srcAspectRef.current,
-      OUT_ASPECT[selectedRatioRef.current],
-    );
-    const cx = previous.x + previous.w / 2;
-    const cy = previous.y + previous.h / 2;
-    const sized = makeFrame(0, 0, nextZoom, srcAspectRef.current, OUT_ASPECT[nextRatio]);
-    const next = makeFrame(cx - sized.w / 2, cy - sized.h / 2, nextZoom, srcAspectRef.current, OUT_ASPECT[nextRatio]);
-    frameZoomRef.current = nextZoom;
-    selectedRatioRef.current = nextRatio;
-    frameOriginRef.current = { x: next.x, y: next.y };
-    setFrameZoom(nextZoom);
-    setSelectedRatio(nextRatio);
-    setFrameOrigin({ x: next.x, y: next.y });
   }, []);
 
   const computeCropRect = useCallback(() => readFrame(), [readFrame]);
@@ -471,13 +388,7 @@ export function ClipPlayer({
     setDuration(element.duration || 0);
     if (!element.videoWidth || !element.videoHeight) return;
     const aspect = element.videoWidth / element.videoHeight;
-    if (!(aspect > 0) || Math.abs(aspect - srcAspectRef.current) < 1e-6) return;
-    srcAspectRef.current = aspect;
-    setSrcAspect(aspect);
-    const sized = makeFrame(0, 0, frameZoomRef.current, aspect, OUT_ASPECT[selectedRatioRef.current]);
-    const centered = makeFrame((1 - sized.w) / 2, (1 - sized.h) / 2, frameZoomRef.current, aspect, OUT_ASPECT[selectedRatioRef.current]);
-    frameOriginRef.current = { x: centered.x, y: centered.y };
-    setFrameOrigin({ x: centered.x, y: centered.y });
+    setSourceAspect(aspect);
   };
 
   const togglePlay = () => {
@@ -584,40 +495,6 @@ export function ClipPlayer({
     } finally {
       setIsSavingClip(false);
     }
-  };
-
-  const handleFramePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    draggedRef.current = false;
-    dragRef.current = {
-      active: true,
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: frameOriginRef.current.x,
-      originY: frameOriginRef.current.y,
-    };
-  };
-
-  const handleFramePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current.active || !frameBoxRef.current) return;
-    const box = frameBoxRef.current;
-    if (!(box.clientWidth > 0) || !(box.clientHeight > 0)) return;
-    const rawX = event.clientX - dragRef.current.startX;
-    const rawY = event.clientY - dragRef.current.startY;
-    if (!draggedRef.current && Math.hypot(rawX, rawY) > 8) draggedRef.current = true;
-    const current = readFrame();
-    setOrigin(
-      dragRef.current.originX - (rawX / box.clientWidth) * current.w,
-      dragRef.current.originY - (rawY / box.clientHeight) * current.h,
-    );
-  };
-
-  const handleFramePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current.active) {
-      try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* already released */ }
-    }
-    dragRef.current.active = false;
   };
 
   const shellClass = layout === "overlay"

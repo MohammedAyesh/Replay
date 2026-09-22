@@ -39,8 +39,9 @@ describe("VarPlayer helpers", () => {
     expect(programTimeAtPlaylistEnd(fragments)).toBe(1_025_000);
   });
 
-  it("finds a nearby buffered range after a playback hole", () => {
-    expect(findBufferedHoleStart(10, [{ start: 0, end: 5 }, { start: 20, end: 30 }])).toBe(20);
+  it("only finds a buffered range within the short recovery threshold", () => {
+    expect(findBufferedHoleStart(10, [{ start: 0, end: 5 }, { start: 14, end: 30 }])).toBe(14);
+    expect(findBufferedHoleStart(10, [{ start: 0, end: 5 }, { start: 20, end: 30 }])).toBeNull();
     expect(findBufferedHoleStart(10, [{ start: 0, end: 5 }, { start: 71, end: 80 }])).toBeNull();
     expect(findBufferedHoleStart(10, [{ start: 0, end: 20 }, { start: 25, end: 30 }])).toBeNull();
   });

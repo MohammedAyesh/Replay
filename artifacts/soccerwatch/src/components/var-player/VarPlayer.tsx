@@ -14,11 +14,11 @@ import {
   Pause,
   Play,
   RotateCcw,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import { HlsPlayer, type HlsPlayerProps } from "@/components/HlsPlayer";
-import { usePanoramaFullscreen, usePinchZoom } from "@/hooks/use-pinch-zoom";
+import { FrameSizeSlider } from "@/components/panorama/FrameSizeSlider";
+import { usePanoramaFrame, maxZoomFor } from "@/hooks/use-panorama-frame";
+import { usePanoramaFullscreen } from "@/hooks/use-pinch-zoom";
 import { frameToVideoStyle } from "@/lib/cropFrame";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import { cn } from "@/lib/utils";
@@ -104,9 +104,19 @@ export function VarPlayer({
   const { t } = useTranslation();
   const copy = t.varPlayer;
   const panelRef = useRef<HTMLDivElement>(null);
-  const zoomRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { zoom, setZoom } = usePinchZoom(zoomRef);
+  const {
+    frameBoxRef,
+    frame,
+    frameZoom,
+    selectedRatio,
+    draggedRef,
+    applyFrameChange,
+    setSourceAspect,
+    handleFramePointerDown,
+    handleFramePointerMove,
+    handleFramePointerUp,
+  } = usePanoramaFrame();
   const { isFullscreen, isCssFullscreen, toggleFullscreen } = usePanoramaFullscreen(panelRef);
   const { setFullscreenVideo } = useFullscreenVideo();
   const [variant, setVariant] = useState<"hls" | "hevc">("hls");
@@ -239,11 +249,6 @@ export function VarPlayer({
   const isReplay = Boolean(hasFrames && behindSeconds > 10);
   const showStarting = !hasFrames;
   const liveRange = timeline ? Math.max(0.001, timeline.liveEdge - scrubStart) : 1;
-  const panoramaFrameStyle = useMemo(
-    () => frameToVideoStyle({ x: 0.25, y: 0, w: 0.5, h: 1 }),
-    [],
-  );
-
   const seekTo = useCallback((next: number, pause = false) => {
     const video = videoRef.current;
     if (!video) return;
@@ -328,6 +333,19 @@ export function VarPlayer({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    const onLoadedMetadata = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setSourceAspect(video.videoWidth / video.videoHeight);
+      }
+    };
+    video.addEventListener("loadedmetadata", onLoadedMetadata);
+    onLoadedMetadata();
+    return () => video.removeEventListener("loadedmetadata", onLoadedMetadata);
+  }, [manifestUrl, setSourceAspect]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
     const clearStall = () => {
       if (stallTimerRef.current != null) {
         window.clearTimeout(stallTimerRef.current);
@@ -406,8 +424,6 @@ export function VarPlayer({
       ref={panelRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      onPointerMove={pokeControls}
-      onTouchStart={pokeControls}
       className={cn(
         "var-player relative min-h-[min(72vh,42rem)] overflow-hidden rounded-2xl bg-black outline-none",
         isFullscreen && "var-player-fullscreen",
@@ -416,12 +432,24 @@ export function VarPlayer({
       aria-label={title}
     >
       <div
-        ref={zoomRef}
-        className={cn("var-player-zoom-layer absolute inset-0", zoom > 1.05 && "is-zoomed")}
-        onClick={pokeControls}
+        className="var-player-zoom-layer absolute inset-0"
       >
         <div className="var-player-frame-centre absolute inset-0 flex items-center justify-center bg-black">
-          <div className="var-player-frame-box relative h-auto w-full overflow-hidden bg-black">
+          <div
+            ref={frameBoxRef}
+            className="var-player-frame-box relative h-auto w-full overflow-hidden bg-black touch-none"
+            onPointerDown={handleFramePointerDown}
+            onPointerMove={handleFramePointerMove}
+            onPointerUp={handleFramePointerUp}
+            onPointerCancel={handleFramePointerUp}
+            onClick={() => {
+              if (draggedRef.current) {
+                draggedRef.current = false;
+                return;
+              }
+              pokeControls();
+            }}
+          >
             <div className="var-player-hls-shell h-full w-full">
               <HlsPlayer
                 key={manifestUrl}
@@ -433,7 +461,7 @@ export function VarPlayer({
                 showDvrControls={false}
                 showStatusOverlays={false}
                 controls={false}
-                videoStyle={panoramaFrameStyle}
+                videoStyle={frameToVideoStyle(frame)}
                 onTimelineChange={onTimelineChange}
                 useProgramDateTime
                 recoverLiveDiscontinuities
@@ -547,12 +575,16 @@ export function VarPlayer({
               </button>
             ))}
           </div>
-          <div className="var-player-control-group">
-            <span>{copy.zoom}</span>
-            <button type="button" onClick={() => { setZoom(zoom - 0.25); pokeControls(); }} className="var-player-icon" aria-label={copy.zoomOut}><ZoomOut className="h-4 w-4" /></button>
-            <span className="min-w-9 text-center tabular-nums">{zoom.toFixed(2)}×</span>
-            <button type="button" onClick={() => { setZoom(zoom + 0.25); pokeControls(); }} className="var-player-icon" aria-label={copy.zoomIn}><ZoomIn className="h-4 w-4" /></button>
-          </div>
+          <FrameSizeSlider
+            zoom={frameZoom}
+            frame={frame}
+            maxZoom={maxZoomFor(selectedRatio)}
+            compact
+            onChange={(nextZoom) => {
+              applyFrameChange(nextZoom, selectedRatio);
+              pokeControls();
+            }}
+          />
           {hevcSupported && (
             <div className="var-player-control-group">
               <span>{copy.quality}</span>
