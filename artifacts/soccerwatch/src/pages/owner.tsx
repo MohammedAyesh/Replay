@@ -1219,6 +1219,11 @@ function RequestCard({
         {isReady && !request.shareUrl && (
           <Button type="button" variant="secondary" onClick={() => onNewLink(request)} disabled={isLinkActionPending} data-testid={`button-new-link-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs"><RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />{copy.newLink}</Button>
         )}
+        {(isReady || key === "expired") && (
+          <Button type="button" variant="outline" onClick={() => onRetry({ ...request, startLocal: shiftLocalWeek(request.startLocal), endLocal: shiftLocalWeek(request.endLocal) })} data-testid={`button-rebook-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs">
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{locale === "ar" ? `احجز نفس الموعد الأسبوع الجاي · ${formatJod(1000)} ${copy.currency}/س` : `Book same slot next week · ${formatJod(1000)} ${copy.currency}/h`}
+          </Button>
+        )}
         {isFailed && <Button type="button" variant="secondary" onClick={() => onRetry(request)} data-testid={`button-retry-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{copy.retry}</Button>}
         {isCancellable && confirmingCancel !== request.id && <Button type="button" variant="ghost" onClick={() => setConfirmingCancel(request.id)} data-testid={`button-cancel-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs text-muted-foreground"><X className="h-3.5 w-3.5" aria-hidden="true" />{copy.cancel}</Button>}
         {isReady && !request.cancellationStatus && !showCancellationForm && (
@@ -1386,4 +1391,13 @@ function MatchRoomRow({ match, locale, onCopy, requestId }: {
       </a>
     </div>
   );
+}
+
+
+/** "YYYY-MM-DD HH:MM" + 7 days, calendar arithmetic only (no time zones involved). */
+function shiftLocalWeek(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/.exec(value);
+  if (!m) return value;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 7));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${m[4]}`;
 }
