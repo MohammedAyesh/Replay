@@ -64,6 +64,7 @@ import {
   type TeamSide,
 } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
+import { MATCH_STATS_PAYWALL_ENABLED } from "@/lib/feature-flags";
 
 const PENDING_KEY = "replay_pending_join";
 type Tab = "overview" | "teams" | "var" | "clips" | "vote" | "stats";
@@ -158,7 +159,7 @@ export default function MatchPage() {
     if (room.phase === "live") return ["var", "overview", "teams"];
     if (room.phase === "pre") return ["overview", "teams"];
     if (room.phase === "cancelled" || room.phase === "failed") return ["overview"];
-    return ["overview", "clips", "vote", "teams", "stats"];
+    return MATCH_STATS_PAYWALL_ENABLED ? ["overview", "clips", "vote", "teams", "stats"] : ["overview", "clips", "vote", "teams"];
   }, [room]);
   const activeTab: Tab = tab && tabs.includes(tab) ? tab : tabs[0];
 
