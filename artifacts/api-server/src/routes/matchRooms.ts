@@ -26,6 +26,7 @@ import {
   avatarUrlFor,
   isPlaying,
   loadRoomByCode,
+  loadRoomByRequestId,
   matchPhase,
   matchWindow,
   normalizeEmail,
@@ -1197,6 +1198,43 @@ router.get("/users/:id/replay-profile", async (req, res): Promise<void> => {
     motmCount: motm,
     publicClips: clipRows[0]?.n ?? 0,
     recent: recent.slice(0, 12),
+  });
+});
+
+// ---------------------------------------------------------------- story context
+
+/** What the 9:16 story renderer needs for one of the viewer's own clips. */
+router.get("/user-clips/:id/story-context", async (req, res): Promise<void> => {
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  const id = intParam(req, "id");
+  if (!id) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
+  const [clip] = await db.select().from(userClipsTable)
+    .where(and(eq(userClipsTable.id, id), eq(userClipsTable.userId, user.id)));
+  if (!clip) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
+  const ctx = clip.footageRequestId ? await loadRoomByRequestId(clip.footageRequestId) : null;
+  const me = ctx ? await playerForUser(ctx.room.id, user.id) : null;
+  const team = me?.team ?? null;
+  res.json({
+    playerName: me?.displayName || user.name,
+    shirtNumber: me?.shirtNumber ?? user.shirtNumber ?? null,
+    avatarUrl: avatarUrlFor(user.id, user.avatarPath),
+    clipTitle: clip.title,
+    match: ctx ? {
+      code: ctx.room.code,
+      title: ctx.room.title,
+      fieldName: ctx.field.name,
+      startLocal: ctx.request.startLocal,
+      startMs: matchWindow(ctx.request).startMs,
+      score: ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null,
+      teamColor: team === "A" ? ctx.room.teamAColor : team === "B" ? ctx.room.teamBColor : null,
+    } : null,
   });
 });
 

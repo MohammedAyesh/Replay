@@ -9,6 +9,7 @@ import {
   matchPlayersTable,
   matchRoomsTable,
   statUnlocksTable,
+  userClipsTable,
   usersTable,
   varMarksTable,
 } from "@workspace/db";
@@ -288,6 +289,24 @@ describe("a match from invite to vote", () => {
     const v2 = await request(app).post(`/api/m/${room.code}/vote`).set(as("omar")).send({ candidatePlayerId: aliPlayer.id });
     expect(v2.body.vote.votesCast).toBe(2);
     expect((await request(app).post(`/api/m/${room.code}/vote`).set(as("outsider")).send({ candidatePlayerId: samiPlayer.id })).status).toBe(403);
+
+    // The story renderer's context for a clip cut from this match.
+    await request(app).post(`/api/m/${room.code}/teams/auto`).set(as("omar")).send({});
+    await request(app).patch(`/api/m/${room.code}/players/${aliPlayer.id}`).set(as("ali")).send({ shirtNumber: 9 });
+    const [clip] = await db.insert(userClipsTable).values({
+      userId: users.ali, videoId: `vid-${TAG}`, title: "Top bins", startTime: "10", endTime: "20",
+      footageRequestId: req.id, visibility: "match",
+    }).returning();
+    const story = await request(app).get(`/api/user-clips/${clip.id}/story-context`).set(as("ali"));
+    expect(story.status).toBe(200);
+    expect(story.body.shirtNumber).toBe(9);
+    expect(story.body.match.code).toBe(room.code);
+    expect(story.body.match.teamColor).toMatch(/^#/);
+    expect((await request(app).get(`/api/user-clips/${clip.id}/story-context`).set(as("omar"))).status).toBe(404);
+    const matchClips = await request(app).get(`/api/m/${room.code}/clips`).set(as("sami"));
+    expect(matchClips.body.map((c: { id: number }) => c.id)).toContain(clip.id);
+    expect((await request(app).get(`/api/m/${room.code}/clips`)).body).toHaveLength(0);
+    await db.delete(userClipsTable).where(eq(userClipsTable.id, clip.id));
 
     // Calendar file.
     const ics = await request(app).get(`/api/m/${room.code}/calendar.ics`);

@@ -20,6 +20,7 @@ import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import Hls from "hls.js";
 import { capPlaybackQuality } from "../lib/hlsQuality";
 import { exportClip, canExportVideo, triggerDownload } from "@/lib/exportClip";
+import { StoryButton } from "@/components/match/StoryButton";
 import { saveLocalClip, getLocalClip, listLocalClips, deleteLocalClip, createLocalBlobUrl, revokeLocalBlobUrl, type LocalClipRecord } from "@/lib/localClips";
 import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
@@ -861,6 +862,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
                 {quotaLabel}
               </span>
             )}
+
+            {exportState === "ready" && <StoryButton clipId={clip.id} />}
 
             {/* Fullscreen toggle */}
             <button
