@@ -95,6 +95,7 @@ export * from './ownerLinkResult';
 export * from './ownerRequest';
 export * from './ownerRequestCancellationStatus';
 export * from './ownerRequestInput';
+export * from './ownerRequestMatch';
 export * from './patchAdInput';
 export * from './profileInput';
 export * from './profileInputGender';

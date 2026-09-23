@@ -27,6 +27,7 @@ import {
 } from "../lib/posterFrame";
 import { buildShareCardHtml, shareCardPath, shareToken, verifyShareToken } from "../lib/shareCard";
 import { logger } from "../lib/logger";
+import { loadRoomByCode, matchWindow, rosterFor } from "../lib/matchRooms";
 
 const router: IRouter = Router();
 
@@ -903,6 +904,69 @@ router.get(["/s/:id/:token/clip.mp4", "/api/s/:id/:token/clip.mp4"], async (req,
   // everything after the zone root.
   const storagePath = clip.exportedUrl.replace(/^https?:\/\/[^/]+\//, "");
   await proxyStorageObject(req, res, storagePath, "video/mp4", 86400);
+});
+
+/**
+ * The match room link people paste into WhatsApp. The SPA renders the page;
+ * this route only puts the right preview card on it (title, time, who's in)
+ * so the link unfurls as an invitation rather than a bare URL.
+ */
+router.get("/m/:code", async (req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store");
+  res.removeHeader("Vary");
+  const indexHtml = await getSpaIndexHtml();
+  const ctx = await loadRoomByCode(String(req.params.code ?? "")).catch(() => null);
+  if (!indexHtml) {
+    res.status(ctx ? 200 : 404).type("text/html").send(`<!doctype html><html><head><meta charset="utf-8"><title>Replay</title></head><body><p>Open this match in the Replay app.</p></body></html>`);
+    return;
+  }
+  if (!ctx) {
+    res.status(404).type("text/html").send(indexHtml);
+    return;
+  }
+  const roster = await rosterFor(ctx.room.id);
+  const going = roster.filter((p) => p.rsvp === "in").length;
+  const needed = ctx.room.playersPerSide * 2;
+  const byId = Number.parseInt(String(req.query.by ?? ""), 10);
+  const inviteToken = typeof req.query.i === "string" ? req.query.i : "";
+  const personal = inviteToken ? roster.find((p) => p.inviteToken === inviteToken) : undefined;
+  const inviter = roster.find((p) => p.id === (personal?.invitedByPlayerId ?? byId));
+  const w = matchWindow(ctx.request);
+  const start = new Date(w.startMs + 3 * 60 * 60 * 1000);
+  const days = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+  const hh = (n: number) => String(n).padStart(2, "0");
+  const when = Number.isFinite(w.startMs)
+    ? `${days[start.getUTCDay()]} ${hh(start.getUTCHours())}:${hh(start.getUTCMinutes())}`
+    : "";
+  const title = `${ctx.room.title || "ماتش"} · ${ctx.field.name}${when ? ` · ${when}` : ""}`;
+  const who = inviter ? `${inviter.displayName} عزمك · ` : "";
+  const description = `${who}${going} من ${needed} جايين · إحصائيات، VAR وتسجيل الماتش على Replay`;
+  const base = publicBaseUrl(req);
+  const pageUrl = `${base}/m/${ctx.room.code}`;
+  const imageUrl = ctx.field.thumbnailUrl && /^https:\/\//.test(ctx.field.thumbnailUrl)
+    ? ctx.field.thumbnailUrl
+    : `${base}/opengraph.jpg`;
+  const e = htmlEscape;
+  const tags = [
+    `<title>${e(title)}</title>`,
+    `<meta name="description" content="${e(description)}" />`,
+    `<meta property="og:title" content="${e(title)}" />`,
+    `<meta property="og:description" content="${e(description)}" />`,
+    `<meta property="og:type" content="website" />`,
+    `<meta property="og:url" content="${e(pageUrl)}" />`,
+    `<meta property="og:image" content="${e(imageUrl)}" />`,
+    `<meta name="twitter:card" content="summary_large_image" />`,
+    `<meta name="twitter:title" content="${e(title)}" />`,
+    `<meta name="twitter:description" content="${e(description)}" />`,
+    `<meta name="twitter:image" content="${e(imageUrl)}" />`,
+  ].join("\n");
+  const html = indexHtml
+    .replace(/<title>[\s\S]*?<\/title>/i, "")
+    .replace(/<meta\s+name=["']description["'][^>]*\/?>/gi, "")
+    .replace(/<meta\s+property=["']og:(?:title|description|type|url|image)["'][^>]*\/?>/gi, "")
+    .replace(/<meta\s+name=["']twitter:(?:card|title|description|image)["'][^>]*\/?>/gi, "")
+    .replace(/<\/head>/i, `${tags}\n</head>`);
+  res.type("text/html").send(html);
 });
 
 export default router;

@@ -13,4 +13,5 @@ export const UserClipVisibility = {
   public: 'public',
   followers: 'followers',
   private: 'private',
+  match: 'match',
 } as const;

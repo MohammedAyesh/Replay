@@ -2249,6 +2249,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/VarMark"
+        match:
+          description: The players' match room for this booking.
+          type: ["object", "null"]
+          required: [code, url, captainUrl]
+          properties:
+            code:
+              type: string
+            url:
+              type: string
+            captainUrl:
+              type: string
 
     VarMarkInput:
       type: object
@@ -2304,7 +2315,7 @@ components:
           type: array
           items:
             type: object
-             required: [id, startLocal, endLocal, billableHours, amountFils, status]
+            required: [id, startLocal, endLocal, billableHours, amountFils, status]
             properties:
               id:
                 type: integer
@@ -2316,8 +2327,8 @@ components:
                 type: integer
               amountFils:
                 type: integer
-               status:
-                 type: string
+              status:
+                type: string
         payments:
           type: array
           items:
@@ -2851,7 +2862,7 @@ components:
             $ref: "#/components/schemas/CropKeyframe"
         visibility:
           type: string
-          enum: ["public", "followers", "private"]
+          enum: ["public", "followers", "private", "match"]
         likeCount:
           type: integer
         aspectRatio:
@@ -2917,7 +2928,7 @@ components:
           type: boolean
         visibility:
           type: string
-          enum: ["public", "followers", "private"]
+          enum: ["public", "followers", "private", "match"]
         aspectRatio:
           type: string
         thumbnailUrl:
@@ -2955,7 +2966,7 @@ components:
             $ref: "#/components/schemas/CropKeyframe"
         visibility:
           type: string
-          enum: ["public", "followers", "private"]
+          enum: ["public", "followers", "private", "match"]
         aspectRatio:
           type: string
           enum: ["16:9", "9:16"]
@@ -2973,7 +2984,7 @@ components:
           type: string
         visibility:
           type: string
-          enum: ["public", "followers", "private"]
+          enum: ["public", "followers", "private", "match"]
         thumbnailTime:
           type: ["number", "null"]
 

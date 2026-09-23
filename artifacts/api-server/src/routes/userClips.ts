@@ -1077,6 +1077,8 @@ router.get("/feed", async (req, res): Promise<void> => {
     if (visibilityContext.ownerVideoIds.has(row.videoId)) return false;
     if (row.visibility === "public") return true;
     if (row.visibility === "private") return row.creatorId === userId;
+    // Match clips are seen by that match's players on the match page, not in the public feed.
+    if (row.visibility === "match") return row.creatorId === userId;
     if (!userId) return false;
     if (row.creatorId === userId) return true;
     return followedIds.includes(row.creatorId);

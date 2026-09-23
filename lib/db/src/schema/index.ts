@@ -25,3 +25,4 @@ export * from "./footageRequests";
 export * from "./footagePayments";
 export * from "./footageCancellationRequests";
 export * from "./varMarks";
+export * from "./matchRooms";

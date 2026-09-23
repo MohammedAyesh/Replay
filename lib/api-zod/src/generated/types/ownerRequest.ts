@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { OwnerRequestCancellationStatus } from './ownerRequestCancellationStatus';
+import type { OwnerRequestMatch } from './ownerRequestMatch';
 import type { VarMark } from './varMark';
 
 export interface OwnerRequest {
@@ -37,4 +38,9 @@ export interface OwnerRequest {
   /** @nullable */
   cancellationStatus: OwnerRequestCancellationStatus;
   marks: VarMark[];
+  /**
+     * The players' match room for this booking.
+     * @nullable
+     */
+  match?: OwnerRequestMatch;
 }

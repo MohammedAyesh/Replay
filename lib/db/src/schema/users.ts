@@ -30,6 +30,10 @@ export const usersTable = pgTable("users", {
   socialMediaConsent: boolean("social_media_consent").notNull().default(false),
   socialMediaConsentAt: timestamp("social_media_consent_at", { withTimezone: true }),
   consentRequired: boolean("consent_required").notNull().default(false),
+  /** Bunny Storage path of the player's own uploaded photo (never a URL: storage is an authenticated origin). */
+  avatarPath: text("avatar_path"),
+  /** Preferred shirt number, reused on every new roster. */
+  shirtNumber: integer("shirt_number"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

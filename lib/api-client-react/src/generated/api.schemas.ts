@@ -107,6 +107,16 @@ export const OwnerRequestCancellationStatus = {
   declined: 'declined',
 } as const;
 
+/**
+ * The players' match room for this booking.
+ * @nullable
+ */
+export type OwnerRequestMatch = {
+  code: string;
+  url: string;
+  captainUrl: string;
+} | null;
+
 export type VarMarkKind = typeof VarMarkKind[keyof typeof VarMarkKind];
 
 
@@ -156,6 +166,11 @@ export interface OwnerRequest {
   /** @nullable */
   cancellationStatus: OwnerRequestCancellationStatus;
   marks: VarMark[];
+  /**
+     * The players' match room for this booking.
+     * @nullable
+     */
+  match?: OwnerRequestMatch;
 }
 
 export type VarMarkInputKind = typeof VarMarkInputKind[keyof typeof VarMarkInputKind];
@@ -587,6 +602,7 @@ export const UserClipVisibility = {
   public: 'public',
   followers: 'followers',
   private: 'private',
+  match: 'match',
 } as const;
 
 export interface UserClip {
@@ -634,6 +650,7 @@ export const FeedClipVisibility = {
   public: 'public',
   followers: 'followers',
   private: 'private',
+  match: 'match',
 } as const;
 
 export interface FeedClip {
@@ -670,6 +687,7 @@ export const CreateUserClipInputVisibility = {
   public: 'public',
   followers: 'followers',
   private: 'private',
+  match: 'match',
 } as const;
 
 export type CreateUserClipInputAspectRatio = typeof CreateUserClipInputAspectRatio[keyof typeof CreateUserClipInputAspectRatio];
@@ -704,6 +722,7 @@ export const UpdateUserClipInputVisibility = {
   public: 'public',
   followers: 'followers',
   private: 'private',
+  match: 'match',
 } as const;
 
 export interface UpdateUserClipInput {

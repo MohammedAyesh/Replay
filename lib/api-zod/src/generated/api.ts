@@ -162,7 +162,12 @@ export const ListOwnerFieldRequestsResponseItem = zod.object({
   "note": zod.string().nullable(),
   "createdBy": zod.number(),
   "offsetSeconds": zod.number()
-}))
+})),
+  "match": zod.object({
+  "code": zod.string(),
+  "url": zod.string(),
+  "captainUrl": zod.string()
+}).nullish().describe('The players\' match room for this booking.')
 })
 export const ListOwnerFieldRequestsResponse = zod.array(ListOwnerFieldRequestsResponseItem)
 
@@ -209,7 +214,12 @@ export const CreateOwnerFieldRequestResponse = zod.object({
   "note": zod.string().nullable(),
   "createdBy": zod.number(),
   "offsetSeconds": zod.number()
-}))
+})),
+  "match": zod.object({
+  "code": zod.string(),
+  "url": zod.string(),
+  "captainUrl": zod.string()
+}).nullish().describe('The players\' match room for this booking.')
 })
 
 
@@ -274,7 +284,12 @@ export const CancelOwnerRequestResponse = zod.object({
   "note": zod.string().nullable(),
   "createdBy": zod.number(),
   "offsetSeconds": zod.number()
-}))
+})),
+  "match": zod.object({
+  "code": zod.string(),
+  "url": zod.string(),
+  "captainUrl": zod.string()
+}).nullish().describe('The players\' match room for this booking.')
 })
 
 
@@ -372,7 +387,8 @@ export const GetOwnerFieldLedgerResponse = zod.object({
   "startLocal": zod.string(),
   "endLocal": zod.string(),
   "billableHours": zod.number(),
-  "amountFils": zod.number()
+  "amountFils": zod.number(),
+  "status": zod.string()
 })),
   "payments": zod.array(zod.object({
   "id": zod.number(),
@@ -1611,7 +1627,7 @@ export const CreateUserClipBody = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
-  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
+  "visibility": zod.enum(['public', 'followers', 'private', 'match']).optional(),
   "aspectRatio": zod.enum(['16:9', '9:16']).optional(),
   "academyId": zod.number().nullish().describe('Academy context this clip was created under (from the page the user was viewing), if any.'),
   "ownerShareToken": zod.string().optional().describe('Active owner footage share token; when present, the server resolves the video source.')
@@ -1631,7 +1647,7 @@ export const CreateUserClipResponse = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
-  "visibility": zod.enum(['public', 'followers', 'private']),
+  "visibility": zod.enum(['public', 'followers', 'private', 'match']),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
   "thumbnailTime": zod.number().nullish(),
@@ -1663,7 +1679,7 @@ export const ListUserClipsResponseItem = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
-  "visibility": zod.enum(['public', 'followers', 'private']),
+  "visibility": zod.enum(['public', 'followers', 'private', 'match']),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
   "thumbnailTime": zod.number().nullish(),
@@ -1698,7 +1714,7 @@ export const UpdateUserClipParams = zod.object({
 
 export const UpdateUserClipBody = zod.object({
   "title": zod.string().optional(),
-  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
+  "visibility": zod.enum(['public', 'followers', 'private', 'match']).optional(),
   "thumbnailTime": zod.number().nullish()
 })
 
@@ -1716,7 +1732,7 @@ export const UpdateUserClipResponse = zod.object({
   "w": zod.number().describe('Crop width as fraction of total video width'),
   "h": zod.number()
 })),
-  "visibility": zod.enum(['public', 'followers', 'private']),
+  "visibility": zod.enum(['public', 'followers', 'private', 'match']),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
   "thumbnailTime": zod.number().nullish(),
@@ -1819,7 +1835,7 @@ export const GetFeedResponseItem = zod.object({
   "shareCount": zod.number(),
   "score": zod.number(),
   "isLiked": zod.boolean(),
-  "visibility": zod.enum(['public', 'followers', 'private']),
+  "visibility": zod.enum(['public', 'followers', 'private', 'match']),
   "aspectRatio": zod.string(),
   "thumbnailUrl": zod.string().nullish(),
   "playbackUrl": zod.string().nullish(),

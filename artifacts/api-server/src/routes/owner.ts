@@ -18,6 +18,7 @@ import { computeAmountFils, computeBillableHours } from "../lib/footageBilling";
 import { controlFetch, controlResponse } from "./contabo";
 import { logger } from "../lib/logger";
 import { buildOwnerFootageTitle } from "@workspace/api-zod";
+import { ensureRoomForRequest, isRosterMemberOfRequest } from "../lib/matchRooms";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -201,11 +202,14 @@ function markToResponse(mark: VarMarkRow, request: FootageRequest) {
   };
 }
 
+type RoomLink = { code: string; captainToken: string } | null;
+
 function requestToResponse(
   row: FootageRequest,
   req: Request,
   marks: VarMarkRow[] = [],
   cancellationStatus: string | null = null,
+  room: RoomLink = null,
 ) {
   const active = isActiveShare(row);
   const varOpenMs = ammanLocalInstant(row.startLocal) - 3 * 60 * 1000;
@@ -233,7 +237,22 @@ function requestToResponse(
     varActive: isVarActive(row),
     cancellationStatus,
     marks: marks.map((mark) => markToResponse(mark, row)),
+    match: room ? {
+      code: room.code,
+      url: `${base}/m/${room.code}`,
+      captainUrl: `${base}/m/${room.code}?c=${room.captainToken}`,
+    } : null,
   };
+}
+
+async function roomLinkFor(row: FootageRequest): Promise<RoomLink> {
+  try {
+    const room = await ensureRoomForRequest(row);
+    return { code: room.code, captainToken: room.captainToken };
+  } catch (error) {
+    logger.warn({ error, requestId: row.id }, "Could not load match room for request");
+    return null;
+  }
 }
 
 async function marksForRequests(rows: FootageRequest[]): Promise<Map<number, VarMarkRow[]>> {
@@ -1241,7 +1260,8 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
   }
 
   const [saved] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, created.id));
-  res.status(201).json(requestToResponse(saved ?? created, req));
+  const room = await roomLinkFor(saved ?? created);
+  res.status(201).json(requestToResponse(saved ?? created, req, [], null, room));
 });
 
 router.get("/owner/fields/:fieldId/requests", async (req, res): Promise<void> => {
@@ -1268,11 +1288,13 @@ router.get("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =>
     .orderBy(desc(footageRequestsTable.createdAt));
   const marksByRequest = await marksForRequests(refreshed);
   const cancellationByRequest = await cancellationStatusForRequests(refreshed);
-  res.json(refreshed.map((row) => requestToResponse(
+  const rooms = await Promise.all(refreshed.map((row) => roomLinkFor(row)));
+  res.json(refreshed.map((row, index) => requestToResponse(
     row,
     req,
     marksByRequest.get(row.id) ?? [],
     cancellationByRequest.get(row.id) ?? null,
+    rooms[index],
   )));
 });
 
@@ -1298,6 +1320,35 @@ async function requireRequestAccess(req: Request, res: Response, id: number): Pr
   return { user, request: found.request, fieldName: found.fieldName };
 }
 
+/**
+ * VAR is open to the field's owners and admins, and to the players of that
+ * match: anyone whose match-room RSVP is "in" (or the room's captain).
+ */
+async function requireVarAccess(req: Request, res: Response, id: number): Promise<{ user: OwnerUser; request: FootageRequest; fieldName: string } | null> {
+  const found = await requestWithField(id);
+  if (!found) {
+    res.status(404).json({ error: "Request not found" });
+    return null;
+  }
+  const user = await getLocalUserRecord(req);
+  if (!user) {
+    unauthenticatedResponse(res, req);
+    return null;
+  }
+  if (!user.isAdmin) {
+    const [owned] = await db
+      .select({ fieldId: fieldOwnersTable.fieldId })
+      .from(fieldOwnersTable)
+      .where(and(eq(fieldOwnersTable.userId, user.id), eq(fieldOwnersTable.fieldId, found.fieldId)))
+      .limit(1);
+    if (!owned && !(await isRosterMemberOfRequest(user.id, id))) {
+      res.status(403).json({ error: "Only this match's players can open its VAR" });
+      return null;
+    }
+  }
+  return { user, request: found.request, fieldName: found.fieldName };
+}
+
 router.get("/owner/requests/:id/var/:variant/playlist.m3u8", async (req, res): Promise<void> => {
   const id = parseId(req.params.id);
   const variant = parseVarVariant(req.params.variant);
@@ -1310,7 +1361,7 @@ router.get("/owner/requests/:id/var/:variant/playlist.m3u8", async (req, res): P
     return;
   }
 
-  const found = await requireRequestAccess(req, res, id);
+  const found = await requireVarAccess(req, res, id);
   if (!found) return;
   if (!isVarActive(found.request)) {
     res.status(404).json({ error: "VAR is not active for this request" });
@@ -1343,7 +1394,7 @@ router.get("/owner/requests/:id/var/:variant/seg/:name", async (req, res): Promi
     return;
   }
 
-  const found = await requireRequestAccess(req, res, id);
+  const found = await requireVarAccess(req, res, id);
   if (!found) return;
   if (!isVarActive(found.request)) {
     res.status(404).json({ error: "VAR is not active for this request" });
@@ -1364,7 +1415,7 @@ router.get("/owner/requests/:id/var/status", async (req, res): Promise<void> => 
     res.status(404).json({ error: "Request not found" });
     return;
   }
-  const found = await requireRequestAccess(req, res, id);
+  const found = await requireVarAccess(req, res, id);
   if (!found) return;
 
   let result;
@@ -1414,7 +1465,7 @@ router.get("/owner/requests/:id/var-marks", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Request not found" });
     return;
   }
-  const found = await requireRequestAccess(req, res, id);
+  const found = await requireVarAccess(req, res, id);
   if (!found) return;
   const marks = await db.select().from(varMarksTable)
     .where(eq(varMarksTable.footageRequestId, id))
@@ -1428,7 +1479,7 @@ router.post("/owner/requests/:id/var-marks", async (req, res): Promise<void> => 
     res.status(404).json({ error: "Request not found" });
     return;
   }
-  const found = await requireRequestAccess(req, res, id);
+  const found = await requireVarAccess(req, res, id);
   if (!found) return;
 
   const parsed = varMarkBodySchema.safeParse(req.body);

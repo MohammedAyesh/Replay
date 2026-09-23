@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startOwnerStatusSync } from "./routes/owner";
+import { backfillMatchRooms } from "./lib/matchRooms";
 
 const rawPort = process.env["PORT"];
 
@@ -24,4 +25,7 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startOwnerStatusSync();
+  backfillMatchRooms()
+    .then((created) => { if (created) logger.info({ created }, "Created match rooms for existing bookings"); })
+    .catch((error) => logger.warn({ error }, "Match room backfill failed"));
 });
