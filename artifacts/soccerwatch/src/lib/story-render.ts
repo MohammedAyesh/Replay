@@ -77,9 +77,32 @@ function loadVideo(url: string): Promise<HTMLVideoElement> {
     v.muted = true;
     v.playsInline = true;
     v.preload = "auto";
+    const timer = window.setTimeout(() => reject(new Error("The clip took too long to open")), 20_000);
+    v.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error("The clip could not be read"));
+    };
+    v.onloadeddata = async () => {
+      // Some recorders write no duration (Infinity): seek far ahead once to learn it.
+      if (!Number.isFinite(v.duration)) {
+        await new Promise<void>((r) => {
+          const done = () => {
+            v.removeEventListener("durationchange", check);
+            r();
+          };
+          const check = () => {
+            if (Number.isFinite(v.duration)) done();
+          };
+          v.addEventListener("durationchange", check);
+          v.currentTime = 1e7;
+          window.setTimeout(done, 5000);
+        });
+        v.currentTime = 0;
+      }
+      window.clearTimeout(timer);
+      resolve(v);
+    };
     v.src = url;
-    v.onloadeddata = () => resolve(v);
-    v.onerror = () => reject(new Error("The clip could not be read"));
   });
 }
 
@@ -161,7 +184,9 @@ export async function renderStory(input: StoryInput): Promise<StoryResult> {
       input.avatarUrl ? loadImage(input.avatarUrl) : Promise.resolve(null),
       decodeAudio(input.videoBlob),
     ]);
-    const clipDur = Math.max(0.5, video.duration || 0);
+    const rawDur = Number.isFinite(video.duration) ? video.duration : 0;
+    if (rawDur <= 0) throw new Error("The clip has no length");
+    const clipDur = Math.min(120, Math.max(0.5, rawDur));
     const total = clipDur + END_HOLD;
     const nFrames = Math.round(total * FPS);
 

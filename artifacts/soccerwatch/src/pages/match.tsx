@@ -331,7 +331,16 @@ function RsvpCard({ room, copy, onRsvp, busy, signedIn }: {
     return (
       <div className="rounded-2xl border border-line bg-surface p-4">
         {inviter && <p className="mb-3 text-sm font-semibold">{copy.invitedYou(inviter.name)}</p>}
-        <button type="button" disabled={busy} onClick={() => onRsvp("in")} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void disabled:opacity-60">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onRsvp("in")}
+          className={cn(
+            "flex min-h-12 w-full items-center justify-center gap-2 rounded-full text-base font-bold disabled:opacity-60",
+            // One primary action per screen: when the footage button is showing, this one steps back.
+            room.footage.shareToken ? "border border-violet/60 text-violet" : "bg-floodlight text-void",
+          )}
+        >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{copy.iPlayed}
         </button>
         <p className="mt-2 text-center text-[11px] text-muted-text">{copy.iPlayedDesc}</p>
