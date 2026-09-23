@@ -7,6 +7,8 @@ import { z } from "zod/v4";
 import {
   db,
   fieldOwnersTable,
+  fieldsTable,
+  footageRequestsTable,
   matchGamesTable,
   matchPlayersTable,
   matchRoomsTable,
@@ -369,7 +371,28 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     res.json({ upcoming: [], live: [], recent: [], invites: [] });
     return;
   }
-  const rooms = await roomsForUser(user.id);
+  const memberRooms = await roomsForUser(user.id);
+  // Field owners also see every match booked on their fields, so the next one
+  // shows up before any player has joined.
+  const owned = await db.select({ fieldId: fieldOwnersTable.fieldId }).from(fieldOwnersTable)
+    .where(eq(fieldOwnersTable.userId, user.id));
+  const ownedFieldIds = owned.map((o) => o.fieldId);
+  const ownerRooms = ownedFieldIds.length ? await db.select({
+    room: matchRoomsTable,
+    request: footageRequestsTable,
+    field: fieldsTable,
+  }).from(matchRoomsTable)
+    .innerJoin(footageRequestsTable, eq(footageRequestsTable.id, matchRoomsTable.footageRequestId))
+    .innerJoin(fieldsTable, eq(fieldsTable.id, matchRoomsTable.fieldId))
+    .where(and(
+      inArray(matchRoomsTable.fieldId, ownedFieldIds),
+      sql`${footageRequestsTable.status} not in ('cancelled', 'failed', 'refunded')`,
+    ))
+    .orderBy(desc(footageRequestsTable.startLocal))
+    .limit(40) : [];
+  const seen = new Set(memberRooms.map((r) => r.room.id));
+  const rooms = [...memberRooms, ...ownerRooms.filter((r) => !seen.has(r.room.id))];
+  const ownedSet = new Set(ownedFieldIds);
   const base = publicBaseUrl(req);
   const items = await Promise.all(rooms.map(async (ctx) => {
     const roster = await rosterFor(ctx.room.id);
@@ -390,6 +413,7 @@ router.get("/me/matches", async (req, res): Promise<void> => {
       myRsvp: me?.rsvp ?? (ctx.room.captainUserId === user.id ? "in" : null),
       myTeam: me?.team ?? null,
       isCaptain: ctx.room.captainUserId === user.id,
+      isOwner: ownedSet.has(ctx.room.fieldId),
       countIn: roster.filter((p) => p.rsvp === "in").length,
       needed: ctx.room.playersPerSide * 2,
       score: ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null,

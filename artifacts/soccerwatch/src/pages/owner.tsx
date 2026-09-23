@@ -1385,6 +1385,7 @@ function MatchRoomRow({ match, locale, onCopy, requestId }: {
         <p className="font-mono text-sm font-bold">#{match.code}</p>
       </div>
       <a href={`/m/${match.code}`} className="inline-flex min-h-10 items-center rounded-full border border-line px-3 text-xs font-semibold">{ar ? "افتح" : "Open"}</a>
+      <a href={`/m/${match.code}?preview=pre`} className="inline-flex min-h-10 items-center rounded-full border border-line px-3 text-xs font-semibold">{ar ? "معاينة قبل الماتش" : "Pre-match preview"}</a>
       <button type="button" onClick={() => onCopy(match.url)} className="inline-flex min-h-10 items-center rounded-full border border-line px-3 text-xs font-semibold">{ar ? "انسخ" : "Copy"}</button>
       <a href={`https://wa.me/?text=${encodeURIComponent(captainText)}`} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center rounded-full border border-violet/60 px-3 text-xs font-bold text-violet">
         {ar ? "ابعت للكابتن" : "Send to captain"}

@@ -136,6 +136,7 @@ export type MyMatchItem = {
   myRsvp?: Rsvp | null;
   myTeam?: TeamSide | null;
   isCaptain?: boolean;
+  isOwner?: boolean;
   countIn?: number;
   needed?: number;
   score?: { a: number; b: number } | null;

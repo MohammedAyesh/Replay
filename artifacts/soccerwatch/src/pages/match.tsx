@@ -102,7 +102,12 @@ export default function MatchPage() {
   const [, setLocation] = useLocation();
   const { user, isGuest, isLoading: authLoading } = useAuth();
   const roomQuery = useMatchRoom(code, search);
-  const room = roomQuery.data;
+  const realRoom = roomQuery.data;
+  // Owners and captains can see the other phases of their match: ?preview=pre|live.
+  const previewParam = query.get("preview");
+  const preview: "pre" | "live" | null = realRoom && (realRoom.isOwner || realRoom.canManage)
+    && (previewParam === "pre" || previewParam === "live") ? previewParam : null;
+  const room = useMemo(() => (realRoom && preview ? previewRoom(realRoom, preview) : realRoom), [realRoom, preview]);
   const now = useServerNow(room?.serverNow);
   const join = useJoinMatch(code);
   const [tab, setTab] = useState<Tab | null>(null);
@@ -129,6 +134,10 @@ export default function MatchPage() {
   }, [code, copy.error, join, toast]);
 
   const onRsvp = (rsvp: JoinInput["rsvp"]) => {
+    if (preview) {
+      toast({ title: copy.previewBanner });
+      return;
+    }
     const input = joinInput(rsvp);
     if (!user || isGuest) {
       writePending(code, input);
@@ -193,6 +202,12 @@ export default function MatchPage() {
 
   return (
     <Shell>
+      {preview && (
+        <div className="sticky top-0 z-30 flex items-center gap-3 bg-violet px-4 py-2.5 text-sm font-semibold text-text">
+          <span className="flex-1">{preview === "pre" ? copy.previewBanner : copy.previewLiveBanner}</span>
+          <Link href={`/m/${room.code}`} className="shrink-0 rounded-full bg-void/30 px-3 py-1 text-xs font-bold">{copy.exitPreview}</Link>
+        </div>
+      )}
       <Hero room={room} copy={copy} now={now} colors={colors} names={names} onShare={onShare} />
       <div className="px-4">
         <RsvpCard room={room} copy={copy} onRsvp={onRsvp} busy={join.isPending} signedIn={Boolean(user) && !isGuest} />
@@ -224,8 +239,18 @@ export default function MatchPage() {
         {activeTab === "overview" && (
           <Overview room={room} copy={copy} colors={colors} names={names} now={now} inviteText={inviteText} onShare={onShare} />
         )}
+        {activeTab === "overview" && !preview && (room.isOwner || room.canManage) && (
+          <div className="flex flex-wrap gap-2">
+            {room.phase !== "pre" && (
+              <Link href={`/m/${room.code}?preview=pre`} className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-muted-text">{copy.seePreMatch}</Link>
+            )}
+            {room.phase !== "live" && (
+              <Link href={`/m/${room.code}?preview=live`} className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-muted-text">{copy.seeLive}</Link>
+            )}
+          </div>
+        )}
         {activeTab === "teams" && <TeamsTab room={room} copy={copy} colors={colors} names={names} />}
-        {activeTab === "var" && <VarTab room={room} copy={copy} />}
+        {activeTab === "var" && <VarTab room={room} copy={copy} preview={Boolean(preview)} />}
         {activeTab === "clips" && <ClipsTab room={room} copy={copy} />}
         {activeTab === "vote" && <VoteTab room={room} copy={copy} now={now} />}
         {activeTab === "stats" && <StatsTab room={room} copy={copy} />}
@@ -788,7 +813,7 @@ function TeamLegend({ side, name, color, editable, onColor }: { side: TeamSide; 
 
 type VarStatus = { varActive: boolean; cdnUrl?: string; fieldName: string };
 
-function VarTab({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" } }) {
+function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; preview?: boolean }) {
   const flag = useFlagMoment(room.code);
   const { toast } = useToast();
   const [status, setStatus] = useState<VarStatus | null>(null);
@@ -811,6 +836,10 @@ function VarTab({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale
   const markTicks = useMemo(() => room.marks.map((m) => ({ atUtcMs: Date.parse(m.atUtc), kind: m.kind })), [room.marks]);
 
   const onFlag = async (kind: "goal" | "foul" | "offside" | "other") => {
+    if (preview) {
+      toast({ title: `${copy.flagKinds[kind]} · ${copy.flagged}` });
+      return;
+    }
     try {
       await flag.mutateAsync({ kind, atUtc: new Date(frameMs ?? Date.now() - 20_000).toISOString() });
       if (navigator.vibrate) navigator.vibrate(30);
@@ -822,6 +851,26 @@ function VarTab({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale
 
   if (!room.isMember && !room.canManage) {
     return <Card className="text-center"><Lock className="mx-auto h-5 w-5 text-muted-text" /><p className="mt-2 text-sm">{copy.varOnlyPlayers}</p></Card>;
+  }
+  if (preview) {
+    return (
+      <>
+        <div className="-mx-4 relative flex aspect-video items-center justify-center overflow-hidden bg-surface" style={{ background: "repeating-linear-gradient(180deg,#0F2A2A 0 12.5%,#0D2525 12.5% 25%)" }}>
+          <span className="absolute start-3 top-3 flex items-center gap-1.5 rounded-full bg-live px-2.5 py-1 text-[10px] font-bold uppercase text-text"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-text" />Live</span>
+          <p className="px-8 text-center text-sm text-text/80">{copy.varBehind}</p>
+        </div>
+        <Card>
+          <p className="flex items-center gap-2 text-sm font-bold"><Flag className="h-4 w-4 text-violet" />{copy.flag}</p>
+          <p className="mt-1 text-xs text-muted-text">{copy.flagHint}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => void onFlag("goal")} className="col-span-2 min-h-12 rounded-full bg-floodlight text-base font-bold text-void">{copy.flagKinds.goal}</button>
+            {(["foul", "offside", "other"] as const).map((k) => (
+              <button key={k} type="button" onClick={() => void onFlag(k)} className={cn("min-h-11 rounded-full border text-sm font-semibold", k === "other" ? "col-span-2 border-violet/60 text-violet" : "border-line text-text")}>{copy.flagKinds[k]}</button>
+            ))}
+          </div>
+        </Card>
+      </>
+    );
   }
   if (!room.var.active || !requestId) {
     return <Card><p className="text-sm">{room.varOpensAt ? copy.varOpensAt(formatClock(Date.parse(room.varOpensAt), copy.locale)) : copy.phase[room.phase]}</p></Card>;
@@ -1014,4 +1063,36 @@ function StatsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
       )}
     </>
   );
+}
+
+
+/** A copy of the room as it would look in another phase, for the owner's preview. */
+function previewRoom(room: MatchRoom, mode: "pre" | "live"): MatchRoom {
+  const now = Date.now();
+  const duration = Number.isFinite(room.endMs - room.startMs) && room.endMs > room.startMs ? room.endMs - room.startMs : 60 * 60 * 1000;
+  const five = 5 * 60 * 1000;
+  const startMs = mode === "pre"
+    ? Math.ceil((now + 2 * 60 * 60 * 1000 + 15 * 60 * 1000) / five) * five
+    : Math.floor((now - 20 * 60 * 1000) / five) * five;
+  const endMs = startMs + duration;
+  const iso = (ms: number) => new Date(ms).toISOString();
+  return {
+    ...room,
+    phase: mode,
+    status: mode === "pre" ? "scheduled" : "recording",
+    startMs,
+    endMs,
+    startsAt: iso(startMs),
+    endsAt: iso(endMs),
+    varOpensAt: iso(startMs - 3 * 60 * 1000),
+    varClosesAt: iso(endMs + 5 * 60 * 1000),
+    voteClosesAt: iso(endMs + 24 * 60 * 60 * 1000),
+    serverNow: iso(now),
+    score: null,
+    games: [],
+    marks: [],
+    var: { ...room.var, active: mode === "live" },
+    footage: { ready: false, readyAt: null, shareUrl: null, shareToken: null, expiresAt: null },
+    vote: { ...room.vote, open: false, closed: false, myVote: null, votesCast: 0, tallies: [], winners: [] },
+  };
 }

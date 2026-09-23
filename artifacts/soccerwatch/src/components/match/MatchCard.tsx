@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { ChevronRight, Crown } from "lucide-react";
-import { PhaseChip, formatClock, formatDay } from "@/components/match/bits";
+import { Countdown, PhaseChip, formatClock, formatDay } from "@/components/match/bits";
 import type { MatchStrings } from "@/i18n/match-strings";
 import type { MyMatchItem } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
@@ -39,7 +39,13 @@ export function MatchCard({ item, copy, now, variant = "row" }: {
           <PhaseChip phase={item.phase} label={copy.phase[item.phase] ?? item.phase} />
         </div>
         <p className="mt-3 font-display text-2xl font-bold leading-tight">{title}</p>
-        <p className="mt-1 text-sm text-muted-text">{item.title ? `${item.field.name} · ` : ""}{day} · {time}</p>
+        <p className="mt-1 text-sm text-muted-text">{item.title ? `${item.field.name} · ` : ""}{day} · {time}{item.isOwner ? ` · ${copy.ownerTag}` : ""}</p>
+        {item.phase === "pre" && item.startMs - now < 7 * 86400000 && (
+          <div className="mt-4">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-text">{copy.kickoffIn}</p>
+            <Countdown targetMs={item.startMs} now={now} labels={copy} />
+          </div>
+        )}
         {needed > 0 && (
           <div className="mt-4">
             <div className="flex h-2 overflow-hidden rounded-full bg-raised">
@@ -69,7 +75,7 @@ export function MatchCard({ item, copy, now, variant = "row" }: {
           {title}
           {item.isCaptain && <Crown className="h-3.5 w-3.5 shrink-0 text-floodlight" aria-label={copy.captainTag} />}
         </p>
-        <p className="truncate text-xs text-muted-text">{day}{item.title ? ` · ${item.field.name}` : ""}</p>
+        <p className="truncate text-xs text-muted-text">{day}{item.title ? ` · ${item.field.name}` : ""}{item.isOwner && !item.myRsvp ? ` · ${copy.ownerTag}` : ""}</p>
       </div>
       {item.score ? (
         <span className="flex flex-col items-end">

@@ -355,6 +355,12 @@ describe("a match from invite to vote", () => {
 
   it("owner bookings carry their match link", async () => {
     const { request: req, room } = await booking(Date.now() + 5 * 24 * 60 * 60 * 1000, 60);
+    // The owner sees the booking on My matches before any player has joined; a stranger doesn't.
+    const ownerMatches = await request(app).get("/api/me/matches").set(as("owner"));
+    const upcoming = ownerMatches.body.upcoming.find((m: { code: string }) => m.code === room.code);
+    expect(upcoming?.isOwner).toBe(true);
+    const outsiderMatches = await request(app).get("/api/me/matches").set(as("outsider"));
+    expect(outsiderMatches.body.upcoming.some((m: { code: string }) => m.code === room.code)).toBe(false);
     const list = await request(app).get(`/api/owner/fields/${fieldId}/requests`).set(as("owner"));
     expect(list.status).toBe(200);
     const items = Array.isArray(list.body) ? list.body : list.body.requests ?? list.body.items;
