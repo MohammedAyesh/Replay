@@ -33,7 +33,8 @@ export default function Matches() {
   const empty = data && !data.live.length && !data.upcoming.length && !data.recent.length && !data.invites.length;
 
   return (
-    <div dir={copy.locale === "ar" ? "rtl" : "ltr"} className="flex min-h-0 flex-1 flex-col overflow-y-auto no-scrollbar px-4 pb-28 pt-2">
+    <div dir={copy.locale === "ar" ? "rtl" : "ltr"} className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-2">
+      <div className="flex min-h-full flex-col">
       {profile.data && (
         <Link href={`/players/${profile.data.id}`} className="mb-4 flex items-center gap-3 rounded-2xl border border-line bg-surface p-3">
           <PlayerAvatar name={profile.data.name} avatarUrl={profile.data.avatarUrl} size={48} />
@@ -63,6 +64,7 @@ export default function Matches() {
           <Section title={copy.recent} items={data.recent} copy={copy} now={now} icon={<Trophy className="h-4 w-4 text-turf" />} />
         </div>
       )}
+      </div>
     </div>
   );
 }

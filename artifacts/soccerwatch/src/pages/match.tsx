@@ -236,8 +236,8 @@ export default function MatchPage() {
 function Shell({ children }: { children: React.ReactNode }) {
   const copy = useMatchCopy();
   return (
-    <main dir={copy.locale === "ar" ? "rtl" : "ltr"} className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-void text-text">
-      {children}
+    <main dir={copy.locale === "ar" ? "rtl" : "ltr"} className="min-h-0 flex-1 overflow-y-auto bg-void text-text">
+      <div className="flex min-h-full flex-col">{children}</div>
     </main>
   );
 }
