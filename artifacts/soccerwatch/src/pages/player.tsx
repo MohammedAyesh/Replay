@@ -478,7 +478,21 @@ function PlayerScreen({ clip }: { clip: Clip }) {
             {clip.isSaved ? t.player.saved : t.player.saveToMyClips}
           </button>
 
-          <button className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-md rounded-xl py-3.5 flex items-center justify-center gap-2 transition-colors active:scale-95">
+          <button
+            type="button"
+            aria-label="Share"
+            onClick={() => {
+              const url = window.location.href;
+              const title = "Replay";
+              if (typeof navigator.share === "function") {
+                void navigator.share({ title, url }).catch(() => undefined);
+              } else {
+                void navigator.clipboard.writeText(url).catch(() => undefined);
+                window.open(`https://wa.me/?text=${encodeURIComponent(`${title} ${url}`)}`, "_blank", "noopener");
+              }
+            }}
+            className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-md rounded-xl py-3.5 flex items-center justify-center gap-2 transition-colors active:scale-95"
+          >
             <Share className="w-5 h-5 text-white" />
           </button>
         </div>

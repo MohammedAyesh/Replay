@@ -1356,7 +1356,7 @@ function LedgerList({ locale, empty, items, copy }: {
                 <p className="truncate text-xs text-foreground" data-testid={`title-owner-ledger-${item.id}`}>{item.title}</p>
                 <p className="mt-1 truncate text-[10px] text-muted-foreground" data-testid={`meta-owner-ledger-${item.id}`}>{item.meta}</p>
               </div>
-               <p className={`shrink-0 font-mono text-xs font-semibold ${item.id.startsWith("charge-") && item.amount === 0 ? "text-emerald-300" : item.kind === "charge" ? "text-primary" : "text-secondary"}`} data-testid={`amount-owner-ledger-${item.id}`}>
+               <p className={`shrink-0 font-mono text-xs font-semibold ${item.id.startsWith("charge-") && item.amount === 0 ? "text-turf" : item.kind === "charge" ? "text-primary" : "text-secondary"}`} data-testid={`amount-owner-ledger-${item.id}`}>
                 {item.kind === "charge" ? "+" : "−"}{formatJod(item.amount)} <span className="text-[9px] font-normal text-muted-foreground">{copy.currency}</span>
               </p>
             </div>

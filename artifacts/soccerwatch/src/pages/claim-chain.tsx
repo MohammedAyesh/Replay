@@ -583,7 +583,7 @@ export default function ClaimChainPage() {
   );
 
   useEffect(() => {
-    if (!authLoading && (!user || isGuest)) setLocation("/login");
+    if (!authLoading && (!user || isGuest)) setLocation(`/sign-in?redirect_url=${encodeURIComponent(window.location.pathname + window.location.search)}`);
   }, [authLoading, isGuest, setLocation, user]);
 
   if (claimQuery.isLoading || chainQuery.isLoading || !manifest || !recording || !bundle) {
@@ -710,7 +710,7 @@ export default function ClaimChainPage() {
             type="button"
             className={`claim-button claim-button-wide ${chain.completed ? "claim-button-primary" : "claim-button-secondary"}`}
             data-testid="button-chain-done"
-            onClick={() => setLocation("/home")}
+            onClick={() => setLocation("/matches")}
           >
             <Home size={16} /> {chain.completed ? "Done — back to my matches" : "Leave it here for now"}
           </button>

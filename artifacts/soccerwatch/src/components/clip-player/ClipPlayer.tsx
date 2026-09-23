@@ -516,7 +516,7 @@ export function ClipPlayer({
     >
       {layout === "overlay" && <FullscreenBridge />}
       {isLive && (
-        <div className="absolute top-safe top-3 start-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/90 backdrop-blur-sm pointer-events-none">
+        <div className="absolute top-safe top-3 start-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-live/90 backdrop-blur-sm pointer-events-none">
           <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
           <span className="text-white text-[10px] font-bold uppercase tracking-wider">Live</span>
         </div>
@@ -524,7 +524,7 @@ export function ClipPlayer({
       <div className={stageClass}>
         <div
           ref={frameBoxRef}
-          className={cn("relative overflow-hidden bg-black touch-none", clipMode === "recording" ? "ring-2 ring-red-500" : "ring-1 ring-white/25")}
+          className={cn("relative overflow-hidden bg-black touch-none", clipMode === "recording" ? "ring-2 ring-live" : "ring-1 ring-white/25")}
           style={selectedRatio === "9:16"
             ? { height: layout === "overlay" ? "min(100%, calc(100vw * 16 / 9))" : "min(70vh, calc(100% * 16 / 9))", aspectRatio: "9/16" }
             : { width: layout === "overlay" ? "min(100%, calc(100dvh * 16 / 9))" : "min(100%, calc(70vh * 16 / 9))", aspectRatio: "16/9" }}

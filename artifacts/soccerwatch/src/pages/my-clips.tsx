@@ -831,9 +831,9 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
                 exportState === "polling"
                   ? "bg-white/20 text-white/60 cursor-not-allowed"
                   : exportState === "ready"
-                  ? "bg-green-500 text-white"
+                  ? "bg-turf text-void"
                   : exportState === "error"
-                  ? "bg-red-500/80 text-white"
+                  ? "bg-violet/80 text-white"
                   : "bg-white/15 text-white hover:bg-white/25"
               } ${landscape ? "w-full" : ""}`}
               aria-label={t.export.button}
@@ -856,7 +856,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
             {quotaLabel && (
               <span
                 className={`text-[11px] leading-tight drop-shadow pointer-events-none ${
-                  isQuotaExhausted(quota) ? "text-amber-300" : "text-white/70"
+                  isQuotaExhausted(quota) ? "text-floodlight" : "text-white/70"
                 } ${landscape ? "w-full text-center" : "max-w-[9rem]"}`}
               >
                 {quotaLabel}
@@ -1284,8 +1284,8 @@ function SavedTab({
           <Download className="w-8 h-8 text-muted-foreground" />
         </motion.div>
         <p className="text-muted-foreground">{t.myClips.noClipsYet}</p>
-        <p className="text-sm text-muted-foreground mt-1">Download clips from the Watch feed to see them here.</p>
-        <Link href="/home">
+        <p className="text-sm text-muted-foreground mt-1">{document.documentElement.lang === "ar" ? "افتح ماتشك، قص لقطتك، وبتلاقيها هون." : "Open your match, cut your moment, and it lands here."}</p>
+        <Link href="/matches">
           <Button variant="ghost" className="mt-6 text-primary font-semibold">{t.myClips.goToWatch}</Button>
         </Link>
       </motion.div>
@@ -1435,7 +1435,7 @@ function LocalClipCard({
               >Cancel</button>
               <button
                 onClick={() => { setShowDelete(false); onDelete(record.clipId); }}
-                className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold"
+                className="px-3 py-1.5 rounded-lg bg-violet text-text text-xs font-semibold"
               >Remove</button>
             </div>
           </motion.div>
@@ -1624,7 +1624,7 @@ function UserClipCard({
               >Cancel</button>
               <button
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDelete(false); handleDelete(); }}
-                className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold"
+                className="px-3 py-1.5 rounded-lg bg-violet text-text text-xs font-semibold"
               >Delete</button>
             </div>
           </motion.div>

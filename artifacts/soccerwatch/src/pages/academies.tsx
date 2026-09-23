@@ -50,16 +50,16 @@ function LiveRow({ cameraId, onOpen }: { cameraId: string; onOpen: () => void })
       onClick={onOpen}
       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-muted/50 hover:bg-muted transition-colors group"
     >
-      <div className="w-9 h-9 rounded-lg bg-red-500/15 flex items-center justify-center flex-shrink-0">
-        <Play className="w-4 h-4 text-red-500 fill-red-500" />
+      <div className="w-9 h-9 rounded-lg bg-live/15 flex items-center justify-center flex-shrink-0">
+        <Play className="w-4 h-4 text-live fill-live" />
       </div>
       <div className="flex-1 text-start">
         <p className="text-sm font-semibold text-foreground">
           {CAMERA_LABELS[cameraId] ?? cameraId}
         </p>
         <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-[11px] font-medium text-red-500 uppercase tracking-wide">Live</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-live animate-pulse" />
+          <span className="text-[11px] font-medium text-live uppercase tracking-wide">Live</span>
         </div>
       </div>
       <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors rtl:hidden" />

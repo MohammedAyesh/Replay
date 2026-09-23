@@ -190,7 +190,7 @@ function ClaimableRecordingRow({
           {recording.court}
         </p>
         {(isDisputed || needsResolution) && (
-          <p className="mt-1 text-xs font-medium text-amber-500">
+          <p className="mt-1 text-xs font-medium text-floodlight">
             {isDisputed ? copy.disputed : copy.needsResolution}
             <span className="block font-normal text-muted-foreground">
               {isDisputed ? copy.disputedDesc : copy.needsResolutionDesc}
