@@ -344,21 +344,10 @@ export default function Login() {
             boxShadow: "0 8px 24px rgba(0,0,0,.28), inset 0 0 0 1px rgba(255,255,255,.09)",
           }}
         >
-          <LogoMark size={30} />
-          <span
-            style={{
-              flex: 1,
-              fontFamily: headFont,
-              fontWeight: 700,
-              fontSize: 19,
-              letterSpacing: "-0.015em",
-              backgroundImage: "linear-gradient(90deg,#2FD8C4,#7B5CFF)",
-              WebkitBackgroundClip: "text",
-              backgroundClip: "text",
-              color: "transparent",
-            }}
-          >
-            REPLAY
+          <img src="/replay-mark.svg" alt="" aria-hidden="true" style={{ width: 30, height: 27 }} />
+          <span className="replay-wordmark" style={{ flex: 1 }} aria-label="Replay">
+            <span className="replay-wordmark-ar" lang="ar">ريبلاي</span>
+            <span className="replay-wordmark-en">REPLAY</span>
           </span>
           <button
             onClick={() => setLocale(isRtl ? "en" : "ar")}
@@ -1137,13 +1126,13 @@ export default function Login() {
                     <circle cx="95" cy="96" r="88" />
                   </clipPath>
                   <g clipPath="url(#ft-clip)">
-                    <polygon points={hexPoints(95, 96, 36)}    fill="#22C7B5" />
-                    <polygon points={hexPoints(126.2, 42, 36)} fill="#BFFF5C" />
-                    <polygon points={hexPoints(63.8, 42, 36)}  fill="#3FE0C9" />
-                    <polygon points={hexPoints(157.4, 96, 36)} fill="#1FA79B" />
-                    <polygon points={hexPoints(32.6, 96, 36)}  fill="#186E7E" />
-                    <polygon points={hexPoints(126.2, 150, 36)} fill="#1C8AA0" />
-                    <polygon points={hexPoints(63.8, 150, 36)} fill="#6C4FE0" />
+                    <polygon points={hexPoints(95, 96, 36)}    fill="#2FD8C4" />
+                    <polygon points={hexPoints(126.2, 42, 36)} fill="#D4FF4F" />
+                    <polygon points={hexPoints(63.8, 42, 36)}  fill="#2FD8C4" />
+                    <polygon points={hexPoints(157.4, 96, 36)} fill="#238F8B" />
+                    <polygon points={hexPoints(32.6, 96, 36)}  fill="#1D526B" />
+                    <polygon points={hexPoints(126.2, 150, 36)} fill="#247A91" />
+                    <polygon points={hexPoints(63.8, 150, 36)} fill="#7B5CFF" />
                   </g>
                   <polygon points="170,62 170,134 210,98" fill="#0B0F1A" />
                   <polygon points="172,68 172,128 206,98" fill="#D4FF4F" />
@@ -1163,7 +1152,8 @@ export default function Login() {
                   color: "transparent",
                 }}
               >
-                REPLAY
+                <span style={{ display: "block", fontFamily: "'Cairo','Rajdhani',sans-serif", fontSize: 14 }}>ريبلاي</span>
+                <span style={{ display: "block", fontFamily: "'Rajdhani','Inter',sans-serif", fontSize: 7, letterSpacing: ".27em", color: "var(--replay-muted)" }}>REPLAY</span>
               </span>
             </div>
 

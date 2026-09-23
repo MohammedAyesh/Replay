@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Cairo:wght@800;900&family=Tajawal:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@700;800&family=Inter:wght@400;500;600&family=Rajdhani:wght@600;700&family=Tajawal:wght@400;500;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
@@ -6,50 +6,67 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
+  --color-void: var(--replay-void);
+  --color-surface: var(--replay-surface);
+  --color-raised: var(--replay-raised);
+  --color-line: var(--replay-line);
+  --color-text: var(--replay-text);
+  --color-muted-text: var(--replay-muted);
+  --color-floodlight: var(--replay-floodlight);
+  --color-violet: var(--replay-violet);
+  --color-live: var(--replay-live);
+  --color-turf: var(--replay-turf);
 
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-card-border: hsl(var(--card-border));
+  --color-background: var(--replay-void);
+  --color-foreground: var(--replay-text);
+  --color-border: var(--replay-line);
+  --color-input: var(--replay-line);
+  --color-ring: var(--replay-turf);
+  --color-card: var(--replay-surface);
+  --color-card-foreground: var(--replay-text);
+  --color-card-border: var(--replay-line);
+  --color-popover: var(--replay-surface);
+  --color-popover-foreground: var(--replay-text);
+  --color-popover-border: var(--replay-line);
+  --color-primary: var(--replay-floodlight);
+  --color-primary-foreground: var(--replay-void);
+  --color-primary-border: var(--replay-floodlight);
+  --color-secondary: var(--replay-violet);
+  --color-secondary-foreground: var(--replay-text);
+  --color-secondary-border: var(--replay-violet);
+  --color-muted: var(--replay-raised);
+  --color-muted-foreground: var(--replay-muted);
+  --color-muted-border: var(--replay-line);
+  --color-accent: var(--replay-turf);
+  --color-accent-foreground: var(--replay-void);
+  --color-accent-border: var(--replay-turf);
+  --color-destructive: var(--replay-line);
+  --color-destructive-foreground: var(--replay-text);
+  --color-destructive-border: var(--replay-line);
+  --color-sidebar: var(--replay-surface);
+  --color-sidebar-foreground: var(--replay-text);
+  --color-sidebar-border: var(--replay-line);
+  --color-sidebar-primary: var(--replay-floodlight);
+  --color-sidebar-primary-foreground: var(--replay-void);
+  --color-sidebar-primary-border: var(--replay-floodlight);
+  --color-sidebar-accent: var(--replay-raised);
+  --color-sidebar-accent-foreground: var(--replay-text);
+  --color-sidebar-accent-border: var(--replay-line);
+  --color-sidebar-ring: var(--replay-turf);
 
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-popover-border: hsl(var(--popover-border));
-
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-primary-border: var(--primary-border);
-
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-secondary-border: var(--secondary-border);
-
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-muted-border: var(--muted-border);
-
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-accent-border: var(--accent-border);
-
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-destructive-border: var(--destructive-border);
-
-  --color-sidebar: hsl(var(--sidebar));
-  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
-  --color-sidebar-border: hsl(var(--sidebar-border));
-  --color-sidebar-primary: hsl(var(--sidebar-primary));
-  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
-  --color-sidebar-primary-border: var(--sidebar-primary-border);
-  --color-sidebar-accent: hsl(var(--sidebar-accent));
-  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
-  --color-sidebar-accent-border: var(--sidebar-accent-border);
-  --color-sidebar-ring: hsl(var(--sidebar-ring));
+  /* Legacy utility names resolve to Signal System tokens. */
+  --color-white: var(--replay-text);
+  --color-black: var(--replay-void);
+  --color-zinc-950: var(--replay-void);
+  --color-zinc-900: var(--replay-surface);
+  --color-zinc-800: var(--replay-raised);
+  --color-zinc-700: var(--replay-line);
+  --color-zinc-600: var(--replay-muted);
+  --color-zinc-500: var(--replay-muted);
+  --color-zinc-400: var(--replay-muted);
+  --color-zinc-300: var(--replay-text);
+  --color-zinc-200: var(--replay-text);
+  --color-zinc-100: var(--replay-text);
 
   --font-sans: var(--app-font-sans);
   --font-serif: var(--app-font-serif);
@@ -63,41 +80,44 @@
 }
 
 :root {
-  /* Navy-dark backgrounds */
-  --background: 224 41% 7%;
-  --foreground: 214 41% 97%;
+  --replay-void: #0B0F1A;
+  --replay-surface: #141B2C;
+  --replay-raised: #1B2338;
+  --replay-line: #232C42;
+  --replay-text: #F2F4F8;
+  --replay-muted: #8A93A6;
+  --replay-floodlight: #D4FF4F;
+  --replay-violet: #7B5CFF;
+  --replay-live: #FF5A3C;
+  --replay-turf: #2FD8C4;
+
+  /* Compatibility values for older hsl(var(--...)) rules. */
+  --background: 225 30% 7%;
+  --foreground: 216 25% 96%;
   --card: 222 38% 13%;
-  --card-foreground: 214 41% 97%;
+  --card-foreground: 216 25% 96%;
   --popover: 222 38% 13%;
-  --popover-foreground: 214 41% 97%;
-
-  /* Floodlight yellow-green primary */
+  --popover-foreground: 216 25% 96%;
   --primary: 75 100% 65%;
-  --primary-foreground: 224 41% 7%;
-
-  --secondary: 221 35% 16%;
-  --secondary-foreground: 214 41% 97%;
-
-  --muted: 221 35% 16%;
-  --muted-foreground: 221 14% 60%;
-
-  /* Stoppage Violet accent */
+  --primary-foreground: 225 30% 7%;
+  --secondary: 222 36% 16%;
+  --secondary-foreground: 216 25% 96%;
+  --muted: 222 36% 16%;
+  --muted-foreground: 220 13% 60%;
   --accent: 251 100% 68%;
-  --accent-foreground: 214 41% 97%;
-
-  --destructive: 9 100% 62%;
-  --destructive-foreground: 214 41% 97%;
-
+  --accent-foreground: 216 25% 96%;
+  --destructive: 0 0% 70%;
+  --destructive-foreground: 216 25% 96%;
   --border: 223 31% 20%;
   --input: 223 31% 20%;
-  --ring: 75 100% 65%;
+  --ring: 169 68% 51%;
   --radius: 1rem;
 
-  --app-font-sans: 'DM Sans', system-ui, sans-serif;
-  --app-font-serif: 'Space Grotesk', serif;
-  --app-font-mono: 'IBM Plex Mono', monospace;
-  --app-font-display: 'Space Grotesk', 'DM Sans', sans-serif;
-  --app-font-arabic: 'Tajawal', 'Cairo', sans-serif;
+  --app-font-sans: 'Inter', system-ui, sans-serif;
+  --app-font-serif: 'Cairo', 'Inter', sans-serif;
+  --app-font-mono: 'Rajdhani', 'Inter', sans-serif;
+  --app-font-display: 'Rajdhani', 'Inter', sans-serif;
+  --app-font-arabic: 'Tajawal', 'Inter', sans-serif;
 
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(255,255,255, .03);
@@ -105,25 +125,7 @@
 }
 
 .dark {
-  --background: 224 41% 7%;
-  --foreground: 214 41% 97%;
-  --card: 222 38% 13%;
-  --card-foreground: 214 41% 97%;
-  --popover: 222 38% 13%;
-  --popover-foreground: 214 41% 97%;
-  --primary: 75 100% 65%;
-  --primary-foreground: 224 41% 7%;
-  --secondary: 221 35% 16%;
-  --secondary-foreground: 214 41% 97%;
-  --muted: 221 35% 16%;
-  --muted-foreground: 221 14% 60%;
-  --accent: 251 100% 68%;
-  --accent-foreground: 214 41% 97%;
-  --destructive: 9 100% 62%;
-  --destructive-foreground: 214 41% 97%;
-  --border: 223 31% 20%;
-  --input: 223 31% 20%;
-  --ring: 75 100% 65%;
+  color-scheme: dark;
 }
 
 @layer base {
@@ -131,14 +133,16 @@
     @apply border-transparent;
   }
   body {
-    @apply font-sans antialiased bg-zinc-950 text-foreground;
+    @apply font-sans antialiased text-foreground;
+    min-width: 320px;
+    background: var(--replay-void);
   }
 }
 
 [dir="rtl"] {
-  --app-font-sans: 'Tajawal', 'DM Sans', sans-serif;
-  --app-font-serif: 'Tajawal', 'Space Grotesk', serif;
-  --app-font-display: 'Cairo', 'Tajawal', sans-serif;
+  --app-font-sans: 'Tajawal', 'Inter', sans-serif;
+  --app-font-serif: 'Tajawal', 'Inter', sans-serif;
+  --app-font-display: 'Cairo', 'Rajdhani', sans-serif;
 }
 
 .font-display {
@@ -1442,4 +1446,206 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
   .claim-page-stage .claim-candidate-arrows {
     display: none;
   }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Replay Signal System surface
+
+   A large part of the product predates the shared token layer and still uses
+   Tailwind's neutral/status utility names. Keep those components functional,
+   but make their rendered surface resolve to the same small brand palette.
+   ────────────────────────────────────────────────────────────────────────── */
+:where(.app-shell, .auth-shell) {
+  color: var(--replay-text);
+  background-color: var(--replay-void);
+}
+
+:where(.app-shell, .auth-shell) :where(input, select, textarea) {
+  border-color: var(--replay-line);
+  border-radius: 12px;
+  color: var(--replay-text);
+  background-color: var(--replay-raised);
+}
+
+:where(.app-shell, .auth-shell) :where(input, select, textarea):focus {
+  outline: 2px solid color-mix(in srgb, var(--replay-turf) 35%, transparent);
+  outline-offset: 1px;
+  border-color: var(--replay-turf);
+}
+
+:where(.app-shell, .auth-shell) :where(button, [role="button"]) {
+  border-color: var(--replay-line);
+}
+
+.replay-wordmark {
+  display: grid;
+  gap: 1px;
+  line-height: 1;
+}
+.replay-wordmark-ar {
+  color: var(--replay-text);
+  font-family: 'Cairo', 'Rajdhani', sans-serif;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: .02em;
+}
+.replay-wordmark-en {
+  color: var(--replay-muted);
+  font-family: 'Rajdhani', 'Inter', sans-serif;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .27em;
+}
+
+.replay-auth-atmosphere {
+  animation: rpDrift 18s ease-in-out infinite;
+}
+
+/* Old neutral utilities are intentionally aliases, not a second dark theme. */
+.bg-zinc-950 { background-color: var(--replay-void) !important; }
+.bg-zinc-900 { background-color: var(--replay-surface) !important; }
+.bg-zinc-800 { background-color: var(--replay-raised) !important; }
+.bg-zinc-700 { background-color: var(--replay-line) !important; }
+.border-zinc-800,
+.border-zinc-700,
+.border-zinc-600 { border-color: var(--replay-line) !important; }
+.text-zinc-100,
+.text-zinc-200,
+.text-zinc-300 { color: var(--replay-text) !important; }
+.text-zinc-400,
+.text-zinc-500,
+.text-zinc-600 { color: var(--replay-muted) !important; }
+
+/* Status colors are subdued unless a component explicitly opts into live. */
+.text-red-300,
+.text-red-400,
+.text-red-500,
+.text-orange-300,
+.text-orange-400,
+.text-orange-500,
+.text-amber-200,
+.text-amber-300,
+.text-amber-400,
+.text-amber-500 { color: var(--replay-muted) !important; }
+.bg-red-950,
+.bg-red-900,
+.bg-red-500,
+.bg-orange-500,
+.bg-amber-950,
+.bg-amber-500,
+.bg-amber-400 {
+  background-color: color-mix(in srgb, var(--replay-raised) 86%, transparent) !important;
+}
+.border-red-900,
+.border-red-800,
+.border-red-500,
+.border-amber-800,
+.border-amber-500,
+.border-orange-500 { border-color: var(--replay-line) !important; }
+.text-emerald-300,
+.text-emerald-400,
+.text-emerald-500,
+.text-green-400,
+.text-green-500,
+.text-sky-200,
+.text-sky-400,
+.text-blue-400 { color: var(--replay-turf) !important; }
+.bg-emerald-500,
+.bg-green-500,
+.bg-sky-500,
+.bg-blue-500 { background-color: var(--replay-turf) !important; }
+
+/* One clear primary action per screen; secondary actions stay violet. */
+.bg-primary,
+.bg-primary\/90,
+.bg-primary\/80 { background-color: var(--replay-floodlight) !important; }
+.text-primary-foreground { color: var(--replay-void) !important; }
+.border-primary { border-color: var(--replay-floodlight) !important; }
+.text-blue-500,
+.text-cyan-400,
+.text-sky-500 { color: var(--replay-turf) !important; }
+
+/* Cards and transient surfaces use border hierarchy instead of glossy shadows. */
+.shadow,
+.shadow-sm,
+.shadow-md,
+.shadow-lg,
+.shadow-xl,
+.shadow-2xl { box-shadow: none !important; }
+.replay-header,
+.admin-page-header,
+.admin-page-tabs,
+.admin-page-content {
+  border-color: var(--replay-line);
+}
+
+/* The player has its own legibility layer, but its controls still use Signal
+   System semantics rather than browser-white or warning-yellow defaults. */
+.var-player-fullscreen,
+.var-player-css-fullscreen,
+.claim-page-stage,
+.claim-stage,
+.claim-frame-box { background: var(--replay-void); }
+.var-player-control-play,
+.claim-tool-play {
+  color: var(--replay-void);
+  background: var(--replay-floodlight);
+}
+.var-player-control-live,
+.claim-live-dot { color: var(--replay-live); }
+.var-player-control-mark { color: var(--replay-turf); }
+.var-player-pill.is-active,
+.claim-tool.is-on {
+  color: var(--replay-void);
+  background: var(--replay-floodlight);
+}
+
+/* Claim / identity flows share the main app tokens while retaining their
+   tracking-specific layout and interaction states. */
+.claim-page {
+  --claim-ink: var(--replay-text);
+  --claim-muted: var(--replay-muted);
+  --claim-dim: color-mix(in srgb, var(--replay-muted) 68%, var(--replay-void));
+  --claim-line: var(--replay-line);
+  --claim-panel: var(--replay-surface);
+  --claim-panel-2: var(--replay-raised);
+  --claim-green: var(--replay-floodlight);
+  --claim-green-deep: var(--replay-turf);
+  --claim-orange: var(--replay-turf);
+  background: var(--replay-void);
+  font-family: var(--app-font-sans);
+}
+.claim-page::before { display: none; }
+.claim-brand-mark {
+  color: var(--replay-void);
+  background: var(--replay-floodlight);
+}
+.claim-match-card,
+.claim-panel,
+.claim-number-chip,
+.claim-moment-row {
+  border-color: var(--replay-line);
+  background: var(--replay-surface);
+}
+.claim-panel { border-radius: 16px; }
+.claim-stage-dot { background: var(--replay-void); }
+.claim-stage.is-active .claim-stage-dot {
+  color: var(--replay-void);
+  background: var(--replay-floodlight);
+}
+.claim-video-error,
+.claim-toast {
+  color: var(--replay-text);
+  background: color-mix(in srgb, var(--replay-surface) 96%, transparent);
+  border-color: var(--replay-line);
+}
+.claim-track-box.is-highlighted,
+.claim-candidate-arrow {
+  border-color: var(--replay-turf);
+  color: var(--replay-void);
+  background: var(--replay-turf);
+}
+
+@media (max-width: 520px) {
+  .replay-wordmark { display: none; }
 }

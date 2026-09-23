@@ -4,7 +4,6 @@ import { X } from "lucide-react";
 import { useLocation } from "wouter";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useTranslation } from "@/i18n";
-import replayLogo from "@/assets/replay-logo.png";
 
 const DELAY_MS = 3500;
 
@@ -88,14 +87,14 @@ export function InstallBanner() {
           <div className="p-4 pe-10">
             {platform === "android-chrome" && (
               <div className="flex items-center gap-3">
-                <img src={replayLogo} alt="Replay" className="w-12 h-12 rounded-xl flex-shrink-0 object-contain" />
+                <img src="/replay-mark.svg" alt="Replay" className="h-12 w-12 shrink-0 object-contain" />
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-foreground text-sm leading-tight">{s.androidTitle}</p>
                   <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{s.androidDesc}</p>
                 </div>
                 <button
                   onClick={handleInstall}
-                  className="flex-shrink-0 bg-primary text-white text-xs font-bold px-4 py-2 rounded-full hover:bg-primary/90 active:scale-95 transition-all"
+                  className="flex-shrink-0 rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/90 active:scale-95 transition-all"
                 >
                   {s.installBtn}
                 </button>
@@ -105,7 +104,7 @@ export function InstallBanner() {
             {platform === "ios-safari" && (
               <div className="flex flex-col gap-3">
                 <div className="flex items-center gap-3">
-                  <img src={replayLogo} alt="Replay" className="w-10 h-10 rounded-xl flex-shrink-0 object-contain" />
+                    <img src="/replay-mark.svg" alt="Replay" className="h-10 w-10 shrink-0 object-contain" />
                   <div>
                     <p className="font-semibold text-foreground text-sm leading-tight">{s.iosTitle}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{s.iosDesc}</p>

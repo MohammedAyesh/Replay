@@ -124,8 +124,7 @@ export default function Account() {
             <div
               className="flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-full"
               style={{
-                background:
-                  "conic-gradient(from 0deg, #22C7B5 0deg 60deg, #BFFF5C 60deg 120deg, #3FE0C9 120deg 180deg, #1FA79B 180deg 240deg, #186E7E 240deg 300deg, #6C4FE0 300deg 360deg)",
+                background: "linear-gradient(135deg, var(--replay-turf), var(--replay-violet))",
               }}
             >
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-card text-2xl font-bold text-primary">
@@ -344,13 +343,13 @@ function ReplaySignOutOverlay() {
           </clipPath>
         </defs>
         <g clipPath="url(#replaySignOutClip)">
-          <polygon className="replay-sign-out-facet" points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#22C7B5" />
-          <polygon className="replay-sign-out-facet" points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#BFFF5C" />
-          <polygon className="replay-sign-out-facet" points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#3FE0C9" />
-          <polygon className="replay-sign-out-facet" points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#1FA79B" />
-          <polygon className="replay-sign-out-facet" points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#186E7E" />
-          <polygon className="replay-sign-out-facet" points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#1C8AA0" />
-          <polygon className="replay-sign-out-facet" points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#6C4FE0" />
+          <polygon className="replay-sign-out-facet" points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#2FD8C4" />
+          <polygon className="replay-sign-out-facet" points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#D4FF4F" />
+          <polygon className="replay-sign-out-facet" points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#2FD8C4" />
+          <polygon className="replay-sign-out-facet" points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#238F8B" />
+          <polygon className="replay-sign-out-facet" points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#1D526B" />
+          <polygon className="replay-sign-out-facet" points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#247A91" />
+          <polygon className="replay-sign-out-facet" points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#7B5CFF" />
         </g>
         <polygon points="170,62 170,134 210,98" fill="#0B0F1A" />
         <polygon points="172,68 172,128 206,98" fill="#D4FF4F" />

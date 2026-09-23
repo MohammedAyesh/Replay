@@ -83,7 +83,7 @@ export default function Live() {
     <div className="flex-1 overflow-y-auto no-scrollbar bg-background">
       <div className="px-4 pt-6 pb-4 flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <Radio className="w-5 h-5 text-red-500" />
+          <Radio className="replay-live-indicator h-5 w-5 text-live" />
           <h1 className="text-white text-xl font-bold">Live</h1>
         </div>
       </div>

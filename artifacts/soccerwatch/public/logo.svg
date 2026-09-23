@@ -1,5 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
-  <circle cx="24" cy="24" r="24" fill="#22c55e"/>
-  <path d="M14 20l3 8h14l3-8-6 3-4-7-4 7-6-3z" fill="white"/>
-  <path d="M17 28l1.5 4h11l1.5-4H17z" fill="white" opacity="0.7"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 0 225 200">
+  <defs><clipPath id="replayLogoClip"><circle cx="95" cy="96" r="88"/></clipPath></defs>
+  <g clip-path="url(#replayLogoClip)">
+    <polygon points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#2FD8C4"/>
+    <polygon points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#D4FF4F"/>
+    <polygon points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#2FD8C4"/>
+    <polygon points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#238F8B"/>
+    <polygon points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#1D526B"/>
+    <polygon points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#247A91"/>
+    <polygon points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#7B5CFF"/>
+  </g>
+  <polygon points="170,62 170,134 210,98" fill="#0B0F1A"/>
+  <polygon points="172,68 172,128 206,98" fill="#D4FF4F"/>
+  <circle cx="178" cy="46" r="7.5" fill="#0B0F1A"/>
+  <circle cx="178" cy="46" r="5.5" fill="#FF5A3C"/>
 </svg>

@@ -122,7 +122,7 @@ function AuthHeroLayout({
   };
 
   return (
-    <div className="relative h-[100dvh] min-h-[100dvh] overflow-x-hidden overflow-y-auto no-scrollbar bg-[#0B0F1A]">
+    <div className="auth-shell relative h-[100dvh] min-h-[100dvh] overflow-x-hidden overflow-y-auto no-scrollbar bg-void">
       <style>{`
         @keyframes rpDrift {
           0%, 100% { transform: translate(0, 0); }
@@ -131,9 +131,9 @@ function AuthHeroLayout({
         .cl-cardBox,
         .cl-cardBox .cl-footer,
         .cl-cardBox .cl-footerAction {
-          background: #141B2C !important;
-          background-color: #141B2C !important;
-          border-color: transparent !important;
+          background: var(--replay-surface) !important;
+          background-color: var(--replay-surface) !important;
+          border-color: var(--replay-line) !important;
           box-shadow: none !important;
         }
         .cl-cardBox .cl-footer {
@@ -160,24 +160,22 @@ function AuthHeroLayout({
         }
       `}</style>
       <div
-        className="absolute -inset-[10%] z-0"
+        className="replay-auth-atmosphere absolute -inset-[10%] z-0"
         style={{
           background: `
-            radial-gradient(60% 45% at 15% 10%, rgba(47,216,196,.22), transparent 60%),
-            radial-gradient(55% 50% at 90% 20%, rgba(123,92,255,.2), transparent 60%),
-            radial-gradient(65% 55% at 25% 95%, rgba(212,255,79,.09), transparent 60%),
-            radial-gradient(70% 60% at 100% 100%, rgba(47,216,196,.12), transparent 60%),
-            linear-gradient(160deg, #0B0F1A, #0D1220 45%, #0B0F1A)
+            radial-gradient(60% 45% at 88% 6%, color-mix(in srgb, var(--replay-turf) 13%, transparent), transparent 60%),
+            radial-gradient(55% 50% at 12% 94%, color-mix(in srgb, var(--replay-violet) 14%, transparent), transparent 60%),
+            var(--replay-void)
           `,
           animation: "rpDrift 18s ease-in-out infinite",
         }}
         aria-hidden="true"
       />
       <div
-        className="absolute inset-0 z-0 opacity-50"
+        className="absolute inset-0 z-0 opacity-30"
         style={{
-          backgroundImage: "radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px)",
-          backgroundSize: "26px 26px",
+          backgroundImage: "radial-gradient(color-mix(in srgb, var(--replay-text) 10%, transparent) 1px, transparent 1px)",
+          backgroundSize: "32px 32px",
           maskImage: "radial-gradient(60% 60% at 50% 30%, #000, transparent)",
           WebkitMaskImage: "radial-gradient(60% 60% at 50% 30%, #000, transparent)",
         }}
@@ -190,7 +188,7 @@ function AuthHeroLayout({
           type="button"
           onClick={handleBack}
           aria-label="Back"
-          className="fixed top-3 z-50 flex h-[34px] w-[34px] items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white"
+          className="fixed top-3 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface text-text"
           style={{ left: "max(12px, calc(50% - 220px + 12px))" }}
         >
           <ArrowLeft className="h-4 w-4" />
@@ -202,7 +200,7 @@ function AuthHeroLayout({
         type="button"
         onClick={() => setLocale(locale === "ar" ? "en" : "ar")}
         aria-label="Change language"
-        className="fixed top-3 z-50 flex items-center gap-1.5 rounded-[99px] border border-white/10 bg-white/[0.04] px-3.5 py-2 text-sm font-semibold text-white"
+        className="fixed top-3 z-50 flex min-h-11 items-center gap-1.5 rounded-full border border-line bg-surface px-3.5 py-2 text-sm font-semibold text-text"
         style={{ right: "max(12px, calc(50% - 220px + 12px))" }}
       >
         <Globe className="h-4 w-4" aria-hidden="true" />
@@ -211,26 +209,7 @@ function AuthHeroLayout({
 
       {/* Tiny logo row */}
       <div className="relative z-10 flex justify-center px-[14px] pt-5">
-        <svg viewBox="-5 0 225 200" width="26" height="24" aria-hidden="true">
-          <defs>
-            <clipPath id="authMarkClip">
-              <circle cx="95" cy="96" r="88" />
-            </clipPath>
-          </defs>
-          <g clipPath="url(#authMarkClip)">
-            <polygon points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#22C7B5" />
-            <polygon points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#BFFF5C" />
-            <polygon points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#3FE0C9" />
-            <polygon points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#1FA79B" />
-            <polygon points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#186E7E" />
-            <polygon points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#1C8AA0" />
-            <polygon points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#6C4FE0" />
-          </g>
-          <polygon points="170,62 170,134 210,98" fill="#0B0F1A" />
-          <polygon points="172,68 172,128 206,98" fill="#D4FF4F" />
-          <circle cx="178" cy="46" r="7.5" fill="#0B0F1A" />
-          <circle cx="178" cy="46" r="5.5" fill="#FF5A3C" />
-        </svg>
+        <img src="/replay-mark.svg" alt="Replay" className="h-8 w-9 object-contain" />
       </div>
       {/* Independently centered auth content */}
       <div className="relative z-[5] flex min-h-[calc(100vh-46px)] flex-col justify-center p-6">
@@ -314,7 +293,7 @@ function SignUpPage() {
         />
         <div
           dir={isArabic ? "rtl" : "ltr"}
-          className={`rounded-2xl border border-white/10 bg-[#111827] p-4 text-white shadow-xl ${isArabic ? "text-right" : "text-left"}`}
+          className={`rounded-2xl border border-line bg-surface p-4 text-text ${isArabic ? "text-right" : "text-left"}`}
         >
           <SignupConsentOption
             id="signup-recording-consent"
@@ -336,7 +315,9 @@ function SignUpPage() {
             badge={copy.optional}
           />
           {showConsentError && (
-            <p className="mt-3 text-xs font-medium text-[#FF8E7A]" role="alert">{copy.error}</p>
+            <p className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground" role="alert">
+              <span aria-hidden="true">!</span>{copy.error}
+            </p>
           )}
         </div>
       </div>
@@ -365,16 +346,16 @@ function SignupConsentOption({
         id={id}
         checked={checked}
         onCheckedChange={(value) => onCheckedChange(value === true)}
-        className="mt-0.5 border-white/40 data-[state=checked]:border-primary"
+        className="mt-0.5 border-line data-[state=checked]:border-turf"
       />
       <span className="min-w-0">
         <span className="flex flex-wrap items-center gap-2 text-sm font-semibold">
           {title}
-          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white/60">
+          <span className="rounded-full border border-line bg-raised px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             {badge}
           </span>
         </span>
-        <span className="mt-1 block text-xs leading-5 text-white/60">{description}</span>
+        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
       </span>
     </label>
   );

@@ -4,8 +4,8 @@
   "description": "Browse and save your best soccer moments.",
   "start_url": "/",
   "display": "fullscreen",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#0B0F1A",
+  "theme_color": "#0B0F1A",
   "orientation": "portrait-primary",
   "icons": [
     {
