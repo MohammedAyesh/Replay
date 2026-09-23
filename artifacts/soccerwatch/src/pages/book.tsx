@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearch } from "wouter";
-import { ArrowLeft, BarChart3, Check, ChevronRight, Clock, Loader2, MapPin, Share2, Timer, Users } from "lucide-react";
-import { PaymentPanel } from "@/components/match/PaymentPanel";
+import { ArrowLeft, Banknote, BarChart3, Check, ChevronRight, Clock, Loader2, MapPin, Share2, Timer, Users } from "lucide-react";
+import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import { useToast } from "@/hooks/use-toast";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { useAuth } from "@/lib/auth";
@@ -12,6 +12,7 @@ import {
   useCreateBooking,
   useTakenSlots,
   type BookingResult,
+  type PayMethod,
 } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +74,7 @@ export default function BookPage() {
   const [start, setStart] = useState<number | null>(null);
   const [duration, setDuration] = useState(60);
   const [title, setTitle] = useState("");
+  const [payWith, setPayWith] = useState<PayMethod>("cliq");
   const [result, setResult] = useState<BookingResult | null>(null);
 
   const fields = fieldsQuery.data?.fields ?? [];
@@ -123,6 +125,8 @@ export default function BookPage() {
   }, [date, duration, fieldId, taken.data]);
 
   const pricePerHour = fieldsQuery.data?.pricePerHourFils ?? 2000;
+  const payAtField = Boolean(fieldsQuery.data?.payAtField);
+  const method: PayMethod = payAtField ? payWith : "cliq";
   const priceFils = Math.max(1, Math.ceil(duration / 60)) * pricePerHour;
   const field = fields.find((f) => f.id === fieldId) ?? null;
   const ready = Boolean(field && start != null);
@@ -144,7 +148,7 @@ export default function BookPage() {
     }
     const win = windowFor(date, start, duration);
     try {
-      const r = await create.mutateAsync({ fieldId: field.id, ...win, title: title.trim() || null });
+      const r = await create.mutateAsync({ fieldId: field.id, ...win, title: title.trim() || null, payWith: method });
       setResult(r);
       window.scrollTo?.({ top: 0 });
     } catch (error) {
@@ -157,17 +161,19 @@ export default function BookPage() {
     return (
       <Page ar={ar}>
         <div className="flex items-center gap-2 text-turf"><Check className="h-5 w-5" /><span className="text-sm font-bold">{b.summary}</span></div>
-        <h1 className="mt-1 font-display text-3xl font-bold">{b.payTitle}</h1>
+        <h1 className="mt-1 font-display text-3xl font-bold">{result.method === "field" ? b.fieldTitle : b.payTitle}</h1>
         <p className="mt-1 text-sm text-muted-text">
           {result.fieldName} · {dayLabel(result.startLocal.slice(0, 10))} · {result.startLocal.slice(11)}–{result.endLocal.slice(11)}
         </p>
         <div className="mt-5 rounded-3xl border border-line bg-surface p-4">
-          <PaymentPanel amountFils={result.amountFils} cliqAlias={result.cliqAlias} reference={result.reference} />
+          {result.method === "field"
+            ? <FieldPaymentPanel amountFils={result.amountFils} reference={result.reference} />
+            : <PaymentPanel amountFils={result.amountFils} cliqAlias={result.cliqAlias} reference={result.reference} />}
         </div>
         <Link href={`/m/${result.code}`} className="mt-5 flex min-h-12 items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void">
           {b.openMatch}<ChevronRight className="h-4 w-4 rtl:rotate-180" />
         </Link>
-        <p className="mt-2 text-center text-xs text-muted-text">{b.payLater}</p>
+        {result.method !== "field" && <p className="mt-2 text-center text-xs text-muted-text">{b.payLater}</p>}
       </Page>
     );
   }
@@ -300,8 +306,27 @@ export default function BookPage() {
         ) : (
           <p className="text-sm text-muted-text">{b.pickAll}</p>
         )}
+        {payAtField && (
+          <div className="mt-4" role="radiogroup" aria-label={b.payHow}>
+            <p className="mb-2 text-xs font-semibold text-muted-text">{b.payHow}</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(["cliq", "field"] as const).map((m) => (
+                <button key={m} type="button" role="radio" aria-checked={method === m} onClick={() => setPayWith(m)}
+                  data-testid={`button-pay-${m}`}
+                  className={cn("flex flex-col items-start gap-1 rounded-2xl border p-3 text-start transition-colors",
+                    method === m ? "border-turf bg-turf/10" : "border-line bg-raised")}>
+                  <span className="flex items-center gap-1.5 text-sm font-bold">
+                    {m === "field" ? <Banknote className="h-4 w-4 text-turf" /> : <span className="font-mono text-[11px] font-black text-violet">CliQ</span>}
+                    {m === "field" ? b.payFieldLabel : b.payCliqLabel}
+                  </span>
+                  <span className="text-[11px] leading-4 text-muted-text">{m === "field" ? b.payFieldDesc(formatJod(priceFils)) : b.payCliqDesc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <button type="button" disabled={!ready || busyNow || isLoading} onClick={() => void submit()} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void disabled:opacity-40">
-          {busyNow ? <><Loader2 className="h-4 w-4 animate-spin" />{b.booking}</> : b.bookAndPay(formatJod(priceFils))}
+          {busyNow ? <><Loader2 className="h-4 w-4 animate-spin" />{b.booking}</> : method === "field" ? b.bookPayField(formatJod(priceFils)) : b.bookAndPay(formatJod(priceFils))}
         </button>
       </section>
 

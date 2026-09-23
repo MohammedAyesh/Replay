@@ -14,7 +14,7 @@ export default function StatPaymentsTab() {
 
   const act = (id: number, action: "confirm" | "reject") =>
     review.mutateAsync({ id, action })
-      .then(() => toast({ title: action === "confirm" ? "Unlocked" : "Rejected" }))
+      .then(() => toast({ title: action === "confirm" ? "Confirmed" : "Rejected" }))
       .catch((e) => toast({ title: e instanceof Error ? e.message : "Failed", variant: "destructive" }));
 
   return (
@@ -22,9 +22,10 @@ export default function StatPaymentsTab() {
       <div>
         <h2 className="font-display text-xl font-bold">Payments</h2>
         <p className="text-xs text-muted-text">
-          Pending CliQ transfers. Recording bookings (2 JOD per hour or part of an hour) start recording the moment you
-          confirm; rejecting cancels the booking and frees the slot. Stats: 0.5 JOD per match, 0.5 JOD × squad for a team
-          unlock, 2 JOD a month. Confirm only once the transfer with this reference has arrived.
+          Payments waiting to be checked. CliQ: confirm only once the transfer carrying this reference has arrived.
+          Confirming a CliQ booking starts the recording; rejecting it cancels the booking and frees the slot.
+          Cash at the field: the recording is already locked in, so confirm means the cash was handed over and
+          reject means it wasn&apos;t. Prices are set in Settings → Pricing.
         </p>
       </div>
       {list.isLoading ? (
@@ -37,7 +38,7 @@ export default function StatPaymentsTab() {
             <div className="min-w-0 flex-1">
               <p className="font-mono text-sm font-bold">{row.reference}</p>
               <p className="truncate text-xs text-muted-text">
-                {row.user.name ?? "—"} · {row.user.phone ?? row.user.email ?? ""} · {row.kind === "booking" ? "Recording booking" : `Stats (${row.kind})`}
+                {row.user.name ?? "—"} · {row.user.phone ?? row.user.email ?? ""} · {row.kind === "booking" ? (row.method === "field" ? "Recording booking · cash at the field" : "Recording booking · CliQ") : `Stats (${row.kind}) · CliQ`}
                 {row.matchCode ? ` · #${row.matchCode}` : ""}
               </p>
               <p className="text-[11px] text-muted-text">{new Date(row.createdAt).toLocaleString("en-GB", { timeZone: "Asia/Amman" })}</p>
@@ -45,10 +46,10 @@ export default function StatPaymentsTab() {
             <span className="font-mono text-lg font-bold">{formatJod(row.amountFils)} JOD</span>
             <div className="flex gap-2">
               <button type="button" disabled={review.isPending} onClick={() => void act(row.id, "confirm")} className="flex min-h-10 items-center gap-1 rounded-full bg-floodlight px-3 text-xs font-bold text-void">
-                <Check className="h-3.5 w-3.5" />Confirm
+                <Check className="h-3.5 w-3.5" />{row.method === "field" ? "Cash received" : "Confirm"}
               </button>
               <button type="button" disabled={review.isPending} onClick={() => void act(row.id, "reject")} className="flex min-h-10 items-center gap-1 rounded-full border border-line px-3 text-xs font-semibold text-muted-text">
-                <X className="h-3.5 w-3.5" />Reject
+                <X className="h-3.5 w-3.5" />{row.method === "field" ? "Didn't pay" : "Reject"}
               </button>
             </div>
           </div>

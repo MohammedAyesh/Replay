@@ -124,6 +124,17 @@ export const SETTINGS: readonly SettingDefinition[] = [
     defaultValue: true,
   },
   {
+    key: "booking.payAtFieldEnabled",
+    group: "Bookings",
+    label: "Players can pay at the field",
+    description:
+      "Offers 'Pay at the field' next to CliQ. The recording is locked in straight away and the " +
+      "field staff collect the cash; mark it received in Admin -> Payments or on the match page. " +
+      "Unpaid holds still count against the per-player limit.",
+    type: "boolean",
+    defaultValue: true,
+  },
+  {
     key: "booking.maxDaysAhead",
     group: "Bookings",
     label: "How far ahead players can book",

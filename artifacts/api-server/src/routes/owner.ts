@@ -1845,6 +1845,7 @@ router.get("/bookings/fields", async (req, res): Promise<void> => {
     maxDaysAhead: commerce.bookingMaxDaysAhead,
     maxMinutes: commerce.bookingMaxMinutes,
     enabled: commerce.bookingEnabled,
+    payAtField: commerce.payAtField,
     cliqAlias: commerce.cliqAlias,
   });
 });
@@ -1879,7 +1880,24 @@ const playerBookingSchema = z.object({
   startLocal: z.string(),
   endLocal: z.string(),
   title: z.string().trim().max(60).nullable().optional(),
+  /** cliq: the recording waits for the transfer. field: locked in now, cash at the field. */
+  payWith: z.enum(["cliq", "field"]).optional(),
 });
+
+/** Bookings a player holds without having paid: CliQ ones waiting, plus pay-at-field ones not yet collected. */
+async function unpaidHolds(userId: number): Promise<number> {
+  const [cliq] = await db.select({ n: sql<number>`count(*)::int` }).from(footageRequestsTable)
+    .where(and(eq(footageRequestsTable.requestedBy, userId), eq(footageRequestsTable.status, "awaiting_payment")));
+  const [field] = await db.select({ n: sql<number>`count(*)::int` }).from(statUnlocksTable)
+    .innerJoin(matchRoomsTable, eq(matchRoomsTable.id, statUnlocksTable.matchId))
+    .innerJoin(footageRequestsTable, eq(footageRequestsTable.id, matchRoomsTable.footageRequestId))
+    .where(and(
+      eq(statUnlocksTable.userId, userId), eq(statUnlocksTable.kind, "booking"),
+      eq(statUnlocksTable.method, "field"), eq(statUnlocksTable.status, "pending"),
+      inArray(footageRequestsTable.status, ["queued", "scheduled", "recording", "running"]),
+    ));
+  return (cliq?.n ?? 0) + (field?.n ?? 0);
+}
 
 router.post("/bookings", async (req, res): Promise<void> => {
   const user = await getLocalUserRecord(req);
@@ -1926,10 +1944,14 @@ router.post("/bookings", async (req, res): Promise<void> => {
     res.status(400).json({ error: `You can book up to ${commerce.bookingMaxDaysAhead} days ahead` });
     return;
   }
-  const waiting = await db.select({ id: footageRequestsTable.id }).from(footageRequestsTable)
-    .where(and(eq(footageRequestsTable.requestedBy, user.id), eq(footageRequestsTable.status, "awaiting_payment")));
-  if (waiting.length >= commerce.bookingMaxAwaiting) {
-    res.status(409).json({ error: `You have ${waiting.length} bookings waiting for payment. Pay or cancel one first.` });
+  const payWith = body.data.payWith ?? "cliq";
+  if (payWith === "field" && !commerce.payAtField) {
+    res.status(400).json({ error: "Paying at the field isn't available right now. Pay by CliQ instead." });
+    return;
+  }
+  const waiting = await unpaidHolds(user.id);
+  if (waiting >= commerce.bookingMaxAwaiting) {
+    res.status(409).json({ error: `You have ${waiting} bookings waiting for payment. Pay or cancel one first.` });
     return;
   }
   const others = await db.select({ startLocal: footageRequestsTable.startLocal, endLocal: footageRequestsTable.endLocal })
@@ -1979,12 +2001,17 @@ router.post("/bookings", async (req, res): Promise<void> => {
     kind: "booking",
     amountFils,
     reference,
+    method: payWith,
   });
+  // Pay at the field: the recording is locked in now; staff collect the cash on the day.
+  const activated = payWith === "field" ? await activatePaidBooking(created.id) : null;
   res.status(201).json({
     code: room.code,
     requestId: created.id,
     amountFils,
     reference,
+    method: payWith,
+    status: activated?.status ?? created.status,
     cliqAlias: commerce.cliqAlias,
     startLocal: created.startLocal,
     endLocal: created.endLocal,
@@ -2009,18 +2036,86 @@ router.delete("/bookings/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Booking not found" });
     return;
   }
+  const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, id));
   if (row.status !== "awaiting_payment") {
-    res.status(409).json({ error: "Only unpaid bookings can be cancelled here" });
-    return;
+    // A pay-at-field booking is already scheduled. It can still be dropped before kick-off
+    // while the cash is uncollected: stop the camera job, then cancel.
+    const [fieldPayment] = room ? await db.select().from(statUnlocksTable).where(and(
+      eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"),
+      eq(statUnlocksTable.method, "field"), eq(statUnlocksTable.status, "pending"),
+    )) : [];
+    const beforeKickoff = ammanLocalEpoch(row.startLocal) > ammanLocalEpoch(getAmmanNow().local);
+    if (!fieldPayment || !beforeKickoff || !["queued", "scheduled"].includes(row.status)) {
+      res.status(409).json({ error: "Only unpaid bookings can be cancelled here, before kick-off" });
+      return;
+    }
+    if (row.vpsJobId) {
+      try {
+        const result = await controlFetch(
+          `/record-hq/${encodeURIComponent(row.cameraId)}/${encodeURIComponent(row.vpsJobId)}`,
+          { method: "DELETE" },
+          30_000,
+        );
+        if (!result.ok && result.status !== 404) {
+          res.status(502).json({ error: "The recording could not be cancelled. Try again in a minute." });
+          return;
+        }
+      } catch (error) {
+        logger.warn({ requestId: id, error }, "Pay-at-field booking cancellation failed");
+        res.status(502).json({ error: "The recording could not be cancelled. Try again in a minute." });
+        return;
+      }
+    }
+    syncState.delete(id);
   }
   await db.update(footageRequestsTable).set({ status: "cancelled", message: "Cancelled before payment", updatedAt: new Date() })
     .where(eq(footageRequestsTable.id, id));
-  const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, id));
   if (room) {
     await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
       .where(and(eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.status, "pending")));
   }
   res.status(204).send();
+});
+
+/**
+ * Switch how an unpaid booking will be paid. CliQ -> field locks the recording in
+ * now. Field -> CliQ keeps it locked in; the admin confirms the transfer as usual.
+ */
+router.post("/bookings/:id/pay-with", async (req, res): Promise<void> => {
+  const user = await getLocalUserRecord(req);
+  if (!user) {
+    unauthenticatedResponse(res, req);
+    return;
+  }
+  const id = parseId(req.params.id);
+  const method = (req.body ?? {}).method;
+  if (!id || (method !== "cliq" && method !== "field")) {
+    res.status(400).json({ error: "Pick CliQ or pay at the field" });
+    return;
+  }
+  const [row] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, id));
+  if (!row || (row.requestedBy !== user.id && !user.isAdmin)) {
+    res.status(404).json({ error: "Booking not found" });
+    return;
+  }
+  const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, id));
+  const [payment] = room ? await db.select().from(statUnlocksTable).where(and(
+    eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.status, "pending"),
+  )) : [];
+  if (!payment) {
+    res.status(409).json({ error: "This booking has no payment waiting" });
+    return;
+  }
+  if (method === "field") {
+    const commerce = await loadCommerce({ userId: user.id, fieldId: row.fieldId });
+    if (!commerce.payAtField) {
+      res.status(400).json({ error: "Paying at the field isn't available right now" });
+      return;
+    }
+  }
+  await db.update(statUnlocksTable).set({ method }).where(eq(statUnlocksTable.id, payment.id));
+  const activated = method === "field" ? await activatePaidBooking(id) : null;
+  res.json({ method, status: activated?.status ?? row.status });
 });
 
 /** Called when an admin confirms a booking payment: start the camera job. */

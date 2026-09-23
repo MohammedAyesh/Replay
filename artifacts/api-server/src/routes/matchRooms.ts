@@ -377,6 +377,9 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
     // Player-paid bookings: the payment the recording is waiting on.
     booking: bookingPayment ? {
       status: bookingPayment.status,
+      /** cliq | field: pay-at-field bookings record straight away; staff collect the cash. */
+      method: bookingPayment.method === "field" ? "field" : "cliq",
+      payAtFieldAllowed: commerce.payAtField,
       amountFils: bookingPayment.amountFils,
       reference: (member || isOwner || bookingPayment.userId === viewerId) ? bookingPayment.reference : null,
       mine: bookingPayment.userId === viewerId,
@@ -1194,7 +1197,7 @@ router.get("/admin/stat-unlocks", async (req, res): Promise<void> => {
     .orderBy(desc(statUnlocksTable.createdAt))
     .limit(200);
   res.json(rows.map(({ unlock, userName, userEmail, userPhone, code }) => ({
-    id: unlock.id, kind: unlock.kind, amountFils: unlock.amountFils, reference: unlock.reference,
+    id: unlock.id, kind: unlock.kind, method: unlock.method, amountFils: unlock.amountFils, reference: unlock.reference,
     status: unlock.status, createdAt: unlock.createdAt.toISOString(), confirmedAt: unlock.confirmedAt?.toISOString() ?? null,
     validUntil: unlock.validUntil?.toISOString() ?? null,
     user: { id: unlock.userId, name: userName, email: userEmail, phone: userPhone },
@@ -1241,6 +1244,36 @@ router.post("/admin/stat-unlocks/:id/:action", async (req, res): Promise<void> =
   } : { status: "rejected", confirmedBy: user.id, confirmedAt: now })
     .where(eq(statUnlocksTable.id, id)).returning();
   res.json({ id: saved.id, status: saved.status, booking });
+});
+
+/**
+ * Cash taken at the field for a pay-at-field booking. The admin or the field's
+ * owner (whoever is standing there) marks it received, or marks it not paid.
+ */
+router.post("/m/:code/booking/collect", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  if (!user.isAdmin && !(await isFieldOwner(user.id, ctx.room.fieldId))) {
+    res.status(403).json({ error: "Only the field or an admin can mark cash as received" });
+    return;
+  }
+  const paid = (req.body ?? {}).paid !== false;
+  const [payment] = await db.select().from(statUnlocksTable).where(and(
+    eq(statUnlocksTable.matchId, ctx.room.id), eq(statUnlocksTable.kind, "booking"),
+    eq(statUnlocksTable.method, "field"), eq(statUnlocksTable.status, "pending"),
+  ));
+  if (!payment) {
+    res.status(409).json({ error: "No cash payment is waiting on this match" });
+    return;
+  }
+  await db.update(statUnlocksTable).set({
+    status: paid ? "paid" : "rejected", confirmedBy: user.id, confirmedAt: new Date(),
+  }).where(eq(statUnlocksTable.id, payment.id));
+  logger.info({ match: ctx.room.code, by: user.id, paid }, "pay-at-field booking marked");
+  const fresh = await loadRoomByCode(ctx.room.code);
+  res.json(await roomPayload(req, fresh ?? ctx, user));
 });
 
 // ---------------------------------------------------------------- avatars

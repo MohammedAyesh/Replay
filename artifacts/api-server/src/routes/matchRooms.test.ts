@@ -592,5 +592,73 @@ describe("players book a future recording and pay by CliQ", () => {
       spy.mockRestore();
     }
   });
+
+  it("pay at the field: recording locks in at once, the field marks the cash received", async () => {
+    const realFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string }> = [];
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://control.example.test")) {
+        calls.push({ url, method: init?.method ?? "GET" });
+        return new Response(JSON.stringify({ jobId: `job-field-${calls.length}`, status: "scheduled" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return realFetch(input, init);
+    });
+    try {
+      const minute = 60 * 1000;
+      const quarter = 15 * minute;
+      const startMs = Math.ceil((Date.now() + 5 * 24 * 60 * minute) / quarter) * quarter;
+      const fields = await request(app).get("/api/bookings/fields");
+      expect(fields.body.payAtField).toBe(true);
+
+      const booked = await request(app).post("/api/bookings").set(as("ali")).send({
+        fieldId, startLocal: localString(startMs), endLocal: localString(startMs + 60 * minute), payWith: "field",
+      });
+      expect(booked.status).toBe(201);
+      requestIds.push(booked.body.requestId);
+      expect(booked.body.method).toBe("field");
+      expect(booked.body.status).toBe("scheduled");
+      expect(calls.filter((c) => c.method === "POST")).toHaveLength(1); // camera job started without waiting
+
+      let page = await request(app).get(`/api/m/${booked.body.code}`).set(as("ali"));
+      expect(page.body.booking).toMatchObject({ status: "pending", method: "field", mine: true });
+
+      // Players can't mark their own cash received; the field owner can.
+      expect((await request(app).post(`/api/m/${booked.body.code}/booking/collect`).set(as("ali")).send({})).status).toBe(403);
+      const admin = (await request(app).get("/api/admin/stat-unlocks").set(as("admin"))).body
+        .find((r: { reference: string }) => r.reference === booked.body.reference);
+      expect(admin.method).toBe("field");
+      page = await request(app).post(`/api/m/${booked.body.code}/booking/collect`).set(as("owner")).send({});
+      expect(page.status).toBe(200);
+      expect(page.body.booking.status).toBe("paid");
+
+      // Switching a CliQ booking to pay-at-field locks it in too.
+      const cliq = await request(app).post("/api/bookings").set(as("ali")).send({
+        fieldId, startLocal: localString(startMs + 2 * 60 * minute), endLocal: localString(startMs + 3 * 60 * minute),
+      });
+      requestIds.push(cliq.body.requestId);
+      expect(cliq.body.method).toBe("cliq");
+      const switched = await request(app).post(`/api/bookings/${cliq.body.requestId}/pay-with`).set(as("ali")).send({ method: "field" });
+      expect(switched.status).toBe(200);
+      expect(switched.body.status).toBe("scheduled");
+
+      // An uncollected pay-at-field booking can still be cancelled before kick-off: the camera job is stopped.
+      const del = await request(app).delete(`/api/bookings/${cliq.body.requestId}`).set(as("ali"));
+      expect(del.status).toBe(204);
+      expect(calls.some((c) => c.method === "DELETE" && c.url.includes("/record-hq/"))).toBe(true);
+      const [gone] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, cliq.body.requestId));
+      expect(gone.status).toBe("cancelled");
+
+      // The switch is refused when the admin has turned pay-at-field off.
+      await fieldRule("booking.payAtFieldEnabled", false);
+      const off = await request(app).post("/api/bookings").set(as("ali")).send({
+        fieldId, startLocal: localString(startMs + 5 * 60 * minute), endLocal: localString(startMs + 6 * 60 * minute), payWith: "field",
+      });
+      expect(off.status).toBe(400);
+      await clearFieldRules();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 

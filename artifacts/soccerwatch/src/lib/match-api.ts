@@ -143,6 +143,9 @@ export type MatchRoom = {
   prices: { bookingFils: number };
   booking: {
     status: "pending" | "paid" | "rejected";
+    /** cliq: waits for the transfer. field: recording locked in, cash collected at the field. */
+    method: PayMethod;
+    payAtFieldAllowed: boolean;
     amountFils: number;
     reference: string | null;
     mine: boolean;
@@ -372,9 +375,12 @@ export function useAvatarRemove() {
   });
 }
 
+export type PayMethod = "cliq" | "field";
+
 export type AdminStatUnlock = {
   id: number;
   kind: "match" | "team" | "monthly" | "booking";
+  method: PayMethod;
   amountFils: number;
   reference: string;
   status: "pending" | "paid" | "rejected";
@@ -446,11 +452,13 @@ export type BookingFields = {
   maxMinutes: number;
   /** Admin → Settings → Bookings. Off hides the Book button on Home. */
   enabled: boolean;
+  /** Admin → Settings → Bookings: "Players can pay at the field". */
+  payAtField: boolean;
   cliqAlias: string;
 };
 export type BookingResult = {
   code: string; requestId: number; amountFils: number; reference: string; cliqAlias: string;
-  startLocal: string; endLocal: string; fieldName: string;
+  startLocal: string; endLocal: string; fieldName: string; method: PayMethod; status: string;
 };
 
 export function useBookingFields() {
@@ -469,7 +477,7 @@ export function useTakenSlots(fieldId: number | null, date: string | null) {
 export function useCreateBooking() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { fieldId: number; startLocal: string; endLocal: string; title?: string | null }) =>
+    mutationFn: (body: { fieldId: number; startLocal: string; endLocal: string; title?: string | null; payWith?: PayMethod }) =>
       call<BookingResult>("/bookings", { method: "POST", body: json(body) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["booking-taken"] });
@@ -480,4 +488,15 @@ export function useCreateBooking() {
 
 export function useCancelBooking(code: string) {
   return useRoomMutation(code, (requestId: number) => call<void>(`/bookings/${requestId}`, { method: "DELETE" }));
+}
+
+/** Switch an unpaid booking between CliQ and paying at the field. */
+export function usePayWith(code: string) {
+  return useRoomMutation(code, ({ requestId, method }: { requestId: number; method: PayMethod }) =>
+    call<{ method: PayMethod; status: string }>(`/bookings/${requestId}/pay-with`, { method: "POST", body: json({ method }) }));
+}
+
+/** Field owner or admin: the cash for a pay-at-field booking was (or wasn't) handed over. */
+export function useCollectCash(code: string) {
+  return useRoomMutation(code, (paid: boolean) => call<MatchRoom>(`/m/${code}/booking/collect`, { method: "POST", body: json({ paid }) }));
 }

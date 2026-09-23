@@ -16,6 +16,7 @@ export interface Commerce {
   statsMonthlyFils: number;
   cliqAlias: string;
   bookingEnabled: boolean;
+  payAtField: boolean;
   bookingMaxDaysAhead: number;
   bookingMaxAwaiting: number;
   bookingMaxMinutes: number;
@@ -51,6 +52,7 @@ export async function loadCommerce(ctx: SettingsContext = {}): Promise<Commerce>
     statsMonthlyFils: jodToFils(all["pricing.statsMonthly"], 2000),
     cliqAlias: alias || process.env.REPLAY_CLIQ_ALIAS || "REPLAYJO",
     bookingEnabled: bool(all["booking.enabled"], true),
+    payAtField: bool(all["booking.payAtFieldEnabled"], true),
     bookingMaxDaysAhead: Math.max(1, int(all["booking.maxDaysAhead"], 14)),
     bookingMaxAwaiting: Math.max(1, int(all["booking.maxAwaitingPayment"], 3)),
     bookingMaxMinutes: Math.max(30, int(all["booking.maxMinutes"], 180)),

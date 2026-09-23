@@ -21,7 +21,7 @@ import {
   Users,
 } from "lucide-react";
 import { VarPlayer } from "@/components/var-player/VarPlayer";
-import { PaymentPanel } from "@/components/match/PaymentPanel";
+import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import {
   Countdown,
   PhaseChip,
@@ -62,6 +62,8 @@ import {
   useUpdateRoom,
   useVote,
   useCancelBooking,
+  useCollectCash,
+  usePayWith,
   whatsappLink,
   type JoinInput,
   type MatchPlayer,
@@ -1262,46 +1264,88 @@ function previewRoom(room: MatchRoom, mode: "pre" | "live"): MatchRoom {
 /** A player booking: pay by CliQ, or see that it's paid. */
 function BookingPaymentCard({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
   const booking = room.booking!;
+  const b = copy.book;
   const cancel = useCancelBooking(room.code);
+  const payWith = usePayWith(room.code);
+  const collect = useCollectCash(room.code);
   const { toast } = useToast();
   const [open, setOpen] = useState(true);
+  const fail = (e: unknown) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" });
+  const field = booking.method === "field";
+  const jod = formatJod(booking.amountFils);
+
   if (booking.status === "paid") {
     return (
       <div className="flex items-center gap-2 rounded-2xl border border-turf/40 bg-turf/10 px-4 py-3 text-sm font-semibold text-turf">
-        <Check className="h-4 w-4" />{copy.book.paid}
+        <Check className="h-4 w-4" />{field ? b.cashReceived : b.paid}
       </div>
     );
   }
   if (booking.status === "rejected") {
-    return <Card><p className="text-sm text-muted-text">{copy.book.rejected}</p></Card>;
+    return <Card><p className="text-sm text-muted-text">{field ? b.cashNotPaid : b.rejected}</p></Card>;
   }
   if (!booking.reference) {
     return (
-      <div className="rounded-2xl border border-violet/40 bg-violet/10 px-4 py-3 text-sm font-semibold text-violet">{copy.book.pending}</div>
+      <div className="rounded-2xl border border-violet/40 bg-violet/10 px-4 py-3 text-sm font-semibold text-violet">{field ? b.fieldPending(jod) : b.pending}</div>
     );
   }
+  // Whoever is at the field (the owner or an admin) ticks the cash off here.
+  const canCollect = field && room.isOwner;
+  const canCancel = Boolean(booking.requestId) && (field ? room.phase === "pre" : true);
   return (
-    <section className="rounded-2xl border border-floodlight/40 bg-surface p-4">
+    <section className={cn("rounded-2xl border bg-surface p-4", field ? "border-turf/40" : "border-floodlight/40")} data-testid="booking-payment-card">
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-start">
         <span>
-          <span className="flex items-center gap-2 text-base font-bold"><span className="h-2 w-2 rounded-full bg-floodlight" />{copy.book.pending}</span>
-          <span className="mt-0.5 block text-xs text-muted-text">{copy.book.pendingDesc}</span>
+          <span className="flex items-center gap-2 text-base font-bold">
+            <span className={cn("h-2 w-2 rounded-full", field ? "bg-turf" : "bg-floodlight")} />{field ? b.fieldPending(jod) : b.pending}
+          </span>
+          <span className="mt-0.5 block text-xs text-muted-text">{field ? b.fieldPendingDesc : b.pendingDesc}</span>
         </span>
-        <span className="font-mono text-xl font-bold" dir="ltr">{formatJod(booking.amountFils)} JOD</span>
+        <span className="font-mono text-xl font-bold" dir="ltr">{jod} JOD</span>
       </button>
       {open && (
         <div className="mt-4">
-          <PaymentPanel amountFils={booking.amountFils} cliqAlias={booking.cliqAlias} reference={booking.reference} />
-          {booking.requestId && (
-            <button
-              type="button"
-              disabled={cancel.isPending}
-              onClick={() => void cancel.mutateAsync(booking.requestId!).then(() => toast({ title: copy.book.cancelled })).catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }))}
-              className="mt-3 text-xs font-semibold text-muted-text underline underline-offset-2"
-            >
-              {copy.book.cancelBooking}
-            </button>
+          {field
+            ? <FieldPaymentPanel amountFils={booking.amountFils} reference={booking.reference} />
+            : <PaymentPanel amountFils={booking.amountFils} cliqAlias={booking.cliqAlias} reference={booking.reference} />}
+          {canCollect && (
+            <div className="mt-4 flex gap-2">
+              <button type="button" disabled={collect.isPending} data-testid="button-cash-received"
+                onClick={() => void collect.mutateAsync(true).then(() => toast({ title: b.cashReceived })).catch(fail)}
+                className="flex min-h-11 flex-[2] items-center justify-center gap-1.5 rounded-full bg-floodlight text-sm font-bold text-void">
+                <Check className="h-4 w-4" />{b.markCashReceived}
+              </button>
+              <button type="button" disabled={collect.isPending}
+                onClick={() => void collect.mutateAsync(false).then(() => toast({ title: b.cashNotPaid })).catch(fail)}
+                className="min-h-11 flex-1 rounded-full border border-line text-sm font-semibold text-muted-text">
+                {b.markNotPaid}
+              </button>
+            </div>
           )}
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+            {booking.mine && booking.requestId && (field || booking.payAtFieldAllowed) && (
+              <button
+                type="button"
+                disabled={payWith.isPending}
+                data-testid="button-switch-pay"
+                onClick={() => void payWith.mutateAsync({ requestId: booking.requestId!, method: field ? "cliq" : "field" })
+                  .then(() => toast({ title: field ? b.payCliqLabel : b.fieldTitle })).catch(fail)}
+                className="text-xs font-semibold text-turf underline underline-offset-2"
+              >
+                {field ? b.switchToCliq : b.switchToField}
+              </button>
+            )}
+            {canCancel && (
+              <button
+                type="button"
+                disabled={cancel.isPending}
+                onClick={() => void cancel.mutateAsync(booking.requestId!).then(() => toast({ title: b.cancelled })).catch(fail)}
+                className="text-xs font-semibold text-muted-text underline underline-offset-2"
+              >
+                {b.cancelBooking}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </section>

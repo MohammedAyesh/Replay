@@ -1,4 +1,4 @@
-import { Copy } from "lucide-react";
+import { Banknote, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { formatJod } from "@/lib/match-api";
@@ -44,5 +44,31 @@ function CopyRow({ label, value, onCopy, highlight }: { label: string; value: st
       </span>
       <Copy className="h-4 w-4 shrink-0 text-muted-text" />
     </button>
+  );
+}
+
+/** Pay at the field: nothing to transfer, just the amount and the reference to show the staff. */
+export function FieldPaymentPanel({ amountFils, reference }: { amountFils: number; reference: string | null }) {
+  const copy = useMatchCopy();
+  const b = copy.book;
+  const { toast } = useToast();
+  const copyText = (text: string) =>
+    void navigator.clipboard.writeText(text).then(() => toast({ title: b.copied })).catch(() => undefined);
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-baseline justify-between rounded-2xl border border-line bg-raised px-4 py-3">
+        <span className="flex items-center gap-2 text-sm text-muted-text"><Banknote className="h-4 w-4 text-turf" />{b.payFieldLabel}</span>
+        <span className="font-mono text-3xl font-bold" dir="ltr">{formatJod(amountFils)} JOD</span>
+      </div>
+      {reference && <CopyRow label={b.payRef} value={reference} onCopy={copyText} highlight />}
+      <ol className="flex flex-col gap-2 ps-1">
+        {b.fieldSteps.map((step, i) => (
+          <li key={i} className="flex items-start gap-3 text-sm">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-turf/20 font-mono text-xs font-bold text-turf">{i + 1}</span>
+            <span className="pt-0.5">{step}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
