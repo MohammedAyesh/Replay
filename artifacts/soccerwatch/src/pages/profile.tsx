@@ -1,4 +1,7 @@
 import { useRoute, useLocation, Link } from "wouter";
+import { Crown as CrownIcon } from "lucide-react";
+import { useReplayProfile } from "@/lib/match-api";
+import { useMatchCopy } from "@/i18n/match-strings";
 import {
   useGetUserProfile,
   useGetPublicPlayerStats,
@@ -151,9 +154,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
           transition={{ type: "spring", stiffness: 300, damping: 20 }}
           className="flex flex-col items-center gap-4 mb-8"
         >
-          <div className="w-24 h-24 rounded-full bg-primary flex items-center justify-center shadow-lg">
-            <span className="text-3xl font-bold text-white">{getInitials(profile.name)}</span>
-          </div>
+          <ProfileFace userId={profile.id} name={profile.name} />
           <div className="text-center">
             <h1 className="text-2xl font-bold">{profile.name}</h1>
             {profile.position && (
@@ -219,6 +220,8 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
             {t.profile.ownProfile}
           </motion.div>
         )}
+
+        <MatchRecord userId={profile.id} />
 
         <PlayerStatsSection
           stats={playerStats}
@@ -497,5 +500,50 @@ function StatCard({ value, label, icon, suffix = "" }: { value: number; label: s
       <span className="text-xl font-bold">{typeof value === "number" && !Number.isInteger(value) ? value.toFixed(1) : value}{suffix}</span>
       <span className="text-xs text-muted-foreground">{label}</span>
     </div>
+  );
+}
+
+
+function ProfileFace({ userId, name }: { userId: number; name: string }) {
+  const { data } = useReplayProfile(userId);
+  return (
+    <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 border-turf/50 bg-raised shadow-lg">
+      {data?.avatarUrl ? (
+        <img src={data.avatarUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <span className="font-display text-3xl font-bold text-text">{getInitials(name)}</span>
+      )}
+    </div>
+  );
+}
+
+/** Matches played on Replay: record, man-of-the-match crowns, recent results. */
+function MatchRecord({ userId }: { userId: number }) {
+  const copy = useMatchCopy();
+  const { data } = useReplayProfile(userId);
+  if (!data || data.matchesPlayed === 0) return null;
+  return (
+    <section className="mt-8 rounded-2xl border border-line bg-surface p-4">
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div><p className="font-mono text-3xl font-bold">{data.matchesPlayed}</p><p className="text-[11px] font-semibold uppercase text-muted-text">{copy.played}</p></div>
+        <div><p className="font-mono text-3xl font-bold text-turf">{data.wins}</p><p className="text-[11px] font-semibold uppercase text-muted-text">{copy.wins}</p></div>
+        <div><p className="flex items-center justify-center gap-1 font-mono text-3xl font-bold text-floodlight"><CrownIcon className="h-5 w-5" />{data.motmCount}</p><p className="text-[11px] font-semibold uppercase text-muted-text">{copy.motmShort}</p></div>
+      </div>
+      <ul className="mt-4 flex flex-col gap-2">
+        {data.recent.slice(0, 6).map((m) => (
+          <li key={m.code}>
+            <Link href={`/m/${m.code}`} className="flex items-center gap-3 rounded-xl border border-line bg-raised px-3 py-2">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold">{m.field.name}</span>
+                <span className="text-[11px] text-muted-text">{m.startLocal.slice(0, 10)}</span>
+              </span>
+              {m.motm && <CrownIcon className="h-4 w-4 text-floodlight" aria-label={copy.motm} />}
+              {m.score && <span className="font-mono text-base font-bold" dir="ltr">{m.score.a}–{m.score.b}</span>}
+              {m.score && m.team && <span className={m.won ? "text-[10px] font-bold text-turf" : "text-[10px] font-bold text-muted-text"}>{m.won ? copy.won : copy.lost}</span>}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
