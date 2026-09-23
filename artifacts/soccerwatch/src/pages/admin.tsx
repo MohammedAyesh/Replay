@@ -13,6 +13,7 @@ import {
 import Hls from "hls.js";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import AdminVarTab from "@/components/admin/AdminVarTab";
+import StatPaymentsTab from "@/components/admin/StatPaymentsTab";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
@@ -36,7 +37,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "claim-disputes" | "analysis" | "branding" | "settings";
+type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "claim-disputes" | "analysis" | "branding" | "settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -5935,6 +5936,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   recordings: { label: "Recordings", render: () => <RecordingsTab /> },
   live: { label: "Live Control", render: () => <LiveTab /> },
   var: { label: "VAR", render: () => <AdminVarTab /> },
+  "stat-payments": { label: "Stat payments", render: () => <StatPaymentsTab /> },
   "claim-disputes": { label: "Claim Disputes", render: () => <ClaimDisputesTab /> },
   analysis: { label: "Analysis", render: () => <AnalysisTab /> },
   branding: { label: "Branding", render: () => <BrandingTab /> },

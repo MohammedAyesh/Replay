@@ -33,6 +33,8 @@ import IdentityBoard from "@/pages/identity-board";
 import Owner from "@/pages/owner";
 import OwnerVar from "@/pages/owner-var";
 import OwnerShare from "@/pages/owner-share";
+import MatchPage from "@/pages/match";
+import Matches from "@/pages/matches";
 import { useAuth } from "@/lib/auth";
 import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from "@/lib/auth-redirect";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -388,7 +390,7 @@ function AuthRedirectGuard() {
   useEffect(() => {
     if (isLoading) return;
     const pathname = location.split("?")[0];
-    const isOwnerShare = pathname.startsWith("/w/");
+    const isOwnerShare = pathname.startsWith("/w/") || pathname.startsWith("/m/");
     const isAuthPage = pathname === "/" || pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up");
 
     // If Clerk says the user IS signed in but our local user record isn't
@@ -449,6 +451,8 @@ function AppRouter() {
         <Route path="/owner" component={Owner} />
         <Route path="/owner/var/:requestId" component={OwnerVar} />
         <Route path="/w/:token" component={OwnerShare} />
+        <Route path="/m/:code" component={MatchPage} />
+        <Route path="/matches" component={Matches} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />

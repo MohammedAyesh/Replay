@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation, useRoute } from "wouter";
+import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   getListUserClipsQueryKey,
@@ -115,7 +115,11 @@ export default function OwnerShare() {
   const [unavailable, setUnavailable] = useState(false);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [isRestoringDraft, setIsRestoringDraft] = useState(false);
-  const [selectedMomentSeconds, setSelectedMomentSeconds] = useState<number | null>(null);
+  const search = useSearch();
+  const searchParams = new URLSearchParams(search);
+  const matchCode = (searchParams.get("m") ?? "").replace(/[^0-9A-Za-z]/g, "").toUpperCase().slice(0, 12) || null;
+  const startAt = Number.parseInt(searchParams.get("t") ?? "", 10);
+  const [selectedMomentSeconds, setSelectedMomentSeconds] = useState<number | null>(Number.isFinite(startAt) && startAt >= 0 ? startAt : null);
   const restoringRef = useRef(false);
   const isArabic = locale === "ar";
   const copy = isArabic
@@ -193,7 +197,7 @@ export default function OwnerShare() {
     };
   }, [injectedMeta, token]);
 
-  const redirectPath = `/w/${encodeURIComponent(token)}`;
+  const redirectPath = `/w/${encodeURIComponent(token)}${search ? `?${search}` : ""}`;
   const authPath = (path: "/sign-up" | "/sign-in") =>
     `${path}?redirect_url=${encodeURIComponent(redirectPath)}`;
 
@@ -217,13 +221,15 @@ export default function OwnerShare() {
         startTime: draft.startTime,
         endTime: draft.endTime,
         cropPath: draft.cropPath,
-        visibility: "private",
+        // Clips cut from a match page are shared with that match's players.
+        visibility: matchCode ? "match" : "private",
         aspectRatio: draft.aspectRatio,
         ownerShareToken: token,
       },
     });
     await queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
-  }, [createUserClip, queryClient, token]);
+    if (matchCode) await queryClient.invalidateQueries({ queryKey: ["match-room", matchCode] });
+  }, [createUserClip, matchCode, queryClient, token]);
 
   useEffect(() => {
     if (!user || isGuest || !token || restoringRef.current) return;
@@ -277,7 +283,13 @@ export default function OwnerShare() {
       className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-void text-foreground"
     >
       <div className="border-b border-line px-4 pb-3 pt-5">
-        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-primary">REPLAY</p>
+        {matchCode ? (
+          <Link href={`/m/${matchCode}`} className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-turf">
+            ← {isArabic ? "الماتش" : "Match"} #{matchCode}
+          </Link>
+        ) : (
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-primary">REPLAY</p>
+        )}
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{meta.fieldName}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{ownerWindowLabel(meta, locale)}</p>
         <span className="mt-3 inline-flex rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">

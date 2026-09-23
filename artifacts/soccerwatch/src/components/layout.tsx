@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, Bookmark, User as UserIcon, LayoutGrid, Building2 } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, LayoutGrid, Building2, CalendarDays } from "lucide-react";
+import { useMatchCopy } from "@/i18n/match-strings";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -12,6 +13,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { t, locale, setLocale } = useTranslation();
   const { user } = useAuth();
+  const matchCopy = useMatchCopy();
 
 
   const isLogin = location === "/";
@@ -19,10 +21,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isWatchFeed = location === "/home";
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");
+  const isMatchRoom = location.startsWith("/m/");
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
-  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || location === "/owner" || isOwnerShare || isOwnerVar;
+  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || location === "/owner" || isOwnerShare || isOwnerVar || isMatchRoom;
   const hasOwnedField = (user?.ownedFieldIds?.length ?? 0) > 0;
   const useTranslucentBar = isWatchFeed;
 
@@ -92,6 +95,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isTranslucent={useTranslucentBar}
           />
           <NavItem
+            href="/matches"
+            icon={<CalendarDays className="w-6 h-6" />}
+            label={matchCopy.matches}
+            isActive={location === "/matches"}
+            isTranslucent={useTranslucentBar}
+          />
+          <NavItem
             href="/my-clips"
             icon={<Bookmark className="w-6 h-6" />}
             label={t.nav.myClips}
@@ -137,7 +147,7 @@ function NavItem({
     <Link
       href={href}
       className={cn(
-        "flex h-[54px] w-16 flex-col items-center justify-center gap-0.5 rounded-xl border-0 py-1 transition-colors",
+        "flex h-[54px] min-w-0 flex-1 max-w-16 flex-col items-center justify-center gap-0.5 rounded-xl border-0 py-1 transition-colors",
         isActive ? "bg-turf/10" : "bg-transparent"
       )}
     >

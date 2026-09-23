@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label";
 import { useTranslation } from "@/i18n";
 import type { Strings } from "@/i18n/strings";
 import { useToast } from "@/hooks/use-toast";
+import { Camera, Loader2 } from "lucide-react";
+import { useAvatarUpload, useReplayProfile } from "@/lib/match-api";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -121,16 +123,7 @@ export default function Account() {
         {/* Profile Card */}
         <div className="bg-background px-4 pb-4">
           <div className="flex items-center gap-3">
-            <div
-              className="flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-full"
-              style={{
-                background: "linear-gradient(135deg, var(--replay-turf), var(--replay-violet))",
-              }}
-            >
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-card text-2xl font-bold text-primary">
-                {initial}
-              </div>
-            </div>
+            <AvatarPicker initial={initial} userId={isGuest ? null : displayUser?.id ?? null} />
             <div className="min-w-0">
               <h2 className="truncate font-display text-xl font-bold text-foreground">{name}</h2>
               <p className="truncate text-sm text-muted-foreground">{email}</p>
@@ -554,5 +547,49 @@ function EditProfileDialog({
         </div>
       </form>
     </div>
+  );
+}
+
+
+/** Tap the face to set a photo. It shows on every match roster and the teams board. */
+function AvatarPicker({ initial, userId }: { initial: string; userId: number | null }) {
+  const { locale } = useTranslation();
+  const { toast } = useToast();
+  const profile = useReplayProfile(userId);
+  const upload = useAvatarUpload();
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const avatarUrl = profile.data?.avatarUrl ?? null;
+  const onFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 6 * 1024 * 1024) {
+      toast({ title: locale === "ar" ? "الصورة أكبر من ٦ ميغا" : "That photo is over 6 MB", variant: "destructive" });
+      return;
+    }
+    try {
+      await upload.mutateAsync(file);
+      toast({ title: locale === "ar" ? "تم تحديث صورتك" : "Photo updated" });
+    } catch (error) {
+      toast({ title: error instanceof Error ? error.message : "Upload failed", variant: "destructive" });
+    }
+  };
+  return (
+    <button
+      type="button"
+      disabled={!userId || upload.isPending}
+      onClick={() => inputRef.current?.click()}
+      aria-label={locale === "ar" ? "غيّر صورتك" : "Change your photo"}
+      className="relative flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-full"
+      style={{ background: "linear-gradient(135deg, var(--replay-turf), var(--replay-violet))" }}
+    >
+      <span className="flex h-[68px] w-[68px] items-center justify-center overflow-hidden rounded-full bg-card text-2xl font-bold text-primary">
+        {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : initial}
+      </span>
+      {userId && (
+        <span className="absolute -bottom-0.5 -end-0.5 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-floodlight text-void">
+          {upload.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+        </span>
+      )}
+      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ""; }} />
+    </button>
   );
 }

@@ -1172,6 +1172,10 @@ function RequestCard({
         </div>
       )}
 
+      {request.match && key !== "cancelled" && key !== "expired" && (
+        <MatchRoomRow match={request.match} locale={locale} onCopy={onCopy} requestId={request.id} />
+      )}
+
       <div className="flex flex-wrap gap-2 border-t border-white/[0.07] p-3">
         {isScheduled && request.varOpensAt && (
           <div className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-[11px] text-muted-text">
@@ -1354,6 +1358,32 @@ function LedgerList({ locale, empty, items, copy }: {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Every booking has a players' match page. The owner hands the captain link to whoever booked. */
+function MatchRoomRow({ match, locale, onCopy, requestId }: {
+  match: { code: string; url: string; captainUrl: string };
+  locale: string;
+  onCopy: (url: string) => void;
+  requestId: number;
+}) {
+  const ar = locale === "ar";
+  const captainText = ar
+    ? `صفحة الماتش جاهزة. افتح الرابط لتصير الكابتن وتعزم الشباب: ${match.captainUrl}`
+    : `Your match page is ready. Open it to become captain and invite the squad: ${match.captainUrl}`;
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.07] px-3 py-3" data-testid={`match-room-owner-request-${requestId}`}>
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-turf">{ar ? "صفحة الماتش" : "Match page"}</p>
+        <p className="font-mono text-sm font-bold">#{match.code}</p>
+      </div>
+      <a href={`/m/${match.code}`} className="inline-flex min-h-10 items-center rounded-full border border-line px-3 text-xs font-semibold">{ar ? "افتح" : "Open"}</a>
+      <button type="button" onClick={() => onCopy(match.url)} className="inline-flex min-h-10 items-center rounded-full border border-line px-3 text-xs font-semibold">{ar ? "انسخ" : "Copy"}</button>
+      <a href={`https://wa.me/?text=${encodeURIComponent(captainText)}`} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center rounded-full border border-violet/60 px-3 text-xs font-bold text-violet">
+        {ar ? "ابعت للكابتن" : "Send to captain"}
+      </a>
     </div>
   );
 }

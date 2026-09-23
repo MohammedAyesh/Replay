@@ -1,0 +1,996 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useRoute, useSearch } from "wouter";
+import {
+  ArrowLeft,
+  CalendarPlus,
+  Check,
+  Clapperboard,
+  Copy,
+  Crown,
+  Flag,
+  Loader2,
+  Lock,
+  MapPin,
+  Minus,
+  Play,
+  Plus,
+  Share2,
+  Shuffle,
+  Trash2,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import { VarPlayer } from "@/components/var-player/VarPlayer";
+import {
+  Countdown,
+  PhaseChip,
+  PitchBoard,
+  PlayerAvatar,
+  ScoreLine,
+  SquadBar,
+  TEAM_SWATCHES,
+  formatClock,
+  formatDate,
+  formatDay,
+  splitDuration,
+  useServerNow,
+} from "@/components/match/bits";
+import { useToast } from "@/hooks/use-toast";
+import { useMatchCopy, type MatchStrings } from "@/i18n/match-strings";
+import { useAuth } from "@/lib/auth";
+import {
+  MatchApiError,
+  apiBase,
+  calendarUrl,
+  formatJod,
+  shareOrCopy,
+  useAutoTeams,
+  useFlagMoment,
+  useInvitePlayer,
+  useJoinMatch,
+  useMatchClips,
+  useMatchRoom,
+  useRemovePlayer,
+  useSetGames,
+  useSetScore,
+  useUnlockStats,
+  useUpdatePlayer,
+  useUpdateRoom,
+  useVote,
+  whatsappLink,
+  type JoinInput,
+  type MatchPlayer,
+  type MatchRoom,
+  type TeamSide,
+} from "@/lib/match-api";
+import { cn } from "@/lib/utils";
+
+const PENDING_KEY = "replay_pending_join";
+type Tab = "overview" | "teams" | "var" | "clips" | "vote" | "stats";
+
+function readPending(code: string): JoinInput | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { code: string; input: JoinInput; at: number };
+    if (parsed.code !== code || Date.now() - parsed.at > 60 * 60 * 1000) return null;
+    return parsed.input;
+  } catch {
+    return null;
+  }
+}
+function writePending(code: string, input: JoinInput | null) {
+  try {
+    if (input) sessionStorage.setItem(PENDING_KEY, JSON.stringify({ code, input, at: Date.now() }));
+    else sessionStorage.removeItem(PENDING_KEY);
+  } catch {
+    /* private mode */
+  }
+}
+
+export default function MatchPage() {
+  const [, params] = useRoute("/m/:code");
+  const code = (params?.code ?? "").toUpperCase();
+  const search = useSearch();
+  const query = useMemo(() => new URLSearchParams(search), [search]);
+  const inviteToken = query.get("i");
+  const byParam = Number.parseInt(query.get("by") ?? "", 10);
+  const captainToken = query.get("c");
+  const copy = useMatchCopy();
+  const { toast } = useToast();
+  const [, setLocation] = useLocation();
+  const { user, isGuest, isLoading: authLoading } = useAuth();
+  const roomQuery = useMatchRoom(code, search);
+  const room = roomQuery.data;
+  const now = useServerNow(room?.serverNow);
+  const join = useJoinMatch(code);
+  const [tab, setTab] = useState<Tab | null>(null);
+  const autoJoinDone = useRef(false);
+
+  useEffect(() => {
+    if (room) document.title = `${room.title || room.field.name} · Replay`;
+  }, [room]);
+
+  const joinInput = useCallback((rsvp: JoinInput["rsvp"]): JoinInput => ({
+    rsvp,
+    inviteToken: inviteToken || null,
+    by: Number.isSafeInteger(byParam) ? byParam : null,
+    captainToken: captainToken || null,
+  }), [byParam, captainToken, inviteToken]);
+
+  const doJoin = useCallback(async (input: JoinInput) => {
+    try {
+      await join.mutateAsync(input);
+      writePending(code, null);
+    } catch (error) {
+      toast({ title: error instanceof MatchApiError ? error.message : copy.error, variant: "destructive" });
+    }
+  }, [code, copy.error, join, toast]);
+
+  const onRsvp = (rsvp: JoinInput["rsvp"]) => {
+    const input = joinInput(rsvp);
+    if (!user || isGuest) {
+      writePending(code, input);
+      setLocation(`/sign-up?redirect_url=${encodeURIComponent(`/m/${code}${search ? `?${search}` : ""}`)}`);
+      return;
+    }
+    void doJoin(input);
+  };
+
+  // Came back from sign-up with a pending RSVP: apply it once.
+  useEffect(() => {
+    if (autoJoinDone.current || authLoading || !user || isGuest || !room) return;
+    const pending = readPending(code);
+    autoJoinDone.current = true;
+    if (pending && !room.me) void doJoin(pending);
+  }, [authLoading, code, doJoin, isGuest, room, user]);
+
+  // The captain link: take the armband as soon as the owner's link is opened by a signed-in player.
+  useEffect(() => {
+    if (!captainToken || !room || !user || isGuest || room.isCaptain || join.isPending) return;
+    if (room.me?.rsvp === "in" && room.captain?.userId === user.id) return;
+    void doJoin({ ...joinInput("in"), captainToken });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captainToken, room?.code, user?.id]);
+
+  const tabs = useMemo<Tab[]>(() => {
+    if (!room) return ["overview"];
+    if (room.phase === "live") return ["var", "overview", "teams"];
+    if (room.phase === "pre") return ["overview", "teams"];
+    if (room.phase === "cancelled" || room.phase === "failed") return ["overview"];
+    return ["overview", "clips", "vote", "teams", "stats"];
+  }, [room]);
+  const activeTab: Tab = tab && tabs.includes(tab) ? tab : tabs[0];
+
+  if (roomQuery.isLoading) {
+    return <Shell><div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-text"><Loader2 className="h-4 w-4 animate-spin" />{copy.loading}</div></Shell>;
+  }
+  if (!room) {
+    return (
+      <Shell>
+        <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+          <p className="font-display text-2xl font-bold">{copy.notFound}</p>
+          <p className="mt-2 text-sm text-muted-text">{copy.notFoundDesc}</p>
+          <Link href="/home" className="mt-6 rounded-full bg-floodlight px-5 py-3 text-sm font-bold text-void">Replay</Link>
+        </div>
+      </Shell>
+    );
+  }
+
+  const colors: Record<TeamSide, string> = { A: room.teams.A.color, B: room.teams.B.color };
+  const names: Record<TeamSide, string> = { A: room.teams.A.name || copy.teamA, B: room.teams.B.name || copy.teamB };
+  const shareUrl = room.myInviteUrl ?? room.url;
+  const when = `${formatDay(room.startMs, copy.locale, now, copy)} ${formatClock(room.startMs, copy.locale)}`;
+  const need = Math.max(0, room.counts.needed - room.counts.in);
+  const inviteText = copy.inviteMessage(room.field.name, when, shareUrl, need);
+
+  const onShare = async () => {
+    const result = await shareOrCopy({ title: room.title || room.field.name, text: inviteText.replace(shareUrl, "").trim(), url: shareUrl });
+    if (result === "copied") toast({ title: copy.copied });
+    if (result === "failed") window.open(whatsappLink(inviteText), "_blank", "noopener");
+  };
+
+  return (
+    <Shell>
+      <Hero room={room} copy={copy} now={now} colors={colors} names={names} onShare={onShare} />
+      <div className="px-4">
+        <RsvpCard room={room} copy={copy} onRsvp={onRsvp} busy={join.isPending} signedIn={Boolean(user) && !isGuest} />
+      </div>
+
+      {tabs.length > 1 && (
+        <div className="sticky top-0 z-20 mt-4 border-b border-line bg-void/95 px-2 backdrop-blur">
+          <div className="no-scrollbar flex gap-1 overflow-x-auto">
+            {tabs.map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTab(t)}
+                className={cn(
+                  "relative shrink-0 px-3.5 py-3 text-sm font-semibold transition-colors",
+                  activeTab === t ? "text-text" : "text-muted-text",
+                )}
+              >
+                {t === "var" && room.phase === "live" && <span className="me-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-live align-middle" />}
+                {copy.tabs[t]}
+                {activeTab === t && <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-turf" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-4 px-4 pb-16 pt-4">
+        {activeTab === "overview" && (
+          <Overview room={room} copy={copy} colors={colors} names={names} now={now} inviteText={inviteText} onShare={onShare} />
+        )}
+        {activeTab === "teams" && <TeamsTab room={room} copy={copy} colors={colors} names={names} />}
+        {activeTab === "var" && <VarTab room={room} copy={copy} />}
+        {activeTab === "clips" && <ClipsTab room={room} copy={copy} />}
+        {activeTab === "vote" && <VoteTab room={room} copy={copy} now={now} />}
+        {activeTab === "stats" && <StatsTab room={room} copy={copy} />}
+      </div>
+    </Shell>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  const copy = useMatchCopy();
+  return (
+    <main dir={copy.locale === "ar" ? "rtl" : "ltr"} className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-void text-text">
+      {children}
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------- hero
+
+function Hero({ room, copy, now, colors, names, onShare }: {
+  room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; now: number;
+  colors: Record<TeamSide, string>; names: Record<TeamSide, string>; onShare: () => void;
+}) {
+  const [, setLocation] = useLocation();
+  const post = ["processing", "ready", "expired"].includes(room.phase);
+  return (
+    <section className="relative overflow-hidden">
+      <div className="absolute inset-0">
+        {room.field.imageUrl ? (
+          <img src={room.field.imageUrl} alt="" className="h-full w-full object-cover opacity-40" />
+        ) : (
+          <div className="h-full w-full" style={{ background: "radial-gradient(120% 90% at 80% 0%, rgba(47,216,196,.25), transparent 60%), radial-gradient(90% 80% at 0% 100%, rgba(123,92,255,.22), transparent 60%)" }} />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-b from-void/40 via-void/70 to-void" />
+      </div>
+      <div className="relative px-4 pb-5 pt-4">
+        <div className="flex items-center justify-between">
+          <button type="button" onClick={() => (window.history.length > 1 ? window.history.back() : setLocation("/home"))} aria-label={copy.back} className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur">
+            <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
+          </button>
+          <div className="flex items-center gap-2">
+            {room.phase === "pre" && (
+              <a href={calendarUrl(room.code)} aria-label={copy.calendar} className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur">
+                <CalendarPlus className="h-4 w-4" />
+              </a>
+            )}
+            <button type="button" onClick={onShare} aria-label={copy.share} className="flex h-10 items-center gap-1.5 rounded-full border border-line bg-surface/80 px-3.5 text-sm font-semibold backdrop-blur">
+              <Share2 className="h-4 w-4" />{copy.share}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6 flex items-center gap-2">
+          <PhaseChip phase={room.phase} label={copy.phase[room.phase] ?? room.phase} />
+          <span className="font-mono text-xs font-semibold tracking-[0.2em] text-muted-text">#{room.code}</span>
+        </div>
+        <h1 className="mt-2 font-display text-3xl font-bold leading-tight">{room.title || room.field.name}</h1>
+        <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-text">
+          <MapPin className="h-3.5 w-3.5" />
+          {room.title ? `${room.field.name} · ` : ""}{copy.startsAt(formatDay(room.startMs, copy.locale, now, copy), `${formatClock(room.startMs, copy.locale)}–${formatClock(room.endMs, copy.locale)}`)}
+        </p>
+
+        {room.phase === "pre" && (
+          <div className="mt-5">
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-turf">{copy.kickoffIn}</p>
+            <Countdown targetMs={room.startMs} now={now} labels={copy} />
+          </div>
+        )}
+        {post && (
+          <div className="mt-6 rounded-2xl border border-line bg-surface/80 p-4 backdrop-blur">
+            <ScoreLine score={room.score} colors={colors} names={names} />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- RSVP
+
+function RsvpCard({ room, copy, onRsvp, busy, signedIn }: {
+  room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; onRsvp: (r: JoinInput["rsvp"]) => void; busy: boolean; signedIn: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (room.phase === "cancelled" || room.phase === "failed" || room.phase === "expired") return null;
+  const post = room.phase === "processing" || room.phase === "ready";
+  const me = room.me;
+  const inviter = room.invitedBy && !me ? room.invitedBy : null;
+
+  if (me && !editing) {
+    if (post) return null;
+    const label = me.rsvp === "in" ? copy.youAreIn : me.rsvp === "maybe" ? copy.youAreMaybe : me.rsvp === "out" ? copy.youAreOut : null;
+    if (!label) return <RsvpButtons copy={copy} onRsvp={onRsvp} busy={busy} />;
+    return (
+      <div className={cn("flex items-center gap-3 rounded-2xl border p-3", me.rsvp === "in" ? "border-turf/40 bg-turf/10" : "border-line bg-surface")}>
+        {me.rsvp === "in" ? <Check className="h-5 w-5 text-turf" /> : <span className="h-2 w-2 rounded-full bg-violet" />}
+        <span className="flex-1 text-sm font-bold">{label}{room.isCaptain ? ` · ${copy.captain}` : ""}</span>
+        <button type="button" onClick={() => setEditing(true)} className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-muted-text">{copy.changeRsvp}</button>
+      </div>
+    );
+  }
+  if (post && !me) return null;
+
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-4">
+      {inviter && (
+        <div className="mb-3 flex items-center gap-3">
+          <PlayerAvatar name={inviter.name} avatarUrl={inviter.avatarUrl} size={36} />
+          <p className="text-sm font-semibold">{room.personalInvite ? copy.invitedYouFor(inviter.name) : copy.invitedYou(inviter.name)}</p>
+        </div>
+      )}
+      <RsvpButtons copy={copy} onRsvp={(r) => { setEditing(false); onRsvp(r); }} busy={busy} />
+      {!signedIn && <p className="mt-2 text-center text-[11px] text-muted-text">{copy.signInToJoinDesc}</p>}
+    </div>
+  );
+}
+
+function RsvpButtons({ copy, onRsvp, busy }: { copy: MatchStrings; onRsvp: (r: JoinInput["rsvp"]) => void; busy: boolean }) {
+  return (
+    <div className="flex gap-2">
+      <button type="button" disabled={busy} onClick={() => onRsvp("in")} className="flex min-h-12 flex-[2] items-center justify-center gap-2 rounded-full bg-floodlight px-4 text-base font-bold text-void disabled:opacity-60">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{copy.imIn}
+      </button>
+      <button type="button" disabled={busy} onClick={() => onRsvp("maybe")} className="min-h-12 flex-1 rounded-full border border-violet/60 px-3 text-sm font-semibold text-violet disabled:opacity-60">{copy.maybe}</button>
+      <button type="button" disabled={busy} onClick={() => onRsvp("out")} className="min-h-12 flex-1 rounded-full border border-line px-3 text-sm font-semibold text-muted-text disabled:opacity-60">{copy.cantMake}</button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- overview
+
+function Overview({ room, copy, colors, names, now, inviteText, onShare }: {
+  room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
+  now: number; inviteText: string; onShare: () => void;
+}) {
+  const post = ["processing", "ready", "expired"].includes(room.phase);
+  return (
+    <>
+      {room.phase === "cancelled" && <Card><p className="font-bold">{copy.phase.cancelled}</p></Card>}
+      {room.phase === "failed" && <Card><p className="font-bold">{copy.phase.failed}</p></Card>}
+      {post && <FootageCard room={room} copy={copy} />}
+      {post && room.canManage && <ScoreEditor room={room} copy={copy} colors={colors} names={names} />}
+      {post && room.vote.winners.length > 0 && <MotmBanner room={room} copy={copy} />}
+      {post && room.vote.open && room.isMember && room.vote.myVote === null && (
+        <Card className="border-violet/40 bg-violet/10">
+          <p className="text-sm font-bold">{copy.vote}</p>
+          <p className="mt-1 text-xs text-muted-text">{copy.voteDesc}</p>
+        </Card>
+      )}
+      {room.phase === "live" && room.isMember && (
+        <Card className="border-live/40 bg-live/10">
+          <p className="flex items-center gap-2 text-sm font-bold"><span className="h-2 w-2 animate-pulse rounded-full bg-live" />{copy.liveNow}</p>
+          <p className="mt-1 text-xs text-muted-text">{copy.flagHint}</p>
+        </Card>
+      )}
+      <Roster room={room} copy={copy} />
+      {room.phase !== "cancelled" && room.phase !== "expired" && (room.isMember || room.canManage || room.me) && (
+        <InviteCard room={room} copy={copy} inviteText={inviteText} onShare={onShare} />
+      )}
+      {room.captainUrl && !post && <CaptainLinkCard room={room} copy={copy} />}
+      {room.canManage && !post && room.phase !== "cancelled" && <RoomEditor room={room} copy={copy} />}
+      {room.field.location && (
+        <a
+          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${room.field.name} ${room.field.location}`)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 text-sm"
+        >
+          <MapPin className="h-4 w-4 text-turf" />
+          <span className="flex-1"><span className="block font-semibold">{room.field.name}</span><span className="text-xs text-muted-text">{room.field.location}</span></span>
+          <span className="text-xs font-semibold text-turf">{copy.directions}</span>
+        </a>
+      )}
+    </>
+  );
+}
+
+function Card({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <section className={cn("rounded-2xl border border-line bg-surface p-4", className)}>{children}</section>;
+}
+
+function Roster({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" } }) {
+  const remove = useRemovePlayer(room.code);
+  const { toast } = useToast();
+  const order: Record<string, number> = { in: 0, maybe: 1, invited: 2, out: 3 };
+  const players = [...room.players].sort((a, b) => order[a.rsvp] - order[b.rsvp]);
+  const visible = players.filter((p) => p.rsvp !== "out");
+  const open = Math.max(0, room.counts.needed - room.counts.in);
+  const captainId = room.captain?.userId ?? null;
+  return (
+    <Card>
+      <div className="flex items-baseline justify-between">
+        <h2 className="flex items-center gap-2 text-base font-bold"><Users className="h-4 w-4 text-turf" />{copy.roster}</h2>
+        <span className="font-mono text-lg font-bold tabular-nums">{copy.countIn(room.counts.in, room.counts.needed)}</span>
+      </div>
+      <div className="mt-2"><SquadBar inCount={room.counts.in} maybe={room.counts.maybe} needed={room.counts.needed} /></div>
+      <p className="mt-1.5 text-xs text-muted-text">
+        {open > 0 ? copy.spotsLeft(open) : copy.full}{room.counts.maybe ? ` · ${copy.maybes(room.counts.maybe)}` : ""}
+      </p>
+      <ul className="mt-3 flex flex-col divide-y divide-line">
+        {visible.map((p) => (
+          <li key={p.id} className="flex items-center gap-3 py-2.5">
+            <PlayerAvatar name={p.name} initials={p.initials} avatarUrl={p.avatarUrl} size={40} dashed={!p.signedUp} ring={p.team ? (p.team === "A" ? room.teams.A.color : room.teams.B.color) : undefined} />
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+                {p.name}{p.isMe ? " ·" : ""}
+                {p.userId != null && p.userId === captainId && <span className="rounded bg-floodlight px-1 text-[10px] font-black text-void">{copy.captainBadge}</span>}
+                {p.shirtNumber != null && <span className="font-mono text-xs text-muted-text">#{p.shirtNumber}</span>}
+              </p>
+              <p className="truncate text-[11px] text-muted-text">
+                {!p.signedUp ? copy.notSignedUp : p.invitedBy ? copy.invitedYou(p.invitedBy.name) : ""}
+              </p>
+            </div>
+            <RsvpDot rsvp={p.rsvp} copy={copy} />
+            {room.canManage && !p.isMe && room.phase === "pre" && (
+              <button
+                type="button"
+                aria-label={copy.remove}
+                onClick={() => void remove.mutateAsync(p.id).catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }))}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-text hover:bg-raised"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </li>
+        ))}
+        {Array.from({ length: Math.min(open, 4) }).map((_, i) => (
+          <li key={`open-${i}`} className="flex items-center gap-3 py-2.5 opacity-60">
+            <PlayerAvatar name="" initials="+" size={40} dashed />
+            <span className="text-sm text-muted-text">{copy.openSpot}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function RsvpDot({ rsvp, copy }: { rsvp: string; copy: MatchStrings }) {
+  if (rsvp === "in") return <span className="rounded-full bg-turf/15 px-2 py-0.5 text-[10px] font-bold text-turf">{copy.imIn}</span>;
+  if (rsvp === "maybe") return <span className="rounded-full bg-violet/15 px-2 py-0.5 text-[10px] font-bold text-violet">{copy.maybe}</span>;
+  return <span className="rounded-full border border-dashed border-line px-2 py-0.5 text-[10px] font-semibold text-muted-text">…</span>;
+}
+
+function InviteCard({ room, copy, inviteText, onShare }: { room: MatchRoom; copy: MatchStrings; inviteText: string; onShare: () => void }) {
+  const invite = useInvitePlayer(room.code);
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [lastLink, setLastLink] = useState<{ name: string; url: string } | null>(null);
+  const canInvite = room.isMember || room.canManage;
+  const submit = async () => {
+    if (!name.trim()) return;
+    try {
+      const result = await invite.mutateAsync({ displayName: name.trim(), phone: phone.trim() || null });
+      setLastLink({ name: name.trim(), url: result.inviteUrl });
+      setName("");
+      setPhone("");
+    } catch (error) {
+      toast({ title: error instanceof Error ? error.message : copy.error, variant: "destructive" });
+    }
+  };
+  return (
+    <Card>
+      <h2 className="flex items-center gap-2 text-base font-bold"><UserPlus className="h-4 w-4 text-violet" />{copy.inviteFriends}</h2>
+      <div className="mt-3 flex gap-2">
+        <a href={whatsappLink(inviteText)} target="_blank" rel="noopener noreferrer" className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full border border-violet/60 px-4 text-sm font-bold text-violet">
+          {copy.inviteByWhatsapp}
+        </a>
+        <button type="button" onClick={onShare} aria-label={copy.share} className="flex h-11 w-11 items-center justify-center rounded-full border border-line"><Share2 className="h-4 w-4" /></button>
+      </div>
+      {canInvite && (
+        <>
+          <button type="button" onClick={() => setOpen((v) => !v)} className="mt-3 text-xs font-semibold text-muted-text underline underline-offset-2">{copy.addPlaceholder}</button>
+          {open && (
+            <div className="mt-2 flex flex-col gap-2">
+              <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder={copy.placeholderName} className="min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" />
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" maxLength={24} placeholder={copy.placeholderPhone} className="min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" dir="ltr" />
+              <button type="button" disabled={!name.trim() || invite.isPending} onClick={() => void submit()} className="min-h-11 rounded-full border border-violet/60 text-sm font-bold text-violet disabled:opacity-50">{copy.add}</button>
+            </div>
+          )}
+          {lastLink && (
+            <div className="mt-3 rounded-xl border border-line bg-raised p-3">
+              <p className="text-xs font-semibold">{copy.personalLink} · {lastLink.name}</p>
+              <a href={whatsappLink(`${copy.invitedYou("")} ${lastLink.url}`.trim())} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex text-xs font-bold text-violet underline">{copy.sendPersonal}</a>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function CaptainLinkCard({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const { toast } = useToast();
+  if (!room.captainUrl) return null;
+  const text = `${room.title || room.field.name}: ${copy.captainLinkDesc} ${room.captainUrl}`;
+  return (
+    <Card>
+      <h2 className="flex items-center gap-2 text-sm font-bold"><Crown className="h-4 w-4 text-floodlight" />{copy.captainLinkTitle}</h2>
+      <p className="mt-1 text-xs text-muted-text">{copy.captainLinkDesc}</p>
+      <div className="mt-3 flex gap-2">
+        <a href={whatsappLink(text)} target="_blank" rel="noopener noreferrer" className="flex min-h-10 flex-1 items-center justify-center rounded-full border border-violet/60 text-xs font-bold text-violet">{copy.sendToCaptain}</a>
+        <button type="button" onClick={() => void navigator.clipboard.writeText(room.captainUrl!).then(() => toast({ title: copy.copied }))} className="flex h-10 w-10 items-center justify-center rounded-full border border-line" aria-label={copy.copyRef}><Copy className="h-4 w-4" /></button>
+      </div>
+    </Card>
+  );
+}
+
+function RoomEditor({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const update = useUpdateRoom(room.code);
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState(room.title ?? "");
+  const [a, setA] = useState(room.teams.A.name ?? "");
+  const [b, setB] = useState(room.teams.B.name ?? "");
+  const [pps, setPps] = useState(room.playersPerSide);
+  if (!open) {
+    return <button type="button" onClick={() => setOpen(true)} className="self-start text-xs font-semibold text-muted-text underline underline-offset-2">{copy.editMatch}</button>;
+  }
+  return (
+    <Card>
+      <label className="block text-xs text-muted-text">{copy.matchTitle}
+        <input value={title} maxLength={60} onChange={(e) => setTitle(e.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-void px-3 text-sm text-text outline-none focus:border-turf" />
+      </label>
+      <p className="mt-3 text-xs text-muted-text">{copy.teamNames}</p>
+      <div className="mt-1 grid grid-cols-2 gap-2">
+        <input value={a} maxLength={30} placeholder={copy.teamA} onChange={(e) => setA(e.target.value)} className="min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" />
+        <input value={b} maxLength={30} placeholder={copy.teamB} onChange={(e) => setB(e.target.value)} className="min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" />
+      </div>
+      <div className="mt-3 flex items-center justify-between">
+        <span className="text-xs text-muted-text">{copy.format}</span>
+        <Stepper value={pps} min={3} max={11} onChange={setPps} label={`${pps}v${pps}`} />
+      </div>
+      <div className="mt-4 flex gap-2">
+        <button type="button" disabled={update.isPending} onClick={() => void update.mutateAsync({ title: title.trim() || null, teamAName: a.trim() || null, teamBName: b.trim() || null, playersPerSide: pps }).then(() => setOpen(false))} className="min-h-11 flex-1 rounded-full bg-floodlight text-sm font-bold text-void">{copy.save}</button>
+        <button type="button" onClick={() => setOpen(false)} className="min-h-11 flex-1 rounded-full border border-line text-sm font-semibold">{copy.cancel}</button>
+      </div>
+    </Card>
+  );
+}
+
+function Stepper({ value, min, max, onChange, label }: { value: number; min: number; max: number; onChange: (v: number) => void; label?: string }) {
+  return (
+    <div className="flex items-center gap-2" dir="ltr">
+      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} className="flex h-9 w-9 items-center justify-center rounded-full border border-line" aria-label="-"><Minus className="h-4 w-4" /></button>
+      <span className="min-w-10 text-center font-mono text-xl font-bold tabular-nums">{label ?? value}</span>
+      <button type="button" onClick={() => onChange(Math.min(max, value + 1))} className="flex h-9 w-9 items-center justify-center rounded-full border border-line" aria-label="+"><Plus className="h-4 w-4" /></button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- after the whistle
+
+function FootageCard({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" } }) {
+  if (room.phase === "expired") return <Card><p className="text-sm text-muted-text">{copy.footageExpired}</p></Card>;
+  if (!room.footage.ready) {
+    return (
+      <Card>
+        <p className="flex items-center gap-2 text-sm font-bold"><Loader2 className="h-4 w-4 animate-spin text-turf" />{copy.fullTime}</p>
+        <p className="mt-1 text-xs text-muted-text">{copy.processingDesc}</p>
+        {room.progress > 0 && room.progress < 100 && (
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-raised"><span className="block h-full bg-turf" style={{ width: `${room.progress}%` }} /></div>
+        )}
+      </Card>
+    );
+  }
+  if (!room.footage.shareToken) return null;
+  const href = `/w/${room.footage.shareToken}?m=${room.code}`;
+  return (
+    <Card className="border-turf/30">
+      <p className="text-base font-bold">{copy.footageReady}</p>
+      {room.footage.expiresAt && <p className="mt-0.5 text-xs text-muted-text">{copy.footageExpires(formatDate(Date.parse(room.footage.expiresAt), copy.locale))}</p>}
+      <Link href={href} className="mt-3 flex min-h-12 items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void">
+        <Play className="h-4 w-4 fill-current" />{copy.watchFootage}
+      </Link>
+      {room.marks.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs font-semibold text-muted-text">{copy.flags}</p>
+          <div className="no-scrollbar mt-2 flex gap-2 overflow-x-auto">
+            {room.marks.map((m) => (
+              <Link key={m.id} href={`/w/${room.footage.shareToken}?m=${room.code}&t=${Math.max(0, Math.round((m.offsetSeconds ?? 0) - 8))}`} className="shrink-0 rounded-xl border border-turf/30 bg-turf/10 px-3 py-2 text-start">
+                <span className="block text-xs font-bold text-turf">{copy.flagKinds[m.kind] ?? m.kind}</span>
+                <span className="font-mono text-[11px] text-muted-text">{copy.atMinute(Math.max(0, Math.floor((m.offsetSeconds ?? 0) / 60)))}{m.byName ? ` · ${m.byName}` : ""}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ScoreEditor({ room, copy, colors, names }: { room: MatchRoom; copy: MatchStrings; colors: Record<TeamSide, string>; names: Record<TeamSide, string> }) {
+  const setScore = useSetScore(room.code);
+  const [open, setOpen] = useState(false);
+  const [a, setA] = useState(room.score?.a ?? 0);
+  const [b, setB] = useState(room.score?.b ?? 0);
+  if (!open) {
+    return <button type="button" onClick={() => setOpen(true)} className="min-h-11 rounded-full border border-line text-sm font-semibold">{room.score ? copy.score : copy.setScore}</button>;
+  }
+  return (
+    <Card>
+      <div className="flex items-center justify-around" dir="ltr">
+        <div className="flex flex-col items-center gap-2"><span className="h-4 w-4 rounded-full" style={{ background: colors.A }} /><span className="text-xs text-muted-text">{names.A}</span><Stepper value={a} min={0} max={99} onChange={setA} /></div>
+        <div className="flex flex-col items-center gap-2"><span className="h-4 w-4 rounded-full" style={{ background: colors.B }} /><span className="text-xs text-muted-text">{names.B}</span><Stepper value={b} min={0} max={99} onChange={setB} /></div>
+      </div>
+      <GamesEditor room={room} copy={copy} />
+      <div className="mt-4 flex gap-2">
+        <button type="button" disabled={setScore.isPending} onClick={() => void setScore.mutateAsync({ scoreA: a, scoreB: b }).then(() => setOpen(false))} className="min-h-11 flex-1 rounded-full bg-floodlight text-sm font-bold text-void">{copy.saveScore}</button>
+        <button type="button" onClick={() => setOpen(false)} className="min-h-11 flex-1 rounded-full border border-line text-sm font-semibold">{copy.cancel}</button>
+      </div>
+    </Card>
+  );
+}
+
+function GamesEditor({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const setGames = useSetGames(room.code);
+  const { toast } = useToast();
+  const total = Math.max(1, Math.round((room.endMs - room.startMs) / 60000));
+  const [games, setLocal] = useState(() => room.games.map((g) => ({ start: Math.round(g.startOffsetSec / 60), end: Math.round(g.endOffsetSec / 60), a: g.scoreA ?? 0, b: g.scoreB ?? 0 })));
+  const [open, setOpen] = useState(room.games.length > 0);
+  if (!open) return <button type="button" onClick={() => { setOpen(true); setLocal([{ start: 0, end: Math.min(total, 15), a: 0, b: 0 }]); }} className="mt-4 text-xs font-semibold text-muted-text underline underline-offset-2">{copy.splitGames}</button>;
+  const save = () => void setGames.mutateAsync(games.map((g) => ({ startOffsetSec: g.start * 60, endOffsetSec: g.end * 60, scoreA: g.a, scoreB: g.b })))
+    .then(() => toast({ title: copy.saveGames }))
+    .catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }));
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <p className="text-xs font-semibold text-muted-text">{copy.games}</p>
+      {games.map((g, i) => (
+        <div key={i} className="mt-2 flex items-center gap-2 text-xs" dir="ltr">
+          <span className="w-14 font-semibold">{copy.gameN(i + 1)}</span>
+          <input type="number" min={0} max={total} value={g.start} onChange={(e) => setLocal(games.map((x, j) => j === i ? { ...x, start: Number(e.target.value) } : x))} className="h-9 w-14 rounded-lg border border-line bg-void px-2" aria-label="start minute" />
+          <span>–</span>
+          <input type="number" min={1} max={total + 10} value={g.end} onChange={(e) => setLocal(games.map((x, j) => j === i ? { ...x, end: Number(e.target.value) } : x))} className="h-9 w-14 rounded-lg border border-line bg-void px-2" aria-label="end minute" />
+          <input type="number" min={0} max={99} value={g.a} onChange={(e) => setLocal(games.map((x, j) => j === i ? { ...x, a: Number(e.target.value) } : x))} className="ms-auto h-9 w-11 rounded-lg border border-line bg-void px-2" aria-label="score A" />
+          <input type="number" min={0} max={99} value={g.b} onChange={(e) => setLocal(games.map((x, j) => j === i ? { ...x, b: Number(e.target.value) } : x))} className="h-9 w-11 rounded-lg border border-line bg-void px-2" aria-label="score B" />
+          <button type="button" onClick={() => setLocal(games.filter((_, j) => j !== i))} className="flex h-9 w-9 items-center justify-center text-muted-text" aria-label={copy.remove}><Trash2 className="h-3.5 w-3.5" /></button>
+        </div>
+      ))}
+      <div className="mt-3 flex gap-2">
+        <button type="button" onClick={() => { const last = games[games.length - 1]; const start = last ? last.end : 0; setLocal([...games, { start, end: Math.min(total, start + 15), a: 0, b: 0 }]); }} className="min-h-9 flex-1 rounded-full border border-line text-xs font-semibold">{copy.addGame}</button>
+        <button type="button" disabled={setGames.isPending} onClick={save} className="min-h-9 flex-1 rounded-full border border-violet/60 text-xs font-bold text-violet">{copy.saveGames}</button>
+      </div>
+    </div>
+  );
+}
+
+function MotmBanner({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const winners = room.players.filter((p) => room.vote.winners.includes(p.id));
+  return (
+    <section className="relative overflow-hidden rounded-2xl border border-floodlight/40 p-4" style={{ background: "linear-gradient(135deg, rgba(212,255,79,.14), rgba(123,92,255,.14))" }}>
+      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-floodlight"><Crown className="h-3.5 w-3.5" />{copy.motm}</p>
+      <div className="mt-3 flex flex-wrap gap-4">
+        {winners.map((w) => (
+          <div key={w.id} className="flex items-center gap-3">
+            <PlayerAvatar name={w.name} initials={w.initials} avatarUrl={w.avatarUrl} size={52} ring="#D4FF4F" />
+            <span className="font-display text-xl font-bold">{w.name}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- teams
+
+function TeamsTab({ room, copy, colors, names }: { room: MatchRoom; copy: MatchStrings; colors: Record<TeamSide, string>; names: Record<TeamSide, string> }) {
+  const auto = useAutoTeams(room.code);
+  const updatePlayer = useUpdatePlayer(room.code);
+  const updateRoom = useUpdateRoom(room.code);
+  const [selected, setSelected] = useState<number | null>(null);
+  const { toast } = useToast();
+  const editable = room.canManage;
+  const active = room.players.filter((p) => p.rsvp === "in" || p.rsvp === "maybe");
+  const bench = active.filter((p) => !p.team || p.slotX == null);
+  const place = (x: number, y: number) => {
+    if (selected == null) return;
+    const team: TeamSide = y >= 50 ? "A" : "B";
+    void updatePlayer.mutateAsync({ playerId: selected, team, slotX: Math.round(x * 10) / 10, slotY: Math.round(y * 10) / 10 })
+      .then(() => setSelected(null))
+      .catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }));
+  };
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <TeamLegend side="B" name={names.B} color={colors.B} editable={editable} onColor={(c) => void updateRoom.mutateAsync({ teamBColor: c })} />
+        <TeamLegend side="A" name={names.A} color={colors.A} editable={editable} onColor={(c) => void updateRoom.mutateAsync({ teamAColor: c })} />
+      </div>
+      {active.some((p) => p.team) ? (
+        <PitchBoard players={room.players} colors={colors} editable={editable} selectedId={selected} onSelect={setSelected} onPlace={place} captainUserId={room.captain?.userId ?? null} />
+      ) : (
+        <Card><p className="text-sm text-muted-text">{editable ? copy.noTeamsYet : copy.teamsLocked}</p></Card>
+      )}
+      {editable && (
+        <>
+          <p className="text-center text-[11px] text-muted-text">{copy.dragHint}</p>
+          <div className="flex gap-2">
+            <button type="button" disabled={auto.isPending || active.length < 2} onClick={() => void auto.mutateAsync(false)} className="min-h-12 flex-[2] rounded-full bg-floodlight text-sm font-bold text-void disabled:opacity-50">{copy.autoTeams}</button>
+            <button type="button" disabled={auto.isPending || active.length < 2} onClick={() => void auto.mutateAsync(true)} className="flex min-h-12 flex-1 items-center justify-center gap-1.5 rounded-full border border-violet/60 text-sm font-semibold text-violet disabled:opacity-50"><Shuffle className="h-4 w-4" />{copy.shuffle}</button>
+          </div>
+        </>
+      )}
+      {bench.length > 0 && (
+        <Card>
+          <p className="text-xs font-semibold text-muted-text">{copy.bench}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {bench.map((p) => (
+              <button key={p.id} type="button" disabled={!editable} onClick={() => setSelected(selected === p.id ? null : p.id)} className={cn("flex items-center gap-2 rounded-full border px-2 py-1", selected === p.id ? "border-floodlight" : "border-line")}>
+                <PlayerAvatar name={p.name} initials={p.initials} avatarUrl={p.avatarUrl} size={26} dashed={!p.signedUp} />
+                <span className="text-xs font-semibold">{p.name}</span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+function TeamLegend({ side, name, color, editable, onColor }: { side: TeamSide; name: string; color: string; editable: boolean; onColor: (c: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative flex-1">
+      <button type="button" disabled={!editable} onClick={() => setOpen((v) => !v)} className={cn("flex w-full items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2", side === "A" && "flex-row-reverse text-end")}>
+        <span className="h-4 w-4 shrink-0 rounded-full border border-line" style={{ background: color }} />
+        <span className="truncate text-sm font-bold">{name}</span>
+      </button>
+      {open && editable && (
+        <div className="absolute z-10 mt-1 flex flex-wrap gap-1.5 rounded-xl border border-line bg-raised p-2">
+          {TEAM_SWATCHES.map((c) => (
+            <button key={c} type="button" onClick={() => { onColor(c); setOpen(false); }} className="h-7 w-7 rounded-full border border-line" style={{ background: c }} aria-label={c} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- live VAR
+
+type VarStatus = { varActive: boolean; cdnUrl?: string; fieldName: string };
+
+function VarTab({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" } }) {
+  const flag = useFlagMoment(room.code);
+  const { toast } = useToast();
+  const [status, setStatus] = useState<VarStatus | null>(null);
+  const [frameMs, setFrameMs] = useState<number | null>(null);
+  const [seekMs, setSeekMs] = useState<number | null>(null);
+  const requestId = room.var.requestId;
+
+  useEffect(() => {
+    if (!requestId || !room.var.active) return;
+    let cancelled = false;
+    const load = () => fetch(`${apiBase}/owner/requests/${requestId}/var/status`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => { if (!cancelled && s) setStatus(s as VarStatus); })
+      .catch(() => undefined);
+    void load();
+    const timer = window.setInterval(load, 20_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [requestId, room.var.active]);
+
+  const markTicks = useMemo(() => room.marks.map((m) => ({ atUtcMs: Date.parse(m.atUtc), kind: m.kind })), [room.marks]);
+
+  const onFlag = async (kind: "goal" | "foul" | "offside" | "other") => {
+    try {
+      await flag.mutateAsync({ kind, atUtc: new Date(frameMs ?? Date.now() - 20_000).toISOString() });
+      if (navigator.vibrate) navigator.vibrate(30);
+      toast({ title: copy.flagged });
+    } catch (error) {
+      toast({ title: error instanceof Error ? error.message : copy.error, variant: "destructive" });
+    }
+  };
+
+  if (!room.isMember && !room.canManage) {
+    return <Card className="text-center"><Lock className="mx-auto h-5 w-5 text-muted-text" /><p className="mt-2 text-sm">{copy.varOnlyPlayers}</p></Card>;
+  }
+  if (!room.var.active || !requestId) {
+    return <Card><p className="text-sm">{room.varOpensAt ? copy.varOpensAt(formatClock(Date.parse(room.varOpensAt), copy.locale)) : copy.phase[room.phase]}</p></Card>;
+  }
+  const proxy = `${apiBase}/owner/requests/${requestId}/var/hls/playlist.m3u8`;
+  return (
+    <>
+      <div className="-mx-4">
+        <VarPlayer
+          src={status?.cdnUrl ?? proxy}
+          fallbackSrc={proxy}
+          hevcSrc={proxy}
+          title={room.field.name}
+          marks={markTicks}
+          minStartUtcMs={room.startMs - 3 * 60 * 1000}
+          onCurrentTimeChange={setFrameMs}
+          seekToUtcMs={seekMs}
+        />
+      </div>
+      <p className="text-center text-[11px] text-muted-text">{copy.varBehind}</p>
+      <Card>
+        <p className="flex items-center gap-2 text-sm font-bold"><Flag className="h-4 w-4 text-violet" />{copy.flag}</p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button type="button" disabled={flag.isPending} onClick={() => void onFlag("goal")} className="col-span-2 min-h-12 rounded-full bg-floodlight text-base font-bold text-void disabled:opacity-60">{copy.flagKinds.goal}</button>
+          {(["foul", "offside", "other"] as const).map((k) => (
+            <button key={k} type="button" disabled={flag.isPending} onClick={() => void onFlag(k)} className={cn("min-h-11 rounded-full border text-sm font-semibold disabled:opacity-60", k === "other" ? "col-span-2 border-violet/60 text-violet" : "border-line text-text")}>{copy.flagKinds[k]}</button>
+          ))}
+        </div>
+      </Card>
+      <Card>
+        <p className="text-xs font-semibold text-muted-text">{copy.flags}</p>
+        {room.marks.length === 0 ? <p className="mt-2 text-xs text-muted-text">{copy.noFlags}</p> : (
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {[...room.marks].reverse().map((m) => (
+              <li key={m.id}>
+                <button type="button" onClick={() => setSeekMs(Date.parse(m.atUtc))} className="flex w-full items-center gap-3 rounded-xl border border-line bg-raised px-3 py-2 text-start">
+                  <span className="font-mono text-sm font-bold text-turf">{copy.atMinute(Math.max(0, Math.floor((m.offsetSeconds ?? 0) / 60)))}</span>
+                  <span className="flex-1 text-sm font-semibold">{copy.flagKinds[m.kind] ?? m.kind}</span>
+                  {m.byName && <span className="truncate text-[11px] text-muted-text">{copy.byName(m.byName)}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- clips
+
+function ClipsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" } }) {
+  const clips = useMatchClips(room.code);
+  const make = room.footage.shareToken ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
+  return (
+    <>
+      {make && (
+        <Link href={make} className="flex min-h-12 items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void">
+          <Clapperboard className="h-4 w-4" />{copy.makeClip}
+        </Link>
+      )}
+      {clips.isLoading ? <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-text" /> : (clips.data ?? []).length === 0 ? (
+        <Card><p className="text-sm text-muted-text">{copy.noClips}</p></Card>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          {(clips.data ?? []).map((clip) => (
+            <Link key={clip.id} href={clip.mine ? "/my-clips" : `/players/${clip.by.userId}`} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface">
+              <div className="relative aspect-video bg-raised">
+                <div className="absolute inset-0 flex items-center justify-center"><Play className="h-6 w-6 text-muted-text" /></div>
+                <span className="absolute bottom-1.5 end-1.5 rounded bg-void/80 px-1.5 font-mono text-[11px]">{Math.round(clip.duration)}s</span>
+                {clip.mine && <span className="absolute start-1.5 top-1.5 rounded-full bg-violet px-2 py-0.5 text-[10px] font-bold">{copy.yourClip}</span>}
+              </div>
+              <div className="flex items-center gap-2 p-2">
+                <PlayerAvatar name={clip.by.name} avatarUrl={clip.by.avatarUrl} size={22} />
+                <span className="truncate text-xs font-semibold">{clip.title || clip.by.name}</span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- vote
+
+function VoteTab({ room, copy, now }: { room: MatchRoom; copy: MatchStrings; now: number }) {
+  const vote = useVote(room.code);
+  const { toast } = useToast();
+  const candidates = room.players.filter((p) => p.rsvp === "in");
+  const tally = new Map(room.vote.tallies.map((t) => [t.playerId, t.count]));
+  const closesIn = room.vote.closesAt ? splitDuration(Date.parse(room.vote.closesAt) - now) : null;
+  const closesLabel = closesIn ? (closesIn.days ? `${closesIn.days}${copy.days} ` : "") + `${closesIn.hours}${copy.hours} ${closesIn.minutes}${copy.minutes}` : "";
+  const canVote = room.vote.open && room.isMember;
+  return (
+    <>
+      <Card>
+        <p className="flex items-center gap-2 text-base font-bold"><Crown className="h-4 w-4 text-floodlight" />{copy.vote}</p>
+        <p className="mt-1 text-xs text-muted-text">
+          {room.vote.closed ? copy.voteClosed : room.vote.open ? `${copy.voteDesc} ${copy.voteClosesIn(closesLabel)}` : copy.voteNotOpen}
+        </p>
+        <p className="mt-1 text-[11px] text-muted-text">{copy.votesCast(room.vote.votesCast, room.vote.eligibleVoters)}</p>
+        {!room.isMember && room.vote.open && <p className="mt-2 text-xs text-muted-text">{copy.onlyPlayersVote}</p>}
+      </Card>
+      <div className="grid grid-cols-3 gap-3">
+        {candidates.map((p) => {
+          const mine = room.vote.myVote === p.id;
+          const winner = room.vote.winners.includes(p.id);
+          const count = tally.get(p.id);
+          return (
+            <button
+              key={p.id}
+              type="button"
+              disabled={!canVote || p.isMe || vote.isPending}
+              onClick={() => void vote.mutateAsync(p.id).catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }))}
+              className={cn(
+                "flex flex-col items-center gap-2 rounded-2xl border p-3 transition-colors disabled:cursor-default",
+                mine ? "border-floodlight bg-floodlight/10" : winner ? "border-floodlight/60" : "border-line bg-surface",
+                p.isMe && "opacity-50",
+              )}
+            >
+              <span className="relative">
+                <PlayerAvatar name={p.name} initials={p.initials} avatarUrl={p.avatarUrl} size={56} ring={winner ? "#D4FF4F" : undefined} />
+                {winner && <Crown className="absolute -top-3 start-1/2 h-5 w-5 -translate-x-1/2 text-floodlight rtl:translate-x-1/2" />}
+              </span>
+              <span className="w-full truncate text-center text-xs font-semibold">{p.name}</span>
+              {count != null && <span className="font-mono text-xs text-muted-text">{copy.votes(count)}</span>}
+              {mine && <span className="text-[10px] font-bold text-floodlight">{copy.yourVote}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- stats
+
+function StatsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const unlock = useUnlockStats(room.code);
+  const { toast } = useToast();
+  const [ref, setRef] = useState<{ reference: string; amountFils: number; cliqAlias: string } | null>(
+    room.stats.pending ? { reference: room.stats.pending.reference, amountFils: room.stats.pending.amountFils, cliqAlias: room.stats.cliqAlias } : null,
+  );
+  if (room.stats.unlocked) {
+    return (
+      <Card className="border-turf/30">
+        <p className="flex items-center gap-2 text-base font-bold"><Check className="h-4 w-4 text-turf" />{copy.statsUnlocked}</p>
+        <p className="mt-1 text-xs text-muted-text">{copy.statsLockedDesc}</p>
+        {room.me?.userId && <Link href={`/players/${room.me.userId}`} className="mt-3 flex min-h-11 items-center justify-center rounded-full bg-floodlight text-sm font-bold text-void">{copy.openStats}</Link>}
+      </Card>
+    );
+  }
+  const start = async (kind: "match" | "team") => {
+    try {
+      const result = await unlock.mutateAsync(kind);
+      setRef(result);
+    } catch (error) {
+      toast({ title: error instanceof Error ? error.message : copy.error, variant: "destructive" });
+    }
+  };
+  return (
+    <>
+      <section className="relative overflow-hidden rounded-2xl border border-line bg-surface p-4">
+        <div className="pointer-events-none absolute inset-0 opacity-40 blur-[6px]" aria-hidden="true">
+          <div className="grid h-full grid-cols-3 gap-2 p-4">
+            {["4.2 km", "17", "63"].map((v) => <div key={v} className="rounded-xl bg-raised p-3 font-mono text-2xl font-bold text-turf">{v}</div>)}
+            <div className="col-span-3 h-24 rounded-xl" style={{ background: "radial-gradient(40% 50% at 30% 60%, rgba(212,255,79,.6), transparent), radial-gradient(30% 40% at 70% 30%, rgba(47,216,196,.5), transparent)" }} />
+          </div>
+        </div>
+        <div className="relative">
+          <p className="flex items-center gap-2 text-base font-bold"><Lock className="h-4 w-4 text-floodlight" />{copy.statsLocked}</p>
+          <p className="mt-1 text-xs text-muted-text">{copy.statsLockedDesc}</p>
+          {room.isMember ? (
+            <div className="mt-4 flex flex-col gap-2">
+              <button type="button" disabled={unlock.isPending} onClick={() => void start("match")} className="min-h-12 rounded-full bg-floodlight text-sm font-bold text-void">{copy.unlockMatch(formatJod(room.stats.prices.matchFils))}</button>
+              {room.canManage && <button type="button" disabled={unlock.isPending} onClick={() => void start("team")} className="min-h-11 rounded-full border border-violet/60 text-sm font-semibold text-violet">{copy.unlockTeam(formatJod(room.stats.prices.teamFils))}</button>}
+            </div>
+          ) : <p className="mt-3 text-xs text-muted-text">{copy.onlyPlayersVote}</p>}
+        </div>
+      </section>
+      {ref && (
+        <Card className="border-violet/40">
+          <p className="text-sm font-bold">{copy.payWithCliq} · {copy.pendingPayment}</p>
+          <p className="mt-2 text-sm leading-6">{copy.cliqSteps(ref.cliqAlias, formatJod(ref.amountFils), ref.reference)}</p>
+          <button type="button" onClick={() => void navigator.clipboard.writeText(ref.reference).then(() => toast({ title: copy.copied }))} className="mt-3 flex min-h-10 items-center gap-2 rounded-full border border-line px-4 font-mono text-sm font-bold">
+            <Copy className="h-4 w-4" />{ref.reference}
+          </button>
+        </Card>
+      )}
+    </>
+  );
+}

@@ -2,6 +2,11 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useTranslation } from "@/i18n";
+import { Link } from "wouter";
+import { MatchCard } from "@/components/match/MatchCard";
+import { useMatchCopy } from "@/i18n/match-strings";
+import { useAuth } from "@/lib/auth";
+import { useMyMatches } from "@/lib/match-api";
 import footballPitchImage from "@/assets/football-pitch.png";
 import clipsEditingImage from "@/assets/clips-editing.png";
 import academiesWatchingImage from "@/assets/academies-watching.png";
@@ -136,6 +141,7 @@ export default function Home() {
   return (
     <div className="home-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
       <div className="home-page-scroll min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-4">
+        <HomeMatches />
         <div className="mb-4 flex items-center gap-3 px-1">
           <h1 className="text-sm font-semibold text-foreground">
             {locale === "ar" ? "الأخبار والتحديثات" : "News & updates"}
@@ -284,5 +290,35 @@ function NewsCard({
         </AnimatePresence>
       </button>
     </motion.article>
+  );
+}
+
+
+/** The top of Home: the live or next match, then invites. */
+function HomeMatches() {
+  const copy = useMatchCopy();
+  const { user, isGuest } = useAuth();
+  const signedIn = Boolean(user) && !isGuest;
+  const { data } = useMyMatches(signedIn);
+  if (!signedIn || !data) return null;
+  const now = Date.now();
+  const hero = data.live[0] ?? data.upcoming[0] ?? null;
+  const invites = data.invites.slice(0, 3);
+  const voting = data.recent.filter((m) => m.voteOpen).slice(0, 2);
+  if (!hero && !invites.length && !voting.length) return null;
+  return (
+    <div className="mb-6 flex flex-col gap-3">
+      {hero && <MatchCard item={hero} copy={copy} now={now} variant="hero" />}
+      {invites.length > 0 && (
+        <div>
+          <p className="mb-2 px-1 text-sm font-bold">{copy.invites}</p>
+          <div className="flex flex-col gap-2">
+            {invites.map((m) => <MatchCard key={`${m.code}-${m.inviteToken}`} item={m} copy={copy} now={now} />)}
+          </div>
+        </div>
+      )}
+      {voting.map((m) => <MatchCard key={`vote-${m.code}`} item={m} copy={copy} now={now} />)}
+      <Link href="/matches" className="self-end px-1 text-xs font-semibold text-turf">{copy.matches} →</Link>
+    </div>
   );
 }
