@@ -668,8 +668,8 @@ export default function Owner() {
       </button>
       <nav className="mt-4 grid grid-cols-3 gap-1 rounded-2xl border border-line bg-surface p-1" aria-label={copy.title} data-testid="owner-tabs">
         {([
-          ["request", copy.request, Plus],
           ["footage", copy.myFootage, Film],
+          ["request", copy.pastFootage, Plus],
           ["billing", copy.billing, WalletCards],
         ] as const).map(([value, label, Icon]) => (
           <button

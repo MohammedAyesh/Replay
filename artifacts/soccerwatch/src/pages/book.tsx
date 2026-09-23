@@ -294,7 +294,7 @@ export default function BookPage() {
       )}
 
       {/* summary + pay */}
-      <section className="sticky bottom-24 z-10 mt-5 rounded-3xl border border-line bg-surface/95 p-4 backdrop-blur">
+      <section className="mt-6 rounded-3xl border border-line bg-surface p-4">
         {ready ? (
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
