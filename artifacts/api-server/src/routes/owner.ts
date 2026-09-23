@@ -9,6 +9,9 @@ import {
   footagePaymentsTable,
   footageCancellationRequestsTable,
   footageRequestsTable,
+  matchPlayersTable,
+  matchRoomsTable,
+  statUnlocksTable,
   varMarksTable,
   usersTable,
 } from "@workspace/db";
@@ -18,7 +21,7 @@ import { computeAmountFils, computeBillableHours } from "../lib/footageBilling";
 import { controlFetch, controlResponse } from "./contabo";
 import { logger } from "../lib/logger";
 import { buildOwnerFootageTitle } from "@workspace/api-zod";
-import { ensureRoomForRequest, isRosterMemberOfRequest } from "../lib/matchRooms";
+import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -1117,6 +1120,43 @@ router.get("/owner/fields/:fieldId/availability/:date", async (req, res): Promis
   }
 });
 
+/**
+ * Hands a booking to the camera service on vps1. Future windows become
+ * scheduled pulls (ready about 20 minutes after the end); past windows are
+ * pulled from the SD card straight away. Failures mark the request failed
+ * (never charged).
+ */
+export async function startCameraJob(row: FootageRequest, cameraId: string): Promise<void> {
+  const end = parseLocalDateTime(row.endLocal);
+  const nowMs = ammanLocalEpoch(getAmmanNow().local);
+  const future = end ? end.epochMs > nowMs : false;
+  const title = buildOwnerFootageTitle(cameraId, row.id, row.startLocal);
+  try {
+    // The camera service expects seconds, while the owner-facing and database
+    // contract intentionally stays at minute precision.
+    const remoteStart = `${row.startLocal}:00`;
+    const remoteEnd = `${row.endLocal}:00`;
+    const result = await controlFetch(
+      `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}`,
+      { method: "POST" },
+      90_000,
+    );
+    const jobId = responseJobId(result.body);
+    if (!result.ok || !jobId) {
+      await failRequest(row.id, errorMessage(result.body, "The camera pull could not be started — not charged"));
+    } else {
+      const remoteStatus = bodyString(result.body, "status", "state");
+      const status = remoteStatus ? mappedStatus(result.body) : (future ? "scheduled" : "queued");
+      await db.update(footageRequestsTable)
+        .set({ vpsJobId: jobId, status, updatedAt: new Date() })
+        .where(eq(footageRequestsTable.id, row.id));
+    }
+  } catch (error) {
+    logger.error({ requestId: row.id, error }, "Failed to queue footage request");
+    await failRequest(row.id, "The camera pull could not be started — not charged");
+  }
+}
+
 router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> => {
   const fieldId = parseId(req.params.fieldId);
   if (!fieldId) {
@@ -1231,33 +1271,7 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     status: end.epochMs > nowMs ? "scheduled" : "queued",
   }).returning();
 
-  const title = buildOwnerFootageTitle(field.cameraId, created.id, start.value);
-  try {
-    // The camera service expects seconds, while the owner-facing and database
-    // contract intentionally stays at minute precision.
-    const remoteStart = `${start.value}:00`;
-    const remoteEnd = `${end.value}:00`;
-    const result = await controlFetch(
-      `/record-hq/${encodeURIComponent(field.cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}`,
-      { method: "POST" },
-      90_000,
-    );
-    const jobId = responseJobId(result.body);
-    if (!result.ok || !jobId) {
-      await failRequest(created.id, errorMessage(result.body, "The camera pull could not be started — not charged"));
-    } else {
-      const remoteStatus = bodyString(result.body, "status", "state");
-      const status = remoteStatus
-        ? mappedStatus(result.body)
-        : (end.epochMs > nowMs ? "scheduled" : "queued");
-      await db.update(footageRequestsTable)
-        .set({ vpsJobId: jobId, status, updatedAt: new Date() })
-        .where(eq(footageRequestsTable.id, created.id));
-    }
-  } catch (error) {
-    logger.error({ requestId: created.id, error }, "Failed to queue owner footage request");
-    await failRequest(created.id, "The camera pull could not be started — not charged");
-  }
+  await startCameraJob(created, field.cameraId);
 
   const [saved] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, created.id));
   const room = await roomLinkFor(saved ?? created);
@@ -1791,5 +1805,223 @@ router.get("/owner/fields/:fieldId/ledger", async (req, res): Promise<void> => {
     balanceFils: totalChargedFils - paidFils,
   });
 });
+
+// ---------------------------------------------------------------- player bookings
+//
+// Anyone with an account can book a future recording. The booking waits for a
+// CliQ payment; an admin confirms it (Admin -> Payments) and only then is the
+// camera job started. The field owner is never billed for these (rate 0 on the
+// request); the money lives on the payment row.
+
+export const PLAYER_BOOKING_FILS_PER_HOUR = Number.parseInt(process.env.REPLAY_PLAYER_BOOKING_FILS_PER_HOUR ?? "", 10) || 2000;
+const BOOKING_HOLD_STATUSES = [...ACTIVE_REQUEST_STATUSES, "awaiting_payment"];
+const MAX_AWAITING_PAYMENT = 3;
+
+export function playerBookingPriceFils(durationSeconds: number): number {
+  return Math.max(1, Math.ceil(durationSeconds / 3600)) * PLAYER_BOOKING_FILS_PER_HOUR;
+}
+
+router.get("/bookings/fields", async (_req, res): Promise<void> => {
+  const rows = await db.select({
+    id: fieldsTable.id,
+    name: fieldsTable.name,
+    location: fieldsTable.location,
+    imageUrl: fieldsTable.thumbnailUrl,
+    cameraId: fieldsTable.cameraId,
+  }).from(fieldsTable).where(isNotNull(fieldsTable.cameraId)).orderBy(asc(fieldsTable.name));
+  res.json({
+    fields: rows.map(({ cameraId: _camera, ...field }) => field),
+    pricePerHourFils: PLAYER_BOOKING_FILS_PER_HOUR,
+    ownerPricePerHourFils: REQUEST_RATE_FILS,
+    maxDaysAhead: 14,
+  });
+});
+
+router.get("/bookings/taken", async (req, res): Promise<void> => {
+  const fieldId = parseId(typeof req.query.fieldId === "string" ? req.query.fieldId : undefined);
+  const date = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : null;
+  if (!fieldId || !date) {
+    res.status(400).json({ error: "fieldId and date are required" });
+    return;
+  }
+  const rows = await db.select({ startLocal: footageRequestsTable.startLocal, endLocal: footageRequestsTable.endLocal })
+    .from(footageRequestsTable)
+    .where(and(
+      eq(footageRequestsTable.fieldId, fieldId),
+      inArray(footageRequestsTable.status, BOOKING_HOLD_STATUSES),
+    ));
+  const dayStart = ammanLocalEpoch(`${date} 00:00`);
+  const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+  res.json({
+    taken: rows.filter((row) => {
+      const s = ammanLocalEpoch(row.startLocal);
+      const e = ammanLocalEpoch(row.endLocal);
+      return Number.isFinite(s) && Number.isFinite(e) && s < dayEnd && e > dayStart;
+    }),
+    now: getAmmanNow().local,
+  });
+});
+
+const playerBookingSchema = z.object({
+  fieldId: z.number().int().positive(),
+  startLocal: z.string(),
+  endLocal: z.string(),
+  title: z.string().trim().max(60).nullable().optional(),
+});
+
+router.post("/bookings", async (req, res): Promise<void> => {
+  const user = await getLocalUserRecord(req);
+  if (!user) {
+    unauthenticatedResponse(res, req);
+    return;
+  }
+  if (user.isGuest) {
+    res.status(403).json({ error: "Create an account to book a recording" });
+    return;
+  }
+  const body = playerBookingSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Pick a field, a start and an end" });
+    return;
+  }
+  const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, body.data.fieldId));
+  if (!field || !field.cameraId) {
+    res.status(404).json({ error: "This field can't record yet" });
+    return;
+  }
+  const start = parseLocalDateTime(body.data.startLocal);
+  const end = parseLocalDateTime(body.data.endLocal);
+  if (!start || !end || start.minute % 15 !== 0 || end.minute % 15 !== 0) {
+    res.status(400).json({ error: "Start and end must be on a 15-minute step" });
+    return;
+  }
+  const durationSeconds = Math.floor((end.epochMs - start.epochMs) / 1000);
+  if (durationSeconds < 30 * 60 || durationSeconds > 3 * 60 * 60) {
+    res.status(400).json({ error: "A recording is between 30 minutes and 3 hours" });
+    return;
+  }
+  const nowMs = ammanLocalEpoch(getAmmanNow().local);
+  if (start.epochMs < nowMs - 15 * 60 * 1000) {
+    res.status(400).json({ error: "Pick a time that hasn't started yet" });
+    return;
+  }
+  if (start.epochMs > nowMs + 14 * 24 * 60 * 60 * 1000) {
+    res.status(400).json({ error: "You can book up to 14 days ahead" });
+    return;
+  }
+  const waiting = await db.select({ id: footageRequestsTable.id }).from(footageRequestsTable)
+    .where(and(eq(footageRequestsTable.requestedBy, user.id), eq(footageRequestsTable.status, "awaiting_payment")));
+  if (waiting.length >= MAX_AWAITING_PAYMENT) {
+    res.status(409).json({ error: "You have 3 bookings waiting for payment. Pay or cancel one first." });
+    return;
+  }
+  const others = await db.select({ startLocal: footageRequestsTable.startLocal, endLocal: footageRequestsTable.endLocal })
+    .from(footageRequestsTable)
+    .where(and(eq(footageRequestsTable.fieldId, field.id), inArray(footageRequestsTable.status, BOOKING_HOLD_STATUSES)));
+  if (others.some((o) => {
+    const s = ammanLocalEpoch(o.startLocal);
+    const e = ammanLocalEpoch(o.endLocal);
+    return start.epochMs < e && s < end.epochMs;
+  })) {
+    res.status(409).json({ error: "Someone already booked that time" });
+    return;
+  }
+
+  const amountFils = playerBookingPriceFils(durationSeconds);
+  const [created] = await db.insert(footageRequestsTable).values({
+    fieldId: field.id,
+    cameraId: field.cameraId,
+    requestedBy: user.id,
+    startLocal: start.value,
+    endLocal: end.value,
+    requestedSeconds: durationSeconds,
+    // Paid by the players, so the field owner's ledger charges nothing for it.
+    rateFils: 0,
+    status: "awaiting_payment",
+    message: "Waiting for payment",
+  }).returning();
+  const room = await ensureRoomForRequest(created);
+  await db.update(matchRoomsTable).set({
+    captainUserId: user.id,
+    title: body.data.title || null,
+    updatedAt: new Date(),
+  }).where(eq(matchRoomsTable.id, room.id));
+  await db.insert(matchPlayersTable).values({
+    matchId: room.id,
+    userId: user.id,
+    displayName: user.name,
+    inviteToken: randomToken(10),
+    rsvp: "in",
+    rsvpAt: new Date(),
+    shirtNumber: user.shirtNumber ?? null,
+  }).onConflictDoNothing();
+  const reference = `RB${room.code}-${randomToken(3).toUpperCase()}`;
+  await db.insert(statUnlocksTable).values({
+    userId: user.id,
+    matchId: room.id,
+    kind: "booking",
+    amountFils,
+    reference,
+  });
+  res.status(201).json({
+    code: room.code,
+    requestId: created.id,
+    amountFils,
+    reference,
+    cliqAlias: process.env.REPLAY_CLIQ_ALIAS || "REPLAYJO",
+    startLocal: created.startLocal,
+    endLocal: created.endLocal,
+    fieldName: field.name,
+  });
+});
+
+/** The booker can drop an unpaid booking. */
+router.delete("/bookings/:id", async (req, res): Promise<void> => {
+  const user = await getLocalUserRecord(req);
+  if (!user) {
+    unauthenticatedResponse(res, req);
+    return;
+  }
+  const id = parseId(req.params.id);
+  if (!id) {
+    res.status(404).json({ error: "Booking not found" });
+    return;
+  }
+  const [row] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, id));
+  if (!row || (row.requestedBy !== user.id && !user.isAdmin)) {
+    res.status(404).json({ error: "Booking not found" });
+    return;
+  }
+  if (row.status !== "awaiting_payment") {
+    res.status(409).json({ error: "Only unpaid bookings can be cancelled here" });
+    return;
+  }
+  await db.update(footageRequestsTable).set({ status: "cancelled", message: "Cancelled before payment", updatedAt: new Date() })
+    .where(eq(footageRequestsTable.id, id));
+  const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, id));
+  if (room) {
+    await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
+      .where(and(eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.status, "pending")));
+  }
+  res.status(204).send();
+});
+
+/** Called when an admin confirms a booking payment: start the camera job. */
+export async function activatePaidBooking(requestId: number): Promise<{ status: string }> {
+  const [row] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, requestId));
+  if (!row) return { status: "missing" };
+  if (row.status !== "awaiting_payment") return { status: row.status };
+  await db.update(footageRequestsTable).set({ status: "queued", message: null, updatedAt: new Date() })
+    .where(eq(footageRequestsTable.id, requestId));
+  await startCameraJob({ ...row, status: "queued" }, row.cameraId);
+  const [fresh] = await db.select({ status: footageRequestsTable.status }).from(footageRequestsTable).where(eq(footageRequestsTable.id, requestId));
+  return { status: fresh?.status ?? "queued" };
+}
+
+export async function cancelUnpaidBooking(requestId: number): Promise<void> {
+  await db.update(footageRequestsTable).set({ status: "cancelled", message: "Payment not received", updatedAt: new Date() })
+    .where(and(eq(footageRequestsTable.id, requestId), eq(footageRequestsTable.status, "awaiting_payment")));
+}
+
 
 export default router;

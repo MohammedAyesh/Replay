@@ -20,10 +20,11 @@ export default function StatPaymentsTab() {
   return (
     <div className="flex flex-col gap-3">
       <div>
-        <h2 className="font-display text-xl font-bold">Stat payments</h2>
+        <h2 className="font-display text-xl font-bold">Payments</h2>
         <p className="text-xs text-muted-text">
-          Pending CliQ transfers for stats: 0.5 JOD per match, 0.5 JOD × squad for a team unlock, 2 JOD a month.
-          Confirm only once the transfer with this reference has arrived.
+          Pending CliQ transfers. Recording bookings (2 JOD per hour or part of an hour) start recording the moment you
+          confirm; rejecting cancels the booking and frees the slot. Stats: 0.5 JOD per match, 0.5 JOD × squad for a team
+          unlock, 2 JOD a month. Confirm only once the transfer with this reference has arrived.
         </p>
       </div>
       {list.isLoading ? (
@@ -36,7 +37,7 @@ export default function StatPaymentsTab() {
             <div className="min-w-0 flex-1">
               <p className="font-mono text-sm font-bold">{row.reference}</p>
               <p className="truncate text-xs text-muted-text">
-                {row.user.name ?? "—"} · {row.user.phone ?? row.user.email ?? ""} · {row.kind}
+                {row.user.name ?? "—"} · {row.user.phone ?? row.user.email ?? ""} · {row.kind === "booking" ? "Recording booking" : `Stats (${row.kind})`}
                 {row.matchCode ? ` · #${row.matchCode}` : ""}
               </p>
               <p className="text-[11px] text-muted-text">{new Date(row.createdAt).toLocaleString("en-GB", { timeZone: "Asia/Amman" })}</p>

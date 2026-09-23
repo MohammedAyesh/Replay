@@ -20,6 +20,7 @@ import {
   type MatchPlayer,
 } from "@workspace/db";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { activatePaidBooking, cancelUnpaidBooking } from "./owner";
 import {
   BOOKING_FILS,
   STATS_MATCH_FILS,
@@ -185,6 +186,7 @@ async function statsAccess(userId: number | null, matchId: number) {
   if (!userId) return { unlocked: false, pending: null as null | { reference: string; kind: string; amountFils: number } };
   const now = new Date();
   const rows = await db.select().from(statUnlocksTable).where(and(
+    inArray(statUnlocksTable.kind, ["match", "team", "monthly"]),
     or(
       and(eq(statUnlocksTable.userId, userId), eq(statUnlocksTable.matchId, matchId)),
       and(eq(statUnlocksTable.userId, userId), eq(statUnlocksTable.kind, "monthly")),
@@ -259,6 +261,9 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
     .where(eq(matchGamesTable.matchId, room.id)).orderBy(asc(matchGamesTable.idx));
   const vote = await voteSummary(ctx, viewerId, roster);
   const stats = await statsAccess(viewerId, room.id);
+  const [bookingPayment] = await db.select().from(statUnlocksTable)
+    .where(and(eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking")))
+    .orderBy(desc(statUnlocksTable.createdAt)).limit(1);
   const now = Date.now();
   const varActive = now >= window.startMs - VAR_OPEN_BEFORE_MS
     && now <= window.endMs + VAR_CLOSE_AFTER_MS
@@ -349,6 +354,15 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
       match: matchClipCount[0]?.n ?? 0,
     },
     prices: { bookingFils: BOOKING_FILS },
+    // Player-paid bookings: the payment the recording is waiting on.
+    booking: bookingPayment ? {
+      status: bookingPayment.status,
+      amountFils: bookingPayment.amountFils,
+      reference: (member || isOwner || bookingPayment.userId === viewerId) ? bookingPayment.reference : null,
+      mine: bookingPayment.userId === viewerId,
+      requestId: bookingPayment.userId === viewerId || isOwner ? request.id : null,
+      cliqAlias: CLIQ_ALIAS,
+    } : null,
   };
 }
 
@@ -1095,6 +1109,19 @@ router.post("/admin/stat-unlocks/:id/:action", async (req, res): Promise<void> =
     return;
   }
   const now = new Date();
+  // A booking payment starts (or cancels) the recording itself.
+  let booking: { status: string } | null = null;
+  if (row.kind === "booking" && row.matchId && row.status === "pending") {
+    const [room] = await db.select({ requestId: matchRoomsTable.footageRequestId }).from(matchRoomsTable)
+      .where(eq(matchRoomsTable.id, row.matchId));
+    if (room) {
+      if (action === "confirm") booking = await activatePaidBooking(room.requestId);
+      else {
+        await cancelUnpaidBooking(room.requestId);
+        booking = { status: "cancelled" };
+      }
+    }
+  }
   const [saved] = await db.update(statUnlocksTable).set(action === "confirm" ? {
     status: "paid",
     confirmedBy: user.id,
@@ -1102,7 +1129,7 @@ router.post("/admin/stat-unlocks/:id/:action", async (req, res): Promise<void> =
     validUntil: row.kind === "monthly" ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) : null,
   } : { status: "rejected", confirmedBy: user.id, confirmedAt: now })
     .where(eq(statUnlocksTable.id, id)).returning();
-  res.json({ id: saved.id, status: saved.status });
+  res.json({ id: saved.id, status: saved.status, booking });
 });
 
 // ---------------------------------------------------------------- avatars

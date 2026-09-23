@@ -293,7 +293,8 @@ export default function Owner() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"request" | "footage" | "billing">(() =>
-    new URLSearchParams(window.location.search).get("tab") === "footage" ? "footage" : "request",
+    // Bookings first: new recordings are booked on /book, so this page opens on what's already booked.
+    ({ request: "request", billing: "billing" } as const)[new URLSearchParams(window.location.search).get("tab") ?? ""] ?? "footage",
   );
   const [requestMode, setRequestMode] = useState<"past" | "book">("past");
   const [selectedFieldId, setSelectedFieldId] = useState<number | null>(null);
@@ -612,7 +613,7 @@ export default function Owner() {
           <div className="flex min-w-0 items-start gap-3">
             <button
               type="button"
-              onClick={() => setLocation("/home")}
+              onClick={() => setLocation("/book")}
               aria-label={locale === "ar" ? "رجوع" : "Back"}
               data-testid="button-owner-back"
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-raised text-foreground transition-colors hover:bg-line"
@@ -656,6 +657,15 @@ export default function Owner() {
         </div>
       </section>
 
+      <button
+        type="button"
+        onClick={() => setLocation(`/book${fieldId ? `?field=${fieldId}` : ""}`)}
+        className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-floodlight text-sm font-bold text-void"
+        data-testid="button-owner-book"
+      >
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        {locale === "ar" ? "احجز تسجيل لماتش جاي" : "Book a recording for an upcoming match"}
+      </button>
       <nav className="mt-4 grid grid-cols-3 gap-1 rounded-2xl border border-line bg-surface p-1" aria-label={copy.title} data-testid="owner-tabs">
         {([
           ["request", copy.request, Plus],
@@ -681,7 +691,7 @@ export default function Owner() {
           copy={copy}
           locale={locale}
           mode={requestMode}
-          setMode={setRequestMode}
+          setMode={(mode) => (mode === "book" ? setLocation("/book") : setRequestMode(mode))}
           date={date}
           setDate={setDate}
           from={from}

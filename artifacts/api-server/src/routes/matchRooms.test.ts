@@ -74,6 +74,8 @@ const as = (who: string) => ({ "x-test-user": String(users[who]) });
 
 beforeAll(async () => {
   process.env.PUBLIC_SHARE_BASE_URL = "https://replay.example.test";
+  process.env.CONTABO_CONTROL_URL = "https://control.example.test";
+  process.env.CONTABO_CONTROL_KEY = "test-key";
   app = express();
   app.use(express.json());
   app.use("/api", matchRoomsRouter);
@@ -375,3 +377,99 @@ describe("a match from invite to vote", () => {
     expect(players).toHaveLength(0);
   });
 });
+
+describe("players book a future recording and pay by CliQ", () => {
+  it("books, holds the slot, waits for payment, then an admin confirm starts the camera job", async () => {
+    const realFetch = globalThis.fetch;
+    const recordCalls: string[] = [];
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://control.example.test")) {
+        recordCalls.push(url);
+        return new Response(JSON.stringify({ jobId: "job-test-1", status: "scheduled" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return realFetch(input as RequestInfo, init);
+    });
+    try {
+      const minute = 60 * 1000;
+      const quarter = 15 * minute;
+      const startMs = Math.ceil((Date.now() + 2 * 24 * 60 * minute) / quarter) * quarter;
+      const startLocal = localString(startMs);
+      const endLocal = localString(startMs + 90 * minute);
+
+      const fields = await request(app).get("/api/bookings/fields");
+      expect(fields.body.fields.some((f: { id: number }) => f.id === fieldId)).toBe(true);
+      expect(fields.body.pricePerHourFils).toBe(2000);
+
+      expect((await request(app).post("/api/bookings").send({ fieldId, startLocal, endLocal })).status).toBe(401);
+      const booked = await request(app).post("/api/bookings").set(as("sami")).send({ fieldId, startLocal, endLocal, title: "Thursday 5s" });
+      expect(booked.status).toBe(201);
+      expect(booked.body.amountFils).toBe(4000); // 90 minutes = 2 started hours × 2 JOD
+      expect(booked.body.reference).toMatch(new RegExp(`^RB${booked.body.code}-`));
+      requestIds.push(booked.body.requestId);
+
+      // The slot is held: nobody else can take it, and it shows as taken.
+      const clash = await request(app).post("/api/bookings").set(as("omar")).send({ fieldId, startLocal, endLocal });
+      expect(clash.status).toBe(409);
+      const taken = await request(app).get(`/api/bookings/taken?fieldId=${fieldId}&date=${startLocal.slice(0, 10)}`);
+      expect(taken.body.taken.some((t: { startLocal: string }) => t.startLocal === startLocal)).toBe(true);
+
+      // The booker is captain and sees the payment on the match page; no camera call yet.
+      const page = await request(app).get(`/api/m/${booked.body.code}`).set(as("sami"));
+      expect(page.body.phase).toBe("pre");
+      expect(page.body.isCaptain).toBe(true);
+      expect(page.body.title).toBe("Thursday 5s");
+      expect(page.body.booking.status).toBe("pending");
+      expect(page.body.booking.mine).toBe(true);
+      expect(page.body.var.active).toBe(false);
+      expect(recordCalls).toHaveLength(0);
+      // Paying for a booking does not unlock stats.
+      expect(page.body.stats.unlocked).toBe(false);
+      expect(page.body.stats.pending).toBeNull();
+
+      // Past windows and too-short windows are refused.
+      expect((await request(app).post("/api/bookings").set(as("sami")).send({
+        fieldId, startLocal: localString(Math.floor((Date.now() - 3 * 60 * minute) / quarter) * quarter),
+        endLocal: localString(Math.floor((Date.now() - 2 * 60 * minute) / quarter) * quarter),
+      })).status).toBe(400);
+
+      // Admin confirms the CliQ transfer: the camera job starts and the booking is scheduled.
+      const list = await request(app).get("/api/admin/stat-unlocks").set(as("admin"));
+      const row = list.body.find((r: { reference: string }) => r.reference === booked.body.reference);
+      expect(row.kind).toBe("booking");
+      const confirm = await request(app).post(`/api/admin/stat-unlocks/${row.id}/confirm`).set(as("admin"));
+      expect(confirm.status).toBe(200);
+      expect(confirm.body.booking.status).toBe("scheduled");
+      expect(recordCalls).toHaveLength(1);
+      expect(recordCalls[0]).toContain("/record-hq/");
+      const [stored] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, booked.body.requestId));
+      expect(stored.status).toBe("scheduled");
+      expect(stored.vpsJobId).toBe("job-test-1");
+      expect(stored.rateFils).toBe(0); // the field owner is never billed for a player booking
+
+      // A second booking that is never paid: the booker cancels it and the slot frees up.
+      const second = await request(app).post("/api/bookings").set(as("omar")).send({
+        fieldId, startLocal: localString(startMs + 3 * 60 * minute), endLocal: localString(startMs + 4 * 60 * minute),
+      });
+      expect(second.status).toBe(201);
+      requestIds.push(second.body.requestId);
+      expect(second.body.amountFils).toBe(2000);
+      expect((await request(app).delete(`/api/bookings/${second.body.requestId}`).set(as("sami"))).status).toBe(404);
+      expect((await request(app).delete(`/api/bookings/${second.body.requestId}`).set(as("omar"))).status).toBe(204);
+      const again = await request(app).post("/api/bookings").set(as("ali")).send({
+        fieldId, startLocal: localString(startMs + 3 * 60 * minute), endLocal: localString(startMs + 4 * 60 * minute),
+      });
+      expect(again.status).toBe(201);
+      requestIds.push(again.body.requestId);
+      // An admin rejecting the payment cancels the booking.
+      const rejRow = (await request(app).get("/api/admin/stat-unlocks").set(as("admin"))).body
+        .find((r: { reference: string }) => r.reference === again.body.reference);
+      await request(app).post(`/api/admin/stat-unlocks/${rejRow.id}/reject`).set(as("admin"));
+      const [rejected] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, again.body.requestId));
+      expect(rejected.status).toBe("cancelled");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+

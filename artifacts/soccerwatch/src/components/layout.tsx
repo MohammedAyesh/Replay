@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, Bookmark, User as UserIcon, LayoutGrid, Building2, CalendarDays } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, LayoutGrid, CalendarDays, CirclePlus } from "lucide-react";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
@@ -25,8 +25,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
-  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || location === "/owner" || isOwnerShare || isOwnerVar || isMatchRoom;
-  const hasOwnedField = (user?.ownedFieldIds?.length ?? 0) > 0;
+  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom;
   const useTranslucentBar = isWatchFeed;
 
   return (
@@ -95,6 +94,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isTranslucent={useTranslucentBar}
           />
           <NavItem
+            href="/book"
+            icon={<CirclePlus className="w-6 h-6" />}
+            label={matchCopy.book.tab}
+            isActive={location === "/book" || location === "/owner"}
+            isTranslucent={useTranslucentBar}
+          />
+          <NavItem
             href="/matches"
             icon={<CalendarDays className="w-6 h-6" />}
             label={matchCopy.matches}
@@ -108,15 +114,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isActive={location === "/my-clips"}
             isTranslucent={useTranslucentBar}
           />
-          {hasOwnedField && (
-            <NavItem
-              href="/owner"
-              icon={<Building2 className="w-6 h-6" />}
-              label={t.nav.myField}
-              isActive={location === "/owner"}
-              isTranslucent={useTranslucentBar}
-            />
-          )}
           <NavItem
             href="/account"
             icon={<UserIcon className="w-6 h-6" />}

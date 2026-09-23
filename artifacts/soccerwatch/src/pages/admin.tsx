@@ -5936,7 +5936,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   recordings: { label: "Recordings", render: () => <RecordingsTab /> },
   live: { label: "Live Control", render: () => <LiveTab /> },
   var: { label: "VAR", render: () => <AdminVarTab /> },
-  "stat-payments": { label: "Stat payments", render: () => <StatPaymentsTab /> },
+  "stat-payments": { label: "Payments", render: () => <StatPaymentsTab /> },
   "claim-disputes": { label: "Claim Disputes", render: () => <ClaimDisputesTab /> },
   analysis: { label: "Analysis", render: () => <AnalysisTab /> },
   branding: { label: "Branding", render: () => <BrandingTab /> },

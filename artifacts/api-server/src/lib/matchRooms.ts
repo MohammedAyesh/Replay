@@ -62,6 +62,11 @@ export function normalizeCode(value: unknown): string {
 export function matchPhase(request: Pick<FootageRequest, "startLocal" | "endLocal" | "status" | "readyAt" | "shareRevoked" | "shareExpiresAt">, now = Date.now()): MatchPhase {
   if (request.status === "cancelled") return "cancelled";
   if (request.status === "failed") return "failed";
+  // A player booking waiting on its payment stays "upcoming" until the slot is over.
+  if (request.status === "awaiting_payment") {
+    const endMs = ammanLocalInstant(request.endLocal);
+    return Number.isFinite(endMs) && now > endMs ? "processing" : "pre";
+  }
   const start = ammanLocalInstant(request.startLocal);
   const end = ammanLocalInstant(request.endLocal);
   if (request.status === "ready" || request.status === "partial") {

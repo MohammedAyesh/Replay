@@ -35,6 +35,7 @@ import OwnerVar from "@/pages/owner-var";
 import OwnerShare from "@/pages/owner-share";
 import MatchPage from "@/pages/match";
 import Matches from "@/pages/matches";
+import BookPage from "@/pages/book";
 import { useAuth } from "@/lib/auth";
 import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from "@/lib/auth-redirect";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -453,6 +454,7 @@ function AppRouter() {
         <Route path="/w/:token" component={OwnerShare} />
         <Route path="/m/:code" component={MatchPage} />
         <Route path="/matches" component={Matches} />
+        <Route path="/book" component={BookPage} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />

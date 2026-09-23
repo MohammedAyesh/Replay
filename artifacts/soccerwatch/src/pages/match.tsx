@@ -21,6 +21,7 @@ import {
   Users,
 } from "lucide-react";
 import { VarPlayer } from "@/components/var-player/VarPlayer";
+import { PaymentPanel } from "@/components/match/PaymentPanel";
 import {
   Countdown,
   PhaseChip,
@@ -57,6 +58,7 @@ import {
   useUpdatePlayer,
   useUpdateRoom,
   useVote,
+  useCancelBooking,
   whatsappLink,
   type JoinInput,
   type MatchPlayer,
@@ -409,6 +411,7 @@ function Overview({ room, copy, colors, names, now, inviteText, onShare }: {
   const post = ["processing", "ready", "expired"].includes(room.phase);
   return (
     <>
+      {room.booking && <BookingPaymentCard room={room} copy={copy} />}
       {room.phase === "cancelled" && <Card><p className="font-bold">{copy.phase.cancelled}</p></Card>}
       {room.phase === "failed" && <Card><p className="font-bold">{copy.phase.failed}</p></Card>}
       {post && <FootageCard room={room} copy={copy} />}
@@ -1095,4 +1098,54 @@ function previewRoom(room: MatchRoom, mode: "pre" | "live"): MatchRoom {
     footage: { ready: false, readyAt: null, shareUrl: null, shareToken: null, expiresAt: null },
     vote: { ...room.vote, open: false, closed: false, myVote: null, votesCast: 0, tallies: [], winners: [] },
   };
+}
+
+
+/** A player booking: pay by CliQ, or see that it's paid. */
+function BookingPaymentCard({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const booking = room.booking!;
+  const cancel = useCancelBooking(room.code);
+  const { toast } = useToast();
+  const [open, setOpen] = useState(true);
+  if (booking.status === "paid") {
+    return (
+      <div className="flex items-center gap-2 rounded-2xl border border-turf/40 bg-turf/10 px-4 py-3 text-sm font-semibold text-turf">
+        <Check className="h-4 w-4" />{copy.book.paid}
+      </div>
+    );
+  }
+  if (booking.status === "rejected") {
+    return <Card><p className="text-sm text-muted-text">{copy.book.rejected}</p></Card>;
+  }
+  if (!booking.reference) {
+    return (
+      <div className="rounded-2xl border border-violet/40 bg-violet/10 px-4 py-3 text-sm font-semibold text-violet">{copy.book.pending}</div>
+    );
+  }
+  return (
+    <section className="rounded-2xl border border-floodlight/40 bg-surface p-4">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-start">
+        <span>
+          <span className="flex items-center gap-2 text-base font-bold"><span className="h-2 w-2 rounded-full bg-floodlight" />{copy.book.pending}</span>
+          <span className="mt-0.5 block text-xs text-muted-text">{copy.book.pendingDesc}</span>
+        </span>
+        <span className="font-mono text-xl font-bold" dir="ltr">{formatJod(booking.amountFils)} JOD</span>
+      </button>
+      {open && (
+        <div className="mt-4">
+          <PaymentPanel amountFils={booking.amountFils} cliqAlias={booking.cliqAlias} reference={booking.reference} />
+          {booking.requestId && (
+            <button
+              type="button"
+              disabled={cancel.isPending}
+              onClick={() => void cancel.mutateAsync(booking.requestId!).then(() => toast({ title: copy.book.cancelled })).catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }))}
+              className="mt-3 text-xs font-semibold text-muted-text underline underline-offset-2"
+            >
+              {copy.book.cancelBooking}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
 }

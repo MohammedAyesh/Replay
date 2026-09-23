@@ -120,6 +120,14 @@ export type MatchRoom = {
   };
   clips: { mine: number; match: number };
   prices: { bookingFils: number };
+  booking: {
+    status: "pending" | "paid" | "rejected";
+    amountFils: number;
+    reference: string | null;
+    mine: boolean;
+    requestId: number | null;
+    cliqAlias: string;
+  } | null;
 };
 
 export type MyMatchItem = {
@@ -339,7 +347,7 @@ export function useAvatarRemove() {
 
 export type AdminStatUnlock = {
   id: number;
-  kind: "match" | "team" | "monthly";
+  kind: "match" | "team" | "monthly" | "booking";
   amountFils: number;
   reference: string;
   status: "pending" | "paid" | "rejected";
@@ -398,4 +406,56 @@ export async function shareOrCopy(payload: { title?: string; text: string; url: 
   } catch {
     return "failed";
   }
+}
+
+
+// ---------------------------------------------------------------- booking a recording
+
+export type BookableField = { id: number; name: string; location: string | null; imageUrl: string | null };
+export type BookingFields = { fields: BookableField[]; pricePerHourFils: number; ownerPricePerHourFils: number; maxDaysAhead: number };
+export type BookingResult = {
+  code: string; requestId: number; amountFils: number; reference: string; cliqAlias: string;
+  startLocal: string; endLocal: string; fieldName: string;
+};
+
+export function useBookingFields() {
+  return useQuery({ queryKey: ["booking-fields"], queryFn: () => call<BookingFields>("/bookings/fields"), staleTime: 5 * 60_000 });
+}
+
+export function useTakenSlots(fieldId: number | null, date: string | null) {
+  return useQuery({
+    queryKey: ["booking-taken", fieldId, date],
+    queryFn: () => call<{ taken: Array<{ startLocal: string; endLocal: string }>; now: string }>(`/bookings/taken?fieldId=${fieldId}&date=${date}`),
+    enabled: Boolean(fieldId && date),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useCreateBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { fieldId: number; startLocal: string; endLocal: string; title?: string | null }) =>
+      call<BookingResult>("/bookings", { method: "POST", body: json(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["booking-taken"] });
+      void qc.invalidateQueries({ queryKey: myMatchesKey });
+    },
+  });
+}
+
+/** Field owners book on their account (no payment step). */
+export function useOwnerBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fieldId, ...body }: { fieldId: number; startLocal: string; endLocal: string }) =>
+      call<{ id: number; match?: { code: string } | null }>(`/owner/fields/${fieldId}/requests`, { method: "POST", body: json(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["booking-taken"] });
+      void qc.invalidateQueries({ queryKey: myMatchesKey });
+    },
+  });
+}
+
+export function useCancelBooking(code: string) {
+  return useRoomMutation(code, (requestId: number) => call<void>(`/bookings/${requestId}`, { method: "DELETE" }));
 }

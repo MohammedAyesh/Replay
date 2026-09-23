@@ -35,6 +35,9 @@ export default function Matches() {
   return (
     <div dir={copy.locale === "ar" ? "rtl" : "ltr"} className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-2">
       <div className="flex min-h-full flex-col">
+      <Link href="/book" className="mb-4 flex min-h-12 items-center justify-center gap-2 rounded-full bg-floodlight text-sm font-bold text-void">
+        {copy.bookFootage("2")}
+      </Link>
       {profile.data && (
         <Link href={`/players/${profile.data.id}`} className="mb-4 flex items-center gap-3 rounded-2xl border border-line bg-surface p-3">
           <PlayerAvatar name={profile.data.name} avatarUrl={profile.data.avatarUrl} size={48} />

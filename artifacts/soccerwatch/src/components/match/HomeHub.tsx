@@ -66,16 +66,11 @@ export function HomeHub() {
           <CalendarDays className="h-6 w-6 text-turf" />
           <p className="mt-3 font-display text-xl font-bold">{copy.homeEmptyTitle}</p>
           <p className="mt-1 text-sm text-muted-text">{isOwner ? copy.homeEmptyOwner : copy.homeEmptyPlayer}</p>
-          {isOwner ? (
-            <Link href="/owner" className="mt-4 inline-flex min-h-11 items-center gap-1 rounded-full bg-floodlight px-5 text-sm font-bold text-void">
-              {copy.bookFootage("1")}
-              <ChevronRight className="h-4 w-4 rtl:rotate-180" />
-            </Link>
-          ) : (
-            <Link href="/view" className="mt-4 inline-flex min-h-11 items-center gap-1 rounded-full border border-violet/60 px-5 text-sm font-bold text-violet">
-              {copy.browseFields}
-            </Link>
-          )}
+          <Link href="/book" className="mt-4 inline-flex min-h-11 items-center gap-1 rounded-full bg-floodlight px-5 text-sm font-bold text-void">
+            {copy.bookFootage(isOwner ? "1" : "2")}
+            <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+          </Link>
+          <p className="mt-2 text-xs text-muted-text">{copy.book.why[0].title}</p>
         </section>
       )}
 
@@ -110,11 +105,7 @@ export function HomeHub() {
             {myClips.map((clip) => (
               <Link key={clip.id} href="/my-clips" className="w-40 shrink-0 overflow-hidden rounded-2xl border border-line bg-surface">
                 <div className="relative aspect-video bg-raised">
-                  {clip.thumbnailUrl ? (
-                    <img src={clip.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center"><Film className="h-5 w-5 text-muted-text" /></div>
-                  )}
+                  <ClipThumb src={clip.thumbnailUrl ?? null} />
                   <span className="absolute bottom-1.5 end-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-void/70"><Play className="h-3 w-3 fill-current" /></span>
                 </div>
                 <p className="truncate px-2.5 py-2 text-xs font-semibold">{clip.title}</p>
@@ -144,4 +135,17 @@ function Section({ title, href, more, children }: { title: string; href?: string
       <div className="flex flex-col gap-2">{children}</div>
     </section>
   );
+}
+
+/** A clip's poster, or a quiet placeholder when there isn't one (or it fails to load). */
+function ClipThumb({ src }: { src: string | null }) {
+  const [broken, setBroken] = useState(false);
+  if (!src || broken) {
+    return (
+      <div className="flex h-full w-full items-center justify-center" style={{ background: "repeating-linear-gradient(180deg,#0F2A2A 0 25%,#0D2525 25% 50%)" }}>
+        <Film className="h-5 w-5 text-turf/70" />
+      </div>
+    );
+  }
+  return <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" onError={() => setBroken(true)} />;
 }
