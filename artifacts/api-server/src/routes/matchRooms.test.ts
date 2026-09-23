@@ -8,12 +8,14 @@ import {
   footageRequestsTable,
   matchPlayersTable,
   matchRoomsTable,
+  settingsRulesTable,
   statUnlocksTable,
   userClipsTable,
   usersTable,
   varMarksTable,
 } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { invalidateSettingsCache } from "../lib/settings";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserRecord: vi.fn(async (req: { headers: Record<string, string | undefined> }) => {
@@ -72,6 +74,16 @@ async function booking(startMs: number, minutes: number, status = "scheduled") {
 
 const as = (who: string) => ({ "x-test-user": String(users[who]) });
 
+/** A settings rule scoped to this test's field, so it cannot leak into other suites. */
+async function fieldRule(key: string, value: number | boolean | string) {
+  await db.insert(settingsRulesTable).values({ key, value, priority: 100, scopeType: "field", scopeId: fieldId });
+  invalidateSettingsCache();
+}
+async function clearFieldRules() {
+  await db.delete(settingsRulesTable).where(and(eq(settingsRulesTable.scopeType, "field"), eq(settingsRulesTable.scopeId, fieldId)));
+  invalidateSettingsCache();
+}
+
 beforeAll(async () => {
   process.env.PUBLIC_SHARE_BASE_URL = "https://replay.example.test";
   process.env.CONTABO_CONTROL_URL = "https://control.example.test";
@@ -105,6 +117,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await clearFieldRules();
   if (requestIds.length) {
     await db.delete(varMarksTable).where(inArray(varMarksTable.footageRequestId, requestIds));
     await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds));
@@ -322,6 +335,13 @@ describe("a match from invite to vote", () => {
     await request(app).post(`/api/m/${room.code}/join`).set(as("omar")).send({ rsvp: "in" });
     await request(app).post(`/api/m/${room.code}/join`).set(as("ali")).send({ rsvp: "in" });
 
+    // Stats ship switched off: nothing to buy until an admin turns them on.
+    await clearFieldRules();
+    const off = await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("ali")).send({ kind: "match" });
+    expect(off.status).toBe(409);
+    expect((await request(app).get(`/api/m/${room.code}`).set(as("ali"))).body.stats.enabled).toBe(false);
+    await fieldRule("stats.enabled", true);
+
     expect((await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("outsider")).send({ kind: "match" })).status).toBe(403);
     expect((await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("ali")).send({ kind: "team" })).status).toBe(403);
     const pending = await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("ali")).send({ kind: "match" });
@@ -353,6 +373,107 @@ describe("a match from invite to vote", () => {
       .find((r: { reference: string }) => r.reference === team.body.reference);
     await request(app).post(`/api/admin/stat-unlocks/${teamRow.id}/confirm`).set(as("admin"));
     expect((await request(app).get(`/api/m/${room.code}`).set(as("omar"))).body.stats.unlocked).toBe(true);
+    await clearFieldRules();
+  });
+
+  it("admin settings drive stats prices, the paywall and the booking price", async () => {
+    const { room } = await booking(Date.now() - 3 * 60 * 60 * 1000, 60, "ready");
+    await request(app).post(`/api/m/${room.code}/join`).set(as("sami")).send({ rsvp: "in" });
+    await fieldRule("stats.enabled", true);
+    await fieldRule("pricing.statsPerMatch", 0.75);
+    await fieldRule("pricing.statsTeamPerPlayer", 0.25);
+    await fieldRule("payments.cliqAlias", "TESTALIAS");
+    let page = await request(app).get(`/api/m/${room.code}`).set(as("sami"));
+    expect(page.body.stats.prices.matchFils).toBe(750);
+    expect(page.body.stats.prices.teamFils).toBe(250 * 12);
+    expect(page.body.stats.cliqAlias).toBe("TESTALIAS");
+    const unlock = await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("sami")).send({ kind: "match" });
+    expect(unlock.body.amountFils).toBe(750);
+    expect(unlock.body.cliqAlias).toBe("TESTALIAS");
+
+    // Team pack switched off: the captain can't buy it.
+    await fieldRule("stats.teamPackEnabled", false);
+    expect((await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("sami")).send({ kind: "team" })).status).toBe(409);
+
+    // Paywall off: stats are simply open.
+    await fieldRule("stats.paywallEnabled", false);
+    page = await request(app).get(`/api/m/${room.code}`).set(as("sami"));
+    expect(page.body.stats.unlocked).toBe(true);
+    expect(page.body.stats.paywall).toBe(false);
+    await clearFieldRules();
+  });
+
+  it("the admin hands the captaincy to another player", async () => {
+    const { room } = await booking(Date.now() + 3 * 60 * 60 * 1000, 60);
+    await request(app).post(`/api/m/${room.code}/join`).set(as("omar")).send({ rsvp: "in" });
+    const joined = await request(app).post(`/api/m/${room.code}/join`).set(as("ali")).send({ rsvp: "in" });
+    expect(joined.status).toBeLessThan(300);
+    const guest = await request(app).post(`/api/m/${room.code}/players`).set(as("omar")).send({ displayName: "No Account" });
+    let page = await request(app).get(`/api/m/${room.code}`).set(as("admin"));
+    expect(page.body.captain.userId).toBe(users.omar);
+    const aliPlayer = page.body.players.find((p: { userId: number | null }) => p.userId === users.ali);
+
+    expect((await request(app).post(`/api/m/${room.code}/captain`).set(as("ali")).send({ playerId: aliPlayer.id })).status).toBe(403);
+    expect((await request(app).post(`/api/m/${room.code}/captain`).set(as("admin")).send({ playerId: guest.body.id })).status).toBe(400);
+    const made = await request(app).post(`/api/m/${room.code}/captain`).set(as("admin")).send({ playerId: aliPlayer.id });
+    expect(made.status).toBe(200);
+    expect(made.body.captain.userId).toBe(users.ali);
+    page = await request(app).get(`/api/m/${room.code}`).set(as("ali"));
+    expect(page.body.isCaptain).toBe(true);
+    // The new captain can pass it on again; the old one no longer can.
+    const omarPlayer = page.body.players.find((p: { userId: number | null }) => p.userId === users.omar);
+    expect((await request(app).post(`/api/m/${room.code}/captain`).set(as("omar")).send({ playerId: omarPlayer.id })).status).toBe(403);
+    expect((await request(app).post(`/api/m/${room.code}/captain`).set(as("ali")).send({ playerId: omarPlayer.id })).status).toBe(200);
+  });
+
+  it("three teams: split, rotate games, and a table", async () => {
+    const { room } = await booking(Date.now() - 50 * 60 * 1000, 60, "recording");
+    for (const who of ["omar", "ali", "sami", "outsider"]) {
+      await request(app).post(`/api/m/${room.code}/join`).set(as(who)).send({ rsvp: "in" });
+    }
+    await request(app).post(`/api/m/${room.code}/players`).set(as("omar")).send({ displayName: "Fifth" });
+    let page = await request(app).get(`/api/m/${room.code}`).set(as("omar"));
+    const fifth = page.body.players.find((p: { name: string }) => p.name === "Fifth");
+    await request(app).patch(`/api/m/${room.code}/players/${fifth.id}`).set(as("omar")).send({ rsvp: "in" });
+
+    // Team C is refused until the match has three teams.
+    expect((await request(app).patch(`/api/m/${room.code}/players/${fifth.id}`).set(as("omar")).send({ team: "C" })).status).toBe(400);
+    const three = await request(app).patch(`/api/m/${room.code}`).set(as("omar")).send({ teamCount: 3, teamCName: "Reds", playersPerSide: 5 });
+    expect(three.status).toBe(200);
+    expect(three.body.teamCount).toBe(3);
+    expect(three.body.teams.C.name).toBe("Reds");
+    expect(three.body.counts.needed).toBe(15);
+
+    const auto = await request(app).post(`/api/m/${room.code}/teams/auto`).set(as("omar")).send({});
+    const sides = auto.body.players.filter((p: { rsvp: string }) => p.rsvp === "in").map((p: { team: string }) => p.team);
+    expect(new Set(sides)).toEqual(new Set(["A", "B", "C"]));
+    const benchC = auto.body.players.filter((p: { team: string }) => p.team === "C");
+    expect(benchC.every((p: { slotX: number | null }) => p.slotX === null)).toBe(true);
+
+    // A game between a team and itself is refused.
+    expect((await request(app).put(`/api/m/${room.code}/games`).set(as("omar"))
+      .send({ games: [{ startOffsetSec: 0, endOffsetSec: 600, teamX: "A", teamY: "A" }] })).status).toBe(400);
+    // Winner stays on: A beats B, A draws C, C beats B.
+    const games = await request(app).put(`/api/m/${room.code}/games`).set(as("omar")).send({ games: [
+      { startOffsetSec: 0, endOffsetSec: 600, teamX: "A", teamY: "B", scoreA: 2, scoreB: 0 },
+      { startOffsetSec: 600, endOffsetSec: 1200, teamX: "A", teamY: "C", scoreA: 1, scoreB: 1 },
+      { startOffsetSec: 1200, endOffsetSec: 1800, teamX: "C", teamY: "B", scoreA: 3, scoreB: 1 },
+    ] });
+    expect(games.status).toBe(200);
+    expect(games.body.score).toBeNull();
+    expect(games.body.games[2]).toMatchObject({ teamX: "C", teamY: "B" });
+    const table = games.body.standings as Array<{ team: string; points: number; played: number }>;
+    expect(table.map((r) => r.team)).toEqual(["C", "A", "B"]);
+    expect(table.map((r) => r.points)).toEqual([4, 4, 0]);
+    expect(games.body.leader).toBe("C");
+
+    // Back to two teams: team C's players go to the bench and its games go.
+    const two = await request(app).patch(`/api/m/${room.code}`).set(as("omar")).send({ teamCount: 2 });
+    expect(two.body.teamCount).toBe(2);
+    expect(two.body.teams.C).toBeUndefined();
+    expect(two.body.players.some((p: { team: string | null }) => p.team === "C")).toBe(false);
+    expect(two.body.games).toHaveLength(1);
+    expect(two.body.standings).toBeNull();
   });
 
   it("owner bookings carry their match link", async () => {
@@ -388,7 +509,7 @@ describe("players book a future recording and pay by CliQ", () => {
         recordCalls.push(url);
         return new Response(JSON.stringify({ jobId: "job-test-1", status: "scheduled" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      return realFetch(input as RequestInfo, init);
+      return realFetch(input, init);
     });
     try {
       const minute = 60 * 1000;

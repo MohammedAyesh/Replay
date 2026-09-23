@@ -37,6 +37,165 @@ export interface SettingDefinition {
 }
 
 export const SETTINGS: readonly SettingDefinition[] = [
+  // ── Pricing ────────────────────────────────────────────────────────────
+  // Prices are entered in JOD (3 decimals, i.e. fils). Every one of them can be
+  // scoped with a rule — per field, per user, or for a time window — which is
+  // how an off-peak price or a launch promotion is expressed.
+  {
+    key: "pricing.playerBookingPerHour",
+    group: "Pricing",
+    label: "Player booking, per started hour",
+    description:
+      "What a player pays (by CliQ) to book a recording on the Book page. Charged per " +
+      "started hour: 90 minutes is two hours. Changing it affects new bookings only; " +
+      "anything already waiting for payment keeps its amount.",
+    type: "number",
+    defaultValue: (Number.parseInt(process.env.REPLAY_PLAYER_BOOKING_FILS_PER_HOUR ?? "", 10) || 2000) / 1000,
+    min: 0,
+    max: 500,
+    unit: "JOD",
+    appliesToNewWorkOnly: true,
+  },
+  {
+    key: "pricing.ownerFootagePerHour",
+    group: "Pricing",
+    label: "Field owner footage, per billable hour",
+    description:
+      "What a field owner's account is charged for footage they request from the owner " +
+      "console. Locked onto each request when it is created.",
+    type: "number",
+    defaultValue: 1,
+    min: 0,
+    max: 500,
+    unit: "JOD",
+    appliesToNewWorkOnly: true,
+  },
+  {
+    key: "pricing.statsPerMatch",
+    group: "Pricing",
+    label: "Stats — one player, one match",
+    description: "Unlocks the Stats tab of one match for the player who pays.",
+    type: "number",
+    defaultValue: 0.5,
+    min: 0,
+    max: 500,
+    unit: "JOD",
+  },
+  {
+    key: "pricing.statsTeamPerPlayer",
+    group: "Pricing",
+    label: "Stats — team pack, per player on the pitch",
+    description:
+      "The captain unlocks stats for everyone in the match. Price = this × players on " +
+      "the pitch (players per side × number of teams).",
+    type: "number",
+    defaultValue: 0.5,
+    min: 0,
+    max: 500,
+    unit: "JOD",
+  },
+  {
+    key: "pricing.statsMonthly",
+    group: "Pricing",
+    label: "Stats — monthly plan",
+    description: "30 days of stats for every match the player is in.",
+    type: "number",
+    defaultValue: 2,
+    min: 0,
+    max: 500,
+    unit: "JOD",
+  },
+  {
+    key: "payments.cliqAlias",
+    group: "Pricing",
+    label: "CliQ alias payments go to",
+    description: "Shown on every payment screen. Check it twice — a typo sends people's money elsewhere.",
+    type: "string",
+    defaultValue: process.env.REPLAY_CLIQ_ALIAS || "REPLAYJO",
+  },
+
+  // ── Bookings ───────────────────────────────────────────────────────────
+  {
+    key: "booking.enabled",
+    group: "Bookings",
+    label: "Players can book recordings",
+    description: "Off hides the Book button on Home and refuses new bookings. Existing bookings are untouched.",
+    type: "boolean",
+    defaultValue: true,
+  },
+  {
+    key: "booking.maxDaysAhead",
+    group: "Bookings",
+    label: "How far ahead players can book",
+    description: "Days from today. Longer windows mean more unpaid holds on the calendar.",
+    type: "number",
+    defaultValue: 14,
+    min: 1,
+    max: 90,
+    integer: true,
+    unit: "days",
+  },
+  {
+    key: "booking.maxAwaitingPayment",
+    group: "Bookings",
+    label: "Unpaid bookings per player",
+    description: "How many bookings one player may hold while waiting for payment. Stops one person blocking the calendar.",
+    type: "number",
+    defaultValue: 3,
+    min: 1,
+    max: 50,
+    integer: true,
+    unit: "bookings",
+  },
+  {
+    key: "booking.maxMinutes",
+    group: "Bookings",
+    label: "Longest booking",
+    description: "The Book page only offers lengths up to this.",
+    type: "number",
+    defaultValue: 180,
+    min: 30,
+    max: 240,
+    integer: true,
+    unit: "minutes",
+  },
+
+  // ── Match stats ────────────────────────────────────────────────────────
+  {
+    key: "stats.enabled",
+    group: "Match stats",
+    label: "Stats tab on match pages",
+    description:
+      "Shows the Stats tab (distance, sprints, touches) on match pages. Only switch it on " +
+      "for fields where stats are produced for every booked match: players must never pay " +
+      "for stats that won't come. Scope it to a field with a rule to roll out one field at a time.",
+    type: "boolean",
+    defaultValue: false,
+  },
+  {
+    key: "stats.paywallEnabled",
+    group: "Match stats",
+    label: "Stats cost money",
+    description: "Off makes stats free for everyone in the match. On asks them to pay by CliQ first.",
+    type: "boolean",
+    defaultValue: true,
+  },
+  {
+    key: "stats.teamPackEnabled",
+    group: "Match stats",
+    label: "Offer the team pack",
+    description: "Let the captain unlock stats for the whole match in one payment.",
+    type: "boolean",
+    defaultValue: true,
+  },
+  {
+    key: "stats.monthlyEnabled",
+    group: "Match stats",
+    label: "Offer the monthly plan",
+    description: "Let players buy 30 days of stats for every match they play.",
+    type: "boolean",
+    defaultValue: true,
+  },
   // ── Downloads ──────────────────────────────────────────────────────────
   {
     key: "downloads.limit",

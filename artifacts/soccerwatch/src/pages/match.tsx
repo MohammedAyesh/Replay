@@ -29,6 +29,7 @@ import {
   PlayerAvatar,
   ScoreLine,
   SquadBar,
+  StandingsTable,
   TEAM_SWATCHES,
   formatClock,
   formatDate,
@@ -49,11 +50,13 @@ import {
   useFlagMoment,
   useInvitePlayer,
   useJoinMatch,
+  useMakeCaptain,
   useMatchClips,
   useMatchRoom,
   useRemovePlayer,
   useSetGames,
   useSetScore,
+  useStatsPlan,
   useUnlockStats,
   useUpdatePlayer,
   useUpdateRoom,
@@ -66,7 +69,6 @@ import {
   type TeamSide,
 } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
-import { MATCH_STATS_PAYWALL_ENABLED } from "@/lib/feature-flags";
 
 const PENDING_KEY = "replay_pending_join";
 type Tab = "overview" | "teams" | "var" | "clips" | "vote" | "stats";
@@ -170,7 +172,7 @@ export default function MatchPage() {
     if (room.phase === "live") return ["var", "overview", "teams"];
     if (room.phase === "pre") return ["overview", "teams"];
     if (room.phase === "cancelled" || room.phase === "failed") return ["overview"];
-    return MATCH_STATS_PAYWALL_ENABLED ? ["overview", "clips", "vote", "teams", "stats"] : ["overview", "clips", "vote", "teams"];
+    return room.stats.enabled ? ["overview", "clips", "vote", "teams", "stats"] : ["overview", "clips", "vote", "teams"];
   }, [room]);
   const activeTab: Tab = tab && tabs.includes(tab) ? tab : tabs[0];
 
@@ -189,8 +191,10 @@ export default function MatchPage() {
     );
   }
 
-  const colors: Record<TeamSide, string> = { A: room.teams.A.color, B: room.teams.B.color };
-  const names: Record<TeamSide, string> = { A: room.teams.A.name || copy.teamA, B: room.teams.B.name || copy.teamB };
+  const colors: Record<TeamSide, string> = { A: room.teams.A.color, B: room.teams.B.color, C: room.teams.C?.color ?? "#2FD8C4" };
+  const names: Record<TeamSide, string> = {
+    A: room.teams.A.name || copy.teamA, B: room.teams.B.name || copy.teamB, C: room.teams.C?.name || copy.teamC,
+  };
   const shareUrl = room.myInviteUrl ?? room.url;
   const when = `${formatDay(room.startMs, copy.locale, now, copy)} ${formatClock(room.startMs, copy.locale)}`;
   const need = Math.max(0, room.counts.needed - room.counts.in);
@@ -323,7 +327,9 @@ function Hero({ room, copy, now, colors, names, onShare }: {
         )}
         {post && (
           <div className="mt-6 rounded-2xl border border-line bg-surface/80 p-4 backdrop-blur">
-            <ScoreLine score={room.score} colors={colors} names={names} />
+            {room.teamCount === 3 && room.standings
+              ? <StandingsTable rows={room.standings} colors={colors} names={names} leader={room.leader} labels={copy} compact />
+              : <ScoreLine score={room.score} colors={colors} names={names} />}
           </div>
         )}
       </div>
@@ -429,7 +435,7 @@ function Overview({ room, copy, colors, names, now, inviteText, onShare }: {
           <p className="mt-1 text-xs text-muted-text">{copy.flagHint}</p>
         </Card>
       )}
-      <Roster room={room} copy={copy} />
+      <Roster room={room} copy={copy} colors={colors} />
       {room.phase !== "cancelled" && room.phase !== "expired" && (room.isMember || room.canManage || room.me) && (
         <InviteCard room={room} copy={copy} inviteText={inviteText} onShare={onShare} />
       )}
@@ -455,8 +461,11 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
   return <section className={cn("rounded-2xl border border-line bg-surface p-4", className)}>{children}</section>;
 }
 
-function Roster({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" } }) {
+function Roster({ room, copy, colors }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; colors: Record<TeamSide, string> }) {
   const remove = useRemovePlayer(room.code);
+  const makeCaptain = useMakeCaptain(room.code);
+  // Two taps to hand over the armband, so a stray tap can't do it.
+  const [confirmCaptain, setConfirmCaptain] = useState<number | null>(null);
   const { toast } = useToast();
   const order: Record<string, number> = { in: 0, maybe: 1, invited: 2, out: 3 };
   const players = [...room.players].sort((a, b) => order[a.rsvp] - order[b.rsvp]);
@@ -476,7 +485,7 @@ function Roster({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale
       <ul className="mt-3 flex flex-col divide-y divide-line">
         {visible.map((p) => (
           <li key={p.id} className="flex items-center gap-3 py-2.5">
-            <PlayerAvatar name={p.name} initials={p.initials} avatarUrl={p.avatarUrl} size={40} dashed={!p.signedUp} ring={p.team ? (p.team === "A" ? room.teams.A.color : room.teams.B.color) : undefined} />
+            <PlayerAvatar name={p.name} initials={p.initials} avatarUrl={p.avatarUrl} size={40} dashed={!p.signedUp} ring={p.team ? colors[p.team] : undefined} />
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
                 {p.name}{p.isMe ? " ·" : ""}
@@ -488,6 +497,32 @@ function Roster({ room, copy }: { room: MatchRoom; copy: MatchStrings & { locale
               </p>
             </div>
             <RsvpDot rsvp={p.rsvp} copy={copy} />
+            {room.canManage && p.signedUp && p.userId !== captainId && room.phase !== "cancelled" && (
+              confirmCaptain === p.id ? (
+                <button
+                  type="button"
+                  disabled={makeCaptain.isPending}
+                  onClick={() => void makeCaptain.mutateAsync(p.id)
+                    .then(() => { setConfirmCaptain(null); toast({ title: copy.captainNow(p.name) }); })
+                    .catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }))}
+                  className="flex h-8 items-center gap-1 rounded-full bg-floodlight px-2.5 text-[11px] font-bold text-void"
+                  data-testid={`button-confirm-captain-${p.id}`}
+                >
+                  {makeCaptain.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Crown className="h-3 w-3" />}{copy.makeCaptain}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  aria-label={copy.makeCaptain}
+                  title={copy.makeCaptain}
+                  onClick={() => setConfirmCaptain(p.id)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-muted-text hover:bg-raised hover:text-floodlight"
+                  data-testid={`button-make-captain-${p.id}`}
+                >
+                  <Crown className="h-3.5 w-3.5" />
+                </button>
+              )
+            )}
             {room.canManage && !p.isMe && room.phase === "pre" && (
               <button
                 type="button"
@@ -589,6 +624,8 @@ function RoomEditor({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
   const [title, setTitle] = useState(room.title ?? "");
   const [a, setA] = useState(room.teams.A.name ?? "");
   const [b, setB] = useState(room.teams.B.name ?? "");
+  const [c, setC] = useState(room.teams.C?.name ?? "");
+  const [teamCount, setTeamCount] = useState<2 | 3>(room.teamCount);
   const [pps, setPps] = useState(room.playersPerSide);
   if (!open) {
     return <button type="button" onClick={() => setOpen(true)} className="self-start text-xs font-semibold text-muted-text underline underline-offset-2">{copy.editMatch}</button>;
@@ -602,13 +639,32 @@ function RoomEditor({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
       <div className="mt-1 grid grid-cols-2 gap-2">
         <input value={a} maxLength={30} placeholder={copy.teamA} onChange={(e) => setA(e.target.value)} className="min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" />
         <input value={b} maxLength={30} placeholder={copy.teamB} onChange={(e) => setB(e.target.value)} className="min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" />
+        {teamCount === 3 && (
+          <input value={c} maxLength={30} placeholder={copy.teamC} onChange={(e) => setC(e.target.value)} className="col-span-2 min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" data-testid="input-team-c" />
+        )}
       </div>
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <span className="text-xs text-muted-text">{copy.teamCount}</span>
+        <div className="flex rounded-full border border-line p-0.5" role="radiogroup" aria-label={copy.teamCount}>
+          {([2, 3] as const).map((n) => (
+            <button key={n} type="button" role="radio" aria-checked={teamCount === n} onClick={() => setTeamCount(n)}
+              className={cn("min-h-9 rounded-full px-4 text-xs font-bold", teamCount === n ? "bg-turf text-void" : "text-muted-text")}
+              data-testid={`button-team-count-${n}`}>
+              {n === 2 ? copy.twoTeams : copy.threeTeams}
+            </button>
+          ))}
+        </div>
+      </div>
+      {teamCount === 3 && <p className="mt-1.5 text-[11px] leading-4 text-muted-text">{copy.threeTeamsHint}</p>}
       <div className="mt-3 flex items-center justify-between">
         <span className="text-xs text-muted-text">{copy.format}</span>
         <Stepper value={pps} min={3} max={11} onChange={setPps} label={`${pps}v${pps}`} />
       </div>
       <div className="mt-4 flex gap-2">
-        <button type="button" disabled={update.isPending} onClick={() => void update.mutateAsync({ title: title.trim() || null, teamAName: a.trim() || null, teamBName: b.trim() || null, playersPerSide: pps }).then(() => setOpen(false))} className="min-h-11 flex-1 rounded-full bg-floodlight text-sm font-bold text-void">{copy.save}</button>
+        <button type="button" disabled={update.isPending} onClick={() => void update.mutateAsync({
+          title: title.trim() || null, teamAName: a.trim() || null, teamBName: b.trim() || null,
+          ...(teamCount === 3 ? { teamCName: c.trim() || null } : {}), teamCount, playersPerSide: pps,
+        }).then(() => setOpen(false))} className="min-h-11 flex-1 rounded-full bg-floodlight text-sm font-bold text-void">{copy.save}</button>
         <button type="button" onClick={() => setOpen(false)} className="min-h-11 flex-1 rounded-full border border-line text-sm font-semibold">{copy.cancel}</button>
       </div>
     </Card>
@@ -671,6 +727,16 @@ function ScoreEditor({ room, copy, colors, names }: { room: MatchRoom; copy: Mat
   const [open, setOpen] = useState(false);
   const [a, setA] = useState(room.score?.a ?? 0);
   const [b, setB] = useState(room.score?.b ?? 0);
+  if (room.teamCount === 3) {
+    // Three teams: the result is the table, built from the games.
+    return (
+      <Card>
+        <p className="text-sm font-bold">{copy.games}</p>
+        <p className="mt-1 text-xs text-muted-text">{copy.threeTeamsHint}</p>
+        <GamesEditor room={room} copy={copy} names={names} colors={colors} startOpen />
+      </Card>
+    );
+  }
   if (!open) {
     return <button type="button" onClick={() => setOpen(true)} className="min-h-11 rounded-full border border-line text-sm font-semibold">{room.score ? copy.score : copy.setScore}</button>;
   }
@@ -680,7 +746,7 @@ function ScoreEditor({ room, copy, colors, names }: { room: MatchRoom; copy: Mat
         <div className="flex flex-col items-center gap-2"><span className="h-4 w-4 rounded-full" style={{ background: colors.A }} /><span className="text-xs text-muted-text">{names.A}</span><Stepper value={a} min={0} max={99} onChange={setA} /></div>
         <div className="flex flex-col items-center gap-2"><span className="h-4 w-4 rounded-full" style={{ background: colors.B }} /><span className="text-xs text-muted-text">{names.B}</span><Stepper value={b} min={0} max={99} onChange={setB} /></div>
       </div>
-      <GamesEditor room={room} copy={copy} />
+      <GamesEditor room={room} copy={copy} names={names} colors={colors} />
       <div className="mt-4 flex gap-2">
         <button type="button" disabled={setScore.isPending} onClick={() => void setScore.mutateAsync({ scoreA: a, scoreB: b }).then(() => setOpen(false))} className="min-h-11 flex-1 rounded-full bg-floodlight text-sm font-bold text-void">{copy.saveScore}</button>
         <button type="button" onClick={() => setOpen(false)} className="min-h-11 flex-1 rounded-full border border-line text-sm font-semibold">{copy.cancel}</button>
@@ -689,34 +755,92 @@ function ScoreEditor({ room, copy, colors, names }: { room: MatchRoom; copy: Mat
   );
 }
 
-function GamesEditor({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+type GameDraft = { start: number; end: number; x: TeamSide; y: TeamSide; a: number; b: number };
+
+/** Three teams, winner stays on: the winner plays the team that sat out. On a draw the newer team stays. */
+function nextPair(prev: GameDraft | undefined, sides: TeamSide[]): [TeamSide, TeamSide] {
+  if (sides.length < 3 || !prev) return ["A", "B"];
+  const out = sides.find((t) => t !== prev.x && t !== prev.y) ?? "C";
+  const stay = prev.a > prev.b ? prev.x : prev.y;
+  return [stay, out];
+}
+
+function GamesEditor({ room, copy, names, colors, startOpen = false }: {
+  room: MatchRoom; copy: MatchStrings; names: Record<TeamSide, string>; colors: Record<TeamSide, string>; startOpen?: boolean;
+}) {
   const setGames = useSetGames(room.code);
   const { toast } = useToast();
+  const sides: TeamSide[] = room.teamCount === 3 ? ["A", "B", "C"] : ["A", "B"];
   const total = Math.max(1, Math.round((room.endMs - room.startMs) / 60000));
-  const [games, setLocal] = useState(() => room.games.map((g) => ({ start: Math.round(g.startOffsetSec / 60), end: Math.round(g.endOffsetSec / 60), a: g.scoreA ?? 0, b: g.scoreB ?? 0 })));
-  const [open, setOpen] = useState(room.games.length > 0);
-  if (!open) return <button type="button" onClick={() => { setOpen(true); setLocal([{ start: 0, end: Math.min(total, 15), a: 0, b: 0 }]); }} className="mt-4 text-xs font-semibold text-muted-text underline underline-offset-2">{copy.splitGames}</button>;
-  const save = () => void setGames.mutateAsync(games.map((g) => ({ startOffsetSec: g.start * 60, endOffsetSec: g.end * 60, scoreA: g.a, scoreB: g.b })))
+  const [games, setLocal] = useState<GameDraft[]>(() => room.games.map((g) => ({
+    start: Math.round(g.startOffsetSec / 60), end: Math.round(g.endOffsetSec / 60),
+    x: g.teamX, y: g.teamY, a: g.scoreA ?? 0, b: g.scoreB ?? 0,
+  })));
+  const [open, setOpen] = useState(startOpen || room.games.length > 0);
+  const edit = (i: number, patch: Partial<GameDraft>) => setLocal(games.map((g, j) => {
+    if (j !== i) return g;
+    const next = { ...g, ...patch };
+    // Picking the team already on the other side swaps them rather than making a team play itself.
+    if (patch.x && patch.x === g.y) next.y = g.x;
+    if (patch.y && patch.y === g.x) next.x = g.y;
+    return next;
+  }));
+  const addGame = () => {
+    const last = games[games.length - 1];
+    const start = last ? last.end : 0;
+    const [x, y] = nextPair(last, sides);
+    setLocal([...games, { start, end: Math.min(total, start + 15), x, y, a: 0, b: 0 }]);
+  };
+  if (!open) return <button type="button" onClick={() => { setOpen(true); addGame(); }} className="mt-4 text-xs font-semibold text-muted-text underline underline-offset-2">{copy.splitGames}</button>;
+  const save = () => void setGames.mutateAsync(games.map((g) => ({
+    startOffsetSec: g.start * 60, endOffsetSec: g.end * 60, teamX: g.x, teamY: g.y, scoreA: g.a, scoreB: g.b,
+  })))
     .then(() => toast({ title: copy.saveGames }))
     .catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }));
+  const teamPicker = (value: TeamSide, onPick: (t: TeamSide) => void, label: string) => sides.length === 2 ? (
+    <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs font-semibold">
+      <span className="h-3 w-3 shrink-0 rounded-full border border-line" style={{ background: colors[value] }} />{names[value]}
+    </span>
+  ) : (
+    <label className="flex min-w-0 flex-1 items-center gap-1.5">
+      <span className="h-3 w-3 shrink-0 rounded-full border border-line" style={{ background: colors[value] }} />
+      <select value={value} onChange={(e) => onPick(e.target.value as TeamSide)} aria-label={label}
+        className="h-9 min-w-0 flex-1 truncate rounded-lg border border-line bg-void px-1.5 text-xs font-semibold">
+        {sides.map((t) => <option key={t} value={t}>{names[t]}</option>)}
+      </select>
+    </label>
+  );
   return (
-    <div className="mt-4 border-t border-line pt-3">
-      <p className="text-xs font-semibold text-muted-text">{copy.games}</p>
+    <div className={cn(!startOpen && "mt-4 border-t border-line pt-3")}>
+      {!startOpen && <p className="text-xs font-semibold text-muted-text">{copy.games}</p>}
       {games.map((g, i) => (
-        <div key={i} className="mt-2 flex items-center gap-2 text-xs" dir="ltr">
-          <span className="w-14 font-semibold">{copy.gameN(i + 1)}</span>
-          <input type="number" min={0} max={total} value={g.start} onChange={(e) => setLocal(games.map((x, j) => j === i ? { ...x, start: Number(e.target.value) } : x))} className="h-9 w-14 rounded-lg border border-line bg-void px-2" aria-label="start minute" />
-          <span>–</span>
-          <input type="number" min={1} max={total + 10} value={g.end} onChange={(e) => setLocal(games.map((x, j) => j === i ? { ...x, end: Number(e.target.value) } : x))} className="h-9 w-14 rounded-lg border border-line bg-void px-2" aria-label="end minute" />
-          <input type="number" min={0} max={99} value={g.a} onChange={(e) => setLocal(games.map((x, j) => j === i ? { ...x, a: Number(e.target.value) } : x))} className="ms-auto h-9 w-11 rounded-lg border border-line bg-void px-2" aria-label="score A" />
-          <input type="number" min={0} max={99} value={g.b} onChange={(e) => setLocal(games.map((x, j) => j === i ? { ...x, b: Number(e.target.value) } : x))} className="h-9 w-11 rounded-lg border border-line bg-void px-2" aria-label="score B" />
-          <button type="button" onClick={() => setLocal(games.filter((_, j) => j !== i))} className="flex h-9 w-9 items-center justify-center text-muted-text" aria-label={copy.remove}><Trash2 className="h-3.5 w-3.5" /></button>
+        <div key={i} className="mt-3 rounded-xl border border-line bg-void/40 p-2" data-testid={`game-row-${i}`}>
+          <div className="flex items-center gap-2 text-xs" dir="ltr">
+            <span className="flex-1 font-semibold">{copy.gameN(i + 1)}</span>
+            <input type="number" min={0} max={total} value={g.start} onChange={(e) => edit(i, { start: Number(e.target.value) })} className="h-8 w-14 rounded-lg border border-line bg-void px-2" aria-label="start minute" />
+            <span>–</span>
+            <input type="number" min={1} max={total + 10} value={g.end} onChange={(e) => edit(i, { end: Number(e.target.value) })} className="h-8 w-14 rounded-lg border border-line bg-void px-2" aria-label="end minute" />
+            <span className="text-muted-text">min</span>
+            <button type="button" onClick={() => setLocal(games.filter((_, j) => j !== i))} className="flex h-8 w-8 items-center justify-center text-muted-text" aria-label={copy.remove}><Trash2 className="h-3.5 w-3.5" /></button>
+          </div>
+          <div className="mt-2 flex items-center gap-2" dir="ltr">
+            {teamPicker(g.x, (t) => edit(i, { x: t }), `${copy.gameN(i + 1)} · 1`)}
+            <input type="number" min={0} max={99} value={g.a} onChange={(e) => edit(i, { a: Number(e.target.value) })} className="h-9 w-11 rounded-lg border border-line bg-void px-2 text-center font-mono" aria-label={`${names[g.x]} goals`} />
+            <span className="text-xs text-muted-text">{copy.vs}</span>
+            <input type="number" min={0} max={99} value={g.b} onChange={(e) => edit(i, { b: Number(e.target.value) })} className="h-9 w-11 rounded-lg border border-line bg-void px-2 text-center font-mono" aria-label={`${names[g.y]} goals`} />
+            {teamPicker(g.y, (t) => edit(i, { y: t }), `${copy.gameN(i + 1)} · 2`)}
+          </div>
         </div>
       ))}
       <div className="mt-3 flex gap-2">
-        <button type="button" onClick={() => { const last = games[games.length - 1]; const start = last ? last.end : 0; setLocal([...games, { start, end: Math.min(total, start + 15), a: 0, b: 0 }]); }} className="min-h-9 flex-1 rounded-full border border-line text-xs font-semibold">{copy.addGame}</button>
-        <button type="button" disabled={setGames.isPending} onClick={save} className="min-h-9 flex-1 rounded-full border border-violet/60 text-xs font-bold text-violet">{copy.saveGames}</button>
+        <button type="button" onClick={addGame} className="min-h-10 flex-1 rounded-full border border-line text-xs font-semibold">{copy.addGame}</button>
+        <button type="button" disabled={setGames.isPending || (games.length === 0 && room.games.length === 0)} onClick={save} className="min-h-10 flex-1 rounded-full border border-violet/60 text-xs font-bold text-violet disabled:opacity-40">{copy.saveGames}</button>
       </div>
+      {room.teamCount === 3 && room.standings && room.games.length > 0 && (
+        <div className="mt-4 border-t border-line pt-3">
+          <StandingsTable rows={room.standings} colors={colors} names={names} leader={room.leader} labels={copy} />
+        </div>
+      )}
     </div>
   );
 }
@@ -748,7 +872,15 @@ function TeamsTab({ room, copy, colors, names }: { room: MatchRoom; copy: MatchS
   const { toast } = useToast();
   const editable = room.canManage;
   const active = room.players.filter((p) => p.rsvp === "in" || p.rsvp === "maybe");
-  const bench = active.filter((p) => !p.team || p.slotX == null);
+  const three = room.teamCount === 3;
+  const waiting = three ? active.filter((p) => p.team === "C") : [];
+  const bench = active.filter((p) => !p.team || (p.team !== "C" && p.slotX == null) || (p.team === "C" && !three));
+  const moveToC = () => {
+    if (selected == null) return;
+    void updatePlayer.mutateAsync({ playerId: selected, team: "C", slotX: null, slotY: null })
+      .then(() => setSelected(null))
+      .catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }));
+  };
   const place = (x: number, y: number) => {
     if (selected == null) return;
     const team: TeamSide = y >= 50 ? "A" : "B";
@@ -766,6 +898,30 @@ function TeamsTab({ room, copy, colors, names }: { room: MatchRoom; copy: MatchS
         <PitchBoard players={room.players} colors={colors} editable={editable} selectedId={selected} onSelect={setSelected} onPlace={place} captainUserId={room.captain?.userId ?? null} />
       ) : (
         <Card><p className="text-sm text-muted-text">{editable ? copy.noTeamsYet : copy.teamsLocked}</p></Card>
+      )}
+      {three && (
+        <Card className="border-dashed">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <TeamLegend side="C" name={names.C} color={colors.C} editable={editable} onColor={(c) => void updateRoom.mutateAsync({ teamCColor: c })} />
+            </div>
+            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-text">{copy.waitingTeam}</span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2" data-testid="team-c-list">
+            {waiting.map((p) => (
+              <button key={p.id} type="button" disabled={!editable} onClick={() => setSelected(selected === p.id ? null : p.id)} className={cn("flex items-center gap-2 rounded-full border px-2 py-1", selected === p.id ? "border-floodlight" : "border-line")}>
+                <PlayerAvatar name={p.name} initials={p.initials} avatarUrl={p.avatarUrl} size={26} dashed={!p.signedUp} ring={colors.C} />
+                <span className="text-xs font-semibold">{p.name}</span>
+                {p.userId != null && p.userId === room.captain?.userId && <span className="rounded bg-floodlight px-1 text-[9px] font-black text-void">{copy.captainBadge}</span>}
+              </button>
+            ))}
+            {editable && selected != null && !waiting.some((p) => p.id === selected) && (
+              <button type="button" onClick={moveToC} className="min-h-9 rounded-full border border-dashed px-3 text-xs font-semibold" style={{ borderColor: colors.C, color: colors.C }}>
+                {copy.moveTo(names.C)}
+              </button>
+            )}
+          </div>
+        </Card>
       )}
       {editable && (
         <>
@@ -1014,6 +1170,7 @@ function VoteTab({ room, copy, now }: { room: MatchRoom; copy: MatchStrings; now
 
 function StatsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
   const unlock = useUnlockStats(room.code);
+  const plan = useStatsPlan();
   const { toast } = useToast();
   const [ref, setRef] = useState<{ reference: string; amountFils: number; cliqAlias: string } | null>(
     room.stats.pending ? { reference: room.stats.pending.reference, amountFils: room.stats.pending.amountFils, cliqAlias: room.stats.cliqAlias } : null,
@@ -1027,9 +1184,9 @@ function StatsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
       </Card>
     );
   }
-  const start = async (kind: "match" | "team") => {
+  const start = async (kind: "match" | "team" | "monthly") => {
     try {
-      const result = await unlock.mutateAsync(kind);
+      const result = kind === "monthly" ? await plan.mutateAsync() : await unlock.mutateAsync(kind);
       setRef(result);
     } catch (error) {
       toast({ title: error instanceof Error ? error.message : copy.error, variant: "destructive" });
@@ -1050,7 +1207,8 @@ function StatsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
           {room.isMember ? (
             <div className="mt-4 flex flex-col gap-2">
               <button type="button" disabled={unlock.isPending} onClick={() => void start("match")} className="min-h-12 rounded-full bg-floodlight text-sm font-bold text-void">{copy.unlockMatch(formatJod(room.stats.prices.matchFils))}</button>
-              {room.canManage && <button type="button" disabled={unlock.isPending} onClick={() => void start("team")} className="min-h-11 rounded-full border border-violet/60 text-sm font-semibold text-violet">{copy.unlockTeam(formatJod(room.stats.prices.teamFils))}</button>}
+              {room.canManage && room.stats.teamPack && <button type="button" disabled={unlock.isPending} onClick={() => void start("team")} className="min-h-11 rounded-full border border-violet/60 text-sm font-semibold text-violet">{copy.unlockTeam(formatJod(room.stats.prices.teamFils))}</button>}
+              {room.stats.monthly && <button type="button" disabled={plan.isPending} onClick={() => void start("monthly")} className="min-h-11 rounded-full border border-line text-sm font-semibold">{copy.unlockMonthly(formatJod(room.stats.prices.monthlyFils))}</button>}
             </div>
           ) : <p className="mt-3 text-xs text-muted-text">{copy.onlyPlayersVote}</p>}
         </div>

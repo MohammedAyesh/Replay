@@ -21,11 +21,13 @@ import {
 } from "@workspace/db";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { activatePaidBooking, cancelUnpaidBooking } from "./owner";
+import { loadCommerce, type Commerce } from "../lib/commerce";
 import {
-  BOOKING_FILS,
-  STATS_MATCH_FILS,
-  STATS_MONTHLY_FILS,
   ammanLocalInstant,
+  computeStandings,
+  standingsLeader,
+  teamSides,
+  type TeamSide,
   avatarUrlFor,
   isPlaying,
   loadRoomByCode,
@@ -59,7 +61,6 @@ const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSiz
 type LocalUser = NonNullable<Awaited<ReturnType<typeof getLocalUserRecord>>>;
 
 const TEAM_COLORS = ["#F2F4F8", "#FF6B1A", "#7AA2FF", "#0B0F1A", "#2FD8C4", "#FFD23F", "#E23B3B", "#1F8A4C"];
-const CLIQ_ALIAS = process.env.REPLAY_CLIQ_ALIAS || "REPLAYJO";
 
 function param(req: Request, name: string): string {
   const value = req.params[name];
@@ -182,7 +183,9 @@ async function voteSummary(ctx: RoomContext, viewerId: number | null, roster: Ma
   };
 }
 
-async function statsAccess(userId: number | null, matchId: number) {
+async function statsAccess(userId: number | null, matchId: number, commerce: Commerce) {
+  // Paywall off: stats are free for everyone who can open the match.
+  if (!commerce.statsPaywall) return { unlocked: true, pending: null as null | { reference: string; kind: string; amountFils: number } };
   if (!userId) return { unlocked: false, pending: null as null | { reference: string; kind: string; amountFils: number } };
   const now = new Date();
   const rows = await db.select().from(statUnlocksTable).where(and(
@@ -217,6 +220,8 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
   const member = isCaptain || isPlaying(me);
   const phase = matchPhase(request);
   const window = matchWindow(request);
+  const commerce = await loadCommerce({ userId: viewerId, fieldId: room.fieldId });
+  const teamCount = room.teamCount >= 3 ? 3 : 2;
 
   // "Invited by" from ?by=<playerId> or a personal invite ?i=<token>.
   const byId = Number.parseInt(String(req.query.by ?? ""), 10);
@@ -233,7 +238,7 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
     maybe: roster.filter((p) => p.rsvp === "maybe").length,
     invited: roster.filter((p) => p.rsvp === "invited").length,
     out: roster.filter((p) => p.rsvp === "out").length,
-    needed: room.playersPerSide * 2,
+    needed: room.playersPerSide * teamCount,
   };
 
   let marks: Array<{ id: number; kind: string; note: string | null; atUtc: string; offsetSeconds: number | null; byName: string | null; mine: boolean }> = [];
@@ -260,7 +265,8 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
   const games = await db.select().from(matchGamesTable)
     .where(eq(matchGamesTable.matchId, room.id)).orderBy(asc(matchGamesTable.idx));
   const vote = await voteSummary(ctx, viewerId, roster);
-  const stats = await statsAccess(viewerId, room.id);
+  const stats = await statsAccess(viewerId, room.id, commerce);
+  const standings = computeStandings(games, teamCount);
   const [bookingPayment] = await db.select().from(statUnlocksTable)
     .where(and(eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking")))
     .orderBy(desc(statUnlocksTable.createdAt)).limit(1);
@@ -295,11 +301,16 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
     },
     title: room.title,
     playersPerSide: room.playersPerSide,
+    teamCount,
     teams: {
       A: { name: room.teamAName, color: room.teamAColor },
       B: { name: room.teamBName, color: room.teamBColor },
+      ...(teamCount === 3 ? { C: { name: room.teamCName, color: room.teamCColor } } : {}),
     },
-    score: room.scoreA !== null && room.scoreB !== null ? { a: room.scoreA, b: room.scoreB } : null,
+    // Two teams: one score line. Three teams: the table (standings) is the result.
+    score: teamCount === 2 && room.scoreA !== null && room.scoreB !== null ? { a: room.scoreA, b: room.scoreB } : null,
+    standings: teamCount === 3 ? standings : null,
+    leader: teamCount === 3 ? standingsLeader(standings) : null,
     captain: captainUser ? {
       userId: captainUser.id,
       name: captainUser.name,
@@ -341,19 +352,28 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
       expiresAt: request.shareExpiresAt?.toISOString() ?? null,
     },
     games: games.map((g) => ({
-      id: g.id, idx: g.idx, startOffsetSec: g.startOffsetSec, endOffsetSec: g.endOffsetSec, scoreA: g.scoreA, scoreB: g.scoreB,
+      id: g.id, idx: g.idx, startOffsetSec: g.startOffsetSec, endOffsetSec: g.endOffsetSec,
+      teamX: g.teamX, teamY: g.teamY, scoreA: g.scoreA, scoreB: g.scoreB,
     })),
     vote,
     stats: {
       ...stats,
-      prices: { matchFils: STATS_MATCH_FILS, monthlyFils: STATS_MONTHLY_FILS, teamFils: STATS_MATCH_FILS * room.playersPerSide * 2 },
-      cliqAlias: CLIQ_ALIAS,
+      enabled: commerce.statsEnabled,
+      paywall: commerce.statsPaywall,
+      teamPack: commerce.statsTeamPack,
+      monthly: commerce.statsMonthly,
+      prices: {
+        matchFils: commerce.statsMatchFils,
+        monthlyFils: commerce.statsMonthlyFils,
+        teamFils: commerce.statsTeamPerPlayerFils * room.playersPerSide * teamCount,
+      },
+      cliqAlias: commerce.cliqAlias,
     },
     clips: {
       mine: myClips.length,
       match: matchClipCount[0]?.n ?? 0,
     },
-    prices: { bookingFils: BOOKING_FILS },
+    prices: { bookingFils: commerce.playerBookingFilsPerHour },
     // Player-paid bookings: the payment the recording is waiting on.
     booking: bookingPayment ? {
       status: bookingPayment.status,
@@ -361,7 +381,7 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
       reference: (member || isOwner || bookingPayment.userId === viewerId) ? bookingPayment.reference : null,
       mine: bookingPayment.userId === viewerId,
       requestId: bookingPayment.userId === viewerId || isOwner ? request.id : null,
-      cliqAlias: CLIQ_ALIAS,
+      cliqAlias: commerce.cliqAlias,
     } : null,
   };
 }
@@ -432,8 +452,9 @@ router.get("/me/matches", async (req, res): Promise<void> => {
       isCaptain: ctx.room.captainUserId === user.id,
       isOwner: ownedSet.has(ctx.room.fieldId),
       countIn: roster.filter((p) => p.rsvp === "in").length,
-      needed: ctx.room.playersPerSide * 2,
-      score: ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null,
+      needed: ctx.room.playersPerSide * (ctx.room.teamCount >= 3 ? 3 : 2),
+      teamCount: ctx.room.teamCount >= 3 ? 3 : 2,
+      score: ctx.room.teamCount < 3 && ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null,
       voteOpen: voteOpen(ctx.request),
     };
   }));
@@ -653,7 +674,7 @@ router.post("/m/:code/players", async (req, res): Promise<void> => {
 });
 
 const playerPatchSchema = z.object({
-  team: z.enum(["A", "B"]).nullable().optional(),
+  team: z.enum(["A", "B", "C"]).nullable().optional(),
   shirtNumber: z.number().int().min(0).max(99).nullable().optional(),
   slotX: z.number().min(0).max(100).nullable().optional(),
   slotY: z.number().min(0).max(100).nullable().optional(),
@@ -682,6 +703,10 @@ router.patch("/m/:code/players/:playerId", async (req, res): Promise<void> => {
   const self = player.userId === user.id;
   if (!manager && !self) {
     res.status(403).json({ error: "Only the captain can change other players" });
+    return;
+  }
+  if (body.data.team === "C" && ctx.room.teamCount < 3) {
+    res.status(400).json({ error: "Turn on a third team first" });
     return;
   }
   // Players may change their own number and name; only the captain sets teams and slots for others.
@@ -762,16 +787,56 @@ router.post("/m/:code/teams/auto", async (req, res): Promise<void> => {
   const shuffle = Boolean((req.body ?? {}).shuffle);
   const roster = (await rosterFor(ctx.room.id)).filter((p) => p.rsvp === "in" || p.rsvp === "maybe");
   const order = shuffle ? [...roster].sort(() => Math.random() - 0.5) : roster;
-  const teamA = order.filter((_, i) => i % 2 === 0);
-  const teamB = order.filter((_, i) => i % 2 === 1);
-  const place = async (players: MatchPlayer[], side: "A" | "B") => {
-    const slots = formationSlots(players.length, side);
+  const sides = teamSides(ctx.room.teamCount);
+  const place = async (players: MatchPlayer[], side: TeamSide) => {
+    // Team C waits on the side: it has no half of the pitch until it rotates on.
+    const slots = side === "C" ? [] : formationSlots(players.length, side);
     await Promise.all(players.map((p, i) => db.update(matchPlayersTable).set({
-      team: side, slotX: slots[i]?.x ?? 50, slotY: slots[i]?.y ?? 50, updatedAt: new Date(),
+      team: side,
+      slotX: side === "C" ? null : slots[i]?.x ?? 50,
+      slotY: side === "C" ? null : slots[i]?.y ?? 50,
+      updatedAt: new Date(),
     }).where(eq(matchPlayersTable.id, p.id))));
   };
-  await place(teamA, "A");
-  await place(teamB, "B");
+  for (const [n, side] of sides.entries()) {
+    await place(order.filter((_, i) => i % sides.length === n), side);
+  }
+  const fresh = await loadRoomByCode(ctx.room.code);
+  res.json(await roomPayload(req, fresh ?? ctx, user));
+});
+
+/**
+ * Hand the armband to someone else on the roster. The admin, the field owner or
+ * the current captain may do it; the new captain must have an account, since the
+ * captain is a user, not a roster line.
+ */
+router.post("/m/:code/captain", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  if (!(await canManage(user, ctx))) {
+    res.status(403).json({ error: "Only the admin or the captain can change the captain" });
+    return;
+  }
+  const playerId = Number((req.body ?? {}).playerId);
+  const [player] = Number.isSafeInteger(playerId) ? await db.select().from(matchPlayersTable)
+    .where(and(eq(matchPlayersTable.id, playerId), eq(matchPlayersTable.matchId, ctx.room.id))) : [];
+  if (!player) {
+    res.status(404).json({ error: "Player not found" });
+    return;
+  }
+  if (!player.userId) {
+    res.status(400).json({ error: "They need to join with an account before they can be captain" });
+    return;
+  }
+  if (player.rsvp === "out") {
+    res.status(400).json({ error: "Pick someone who is playing" });
+    return;
+  }
+  await db.update(matchRoomsTable).set({ captainUserId: player.userId, updatedAt: new Date() })
+    .where(eq(matchRoomsTable.id, ctx.room.id));
+  logger.info({ match: ctx.room.code, by: user.id, captain: player.userId }, "match captain changed");
   const fresh = await loadRoomByCode(ctx.room.code);
   res.json(await roomPayload(req, fresh ?? ctx, user));
 });
@@ -782,6 +847,9 @@ const roomPatchSchema = z.object({
   teamBName: z.string().trim().max(30).nullable().optional(),
   teamAColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   teamBColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+  teamCName: z.string().trim().max(30).nullable().optional(),
+  teamCColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+  teamCount: z.union([z.literal(2), z.literal(3)]).optional(),
   playersPerSide: z.number().int().min(3).max(11).optional(),
 });
 
@@ -800,6 +868,20 @@ router.patch("/m/:code", async (req, res): Promise<void> => {
     return;
   }
   await db.update(matchRoomsTable).set({ ...body.data, updatedAt: new Date() }).where(eq(matchRoomsTable.id, ctx.room.id));
+  if (body.data.teamCount === 2 && ctx.room.teamCount >= 3) {
+    // Dropping the third team sends its players back to the bench, and games
+    // that involved it no longer fit a two-team match.
+    await db.update(matchPlayersTable).set({ team: null, slotX: null, slotY: null, updatedAt: new Date() })
+      .where(and(eq(matchPlayersTable.matchId, ctx.room.id), eq(matchPlayersTable.team, "C")));
+    await db.delete(matchGamesTable).where(and(
+      eq(matchGamesTable.matchId, ctx.room.id),
+      or(eq(matchGamesTable.teamX, "C"), eq(matchGamesTable.teamY, "C")),
+    ));
+  }
+  if (body.data.teamCount === 3 && ctx.room.teamCount < 3) {
+    // With three teams the result is the table, not a single score line.
+    await db.update(matchRoomsTable).set({ scoreA: null, scoreB: null }).where(eq(matchRoomsTable.id, ctx.room.id));
+  }
   const fresh = await loadRoomByCode(ctx.room.code);
   res.json(await roomPayload(req, fresh ?? ctx, user));
 });
@@ -834,6 +916,8 @@ const gamesSchema = z.object({
   games: z.array(z.object({
     startOffsetSec: z.number().int().min(0),
     endOffsetSec: z.number().int().min(1),
+    teamX: z.enum(["A", "B", "C"]).optional(),
+    teamY: z.enum(["A", "B", "C"]).optional(),
     scoreA: z.number().int().min(0).max(99).nullable().optional(),
     scoreB: z.number().int().min(0).max(99).nullable().optional(),
   })).max(12),
@@ -855,9 +939,16 @@ router.put("/m/:code/games", async (req, res): Promise<void> => {
   }
   const w = matchWindow(ctx.request);
   const total = Math.round((w.endMs - w.startMs) / 1000);
-  const games = [...body.data.games].sort((a, b) => a.startOffsetSec - b.startOffsetSec);
+  const sides = teamSides(ctx.room.teamCount);
+  const games = [...body.data.games]
+    .map((g) => ({ ...g, teamX: g.teamX ?? "A", teamY: g.teamY ?? "B" }))
+    .sort((a, b) => a.startOffsetSec - b.startOffsetSec);
   for (let i = 0; i < games.length; i += 1) {
     const g = games[i];
+    if (g.teamX === g.teamY || !sides.includes(g.teamX) || !sides.includes(g.teamY)) {
+      res.status(400).json({ error: "Each game is between two different teams" });
+      return;
+    }
     if (g.endOffsetSec <= g.startOffsetSec || g.endOffsetSec > total + 600 || (i > 0 && g.startOffsetSec < games[i - 1].endOffsetSec)) {
       res.status(400).json({ error: "Games must not overlap and must fit inside the match" });
       return;
@@ -868,14 +959,18 @@ router.put("/m/:code/games", async (req, res): Promise<void> => {
     if (games.length) {
       await tx.insert(matchGamesTable).values(games.map((g, idx) => ({
         matchId: ctx.room.id, idx, startOffsetSec: g.startOffsetSec, endOffsetSec: g.endOffsetSec,
+        teamX: g.teamX, teamY: g.teamY,
         scoreA: g.scoreA ?? null, scoreB: g.scoreB ?? null,
       })));
     }
     // The match score is the number of games won when games carry scores.
+    // With three teams the result is the table, computed on read.
     const scored = games.filter((g) => g.scoreA != null && g.scoreB != null);
-    if (scored.length) {
-      const winsA = scored.filter((g) => (g.scoreA ?? 0) > (g.scoreB ?? 0)).length;
-      const winsB = scored.filter((g) => (g.scoreB ?? 0) > (g.scoreA ?? 0)).length;
+    if (scored.length && sides.length === 2) {
+      const winner = (g: typeof scored[number]) =>
+        (g.scoreA ?? 0) > (g.scoreB ?? 0) ? g.teamX : (g.scoreB ?? 0) > (g.scoreA ?? 0) ? g.teamY : null;
+      const winsA = scored.filter((g) => winner(g) === "A").length;
+      const winsB = scored.filter((g) => winner(g) === "B").length;
       await tx.update(matchRoomsTable).set({ scoreA: winsA, scoreB: winsB, scoreUpdatedAt: new Date() })
         .where(eq(matchRoomsTable.id, ctx.room.id));
     }
@@ -1023,6 +1118,15 @@ router.post("/m/:code/stats/unlock", async (req, res): Promise<void> => {
   const user = await requirePlayer(req, res);
   if (!user) return;
   const kind = (req.body ?? {}).kind === "team" ? "team" : "match";
+  const commerce = await loadCommerce({ userId: user.id, fieldId: ctx.room.fieldId });
+  if (!commerce.statsEnabled || !commerce.statsPaywall) {
+    res.status(409).json({ error: commerce.statsEnabled ? "Stats are free right now" : "Stats aren't available yet" });
+    return;
+  }
+  if (kind === "team" && !commerce.statsTeamPack) {
+    res.status(409).json({ error: "The team pack isn't on offer right now" });
+    return;
+  }
   const me = await playerForUser(ctx.room.id, user.id);
   if (!isPlaying(me) && ctx.room.captainUserId !== user.id) {
     res.status(403).json({ error: "Only players in this match can unlock its stats" });
@@ -1037,30 +1141,37 @@ router.post("/m/:code/stats/unlock", async (req, res): Promise<void> => {
     eq(statUnlocksTable.kind, kind), inArray(statUnlocksTable.status, ["pending", "paid"]),
   ));
   if (existing) {
-    res.json({ reference: existing.reference, status: existing.status, amountFils: existing.amountFils, cliqAlias: CLIQ_ALIAS });
+    res.json({ reference: existing.reference, status: existing.status, amountFils: existing.amountFils, cliqAlias: commerce.cliqAlias });
     return;
   }
-  const amountFils = kind === "team" ? STATS_MATCH_FILS * ctx.room.playersPerSide * 2 : STATS_MATCH_FILS;
+  const amountFils = kind === "team"
+    ? commerce.statsTeamPerPlayerFils * ctx.room.playersPerSide * (ctx.room.teamCount >= 3 ? 3 : 2)
+    : commerce.statsMatchFils;
   const [created] = await db.insert(statUnlocksTable).values({
     userId: user.id, matchId: ctx.room.id, kind, amountFils, reference: paymentReference(`RP${ctx.room.code}`),
   }).returning();
-  res.status(201).json({ reference: created.reference, status: created.status, amountFils, cliqAlias: CLIQ_ALIAS });
+  res.status(201).json({ reference: created.reference, status: created.status, amountFils, cliqAlias: commerce.cliqAlias });
 });
 
 router.post("/me/stats-plan", async (req, res): Promise<void> => {
   const user = await requirePlayer(req, res);
   if (!user) return;
+  const commerce = await loadCommerce({ userId: user.id });
+  if (!commerce.statsEnabled || !commerce.statsPaywall || !commerce.statsMonthly) {
+    res.status(409).json({ error: "The monthly plan isn't on offer right now" });
+    return;
+  }
   const [existing] = await db.select().from(statUnlocksTable).where(and(
     eq(statUnlocksTable.userId, user.id), eq(statUnlocksTable.kind, "monthly"), eq(statUnlocksTable.status, "pending"),
   ));
   if (existing) {
-    res.json({ reference: existing.reference, status: existing.status, amountFils: existing.amountFils, cliqAlias: CLIQ_ALIAS });
+    res.json({ reference: existing.reference, status: existing.status, amountFils: existing.amountFils, cliqAlias: commerce.cliqAlias });
     return;
   }
   const [created] = await db.insert(statUnlocksTable).values({
-    userId: user.id, kind: "monthly", amountFils: STATS_MONTHLY_FILS, reference: paymentReference("RPM"),
+    userId: user.id, kind: "monthly", amountFils: commerce.statsMonthlyFils, reference: paymentReference("RPM"),
   }).returning();
-  res.status(201).json({ reference: created.reference, status: created.status, amountFils: created.amountFils, cliqAlias: CLIQ_ALIAS });
+  res.status(201).json({ reference: created.reference, status: created.status, amountFils: created.amountFils, cliqAlias: commerce.cliqAlias });
 });
 
 router.get("/admin/stat-unlocks", async (req, res): Promise<void> => {
@@ -1229,8 +1340,13 @@ router.get("/users/:id/replay-profile", async (req, res): Promise<void> => {
     const vote = await voteSummary(ctx, null, roster);
     const isMotm = vote.winners.includes(me!.id);
     if (isMotm) motm += 1;
-    const score = ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null;
-    const won = score && me!.team ? (me!.team === "A" ? score.a > score.b : score.b > score.a) : false;
+    const threeTeams = ctx.room.teamCount >= 3;
+    const score = !threeTeams && ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null;
+    let won = score && me!.team ? (me!.team === "A" ? score.a > score.b : me!.team === "B" ? score.b > score.a : false) : false;
+    if (threeTeams && me!.team) {
+      const games = await db.select().from(matchGamesTable).where(eq(matchGamesTable.matchId, ctx.room.id));
+      won = standingsLeader(computeStandings(games, 3)) === me!.team;
+    }
     if (won) wins += 1;
     recent.push({
       code: ctx.room.code, url: `${base}/m/${ctx.room.code}`, startLocal: ctx.request.startLocal,
@@ -1286,8 +1402,9 @@ router.get("/user-clips/:id/story-context", async (req, res): Promise<void> => {
       fieldName: ctx.field.name,
       startLocal: ctx.request.startLocal,
       startMs: matchWindow(ctx.request).startMs,
-      score: ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null,
-      teamColor: team === "A" ? ctx.room.teamAColor : team === "B" ? ctx.room.teamBColor : null,
+      score: ctx.room.teamCount < 3 && ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null,
+      teamColor: team === "A" ? ctx.room.teamAColor : team === "B" ? ctx.room.teamBColor
+        : team === "C" && ctx.room.teamCount >= 3 ? ctx.room.teamCColor : null,
     } : null,
   });
 });

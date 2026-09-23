@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { MatchPhase, MatchPlayer, TeamSide } from "@/lib/match-api";
+import type { MatchPhase, MatchPlayer, StandingRow, TeamSide } from "@/lib/match-api";
 
 /** A face, or initials on a raised disc when there's no photo. */
 export function PlayerAvatar({
@@ -226,6 +226,48 @@ export function ScoreLine({ score, colors, names, size = "lg" }: {
         {score ? `${score.a}–${score.b}` : "–"}
       </span>
       <TeamTag color={colors.B} name={names.B} />
+    </div>
+  );
+}
+
+/** Three-team sessions: the table, best first. */
+export function StandingsTable({ rows, colors, names, leader, labels, compact = false }: {
+  rows: StandingRow[];
+  colors: Record<TeamSide, string>;
+  names: Record<TeamSide, string>;
+  leader: TeamSide | null;
+  labels: { table: string; topOfTable: string; tableCols: { p: string; w: string; d: string; l: string; gd: string; pts: string } };
+  compact?: boolean;
+}) {
+  const c = labels.tableCols;
+  const cols = compact ? [c.p, c.gd, c.pts] : [c.p, c.w, c.d, c.l, c.gd, c.pts];
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-text">
+        <span className="flex-1">{labels.table}</span>
+        {cols.map((h) => <span key={h} className="w-8 text-center">{h}</span>)}
+      </div>
+      <ul className="flex flex-col gap-1">
+        {rows.map((r, i) => {
+          const gd = r.goalsFor - r.goalsAgainst;
+          const values = compact ? [r.played, gd, r.points] : [r.played, r.won, r.drawn, r.lost, gd, r.points];
+          return (
+            <li key={r.team} className={cn("flex items-center gap-2 rounded-xl px-2 py-2", leader === r.team ? "bg-floodlight/10" : "bg-raised/60")} data-testid={`standing-${r.team}`}>
+              <span className="w-4 font-mono text-xs text-muted-text">{i + 1}</span>
+              <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-line" style={{ background: colors[r.team] }} />
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+                {names[r.team]}
+                {leader === r.team && <span className="ms-1.5 text-[10px] font-bold uppercase text-floodlight">{labels.topOfTable}</span>}
+              </span>
+              {values.map((v, j) => (
+                <span key={j} dir="ltr" className={cn("w-8 text-center font-mono text-sm tabular-nums", j === values.length - 1 ? "font-bold text-text" : "text-muted-text")}>
+                  {j === values.length - 2 && v > 0 ? `+${v}` : v}
+                </span>
+              ))}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

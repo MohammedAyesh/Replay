@@ -1,3 +1,4 @@
+import { bookingPriceFils, loadCommerce } from "../lib/commerce";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -25,7 +26,6 @@ import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../l
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
-const REQUEST_RATE_FILS = 1000;
 const SHARE_LIFETIME_MS = 14 * 24 * 60 * 60 * 1000;
 const AVAILABILITY_CACHE_MS = 2 * 60 * 1000;
 const REQUEST_REFRESH_MS = 10 * 1000;
@@ -1065,6 +1065,19 @@ router.post("/admin/fields/:fieldId/payments", async (req, res): Promise<void> =
   });
 });
 
+/** The owner's footage rate for one field (Admin -> Settings -> Pricing), for the console's price labels. */
+router.get("/owner/fields/:fieldId/rate", async (req, res): Promise<void> => {
+  const fieldId = parseId(req.params.fieldId);
+  if (!fieldId) {
+    res.status(400).json({ error: "Invalid field id" });
+    return;
+  }
+  const user = await requireFieldAccess(req, res, fieldId);
+  if (!user) return;
+  const commerce = await loadCommerce({ userId: user.id, fieldId });
+  res.json({ ratePerHourFils: commerce.ownerFootageFilsPerHour });
+});
+
 router.get("/owner/fields", async (req, res): Promise<void> => {
   const user = await requireOwnerUser(req, res);
   if (!user) return;
@@ -1267,7 +1280,7 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     startLocal: start.value,
     endLocal: end.value,
     requestedSeconds: durationSeconds,
-    rateFils: REQUEST_RATE_FILS,
+    rateFils: (await loadCommerce({ userId: user.id, fieldId })).ownerFootageFilsPerHour,
     status: end.epochMs > nowMs ? "scheduled" : "queued",
   }).returning();
 
@@ -1813,15 +1826,12 @@ router.get("/owner/fields/:fieldId/ledger", async (req, res): Promise<void> => {
 // camera job started. The field owner is never billed for these (rate 0 on the
 // request); the money lives on the payment row.
 
-export const PLAYER_BOOKING_FILS_PER_HOUR = Number.parseInt(process.env.REPLAY_PLAYER_BOOKING_FILS_PER_HOUR ?? "", 10) || 2000;
+// Prices and limits come from Admin -> Settings (lib/commerce.ts).
 const BOOKING_HOLD_STATUSES = [...ACTIVE_REQUEST_STATUSES, "awaiting_payment"];
-const MAX_AWAITING_PAYMENT = 3;
 
-export function playerBookingPriceFils(durationSeconds: number): number {
-  return Math.max(1, Math.ceil(durationSeconds / 3600)) * PLAYER_BOOKING_FILS_PER_HOUR;
-}
-
-router.get("/bookings/fields", async (_req, res): Promise<void> => {
+router.get("/bookings/fields", async (req, res): Promise<void> => {
+  const viewer = await getLocalUserRecord(req).catch(() => null);
+  const commerce = await loadCommerce({ userId: viewer && !viewer.isGuest ? viewer.id : null });
   const rows = await db.select({
     id: fieldsTable.id,
     name: fieldsTable.name,
@@ -1831,9 +1841,11 @@ router.get("/bookings/fields", async (_req, res): Promise<void> => {
   }).from(fieldsTable).where(isNotNull(fieldsTable.cameraId)).orderBy(asc(fieldsTable.name));
   res.json({
     fields: rows.map(({ cameraId: _camera, ...field }) => field),
-    pricePerHourFils: PLAYER_BOOKING_FILS_PER_HOUR,
-    ownerPricePerHourFils: REQUEST_RATE_FILS,
-    maxDaysAhead: 14,
+    pricePerHourFils: commerce.playerBookingFilsPerHour,
+    maxDaysAhead: commerce.bookingMaxDaysAhead,
+    maxMinutes: commerce.bookingMaxMinutes,
+    enabled: commerce.bookingEnabled,
+    cliqAlias: commerce.cliqAlias,
   });
 });
 
@@ -1889,6 +1901,11 @@ router.post("/bookings", async (req, res): Promise<void> => {
     res.status(404).json({ error: "This field can't record yet" });
     return;
   }
+  const commerce = await loadCommerce({ userId: user.id, fieldId: field.id });
+  if (!commerce.bookingEnabled) {
+    res.status(403).json({ error: "Booking is closed right now" });
+    return;
+  }
   const start = parseLocalDateTime(body.data.startLocal);
   const end = parseLocalDateTime(body.data.endLocal);
   if (!start || !end || start.minute % 15 !== 0 || end.minute % 15 !== 0) {
@@ -1896,8 +1913,8 @@ router.post("/bookings", async (req, res): Promise<void> => {
     return;
   }
   const durationSeconds = Math.floor((end.epochMs - start.epochMs) / 1000);
-  if (durationSeconds < 30 * 60 || durationSeconds > 3 * 60 * 60) {
-    res.status(400).json({ error: "A recording is between 30 minutes and 3 hours" });
+  if (durationSeconds < 30 * 60 || durationSeconds > commerce.bookingMaxMinutes * 60) {
+    res.status(400).json({ error: `A recording is between 30 minutes and ${commerce.bookingMaxMinutes} minutes` });
     return;
   }
   const nowMs = ammanLocalEpoch(getAmmanNow().local);
@@ -1905,14 +1922,14 @@ router.post("/bookings", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Pick a time that hasn't started yet" });
     return;
   }
-  if (start.epochMs > nowMs + 14 * 24 * 60 * 60 * 1000) {
-    res.status(400).json({ error: "You can book up to 14 days ahead" });
+  if (start.epochMs > nowMs + commerce.bookingMaxDaysAhead * 24 * 60 * 60 * 1000) {
+    res.status(400).json({ error: `You can book up to ${commerce.bookingMaxDaysAhead} days ahead` });
     return;
   }
   const waiting = await db.select({ id: footageRequestsTable.id }).from(footageRequestsTable)
     .where(and(eq(footageRequestsTable.requestedBy, user.id), eq(footageRequestsTable.status, "awaiting_payment")));
-  if (waiting.length >= MAX_AWAITING_PAYMENT) {
-    res.status(409).json({ error: "You have 3 bookings waiting for payment. Pay or cancel one first." });
+  if (waiting.length >= commerce.bookingMaxAwaiting) {
+    res.status(409).json({ error: `You have ${waiting.length} bookings waiting for payment. Pay or cancel one first.` });
     return;
   }
   const others = await db.select({ startLocal: footageRequestsTable.startLocal, endLocal: footageRequestsTable.endLocal })
@@ -1927,7 +1944,7 @@ router.post("/bookings", async (req, res): Promise<void> => {
     return;
   }
 
-  const amountFils = playerBookingPriceFils(durationSeconds);
+  const amountFils = bookingPriceFils(durationSeconds, commerce.playerBookingFilsPerHour);
   const [created] = await db.insert(footageRequestsTable).values({
     fieldId: field.id,
     cameraId: field.cameraId,
@@ -1968,7 +1985,7 @@ router.post("/bookings", async (req, res): Promise<void> => {
     requestId: created.id,
     amountFils,
     reference,
-    cliqAlias: process.env.REPLAY_CLIQ_ALIAS || "REPLAYJO",
+    cliqAlias: commerce.cliqAlias,
     startLocal: created.startLocal,
     endLocal: created.endLocal,
     fieldName: field.name,

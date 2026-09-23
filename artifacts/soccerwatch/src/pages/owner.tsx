@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiBase } from "@/lib/match-api";
 import {
   getGetOwnerFieldAvailabilityQueryKey,
   getGetOwnerFieldLedgerQueryKey,
@@ -319,6 +320,7 @@ export default function Owner() {
   const fields = fieldsQuery.data ?? [];
   const fieldId = selectedFieldId ?? fields[0]?.id ?? 0;
   const selectedField = fields.find((field) => field.id === fieldId) ?? fields[0];
+  const ownerRateFils = useOwnerRate(fieldId);
 
   useEffect(() => {
     if (fields.length && !fields.some((field) => field.id === selectedFieldId)) {
@@ -389,7 +391,7 @@ export default function Owner() {
   const rawDurationMinutes = timeToMinutes(to) - timeToMinutes(from);
   const durationMinutes = rawDurationMinutes > 0 ? rawDurationMinutes : rawDurationMinutes + 24 * 60;
   const billableHours = Math.ceil(durationMinutes / 60);
-  const amountFils = billableHours * 1000;
+  const amountFils = billableHours * ownerRateFils;
   const today = ammanDate();
   const maxBookDate = addDays(today, 14);
   const recordingCount = requests.filter((request) =>
@@ -593,6 +595,7 @@ export default function Owner() {
   }
 
   return (
+    <OwnerRateContext.Provider value={ownerRateFils}>
     <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-28 pt-2 sm:px-5" data-testid="page-owner" data-route={location}>
       {activeVarRequests.length > 0 && (
         <section className="mb-3 rounded-2xl border border-live/40 bg-live/10 p-3" data-testid="owner-var-live-banner">
@@ -613,7 +616,7 @@ export default function Owner() {
           <div className="flex min-w-0 items-start gap-3">
             <button
               type="button"
-              onClick={() => setLocation("/book")}
+              onClick={() => setLocation("/account")}
               aria-label={locale === "ar" ? "رجوع" : "Back"}
               data-testid="button-owner-back"
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-raised text-foreground transition-colors hover:bg-line"
@@ -659,7 +662,7 @@ export default function Owner() {
 
       <button
         type="button"
-        onClick={() => setLocation(`/book${fieldId ? `?field=${fieldId}` : ""}`)}
+        onClick={() => { setTab("request"); setRequestMode("book"); }}
         className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-floodlight text-sm font-bold text-void"
         data-testid="button-owner-book"
       >
@@ -691,7 +694,7 @@ export default function Owner() {
           copy={copy}
           locale={locale}
           mode={requestMode}
-          setMode={(mode) => (mode === "book" ? setLocation("/book") : setRequestMode(mode))}
+          setMode={setRequestMode}
           date={date}
           setDate={setDate}
           from={from}
@@ -765,6 +768,7 @@ export default function Owner() {
         {copy.secureLink}
       </div>
     </main>
+    </OwnerRateContext.Provider>
   );
 }
 
@@ -1068,6 +1072,23 @@ function FootagePanel({
   );
 }
 
+const OwnerRateContext = createContext(1000);
+
+/** The field's footage rate from Admin -> Settings -> Pricing (1 JOD/hour until changed). */
+function useOwnerRate(fieldId: number): number {
+  const query = useQuery({
+    queryKey: ["owner-rate", fieldId],
+    enabled: fieldId > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const response = await fetch(`${apiBase}/owner/fields/${fieldId}/rate`, { credentials: "include" });
+      if (!response.ok) throw new Error(`rate ${response.status}`);
+      return (await response.json()) as { ratePerHourFils: number };
+    },
+  });
+  return query.data?.ratePerHourFils ?? 1000;
+}
+
 function RequestCard({
   copy,
   locale,
@@ -1105,6 +1126,7 @@ function RequestCard({
   isSubmittingCancellation: boolean;
   isLinkActionPending: boolean;
 }) {
+  const rateFils = useContext(OwnerRateContext);
   const key = statusKey(request.status);
   const label = copy.status[key] ?? copy.unknownStatus;
   const message = copy.statusMessage[key] ?? copy.unknownStatus;
@@ -1231,7 +1253,7 @@ function RequestCard({
         )}
         {(isReady || key === "expired") && (
           <Button type="button" variant="outline" onClick={() => onRetry({ ...request, startLocal: shiftLocalWeek(request.startLocal), endLocal: shiftLocalWeek(request.endLocal) })} data-testid={`button-rebook-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs">
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{locale === "ar" ? `احجز نفس الموعد الأسبوع الجاي · ${formatJod(1000)} ${copy.currency}/س` : `Book same slot next week · ${formatJod(1000)} ${copy.currency}/h`}
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{locale === "ar" ? `احجز نفس الموعد الأسبوع الجاي · ${formatJod(rateFils)} ${copy.currency}/س` : `Book same slot next week · ${formatJod(rateFils)} ${copy.currency}/h`}
           </Button>
         )}
         {isFailed && <Button type="button" variant="secondary" onClick={() => onRetry(request)} data-testid={`button-retry-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />{copy.retry}</Button>}

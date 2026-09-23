@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { CalendarDays, ChevronRight, Film, Play } from "lucide-react";
+import { CalendarDays, ChevronRight, CirclePlus, Film, Play } from "lucide-react";
 import { useListUserClips, getListUserClipsQueryKey } from "@workspace/api-client-react";
 import { MatchCard } from "@/components/match/MatchCard";
 import { PlayerAvatar } from "@/components/match/bits";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { useAuth } from "@/lib/auth";
-import { useMyMatches, useReplayProfile } from "@/lib/match-api";
+import { formatJod, useBookingFields, useMyMatches, useReplayProfile } from "@/lib/match-api";
 
 function useTicker(ms: number) {
   const [now, setNow] = useState(Date.now());
@@ -30,8 +30,22 @@ export function HomeHub() {
   const profile = useReplayProfile(signedIn ? user?.id : null);
   const clips = useListUserClips({ query: { enabled: signedIn, queryKey: getListUserClipsQueryKey(), staleTime: 60_000 } });
   const now = useTicker(1000);
+  // Booking lives here and only here: Home is the one way into /book.
+  const booking = useBookingFields();
+  const canBook = booking.data ? booking.data.enabled && booking.data.fields.length > 0 : false;
+  const bookLabel = copy.bookFootage(formatJod(booking.data?.pricePerHourFils ?? 2000));
+  const bookRow = canBook ? (
+    <Link href="/book" className="flex items-center gap-3 rounded-2xl border border-floodlight/30 bg-surface p-3" data-testid="link-home-book">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-floodlight text-void"><CirclePlus className="h-5 w-5" /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-bold">{bookLabel}</span>
+        <span className="block truncate text-xs text-muted-text">{copy.book.why[0].title}</span>
+      </span>
+      <ChevronRight className="h-4 w-4 text-muted-text rtl:rotate-180" />
+    </Link>
+  ) : null;
 
-  if (!signedIn) return null;
+  if (!signedIn) return bookRow ? <div className="mb-6">{bookRow}</div> : null;
   const data = matches.data;
   const isOwner = (user?.ownedFieldIds?.length ?? 0) > 0;
   const firstName = (user?.name ?? "").trim().split(/\s+/)[0] ?? "";
@@ -60,17 +74,24 @@ export function HomeHub() {
       {matches.isLoading ? (
         <div className="h-48 animate-pulse rounded-3xl bg-surface" />
       ) : hero ? (
-        <MatchCard item={hero} copy={copy} now={now} variant="hero" />
+        <>
+          <MatchCard item={hero} copy={copy} now={now} variant="hero" />
+          {bookRow}
+        </>
       ) : (
         <section className="rounded-3xl border border-line bg-surface p-5">
           <CalendarDays className="h-6 w-6 text-turf" />
           <p className="mt-3 font-display text-xl font-bold">{copy.homeEmptyTitle}</p>
           <p className="mt-1 text-sm text-muted-text">{isOwner ? copy.homeEmptyOwner : copy.homeEmptyPlayer}</p>
-          <Link href="/book" className="mt-4 inline-flex min-h-11 items-center gap-1 rounded-full bg-floodlight px-5 text-sm font-bold text-void">
-            {copy.bookFootage(isOwner ? "1" : "2")}
-            <ChevronRight className="h-4 w-4 rtl:rotate-180" />
-          </Link>
-          <p className="mt-2 text-xs text-muted-text">{copy.book.why[0].title}</p>
+          {canBook && (
+            <>
+              <Link href="/book" className="mt-4 inline-flex min-h-11 items-center gap-1 rounded-full bg-floodlight px-5 text-sm font-bold text-void" data-testid="link-home-book">
+                {bookLabel}
+                <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+              </Link>
+              <p className="mt-2 text-xs text-muted-text">{copy.book.why[0].title}</p>
+            </>
+          )}
         </section>
       )}
 

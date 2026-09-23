@@ -38,6 +38,10 @@ export const matchRoomsTable = pgTable("match_rooms", {
   teamBName: text("team_b_name"),
   teamAColor: text("team_a_color").notNull().default("#F2F4F8"),
   teamBColor: text("team_b_color").notNull().default("#FF6B1A"),
+  /** 2 or 3. With three teams, games record which two teams played and a table ranks them. */
+  teamCount: integer("team_count").notNull().default(2),
+  teamCName: text("team_c_name"),
+  teamCColor: text("team_c_color").notNull().default("#2FD8C4"),
   scoreA: integer("score_a"),
   scoreB: integer("score_b"),
   scoreUpdatedAt: timestamp("score_updated_at", { withTimezone: true }),
@@ -61,7 +65,7 @@ export const matchPlayersTable = pgTable("match_players", {
   inviteToken: text("invite_token").notNull().unique(),
   /** invited | in | maybe | out */
   rsvp: text("rsvp").notNull().default("invited"),
-  /** A | B | null (not placed yet) */
+  /** A | B | C | null (not placed yet) */
   team: text("team"),
   shirtNumber: integer("shirt_number"),
   /** Position on the lineup board as percentages of the pitch (0-100). */
@@ -82,6 +86,9 @@ export const matchGamesTable = pgTable("match_games", {
   idx: integer("idx").notNull(),
   startOffsetSec: integer("start_offset_sec").notNull(),
   endOffsetSec: integer("end_offset_sec").notNull(),
+  /** The two teams that played this game; scoreA is team_x's goals, scoreB team_y's. */
+  teamX: text("team_x").notNull().default("A"),
+  teamY: text("team_y").notNull().default("B"),
   scoreA: integer("score_a"),
   scoreB: integer("score_b"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

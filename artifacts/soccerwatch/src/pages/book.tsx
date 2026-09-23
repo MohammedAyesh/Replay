@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearch } from "wouter";
-import { BarChart3, Check, ChevronRight, Clock, Loader2, MapPin, Share2, Timer, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Check, ChevronRight, Clock, Loader2, MapPin, Share2, Timer, Users } from "lucide-react";
 import { PaymentPanel } from "@/components/match/PaymentPanel";
 import { useToast } from "@/hooks/use-toast";
 import { useMatchCopy } from "@/i18n/match-strings";
@@ -10,13 +10,12 @@ import {
   formatJod,
   useBookingFields,
   useCreateBooking,
-  useOwnerBooking,
   useTakenSlots,
   type BookingResult,
 } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
 
-const DURATIONS = [60, 90, 120, 180];
+const DURATIONS = [60, 90, 120, 180, 240];
 const FIRST_SLOT = 7 * 60; // 07:00
 const LAST_SLOT = 23 * 60 + 30; // 23:30
 const WHY_ICONS = [Timer, BarChart3, Users, Share2];
@@ -61,10 +60,9 @@ export default function BookPage() {
   const { toast } = useToast();
   const search = useSearch();
   const [, setLocation] = useLocation();
-  const { user, isGuest, isAdmin, isLoading } = useAuth();
+  const { user, isGuest, isLoading } = useAuth();
   const fieldsQuery = useBookingFields();
   const create = useCreateBooking();
-  const ownerBook = useOwnerBooking();
 
   const today = ammanParts(Date.now()).date;
   const [fieldId, setFieldId] = useState<number | null>(() => {
@@ -75,7 +73,6 @@ export default function BookPage() {
   const [start, setStart] = useState<number | null>(null);
   const [duration, setDuration] = useState(60);
   const [title, setTitle] = useState("");
-  const [billOwner, setBillOwner] = useState(false);
   const [result, setResult] = useState<BookingResult | null>(null);
 
   const fields = fieldsQuery.data?.fields ?? [];
@@ -83,12 +80,12 @@ export default function BookPage() {
     if (fieldId == null && fields.length === 1) setFieldId(fields[0].id);
   }, [fieldId, fields]);
 
-  const ownedIds = (user?.ownedFieldIds ?? []) as number[];
-  const canBillOwner = Boolean(fieldId && (isAdmin || ownedIds.includes(fieldId)));
+  const maxMinutes = fieldsQuery.data?.maxMinutes ?? 180;
+  const durations = DURATIONS.filter((m) => m <= maxMinutes);
   useEffect(() => {
-    setBillOwner(Boolean(fieldId && ownedIds.includes(fieldId)));
+    if (duration > maxMinutes) setDuration(durations[durations.length - 1] ?? 60);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fieldId]);
+  }, [maxMinutes]);
 
   const taken = useTakenSlots(fieldId, date);
   const nowParts = useMemo(() => {
@@ -125,11 +122,11 @@ export default function BookPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, duration, fieldId, taken.data]);
 
-  const pricePerHour = billOwner ? fieldsQuery.data?.ownerPricePerHourFils ?? 1000 : fieldsQuery.data?.pricePerHourFils ?? 2000;
+  const pricePerHour = fieldsQuery.data?.pricePerHourFils ?? 2000;
   const priceFils = Math.max(1, Math.ceil(duration / 60)) * pricePerHour;
   const field = fields.find((f) => f.id === fieldId) ?? null;
   const ready = Boolean(field && start != null);
-  const busyNow = create.isPending || ownerBook.isPending;
+  const busyNow = create.isPending;
 
   const dayLabel = (d: string) => {
     if (d === today) return copy.today;
@@ -147,12 +144,6 @@ export default function BookPage() {
     }
     const win = windowFor(date, start, duration);
     try {
-      if (billOwner && canBillOwner) {
-        const r = await ownerBook.mutateAsync({ fieldId: field.id, ...win });
-        toast({ title: b.paid });
-        setLocation(r.match?.code ? `/m/${r.match.code}` : "/owner?tab=footage");
-        return;
-      }
       const r = await create.mutateAsync({ fieldId: field.id, ...win, title: title.trim() || null });
       setResult(r);
       window.scrollTo?.({ top: 0 });
@@ -181,10 +172,22 @@ export default function BookPage() {
     );
   }
 
+  // ---------------------------------------------------------------- closed by the admin
+  if (fieldsQuery.data && !fieldsQuery.data.enabled) {
+    return (
+      <Page ar={ar}>
+        <BackHome label={b.back} />
+        <h1 className="mt-3 font-display text-3xl font-bold">{b.title}</h1>
+        <p className="mt-3 rounded-2xl border border-line bg-surface p-4 text-sm text-muted-text">{b.closed}</p>
+      </Page>
+    );
+  }
+
   // ---------------------------------------------------------------- the booking form
   return (
     <Page ar={ar}>
-      <h1 className="font-display text-3xl font-bold">{b.title}</h1>
+      <BackHome label={b.back} />
+      <h1 className="mt-3 font-display text-3xl font-bold">{b.title}</h1>
       <p className="mt-1 text-sm text-muted-text">{b.subtitle}</p>
 
       <section className="mt-5 rounded-3xl border border-turf/25 p-4" style={{ background: "radial-gradient(120% 120% at 100% 0%, rgba(47,216,196,.12), transparent 60%), #141B2C" }}>
@@ -248,8 +251,8 @@ export default function BookPage() {
 
       {/* 3. time and length */}
       <Step n={3} label={b.length}>
-        <div className="grid grid-cols-4 gap-2">
-          {DURATIONS.map((m) => (
+        <div className={cn("grid gap-2", durations.length > 4 ? "grid-cols-5" : "grid-cols-4")}>
+          {durations.map((m) => (
             <button key={m} type="button" onClick={() => setDuration(m)} className={cn(
               "min-h-11 rounded-xl border text-sm font-semibold",
               duration === m ? "border-turf bg-turf/15 text-turf" : "border-line bg-surface",
@@ -283,16 +286,6 @@ export default function BookPage() {
         <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={60} placeholder={b.namePlaceholder} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm text-text outline-none focus:border-turf" />
       </label>
 
-      {canBillOwner && (
-        <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-line bg-surface p-3">
-          <input type="checkbox" checked={billOwner} onChange={(e) => setBillOwner(e.target.checked)} className="mt-1 h-4 w-4 accent-[#2FD8C4]" />
-          <span>
-            <span className="block text-sm font-semibold">{b.ownerBill}</span>
-            <span className="block text-xs text-muted-text">{b.ownerBillDesc(formatJod(fieldsQuery.data?.ownerPricePerHourFils ?? 1000))}</span>
-          </span>
-        </label>
-      )}
-
       {/* summary + pay */}
       <section className="mt-6 rounded-3xl border border-line bg-surface p-4">
         {ready ? (
@@ -308,20 +301,20 @@ export default function BookPage() {
           <p className="text-sm text-muted-text">{b.pickAll}</p>
         )}
         <button type="button" disabled={!ready || busyNow || isLoading} onClick={() => void submit()} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void disabled:opacity-40">
-          {busyNow ? <><Loader2 className="h-4 w-4 animate-spin" />{b.booking}</> : billOwner && canBillOwner ? b.bookOwner : b.bookAndPay(formatJod(priceFils))}
+          {busyNow ? <><Loader2 className="h-4 w-4 animate-spin" />{b.booking}</> : b.bookAndPay(formatJod(priceFils))}
         </button>
       </section>
 
-      {(ownedIds.length > 0 || isAdmin) && (
-        <Link href="/owner" className="mt-4 flex items-center gap-3 rounded-2xl border border-line p-3">
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">{b.ownerTools}</span>
-            <span className="block text-xs text-muted-text">{b.ownerToolsDesc}</span>
-          </span>
-          <ChevronRight className="h-4 w-4 text-muted-text rtl:rotate-180" />
-        </Link>
-      )}
     </Page>
+  );
+}
+
+/** Book has no tab of its own: it opens from Home, so it leads back there. */
+function BackHome({ label }: { label: string }) {
+  return (
+    <Link href="/" className="inline-flex min-h-10 items-center gap-1.5 text-sm font-semibold text-muted-text hover:text-text">
+      <ArrowLeft className="h-4 w-4 rtl:rotate-180" />{label}
+    </Link>
   );
 }
 

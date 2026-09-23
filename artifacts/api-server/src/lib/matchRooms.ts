@@ -19,9 +19,69 @@ export const VAR_OPEN_BEFORE_MS = 3 * 60 * 1000;
 export const VAR_CLOSE_AFTER_MS = 5 * 60 * 1000;
 export const VOTE_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const FOOTAGE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
-export const STATS_MATCH_FILS = 500;
-export const STATS_MONTHLY_FILS = 2000;
-export const BOOKING_FILS = 2000;
+// Prices live in Admin -> Settings; see lib/commerce.ts.
+
+export type TeamSide = "A" | "B" | "C";
+
+export function teamSides(teamCount: number): TeamSide[] {
+  return teamCount >= 3 ? ["A", "B", "C"] : ["A", "B"];
+}
+
+export interface GameResult {
+  teamX: string;
+  teamY: string;
+  scoreA: number | null;
+  scoreB: number | null;
+}
+
+export interface StandingRow {
+  team: TeamSide;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  points: number;
+}
+
+/**
+ * The table for a multi-game session: 3 points a win, 1 a draw. Games without a
+ * score are ignored. Sorted by points, then goal difference, then goals scored.
+ */
+export function computeStandings(games: readonly GameResult[], teamCount: number): StandingRow[] {
+  const sides = teamSides(teamCount);
+  const rows = new Map<TeamSide, StandingRow>(sides.map((team) => [team, {
+    team, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0, points: 0,
+  }]));
+  for (const g of games) {
+    if (g.scoreA == null || g.scoreB == null) continue;
+    const x = rows.get(g.teamX as TeamSide);
+    const y = rows.get(g.teamY as TeamSide);
+    if (!x || !y || x === y) continue;
+    x.played += 1; y.played += 1;
+    x.goalsFor += g.scoreA; x.goalsAgainst += g.scoreB;
+    y.goalsFor += g.scoreB; y.goalsAgainst += g.scoreA;
+    if (g.scoreA > g.scoreB) { x.won += 1; y.lost += 1; x.points += 3; }
+    else if (g.scoreB > g.scoreA) { y.won += 1; x.lost += 1; y.points += 3; }
+    else { x.drawn += 1; y.drawn += 1; x.points += 1; y.points += 1; }
+  }
+  return [...rows.values()].sort((a, b) =>
+    b.points - a.points
+    || (b.goalsFor - b.goalsAgainst) - (a.goalsFor - a.goalsAgainst)
+    || b.goalsFor - a.goalsFor
+    || a.team.localeCompare(b.team));
+}
+
+/** The outright leader of the table, or null when nobody has played or the top is tied. */
+export function standingsLeader(rows: readonly StandingRow[]): TeamSide | null {
+  const [first, second] = rows;
+  if (!first || first.played === 0) return null;
+  if (second && second.points === first.points
+    && second.goalsFor - second.goalsAgainst === first.goalsFor - first.goalsAgainst
+    && second.goalsFor === first.goalsFor) return null;
+  return first.team;
+}
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "scheduled", "recording"]);
 const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";

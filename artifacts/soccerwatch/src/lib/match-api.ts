@@ -36,7 +36,7 @@ const json = (body: unknown) => JSON.stringify(body ?? {});
 
 export type MatchPhase = "pre" | "live" | "processing" | "ready" | "expired" | "failed" | "cancelled";
 export type Rsvp = "invited" | "in" | "maybe" | "out";
-export type TeamSide = "A" | "B";
+export type TeamSide = "A" | "B" | "C";
 
 export type MatchPlayer = {
   id: number;
@@ -64,6 +64,18 @@ export type MatchMark = {
   mine: boolean;
 };
 
+export type TeamInfo = { name: string | null; color: string };
+export type StandingRow = {
+  team: TeamSide; played: number; won: number; drawn: number; lost: number;
+  goalsFor: number; goalsAgainst: number; points: number;
+};
+export type MatchGame = {
+  id: number; idx: number; startOffsetSec: number; endOffsetSec: number;
+  /** The two teams that played; scoreA belongs to teamX, scoreB to teamY. */
+  teamX: TeamSide; teamY: TeamSide;
+  scoreA: number | null; scoreB: number | null;
+};
+
 export type MatchRoom = {
   code: string;
   url: string;
@@ -83,8 +95,12 @@ export type MatchRoom = {
   field: { id: number; name: string; location: string | null; imageUrl: string | null };
   title: string | null;
   playersPerSide: number;
-  teams: { A: { name: string | null; color: string }; B: { name: string | null; color: string } };
+  teamCount: 2 | 3;
+  teams: { A: TeamInfo; B: TeamInfo; C?: TeamInfo };
   score: { a: number; b: number } | null;
+  /** Three-team matches only: the table, best first. */
+  standings: StandingRow[] | null;
+  leader: TeamSide | null;
   captain: { userId: number; name: string; avatarUrl: string | null } | null;
   isCaptain: boolean;
   isOwner: boolean;
@@ -101,7 +117,7 @@ export type MatchRoom = {
   var: { active: boolean; requestId: number | null; state: string | null };
   marks: MatchMark[];
   footage: { ready: boolean; readyAt: string | null; shareUrl: string | null; shareToken: string | null; expiresAt: string | null };
-  games: Array<{ id: number; idx: number; startOffsetSec: number; endOffsetSec: number; scoreA: number | null; scoreB: number | null }>;
+  games: MatchGame[];
   vote: {
     open: boolean;
     closed: boolean;
@@ -115,6 +131,11 @@ export type MatchRoom = {
   stats: {
     unlocked: boolean;
     pending: { reference: string; kind: string; amountFils: number } | null;
+    /** Admin → Settings → Match stats. */
+    enabled: boolean;
+    paywall: boolean;
+    teamPack: boolean;
+    monthly: boolean;
     prices: { matchFils: number; monthlyFils: number; teamFils: number };
     cliqAlias: string;
   };
@@ -291,15 +312,21 @@ export const useAutoTeams = (code: string) =>
   useRoomMutation(code, (shuffle: boolean) => call<MatchRoom>(`/m/${code}/teams/auto`, { method: "POST", body: json({ shuffle }) }));
 
 export const useUpdateRoom = (code: string) =>
-  useRoomMutation(code, (body: { title?: string | null; teamAName?: string | null; teamBName?: string | null; teamAColor?: string; teamBColor?: string; playersPerSide?: number }) =>
+  useRoomMutation(code, (body: {
+    title?: string | null; teamAName?: string | null; teamBName?: string | null; teamCName?: string | null;
+    teamAColor?: string; teamBColor?: string; teamCColor?: string; teamCount?: 2 | 3; playersPerSide?: number;
+  }) =>
     call<MatchRoom>(`/m/${code}`, { method: "PATCH", body: json(body) }));
 
 export const useSetScore = (code: string) =>
   useRoomMutation(code, (body: { scoreA: number; scoreB: number }) => call<MatchRoom>(`/m/${code}/score`, { method: "POST", body: json(body) }));
 
 export const useSetGames = (code: string) =>
-  useRoomMutation(code, (games: Array<{ startOffsetSec: number; endOffsetSec: number; scoreA?: number | null; scoreB?: number | null }>) =>
+  useRoomMutation(code, (games: Array<{ startOffsetSec: number; endOffsetSec: number; teamX?: TeamSide; teamY?: TeamSide; scoreA?: number | null; scoreB?: number | null }>) =>
     call<MatchRoom>(`/m/${code}/games`, { method: "PUT", body: json({ games }) }));
+
+export const useMakeCaptain = (code: string) =>
+  useRoomMutation(code, (playerId: number) => call<MatchRoom>(`/m/${code}/captain`, { method: "POST", body: json({ playerId }) }));
 
 export const useFlagMoment = (code: string) =>
   useRoomMutation(code, (body: { kind: "goal" | "foul" | "offside" | "other"; note?: string | null; atUtc?: string }) =>
@@ -412,7 +439,15 @@ export async function shareOrCopy(payload: { title?: string; text: string; url: 
 // ---------------------------------------------------------------- booking a recording
 
 export type BookableField = { id: number; name: string; location: string | null; imageUrl: string | null };
-export type BookingFields = { fields: BookableField[]; pricePerHourFils: number; ownerPricePerHourFils: number; maxDaysAhead: number };
+export type BookingFields = {
+  fields: BookableField[];
+  pricePerHourFils: number;
+  maxDaysAhead: number;
+  maxMinutes: number;
+  /** Admin → Settings → Bookings. Off hides the Book button on Home. */
+  enabled: boolean;
+  cliqAlias: string;
+};
 export type BookingResult = {
   code: string; requestId: number; amountFils: number; reference: string; cliqAlias: string;
   startLocal: string; endLocal: string; fieldName: string;
@@ -436,19 +471,6 @@ export function useCreateBooking() {
   return useMutation({
     mutationFn: (body: { fieldId: number; startLocal: string; endLocal: string; title?: string | null }) =>
       call<BookingResult>("/bookings", { method: "POST", body: json(body) }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["booking-taken"] });
-      void qc.invalidateQueries({ queryKey: myMatchesKey });
-    },
-  });
-}
-
-/** Field owners book on their account (no payment step). */
-export function useOwnerBooking() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ fieldId, ...body }: { fieldId: number; startLocal: string; endLocal: string }) =>
-      call<{ id: number; match?: { code: string } | null }>(`/owner/fields/${fieldId}/requests`, { method: "POST", body: json(body) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["booking-taken"] });
       void qc.invalidateQueries({ queryKey: myMatchesKey });
