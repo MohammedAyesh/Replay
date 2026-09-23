@@ -374,8 +374,11 @@ router.get("/me/matches", async (req, res): Promise<void> => {
   const memberRooms = await roomsForUser(user.id);
   // Field owners also see every match booked on their fields, so the next one
   // shows up before any player has joined.
-  const owned = await db.select({ fieldId: fieldOwnersTable.fieldId }).from(fieldOwnersTable)
-    .where(eq(fieldOwnersTable.userId, user.id));
+  // Admins run every field, so they see every booking.
+  const owned = user.isAdmin
+    ? await db.select({ fieldId: fieldsTable.id }).from(fieldsTable)
+    : await db.select({ fieldId: fieldOwnersTable.fieldId }).from(fieldOwnersTable)
+      .where(eq(fieldOwnersTable.userId, user.id));
   const ownedFieldIds = owned.map((o) => o.fieldId);
   const ownerRooms = ownedFieldIds.length ? await db.select({
     room: matchRoomsTable,

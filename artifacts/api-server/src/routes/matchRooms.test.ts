@@ -359,6 +359,8 @@ describe("a match from invite to vote", () => {
     const ownerMatches = await request(app).get("/api/me/matches").set(as("owner"));
     const upcoming = ownerMatches.body.upcoming.find((m: { code: string }) => m.code === room.code);
     expect(upcoming?.isOwner).toBe(true);
+    const adminMatches = await request(app).get("/api/me/matches").set(as("admin"));
+    expect(adminMatches.body.upcoming.some((m: { code: string }) => m.code === room.code)).toBe(true);
     const outsiderMatches = await request(app).get("/api/me/matches").set(as("outsider"));
     expect(outsiderMatches.body.upcoming.some((m: { code: string }) => m.code === room.code)).toBe(false);
     const list = await request(app).get(`/api/owner/fields/${fieldId}/requests`).set(as("owner"));
