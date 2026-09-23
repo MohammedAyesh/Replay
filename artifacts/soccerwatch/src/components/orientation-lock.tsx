@@ -52,20 +52,20 @@ export function OrientationLock() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="absolute inset-0 z-[500] bg-[#0D1B3E] flex flex-col items-center justify-center gap-6 select-none"
+          className="absolute inset-0 z-[500] bg-void flex flex-col items-center justify-center gap-6 select-none"
         >
           <motion.div
             animate={{ rotate: [0, 90, 90, 0] }}
             transition={{ repeat: Infinity, duration: 2.6, ease: "easeInOut", times: [0, 0.35, 0.65, 1] }}
           >
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--replay-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <rect x="5" y="2" width="14" height="20" rx="2" />
-              <circle cx="12" cy="18" r="1" fill="white" stroke="none" />
+              <circle cx="12" cy="18" r="1" fill="var(--replay-text)" stroke="none" />
             </svg>
           </motion.div>
           <div className="flex flex-col items-center gap-2 text-center px-8">
-            <p className="text-white text-lg font-bold">{t.orientationLock.title}</p>
-            <p className="text-white/60 text-sm leading-relaxed">{t.orientationLock.subtitle}</p>
+            <p className="text-text text-lg font-bold">{t.orientationLock.title}</p>
+            <p className="text-muted-text text-sm leading-relaxed">{t.orientationLock.subtitle}</p>
           </div>
         </motion.div>
       )}

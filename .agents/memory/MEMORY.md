@@ -36,3 +36,4 @@
 - [Claim continuity questions](claim-continuity-questions.md) — internal long gaps and optional kit changes use continuity questions without changing the tracking payload.
 - [Footage refund accounting](footage-refund-accounting.md) — approved footage cancellations use a zero-valued refunded request and must not add negative payment rows.
 - [Bunny title parser formats](bunny-title-parser.md) — public archive titles may omit the camera prefix; parse bare ISO date/time titles in both archive and admin flows.
+- [Replay visual tokens](replay-visual-tokens.md) — Floodlight is the single primary action, Turf marks ready/active states, and live red is reserved for live recording signals.

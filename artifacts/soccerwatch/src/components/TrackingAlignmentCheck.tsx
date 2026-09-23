@@ -196,8 +196,10 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
           if (!ctx) continue;
           ctx.drawImage(video, sx, sy, CROP_W, CROP_H, 0, 0, canvas.width, canvas.height);
           ctx.lineWidth = 2;
-          ctx.strokeStyle = "#c7f24a";
-          ctx.font = "11px ui-monospace, monospace";
+          ctx.strokeStyle = getComputedStyle(document.documentElement)
+            .getPropertyValue("--replay-turf")
+            .trim();
+          ctx.font = "11px Rajdhani, sans-serif";
           let drawn = 0;
           for (const box of boxes) {
             const bx = (box.x - sx) * scale;
@@ -232,8 +234,8 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
   }, [recordingId]);
 
   return (
-    <div className="mt-3 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
-      <p className="mb-2 text-[11px] text-zinc-400" data-testid="text-alignment-status">{status}</p>
+    <div className="mt-3 w-full rounded-lg border border-line bg-void/60 p-3">
+      <p className="mb-2 text-[11px] text-muted-text" data-testid="text-alignment-status">{status}</p>
       <div className="flex gap-3 overflow-x-auto pb-1">
         {[0, 1, 2, 3, 4, 5].map((index) => {
           const shot = shots.find((_, i) => i === index);
@@ -241,11 +243,11 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
             <figure key={index} className="m-0 flex-none">
               <canvas
                 ref={(node) => { canvasRefs.current[index] = node; }}
-                className="block rounded border border-zinc-800 bg-black"
+                className="block rounded border border-line bg-void"
                 style={{ width: SHOT_W / 2, height: (CROP_H * (SHOT_W / CROP_W)) / 2 }}
                 data-testid={`canvas-alignment-${index}`}
               />
-              <figcaption className="mt-1 font-mono text-[10px] text-zinc-500">
+              <figcaption className="mt-1 font-mono text-[10px] text-muted-text">
                 {shot
                   ? `${shot.name} · ${Math.floor(shot.seconds / 60)}:${String(Math.floor(shot.seconds % 60)).padStart(2, "0")} · ${shot.drawn < 0 ? "seek failed" : `${shot.drawn} boxes`}`
                   : "…"}

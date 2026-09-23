@@ -248,18 +248,18 @@ function VarCameraCard({ camera }: { camera: Camera }) {
   return (
     <section className={cn(
       "rounded-2xl border overflow-hidden",
-      showPlayer ? "border-red-600/60 bg-zinc-900" : "border-zinc-800 bg-zinc-900/60",
+      showPlayer ? "border-live/60 bg-surface" : "border-line bg-surface/60",
     )}>
-      <header className="flex items-center gap-3 border-b border-zinc-800/70 px-4 py-3">
+      <header className="flex items-center gap-3 border-b border-line px-4 py-3">
         <span className={cn(
           "h-2.5 w-2.5 rounded-full",
-          loading ? "bg-zinc-600 animate-pulse" : showPlayer ? "bg-red-500 animate-pulse" : isOn ? "bg-amber-400" : "bg-zinc-600",
+          loading ? "bg-muted-text animate-pulse" : showPlayer ? "bg-live animate-pulse" : isOn ? "bg-turf" : "bg-muted-text",
         )} />
-        <h2 className="text-sm font-semibold text-white">{copy.camera(cameraNumber(camera))}</h2>
+        <h2 className="text-sm font-semibold text-text">{copy.camera(cameraNumber(camera))}</h2>
         {!loading && isSupported && (
           <span className={cn(
             "ml-auto rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-            showPlayer ? "border-red-600/40 bg-red-600/10 text-red-300" : isOn ? "border-amber-600/40 bg-amber-600/10 text-amber-300" : "border-zinc-700 text-zinc-500",
+            showPlayer ? "border-live/40 bg-live/10 text-live" : isOn ? "border-turf/40 bg-turf/10 text-turf" : "border-line text-muted-text",
           )}>
             {!isOn ? copy.off : isLive ? copy.live : state?.live === false ? copy.starting : copy.on}
           </span>
@@ -268,27 +268,27 @@ function VarCameraCard({ camera }: { camera: Camera }) {
 
       <div className="space-y-4 p-4">
         {loading && (
-          <div className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />{copy.checking}</div>
+          <div className="flex items-center gap-2 text-xs text-muted-text"><Loader2 className="h-3.5 w-3.5 animate-spin" />{copy.checking}</div>
         )}
         {error && (
-          <div className="flex items-start gap-2 rounded-xl border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+          <div className="flex items-start gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-xs text-text">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>{error}</span>
           </div>
         )}
         {stopNotice && (
-          <div className="flex items-start gap-2 rounded-xl border border-blue-700/40 bg-blue-900/20 px-3 py-2 text-xs text-blue-200">
+          <div className="flex items-start gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-xs text-turf">
             <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>{stopNotice}</span>
           </div>
         )}
 
         {!loading && !isSupported && (
-          <p className="text-sm text-zinc-500">{copy.unavailable}</p>
+          <p className="text-sm text-muted-text">{copy.unavailable}</p>
         )}
 
         {!loading && isSupported && (
           <>
-            {since && <p className="flex items-center gap-1.5 text-xs text-zinc-400"><Clock className="h-3.5 w-3.5" />{copy.startedAt(since)}</p>}
-            {until && <p className="flex items-center gap-1.5 text-xs text-zinc-400"><Clock className="h-3.5 w-3.5" />{copy.until(until)}</p>}
+            {since && <p className="flex items-center gap-1.5 text-xs text-muted-text"><Clock className="h-3.5 w-3.5" />{copy.startedAt(since)}</p>}
+            {until && <p className="flex items-center gap-1.5 text-xs text-muted-text"><Clock className="h-3.5 w-3.5" />{copy.until(until)}</p>}
 
             {showPlayer ? (
               <VarPlayer
@@ -298,48 +298,48 @@ function VarCameraCard({ camera }: { camera: Camera }) {
                 title={`${copy.camera(cameraNumber(camera))} · VAR`}
               />
             ) : (
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-5 text-center text-xs text-zinc-500">
+              <div className="rounded-xl border border-line bg-void/60 px-4 py-5 text-center text-xs text-muted-text">
                 {isOn ? copy.connectingMessage : copy.offMessage}
               </div>
             )}
 
             <div className="flex flex-wrap items-end gap-2">
-              <label className="min-w-[150px] flex-1 text-[11px] text-zinc-500">
+              <label className="min-w-[150px] flex-1 text-[11px] text-muted-text">
                 <span className="mb-1 block">{copy.duration}</span>
-                <select value={duration} onChange={(event) => setDuration(Number(event.target.value))} disabled={working !== null || isOn} className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-xs text-white">
+                <select value={duration} onChange={(event) => setDuration(Number(event.target.value))} disabled={working !== null || isOn} className="w-full rounded-xl border border-line bg-void px-3 py-2.5 text-xs text-text">
                   {DURATION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{copy[option.label]}</option>)}
                 </select>
               </label>
-              <button type="button" onClick={start} disabled={working !== null || isOn} className="flex items-center justify-center gap-1.5 rounded-xl bg-red-600 px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40">
+              <button type="button" onClick={start} disabled={working !== null || isOn} className="flex items-center justify-center gap-1.5 rounded-xl bg-floodlight px-3 py-2.5 text-xs font-semibold text-void transition-colors hover:bg-floodlight/90 disabled:cursor-not-allowed disabled:opacity-40">
                 {working === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Radio className="h-3.5 w-3.5" />}
                 {working === "start" ? copy.startingAction : copy.start}
               </button>
               {!stopConfirm ? (
-                <button type="button" onClick={() => setStopConfirm(true)} disabled={working !== null || !isOn} className="flex items-center justify-center gap-1.5 rounded-xl bg-zinc-800 px-3 py-2.5 text-xs font-semibold text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40">
+                <button type="button" onClick={() => setStopConfirm(true)} disabled={working !== null || !isOn} className="flex items-center justify-center gap-1.5 rounded-xl border border-line bg-transparent px-3 py-2.5 text-xs font-semibold text-text transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-40">
                   <Square className="h-3.5 w-3.5" />{copy.stop}
                 </button>
               ) : (
-                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-700/50 bg-amber-950/30 px-3 py-2">
-                  <span className="text-xs text-amber-200">{copy.stopConfirm}</span>
-                  <button type="button" onClick={stop} disabled={working !== null} className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-semibold text-black disabled:opacity-50">{working === "stop" ? copy.stopping : copy.confirmStop}</button>
-                  <button type="button" onClick={() => setStopConfirm(false)} className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300">{copy.keepRunning}</button>
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2">
+                  <span className="text-xs text-text">{copy.stopConfirm}</span>
+                  <button type="button" onClick={stop} disabled={working !== null} className="rounded-lg bg-floodlight px-2.5 py-1.5 text-xs font-semibold text-void disabled:opacity-50">{working === "stop" ? copy.stopping : copy.confirmStop}</button>
+                  <button type="button" onClick={() => setStopConfirm(false)} className="rounded-lg border border-line bg-transparent px-2.5 py-1.5 text-xs text-muted-text">{copy.keepRunning}</button>
                 </div>
               )}
-              <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded-xl bg-zinc-800 p-2.5 text-zinc-500 transition-colors hover:bg-zinc-700 hover:text-zinc-300" title={copy.refresh} aria-label={copy.refresh}>
+              <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded-xl border border-line bg-transparent p-2.5 text-muted-text transition-colors hover:bg-raised hover:text-text" title={copy.refresh} aria-label={copy.refresh}>
                 <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
               </button>
             </div>
 
-            <form onSubmit={schedule} className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
-              <div className="flex items-center gap-2 text-xs font-semibold text-white"><CalendarDays className="h-3.5 w-3.5 text-primary" />{copy.scheduleTitle}</div>
+            <form onSubmit={schedule} className="space-y-2 rounded-xl border border-line bg-void/40 p-3">
+              <div className="flex items-center gap-2 text-xs font-semibold text-text"><CalendarDays className="h-3.5 w-3.5 text-turf" />{copy.scheduleTitle}</div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <label className="text-[11px] text-zinc-500"><span className="mb-1 block">{copy.date}</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} min={formatDateForAmman(new Date())} className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white" /></label>
-                <label className="text-[11px] text-zinc-500"><span className="mb-1 block">{copy.from}</span><select value={from} onChange={(event) => setFrom(event.target.value)} className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white">{TIME_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>
-                <label className="text-[11px] text-zinc-500"><span className="mb-1 block">{copy.to}</span><select value={to} onChange={(event) => setTo(event.target.value)} className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white">{TIME_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>
+                <label className="text-[11px] text-muted-text"><span className="mb-1 block">{copy.date}</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} min={formatDateForAmman(new Date())} className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-xs text-text" /></label>
+                <label className="text-[11px] text-muted-text"><span className="mb-1 block">{copy.from}</span><select value={from} onChange={(event) => setFrom(event.target.value)} className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-xs text-text">{TIME_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>
+                <label className="text-[11px] text-muted-text"><span className="mb-1 block">{copy.to}</span><select value={to} onChange={(event) => setTo(event.target.value)} className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-xs text-text">{TIME_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[10px] text-zinc-600">{copy.scheduleHint}</span>
-                <button type="submit" disabled={working !== null} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-black disabled:opacity-50">
+                <span className="text-[10px] text-muted-text">{copy.scheduleHint}</span>
+                <button type="submit" disabled={working !== null} className="flex items-center gap-1.5 rounded-lg bg-floodlight px-3 py-2 text-xs font-semibold text-void disabled:opacity-50">
                   {working === "schedule" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarDays className="h-3.5 w-3.5" />}
                   {working === "schedule" ? copy.scheduling : copy.schedule}
                 </button>
@@ -347,18 +347,18 @@ function VarCameraCard({ camera }: { camera: Camera }) {
             </form>
 
             <div className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">{copy.upcoming}</h3>
-              {upcoming.length === 0 ? <p className="text-xs text-zinc-600">{copy.noWindows}</p> : upcoming.map((window, index) => {
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-text">{copy.upcoming}</h3>
+              {upcoming.length === 0 ? <p className="text-xs text-muted-text">{copy.noWindows}</p> : upcoming.map((window, index) => {
                 const cancelKey = windowKey(window, index);
                 const isCanceling = working === String(window.id);
                 return (
-                  <div key={`${window.kind}-${cancelKey}`} className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950/50 px-3 py-2.5">
+                  <div key={`${window.kind}-${cancelKey}`} className="flex items-center gap-3 rounded-xl border border-line bg-void/50 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium text-white">{window.kind === "admin" ? copy.adminWindow : copy.ownerBooking}{windowLabel(window, "") ? ` · ${windowLabel(window, "")}` : ""}</p>
-                      <p className="text-[11px] text-zinc-500">{windowStart(window)} → {windowEnd(window)}{displayValue(window.status) ? ` · ${displayValue(window.status)}` : ""}</p>
+                      <p className="text-xs font-medium text-text">{window.kind === "admin" ? copy.adminWindow : copy.ownerBooking}{windowLabel(window, "") ? ` · ${windowLabel(window, "")}` : ""}</p>
+                      <p className="text-[11px] text-muted-text">{windowStart(window)} → {windowEnd(window)}{displayValue(window.status) ? ` · ${displayValue(window.status)}` : ""}</p>
                     </div>
                     {window.kind === "admin" && window.id != null && (
-                      <button type="button" onClick={() => cancelWindow(window.id)} disabled={working !== null} className="flex shrink-0 items-center gap-1 rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50" aria-label={copy.cancel}>
+                      <button type="button" onClick={() => cancelWindow(window.id)} disabled={working !== null} className="flex shrink-0 items-center gap-1 rounded-lg border border-line p-1.5 text-muted-text transition-colors hover:bg-raised hover:text-text disabled:opacity-50" aria-label={copy.cancel}>
                         {isCanceling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                       </button>
                     )}
@@ -378,8 +378,8 @@ export default function AdminVarTab() {
   return (
     <div className="space-y-4 outline-none" aria-label={t.adminVar.title}>
       <div>
-        <p className="text-lg font-semibold text-white">{t.adminVar.title}</p>
-        <p className="mt-0.5 text-xs text-zinc-500">{t.adminVar.subtitle}</p>
+        <p className="text-lg font-semibold text-text">{t.adminVar.title}</p>
+        <p className="mt-0.5 text-xs text-muted-text">{t.adminVar.subtitle}</p>
       </div>
       <div className="grid grid-cols-1 gap-3">
         {CAMERAS.map((camera) => <VarCameraCard key={camera} camera={camera} />)}

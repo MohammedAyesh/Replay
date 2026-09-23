@@ -498,15 +498,15 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
     };
 
     return (
-      <div className="relative rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800">
+      <div className="relative rounded-2xl overflow-hidden bg-surface border border-line">
         {/* Label + live/replay badge */}
         <div className="absolute top-3 start-3 z-10 flex items-center gap-1.5">
-          <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/70 backdrop-blur-sm text-xs font-semibold text-white">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+          <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/70 backdrop-blur-sm text-xs font-semibold text-text">
+            <span className="w-1.5 h-1.5 rounded-full bg-live animate-pulse" />
             {label}
           </span>
           {ready && (
-            <span className="px-2 py-1 rounded-full bg-black/70 text-[10px] font-semibold text-white">
+            <span className="px-2 py-1 rounded-full bg-black/70 text-[10px] font-semibold text-text">
               {isLive ? "LIVE" : "REPLAY"}
             </span>
           )}
@@ -514,7 +514,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
 
         <video
           ref={videoRef}
-          className={`w-full aspect-video bg-black${videoClassName ? ` ${videoClassName}` : ""}`}
+          className={`w-full aspect-video bg-void${videoClassName ? ` ${videoClassName}` : ""}`}
           style={videoStyle}
           playsInline
           muted
@@ -524,7 +524,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         {/* DVR scrubber */}
         {showDvrControls && (
           hasDvrWindow && (
-            <div className="bg-zinc-950 px-3 py-2 space-y-1.5">
+            <div className="bg-void px-3 py-2 space-y-1.5">
             <input
               aria-label={`${label} timeline`}
               type="range"
@@ -540,9 +540,9 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
                 if (videoRef.current) videoRef.current.currentTime = next;
                 setTimeline((current) => ({ ...current, position: next }));
               }}
-              className="w-full accent-red-500"
+              className="w-full accent-live"
             />
-            <div className="flex items-center justify-between text-[10px] text-zinc-400">
+            <div className="flex items-center justify-between text-[10px] text-muted-text">
               <span>
                 {isLive ? "Live edge" : "Rewound in available window"}
               </span>
@@ -550,7 +550,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
                 <button
                   type="button"
                   onClick={goLive}
-                  className="inline-flex items-center gap-1 text-red-400 hover:text-red-300 font-semibold"
+                  className="inline-flex items-center gap-1 text-muted-text hover:text-text font-semibold"
                 >
                   <RotateCcw className="w-3 h-3" />
                   Go live
@@ -563,24 +563,24 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
 
         {/* Loading overlay */}
         {showStatusOverlays && !ready && !waiting && (
-          <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60">
+          <div className="absolute inset-0 flex items-center justify-center bg-void/60">
             <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
           </div>
         )}
 
         {/* Waiting-for-stream overlay (retryOnNetworkError mode only) */}
         {showStatusOverlays && waiting && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950/80">
-            <div className="w-6 h-6 rounded-full border-2 border-zinc-500 border-t-transparent animate-spin" />
-            <p className="text-zinc-400 text-sm font-medium">Waiting for stream…</p>
-            <p className="text-zinc-600 text-xs">Retrying automatically</p>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-void/80">
+            <div className="w-6 h-6 rounded-full border-2 border-muted-text border-t-transparent animate-spin" />
+            <p className="text-muted-text text-sm font-medium">Waiting for stream…</p>
+            <p className="text-muted-text text-xs">Retrying automatically</p>
           </div>
         )}
 
         {/* Error toast */}
         {showStatusOverlays && error && (
           <div className="absolute inset-x-0 bottom-12 flex justify-center px-3">
-            <span className="rounded-lg bg-black/80 px-3 py-2 text-xs text-white">
+            <span className="rounded-lg border border-line bg-surface/90 px-3 py-2 text-xs text-text">
               {error}
             </span>
           </div>

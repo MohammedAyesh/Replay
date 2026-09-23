@@ -594,20 +594,20 @@ export default function Owner() {
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-28 pt-2 sm:px-5" data-testid="page-owner" data-route={location}>
       {activeVarRequests.length > 0 && (
-        <section className="mb-3 rounded-2xl border border-red-400/40 bg-red-500/[0.12] p-3" data-testid="owner-var-live-banner">
+        <section className="mb-3 rounded-2xl border border-live/40 bg-live/10 p-3" data-testid="owner-var-live-banner">
           <div className="flex items-start gap-2">
-            <span className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-400" />
+            <span className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-live" />
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold text-red-100">{locale === "ar" ? "مراجعة VAR متاحة الآن" : "VAR review is live now"}</p>
-              <p className="mt-1 text-[11px] leading-4 text-red-100/70">{locale === "ar" ? "افتح المباراة لوضع العلامات على اللحظات المهمة." : "Open the match to mark the important moments."}</p>
+              <p className="text-xs font-bold text-text">{locale === "ar" ? "مراجعة VAR متاحة الآن" : "VAR review is live now"}</p>
+              <p className="mt-1 text-[11px] leading-4 text-muted-text">{locale === "ar" ? "افتح المباراة لوضع العلامات على اللحظات المهمة." : "Open the match to mark the important moments."}</p>
             </div>
-            <button type="button" onClick={() => setLocation(`/owner/var/${activeVarRequests[0].id}`)} className="shrink-0 rounded-xl bg-red-400 px-3 py-2 text-[11px] font-bold text-red-950">
+            <button type="button" onClick={() => setLocation(`/owner/var/${activeVarRequests[0].id}`)} className="shrink-0 rounded-xl bg-floodlight px-3 py-2 text-[11px] font-bold text-void">
               {locale === "ar" ? "فتح VAR" : "Open VAR"}
             </button>
           </div>
         </section>
       )}
-      <section className="rounded-[26px] border border-white/[0.08] bg-[linear-gradient(145deg,rgba(212,255,79,.13),rgba(20,27,43,.45)_52%,rgba(123,92,255,.10))] p-4 sm:p-5" data-testid="owner-header">
+      <section className="rounded-[26px] border border-line bg-surface p-4 sm:p-5" data-testid="owner-header">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             <button
@@ -615,21 +615,21 @@ export default function Owner() {
               onClick={() => setLocation("/home")}
               aria-label={locale === "ar" ? "رجوع" : "Back"}
               data-testid="button-owner-back"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-foreground transition-colors hover:bg-white/[0.1]"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-raised text-foreground transition-colors hover:bg-line"
             >
               <ArrowLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
             </button>
             <div className="min-w-0">
-            <p className="mb-2 flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-primary" data-testid="text-owner-eyebrow">
-              <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_0_4px_rgba(212,255,79,.12)]" />
+            <p className="mb-2 flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-turf" data-testid="text-owner-eyebrow">
+              <span className="h-1.5 w-1.5 rounded-full bg-turf" />
               {copy.active}
             </p>
             <h1 className="font-display text-[clamp(27px,8vw,40px)] font-semibold leading-[0.95] tracking-[-0.05em] text-foreground" data-testid="text-owner-title">{copy.title}</h1>
             <p className="mt-2 max-w-[29rem] text-xs leading-5 text-muted-foreground" data-testid="text-owner-subtitle">{copy.subtitle}</p>
             </div>
           </div>
-          <div className="hidden shrink-0 rounded-2xl border border-primary/20 bg-background/30 p-3 sm:block" data-testid="owner-trust-mark">
-            <ShieldCheck className="h-6 w-6 text-primary" aria-hidden="true" />
+          <div className="hidden shrink-0 rounded-2xl border border-turf/20 bg-raised p-3 sm:block" data-testid="owner-trust-mark">
+            <ShieldCheck className="h-6 w-6 text-turf" aria-hidden="true" />
           </div>
         </div>
         <label className="mt-4 block" htmlFor="owner-field-select">
@@ -641,7 +641,7 @@ export default function Owner() {
               onChange={(event) => selectField(event.target.value)}
               data-testid="select-owner-field"
               aria-label={copy.field}
-              className="h-11 w-full appearance-none rounded-xl border border-white/[0.12] bg-background/50 px-3 pe-10 text-sm font-medium text-foreground outline-none focus:border-primary"
+              className="h-11 w-full appearance-none rounded-xl border border-line bg-surface px-3 pe-10 text-sm font-medium text-foreground outline-none focus:border-turf"
             >
               <option value="" disabled>{copy.chooseField}</option>
               {fields.map((field: OwnerField) => <option key={field.id} value={field.id}>{field.name}</option>)}
@@ -650,13 +650,13 @@ export default function Owner() {
           </span>
         </label>
         <div className="mt-3 grid grid-cols-3 gap-2" data-testid="owner-live-summary">
-          <OwnerMetric icon={<span className="h-1.5 w-1.5 rounded-full bg-orange-300" />} label={copy.status.recording ?? copy.active} value={recordingCount} testId="recording" />
+          <OwnerMetric icon={<span className="h-1.5 w-1.5 rounded-full bg-live" />} label={copy.status.recording ?? copy.active} value={recordingCount} testId="recording" />
           <OwnerMetric icon={<Check className="h-3.5 w-3.5" />} label={copy.status.ready ?? copy.myFootage} value={readyCount} testId="ready" />
           <OwnerMetric icon={<Banknote className="h-3.5 w-3.5" />} label={copy.due} value={formatJod(selectedField?.balanceFils ?? 0)} testId="due" />
         </div>
       </section>
 
-      <nav className="mt-4 grid grid-cols-3 gap-1 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-1" aria-label={copy.title} data-testid="owner-tabs">
+      <nav className="mt-4 grid grid-cols-3 gap-1 rounded-2xl border border-line bg-surface p-1" aria-label={copy.title} data-testid="owner-tabs">
         {([
           ["request", copy.request, Plus],
           ["footage", copy.myFootage, Film],
@@ -668,7 +668,7 @@ export default function Owner() {
             onClick={() => setTab(value)}
             aria-selected={tab === value}
             data-testid={`tab-owner-${value}`}
-            className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-2 text-xs font-semibold transition-colors ${tab === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"}`}
+            className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-2 text-xs font-semibold transition-colors ${tab === value ? "bg-turf text-void" : "text-muted-foreground hover:bg-raised hover:text-foreground"}`}
           >
             <Icon className="h-3.5 w-3.5" aria-hidden="true" />
             {label}
@@ -825,7 +825,7 @@ function RequestPanel({
   return (
     <section className="mt-4 space-y-3" data-testid="owner-request-panel">
       <div className="grid grid-cols-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-1" data-testid="owner-request-switch">
-        <button type="button" onClick={() => setMode("past")} aria-pressed={mode === "past"} data-testid="button-request-past" className={`min-h-11 rounded-xl px-3 text-xs font-semibold ${mode === "past" ? "bg-white/[0.10] text-foreground" : "text-muted-foreground"}`}>{copy.pastFootage}</button>
+          <button type="button" onClick={() => setMode("past")} aria-pressed={mode === "past"} data-testid="button-request-past" className={`min-h-11 rounded-xl px-3 text-xs font-semibold ${mode === "past" ? "bg-turf text-void" : "text-muted-foreground"}`}>{copy.pastFootage}</button>
         <button type="button" onClick={() => setMode("book")} aria-pressed={mode === "book"} data-testid="button-request-book" className={`min-h-11 rounded-xl px-3 text-xs font-semibold ${mode === "book" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>{copy.bookMatch}</button>
       </div>
 
@@ -1154,7 +1154,7 @@ function RequestCard({
 
       {request.varActive && (
         <div className="border-t border-white/[0.07] p-3" data-testid={`var-owner-request-${request.id}`}>
-          <button type="button" onClick={() => onOpenVar(request.id)} className="mb-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-red-400 px-3 py-2 text-xs font-bold text-red-950">
+          <button type="button" onClick={() => onOpenVar(request.id)} className="mb-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-floodlight px-3 py-2 text-xs font-bold text-void">
             <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />
             {locale === "ar" ? "فتح مراجعة VAR بملء الشاشة" : "Open full-screen VAR review"}
           </button>
@@ -1174,7 +1174,7 @@ function RequestCard({
 
       <div className="flex flex-wrap gap-2 border-t border-white/[0.07] p-3">
         {isScheduled && request.varOpensAt && (
-          <div className="w-full rounded-xl border border-red-300/25 bg-red-500/[0.08] px-3 py-2 text-[11px] text-red-100/80">
+          <div className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-[11px] text-muted-text">
             {locale === "ar" ? "يفتح VAR الساعة" : "VAR opens at"} {new Date(request.varOpensAt).toLocaleTimeString(locale === "ar" ? "ar-JO" : "en-JO", { hour: "2-digit", minute: "2-digit" })}
           </div>
         )}
@@ -1233,7 +1233,7 @@ function RequestCard({
         <div className="grid gap-3 border-t border-destructive/20 bg-destructive/[0.06] p-3" data-testid={`confirm-cancel-owner-request-${request.id}`}>
           <p className="text-xs leading-5 text-foreground">{copy.cancelPrompt}</p>
           <div className="flex gap-2">
-            <Button type="button" variant="destructive" onClick={() => onCancel(request.id)} disabled={isCancelling} data-testid={`button-confirm-cancel-owner-request-${request.id}`} className="min-h-11 flex-1 rounded-xl text-xs">{isCancelling ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}{copy.confirmCancel}</Button>
+            <Button type="button" onClick={() => onCancel(request.id)} disabled={isCancelling} data-testid={`button-confirm-cancel-owner-request-${request.id}`} className="min-h-11 flex-1 rounded-xl bg-floodlight text-void hover:bg-floodlight/90 text-xs">{isCancelling ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}{copy.confirmCancel}</Button>
             <Button type="button" variant="ghost" onClick={() => setConfirmingCancel(null)} data-testid={`button-keep-owner-request-${request.id}`} className="min-h-11 rounded-xl text-xs">{copy.keepRequest}</Button>
           </div>
         </div>

@@ -205,7 +205,7 @@ export default function OwnerShare() {
           {copy.myClips}
         </Link>
       ),
-      className: "bg-primary text-white border-none",
+      className: "bg-floodlight text-void border-none",
       duration: 3500,
     });
   }, [copy.myClips, copy.saved, toast]);
@@ -254,7 +254,7 @@ export default function OwnerShare() {
 
   if (metaLoading) {
     return (
-      <main className="flex min-h-0 flex-1 items-center justify-center bg-[#0B0F1A] px-6 text-center text-muted-foreground">
+      <main className="flex min-h-0 flex-1 items-center justify-center bg-void px-6 text-center text-muted-foreground">
         {copy.loading}
       </main>
     );
@@ -264,7 +264,7 @@ export default function OwnerShare() {
     return (
       <main
         dir={isArabic ? "rtl" : "ltr"}
-        className="flex min-h-0 flex-1 items-center justify-center bg-[#0B0F1A] px-6 text-center text-muted-foreground"
+        className="flex min-h-0 flex-1 items-center justify-center bg-void px-6 text-center text-muted-foreground"
       >
         {copy.unavailable}
       </main>
@@ -274,9 +274,9 @@ export default function OwnerShare() {
   return (
     <main
       dir={isArabic ? "rtl" : "ltr"}
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#0B0F1A] text-foreground"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-void text-foreground"
     >
-      <div className="border-b border-white/[0.08] px-4 pb-3 pt-5">
+      <div className="border-b border-line px-4 pb-3 pt-5">
         <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-primary">REPLAY</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{meta.fieldName}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{ownerWindowLabel(meta, locale)}</p>
@@ -306,7 +306,7 @@ export default function OwnerShare() {
         />
       </div>
 
-      <section className="mx-3 mb-5 rounded-2xl border border-white/[0.08] bg-[#141B2C] p-4 sm:mx-5">
+      <section className="mx-3 mb-5 rounded-2xl border border-line bg-surface p-4 sm:mx-5">
         <h2 className="text-sm font-bold">{copy.keyMoments}</h2>
         <div className="mt-3 flex flex-wrap gap-2">
           {(meta.keyMoments ?? []).length === 0 ? (
@@ -328,11 +328,11 @@ export default function OwnerShare() {
         </div>
       </section>
 
-      <div className="mx-3 mb-6 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-[#141B2C] p-4 sm:mx-5">
+      <div className="mx-3 mb-6 flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4 sm:mx-5">
         <p className="text-sm font-semibold">{copy.wantClips}</p>
         <Link
           href="/home"
-          className="shrink-0 rounded-xl bg-primary px-3 py-2 text-sm font-bold text-[#0B0F1A]"
+          className="shrink-0 rounded-xl bg-floodlight px-3 py-2 text-sm font-bold text-void"
         >
           {copy.openReplay}
         </Link>
@@ -341,24 +341,24 @@ export default function OwnerShare() {
       <Dialog open={authPromptOpen} onOpenChange={setAuthPromptOpen}>
         <DialogContent
           dir={isArabic ? "rtl" : "ltr"}
-          className={cn("border-white/10 bg-[#141B2C] text-white", isArabic && "text-right")}
+          className={cn("border-line bg-surface text-text", isArabic && "text-right")}
         >
           <DialogHeader>
             <DialogTitle>{copy.authTitle}</DialogTitle>
-            <DialogDescription className="text-white/65">{copy.authDescription}</DialogDescription>
+            <DialogDescription className="text-muted-text">{copy.authDescription}</DialogDescription>
           </DialogHeader>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setLocation(authPath("/sign-up"))}
-              className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-bold text-[#0B0F1A]"
+              className="flex-1 rounded-xl bg-floodlight px-4 py-3 text-sm font-bold text-void"
             >
               {copy.signUp}
             </button>
             <button
               type="button"
               onClick={() => setLocation(authPath("/sign-in"))}
-              className="flex-1 rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white"
+              className="flex-1 rounded-xl border border-line bg-raised px-4 py-3 text-sm font-semibold text-text"
             >
               {copy.signIn}
             </button>

@@ -623,8 +623,8 @@ export function ClipPlayer({
                 <FrameSizeSlider zoom={frameZoom} frame={frame} maxZoom={maxZoomFor(selectedRatio)} onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)} />
               </div>
               <div className="flex justify-center">
-                <button onClick={startRecording} className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-black font-bold text-sm">
-                  <Circle className="w-4 h-4 fill-black" />
+        <button onClick={startRecording} className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-primary-foreground font-bold text-sm">
+                  <Circle className="w-4 h-4 fill-primary-foreground" />
                   {t.clipping.record}
                 </button>
               </div>
@@ -637,17 +637,17 @@ export function ClipPlayer({
         {clipMode === "recording" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-20 flex flex-col pointer-events-none">
             <div className="pt-safe pt-4 px-4 flex items-start justify-between">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-red-500/40">
-                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-red-400 text-xs font-bold tabular-nums">{formatElapsed(recElapsed)}</span>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-live/40">
+                <div className="w-2 h-2 rounded-full bg-live animate-pulse" />
+                <span className="text-live text-xs font-bold tabular-nums">{formatElapsed(recElapsed)}</span>
               </div>
               <MiniMap frame={frame} srcAspect={srcAspect} />
             </div>
             <div className="flex-1" />
             <div className="px-4 pointer-events-auto flex flex-col items-center gap-3" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
               <FrameSizeSlider zoom={frameZoom} frame={frame} maxZoom={maxZoomFor(selectedRatio)} compact onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)} />
-              <button onClick={() => stopRecording()} className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-red-500 text-white font-bold text-sm">
-                <Square className="w-4 h-4 fill-white" />
+              <button onClick={() => stopRecording()} className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-line bg-transparent text-text font-bold text-sm hover:bg-raised">
+                <Square className="w-4 h-4 fill-text" />
                 {t.clipping.stopRecording}
               </button>
             </div>
@@ -661,8 +661,8 @@ export function ClipPlayer({
             <p className="text-white text-sm font-semibold text-center">{t.clipping.reviewTitle} · {formatDuration(Math.max(0, clipEndTime - clipStartRef.current))}</p>
             <input value={clipTitle} onChange={(event) => setClipTitle(event.target.value)} placeholder={t.clipping.titlePlaceholder} className="w-full bg-white/10 border border-white/20 rounded-xl px-3 py-2.5 text-white placeholder:text-white/40 text-sm outline-none focus:border-primary" />
             <div className="flex gap-2">
-              <button onClick={discardClip} className="flex-1 py-2.5 rounded-xl border border-white/20 text-white text-sm font-medium">{t.clipping.discard}</button>
-              <button onClick={saveClip} disabled={isSavingClip} className="flex-1 py-2.5 rounded-xl bg-primary text-black text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-60">
+              <button onClick={discardClip} className="flex-1 py-2.5 rounded-xl border border-line text-text text-sm font-medium">{t.clipping.discard}</button>
+              <button onClick={saveClip} disabled={isSavingClip} className="flex-1 py-2.5 rounded-xl border border-violet bg-violet/10 text-violet text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-60">
                 <CheckCircle2 className="w-4 h-4" />
                 {isSavingClip ? t.clipping.saving : t.clipping.save}
               </button>

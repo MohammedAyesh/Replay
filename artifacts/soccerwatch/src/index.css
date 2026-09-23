@@ -414,22 +414,22 @@
 /* Claim your match — a portrait-first viewing surface with the acid-green
    tracking layer treated like a broadcast instrument. */
 .claim-page {
-  --claim-ink: #eef3e6;
-  --claim-muted: #91a08f;
-  --claim-dim: #627064;
-  --claim-line: rgba(196, 224, 184, .14);
-  --claim-panel: #131c1b;
-  --claim-panel-2: #182321;
-  --claim-green: #d4ff4f;
-  --claim-green-deep: #a9d52e;
-  --claim-orange: #ff835f;
+  --claim-ink: var(--replay-text);
+  --claim-muted: var(--replay-muted);
+  --claim-dim: color-mix(in srgb, var(--replay-muted) 68%, var(--replay-void));
+  --claim-line: var(--replay-line);
+  --claim-panel: var(--replay-surface);
+  --claim-panel-2: var(--replay-raised);
+  --claim-green: var(--replay-floodlight);
+  --claim-green-deep: var(--replay-turf);
+  --claim-orange: var(--replay-turf);
   min-height: 100dvh;
   overflow-x: hidden;
   color: var(--claim-ink);
   background:
     radial-gradient(70% 45% at 52% -10%, rgba(97, 142, 91, .18), transparent 70%),
     radial-gradient(55% 42% at 100% 52%, rgba(212,255,79,.04), transparent 75%),
-    #0c1313;
+    var(--replay-void);
   font-family: var(--app-font-sans);
 }
 .claim-page::before {
@@ -439,7 +439,7 @@
   pointer-events: none;
   content: "";
   opacity: .13;
-  background-image: radial-gradient(rgba(220, 245, 207, .32) .6px, transparent .6px);
+  background-image: radial-gradient(color-mix(in srgb, var(--replay-muted) 32%, transparent) .6px, transparent .6px);
   background-size: 7px 7px;
   mask-image: linear-gradient(to bottom, #000, transparent 85%);
 }
@@ -486,7 +486,7 @@
   width: 26px;
   height: 26px;
   place-items: center;
-  color: #0e1513;
+  color: var(--replay-void);
   background: var(--claim-green);
   clip-path: polygon(25% 6%, 75% 6%, 100% 50%, 75% 94%, 25% 94%, 0 50%);
 }
@@ -551,22 +551,22 @@
 .claim-stage:disabled { opacity: 1; }
 .claim-stage.is-complete { cursor: pointer; color: var(--claim-muted); }
 .claim-stage.is-active { color: var(--claim-green); }
-.claim-stage-dot { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid var(--claim-line); border-radius: 50%; background: #101918; font-family: var(--app-font-mono); font-size: 9px; transition: border-color .2s, background .2s; }
+.claim-stage-dot { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid var(--claim-line); border-radius: 50%; background: var(--replay-void); font-family: var(--app-font-mono); font-size: 9px; transition: border-color .2s, background .2s; }
 .claim-stage.is-complete .claim-stage-dot { border-color: rgba(212,255,79,.55); color: var(--claim-green); }
 .claim-stage.is-active .claim-stage-dot { border-color: var(--claim-green); color: #0e1513; background: var(--claim-green); }
 .claim-stage-label { max-width: 110px; font-family: var(--app-font-mono); font-size: 9px; letter-spacing: .05em; text-align: center; text-transform: uppercase; }
 /* ── Stage: the page IS the player, modelled on VideoPlayer in field-detail ── */
-.claim-page-stage { position: fixed; inset: 0; z-index: 50; overflow: hidden; background: #000; }
-.claim-stage { position: absolute; inset: 0; background: #000; }
+.claim-page-stage { position: fixed; inset: 0; z-index: 50; overflow: hidden; background: var(--replay-void); }
+.claim-stage { position: absolute; inset: 0; background: var(--replay-void); }
 .claim-stage-centre { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 /* The frame box has the OUTPUT aspect (16:9). The <video> and the overlay layer inside it are
    positioned by the same frame (applyFrame), so a box always sits on its pixel. */
-.claim-frame-box { position: relative; overflow: hidden; background: #000; touch-action: none; cursor: grab; }
+.claim-frame-box { position: relative; overflow: hidden; background: var(--replay-void); touch-action: none; cursor: grab; }
 .claim-frame-box:active { cursor: grabbing; }
 .claim-video { display: block; object-fit: fill; pointer-events: none; user-select: none; }
 .claim-overlay-layer { pointer-events: none; }
 .claim-fallback-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: hidden; background: linear-gradient(155deg, #1b352b 0%, #204d39 42%, #13251e 100%); }
-.claim-video-error { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; color: var(--claim-ink); background: rgba(10,17,16,.82); font-family: var(--app-font-mono); font-size: 11px; text-align: center; }
+.claim-video-error { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; color: var(--claim-ink); background: color-mix(in srgb, var(--replay-surface) 82%, transparent); font-family: var(--app-font-mono); font-size: 11px; text-align: center; }
 .claim-stage-top, .claim-stage-bottom { position: absolute; z-index: 20; transition: opacity .25s ease; }
 .claim-stage-top.is-hidden, .claim-stage-bottom.is-hidden { opacity: 0; pointer-events: none; }
 .claim-stage-top { top: 0; left: 0; right: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: max(12px, env(safe-area-inset-top)) 16px 0; background: linear-gradient(rgba(0,0,0,.65), transparent); }
@@ -597,7 +597,7 @@
 .claim-minimap-dot { position: absolute; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--claim-orange); box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
 .claim-stage-bottom { right: 0; bottom: 0; left: 0; display: grid; gap: 10px; padding: 24px 16px max(16px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.8)); }
 .claim-seek-row { display: flex; align-items: center; gap: 10px; }
-.claim-clock { min-width: 44px; color: #fff; font-family: var(--app-font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.claim-clock { min-width: 44px; color: var(--replay-text); font-family: var(--app-font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
 .claim-clock:last-child { text-align: right; }
 .claim-seek-track { position: relative; flex: 1; display: flex; align-items: center; }
 .claim-seek-track input { width: 100%; height: 3px; accent-color: var(--claim-green); }
@@ -607,7 +607,7 @@
 .claim-zoom { display: flex; flex: 1 1 200px; align-items: center; gap: 8px; min-width: 160px; max-width: 320px; padding: 6px 10px; border-radius: 999px; color: rgba(255,255,255,.7); background: rgba(0,0,0,.5); font-family: var(--app-font-mono); font-size: 9px; text-transform: uppercase; }
 .claim-zoom input { flex: 1; height: 3px; accent-color: var(--claim-green); }
 .claim-tool { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid rgba(255,255,255,.15); border-radius: 999px; cursor: pointer; color: #fff; background: rgba(0,0,0,.5); font-size: 11px; font-weight: 600; }
-.claim-tool-play { width: 44px; justify-content: center; padding: 0; color: #0e1513; background: #fff; }
+.claim-tool-play { width: 44px; justify-content: center; padding: 0; color: var(--replay-void); background: var(--replay-text); }
 .claim-tool.is-on { color: #0e1513; background: var(--claim-green); border-color: var(--claim-green); }
 /* The stage panel floats over the picture; it must never cover the centre where the player is. */
 .claim-stage-panel { position: absolute; z-index: 25; right: 16px; top: 64px; width: min(340px, calc(100% - 32px)); max-height: calc(100% - 200px); overflow: auto; }
@@ -741,8 +741,8 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-prompt-card span, .claim-follow-status span, .overlap-callout span { color: var(--claim-muted); font-size: 10px; line-height: 1.35; }
 .claim-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 42px; padding: 0 17px; border: 1px solid transparent; cursor: pointer; font-size: 12px; font-weight: 600; transition: transform .2s ease, background .2s ease, border-color .2s ease; }
 .claim-button:hover { transform: translateY(-1px); }
-.claim-button-primary { color: #0d1511; background: var(--claim-green); }
-.claim-button-primary:hover { background: #e0ff7b; }
+.claim-button-primary { color: var(--replay-void); background: var(--claim-green); }
+.claim-button-primary:hover { background: color-mix(in srgb, var(--claim-green) 88%, var(--replay-text)); }
 .claim-button-secondary { color: var(--claim-ink); border-color: var(--claim-line); background: rgba(196,224,184,.06); }
 .claim-button-wide { width: 100%; margin-top: 23px; }
 .claim-text-button { display: flex; align-items: center; gap: 7px; margin: 17px auto 0; padding: 4px; border: 0; cursor: pointer; color: var(--claim-muted); background: transparent; font-size: 11px; }
@@ -784,7 +784,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .look-control:hover, .look-control.selected { border-color: rgba(212,255,79,.45); color: var(--claim-green); background: rgba(212,255,79,.06); }
 .look-control kbd { margin-left: auto; }
 .claim-resume-card { display: flex; align-items: center; gap: 11px; padding: 14px; border: 1px solid var(--claim-line); background: rgba(20,31,29,.66); }
-.resume-icon { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; color: #0e1513; background: var(--claim-green); }
+.resume-icon { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; color: var(--replay-void); background: var(--claim-green); }
 .claim-resume-card > div:nth-child(2) { display: grid; gap: 3px; }
 .resume-label { color: var(--claim-green); font-family: var(--app-font-mono); font-size: 8px; letter-spacing: .12em; }
 .claim-resume-card b { font-size: 11px; font-weight: 600; }
@@ -797,7 +797,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
 .claim-section-heading .claim-eyebrow { margin-bottom: 11px; }
 .claim-section-heading h2 { font-size: 30px; }
-.claim-section-heading h2 span { display: inline-grid; width: 22px; height: 22px; margin-left: 7px; place-items: center; vertical-align: 5px; color: #0e1513; background: var(--claim-green); font-family: var(--app-font-mono); font-size: 10px; }
+.claim-section-heading h2 span { display: inline-grid; width: 22px; height: 22px; margin-left: 7px; place-items: center; vertical-align: 5px; color: var(--replay-void); background: var(--claim-green); font-family: var(--app-font-mono); font-size: 10px; }
 .claim-section-heading > p { max-width: 300px; margin: 0; color: var(--claim-muted); font-size: 12px; line-height: 1.45; text-align: right; }
 .claim-clips-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .claim-clip-card { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 12px; padding: 9px; border: 1px solid var(--claim-line); background: rgba(20,31,29,.65); }
@@ -805,7 +805,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-clip-thumb::before { position: absolute; inset: 15% 10%; border: 1px solid rgba(220,248,209,.25); content: ""; transform: skewY(-8deg); }
 .thumb-1 { background: linear-gradient(140deg, #405c38, #21352a); }
 .thumb-2 { background: linear-gradient(140deg, #5d493b, #28332b); }
-.clip-play { z-index: 1; display: grid; width: 24px; height: 24px; place-items: center; color: #0e1513; background: var(--claim-green); }
+.clip-play { z-index: 1; display: grid; width: 24px; height: 24px; place-items: center; color: var(--replay-void); background: var(--claim-green); }
 .clip-time, .clip-kind { z-index: 1; color: rgba(238,243,230,.8); font-family: var(--app-font-mono); font-size: 8px; }
 .clip-kind { position: absolute; top: 7px; right: 7px; color: var(--claim-green); }
 .claim-clip-details { display: grid; gap: 4px; min-width: 0; }
@@ -817,7 +817,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .claim-locked-clip b { color: var(--claim-ink); font-size: 11px; font-weight: 600; }
 .claim-locked-clip span { color: var(--claim-dim); font-size: 9px; }
 .claim-done-panel { display: flex; align-items: center; gap: 15px; margin-top: 29px; padding: 18px; border: 1px solid rgba(212,255,79,.2); background: rgba(212,255,79,.05); }
-.done-stamp { display: grid; width: 43px; height: 43px; flex: 0 0 auto; place-items: center; color: #0e1513; background: var(--claim-green); }
+.done-stamp { display: grid; width: 43px; height: 43px; flex: 0 0 auto; place-items: center; color: var(--replay-void); background: var(--claim-green); }
 .claim-done-panel .claim-eyebrow { margin-bottom: 7px; }
 .claim-done-panel h2 { margin: 0; font-family: var(--app-font-display); font-size: 23px; }
 .claim-done-panel p:last-of-type { margin: 5px 0 0; color: var(--claim-muted); font-size: 11px; }
@@ -1024,41 +1024,41 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 }
 
 /* ── Identity board ─────────────────────────────────────────────────────── */
-.idb { direction: ltr; text-align: left; flex: 1 1 auto; min-height: 0; height: 100%; max-height: 100%; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 18px 20px 80px; color: #eef3e6; background: #0b100f; font-size: 13px; }
+.idb { direction: ltr; text-align: left; flex: 1 1 auto; min-height: 0; height: 100%; max-height: 100%; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 18px 20px 80px; color: var(--replay-text); background: var(--replay-void); font-size: 13px; }
 .idb-header { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; }
 .idb-header h1 { margin: 0; font-size: 22px; }
-.idb-header p { margin: 2px 0 0; color: #91a08f; }
-.idb-back { border: 1px solid rgba(255,255,255,.15); background: none; color: #eef3e6; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.idb-header p { margin: 2px 0 0; color: var(--replay-muted); }
+.idb-back { border: 1px solid var(--replay-line); background: none; color: var(--replay-text); padding: 6px 10px; border-radius: 6px; cursor: pointer; }
 .idb-actions { margin-left: auto; display: flex; gap: 8px; }
-.idb-actions button { border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06); color: #eef3e6; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; }
-.idb-actions button.is-primary { background: #d4ff4f; color: #0e1513; border-color: #d4ff4f; }
+.idb-actions button { border: 1px solid var(--replay-line); background: color-mix(in srgb, var(--replay-raised) 70%, transparent); color: var(--replay-text); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+.idb-actions button.is-primary { background: var(--replay-floodlight); color: var(--replay-void); border-color: var(--replay-floodlight); }
 .idb-actions button:disabled { opacity: .5; cursor: default; }
-.idb-coverage { margin: 4px 0 10px; color: #91a08f; font-family: var(--app-font-mono); font-size: 10px; line-height: 1.5; }
-.idb-status { padding: 8px 12px; border-radius: 6px; background: rgba(212,255,79,.08); color: #d4ff4f; }
-.idb-status.is-warn { background: rgba(255,131,95,.12); color: #ff835f; }
+.idb-coverage { margin: 4px 0 10px; color: var(--replay-muted); font-family: var(--app-font-mono); font-size: 10px; line-height: 1.5; }
+.idb-status { padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, var(--replay-turf) 10%, transparent); color: var(--replay-turf); }
+.idb-status.is-warn { background: color-mix(in srgb, var(--replay-raised) 86%, transparent); color: var(--replay-muted); }
 .idb-locks { display: grid; gap: 6px; margin-top: 8px; }
-.idb-lock { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; border: 1px solid rgba(255,131,95,.25); border-radius: 5px; font-family: var(--app-font-mono); font-size: 10px; }
-.idb-lock button { border: 1px solid rgba(255,191,105,.45); background: rgba(255,191,105,.12); color: #ffbf69; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 10px; }
+.idb-lock { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; border: 1px solid var(--replay-line); border-radius: 5px; font-family: var(--app-font-mono); font-size: 10px; }
+.idb-lock button { border: 1px solid var(--replay-line); background: var(--replay-raised); color: var(--replay-muted); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 10px; }
 .idb-lock button:disabled { opacity: .5; cursor: default; }
-.idb-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; color: #91a08f; font-family: var(--app-font-mono); font-size: 10px; }
+.idb-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; color: var(--replay-muted); font-family: var(--app-font-mono); font-size: 10px; }
 .idb-metrics span, .idb-metrics strong { padding: 5px 8px; border: 1px solid rgba(255,255,255,.09); border-radius: 5px; background: rgba(255,255,255,.03); }
-.idb-metrics b { color: #eef3e6; }
-.idb-metrics strong { color: #ffbf69; border-color: rgba(255,191,105,.35); }
+.idb-metrics b { color: var(--replay-text); }
+.idb-metrics strong { color: var(--replay-turf); border-color: var(--replay-line); }
 .idb-layout { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 14px; width: min(100%, 1440px); margin-inline: auto; align-items: start; }
 .idb-board { min-width: 0; }
 .idb-rows { display: grid; gap: 6px; }
-.idb-row { display: grid; grid-template-columns: 200px 1fr; gap: 10px; padding: 6px; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; background: #121a18; }
-.idb-row.is-target { border-color: rgba(212,255,79,.55); background: #16221d; }
-.idb-row.is-inconsistent { border-color: rgba(255,131,95,.7); background: rgba(255,131,95,.06); }
+.idb-row { display: grid; grid-template-columns: 200px 1fr; gap: 10px; padding: 6px; border: 1px solid var(--replay-line); border-radius: 8px; background: var(--replay-surface); }
+.idb-row.is-target { border-color: color-mix(in srgb, var(--replay-floodlight) 55%, var(--replay-line)); background: var(--replay-raised); }
+.idb-row.is-inconsistent { border-color: var(--replay-line); background: color-mix(in srgb, var(--replay-raised) 86%, transparent); }
 .idb-handle { display: grid; gap: 4px; align-content: start; cursor: grab; padding: 4px; border-radius: 6px; }
 .idb-handle:active { cursor: grabbing; }
-.idb-name { width: 100%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: #eef3e6; padding: 4px 6px; border-radius: 4px; font-weight: 600; }
-.idb-meta { color: #91a08f; font-family: var(--app-font-mono); font-size: 10px; }
+.idb-name { width: 100%; background: var(--replay-raised); border: 1px solid var(--replay-line); color: var(--replay-text); padding: 4px 6px; border-radius: 4px; font-weight: 600; }
+.idb-meta { color: var(--replay-muted); font-family: var(--app-font-mono); font-size: 10px; }
 .idb-timeline { position: relative; height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
-.idb-timeline span { position: absolute; top: 0; height: 100%; background: #d4ff4f; opacity: .8; }
-.idb-suggest { border: 1px solid rgba(212,255,79,.4); background: rgba(212,255,79,.1); color: #d4ff4f; padding: 3px 8px; border-radius: 999px; cursor: pointer; font-size: 11px; justify-self: start; }
+.idb-timeline span { position: absolute; top: 0; height: 100%; background: var(--replay-floodlight); opacity: .8; }
+.idb-suggest { border: 1px solid color-mix(in srgb, var(--replay-floodlight) 40%, var(--replay-line)); background: color-mix(in srgb, var(--replay-floodlight) 10%, transparent); color: var(--replay-floodlight); padding: 3px 8px; border-radius: 999px; cursor: pointer; font-size: 11px; justify-self: start; }
 .idb-strip { display: flex; gap: 3px; overflow-x: auto; }
-.idb-crop { position: relative; flex: 0 0 auto; height: 96px; border-radius: 4px; overflow: hidden; background: #060908; cursor: grab; border: 1px solid transparent; }
+.idb-crop { position: relative; flex: 0 0 auto; height: 96px; border-radius: 4px; overflow: hidden; background: var(--replay-void); cursor: grab; border: 1px solid transparent; }
 .idb-crop.is-boundary { border-color: rgba(255,191,105,.85); box-shadow: inset 0 0 0 1px rgba(255,191,105,.25); }
 .idb-crop img { display: block; height: 96px; width: auto; }
 .idb-crop small { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 3px; background: rgba(0,0,0,.6); color: #cfd8c9; font-family: var(--app-font-mono); font-size: 9px; }

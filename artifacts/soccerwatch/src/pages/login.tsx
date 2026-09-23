@@ -183,9 +183,9 @@ const COPY = {
 } as const;
 
 const STEP_ACCENTS = [
-  { accent: "#D4FF4F", tint: "rgba(212,255,79,.12)", ghost: "rgba(212,255,79,.07)" },
-  { accent: "#2FD8C4", tint: "rgba(47,216,196,.13)", ghost: "rgba(47,216,196,.08)" },
-  { accent: "#7B5CFF", tint: "rgba(123,92,255,.13)", ghost: "rgba(123,92,255,.08)" },
+  { accent: "var(--replay-floodlight)", tint: "color-mix(in srgb, var(--replay-floodlight) 12%, transparent)", ghost: "color-mix(in srgb, var(--replay-floodlight) 7%, transparent)" },
+  { accent: "var(--replay-turf)", tint: "color-mix(in srgb, var(--replay-turf) 13%, transparent)", ghost: "color-mix(in srgb, var(--replay-turf) 8%, transparent)" },
+  { accent: "var(--replay-violet)", tint: "color-mix(in srgb, var(--replay-violet) 13%, transparent)", ghost: "color-mix(in srgb, var(--replay-violet) 8%, transparent)" },
 ];
 
 // Convert ASCII digits to Arabic-Indic numerals for RTL step labels
@@ -203,13 +203,13 @@ function hexPoints(cx: number, cy: number, size: number) {
 
 function LogoMark({ size = 34 }: { size?: number }) {
   const facets = [
-    { cx: 95,    cy: 96,  color: "#22C7B5" },
-    { cx: 126.2, cy: 42,  color: "#BFFF5C" },
-    { cx: 63.8,  cy: 42,  color: "#3FE0C9" },
-    { cx: 157.4, cy: 96,  color: "#1FA79B" },
-    { cx: 32.6,  cy: 96,  color: "#186E7E" },
-    { cx: 126.2, cy: 150, color: "#1C8AA0" },
-    { cx: 63.8,  cy: 150, color: "#6C4FE0" },
+    { cx: 95,    cy: 96,  color: "var(--replay-turf)" },
+    { cx: 126.2, cy: 42,  color: "var(--replay-floodlight)" },
+    { cx: 63.8,  cy: 42,  color: "var(--replay-turf)" },
+    { cx: 157.4, cy: 96,  color: "color-mix(in srgb, var(--replay-turf) 72%, var(--replay-void))" },
+    { cx: 32.6,  cy: 96,  color: "color-mix(in srgb, var(--replay-turf) 42%, var(--replay-void))" },
+    { cx: 126.2, cy: 150, color: "color-mix(in srgb, var(--replay-turf) 62%, var(--replay-violet))" },
+    { cx: 63.8,  cy: 150, color: "var(--replay-violet)" },
   ];
   return (
     <span className="block shrink-0" style={{ width: size, height: size * (200 / 220) }}>
@@ -225,17 +225,17 @@ function LogoMark({ size = 34 }: { size?: number }) {
               key={`${f.cx}-${f.cy}`}
               points={hexPoints(f.cx, f.cy, 36)}
               fill={f.color}
-              stroke="#0B0F1A"
+              stroke="var(--replay-void)"
               strokeWidth="1.5"
               strokeLinejoin="round"
             />
           ))}
         </g>
-        <circle cx="95" cy="96" r="88" fill="none" stroke="#0B0F1A" strokeWidth="3" opacity="0.35" />
-        <polygon points="170,62 170,134 210,98" fill="#0B0F1A" stroke="#0B0F1A" strokeWidth="16" strokeLinejoin="round" />
-        <polygon points="172,68 172,128 206,98" fill="#D4FF4F" stroke="#D4FF4F" strokeWidth="12" strokeLinejoin="round" />
-        <circle cx="178" cy="46" r="7.5" fill="#0B0F1A" />
-        <circle cx="178" cy="46" r="5.5" fill="#FF5A3C" />
+        <circle cx="95" cy="96" r="88" fill="none" stroke="var(--replay-void)" strokeWidth="3" opacity="0.35" />
+        <polygon points="170,62 170,134 210,98" fill="var(--replay-void)" stroke="var(--replay-void)" strokeWidth="16" strokeLinejoin="round" />
+        <polygon points="172,68 172,128 206,98" fill="var(--replay-floodlight)" stroke="var(--replay-floodlight)" strokeWidth="12" strokeLinejoin="round" />
+        <circle cx="178" cy="46" r="7.5" fill="var(--replay-void)" />
+        <circle cx="178" cy="46" r="5.5" fill="var(--replay-violet)" />
       </svg>
     </span>
   );
@@ -318,8 +318,8 @@ export default function Login() {
       dir={isRtl ? "rtl" : "ltr"}
       style={{
         minHeight: "100vh",
-        background: "#0B0F1A",
-        color: "#F3F6FA",
+        background: "var(--replay-void)",
+        color: "var(--replay-text)",
         fontFamily: bodyFont,
         WebkitFontSmoothing: "antialiased",
       }}
@@ -359,7 +359,7 @@ export default function Login() {
               borderRadius: 99,
               border: 0,
               background: "rgba(255,255,255,.09)",
-              color: "#F3F6FA",
+              color: "var(--replay-text)",
               fontSize: 12,
               fontWeight: 700,
               letterSpacing: "0.03em",
@@ -433,8 +433,8 @@ export default function Login() {
                 letterSpacing: "-0.02em",
               }}
             >
-              <span style={{ display: "block", color: "#F3F6FA" }}>{tc.heroLine1}</span>
-              <span style={{ display: "block", position: "relative", top: 3, color: "#D4FF4F" }}>{tc.heroLine2}</span>
+              <span style={{ display: "block", color: "var(--replay-text)" }}>{tc.heroLine1}</span>
+              <span style={{ display: "block", position: "relative", top: 3, color: "var(--replay-floodlight)" }}>{tc.heroLine2}</span>
             </motion.h1>
             <motion.p
               initial={{ opacity: 0, y: 12 }}
@@ -469,8 +469,8 @@ export default function Login() {
                   padding: "16px",
                   borderRadius: 16,
                   border: 0,
-                  background: "#D4FF4F",
-                  color: "#0B0F1A",
+                  background: "var(--replay-floodlight)",
+                  color: "var(--replay-void)",
                   fontSize: 15.5,
                   fontWeight: 800,
                   letterSpacing: "0.01em",
@@ -494,7 +494,7 @@ export default function Login() {
                   borderRadius: 16,
                   border: "1px solid rgba(255,255,255,.16)",
                   background: "rgba(255,255,255,.06)",
-                  color: "#F3F6FA",
+                  color: "var(--replay-text)",
                   fontSize: 15.5,
                   fontWeight: 800,
                   letterSpacing: "0.01em",
@@ -598,7 +598,7 @@ export default function Login() {
                 fontWeight: 800,
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
-                color: "#D4FF4F",
+                color: "var(--replay-floodlight)",
                 fontFamily: bodyFont,
               }}
             >
@@ -612,7 +612,7 @@ export default function Login() {
                 fontSize: 27,
                 letterSpacing: "-0.015em",
                 lineHeight: 1.15,
-                color: "#F3F6FA",
+                color: "var(--replay-text)",
               }}
             >
               {tc.howTitle}
@@ -660,7 +660,7 @@ export default function Login() {
                         zIndex: 1,
                         padding: 22,
                         borderRadius: 22,
-                        background: "#141B2C",
+                        background: "var(--replay-surface)",
                         border: "1px solid rgba(255,255,255,.08)",
                       }}
                     >
@@ -727,7 +727,7 @@ export default function Login() {
                             fontWeight: 700,
                             fontSize: 20,
                             letterSpacing: "-0.01em",
-                            color: "#F3F6FA",
+                            color: "var(--replay-text)",
                           }}
                         >
                           {step.title}
@@ -802,7 +802,7 @@ export default function Login() {
                 fontWeight: 800,
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
-                color: "#7B5CFF",
+                color: "var(--replay-violet)",
                 fontFamily: bodyFont,
               }}
             >
@@ -816,7 +816,7 @@ export default function Login() {
                 fontSize: 27,
                 letterSpacing: "-0.015em",
                 lineHeight: 1.15,
-                color: "#F3F6FA",
+                color: "var(--replay-text)",
               }}
             >
               {tc.aboutTitle}
@@ -842,7 +842,7 @@ export default function Login() {
                 height="14"
                 viewBox="0 0 24 24"
                 fill="none"
-                stroke="#D4FF4F"
+                stroke="var(--replay-floodlight)"
                 strokeWidth="1.9"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -855,7 +855,7 @@ export default function Login() {
                   fontSize: 11.5,
                   fontWeight: 800,
                   letterSpacing: "0.05em",
-                  color: "#D4FF4F",
+                  color: "var(--replay-floodlight)",
                   fontFamily: bodyFont,
                 }}
               >
@@ -907,7 +907,7 @@ export default function Login() {
                 fontWeight: 800,
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
-                color: "#2FD8C4",
+                color: "var(--replay-turf)",
                 fontFamily: bodyFont,
               }}
             >
@@ -921,7 +921,7 @@ export default function Login() {
                 fontSize: 27,
                 letterSpacing: "-0.015em",
                 lineHeight: 1.15,
-                color: "#F3F6FA",
+                color: "var(--replay-text)",
               }}
             >
               {tc.contactTitle}
@@ -948,7 +948,7 @@ export default function Login() {
                   alignItems: "center",
                   justifyContent: "center",
                   margin: "0 auto 14px",
-                  color: "#F3F6FA",
+                  color: "var(--replay-text)",
                 }}
               >
                 <svg
@@ -984,8 +984,8 @@ export default function Login() {
                   padding: 15,
                   borderRadius: 14,
                   border: 0,
-                  background: "#D4FF4F",
-                  color: "#0B0F1A",
+                  background: "var(--replay-floodlight)",
+                  color: "var(--replay-void)",
                   fontSize: 14.5,
                   fontWeight: 800,
                   cursor: "default",
@@ -1013,7 +1013,7 @@ export default function Login() {
                 fontWeight: 700,
                 fontSize: 27,
                 letterSpacing: "-0.015em",
-                color: "#F3F6FA",
+                color: "var(--replay-text)",
               }}
             >
               {tc.faqTitle}
@@ -1026,7 +1026,7 @@ export default function Login() {
                     key={i}
                     style={{
                       border: "1px solid rgba(255,255,255,.08)",
-                      background: "#141B2C",
+                      background: "var(--replay-surface)",
                       borderRadius: 16,
                       overflow: "hidden",
                     }}
@@ -1042,7 +1042,7 @@ export default function Login() {
                         padding: 16,
                         border: 0,
                         background: "transparent",
-                        color: "#F3F6FA",
+                        color: "var(--replay-text)",
                         textAlign: "start",
                         cursor: "pointer",
                       }}
@@ -1068,7 +1068,7 @@ export default function Login() {
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          color: "#F3F6FA",
+                          color: "var(--replay-text)",
                         }}
                       >
                         {isOpen ? (
@@ -1126,18 +1126,18 @@ export default function Login() {
                     <circle cx="95" cy="96" r="88" />
                   </clipPath>
                   <g clipPath="url(#ft-clip)">
-                    <polygon points={hexPoints(95, 96, 36)}    fill="#2FD8C4" />
-                    <polygon points={hexPoints(126.2, 42, 36)} fill="#D4FF4F" />
-                    <polygon points={hexPoints(63.8, 42, 36)}  fill="#2FD8C4" />
-                    <polygon points={hexPoints(157.4, 96, 36)} fill="#238F8B" />
-                    <polygon points={hexPoints(32.6, 96, 36)}  fill="#1D526B" />
-                    <polygon points={hexPoints(126.2, 150, 36)} fill="#247A91" />
-                    <polygon points={hexPoints(63.8, 150, 36)} fill="#7B5CFF" />
+                    <polygon points={hexPoints(95, 96, 36)}    fill="var(--replay-turf)" />
+                    <polygon points={hexPoints(126.2, 42, 36)} fill="var(--replay-floodlight)" />
+                    <polygon points={hexPoints(63.8, 42, 36)}  fill="var(--replay-turf)" />
+                    <polygon points={hexPoints(157.4, 96, 36)} fill="color-mix(in srgb, var(--replay-turf) 72%, var(--replay-void))" />
+                    <polygon points={hexPoints(32.6, 96, 36)}  fill="color-mix(in srgb, var(--replay-turf) 42%, var(--replay-void))" />
+                    <polygon points={hexPoints(126.2, 150, 36)} fill="color-mix(in srgb, var(--replay-turf) 62%, var(--replay-violet))" />
+                    <polygon points={hexPoints(63.8, 150, 36)} fill="var(--replay-violet)" />
                   </g>
-                  <polygon points="170,62 170,134 210,98" fill="#0B0F1A" />
-                  <polygon points="172,68 172,128 206,98" fill="#D4FF4F" />
-                  <circle cx="178" cy="46" r="7.5" fill="#0B0F1A" />
-                  <circle cx="178" cy="46" r="5.5" fill="#FF5A3C" />
+                  <polygon points="170,62 170,134 210,98" fill="var(--replay-void)" />
+                  <polygon points="172,68 172,128 206,98" fill="var(--replay-floodlight)" />
+                  <circle cx="178" cy="46" r="7.5" fill="var(--replay-void)" />
+                  <circle cx="178" cy="46" r="5.5" fill="var(--replay-violet)" />
                 </svg>
               </div>
               <span
@@ -1146,7 +1146,7 @@ export default function Login() {
                   fontWeight: 700,
                   fontSize: 15,
                   letterSpacing: "-0.01em",
-                  backgroundImage: "linear-gradient(90deg,#2FD8C4,#7B5CFF)",
+                  backgroundImage: "linear-gradient(90deg,var(--replay-turf),var(--replay-violet))",
                   WebkitBackgroundClip: "text",
                   backgroundClip: "text",
                   color: "transparent",

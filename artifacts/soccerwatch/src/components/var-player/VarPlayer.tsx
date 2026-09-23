@@ -425,7 +425,7 @@ export function VarPlayer({
       tabIndex={0}
       onKeyDown={onKeyDown}
       className={cn(
-        "var-player relative min-h-[min(72vh,42rem)] overflow-hidden rounded-2xl bg-black outline-none",
+        "var-player relative min-h-[min(72vh,42rem)] overflow-hidden rounded-2xl bg-void outline-none",
         isFullscreen && "var-player-fullscreen",
         isCssFullscreen && "var-player-css-fullscreen",
       )}
@@ -434,10 +434,10 @@ export function VarPlayer({
       <div
         className="var-player-zoom-layer absolute inset-0"
       >
-        <div className="var-player-frame-centre absolute inset-0 flex items-center justify-center bg-black">
+        <div className="var-player-frame-centre absolute inset-0 flex items-center justify-center bg-void">
           <div
             ref={frameBoxRef}
-            className="var-player-frame-box relative h-auto w-full overflow-hidden bg-black touch-none"
+            className="var-player-frame-box relative h-auto w-full overflow-hidden bg-void touch-none"
             onPointerDown={handleFramePointerDown}
             onPointerMove={handleFramePointerMove}
             onPointerUp={handleFramePointerUp}
@@ -474,7 +474,7 @@ export function VarPlayer({
       </div>
 
       <div className={cn("var-player-topbar", !showControls && "is-hidden")}>
-        <p className="font-mono text-xs tabular-nums text-white/80" dir="ltr">
+        <p className="font-mono text-xs tabular-nums text-text/80" dir="ltr">
           {currentProgramTime == null ? "—" : formatVarWallClock(currentProgramTime)} {copy.clockZone}
         </p>
         <span className="var-player-badge" dir="ltr">
@@ -498,16 +498,16 @@ export function VarPlayer({
       {(showStarting || playerState.waiting) && (
         <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/65 px-5 text-center">
           <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <p className="text-sm font-semibold text-white">{copy.starting}</p>
+          <p className="text-sm font-semibold text-text">{copy.starting}</p>
         </div>
       )}
       {pictureStalled && !playerState.waiting && hasFrames && (
-        <div className="pointer-events-none absolute inset-x-3 top-16 z-10 rounded-xl border border-amber-400/30 bg-black/75 px-3 py-2 text-center text-xs font-semibold text-amber-100">
+        <div className="pointer-events-none absolute inset-x-3 top-16 z-10 rounded-xl border border-line bg-void/75 px-3 py-2 text-center text-xs font-semibold text-muted-text">
           {copy.noPicture}
         </div>
       )}
       {playerState.error && !playerState.waiting && (
-        <div className="pointer-events-none absolute inset-x-3 bottom-28 z-10 rounded-xl bg-black/80 px-3 py-2 text-center text-xs text-white">
+        <div className="pointer-events-none absolute inset-x-3 bottom-28 z-10 rounded-xl bg-void/80 px-3 py-2 text-center text-xs text-text">
           {playerState.error}
         </div>
       )}
@@ -533,7 +533,7 @@ export function VarPlayer({
                 {markPositions.map((mark) => (
                   <span
                     key={`${mark.atUtcMs}-${mark.kind}`}
-                    className="absolute top-0 h-5 w-0.5 rounded-full bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,.8)]"
+                    className="absolute top-0 h-5 w-0.5 rounded-full bg-turf"
                     style={{ left: `${((mark.position - scrubStart) / liveRange) * 100}%` }}
                     title={mark.kind}
                   />
@@ -541,7 +541,7 @@ export function VarPlayer({
               </div>
             )}
           </div>
-          <span className="shrink-0 text-[10px] text-white/60" dir="ltr">
+          <span className="shrink-0 text-[10px] text-muted-text" dir="ltr">
             {timeline ? copy.timelineRange(Math.max(0, Math.round(timeline.liveEdge - scrubStart))) : "—"}
           </span>
         </div>

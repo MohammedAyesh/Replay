@@ -105,7 +105,7 @@ export default function Onboarding() {
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-          className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full"
+          className="w-8 h-8 border-2 border-line border-t-text rounded-full"
         />
       </div>
     );
@@ -114,7 +114,7 @@ export default function Onboarding() {
   return (
     <div
       dir={textDirection}
-      className={`w-full flex flex-col text-white ${isArabic ? "text-right" : "text-left"}`}
+      className={`w-full flex flex-col text-text ${isArabic ? "text-right" : "text-left"}`}
       style={{
         fontFamily: isArabic
           ? "'Tajawal', 'Cairo', sans-serif"
@@ -127,7 +127,7 @@ export default function Onboarding() {
       >
         {copy.title}
       </motion.h1>
-      <motion.p {...fadeUp(0.15)} className="mb-8 text-sm text-[#2FD8C4]">
+        <motion.p {...fadeUp(0.15)} className="mb-8 text-sm text-turf">
         {copy.subtitle}
       </motion.p>
 
@@ -137,7 +137,7 @@ export default function Onboarding() {
         className="flex flex-col gap-4"
       >
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-name" className="text-sm font-medium text-white/80">
+          <Label htmlFor="onboarding-name" className="text-sm font-medium text-text/80">
             {copy.fullName}
           </Label>
           <Input
@@ -145,13 +145,13 @@ export default function Onboarding() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={copy.fullNamePlaceholder}
-            className={`h-12 rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary ${isArabic ? "text-right" : "text-left"}`}
+            className={`h-12 rounded-[13px] border-line bg-raised text-text placeholder:text-muted-text focus-visible:ring-turf ${isArabic ? "text-right" : "text-left"}`}
             autoComplete="name"
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-phone" className="text-sm font-medium text-white/80">
+          <Label htmlFor="onboarding-phone" className="text-sm font-medium text-text/80">
             {copy.phoneNumber}
           </Label>
           <Input
@@ -160,25 +160,25 @@ export default function Onboarding() {
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder={copy.phonePlaceholder}
-            className={`h-12 rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary ${isArabic ? "text-right" : "text-left"}`}
+            className={`h-12 rounded-[13px] border-line bg-raised text-text placeholder:text-muted-text focus-visible:ring-turf ${isArabic ? "text-right" : "text-left"}`}
             autoComplete="tel"
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-position" className="text-sm font-medium text-white/80">
+          <Label htmlFor="onboarding-position" className="text-sm font-medium text-text/80">
             {copy.preferredPosition}
           </Label>
           <select
             id="onboarding-position"
             value={position}
             onChange={(e) => setPosition(e.target.value)}
-            className={`h-12 w-full appearance-none rounded-[13px] border border-white/10 bg-white/[0.04] px-3 text-white focus:outline-none focus:ring-2 focus:ring-primary ${isArabic ? "text-right" : "text-left"}`}
+            className={`h-12 w-full appearance-none rounded-[13px] border border-line bg-raised px-3 text-text focus:outline-none focus:ring-2 focus:ring-turf ${isArabic ? "text-right" : "text-left"}`}
             style={{ backgroundImage: "none" }}
           >
-            <option value="" disabled className="text-black">{copy.selectPosition}</option>
+            <option value="" disabled className="text-void">{copy.selectPosition}</option>
             {POSITION_VALUES.map((value) => (
-              <option key={value} value={value} className="text-black">
+              <option key={value} value={value} className="text-void">
                 {copy.positions[value]}
               </option>
             ))}
@@ -186,7 +186,7 @@ export default function Onboarding() {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-age" className="text-sm font-medium text-white/80">
+          <Label htmlFor="onboarding-age" className="text-sm font-medium text-text/80">
             {copy.age}
           </Label>
           <Input
@@ -197,24 +197,24 @@ export default function Onboarding() {
             value={age}
             onChange={(e) => setAge(e.target.value)}
             placeholder={copy.agePlaceholder}
-            className={`h-12 rounded-[13px] border-white/10 bg-white/[0.04] text-white placeholder:text-white/40 focus-visible:ring-primary ${isArabic ? "text-right" : "text-left"}`}
+            className={`h-12 rounded-[13px] border-line bg-raised text-text placeholder:text-muted-text focus-visible:ring-turf ${isArabic ? "text-right" : "text-left"}`}
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="onboarding-gender" className="text-sm font-medium text-white/80">
+          <Label htmlFor="onboarding-gender" className="text-sm font-medium text-text/80">
             {copy.gender}
           </Label>
           <select
             id="onboarding-gender"
             value={gender}
             onChange={(e) => setGender(e.target.value)}
-            className={`h-12 w-full appearance-none rounded-[13px] border border-white/10 bg-white/[0.04] px-3 text-white focus:outline-none focus:ring-2 focus:ring-primary ${isArabic ? "text-right" : "text-left"}`}
+            className={`h-12 w-full appearance-none rounded-[13px] border border-line bg-raised px-3 text-text focus:outline-none focus:ring-2 focus:ring-turf ${isArabic ? "text-right" : "text-left"}`}
             style={{ backgroundImage: "none" }}
           >
-            <option value="" disabled className="text-black">{copy.selectGender}</option>
+            <option value="" disabled className="text-void">{copy.selectGender}</option>
             {GENDER_VALUES.map(({ value, labelKey }) => (
-              <option key={value} value={value} className="text-black">
+              <option key={value} value={value} className="text-void">
                 {copy.genders[labelKey]}
               </option>
             ))}
@@ -225,7 +225,7 @@ export default function Onboarding() {
           <Button
             type="submit"
             disabled={!allFilled || updateProfile.isPending}
-            className="w-full rounded-[14px] bg-primary py-4 text-base font-semibold text-[#0B0F1A] hover:bg-primary/90 disabled:opacity-50"
+            className="w-full rounded-[14px] bg-floodlight py-4 text-base font-semibold text-void hover:bg-floodlight/90 disabled:opacity-50"
           >
             {updateProfile.isPending ? copy.saving : copy.continue}
           </Button>

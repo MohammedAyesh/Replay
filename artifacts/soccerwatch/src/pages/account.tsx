@@ -192,9 +192,9 @@ export default function Account() {
                       <p className="text-xs text-muted-foreground">{match.date} · {Math.round(match.supportPercent)}% support</p>
                     </div>
                     <span className={`ms-3 shrink-0 text-[10px] font-bold uppercase tracking-wide ${
-                      match.state === "confirmed" ? "text-emerald-500" :
-                        match.state === "disputed" ? "text-amber-500" :
-                          match.state === "needs_resolution" ? "text-orange-500" : "text-muted-foreground"
+                      match.state === "confirmed" ? "text-turf" :
+                        match.state === "disputed" ? "text-muted-text" :
+                          match.state === "needs_resolution" ? "text-muted-text" : "text-muted-foreground"
                     }`}>
                       {match.state.replace("_", " ")}
                     </span>
@@ -266,7 +266,7 @@ export default function Account() {
             type="button"
             variant="outline"
             disabled={isLoggingOut}
-            className="w-full rounded-2xl border-[rgba(255,90,60,0.28)] bg-[rgba(255,90,60,0.09)] py-6 font-semibold text-destructive hover:bg-destructive/5 hover:text-destructive disabled:opacity-50"
+            className="w-full rounded-2xl border border-line bg-transparent py-6 font-semibold text-text hover:bg-raised disabled:opacity-50"
             onClick={handleLogout}
           >
             <LogOut className="me-2 h-5 w-5" />
@@ -295,7 +295,7 @@ export default function Account() {
 function ReplaySignOutOverlay() {
   return (
     <div
-      className="fixed inset-0 z-[9999] grid place-items-center bg-[#0B0F1A]"
+      className="fixed inset-0 z-[9999] grid place-items-center bg-void"
       role="status"
       aria-label="Signing out"
     >
@@ -343,18 +343,18 @@ function ReplaySignOutOverlay() {
           </clipPath>
         </defs>
         <g clipPath="url(#replaySignOutClip)">
-          <polygon className="replay-sign-out-facet" points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#2FD8C4" />
-          <polygon className="replay-sign-out-facet" points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#D4FF4F" />
-          <polygon className="replay-sign-out-facet" points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#2FD8C4" />
-          <polygon className="replay-sign-out-facet" points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#238F8B" />
-          <polygon className="replay-sign-out-facet" points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#1D526B" />
-          <polygon className="replay-sign-out-facet" points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#247A91" />
-          <polygon className="replay-sign-out-facet" points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#7B5CFF" />
+          <polygon className="replay-sign-out-facet" points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="var(--replay-turf)" />
+          <polygon className="replay-sign-out-facet" points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="var(--replay-floodlight)" />
+          <polygon className="replay-sign-out-facet" points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="var(--replay-turf)" />
+          <polygon className="replay-sign-out-facet" points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="color-mix(in srgb, var(--replay-turf) 72%, var(--replay-void))" />
+          <polygon className="replay-sign-out-facet" points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="color-mix(in srgb, var(--replay-turf) 42%, var(--replay-void))" />
+          <polygon className="replay-sign-out-facet" points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="color-mix(in srgb, var(--replay-turf) 62%, var(--replay-violet))" />
+          <polygon className="replay-sign-out-facet" points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="var(--replay-violet)" />
         </g>
-        <polygon points="170,62 170,134 210,98" fill="#0B0F1A" />
-        <polygon points="172,68 172,128 206,98" fill="#D4FF4F" />
-        <circle cx="178" cy="46" r="7.5" fill="#0B0F1A" />
-        <circle cx="178" cy="46" r="5.5" fill="#FF5A3C" />
+        <polygon points="170,62 170,134 210,98" fill="var(--replay-void)" />
+        <polygon points="172,68 172,128 206,98" fill="var(--replay-floodlight)" />
+        <circle cx="178" cy="46" r="7.5" fill="var(--replay-void)" />
+        <circle cx="178" cy="46" r="5.5" fill="var(--replay-violet)" />
       </svg>
     </div>
   );
@@ -397,7 +397,7 @@ function LanguageToggle() {
           onClick={() => setLocale("en")}
           className={`rounded-md px-3 py-1 text-sm font-semibold transition-colors ${
             locale === "en"
-              ? "bg-zinc-700 text-foreground shadow-sm"
+              ? "bg-line text-foreground"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
@@ -407,7 +407,7 @@ function LanguageToggle() {
           onClick={() => setLocale("ar")}
           className={`rounded-md px-3 py-1 text-sm font-semibold transition-colors ${
             locale === "ar"
-              ? "bg-zinc-700 text-foreground shadow-sm"
+              ? "bg-line text-foreground"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >

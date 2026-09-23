@@ -160,37 +160,37 @@ export default function BrandingTab() {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-white font-display font-black text-xl uppercase tracking-tight">Branding</h2>
-        <p className="text-zinc-500 text-xs mt-1">
+        <h2 className="text-text font-display font-black text-xl uppercase tracking-tight">Branding</h2>
+        <p className="text-muted-text text-xs mt-1">
           Burned into exported clips. An academy's own branding wins, then the field's,
           then the global one — each piece falling back on its own.
         </p>
       </div>
 
       {notice && (
-        <div className="rounded border border-amber-800/60 bg-amber-950/30 px-3 py-2.5">
-          <p className="text-amber-200/80 text-xs">{notice}</p>
+        <div className="rounded border border-line bg-surface px-3 py-2.5">
+          <p className="text-muted-text text-xs">{notice}</p>
         </div>
       )}
       {error && (
-        <div className="rounded border border-red-900/60 bg-red-950/40 text-red-300 text-sm px-3 py-2">{error}</div>
+        <div className="rounded border border-line bg-surface text-text text-sm px-3 py-2">{error}</div>
       )}
 
       {/* Scope picker */}
-      <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3 space-y-2">
-        <p className="text-zinc-300 text-sm font-semibold">Whose branding are you editing?</p>
+      <div className="rounded border border-line bg-surface/40 p-3 space-y-2">
+        <p className="text-text text-sm font-semibold">Whose branding are you editing?</p>
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setScope({ type: "global", id: 0 })}
             className={cn(
               "px-3 py-1.5 rounded text-xs font-semibold",
-              scope.type === "global" ? "bg-primary text-black" : "border border-zinc-700 text-zinc-400",
+              scope.type === "global" ? "bg-floodlight text-void" : "border border-line text-muted-text",
             )}
           >
             Everyone
           </button>
           <select
-            className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200"
+            className="bg-void border border-line rounded px-2 py-1.5 text-xs text-text"
             value={scope.type === "field" ? String(scope.id) : ""}
             onChange={(e) => e.target.value && setScope({ type: "field", id: Number(e.target.value) })}
           >
@@ -198,7 +198,7 @@ export default function BrandingTab() {
             {fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
           <select
-            className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200"
+            className="bg-void border border-line rounded px-2 py-1.5 text-xs text-text"
             value={scope.type === "academy" ? String(scope.id) : ""}
             onChange={(e) => e.target.value && setScope({ type: "academy", id: Number(e.target.value) })}
           >
@@ -213,19 +213,19 @@ export default function BrandingTab() {
         const inUse = effective(kind);
         const inherited = !own && inUse;
         return (
-          <div key={kind} className="rounded border border-zinc-800 bg-zinc-900/40 p-3 space-y-2.5">
+          <div key={kind} className="rounded border border-line bg-surface/40 p-3 space-y-2.5">
             <div className="flex items-center gap-2">
-              <p className="text-zinc-300 text-sm font-semibold">{KIND_LABEL[kind]}</p>
+              <p className="text-text text-sm font-semibold">{KIND_LABEL[kind]}</p>
               {inherited && (
                 <span className="text-[10px] uppercase tracking-wider text-sky-300">
                   inherited from {inUse.scopeType === "global" ? "everyone" : inUse.scopeType}
                 </span>
               )}
             </div>
-            <p className="text-zinc-500 text-xs">{KIND_HINT[kind]}</p>
+            <p className="text-muted-text text-xs">{KIND_HINT[kind]}</p>
 
             {kind === "overlay" && sizes && (
-              <p className="text-zinc-600 text-xs">
+              <p className="text-muted-text text-xs">
                 Export size is {sizes.landscape.w}×{sizes.landscape.h} landscape,
                 {" "}{sizes.portrait.w}×{sizes.portrait.h} portrait.
               </p>
@@ -237,40 +237,40 @@ export default function BrandingTab() {
                   <img
                     src={inUse.assetUrl}
                     alt=""
-                    className="w-40 h-24 object-contain rounded border border-zinc-800"
+                    className="w-40 h-24 object-contain rounded border border-line"
                     style={{
                       // Checkerboard, so a transparent overlay is visibly
                       // transparent rather than looking like a black rectangle.
                       backgroundImage:
-                        "linear-gradient(45deg,#27272a 25%,transparent 25%,transparent 75%,#27272a 75%)," +
-                        "linear-gradient(45deg,#27272a 25%,transparent 25%,transparent 75%,#27272a 75%)",
+                        "linear-gradient(45deg,color-mix(in srgb,var(--replay-line) 55%,var(--replay-void)) 25%,transparent 25%,transparent 75%,color-mix(in srgb,var(--replay-line) 55%,var(--replay-void)) 75%)," +
+                        "linear-gradient(45deg,color-mix(in srgb,var(--replay-line) 55%,var(--replay-void)) 25%,transparent 25%,transparent 75%,color-mix(in srgb,var(--replay-line) 55%,var(--replay-void)) 75%)",
                       backgroundSize: "12px 12px",
                       backgroundPosition: "0 0, 6px 6px",
                     }}
                   />
                 ) : (
                   <video src={inUse.assetUrl} controls muted
-                    className="w-40 rounded border border-zinc-800 bg-black" />
+                    className="w-40 rounded border border-line bg-void" />
                 )}
                 <div className="text-xs space-y-1 min-w-0">
                   {inUse.width && (
-                    <p className={cn(inUse.fitsLandscape === false ? "text-amber-400" : "text-zinc-400")}>
+                    <p className={cn(inUse.fitsLandscape === false ? "text-muted-text" : "text-muted-text")}>
                       {inUse.width}×{inUse.height}
                       {inUse.fitsLandscape === false && sizes &&
                         ` — not ${sizes.landscape.w}×${sizes.landscape.h}, so it will sit in a corner rather than covering the frame`}
                     </p>
                   )}
-                  <p className="text-zinc-600">{formatBytes(inUse.bytes)}</p>
+                  <p className="text-muted-text">{formatBytes(inUse.bytes)}</p>
                   {own && (
                     <button onClick={() => void remove(kind)} disabled={busy === kind}
-                      className="text-red-400/80 hover:text-red-300">
+                      className="text-muted-text hover:text-text">
                       Remove
                     </button>
                   )}
                 </div>
               </div>
             ) : (
-              <p className="text-zinc-600 text-xs">Nothing set anywhere — clips export without it.</p>
+              <p className="text-muted-text text-xs">Nothing set anywhere — clips export without it.</p>
             )}
 
             <input
@@ -279,9 +279,9 @@ export default function BrandingTab() {
               accept={kind === "overlay" ? "image/png" : "video/mp4"}
               disabled={busy === kind}
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(kind, f); }}
-              className="block w-full text-xs text-zinc-400 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-zinc-800 file:text-zinc-200 file:text-xs"
+              className="block w-full text-xs text-muted-text file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-raised file:text-text file:text-xs"
             />
-            {busy === kind && <p className="text-zinc-500 text-xs">Uploading…</p>}
+            {busy === kind && <p className="text-muted-text text-xs">Uploading…</p>}
           </div>
         );
       })}
