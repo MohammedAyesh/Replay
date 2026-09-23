@@ -1172,7 +1172,7 @@ function RequestCard({
         </div>
       )}
 
-      {request.match && key !== "cancelled" && key !== "expired" && (
+      {request.match && !["cancelled", "expired", "failed", "refunded"].includes(key) && (
         <MatchRoomRow match={request.match} locale={locale} onCopy={onCopy} requestId={request.id} />
       )}
 
