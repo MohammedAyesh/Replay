@@ -326,7 +326,18 @@ function RsvpCard({ room, copy, onRsvp, busy, signedIn }: {
       </div>
     );
   }
-  if (post && !me) return null;
+  if (post && !me) {
+    // The link often arrives after the game: let players claim their place to get the footage, clips and vote.
+    return (
+      <div className="rounded-2xl border border-line bg-surface p-4">
+        {inviter && <p className="mb-3 text-sm font-semibold">{copy.invitedYou(inviter.name)}</p>}
+        <button type="button" disabled={busy} onClick={() => onRsvp("in")} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void disabled:opacity-60">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{copy.iPlayed}
+        </button>
+        <p className="mt-2 text-center text-[11px] text-muted-text">{copy.iPlayedDesc}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-line bg-surface p-4">
