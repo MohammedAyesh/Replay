@@ -17,7 +17,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 
   const isLogin = location === "/";
-  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/");
+  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find/");
   const isWatchFeed = location === "/home";
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");

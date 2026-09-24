@@ -29,6 +29,7 @@ import View from "@/pages/view";
 import Live from "@/pages/live";
 import ClaimDemo from "@/pages/claim-demo";
 import ClaimChain from "@/pages/claim-chain";
+import ClaimFind from "@/pages/claim-find";
 import IdentityBoard from "@/pages/identity-board";
 import Owner from "@/pages/owner";
 import OwnerVar from "@/pages/owner-var";
@@ -447,6 +448,7 @@ function AppRouter() {
         <Route path="/my-clips" component={MyClips} />
         <Route path="/live" component={Live} />
         <Route path="/claim/demo" component={ClaimDemo} />
+        <Route path="/find/:id" component={ClaimFind} />
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
         <Route path="/owner" component={Owner} />

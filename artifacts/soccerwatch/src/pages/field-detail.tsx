@@ -20,6 +20,7 @@ import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
+import { useClaimCopy } from "@/i18n/claim-strings";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
 
@@ -169,11 +170,26 @@ function ClaimableRecordingRow({
   };
 }) {
   const state = recording.viewerClaimState;
+  const claimCopy = useClaimCopy();
   const dateTime = formatRecordingDateTime(recording.date, recording.timeSlot, locale, copy.dateTimeFallback);
-  const isDisputed = state === "disputed";
+  /*
+   * "disputed" is a server state that no longer means what it says.
+   *
+   * Two claimants resolving to the same person with overlapping frames now
+   * CONFIRMS both: they were on the same stretches of footage and neither
+   * loses anything. Nothing is withheld and there is nothing for an
+   * administrator to decide, so the row reads as shared rather than as a
+   * queue the player is stuck in. The server still emits the state and still
+   * returns 409 on the overlapping tap; removing those is the other half of
+   * this change.
+   */
+  const isShared = state === "disputed";
   const needsResolution = state === "needs_resolution";
   const isSettled = state === "confirmed";
   const actionLabel = isSettled ? copy.result : state === null ? copy.invite : copy.continue;
+  // The gallery is the primary flow; the chain stays reachable from inside it
+  // as "find me in the video".
+  const href = `/find/${recording.id}`;
 
   return (
     <motion.div
@@ -189,28 +205,35 @@ function ClaimableRecordingRow({
         <p className="mt-0.5 text-xs text-muted-foreground">
           {recording.court}
         </p>
-        {(isDisputed || needsResolution) && (
-          <p className="mt-1 text-xs font-medium text-floodlight">
-            {isDisputed ? copy.disputed : copy.needsResolution}
+        {isShared && (
+          <p className="mt-1 text-xs font-medium text-turf">
+            {claimCopy.entry.sharedNoName}
             <span className="block font-normal text-muted-foreground">
-              {isDisputed ? copy.disputedDesc : copy.needsResolutionDesc}
+              {claimCopy.entry.sharedDesc}
+            </span>
+          </p>
+        )}
+        {needsResolution && (
+          <p className="mt-1 text-xs font-medium text-floodlight">
+            {claimCopy.entry.replaced}
+            <span className="block font-normal text-muted-foreground">
+              {claimCopy.entry.replacedDesc}
             </span>
           </p>
         )}
       </div>
-      {!isDisputed && !needsResolution && (
-        <Link
-          href={`/claim/${recording.id}`}
-          className="flex shrink-0 items-center gap-1 rounded-xl bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20"
-        >
-          <span>{actionLabel}</span>
-          <ChevronRight className="h-3.5 w-3.5 rtl:hidden" />
-          <ChevronLeft className="h-3.5 w-3.5 ltr:hidden" />
-        </Link>
-      )}
+      <Link
+        href={href}
+        className="flex shrink-0 items-center gap-1 rounded-xl bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20"
+      >
+        <span>{needsResolution ? claimCopy.entry.replacedAction : isShared ? copy.result : actionLabel}</span>
+        <ChevronRight className="h-3.5 w-3.5 rtl:hidden" />
+        <ChevronLeft className="h-3.5 w-3.5 ltr:hidden" />
+      </Link>
     </motion.div>
   );
 }
+
 // ── Calendar ──────────────────────────────────────────────────────────────────
 
 function MiniCalendar({
