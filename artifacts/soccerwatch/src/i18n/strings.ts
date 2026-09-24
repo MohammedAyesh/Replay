@@ -325,6 +325,7 @@ const strings = {
       createAccountCTA: "Create Account",
       browseGuestCTA: "Continue as Guest",
       error: "Failed to save clip",
+      liveTimeNotAdvanced: "The live playhead has not advanced. Keep playback moving, then stop the recording.",
     },
     export: {
       button: "Export",
@@ -903,6 +904,7 @@ const strings = {
       createAccountCTA: "إنشاء حساب",
       browseGuestCTA: "تابع كضيف",
       error: "فشل حفظ المقطع",
+      liveTimeNotAdvanced: "لم يتقدم موضع التشغيل المباشر بعد. اترك التشغيل مستمرًا ثم أوقف التسجيل.",
     },
     export: {
       button: "تصدير",

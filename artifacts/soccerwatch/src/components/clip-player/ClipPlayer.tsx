@@ -31,6 +31,7 @@ import {
 } from "@/lib/cropFrame";
 import { capPlaybackQuality } from "@/lib/hlsQuality";
 import { cn } from "@/lib/utils";
+import { createLiveClipWindow, formatAmmanClock, liveProgramTimeAtPosition } from "./liveTime";
 import { normalizeClipKeyframes } from "./normalize";
 
 export type ClipSource =
@@ -259,14 +260,7 @@ export function ClipPlayer({
   const programTimeAt = useCallback((position: number): number | null => {
     const hls = hlsRef.current as (Hls & { playingDate?: Date }) | null;
     const playingDate = hls?.playingDate?.getTime();
-    if (typeof playingDate === "number" && Number.isFinite(playingDate)) return playingDate;
-    const fragment = liveFragmentsRef.current.find((candidate) =>
-      Number.isFinite(candidate.programDateTime)
-      && position >= candidate.start
-      && position <= candidate.start + candidate.duration,
-    );
-    if (!fragment || !Number.isFinite(fragment.programDateTime)) return null;
-    return (fragment.programDateTime as number) + (position - fragment.start) * 1000;
+    return liveProgramTimeAtPosition(position, liveFragmentsRef.current, playingDate);
   }, []);
 
   const mediaPositionAtUtc = useCallback((targetUtcMs: number): number | null => {
@@ -533,14 +527,20 @@ export function ClipPlayer({
       return;
     }
     if (clipModeRef.current === "recording" || !videoRef.current) return;
-    if (isLiveDvr && liveUtcRef.current == null) {
+    const element = videoRef.current;
+    const liveStartUtcMs = isLiveDvr ? programTimeAt(element.currentTime) : null;
+    if (isLiveDvr && liveStartUtcMs == null) {
       toast({ title: t.clipping.error, description: "Wait for live DVR time data before recording a clip.", variant: "destructive" });
       return;
     }
-    const element = videoRef.current;
     element.play().catch(() => {});
     clipStartRef.current = element.currentTime;
-    liveClipStartUtcRef.current = isLiveDvr ? liveUtcRef.current : null;
+    liveClipStartUtcRef.current = liveStartUtcMs;
+    if (liveStartUtcMs != null) {
+      liveUtcRef.current = liveStartUtcMs;
+      setLiveUtcMs(liveStartUtcMs);
+      liveDvr?.onCurrentTimeUtcChange?.(liveStartUtcMs);
+    }
     liveClipEndUtcRef.current = null;
     clipModeRef.current = "recording";
     recordingRef.current.keyframes = [];
@@ -571,22 +571,36 @@ export function ClipPlayer({
   };
 
   const stopRecording = (overrideEndTime?: number) => {
+    const element = videoRef.current;
+    const endTime = overrideEndTime ?? element?.currentTime ?? clipStartRef.current;
+    const liveWindow = isLiveDvr
+      ? createLiveClipWindow(
+        liveClipStartUtcRef.current,
+        element ? programTimeAt(element.currentTime) : null,
+        maxLiveClipSeconds,
+      )
+      : null;
+    if (isLiveDvr && !liveWindow) {
+      toast({
+        title: t.clipping.error,
+        description: t.clipping.liveTimeNotAdvanced,
+        variant: "destructive",
+      });
+      return;
+    }
     clipModeRef.current = "review";
     if (recordingRef.current.interval) clearInterval(recordingRef.current.interval);
     if (elapsedRef.current) clearInterval(elapsedRef.current);
     recordingRef.current.interval = null;
     elapsedRef.current = null;
-    const endTime = overrideEndTime ?? videoRef.current?.currentTime ?? clipStartRef.current;
-    const currentLiveEndUtc = isLiveDvr ? liveUtcRef.current : null;
-    const liveEndUtc = isLiveDvr
-      && liveClipStartUtcRef.current != null
-      && currentLiveEndUtc != null
-      ? Math.min(currentLiveEndUtc, liveClipStartUtcRef.current + maxLiveClipSeconds * 1000)
-      : currentLiveEndUtc;
+    const liveEndUtc = liveWindow?.endUtcMs ?? null;
     liveClipEndUtcRef.current = liveEndUtc;
-    const relativeEnd = isLiveDvr && liveClipStartUtcRef.current != null && liveEndUtc != null
-      ? Math.max(0, (liveEndUtc - liveClipStartUtcRef.current) / 1000)
-      : Math.max(0, endTime - clipStartRef.current);
+    const relativeEnd = liveWindow?.durationSeconds ?? Math.max(0, endTime - clipStartRef.current);
+    if (liveEndUtc != null) {
+      liveUtcRef.current = liveEndUtc;
+      setLiveUtcMs(liveEndUtc);
+      liveDvr?.onCurrentTimeUtcChange?.(liveEndUtc);
+    }
     if (videoRef.current) recordingRef.current.keyframes.push({ t: relativeEnd, ...computeCropRect() });
     videoRef.current?.pause();
     setClipEndTime(isLiveDvr && liveEndUtc != null ? liveEndUtc / 1000 : endTime);
@@ -788,7 +802,7 @@ export function ClipPlayer({
               {isLiveDvr && liveRange && (
                 <div className="flex items-center gap-2">
                   <span className="w-14 text-end font-mono text-[10px] text-white/80">
-                    {liveUtcMs == null ? "UTC" : new Date(liveUtcMs).toISOString().slice(11, 19)}
+                    {formatAmmanClock(liveUtcMs)}
                   </span>
                   <input
                     type="range"
@@ -796,12 +810,12 @@ export function ClipPlayer({
                     max={liveRange.endUtcMs}
                     step={1000}
                     value={Math.max(liveRange.startUtcMs, Math.min(liveRange.endUtcMs, liveUtcMs ?? liveRange.endUtcMs))}
-                    aria-label="Live DVR position in UTC"
+                    aria-label="Live DVR position in Amman local time"
                     onChange={(event) => seekToUtc(Number(event.target.value))}
                     className="flex-1 accent-primary h-1"
                   />
                   <span className="w-14 font-mono text-[10px] text-white/80">
-                    {new Date(liveRange.endUtcMs).toISOString().slice(11, 19)}
+                    {formatAmmanClock(liveRange.endUtcMs)}
                   </span>
                   {liveUtcMs != null && liveRange.endUtcMs - liveUtcMs > 8_000 && (
                     <button

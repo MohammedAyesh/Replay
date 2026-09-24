@@ -21,6 +21,7 @@ import { queueUserClipExport } from "./userClips";
 
 const router: IRouter = Router();
 const RATE_WINDOW_MS = 60_000;
+const RATE_DAY_MS = 24 * 60 * 60_000;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 const MAX_LIVE_CLIP_SECONDS = 10 * 60;
 const MAX_UNKNOWN_JOB_WAIT_MS = 60 * 60 * 1000;
@@ -33,30 +34,57 @@ function requestParam(req: Request, name: string): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
-function rateLimit(max: number) {
+function consumeRateLimit(
+  key: string,
+  max: number,
+  windowMs: number,
+): { allowed: boolean; retryAfterSeconds: number } {
+  const now = Date.now();
+  let bucket = rateBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = { count: 0, resetAt: now + windowMs };
+    rateBuckets.set(key, bucket);
+  }
+  if (rateBuckets.size > 20_000) {
+    for (const [entry, value] of rateBuckets) {
+      if (value.resetAt <= now) rateBuckets.delete(entry);
+    }
+  }
+  const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+  if (bucket.count >= max) return { allowed: false, retryAfterSeconds };
+  bucket.count += 1;
+  return { allowed: true, retryAfterSeconds };
+}
+
+export function resetMatchLiveRateLimits(): void {
+  rateBuckets.clear();
+}
+
+function rateLimit(max: number, scope: string, message: string) {
   return (req: Request, res: Response, next: () => void): void => {
-    const now = Date.now();
     const code = normalizeCode(requestParam(req, "code"));
     const client = req.ip || req.socket.remoteAddress || "unknown";
-    const key = `${client}:${code}`;
-    let bucket = rateBuckets.get(key);
-    if (!bucket || bucket.resetAt <= now) {
-      bucket = { count: 0, resetAt: now + RATE_WINDOW_MS };
-      rateBuckets.set(key, bucket);
-    }
-    bucket.count += 1;
-    if (rateBuckets.size > 20_000) {
-      for (const [entry, value] of rateBuckets) {
-        if (value.resetAt <= now) rateBuckets.delete(entry);
-      }
-    }
-    if (bucket.count > max) {
-      res.set("Retry-After", String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
-      res.status(429).json({ error: "Too many live match requests" });
+    const limit = consumeRateLimit(`${scope}:ip:${client}:${code}`, max, RATE_WINDOW_MS);
+    if (!limit.allowed) {
+      res.set("Retry-After", String(limit.retryAfterSeconds));
+      res.status(429).json({ error: message });
       return;
     }
     next();
   };
+}
+
+function limitLiveClipSave(userId: number, res: Response): boolean {
+  const minuteLimit = consumeRateLimit(`live-clips:user:${userId}:minute`, 20, RATE_WINDOW_MS);
+  const limit = minuteLimit.allowed
+    ? consumeRateLimit(`live-clips:user:${userId}:day`, 200, RATE_DAY_MS)
+    : minuteLimit;
+  if (!limit.allowed) {
+    res.set("Retry-After", String(limit.retryAfterSeconds));
+    res.status(429).json({ error: "Too many live match requests" });
+    return false;
+  }
+  return true;
 }
 
 function liveVariant(value: string): LiveVariant | null {
@@ -253,7 +281,10 @@ async function ensureMediaAccess(req: Request, res: Response): Promise<{
   return { ctx, camera };
 }
 
-router.get("/matches/:code/live/status", rateLimit(60), async (req, res): Promise<void> => {
+router.get(
+  "/matches/:code/live/status",
+  rateLimit(60, "match-live-status", "Too many live status requests"),
+  async (req, res): Promise<void> => {
   const ctx = await getMatchContext(req, res);
   if (!ctx) return;
   try {
@@ -266,7 +297,7 @@ router.get("/matches/:code/live/status", rateLimit(60), async (req, res): Promis
 
 router.get(
   "/matches/:code/live/:variant/playlist.m3u8",
-  rateLimit(180),
+  rateLimit(300, "match-live-playlist", "Too many live playlist requests"),
   async (req, res): Promise<void> => {
     const access = await ensureMediaAccess(req, res);
     if (!access) return;
@@ -312,7 +343,7 @@ router.get(
 
 router.get(
   "/matches/:code/live/:variant/seg/:name",
-  rateLimit(900),
+  rateLimit(900, "match-live-segment", "Too many live segment requests"),
   async (req, res): Promise<void> => {
     const access = await ensureMediaAccess(req, res);
     if (!access) return;
@@ -354,7 +385,7 @@ router.get(
   },
 );
 
-router.post("/matches/:code/live-clips", rateLimit(8), async (req, res): Promise<void> => {
+router.post("/matches/:code/live-clips", async (req, res): Promise<void> => {
   const params = CreateMatchLiveClipParams.safeParse({ code: normalizeCode(requestParam(req, "code")) });
   if (!params.success || !params.data.code) {
     res.status(404).json({ error: "Match not found" });
@@ -375,6 +406,7 @@ router.post("/matches/:code/live-clips", rateLimit(8), async (req, res): Promise
     res.status(403).json({ error: "Sign in with a real account to save live clips" });
     return;
   }
+  if (!limitLiveClipSave(user.id, res)) return;
 
   const ctx = await loadRoomByCode(params.data.code);
   if (!ctx) {
@@ -482,7 +514,7 @@ router.post("/matches/:code/live-clips", rateLimit(8), async (req, res): Promise
 
 router.get(
   "/matches/:code/live-clips/:id/status",
-  rateLimit(30),
+  rateLimit(30, "match-live-clip-status", "Too many live clip status requests"),
   async (req, res): Promise<void> => {
     const user = await getLocalUserRecord(req);
     if (!user || user.isGuest) {

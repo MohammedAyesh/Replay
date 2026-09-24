@@ -1197,7 +1197,7 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
               seekToUtcMs={seekUtcMs}
             />
           </div>
-          <p className="text-center text-[11px] text-muted-text">{copy.varBehind} · UTC DVR</p>
+          <p className="text-center text-[11px] text-muted-text">{copy.varBehind}</p>
           {status.panAvailable && (
             <button
               type="button"

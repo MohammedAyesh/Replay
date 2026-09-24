@@ -34,8 +34,8 @@ vi.mock("./userClips", () => ({
   queueUserClipExport: vi.fn(async () => "pending"),
 }));
 
-import matchLiveRouter from "./matchLive";
-import { controlFetch } from "./contabo";
+import matchLiveRouter, { resetMatchLiveRateLimits } from "./matchLive";
+import { controlFetch, controlResponse } from "./contabo";
 import { queueUserClipExport } from "./userClips";
 import { ensureRoomForRequest } from "../lib/matchRooms";
 
@@ -114,7 +114,9 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  resetMatchLiveRateLimits();
   vi.mocked(controlFetch).mockReset();
+  vi.mocked(controlResponse).mockReset();
   vi.mocked(queueUserClipExport).mockReset().mockResolvedValue("pending");
 });
 
@@ -237,6 +239,64 @@ describe("match live clip control contract", () => {
       .send(input)
       .expect(400);
     expect(controlFetch).not.toHaveBeenCalled();
+  });
+
+  it("allows a viewer to save after 100 live playlist and segment requests", async () => {
+    vi.mocked(controlResponse).mockImplementation(async (path) => (
+      path.endsWith("/playlist.m3u8")
+        ? new Response("#EXTM3U\n#EXTINF:4,\nseg/segment1.ts\n", { status: 200 })
+        : new Response(new Uint8Array([0, 1, 2]), {
+          status: 200,
+          headers: { "Content-Type": "video/mp2t" },
+        })
+    ));
+
+    for (let index = 0; index < 100; index += 1) {
+      const response = index % 2 === 0
+        ? await request(app).get(`/api/matches/${matchCode}/live/hls/playlist.m3u8`)
+        : await request(app).get(`/api/matches/${matchCode}/live/hls/seg/segment1.ts`);
+      expect(response.status).toBe(200);
+    }
+
+    vi.mocked(controlFetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      body: { job: `cam1_${TAG}` },
+    });
+    const saved = await request(app)
+      .post(`/api/matches/${matchCode}/live-clips`)
+      .set("x-test-user", String(userId))
+      .send(clipInput())
+      .expect(201);
+
+    expect(saved.body.liveClipStatus).toBe("queued");
+    expect(controlResponse).toHaveBeenCalledTimes(100);
+    expect(controlFetch).toHaveBeenCalledOnce();
+  });
+
+  it("applies the live match request limit only to per-user clip saves", async () => {
+    vi.mocked(controlFetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: { job: `cam1_${TAG}` },
+    });
+
+    for (let index = 0; index < 20; index += 1) {
+      await request(app)
+        .post(`/api/matches/${matchCode}/live-clips`)
+        .set("x-test-user", String(userId))
+        .send(clipInput())
+        .expect(201);
+    }
+
+    const limitedSave = await request(app)
+      .post(`/api/matches/${matchCode}/live-clips`)
+      .set("x-test-user", String(userId))
+      .send(clipInput())
+      .expect(429);
+
+    expect(limitedSave.body.error).toBe("Too many live match requests");
+    expect(controlFetch).toHaveBeenCalledTimes(20);
   });
 
   it("rejects ball-follow when the control service reports unavailable path coverage", async () => {
