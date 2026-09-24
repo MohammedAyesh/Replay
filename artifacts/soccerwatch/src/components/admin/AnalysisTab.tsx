@@ -6,12 +6,10 @@ import { formatStartTime, parseStartTime } from "@/lib/analysisStart";
  * The analysis queue.
  *
  * The thing this page has to communicate, and the reason it is a page rather
- * than a button, is that pressing it starts something that takes about six
- * hours on a computer in somebody's flat. So the interface is built around
- * waiting: where the job is in the queue, what the workstation is doing right
- * now, and - the state that would otherwise look like a bug - whether the
- * workstation is even switched on. A queued job with the PC asleep is normal,
- * and the page says so in words rather than leaving a spinner turning.
+ * than a button, is that pressing it queues work for a cloud runner that rents
+ * a GPU for each job and deletes it afterwards. So the interface is built
+ * around waiting: where the job is in the queue, what the runner is doing
+ * right now, and whether the runner is available.
  */
 
 type JobStatus = "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled";
@@ -32,6 +30,7 @@ interface Job {
   sources: SourceDescriptor[];
   bundleRecordingIds: number[];
   matchStartSeconds: number;
+  params?: { gpu?: string };
   status: JobStatus;
   stage: string | null;
   progress: number;
@@ -105,6 +104,7 @@ export default function AnalysisTab() {
   const [options, setOptions] = useState<RecordingOption[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [startInput, setStartInput] = useState("0:00");
+  const [selectedGpu, setSelectedGpu] = useState("auto");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [schemaNotice, setSchemaNotice] = useState<string | null>(null);
@@ -176,13 +176,15 @@ export default function AnalysisTab() {
           recordingId: selected[0],
           sourceRecordingIds: selected,
           matchStartSeconds: startSeconds,
+          params: { gpu: selectedGpu },
         }),
       });
       setSelected([]);
+      setSelectedGpu("auto");
       setNotice(
         anyWorkerOnline
-          ? "Queued. The workstation will pick it up within a minute."
-          : "Queued. Nothing is listening right now, so it will start when the analysis PC is next switched on.",
+          ? "Queued. A GPU will be rented for it within a minute."
+          : "Queued. The cloud runner is not answering right now, so the job will wait in the queue.",
       );
       await load();
     } catch (e) {
@@ -210,7 +212,7 @@ export default function AnalysisTab() {
         <h2 className="text-white font-display font-black text-xl uppercase tracking-tight">Analysis</h2>
         <p className="text-zinc-500 text-xs mt-1">
           Runs the tracking pipeline over one or more recordings and attaches the result, so the
-          match becomes claimable. A football hour takes about six hours of GPU time.
+          match becomes claimable. Runs on a GPU rented for each job and deleted afterwards. A two-hour match takes about 2–2¾ hours depending on the GPU and costs well under $1.
         </p>
       </div>
 
@@ -221,26 +223,27 @@ export default function AnalysisTab() {
         </div>
       )}
 
-      {/* Workstation health. This box exists so that "nothing is happening" has
+      {/* Analysis runner health. This box exists so that "nothing is happening" has
           a visible cause instead of looking like a broken queue. */}
       <div className="rounded border border-zinc-800 bg-zinc-900/40 px-3 py-2.5">
         <div className="flex items-center justify-between">
-          <p className="text-zinc-300 text-sm font-semibold">Analysis workstation</p>
+          <p className="text-zinc-300 text-sm font-semibold">Analysis runner</p>
           <span className={cn("text-xs font-semibold", anyWorkerOnline ? "text-emerald-400" : "text-amber-400")}>
             {anyWorkerOnline ? "online" : "offline"}
           </span>
         </div>
         {workers.length === 0 ? (
           <p className="text-zinc-500 text-xs mt-1">
-            No workstation has ever checked in. Start the worker on the analysis PC — jobs queued
-            here will wait until it does.
+            The cloud runner has not checked in yet. Jobs queued here will wait until it does.
           </p>
         ) : (
           <ul className="mt-1.5 space-y-1">
             {workers.map((worker) => (
               <li key={worker.id} className="text-xs text-zinc-400 flex items-center gap-2">
                 <span className={cn("h-1.5 w-1.5 rounded-full", worker.online ? "bg-emerald-400" : "bg-zinc-600")} />
-                <span className="text-zinc-300 font-medium">{worker.id}</span>
+                <span className="text-zinc-300 font-medium">
+                  {worker.id === "cloud-gpu" ? "Cloud GPU (rented per job)" : worker.id}
+                </span>
                 <span>last seen {ago(worker.lastSeenAt)}</span>
                 {worker.currentJobId && <span>· on job #{worker.currentJobId}</span>}
                 {worker.version && <span className="text-zinc-600">· {worker.version}</span>}
@@ -311,7 +314,7 @@ export default function AnalysisTab() {
           )}
         </div>
 
-        <div className="flex items-end gap-3">
+        <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="text-zinc-500 text-[11px] uppercase tracking-wider block">Match starts at</label>
             <input
@@ -327,6 +330,23 @@ export default function AnalysisTab() {
               {startSeconds === null
                 ? "Use m:ss, h:mm:ss, or a number of seconds."
                 : `${formatStartTime(startSeconds)} into the first recording`}
+            </p>
+          </div>
+          <div className="min-w-0 flex-1">
+            <label htmlFor="analysis-gpu" className="text-zinc-500 text-[11px] uppercase tracking-wider block">GPU</label>
+            <select
+              id="analysis-gpu"
+              value={selectedGpu}
+              onChange={(e) => setSelectedGpu(e.target.value)}
+              className="mt-1 w-full min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
+            >
+              <option value="auto">Auto — cheapest free card (usually RTX 4080 Super)</option>
+              <option value="RTX 4080 (Super)">RTX 4080 Super · $0.25/h · ~2h40 · ~$0.66 per 2-hour match (cheapest)</option>
+              <option value="RTX 5090D">RTX 5090D · $0.41/h · ~2h05 · ~$0.84 per 2-hour match (fastest for the money)</option>
+              <option value="RTX 5090">RTX 5090 · $0.46/h · ~2h00 · ~$0.92 per 2-hour match</option>
+            </select>
+            <p className="text-zinc-600 text-[11px] mt-1">
+              Auto takes the cheapest card that is free. If you pick a specific card and none is free, the job waits up to 30 minutes and then fails with a message.
             </p>
           </div>
           <button
@@ -364,6 +384,7 @@ export default function AnalysisTab() {
             <p className="text-zinc-500 text-xs mt-1.5">
               {job.sources.length > 1 ? `${job.sources.length} recordings` : "1 recording"}
               {" · kick-off "}{formatStartTime(job.matchStartSeconds)}
+              {" · GPU: "}{job.params?.gpu && job.params.gpu !== "auto" ? job.params.gpu : "Auto"}
               {job.bundleRecordingIds.length > 0 &&
                 ` · ${job.bundleRecordingIds.length}/${job.sources.length} bundles attached`}
             </p>
@@ -371,7 +392,7 @@ export default function AnalysisTab() {
             {job.status === "queued" && (
               <p className="text-zinc-400 text-xs mt-1.5">
                 {job.queuePosition === 1
-                  ? anyWorkerOnline ? "Next up." : "Next up — waiting for the workstation to come online."
+                  ? anyWorkerOnline ? "Next up." : "Next up — waiting for the cloud runner."
                   : `Position ${job.queuePosition} in the queue.`}
               </p>
             )}

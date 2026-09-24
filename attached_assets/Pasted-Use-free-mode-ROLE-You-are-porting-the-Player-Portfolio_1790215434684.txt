@@ -1,0 +1,54 @@
+Use free mode.
+
+ROLE
+You are porting the Player Portfolio feature onto this workspace (current main) from a bundle. The feature was built and verified in another task; your job is a faithful MOVE, not a redesign. Everything you need is in portfolio-port.zip at the workspace root. If the folder portfolio-port/ does not exist, run: unzip -o portfolio-port.zip
+
+FIRST, read portfolio-port/README-PORT.md end to end. It lists all 16 files (4 new, 12 modified) with the exact lines to add and where. Follow it literally. If anything it describes does not match what main actually contains, STOP at that point and report the difference — do not improvise.
+
+HARD RULES
+- Do NOT run drizzle push, push-force, drizzle-kit generate/migrate, or any SQL that writes. The columns/table already exist in the shared database; the schema edits only declare them.
+- Do NOT touch any file not listed in README-PORT.md. No refactors, no renames, no "while I'm here" fixes, no lazy-loading, no changes to AuthRedirectGuard, match rooms, owner console, claim pages, live or archive code.
+- Do NOT attempt to make clip sharing "work" beyond what the bundle contains. If you notice gaps, put them in the final report under "Observations".
+- Do NOT apply anything from portfolio-port/reference/ — those hunks have stale context and are for reading only.
+- Never install packages. Commit generated codegen output as the repo already tracks it.
+
+STEP 1 — READ-ONLY BASELINE (report raw output; never summarise errors away)
+a) git rev-parse --abbrev-ref HEAD; git rev-parse HEAD; git log --oneline -8
+b) pnpm run typecheck → pass/fail and EVERY error as file:line — message. If red, record it; you will not fix pre-existing errors.
+c) pnpm --filter @workspace/api-server run test → passed/failed/skipped counts and failing test names.
+d) pnpm --filter @workspace/api-spec run codegen then git status --porcelain: if untouched main produces a diff, paste git diff --stat, then revert it (git checkout -- . and delete new untracked generated files). Main must be exactly as found before Step 2.
+e) Read-only SQL via the existing DATABASE_URL (SELECT only):
+   SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_name='users' AND column_name IN ('nation','profile_photo');
+   SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_name='user_clips' AND column_name='show_in_portfolio';
+   SELECT column_name,data_type,is_nullable FROM information_schema.tables t JOIN information_schema.columns c USING (table_name) WHERE t.table_name='portfolio_history' ORDER BY ordinal_position;
+   All three must return rows. If any is empty, STOP and report — the move cannot proceed without a schema change, and that is a human decision.
+f) grep -n "portfolio\|showInPortfolio\|profilePhoto" lib/api-spec/openapi.yaml lib/db/src/schema/*.ts artifacts/api-server/src/routes/index.ts artifacts/soccerwatch/src/App.tsx → expected: no matches. If there are matches, STOP and report.
+
+STEP 2 — THE MOVE, in this exact order (README-PORT.md sections in brackets)
+1. Schema declarations [§1]: new portfolio.ts; users.ts +nation +profilePhoto; userClips.ts +showInPortfolio; index.ts export.
+2. OpenAPI [§4]: portfolio paths under ONE /users/{id}/portfolio key (get then patch); the five Portfolio* schemas; the property additions to User, UserClip (also add to its required list) and UpdateUserClipInput. Then run codegen. Confirm useGetUserPortfolio / useUpdateUserPortfolio / getGetUserPortfolioQueryKey / PortfolioView / PortfolioClip exist in @workspace/api-client-react and GetUserPortfolio* / UpdateUserPortfolio* in @workspace/api-zod.
+3. API [§2]: new routes/portfolios.ts; mount in routes/index.ts directly after usersRouter; apply patches/userClips.route.portfolio.patch by context (three hunks).
+4. Frontend [§3]: new features/portfolio/model.ts + page.tsx; App.tsx route + Toaster guard (static import — no lazy()); layout.tsx isPortfolio; account.tsx My Portfolio row + Sparkles import; my-clips.tsx patch by context plus the imports listed in §3e; strings.ts six blocks; index.css append.
+5. pnpm run typecheck. The ONLY acceptable outcome is: zero errors in any file you touched, and no new errors elsewhere compared with Step 1b. If strings.ts complains about a duplicate key (e.g. myClips.cancel already exists), keep main's existing key and drop the duplicate from the addition — report it.
+6. pnpm --filter @workspace/api-server run test → counts must be ≥ Step 1c.
+
+STEP 3 — SERVED-PAGE VERIFICATION (dev preview URL, not localhost claims; screenshots for every item)
+Anonymous (logged out / incognito):
+ V1  GET /api/users/<an existing user id>/portfolio → 200 JSON with canEdit:false, history:[], clips:[] (paste the body). A non-existent id → 404.
+ V2  /portfolio/<that id> renders the story page: hero with name, chapters, no owner controls (no Edit Story / Reset / Share bar), and the app header and bottom tab bar are NOT visible. Screenshot at 390px width and at 1280px.
+ V3  Switch to Arabic and reload: RTL layout, Arabic strings, screenshot at 390px.
+ V4  PATCH /api/users/<id>/portfolio without auth → 401.
+Signed in as an admin/demo account you control:
+ V5  /account shows a "My Portfolio" row above "Edit Profile" (Arabic: "ملفي التعريفي"); tapping it opens /portfolio/<own id> with the owner bar (Share + Edit Story + Reset) and canEdit:true in the API body.
+ V6  Edit Story → change nation, add one history item, save → PATCH returns 200 and the change persists after a hard reload; the DB row appears in portfolio_history (SELECT only).
+ V7  /my-clips: each created clip card shows the eye toggle; tapping it opens the share/unshare consent dialog. Do NOT judge whether the badge state persists — just report what happens after confirming, including the network response of the PATCH.
+ V8  Every other page still renders: /home, /view, /matches, /my-clips, /account, /m/<a code>, /owner (if the account owns a field), /admin. One screenshot each; any console error pasted verbatim.
+Anything that fails in V1–V8: report it with the exact error; do not start fixing outside the 16 files.
+
+STEP 4 — REPORT
+- Baseline (Step 1) raw results.
+- git diff --stat for the move (must list only the 16 files plus generated codegen output).
+- Typecheck and test results before/after.
+- The V1–V8 results with screenshots and pasted API bodies.
+- "Observations" — anything about clip sharing you noticed (e.g. which serializers return showInPortfolio, missing imports, generated Zod shape of UpdateUserClipInput). Observations only; no changes.
+Do not mark the task complete without Step 3 evidence. Do not run any drizzle push, ever, in this task.
