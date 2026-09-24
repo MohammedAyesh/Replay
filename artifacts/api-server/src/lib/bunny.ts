@@ -13,6 +13,11 @@ export const BUNNY_STORAGE_API_KEY = process.env.BUNNY_STORAGE_API_KEY ?? "";
 export const BUNNY_STORAGE_CDN_URL = process.env.BUNNY_STORAGE_CDN_URL ?? "";
 export const BUNNY_STORAGE_HOSTNAME = process.env.BUNNY_STORAGE_HOSTNAME ?? "storage.bunnycdn.com";
 
+/** Videos with this title prefix are transient live clips, not library footage. */
+export function isExcludedBunnyVideoTitle(title: string | null | undefined): boolean {
+  return typeof title === "string" && title.toLowerCase().startsWith("liveclip_");
+}
+
 export function getBunnyPlaybackUrl(videoId: string): string {
   return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/playlist.m3u8`;
 }

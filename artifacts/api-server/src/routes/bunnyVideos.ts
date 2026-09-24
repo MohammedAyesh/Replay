@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db, fieldsTable, recordingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, isBunnyConfigured } from "../lib/bunny.js";
+import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, isBunnyConfigured, isExcludedBunnyVideoTitle } from "../lib/bunny.js";
 import {
   createPublicFootageContext,
   extractBunnyVideoId,
@@ -101,6 +101,7 @@ router.get("/fields/:id/videos", async (req, res): Promise<void> => {
 
   const videos = raw
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
+    .filter((v) => !isExcludedBunnyVideoTitle(v.title))
     .filter((v) => v.status === undefined || v.status === 4)
     .filter((v) => {
       const guid = v.guid as string;

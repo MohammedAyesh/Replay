@@ -23,6 +23,7 @@ import {
   BUNNY_CDN_HOSTNAME,
   BUNNY_STORAGE_API_KEY,
   isBunnyStorageConfigured,
+  isExcludedBunnyVideoTitle,
   uploadClipIntroToBunnyStorage,
 } from "../lib/bunny";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
@@ -1154,6 +1155,7 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
     successfullyReadFieldIds.add(field.id);
     for (const video of videos) {
       if (typeof video.guid !== "string") continue;
+      if (isExcludedBunnyVideoTitle(video.title)) continue;
       knownRemoteGuids.add(video.guid);
       if (video.status === undefined || video.status === 4) {
         remoteByGuid.set(video.guid, recordingFromBunny(video, field.id));
