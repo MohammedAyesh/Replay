@@ -20,7 +20,7 @@
 - [GCS gzip downloads](gcs-gzip-downloads.md) — Google Cloud Storage auto-decompresses gzip objects unless download uses `{ decompress: false }`; preserve bytes when forwarding Content-Encoding.
 - [Progressive HLS browser cache](progressive-hls-browser-cache.md) — keep persisted cache reads independent from per-client post-Play writes, and make every Cache API failure fall back to network.
 - [HLS cache generations](hls-cache-generation.md) — bump the service-worker cache namespace when proxy/media response behavior changes; stale successful error bodies can black-screen playback.
-- [VAR HLS wall clock](var-hls-wall-clock.md) — derive playback time from hls.js playingDate or the active fragment; never extrapolate first PDT across playlist gaps.
+- [VAR HLS wall clock](var-hls-wall-clock.md) — playhead timestamps use the covering fragment’s own PDT; missing metadata is unknown, not a stale fallback.
 - [Claim completion and results](claim-completion-results.md) — ordinary progress saves cannot clear completion; expose only server-supported tracking results and keep unsupported metrics unavailable.
 - [Signup media consent](signup-media-consent.md) — collect recording consent inline during Clerk signup; social-media consent is separate and optional, with no post-signup gate.
 - [Claim Match bundle summaries](claim-match-bundle-summary.md) — derive state from compact ranges/events; reserve full segment reads for legacy manifests.

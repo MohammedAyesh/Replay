@@ -31,7 +31,12 @@ import {
 } from "@/lib/cropFrame";
 import { capPlaybackQuality } from "@/lib/hlsQuality";
 import { cn } from "@/lib/utils";
-import { createLiveClipWindow, formatAmmanClock, liveProgramTimeAtPosition } from "./liveTime";
+import {
+  createLiveClipWindow,
+  formatAmmanClock,
+  liveElapsedSeconds,
+  liveProgramTimeAtPosition,
+} from "./liveTime";
 import { normalizeClipKeyframes } from "./normalize";
 
 export type ClipSource =
@@ -56,6 +61,9 @@ export type LiveDvrOptions = {
 export type ClipPlayerProps = {
   /** HLS manifest URL. The caller owns authorization/proxying. */
   src: string;
+  /** Optional alternate manifest used after the preferred stream fails. */
+  fallbackSrc?: string;
+  onFallback?: () => void;
   title: string;
   source: ClipSource;
   academyId?: number;
@@ -182,6 +190,8 @@ function QualityPicker({
 
 export function ClipPlayer({
   src,
+  fallbackSrc,
+  onFallback,
   title,
   source,
   academyId,
@@ -198,6 +208,8 @@ export function ClipPlayer({
 }: ClipPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const fallbackRestoreUtcRef = useRef<number | null>(null);
+  const fallbackTriedRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const {
     frameBoxRef,
@@ -230,6 +242,7 @@ export function ClipPlayer({
     interval: null,
     keyframes: [],
   });
+  const liveRecordElapsedRef = useRef(0);
   const lastExternalSeekRef = useRef<number | null>(null);
   const lastExternalUtcSeekRef = useRef<number | null>(null);
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -241,6 +254,9 @@ export function ClipPlayer({
   const [qualityLevels, setQualityLevels] = useState<Array<{ height: number; index: number }>>([]);
   const [activeQuality, setActiveQuality] = useState(-1);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
+  const [usingFallback, setUsingFallback] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [look, setLook] = useState<"original" | "warm" | "cinematic" | "noir">("original");
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [liveUtcMs, setLiveUtcMs] = useState<number | null>(null);
@@ -256,12 +272,20 @@ export function ClipPlayer({
   const sourceKey = source.kind === "bunny" ? source.videoId : source.token;
   const isLiveDvr = Boolean(liveDvr);
   const maxLiveClipSeconds = Math.max(1, Math.min(600, liveDvr?.maxDurationSeconds ?? 600));
+  const activeSrc = usingFallback && fallbackSrc ? fallbackSrc : src;
 
   const programTimeAt = useCallback((position: number): number | null => {
-    const hls = hlsRef.current as (Hls & { playingDate?: Date }) | null;
-    const playingDate = hls?.playingDate?.getTime();
-    return liveProgramTimeAtPosition(position, liveFragmentsRef.current, playingDate);
+    return liveProgramTimeAtPosition(position, liveFragmentsRef.current);
   }, []);
+
+  useEffect(() => {
+    setUsingFallback(false);
+    fallbackTriedRef.current = false;
+  }, [src]);
+
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = playbackRate;
+  }, [playbackRate]);
 
   const mediaPositionAtUtc = useCallback((targetUtcMs: number): number | null => {
     let nearest: { position: number; distance: number } | null = null;
@@ -389,15 +413,29 @@ export function ClipPlayer({
     const element = videoRef.current;
     if (!element) return;
     liveFragmentsRef.current = [];
-    liveUtcRef.current = null;
     setLiveRange(null);
-    setLiveUtcMs(null);
+    if (fallbackRestoreUtcRef.current == null) {
+      liveUtcRef.current = null;
+      setLiveUtcMs(null);
+    } else {
+      liveUtcRef.current = fallbackRestoreUtcRef.current;
+      setLiveUtcMs(fallbackRestoreUtcRef.current);
+    }
     element.muted = isLive;
     let previousTime = -1;
+    const switchToFallback = () => {
+      if (!fallbackSrc || fallbackTriedRef.current || activeSrc === fallbackSrc) return false;
+      fallbackTriedRef.current = true;
+      fallbackRestoreUtcRef.current = isLiveDvr ? liveUtcRef.current : null;
+      setUsingFallback(true);
+      onFallback?.();
+      return true;
+    };
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
     const onDurationChange = () => { if (!isLive) setDuration(element.duration || 0); };
     const onTimeUpdate = () => {
+      if (isLiveDvr && fallbackRestoreUtcRef.current != null) return;
       if (seekDraggingRef.current) return;
       const now = element.currentTime;
       setCurrentTime(now);
@@ -427,6 +465,13 @@ export function ClipPlayer({
       const details = (data as { details?: { fragments?: TimelineFragment[] } }).details;
       const fragments = details?.fragments ?? [];
       liveFragmentsRef.current = fragments;
+      if (fallbackRestoreUtcRef.current != null) {
+        const restoredPosition = mediaPositionAtUtc(fallbackRestoreUtcRef.current);
+        if (restoredPosition != null) {
+          element.currentTime = restoredPosition;
+          fallbackRestoreUtcRef.current = null;
+        }
+      }
       const dated = fragments.filter((fragment) =>
         Number.isFinite(fragment.programDateTime) && fragment.duration > 0,
       );
@@ -450,6 +495,7 @@ export function ClipPlayer({
     element.addEventListener("durationchange", onDurationChange);
     element.addEventListener("timeupdate", onTimeUpdate);
     element.addEventListener("ended", onEnded);
+    element.addEventListener("error", switchToFallback);
     setQualityLevels([]);
     setActiveQuality(-1);
     setShowQualityPicker(false);
@@ -468,7 +514,7 @@ export function ClipPlayer({
         : { enableWorker: false });
       hlsRef.current = hls;
       capPlaybackQuality(hls);
-      hls.loadSource(src);
+      hls.loadSource(activeSrc);
       hls.attachMedia(element);
       if (isLiveDvr) {
         hls.on(Hls.Events.LEVEL_UPDATED, updateLiveRange);
@@ -480,16 +526,20 @@ export function ClipPlayer({
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
+        if (switchToFallback()) return;
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
         else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
         else element.dispatchEvent(new Event("error"));
       });
     } else if (element.canPlayType("application/vnd.apple.mpegurl")) {
-      element.src = src;
+      element.src = activeSrc;
       element.addEventListener("canplay", () => element.play().catch(() => {}), { once: true });
     }
 
     return () => {
+      if (isLiveDvr && liveUtcRef.current != null) {
+        fallbackRestoreUtcRef.current = liveUtcRef.current;
+      }
       hlsRef.current?.destroy();
       hlsRef.current = null;
       element.removeEventListener("play", onPlay);
@@ -497,9 +547,10 @@ export function ClipPlayer({
       element.removeEventListener("durationchange", onDurationChange);
       element.removeEventListener("timeupdate", onTimeUpdate);
       element.removeEventListener("ended", onEnded);
+      element.removeEventListener("error", switchToFallback);
       liveFragmentsRef.current = [];
     };
-  }, [isLive, isLiveDvr, src, liveDvr, programTimeAt]);
+  }, [activeSrc, fallbackSrc, isLive, isLiveDvr, liveDvr, mediaPositionAtUtc, onFallback, programTimeAt]);
 
   const onLoadedMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {
     if (isLive) return;
@@ -518,6 +569,59 @@ export function ClipPlayer({
   const seek = (delta: number) => {
     if ((isLive && !isLiveDvr) || !videoRef.current) return;
     videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.duration || Infinity, videoRef.current.currentTime + delta));
+    resetControlsTimer();
+  };
+
+  const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 2];
+  const changePlaybackRate = (direction: -1 | 1) => {
+    const currentIndex = playbackRates.findIndex((rate) => Math.abs(rate - playbackRate) < 0.01);
+    const nextIndex = (currentIndex + direction + playbackRates.length) % playbackRates.length;
+    setPlaybackRate(playbackRates[nextIndex] ?? 1);
+    resetControlsTimer();
+  };
+
+  const handlePlayerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (
+      clipMode !== "idle"
+      || target.closest("button, input, select, textarea, [contenteditable='true']")
+    ) return;
+    switch (event.key) {
+      case " ":
+      case "k":
+      case "K":
+        event.preventDefault();
+        togglePlay();
+        break;
+      case "ArrowLeft":
+      case "j":
+      case "J":
+        event.preventDefault();
+        seek(-5);
+        break;
+      case "ArrowRight":
+      case "l":
+      case "L":
+        event.preventDefault();
+        seek(5);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        changePlaybackRate(1);
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        changePlaybackRate(-1);
+        break;
+      case ",":
+        event.preventDefault();
+        seek(-1 / 25);
+        break;
+      case ".":
+        event.preventDefault();
+        seek(1 / 25);
+        break;
+    }
   };
 
   const startRecording = () => {
@@ -533,6 +637,8 @@ export function ClipPlayer({
       toast({ title: t.clipping.error, description: "Wait for live DVR time data before recording a clip.", variant: "destructive" });
       return;
     }
+    element.playbackRate = 1;
+    setPlaybackRate(1);
     element.play().catch(() => {});
     clipStartRef.current = element.currentTime;
     liveClipStartUtcRef.current = liveStartUtcMs;
@@ -544,28 +650,44 @@ export function ClipPlayer({
     liveClipEndUtcRef.current = null;
     clipModeRef.current = "recording";
     recordingRef.current.keyframes = [];
+    liveRecordElapsedRef.current = 0;
     setRecElapsed(0);
     const sampleFrame = () => {
       const current = videoRef.current;
       if (!current) return;
-      const relativeTime = isLiveDvr && liveClipStartUtcRef.current != null && liveUtcRef.current != null
-        ? (liveUtcRef.current - liveClipStartUtcRef.current) / 1000
+      const mappedUtc = isLiveDvr ? programTimeAt(current.currentTime) : null;
+      if (mappedUtc != null) liveUtcRef.current = mappedUtc;
+      const elapsedFromTimeline = isLiveDvr
+        ? liveElapsedSeconds(liveClipStartUtcRef.current, mappedUtc, liveRecordElapsedRef.current)
         : current.currentTime - clipStartRef.current;
-      if (relativeTime < 0) return;
-      if (isLiveDvr && relativeTime >= maxLiveClipSeconds) {
+      if (elapsedFromTimeline == null || elapsedFromTimeline < 0) return;
+      const relativeTime = elapsedFromTimeline;
+      if (isLiveDvr) liveRecordElapsedRef.current = relativeTime;
+      if (isLiveDvr && relativeTime > maxLiveClipSeconds) {
         stopRecordingRef.current(current.currentTime);
         return;
       }
+      setRecElapsed((previous) => Math.max(previous, relativeTime));
       recordingRef.current.keyframes.push({ t: relativeTime, ...computeCropRect() });
     };
     sampleFrame();
     recordingRef.current.interval = setInterval(sampleFrame, 150);
     elapsedRef.current = setInterval(() => {
-      if (!videoRef.current) return;
-      const elapsed = isLiveDvr && liveClipStartUtcRef.current != null && liveUtcRef.current != null
-        ? (liveUtcRef.current - liveClipStartUtcRef.current) / 1000
-        : videoRef.current.currentTime - clipStartRef.current;
-      setRecElapsed(Math.max(0, elapsed));
+      const current = videoRef.current;
+      if (!current) return;
+      const mappedUtc = isLiveDvr ? programTimeAt(current.currentTime) : null;
+      if (mappedUtc != null) {
+        liveUtcRef.current = mappedUtc;
+        setLiveUtcMs(mappedUtc);
+        liveDvr?.onCurrentTimeUtcChange?.(mappedUtc);
+      }
+      const elapsedFromTimeline = isLiveDvr
+        ? liveElapsedSeconds(liveClipStartUtcRef.current, mappedUtc, liveRecordElapsedRef.current)
+        : current.currentTime - clipStartRef.current;
+      if (elapsedFromTimeline == null || elapsedFromTimeline < 0) return;
+      const elapsed = elapsedFromTimeline;
+      if (isLiveDvr) liveRecordElapsedRef.current = elapsed;
+      setRecElapsed((previous) => Math.max(previous, elapsed));
     }, 100);
     setClipMode("recording");
   };
@@ -573,17 +695,37 @@ export function ClipPlayer({
   const stopRecording = (overrideEndTime?: number) => {
     const element = videoRef.current;
     const endTime = overrideEndTime ?? element?.currentTime ?? clipStartRef.current;
+    const mappedEndUtc = isLiveDvr && element ? programTimeAt(element.currentTime) : null;
     const liveWindow = isLiveDvr
       ? createLiveClipWindow(
         liveClipStartUtcRef.current,
-        element ? programTimeAt(element.currentTime) : null,
+        mappedEndUtc,
         maxLiveClipSeconds,
       )
       : null;
     if (isLiveDvr && !liveWindow) {
+      if (recordingRef.current.interval) clearInterval(recordingRef.current.interval);
+      if (elapsedRef.current) clearInterval(elapsedRef.current);
+      recordingRef.current.interval = null;
+      elapsedRef.current = null;
+      const candidateDuration = liveClipStartUtcRef.current != null && mappedEndUtc != null
+        ? (mappedEndUtc - liveClipStartUtcRef.current) / 1000
+        : null;
+      const description = candidateDuration == null
+        ? "Live clip time is unavailable. Please try recording again."
+        : candidateDuration < 1
+          ? "Clip must be at least 1 second long."
+          : "Clip cannot be longer than 10 minutes.";
+      clipModeRef.current = "idle";
+      recordingRef.current.keyframes = [];
+      setClipMode("idle");
+      setRecElapsed(0);
+      setClipDurationSeconds(0);
+      liveClipStartUtcRef.current = null;
+      liveClipEndUtcRef.current = null;
       toast({
         title: t.clipping.error,
-        description: t.clipping.liveTimeNotAdvanced,
+        description,
         variant: "destructive",
       });
       return;
@@ -683,14 +825,30 @@ export function ClipPlayer({
   const stageClass = layout === "overlay"
     ? "absolute inset-0 flex items-center justify-center bg-black"
     : "relative flex min-h-[min(72vh,42rem)] items-center justify-center bg-black";
+  const videoFilter = look === "warm"
+    ? "sepia(0.18) saturate(1.16) contrast(1.04)"
+    : look === "cinematic"
+      ? "saturate(0.82) contrast(1.12)"
+      : look === "noir"
+        ? "grayscale(1) contrast(1.08)"
+        : "none";
 
   return (
     <motion.div
       ref={containerRef}
+      tabIndex={0}
+      onPointerDown={(event) => {
+        const target = event.target as HTMLElement;
+        if (!target.closest("button, input, select, textarea, [contenteditable='true']")) {
+          event.currentTarget.focus({ preventScroll: true });
+        }
+      }}
+      onKeyDown={handlePlayerKeyDown}
+      aria-label={`${title} video player`}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className={shellClass}
+      className={cn(shellClass, "outline-none focus-visible:ring-2 focus-visible:ring-primary")}
       data-clip-source={sourceKey}
       data-clip-academy={academyId}
     >
@@ -724,7 +882,13 @@ export function ClipPlayer({
             resetControlsTimer();
           }}
         >
-          <video ref={videoRef} className="pointer-events-none select-none" style={frameToVideoStyle(frame)} playsInline onLoadedMetadata={onLoadedMetadata} />
+          <video
+            ref={videoRef}
+            className="pointer-events-none select-none"
+            style={{ ...frameToVideoStyle(frame), filter: videoFilter }}
+            playsInline
+            onLoadedMetadata={onLoadedMetadata}
+          />
           <SkipFlash flash={skipFlash} />
         </div>
       </div>
@@ -828,6 +992,57 @@ export function ClipPlayer({
                   )}
                 </div>
               )}
+              <div className="flex items-center justify-center gap-2 overflow-x-auto pb-1">
+                <button
+                  type="button"
+                  aria-label="Step back one frame"
+                  title="Step back one frame (,)"
+                  disabled={isLive && !isLiveDvr}
+                  onClick={() => seek(-1 / 25)}
+                  className="min-h-10 shrink-0 rounded-full border border-white/20 bg-black/40 px-3 text-xs font-semibold text-white disabled:opacity-40"
+                >
+                  −1 frame
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Playback speed ${playbackRate} times`}
+                  title="Playback speed (up/down arrows)"
+                  onClick={() => changePlaybackRate(1)}
+                  className="min-h-10 shrink-0 rounded-full border border-white/20 bg-black/40 px-3 text-xs font-semibold text-white"
+                >
+                  {playbackRate}×
+                </button>
+                <label className="flex min-h-10 shrink-0 items-center gap-2 rounded-full border border-white/20 bg-black/40 px-3 text-xs font-semibold text-white">
+                  <span>Look</span>
+                  <select
+                    aria-label="Video look filter"
+                    value={look}
+                    onChange={(event) => {
+                      setLook(event.target.value as typeof look);
+                      resetControlsTimer();
+                    }}
+                    className="bg-transparent text-white outline-none"
+                  >
+                    <option value="original" className="bg-black">Original</option>
+                    <option value="warm" className="bg-black">Warm</option>
+                    <option value="cinematic" className="bg-black">Cinematic</option>
+                    <option value="noir" className="bg-black">Noir</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  aria-label="Step forward one frame"
+                  title="Step forward one frame (.)"
+                  disabled={isLive && !isLiveDvr}
+                  onClick={() => seek(1 / 25)}
+                  className="min-h-10 shrink-0 rounded-full border border-white/20 bg-black/40 px-3 text-xs font-semibold text-white disabled:opacity-40"
+                >
+                  +1 frame
+                </button>
+              </div>
+              <p className="hidden text-center text-[10px] text-white/50 sm:block">
+                Space: play/pause · ←/→: seek 5s · ,/.: step one frame · ↑/↓: speed
+              </p>
               <div className="flex justify-center">
                 <FrameSizeSlider zoom={frameZoom} frame={frame} maxZoom={maxZoomFor(selectedRatio)} onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)} />
               </div>

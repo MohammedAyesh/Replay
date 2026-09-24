@@ -1003,6 +1003,25 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
   const [ballFollow, setBallFollow] = useState(false);
   const [processing, setProcessing] = useState<MatchLiveClipProgress | null>(null);
   const [processingId, setProcessingId] = useState<number | null>(null);
+  const [playbackQuality, setPlaybackQuality] = useState<"hd" | "data-saver">(() => {
+    try {
+      return localStorage.getItem("replay-var-playback-quality") === "data-saver" ? "data-saver" : "hd";
+    } catch {
+      return "hd";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("replay-var-playback-quality", playbackQuality);
+    } catch {
+      // Keep the choice for the current page if browser storage is unavailable.
+    }
+  }, [playbackQuality]);
+
+  const useDataSaverFallback = useCallback(() => {
+    setPlaybackQuality("data-saver");
+  }, []);
 
   useEffect(() => {
     if (preview) return;
@@ -1170,7 +1189,9 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
       }
       : undefined
   ), [status?.live, windowEndUtcMs, windowStartUtcMs]);
-  const playerSrc = `${apiBase}/matches/${encodeURIComponent(room.code)}/live/${ballFollow ? "pan" : "hls"}/playlist.m3u8`;
+  const livePath = `${apiBase}/matches/${encodeURIComponent(room.code)}/live`;
+  const playerSrc = `${livePath}/${ballFollow ? "pan" : playbackQuality === "hd" ? "hevc" : "hls"}/playlist.m3u8`;
+  const hlsFallbackSrc = `${livePath}/hls/playlist.m3u8`;
   const clipFinished = processing?.liveClipStatus === "ready" || processing?.liveClipStatus === "failed";
   const processingLabel = processing?.liveClipStatus === "ready"
     ? (processing.exportStatus === "done"
@@ -1185,6 +1206,8 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
           <div className="-mx-4">
             <ClipPlayer
               src={playerSrc}
+              fallbackSrc={!ballFollow && playbackQuality === "hd" ? hlsFallbackSrc : undefined}
+              onFallback={useDataSaverFallback}
               title={room.title || room.field.name}
               source={{ kind: "bunny", videoId: `live:${room.code}` }}
               liveCameraId={room.field.name}
@@ -1197,6 +1220,26 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
               seekToUtcMs={seekUtcMs}
             />
           </div>
+          {!ballFollow && (
+            <div role="group" aria-label="VAR playback quality" className="mt-2 flex justify-center gap-2">
+              {(["hd", "data-saver"] as const).map((quality) => (
+                <button
+                  key={quality}
+                  type="button"
+                  aria-pressed={playbackQuality === quality}
+                  onClick={() => setPlaybackQuality(quality)}
+                  className={cn(
+                    "min-h-10 rounded-full border px-4 text-xs font-semibold transition-colors",
+                    playbackQuality === quality
+                      ? "border-floodlight bg-floodlight/10 text-floodlight"
+                      : "border-line text-muted-text",
+                  )}
+                >
+                  {quality === "hd" ? "HD" : "Data saver"}
+                </button>
+              ))}
+            </div>
+          )}
           <p className="text-center text-[11px] text-muted-text">{copy.varBehind}</p>
           {status.panAvailable && (
             <button

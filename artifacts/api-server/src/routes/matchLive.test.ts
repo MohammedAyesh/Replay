@@ -34,7 +34,10 @@ vi.mock("./userClips", () => ({
   queueUserClipExport: vi.fn(async () => "pending"),
 }));
 
-import matchLiveRouter, { resetMatchLiveRateLimits } from "./matchLive";
+import matchLiveRouter, {
+  isValidLiveClipDurationMs,
+  resetMatchLiveRateLimits,
+} from "./matchLive";
 import { controlFetch, controlResponse } from "./contabo";
 import { queueUserClipExport } from "./userClips";
 import { ensureRoomForRequest } from "../lib/matchRooms";
@@ -166,6 +169,13 @@ afterAll(async () => {
 });
 
 describe("match live clip control contract", () => {
+  it("accepts only live clip durations from one second through ten minutes", () => {
+    expect(isValidLiveClipDurationMs(999)).toBe(false);
+    expect(isValidLiveClipDurationMs(1_000)).toBe(true);
+    expect(isValidLiveClipDurationMs(600_000)).toBe(true);
+    expect(isValidLiveClipDurationMs(600_001)).toBe(false);
+  });
+
   it("accepts the deployed job key and processes documented worker states and offsets", async () => {
     vi.mocked(controlFetch).mockResolvedValueOnce({
       ok: true,
@@ -213,6 +223,7 @@ describe("match live clip control contract", () => {
         length: 10,
         width: 4096,
         height: 1152,
+        partial: true,
       },
     });
     const ready = await request(app)
@@ -221,6 +232,9 @@ describe("match live clip control contract", () => {
       .expect(200);
     expect(ready.body.liveClipStatus).toBe("ready");
     expect(ready.body.exportStatus).toBe("pending");
+    expect(ready.body.liveClipError).toBe(
+      "Part of this moment wasn't recorded (camera gap) — the clip is shorter than you picked.",
+    );
     expect(queueUserClipExport).toHaveBeenCalledOnce();
 
     const [captured] = await db.select().from(userClipsTable)
@@ -238,6 +252,19 @@ describe("match live clip control contract", () => {
       .set("x-test-user", String(userId))
       .send(input)
       .expect(400);
+    expect(controlFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects live clip windows outside the one-second to ten-minute limits", async () => {
+    const tooShort = clipInput();
+    tooShort.start = tooShort.end - 0.5;
+    const shortResponse = await request(app)
+      .post(`/api/matches/${matchCode}/live-clips`)
+      .set("x-test-user", String(userId))
+      .send(tooShort)
+      .expect(400);
+    expect(shortResponse.body.error).toContain("at least 1 second");
+
     expect(controlFetch).not.toHaveBeenCalled();
   });
 

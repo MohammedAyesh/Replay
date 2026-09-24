@@ -24,6 +24,14 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_DAY_MS = 24 * 60 * 60_000;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 const MAX_LIVE_CLIP_SECONDS = 10 * 60;
+const MIN_LIVE_CLIP_SECONDS = 1;
+export function isValidLiveClipDurationMs(durationMs: number): boolean {
+  return Number.isFinite(durationMs)
+    && durationMs >= MIN_LIVE_CLIP_SECONDS * 1000
+    && durationMs <= MAX_LIVE_CLIP_SECONDS * 1000;
+}
+const PARTIAL_LIVE_CLIP_NOTICE =
+  "Part of this moment wasn't recorded (camera gap) — the clip is shorter than you picked.";
 const MAX_UNKNOWN_JOB_WAIT_MS = 60 * 60 * 1000;
 
 type LiveVariant = "hls" | "hevc" | "pan";
@@ -420,16 +428,16 @@ router.post("/matches/:code/live-clips", async (req, res): Promise<void> => {
   }
   const startMs = parsed.data.start * 1000;
   const endMs = parsed.data.end * 1000;
+  const durationMs = endMs - startMs;
   const window = matchWindow(ctx.request);
   const now = Date.now();
   if (
     !Number.isFinite(startMs) || !Number.isFinite(endMs)
-    || endMs <= startMs
-    || endMs - startMs > MAX_LIVE_CLIP_SECONDS * 1000
+    || !isValidLiveClipDurationMs(durationMs)
     || startMs < window.startMs - 3 * 60 * 1000
     || endMs > Math.min(window.endMs + 5 * 60 * 1000, now)
   ) {
-    res.status(400).json({ error: "Clip time must be within the live match window and no longer than 10 minutes" });
+    res.status(400).json({ error: "Clip must be at least 1 second and no longer than 10 minutes, within the live match window" });
     return;
   }
 
@@ -553,6 +561,10 @@ router.get(
         );
         if (job.ok) {
           const payload = jobPayload(job.body);
+          const partialNotice = recordValue(payload, "partial") === true
+            || clip.liveClipError === PARTIAL_LIVE_CLIP_NOTICE
+            ? PARTIAL_LIVE_CLIP_NOTICE
+            : null;
           const nextStatus = captureStatus(payload);
           if (nextStatus === "failed") {
             const message = safeError(
@@ -560,7 +572,7 @@ router.get(
               "Live clip processing failed",
             );
             [clip] = await db.update(userClipsTable)
-              .set({ liveClipStatus: "failed", liveClipError: message })
+              .set({ liveClipStatus: "failed", liveClipError: partialNotice ?? message })
               .where(eq(userClipsTable.id, clip.id))
               .returning();
           } else if (nextStatus === "ready") {
@@ -577,7 +589,7 @@ router.get(
               [clip] = await db.update(userClipsTable)
                 .set({
                   liveClipStatus: "failed",
-                  liveClipError: "Live clip worker returned incomplete source offsets",
+                  liveClipError: partialNotice ?? "Live clip worker returned incomplete source offsets",
                 })
                 .where(eq(userClipsTable.id, clip.id))
                 .returning();
@@ -588,7 +600,7 @@ router.get(
                   startTime: String(offsetStart / duration),
                   endTime: String(offsetEnd / duration),
                   liveClipStatus: "ready",
-                  liveClipError: null,
+                  liveClipError: partialNotice,
                 })
                 .where(eq(userClipsTable.id, clip.id))
                 .returning();
@@ -607,7 +619,7 @@ router.get(
           } else {
             const progressStatus = stringValue(payload, "status", "state")?.toLowerCase() ?? "processing";
             [clip] = await db.update(userClipsTable)
-              .set({ liveClipStatus: progressStatus, liveClipError: null })
+              .set({ liveClipStatus: progressStatus, liveClipError: partialNotice })
               .where(eq(userClipsTable.id, clip.id))
               .returning();
           }

@@ -10,6 +10,25 @@ export type LiveClipWindow = {
   durationSeconds: number;
 };
 
+export function liveElapsedSeconds(
+  startUtcMs: number | null,
+  playheadUtcMs: number | null,
+  previousElapsedSeconds = 0,
+): number | null {
+  if (
+    startUtcMs == null
+    || playheadUtcMs == null
+    || !Number.isFinite(startUtcMs)
+    || !Number.isFinite(playheadUtcMs)
+  ) {
+    return null;
+  }
+  const previous = Number.isFinite(previousElapsedSeconds)
+    ? Math.max(0, previousElapsedSeconds)
+    : 0;
+  return Math.max(previous, 0, (playheadUtcMs - startUtcMs) / 1000);
+}
+
 const ammanClockFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Amman",
   hour: "2-digit",
@@ -21,23 +40,27 @@ const ammanClockFormatter = new Intl.DateTimeFormat("en-GB", {
 export function liveProgramTimeAtPosition(
   position: number,
   fragments: readonly ProgramTimedFragment[],
-  playingDateMs?: number | null,
 ): number | null {
-  if (Number.isFinite(position)) {
-    const fragment = fragments.find((candidate) =>
-      typeof candidate.programDateTime === "number"
-      && Number.isFinite(candidate.programDateTime)
-      && candidate.duration > 0
+  if (!Number.isFinite(position)) return null;
+  let active: ProgramTimedFragment | undefined;
+  for (const candidate of fragments) {
+    if (
+      candidate.duration > 0
       && position >= candidate.start
-      && position <= candidate.start + candidate.duration,
-    );
-    if (fragment && typeof fragment.programDateTime === "number") {
-      return fragment.programDateTime + (position - fragment.start) * 1000;
+      && position <= candidate.start + candidate.duration
+      && (!active || candidate.start > active.start)
+    ) {
+      active = candidate;
     }
   }
-  return typeof playingDateMs === "number" && Number.isFinite(playingDateMs)
-    ? playingDateMs
-    : null;
+  if (
+    active
+    && typeof active.programDateTime === "number"
+    && Number.isFinite(active.programDateTime)
+  ) {
+    return active.programDateTime + (position - active.start) * 1000;
+  }
+  return null;
 }
 
 export function createLiveClipWindow(
@@ -55,12 +78,12 @@ export function createLiveClipWindow(
   ) {
     return null;
   }
-  const endUtcMs = Math.min(playheadUtcMs, startUtcMs + maxDurationSeconds * 1000);
-  if (endUtcMs <= startUtcMs) return null;
+  const durationSeconds = (playheadUtcMs - startUtcMs) / 1000;
+  if (durationSeconds < 1 || durationSeconds > maxDurationSeconds) return null;
   return {
     startUtcMs,
-    endUtcMs,
-    durationSeconds: (endUtcMs - startUtcMs) / 1000,
+    endUtcMs: playheadUtcMs,
+    durationSeconds,
   };
 }
 
