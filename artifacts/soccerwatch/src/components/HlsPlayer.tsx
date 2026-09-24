@@ -37,6 +37,8 @@ export interface HlsPlayerProps {
   url: string;
   label: string;
   windowSeconds?: number;
+  /** Seconds from the live edge that still count as live for this rendition. */
+  liveEdgeToleranceSeconds?: number;
   retryOnNetworkError?: boolean;
   /** Let a parent render a custom VAR control surface. */
   showDvrControls?: boolean;
@@ -134,6 +136,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
     url,
     label,
     windowSeconds,
+    liveEdgeToleranceSeconds = 8,
     retryOnNetworkError = false,
     showDvrControls = true,
     showStatusOverlays = true,
@@ -488,7 +491,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
     }, [url, recoverLiveDiscontinuities]);
 
     const hasDvrWindow = timeline.end - timeline.start > 3;
-    const isLive = hasDvrWindow && timeline.end - timeline.position < 8;
+    const isLive = hasDvrWindow && timeline.end - timeline.position < liveEdgeToleranceSeconds;
 
     const goLive = () => {
       const el = videoRef.current;

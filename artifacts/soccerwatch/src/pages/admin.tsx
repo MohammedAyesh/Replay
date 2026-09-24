@@ -3126,9 +3126,38 @@ const LIVE_PLAYBACK_BASE = `${basePath}/api/live`;
 
 interface CameraStatus {
   live: boolean;
-  startedAt?: string;
+  phase?: "off" | "starting" | "live" | "stalled" | "failed" | "refused" | "stopping";
+  session?: boolean;
+  startedAt?: number | string | null;
+  firstFootageAt?: number | string | null;
+  feedAgeSec?: number | null;
+  note?: string | null;
   viewers?: number;
   [k: string]: unknown;
+}
+
+type CameraPhase = NonNullable<CameraStatus["phase"]>;
+
+function liveControlPhase(status: CameraStatus | null): CameraPhase {
+  return status?.phase ?? (status?.live ? "live" : "off");
+}
+
+function epochMilliseconds(value: number | string | null | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.abs(value) < 100_000_000_000 ? value * 1000 : value;
+  }
+  if (typeof value !== "string" || !value.trim()) return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatLiveDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 interface LivePanStatus {
@@ -3256,8 +3285,13 @@ function CameraCard({
   const [status, setStatus] = useState<CameraStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const statusRequestIdRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
+  const [controlError, setControlError] = useState<string | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
+  const [pendingControl, setPendingControl] = useState<"start" | "stop" | null>(null);
+  const [startClickedAtMs, setStartClickedAtMs] = useState<number | null>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const [autoPanStatus, setAutoPanStatus] = useState<LivePanStatus | null>(null);
   const [autoPanWorking, setAutoPanWorking] = useState(false);
   const [autoPanError, setAutoPanError] = useState<string | null>(null);
@@ -3273,9 +3307,17 @@ function CameraCard({
       ...opts,
     });
     if (res.status === 401) throw new Error("bad_password");
-    if (!res.ok) throw new Error(`${res.status}`);
     if (res.status === 204) return null;
-    return res.json();
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const responseBody = body && typeof body === "object"
+        ? body as { detail?: unknown; error?: unknown; message?: unknown }
+        : null;
+      const message = [responseBody?.detail, responseBody?.error, responseBody?.message]
+        .find((value): value is string => typeof value === "string" && !!value.trim());
+      throw new Error(message ?? `Control request failed (${res.status})`);
+    }
+    return body;
   }, [adminPassword]);
 
   const autoPanFetch = useCallback(async (path: string, opts?: RequestInit) => {
@@ -3346,84 +3388,189 @@ function CameraCard({
   };
 
   const fetchStatus = useCallback(async () => {
+    const requestId = ++statusRequestIdRef.current;
     try {
       const data = await contaboFetch(`/admin/contabo/status/${camera}`);
+      if (requestId !== statusRequestIdRef.current) return;
       setStatus(data as CameraStatus);
       setError(null);
     } catch (e) {
+      if (requestId !== statusRequestIdRef.current) return;
       const msg = e instanceof Error ? e.message : "Error";
-      setError(msg === "bad_password" ? "Wrong password" : "Could not reach control server");
+      setError(msg === "bad_password" ? "Wrong password" : msg || "Could not reach control server");
     } finally {
-      setLoading(false);
+      if (requestId === statusRequestIdRef.current) setLoading(false);
     }
   }, [camera, contaboFetch]);
 
+  const phase = liveControlPhase(status);
+  const isTerminalFailure = phase === "failed" || phase === "refused";
+  const isStarting = phase === "starting" || (pendingControl === "start" && phase === "off");
+  const isStopping = phase === "stopping" || (
+    pendingControl === "stop" && phase !== "off" && !isTerminalFailure
+  );
+  const isLive = phase === "live" && !isStopping;
+  const isStalled = phase === "stalled" && !isStopping;
+  const statusPollMs = isStarting || isStopping ? 2_000 : 8_000;
+  const canStart = (phase === "off" || isTerminalFailure) && status?.session !== true;
+  const canStop = !isStopping && (
+    status?.session === true || isStarting || isLive || isStalled
+  );
+  const startAtMs = phase === "starting"
+    ? epochMilliseconds(status?.startedAt) ?? startClickedAtMs
+    : startClickedAtMs;
+  const startElapsedSeconds = startAtMs == null ? 0 : Math.max(0, (clockNow - startAtMs) / 1000);
+  const startProgress = Math.min(100, (startElapsedSeconds / 60) * 100);
+  const firstFootageAtMs = epochMilliseconds(status?.firstFootageAt);
+  const liveDurationSeconds = firstFootageAtMs == null
+    ? null
+    : Math.max(0, (clockNow - firstFootageAtMs) / 1000);
+  const feedAgeSeconds = typeof status?.feedAgeSec === "number" && Number.isFinite(status.feedAgeSec)
+    ? Math.max(0, Math.floor(status.feedAgeSec))
+    : null;
+
   useEffect(() => {
-    fetchStatus();
-    const id = setInterval(fetchStatus, 8000);
-    return () => clearInterval(id);
+    void fetchStatus();
   }, [fetchStatus]);
 
+  useEffect(() => {
+    const id = window.setInterval(() => { void fetchStatus(); }, statusPollMs);
+    return () => clearInterval(id);
+  }, [fetchStatus, statusPollMs]);
+
+  useEffect(() => {
+    if (!isStarting && !isLive) return;
+    setClockNow(Date.now());
+    const id = window.setInterval(() => setClockNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [isStarting, isLive]);
+
+  useEffect(() => {
+    if (!isStarting) setStartClickedAtMs(null);
+  }, [isStarting]);
+
   const handleStart = async () => {
+    const previousStatus = status;
+    const clickedAt = Date.now();
+    setPendingControl("start");
+    setStartClickedAtMs(clickedAt);
+    setStatus((current) => ({
+      ...(current ?? { live: false }),
+      live: false,
+      phase: "starting",
+      session: true,
+      startedAt: Math.floor(clickedAt / 1000),
+      note: null,
+    }));
+    setError(null);
+    setControlError(null);
     setWorking(true);
     try {
-      await contaboFetch(`/admin/contabo/live/start/${camera}`, { method: "POST" });
+      const response = await contaboFetch(`/admin/contabo/live/start/${camera}`, { method: "POST" });
+      statusRequestIdRef.current += 1;
+      if (response && typeof response === "object") setStatus(response as CameraStatus);
+    } catch (e) {
+      statusRequestIdRef.current += 1;
+      setStatus(previousStatus);
+      setStartClickedAtMs(null);
       await fetchStatus();
-    } catch {
-      setError("Start failed");
+      const message = e instanceof Error ? e.message : "Start failed";
+      setControlError(message === "bad_password" ? "Wrong password" : message);
     } finally {
+      setPendingControl(null);
       setWorking(false);
     }
   };
 
   const handleStop = async () => {
     if (!confirm(`Stop live stream for ${camera}?`)) return;
+    const previousStatus = status;
+    setPendingControl("stop");
+    setStatus((current) => ({
+      ...(current ?? { live: false }),
+      live: false,
+      phase: "stopping",
+      session: true,
+    }));
+    setError(null);
+    setControlError(null);
     setWorking(true);
     try {
-      await contaboFetch(`/admin/contabo/live/stop/${camera}`, { method: "POST" });
+      const response = await contaboFetch(`/admin/contabo/live/stop/${camera}`, { method: "POST" });
+      statusRequestIdRef.current += 1;
+      if (response && typeof response === "object") setStatus(response as CameraStatus);
       setShowPlayer(false);
+    } catch (e) {
+      statusRequestIdRef.current += 1;
+      setStatus(previousStatus);
       await fetchStatus();
-    } catch {
-      setError("Stop failed");
+      const message = e instanceof Error ? e.message : "Stop failed";
+      setControlError(message === "bad_password" ? "Wrong password" : message);
     } finally {
+      setPendingControl(null);
       setWorking(false);
     }
   };
 
   const playbackUrl = `${LIVE_PLAYBACK_BASE}/${camera}/index.m3u8`;
-  const isLive = status?.live === true;
   const label = camera === "camera1" ? "Camera 1" : "Camera 2";
+  const visibleError = controlError ?? error;
 
   return (
     <div className={cn(
       "rounded-2xl border overflow-hidden transition-colors",
-      isLive ? "border-live/60 bg-surface" : "border-line bg-surface/60",
+      isLive ? "border-turf/60 bg-surface" :
+      isStalled ? "border-amber-500/50 bg-surface" :
+      isTerminalFailure ? "border-red-500/50 bg-surface" :
+      "border-line bg-surface/60",
     )}>
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-line">
         <div className={cn(
           "w-2.5 h-2.5 rounded-full flex-shrink-0",
           loading ? "bg-muted-text animate-pulse" :
-          isLive ? "bg-live animate-pulse" :
-          "bg-muted-text"
+          isLive ? "bg-turf animate-pulse" :
+          isStalled ? "bg-amber-400" :
+          isTerminalFailure ? "bg-red-500" :
+          isStarting || isStopping ? "bg-muted-text animate-pulse" :
+          "bg-muted-text",
         )} />
         <span className="text-text font-semibold text-sm">{label}</span>
         {isLive && (
-          <span className="text-[10px] bg-live/10 text-live border border-live/40 px-2 py-0.5 rounded-full font-medium tracking-wide ml-auto">
+          <span className="text-[10px] bg-turf/10 text-turf border border-turf/40 px-2 py-0.5 rounded-full font-medium tracking-wide ml-auto">
             LIVE
           </span>
         )}
-        {!isLive && !loading && (
+        {isStarting && (
+          <span className="text-[10px] text-muted-text ml-auto">STARTING</span>
+        )}
+        {isStopping && (
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-text ml-auto">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            STOPPING
+          </span>
+        )}
+        {isStalled && (
+          <span className="text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full font-medium tracking-wide ml-auto">
+            STALLED
+          </span>
+        )}
+        {isTerminalFailure && (
+          <span className="text-[10px] bg-red-500/10 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-full font-medium tracking-wide ml-auto">
+            {phase.toUpperCase()}
+          </span>
+        )}
+        {phase === "off" && !loading && (
           <span className="text-[10px] text-muted-text ml-auto">Offline</span>
         )}
       </div>
 
       {/* Status info */}
       <div className="px-4 py-3 space-y-3">
-        {error && (
+        {visibleError && (
           <div className="flex items-center gap-2 text-text text-xs bg-surface border border-line rounded-xl px-3 py-2">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-            {error}
+            {visibleError}
           </div>
         )}
 
@@ -3441,12 +3588,64 @@ function CameraCard({
           </div>
         )}
 
+        {isStarting && (
+          <div role="status" className="rounded-xl border border-line bg-raised/50 px-3 py-3 space-y-2">
+            <div className="flex items-center gap-2 text-text text-xs font-medium">
+              <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin text-muted-text" />
+              <span>Starting live — switching the camera on…</span>
+            </div>
+            {status?.note && <p className="text-muted-text text-[11px]">{status.note}</p>}
+            <div
+              role="progressbar"
+              aria-label="Waiting for first footage"
+              aria-valuemin={0}
+              aria-valuemax={60}
+              aria-valuenow={Math.min(60, Math.floor(startElapsedSeconds))}
+              className="h-1.5 overflow-hidden rounded-full bg-line"
+            >
+              <div
+                className="h-full rounded-full bg-turf transition-[width] duration-500"
+                style={{ width: `${startProgress}%` }}
+              />
+            </div>
+            <div className="flex justify-between gap-3 text-[11px]">
+              <span className="text-muted-text">Waiting for first footage</span>
+              <span className="font-mono text-text">{formatLiveDuration(startElapsedSeconds)}</span>
+            </div>
+          </div>
+        )}
+
+        {isStopping && (
+          <div role="status" className="rounded-xl border border-line bg-raised/50 px-3 py-2.5 space-y-1">
+            <div className="flex items-center gap-2 text-text text-xs font-medium">
+              <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin text-muted-text" />
+              <span>Stopping — switching the camera off…</span>
+            </div>
+            {status?.note && <p className="pl-5 text-muted-text text-[11px]">{status.note}</p>}
+          </div>
+        )}
+
+        {isStalled && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 space-y-1">
+            <p className="text-amber-200 text-xs font-medium">{status?.note || "The live feed has stalled."}</p>
+            <p className="text-amber-200/70 text-[11px]">
+              {feedAgeSeconds === null ? "Last footage age unavailable." : `Last footage ${feedAgeSeconds}s ago.`}
+            </p>
+          </div>
+        )}
+
+        {isTerminalFailure && status?.note && status.note !== visibleError && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2.5 text-red-200 text-xs">
+            {status.note}
+          </div>
+        )}
+
         <div className="rounded-xl border border-line bg-surface/70 px-3 py-3 space-y-2">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-text text-xs font-semibold">Auto-pan</p>
               <p className="text-muted-text text-[11px] mt-0.5">
-                GPU starts and stops automatically; charged only while running (~$0.25/h).
+                Rents a GPU while on (~$0.25/h). Turns itself off after 10 min without footage or after 4 h.
               </p>
             </div>
             <button
@@ -3489,10 +3688,12 @@ function CameraCard({
           )}
         </div>
 
-        {!loading && isLive && status?.startedAt && (
+        {!loading && isLive && (
           <div className="flex items-center gap-1.5 text-xs text-muted-text">
             <Clock className="w-3 h-3" />
-            Started {new Date(status.startedAt as string).toLocaleTimeString()}
+            {liveDurationSeconds === null
+              ? "Live for —"
+              : `Live for ${formatLiveDuration(liveDurationSeconds)}`}
           </div>
         )}
 
@@ -3527,7 +3728,7 @@ function CameraCard({
         <div className="flex gap-2 pt-1">
           <button
             onClick={handleStart}
-            disabled={working || loading || isLive}
+            disabled={working || loading || !canStart}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold bg-floodlight text-void hover:bg-floodlight/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Radio className="w-3.5 h-3.5" />
@@ -3535,7 +3736,7 @@ function CameraCard({
           </button>
           <button
             onClick={handleStop}
-            disabled={working || loading || !isLive}
+            disabled={working || loading || !canStop}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold border border-line bg-transparent text-text hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Square className="w-3.5 h-3.5" />

@@ -186,7 +186,13 @@ function LiveCamera({ id, label }: { id: string; label: string }) {
   return (
     <div className="space-y-3">
       {viewToggle}
-      <HlsPlayer key={`${source.variant}:${source.url}`} url={source.url} label={label} retryOnNetworkError />
+      <HlsPlayer
+        key={`${source.variant}:${source.url}`}
+        url={source.url}
+        label={label}
+        retryOnNetworkError
+        liveEdgeToleranceSeconds={source.variant === "pan" ? 30 : undefined}
+      />
     </div>
   );
 }
