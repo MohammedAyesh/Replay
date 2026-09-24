@@ -1095,14 +1095,7 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
     const startedAt = Date.now();
     const poll = async () => {
       if (cancelled) return;
-      if (Date.now() - startedAt > 60 * 60 * 1000) {
-        setProcessing((current) => current ? {
-          ...current,
-          liveClipStatus: "failed",
-          liveClipError: "Live clip processing timed out",
-        } : current);
-        return;
-      }
+      const elapsedMs = Date.now() - startedAt;
       try {
         const response = await fetch(
           `${apiBase}/matches/${encodeURIComponent(room.code)}/live-clips/${processingId}/status`,
@@ -1116,9 +1109,11 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
           if (captureFinished && result.exportStatus !== "pending") return;
         }
       } catch {
-        // Retry transient network errors while the one-hour worker window remains open.
+        // Keep checking through long Bunny encoding queues and transient network errors.
       }
-      if (!cancelled) timer = window.setTimeout(poll, 5_000);
+      // Poll at 5 seconds for the first hour, then back off without reporting a
+      // false timeout: the worker can complete after an hour-long Bunny queue.
+      if (!cancelled) timer = window.setTimeout(poll, elapsedMs < 60 * 60 * 1000 ? 5_000 : 30_000);
     };
     void poll();
     return () => {

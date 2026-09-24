@@ -23,7 +23,7 @@ const router: IRouter = Router();
 const RATE_WINDOW_MS = 60_000;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 const MAX_LIVE_CLIP_SECONDS = 10 * 60;
-const MAX_CAPTURE_WAIT_MS = 60 * 60 * 1000;
+const MAX_UNKNOWN_JOB_WAIT_MS = 60 * 60 * 1000;
 
 type LiveVariant = "hls" | "hevc" | "pan";
 type MatchLiveContext = NonNullable<Awaited<ReturnType<typeof loadRoomByCode>>>;
@@ -395,7 +395,7 @@ router.post("/matches/:code/live-clips", rateLimit(8), async (req, res): Promise
     || endMs <= startMs
     || endMs - startMs > MAX_LIVE_CLIP_SECONDS * 1000
     || startMs < window.startMs - 3 * 60 * 1000
-    || endMs > Math.min(window.endMs + 5 * 60 * 1000, now + 15_000)
+    || endMs > Math.min(window.endMs + 5 * 60 * 1000, now)
   ) {
     res.status(400).json({ error: "Clip time must be within the live match window and no longer than 10 minutes" });
     return;
@@ -418,7 +418,7 @@ router.post("/matches/:code/live-clips", rateLimit(8), async (req, res): Promise
         res.status(502).json({ error: "Ball-path is unavailable" });
         return;
       }
-      if (recordValue(ballPath.body, "available") === false) {
+      if (recordValue(ballPath.body, "available") !== true) {
         res.status(409).json({ error: "Ball-follow is unavailable for this clip window" });
         return;
       }
@@ -459,7 +459,7 @@ router.post("/matches/:code/live-clips", rateLimit(8), async (req, res): Promise
     result = { ok: false, status: 502, body: { error: "Live clip worker is unavailable" } };
   }
 
-  const jobId = stringValue(result.body, "jobId", "job_id", "id");
+  const jobId = stringValue(result.body, "job", "jobId", "job_id", "id");
   const queued = result.ok && jobId && /^[A-Za-z0-9._-]{1,128}$/.test(jobId);
   const failureMessage = !result.ok
     ? safeError(stringValue(result.body, "error", "message"), "Live clip could not be queued")
@@ -513,15 +513,6 @@ router.get(
       && clip.liveClipStatus !== "failed"
       && clip.liveClipJobId
     ) {
-      if (Date.now() - clip.createdAt.getTime() > MAX_CAPTURE_WAIT_MS) {
-        [clip] = await db.update(userClipsTable)
-          .set({
-            liveClipStatus: "failed",
-            liveClipError: "Live clip processing exceeded the 60-minute limit",
-          })
-          .where(eq(userClipsTable.id, clip.id))
-          .returning();
-      } else {
       try {
         const job = await controlFetch(
           `/live/clip/job/${encodeURIComponent(clip.liveClipJobId)}`,
@@ -588,7 +579,7 @@ router.get(
               .where(eq(userClipsTable.id, clip.id))
               .returning();
           }
-        } else if (job.status === 404 && Date.now() - clip.createdAt.getTime() > MAX_CAPTURE_WAIT_MS) {
+        } else if (job.status === 404 && Date.now() - clip.createdAt.getTime() > MAX_UNKNOWN_JOB_WAIT_MS) {
           [clip] = await db.update(userClipsTable)
             .set({
               liveClipStatus: "failed",
@@ -600,7 +591,6 @@ router.get(
       } catch (error) {
         // Keep the last persisted state while the upstream worker is temporarily unavailable.
         logger.warn({ error, clipId: clip.id }, "Live clip status poll failed");
-      }
       }
     } else if (!clip.liveClipJobId && clip.liveClipStatus === "queued" && Date.now() - clip.createdAt.getTime() > 60_000) {
       [clip] = await db.update(userClipsTable)
