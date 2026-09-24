@@ -3162,11 +3162,13 @@ function formatLiveDuration(totalSeconds: number): string {
 
 interface LivePanStatus {
   on: boolean;
-  state?: string;
+  state?: string | null;
   gpu?: string | null;
   usdPerHr?: number | null;
   usdSoFar?: number | null;
   behindLiveSec?: number | null;
+  segmentsOut?: number | null;
+  lastSessionUsd?: number | null;
   note?: string | null;
 }
 
@@ -3515,6 +3517,9 @@ function CameraCard({
   const playbackUrl = `${LIVE_PLAYBACK_BASE}/${camera}/index.m3u8`;
   const label = camera === "camera1" ? "Camera 1" : "Camera 2";
   const visibleError = controlError ?? error;
+  const autoPanIsOff = autoPanStatus != null && (
+    !autoPanStatus.on || autoPanStatus.state === "off"
+  );
 
   return (
     <div className={cn(
@@ -3670,17 +3675,22 @@ function CameraCard({
           {autoPanStatus ? (
             <>
               <p className="text-text text-[11px]">
-                State: <span className="font-medium">{autoPanStatus.state ?? (autoPanStatus.on ? "on" : "off")}</span>
+                State: <span className="font-medium">{autoPanIsOff ? "off" : autoPanStatus.state ?? "on"}</span>
+                {autoPanIsOff && typeof autoPanStatus.lastSessionUsd === "number" && (
+                  <span className="font-normal text-muted-text"> · Last session: ${autoPanStatus.lastSessionUsd.toFixed(2)}</span>
+                )}
               </p>
-              <p className="text-muted-text text-[11px]">
-                {autoPanStatus.gpu ?? "GPU pending"}
-                {" · "}
-                {typeof autoPanStatus.usdPerHr === "number" ? `$${autoPanStatus.usdPerHr.toFixed(2)}/h` : "Rate unavailable"}
-                {" · "}
-                {typeof autoPanStatus.usdSoFar === "number" ? `$${autoPanStatus.usdSoFar.toFixed(2)} so far` : "Cost unavailable"}
-                {" · "}
-                {typeof autoPanStatus.behindLiveSec === "number" ? `${Math.round(autoPanStatus.behindLiveSec)} s behind live` : "— s behind live"}
-              </p>
+              {!autoPanIsOff && (
+                <p className="text-muted-text text-[11px]">
+                  {autoPanStatus.gpu ?? "GPU pending"}
+                  {" · "}
+                  {typeof autoPanStatus.usdPerHr === "number" ? `$${autoPanStatus.usdPerHr.toFixed(2)}/h` : "Rate unavailable"}
+                  {" · "}
+                  {typeof autoPanStatus.usdSoFar === "number" ? `$${autoPanStatus.usdSoFar.toFixed(2)} so far` : "Cost unavailable"}
+                  {" · "}
+                  {typeof autoPanStatus.behindLiveSec === "number" ? `${Math.round(autoPanStatus.behindLiveSec)} s behind live` : "— s behind live"}
+                </p>
+              )}
               {autoPanStatus.note && <p className="text-muted-text text-[11px]">{autoPanStatus.note}</p>}
             </>
           ) : (
