@@ -78,6 +78,19 @@ describe("where to play from", () => {
     expect(res.body.variant).toBe("hevc");
   });
 
+  it("serves pan with its 90-second freshness window", async () => {
+    playlist = playlistEndingAt(60);
+    const live = await request(app).get("/api/live/camera1/source?variant=pan").expect(200);
+    expect(live.body.url).toBe("https://live-cdn.test/cam1/pan/live.m3u8");
+    expect(live.body.proxyUrl).toBe("/api/live/camera1/index.m3u8?variant=pan");
+    expect(live.body.status.live).toBe(true);
+
+    playlist = playlistEndingAt(95);
+    const stale = await request(app).get("/api/live/camera1/source?variant=pan").expect(200);
+    expect(stale.body.status.live).toBe(false);
+    expect(stale.body.status.reason).toBe("stale");
+  });
+
   it("falls back to hls for an unknown variant rather than 404ing the viewer", async () => {
     playlist = playlistEndingAt(2);
     const res = await request(app).get("/api/live/camera1/source?variant=../../etc").expect(200);

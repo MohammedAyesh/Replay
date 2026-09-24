@@ -24,7 +24,7 @@ export interface LiveStatus {
 
 export interface LiveSource {
   camera: string;
-  variant: "hls" | "hevc";
+  variant: "hls" | "hevc" | "pan";
   /** The CDN playlist. Playing this keeps the app out of the byte path. */
   url: string;
   /** The same stream relayed by the app, for a client that cannot reach the CDN. */
@@ -38,7 +38,7 @@ const basePath = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
 export async function fetchLiveSource(
   camera: string,
-  variant: "hls" | "hevc" = "hls",
+  variant: "hls" | "hevc" | "pan" = "hls",
 ): Promise<LiveSource> {
   const res = await fetch(`${basePath}/api/live/${camera}/source?variant=${variant}`, {
     credentials: "include",

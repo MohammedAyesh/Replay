@@ -120,7 +120,7 @@ export type LiveStatus = {
   segmentCount: number;
 };
 
-export function describeLive(manifest: LiveManifest, now: Date): LiveStatus {
+export function describeLive(manifest: LiveManifest, now: Date, staleAfterSeconds?: number): LiveStatus {
   const behind = livenessSeconds(manifest, now);
   const base = {
     dvrSeconds: Math.round(manifest.dvrSeconds),
@@ -135,7 +135,7 @@ export function describeLive(manifest: LiveManifest, now: Date): LiveStatus {
   // worse than showing one that has just stopped — and the viewer finds out in
   // seconds either way.
   if (behind === null) return { live: true, reason: "no-timestamps", ...base };
-  return behind <= stalenessThresholdSeconds(manifest)
+  return behind <= (staleAfterSeconds ?? stalenessThresholdSeconds(manifest))
     ? { live: true, reason: "live", ...base }
     : { live: false, reason: "stale", ...base };
 }

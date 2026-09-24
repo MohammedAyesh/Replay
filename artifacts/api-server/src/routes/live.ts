@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { logger } from "../lib/logger";
+import { LIVE_CAMERA_UPSTREAM } from "../lib/liveCameras";
 import { describeLive, formatAge, parseLiveManifest, type LiveStatus } from "../lib/liveManifest";
 
 const router: IRouter = Router();
@@ -38,13 +39,10 @@ const CDN_BASE = (process.env.LIVE_CDN_BASE || "https://livejordangalaxy.b-cdn.n
 const ORIGIN_BASE = (process.env.LIVE_ORIGIN_BASE || "http://169.58.73.17:8088").replace(/\/$/, "");
 
 /**
- * Two renditions exist per camera on the VPS: `hls` is transcoded H.264,
- * `hevc` is a stream copy that costs about a fortieth of the CPU. Only `hls`
- * plays everywhere, so it stays the default; `hevc` is selectable because it
- * exists and someone will want to compare them on a running match, which is
- * what it was built for.
+ * The camera offers the ordinary H.264 `hls`, the `hevc` stream copy, and a
+ * rented-GPU `pan` rendition that follows play. HLS remains the default.
  */
-const VARIANTS = ["hls", "hevc"] as const;
+const VARIANTS = ["hls", "hevc", "pan"] as const;
 export type LiveVariant = (typeof VARIANTS)[number];
 const isVariant = (v: string): v is LiveVariant => (VARIANTS as readonly string[]).includes(v);
 
@@ -53,11 +51,7 @@ const isVariant = (v: string): v is LiveVariant => (VARIANTS as readonly string[
  * allowlist rather than a pattern: these names are interpolated into a URL
  * path, and an allowlist is the shortest correct answer to that.
  */
-const CAMERAS = (process.env.LIVE_CAMERAS || "camera1:cam1,camera2:cam2")
-  .split(",")
-  .map((pair) => pair.split(":"))
-  .filter((parts): parts is [string, string] => parts.length === 2 && !!parts[0] && !!parts[1]);
-const UPSTREAM = new Map(CAMERAS.map(([api, disk]) => [api, disk]));
+const UPSTREAM = LIVE_CAMERA_UPSTREAM;
 
 /** A segment file name only: no slashes, no dot-segments. */
 const SEGMENT_NAME_RE = /^[A-Za-z0-9_-]+\.(ts|m4s|mp4)$/;
@@ -93,7 +87,11 @@ router.get("/live/:camera/source", async (req, res): Promise<void> => {
       cache: "no-store",
     });
     if (upstream.ok) {
-      status = describeLive(parseLiveManifest(await upstream.text()), new Date());
+      status = describeLive(
+        parseLiveManifest(await upstream.text()),
+        new Date(),
+        variant === "pan" ? 90 : undefined,
+      );
     } else if (upstream.status !== 404) {
       logger.warn({ camera, variant, status: upstream.status }, "Live origin returned an error");
     }
@@ -136,7 +134,11 @@ router.get("/live/:camera/status", async (req, res): Promise<void> => {
     });
     if (!upstream.ok) { res.status(502).json({ error: `Origin returned ${upstream.status}` }); return; }
     res.set("Cache-Control", "no-store");
-    res.json(describeLive(parseLiveManifest(await upstream.text()), new Date()));
+    res.json(describeLive(
+      parseLiveManifest(await upstream.text()),
+      new Date(),
+      variant === "pan" ? 90 : undefined,
+    ));
   } catch {
     res.status(504).json({ error: "Could not reach the live origin" });
   }

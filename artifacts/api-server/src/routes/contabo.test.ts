@@ -66,6 +66,18 @@ beforeAll(async () => {
     if (url.endsWith("/var/cam1/windows/window_1")) {
       return new Response(null, { status: 204 });
     }
+    if (url.endsWith("/livepan/status/camera1")) {
+      return jsonResponse({ cam: "camera1", on: true, state: "active", gpu: "A10", usdPerHr: 0.25, usdSoFar: 0.1 });
+    }
+    if (url.endsWith("/livepan/start/camera1")) {
+      return jsonResponse({ cam: "camera1", on: true, state: "starting" });
+    }
+    if (url.endsWith("/livepan/stop/camera1")) {
+      return jsonResponse({ cam: "camera1", on: false, state: "off" });
+    }
+    if (url.endsWith("/livepan/start/camera2")) {
+      return jsonResponse({ message: "Camera is reserved for a scheduled match" }, 409);
+    }
     return realFetch(input, init);
   });
 });
@@ -90,6 +102,12 @@ describe("admin VAR control authorization", () => {
   it("rejects anonymous access", async () => {
     mockedGetLocalUserId.mockResolvedValue(null);
     await request(app).post("/api/admin/var/camera1/start").expect(403);
+  });
+
+  it("rejects non-admin access to livepan controls", async () => {
+    mockedGetLocalUserId.mockResolvedValue(plainId);
+    await request(app).post("/api/admin/contabo/livepan/start/camera1").expect(403);
+    expect(requests).toHaveLength(0);
   });
 });
 
@@ -119,5 +137,30 @@ describe("admin VAR control proxy", () => {
     expect(requests.some((url) => url.includes("/var/cam1/schedule?start="))).toBe(true);
     expect(requests).toContain("https://var-control.test/var/cam1/windows");
     expect(requests).toContain("https://var-control.test/var/cam1/windows/window_1");
+  });
+});
+
+describe("admin livepan control proxy", () => {
+  it("proxies status, start, and stop to the livepan API", async () => {
+    const status = await request(app).get("/api/admin/contabo/livepan/status/camera1").expect(200);
+    expect(status.body).toMatchObject({ on: true, state: "active", gpu: "A10", usdPerHr: 0.25 });
+
+    const started = await request(app).post("/api/admin/contabo/livepan/start/camera1").expect(200);
+    expect(started.body).toMatchObject({ on: true, state: "starting" });
+    const stopped = await request(app).post("/api/admin/contabo/livepan/stop/camera1").expect(200);
+    expect(stopped.body).toMatchObject({ on: false, state: "off" });
+
+    expect(requests).toContain("https://var-control.test/livepan/status/camera1");
+    expect(requests).toContain("https://var-control.test/livepan/start/camera1");
+    expect(requests).toContain("https://var-control.test/livepan/stop/camera1");
+  });
+
+  it("preserves control API 409 messages and rejects unknown cameras", async () => {
+    const conflict = await request(app).post("/api/admin/contabo/livepan/start/camera2").expect(409);
+    expect(conflict.body.message).toBe("Camera is reserved for a scheduled match");
+
+    const requestsBeforeInvalidCamera = requests.length;
+    await request(app).get("/api/admin/contabo/livepan/status/camera9").expect(400);
+    expect(requests).toHaveLength(requestsBeforeInvalidCamera);
   });
 });

@@ -3131,6 +3131,16 @@ interface CameraStatus {
   [k: string]: unknown;
 }
 
+interface LivePanStatus {
+  on: boolean;
+  state?: string;
+  gpu?: string | null;
+  usdPerHr?: number | null;
+  usdSoFar?: number | null;
+  behindLiveSec?: number | null;
+  note?: string | null;
+}
+
 interface RecordingJob {
   id: string;
   camera: string;
@@ -3248,6 +3258,9 @@ function CameraCard({
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
+  const [autoPanStatus, setAutoPanStatus] = useState<LivePanStatus | null>(null);
+  const [autoPanWorking, setAutoPanWorking] = useState(false);
+  const [autoPanError, setAutoPanError] = useState<string | null>(null);
 
   const contaboFetch = useCallback(async (path: string, opts?: RequestInit) => {
     const res = await fetch(`${basePath}/api${path}`, {
@@ -3264,6 +3277,73 @@ function CameraCard({
     if (res.status === 204) return null;
     return res.json();
   }, [adminPassword]);
+
+  const autoPanFetch = useCallback(async (path: string, opts?: RequestInit) => {
+    const res = await fetch(`${basePath}/api${path}`, {
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Password": adminPassword,
+        ...(opts?.headers ?? {}),
+      },
+      ...opts,
+    });
+    if (res.status === 401) throw new Error("bad_password");
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const detail = body && typeof body === "object"
+        ? body as { message?: unknown; error?: unknown }
+        : null;
+      const message = typeof detail?.message === "string"
+        ? detail.message
+        : typeof detail?.error === "string"
+          ? detail.error
+          : `Control request failed (${res.status})`;
+      throw new Error(message);
+    }
+    return body;
+  }, [adminPassword]);
+
+  const fetchAutoPanStatus = useCallback(async () => {
+    if (document.visibilityState !== "visible") return;
+    try {
+      const data = await autoPanFetch(`/admin/contabo/livepan/status/${camera}`);
+      setAutoPanStatus(data as LivePanStatus);
+      setAutoPanError(null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not reach the livepan control server";
+      setAutoPanError(message === "bad_password" ? "Wrong password" : message);
+    }
+  }, [autoPanFetch, camera]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void fetchAutoPanStatus();
+    };
+    refreshWhenVisible();
+    const timer = setInterval(refreshWhenVisible, 10_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [fetchAutoPanStatus]);
+
+  const handleAutoPanToggle = async () => {
+    if (!autoPanStatus) return;
+    setAutoPanWorking(true);
+    setAutoPanError(null);
+    const action = autoPanStatus.on ? "stop" : "start";
+    try {
+      await autoPanFetch(`/admin/contabo/livepan/${action}/${camera}`, { method: "POST" });
+      await fetchAutoPanStatus();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Auto-pan request failed";
+      setAutoPanError(message === "bad_password" ? "Wrong password" : message);
+    } finally {
+      setAutoPanWorking(false);
+    }
+  };
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -3347,12 +3427,67 @@ function CameraCard({
           </div>
         )}
 
+        {autoPanError && (
+          <div role="alert" className="flex items-center gap-2 text-text text-xs bg-surface border border-line rounded-xl px-3 py-2">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" />
+            <span>{autoPanError}</span>
+          </div>
+        )}
+
         {loading && (
           <div className="flex items-center gap-2 text-muted-text text-xs">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             Checking status…
           </div>
         )}
+
+        <div className="rounded-xl border border-line bg-surface/70 px-3 py-3 space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-text text-xs font-semibold">Auto-pan</p>
+              <p className="text-muted-text text-[11px] mt-0.5">
+                GPU starts and stops automatically; charged only while running (~$0.25/h).
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-label={`Auto-pan for ${label}`}
+              aria-checked={autoPanStatus?.on === true}
+              disabled={autoPanWorking || !autoPanStatus}
+              onClick={() => void handleAutoPanToggle()}
+              className={cn(
+                "relative h-6 w-11 flex-shrink-0 rounded-full transition-colors disabled:opacity-40",
+                autoPanStatus?.on ? "bg-turf" : "bg-zinc-700",
+              )}
+            >
+              <span className={cn(
+                "absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform",
+                autoPanStatus?.on ? "translate-x-6" : "translate-x-1",
+              )} />
+            </button>
+          </div>
+
+          {autoPanStatus ? (
+            <>
+              <p className="text-text text-[11px]">
+                State: <span className="font-medium">{autoPanStatus.state ?? (autoPanStatus.on ? "on" : "off")}</span>
+              </p>
+              <p className="text-muted-text text-[11px]">
+                {autoPanStatus.gpu ?? "GPU pending"}
+                {" · "}
+                {typeof autoPanStatus.usdPerHr === "number" ? `$${autoPanStatus.usdPerHr.toFixed(2)}/h` : "Rate unavailable"}
+                {" · "}
+                {typeof autoPanStatus.usdSoFar === "number" ? `$${autoPanStatus.usdSoFar.toFixed(2)} so far` : "Cost unavailable"}
+                {" · "}
+                {typeof autoPanStatus.behindLiveSec === "number" ? `${Math.round(autoPanStatus.behindLiveSec)} s behind live` : "— s behind live"}
+              </p>
+              {autoPanStatus.note && <p className="text-muted-text text-[11px]">{autoPanStatus.note}</p>}
+            </>
+          ) : (
+            <p className="text-muted-text text-[11px]">Checking Auto-pan status…</p>
+          )}
+        </div>
 
         {!loading && isLive && status?.startedAt && (
           <div className="flex items-center gap-1.5 text-xs text-muted-text">

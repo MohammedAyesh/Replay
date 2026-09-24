@@ -84,6 +84,13 @@ describe("is anything actually arriving", () => {
     expect(stalenessThresholdSeconds(parseLiveManifest("#EXT-X-TARGETDURATION:20\n"))).toBe(60);
   });
 
+  it("allows a pan rendition to be up to 90 seconds behind", () => {
+    const now = new Date("2026-09-01T08:53:10.000Z"); // 90s after the playlist edge
+    expect(describeLive(m, now).live).toBe(false);
+    expect(describeLive(m, now, 90).live).toBe(true);
+    expect(describeLive(m, new Date(now.getTime() + 1000), 90).live).toBe(false);
+  });
+
   it("tolerates a live edge slightly in the future", () => {
     // The origin stamps a segment's PDT at the start of the period it covers,
     // so the edge routinely reads a second or two ahead of the fetch. Treating

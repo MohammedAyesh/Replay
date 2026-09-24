@@ -3,6 +3,7 @@ import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { logger } from "../lib/logger";
+import { parseLiveCamera } from "../lib/liveCameras";
 
 const router: IRouter = Router();
 
@@ -308,6 +309,79 @@ router.get("/admin/contabo/config", requireContaboAuth as import("express").Requ
 });
 
 /**
+ * Admin livepan proxies. The GPU worker owns the rented instance lifecycle;
+ * these routes only forward authenticated admin controls and status.
+ */
+router.get("/admin/contabo/livepan/status/:camera", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  const camera = parseLiveCamera(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid camera" });
+    return;
+  }
+
+  try {
+    sendControlResult(res, await controlFetch(`/livepan/status/${camera}`));
+  } catch (err) {
+    logger.error({ err, camera }, "Failed to reach livepan control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+router.post("/admin/contabo/livepan/start/:camera", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  const camera = parseLiveCamera(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid camera" });
+    return;
+  }
+
+  try {
+    sendControlResult(res, await controlFetch(`/livepan/start/${camera}`, {
+      method: "POST",
+      body: JSON.stringify(req.body ?? {}),
+    }));
+  } catch (err) {
+    logger.error({ err, camera }, "Failed to reach livepan control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+router.post("/admin/contabo/livepan/stop/:camera", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
+  const missing = missingSecrets();
+  if (missing.length > 0) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  const camera = parseLiveCamera(req.params.camera);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid camera" });
+    return;
+  }
+
+  try {
+    sendControlResult(res, await controlFetch(`/livepan/stop/${camera}`, {
+      method: "POST",
+      body: JSON.stringify(req.body ?? {}),
+    }));
+  } catch (err) {
+    logger.error({ err, camera }, "Failed to reach livepan control server");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
+
+/**
  * GET /admin/contabo/status/:camera
  * Proxy: GET {CONTROL_URL}/live/status/{camera}
  * Expected control-server response: { live: boolean, startedAt?: string, viewers?: number, ... }
@@ -319,8 +393,8 @@ router.get("/admin/contabo/status/:camera", requireContaboAuth as import("expres
     return;
   }
 
-  const camera = req.params.camera as string;
-  if (!["camera1", "camera2"].includes(camera)) {
+  const camera = parseLiveCamera(req.params.camera);
+  if (!camera) {
     res.status(400).json({ error: "Invalid camera" });
     return;
   }
@@ -346,8 +420,8 @@ router.post("/admin/contabo/live/start/:camera", requireContaboAuth as import("e
     return;
   }
 
-  const camera = req.params.camera as string;
-  if (!["camera1", "camera2"].includes(camera)) {
+  const camera = parseLiveCamera(req.params.camera);
+  if (!camera) {
     res.status(400).json({ error: "Invalid camera" });
     return;
   }
@@ -376,8 +450,8 @@ router.post("/admin/contabo/live/stop/:camera", requireContaboAuth as import("ex
     return;
   }
 
-  const camera = req.params.camera as string;
-  if (!["camera1", "camera2"].includes(camera)) {
+  const camera = parseLiveCamera(req.params.camera);
+  if (!camera) {
     res.status(400).json({ error: "Invalid camera" });
     return;
   }
