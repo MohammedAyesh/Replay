@@ -35,8 +35,12 @@ export type KitGroup = {
 export type KitSplit = {
   separated: boolean;
   groups: KitGroup[];
-  /** people whose colour could not be read at all */
+  /** people with no kit tile to be found under: unread, or in no kept group */
   unreadableIds: string[];
+  /** mean chroma across everyone read, for the gate below */
+  meanSaturation: number;
+  /** share of readable people the kept kits cover */
+  coverage: number;
 };
 
 /** Below this the torso has no usable hue: white, black, grey, or too dark. */
@@ -45,8 +49,29 @@ export const MIN_SATURATION = 0.18;
 export const MIN_KIT_MEMBERS = 2;
 /** More than this and the tiles stop being a choice. */
 export const MAX_KITS = 4;
-/** One bucket holding this much of the pitch means the colours did not split. */
-export const DOMINANT_SHARE = 0.85;
+/**
+ * One bucket holding this much of the pitch means the colours did not split.
+ *
+ * Two real sides are roughly half and half, so a legitimate split puts the
+ * largest kit around 0.5-0.6. 0.85 was far too generous: it passed a reading of
+ * a real match in which 68% of everyone landed in one bucket.
+ */
+export const DOMINANT_SHARE = 0.7;
+/**
+ * Kit tiles that between them cover less of the pitch than this are not a way
+ * through the gallery, they are a way past two thirds of it.
+ */
+export const MIN_KIT_COVERAGE = 0.6;
+/**
+ * Mean chroma below this means the crops carry no colour at all -- distance,
+ * compression and floodlight, not two teams in grey.
+ *
+ * Measured on a real sprite file (cam1, 121 tracks): mean saturation 0.10
+ * across every bucket, and the light/grey/dark split was reading brightness,
+ * not kit. Without this gate the screen offers four "kits" that are really
+ * exposure bands.
+ */
+export const MIN_MEAN_SATURATION = 0.2;
 
 export function rgbToHsl(r: number, g: number, b: number): TorsoColour {
   const rn = r / 255;
@@ -106,17 +131,34 @@ export function averageHue(hues: number[]): number | null {
 
 /** The bucket a torso falls in. Achromatic kits split on lightness instead. */
 export function bucketFor(colour: TorsoColour): KitKey {
-  if (colour.saturation < MIN_SATURATION) {
+  // hue === null has to send it here too, not only low saturation. A reading
+  // can be saturated on average and still have no agreed hue -- a white kit
+  // under floodlight, or crops whose hues never reached the quarter-of-pixels
+  // bar -- and `hue ?? 0` would then file every one of those under red.
+  if (colour.hue === null || colour.saturation < MIN_SATURATION) {
     if (colour.lightness >= 0.6) return "light";
     if (colour.lightness <= 0.35) return "dark";
     return "grey";
   }
-  const hue = (((colour.hue ?? 0) % 360) + 360) % 360;
+  const hue = ((colour.hue % 360) + 360) % 360;
   return `h${(Math.floor(hue / 30) * 30) % 360}`;
 }
 
 function isHueBucket(key: KitKey): boolean {
   return key.startsWith("h");
+}
+
+/**
+ * "grey" is never a kit.
+ *
+ * A torso with no hue and a middling lightness is one the reader failed on, not
+ * a team in grey. "light" and "dark" ARE kits -- white against black is a real
+ * and common pairing, and lightness is the whole signal there -- but the middle
+ * is the bin for everything that could not be read, and offering it as a tile
+ * sends the claimant into a pile of strangers.
+ */
+function isKitBucket(key: KitKey): boolean {
+  return key !== "grey";
 }
 
 function hueOf(key: KitKey): number {
@@ -165,7 +207,7 @@ export function splitKits(colours: Array<{ id: string; colour: TorsoColour | nul
 
   const merged = mergeAdjacentHueBuckets(buckets);
   const ordered = [...merged.entries()]
-    .filter(([, ids]) => ids.length >= MIN_KIT_MEMBERS)
+    .filter(([key, ids]) => isKitBucket(key) && ids.length >= MIN_KIT_MEMBERS)
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, MAX_KITS);
 
@@ -185,11 +227,30 @@ export function splitKits(colours: Array<{ id: string; colour: TorsoColour | nul
 
   const placed = groups.reduce((total, group) => total + group.memberIds.length, 0);
   const largest = groups[0]?.memberIds.length ?? 0;
+  const meanSaturation = readable.length === 0
+    ? 0
+    : readable.reduce((total, entry) => total + entry.colour.saturation, 0) / readable.length;
   const separated = groups.length >= 2
     && placed > 0
+    && readable.length > 0
+    && meanSaturation >= MIN_MEAN_SATURATION
+    && placed / readable.length >= MIN_KIT_COVERAGE
     && largest / placed < DOMINANT_SHARE;
 
-  return { separated, groups, unreadableIds };
+  // Anyone the kits do not cover has no kit tile to be found under, so they are
+  // reported as unreadable rather than quietly dropped.
+  const inAKit = new Set(groups.flatMap((group) => group.memberIds));
+  const uncovered = readable
+    .map((entry) => entry.id)
+    .filter((id) => !inAKit.has(id));
+
+  return {
+    separated,
+    groups,
+    unreadableIds: separated ? [...unreadableIds, ...uncovered] : unreadableIds,
+    meanSaturation,
+    coverage: readable.length === 0 ? 0 : placed / readable.length,
+  };
 }
 
 /**

@@ -70,6 +70,52 @@ describe("splitKits", () => {
     expect(split.separated).toBe(false);
   });
 
+  /**
+   * Measured on a real sprite file: 121 tracks, mean saturation 0.10, and the
+   * buckets came out light 10 / grey 82 / dark 15 / hue 14 -- brightness bands,
+   * not two teams. The old 0.85 dominance test passed it.
+   */
+  it("refuses a match whose crops carry no colour at all", () => {
+    const washed = (lightness: number) => ({ hue: 30, saturation: 0.1, lightness });
+    const split = splitKits([
+      ...Array.from({ length: 82 }, (_, n) => ({ id: `g${n}`, colour: washed(0.46) })),
+      ...Array.from({ length: 15 }, (_, n) => ({ id: `d${n}`, colour: washed(0.31) })),
+      ...Array.from({ length: 10 }, (_, n) => ({ id: `l${n}`, colour: washed(0.67) })),
+    ]);
+    expect(split.meanSaturation).toBeLessThan(0.2);
+    expect(split.separated).toBe(false);
+  });
+
+  it("never offers grey as a kit, and refuses when the kits cover too few", () => {
+    const split = splitKits([
+      ...Array.from({ length: 20 }, (_, n) => ({ id: `g${n}`, colour: colour(null, 0.05, 0.5) })),
+      ...[1, 2, 3].map((n) => ({ id: `blue${n}`, colour: colour(220, 0.6) })),
+      ...[1, 2, 3].map((n) => ({ id: `red${n}`, colour: colour(5, 0.6) })),
+    ]);
+    expect(split.groups.map((group) => group.key)).not.toContain("grey");
+    expect(split.coverage).toBeLessThan(0.6);
+    expect(split.separated).toBe(false);
+  });
+
+  it("separates a white kit from a black one, where lightness is the signal", () => {
+    const split = splitKits([
+      ...Array.from({ length: 6 }, (_, n) => ({ id: `w${n}`, colour: colour(null, 0.3, 0.78) })),
+      ...Array.from({ length: 6 }, (_, n) => ({ id: `b${n}`, colour: colour(null, 0.3, 0.2) })),
+    ]);
+    expect(split.separated).toBe(true);
+    expect(split.groups.map((group) => group.key).sort()).toEqual(["dark", "light"]);
+  });
+
+  it("names everyone the kits do not cover, so nobody is quietly dropped", () => {
+    const split = splitKits([
+      ...Array.from({ length: 6 }, (_, n) => ({ id: `blue${n}`, colour: colour(220, 0.6) })),
+      ...Array.from({ length: 6 }, (_, n) => ({ id: `red${n}`, colour: colour(5, 0.6) })),
+      { id: "lonely", colour: colour(120, 0.6) },
+    ]);
+    expect(split.separated).toBe(true);
+    expect(split.unreadableIds).toContain("lonely");
+  });
+
   it("keeps unreadable people out of the kits and names them", () => {
     const split = splitKits([
       ...[1, 2, 3].map((n) => ({ id: `blue${n}`, colour: colour(220) })),
