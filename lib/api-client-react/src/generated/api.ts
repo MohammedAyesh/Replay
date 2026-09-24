@@ -67,6 +67,10 @@ import type {
   LikeResult,
   LocaleInput,
   LoginInput,
+  MatchLiveClipInput,
+  MatchLiveClipResponse,
+  MatchLiveClipStatusResponse,
+  MatchLiveStatusResponse,
   MediaConsentInput,
   OwnerAvailability,
   OwnerCancellationInput,
@@ -4046,6 +4050,405 @@ export const useRemoveAcademyRecording = <TError = ErrorType<void>,
       > => {
       return useMutation(getRemoveAcademyRecordingMutationOptions(options));
     }
+
+export const getGetMatchLiveStatusUrl = (code: string,) => {
+
+
+
+
+  return `/api/matches/${code}/live/status`
+}
+
+/**
+ * @summary Get public live playback availability for a match code
+ */
+export const getMatchLiveStatus = async (code: string, options?: RequestInit): Promise<MatchLiveStatusResponse> => {
+
+  return customFetch<MatchLiveStatusResponse>(getGetMatchLiveStatusUrl(code),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMatchLiveStatusQueryKey = (code: string,) => {
+    return [
+    `/api/matches/${code}/live/status`
+    ] as const;
+    }
+
+
+export const getGetMatchLiveStatusQueryOptions = <TData = Awaited<ReturnType<typeof getMatchLiveStatus>>, TError = ErrorType<void>>(code: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMatchLiveStatusQueryKey(code);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMatchLiveStatus>>> = ({ signal }) => getMatchLiveStatus(code, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: code !== null && code !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMatchLiveStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getMatchLiveStatus>>>
+export type GetMatchLiveStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get public live playback availability for a match code
+ */
+
+export function useGetMatchLiveStatus<TData = Awaited<ReturnType<typeof getMatchLiveStatus>>, TError = ErrorType<void>>(
+ code: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMatchLiveStatusQueryOptions(code,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMatchLivePlaylistUrl = (code: string,
+    variant: 'hls' | 'hevc' | 'pan',) => {
+
+
+
+
+  return `/api/matches/${code}/live/${variant}/playlist.m3u8`
+}
+
+/**
+ * @summary Proxy a match-scoped HLS playlist
+ */
+export const getMatchLivePlaylist = async (code: string,
+    variant: 'hls' | 'hevc' | 'pan', options?: RequestInit): Promise<string> => {
+
+  return customFetch<string>(getGetMatchLivePlaylistUrl(code,variant),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMatchLivePlaylistQueryKey = (code: string,
+    variant: 'hls' | 'hevc' | 'pan',) => {
+    return [
+    `/api/matches/${code}/live/${variant}/playlist.m3u8`
+    ] as const;
+    }
+
+
+export const getGetMatchLivePlaylistQueryOptions = <TData = Awaited<ReturnType<typeof getMatchLivePlaylist>>, TError = ErrorType<void>>(code: string,
+    variant: 'hls' | 'hevc' | 'pan', options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMatchLivePlaylist>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMatchLivePlaylistQueryKey(code,variant);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMatchLivePlaylist>>> = ({ signal }) => getMatchLivePlaylist(code,variant, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: code !== null && code !== undefined && variant !== null && variant !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMatchLivePlaylist>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMatchLivePlaylistQueryResult = NonNullable<Awaited<ReturnType<typeof getMatchLivePlaylist>>>
+export type GetMatchLivePlaylistQueryError = ErrorType<void>
+
+
+/**
+ * @summary Proxy a match-scoped HLS playlist
+ */
+
+export function useGetMatchLivePlaylist<TData = Awaited<ReturnType<typeof getMatchLivePlaylist>>, TError = ErrorType<void>>(
+ code: string,
+    variant: 'hls' | 'hevc' | 'pan', options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMatchLivePlaylist>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMatchLivePlaylistQueryOptions(code,variant,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMatchLiveSegmentUrl = (code: string,
+    variant: 'hls' | 'hevc' | 'pan',
+    name: string,) => {
+
+
+
+
+  return `/api/matches/${code}/live/${variant}/seg/${name}`
+}
+
+/**
+ * @summary Proxy a segment from a match-scoped live playlist
+ */
+export const getMatchLiveSegment = async (code: string,
+    variant: 'hls' | 'hevc' | 'pan',
+    name: string, options?: RequestInit): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetMatchLiveSegmentUrl(code,variant,name),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMatchLiveSegmentQueryKey = (code: string,
+    variant: 'hls' | 'hevc' | 'pan',
+    name: string,) => {
+    return [
+    `/api/matches/${code}/live/${variant}/seg/${name}`
+    ] as const;
+    }
+
+
+export const getGetMatchLiveSegmentQueryOptions = <TData = Awaited<ReturnType<typeof getMatchLiveSegment>>, TError = ErrorType<void>>(code: string,
+    variant: 'hls' | 'hevc' | 'pan',
+    name: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveSegment>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMatchLiveSegmentQueryKey(code,variant,name);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMatchLiveSegment>>> = ({ signal }) => getMatchLiveSegment(code,variant,name, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: code !== null && code !== undefined && variant !== null && variant !== undefined && name !== null && name !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveSegment>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMatchLiveSegmentQueryResult = NonNullable<Awaited<ReturnType<typeof getMatchLiveSegment>>>
+export type GetMatchLiveSegmentQueryError = ErrorType<void>
+
+
+/**
+ * @summary Proxy a segment from a match-scoped live playlist
+ */
+
+export function useGetMatchLiveSegment<TData = Awaited<ReturnType<typeof getMatchLiveSegment>>, TError = ErrorType<void>>(
+ code: string,
+    variant: 'hls' | 'hevc' | 'pan',
+    name: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveSegment>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMatchLiveSegmentQueryOptions(code,variant,name,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateMatchLiveClipUrl = (code: string,) => {
+
+
+
+
+  return `/api/matches/${code}/live-clips`
+}
+
+/**
+ * @summary Capture a live DVR window into a user clip
+ */
+export const createMatchLiveClip = async (code: string,
+    matchLiveClipInput: MatchLiveClipInput, options?: RequestInit): Promise<MatchLiveClipResponse> => {
+
+  return customFetch<MatchLiveClipResponse>(getCreateMatchLiveClipUrl(code),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(matchLiveClipInput)
+  }
+);}
+
+
+
+
+export const getCreateMatchLiveClipMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMatchLiveClip>>, TError,{code: string;data: BodyType<MatchLiveClipInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createMatchLiveClip>>, TError,{code: string;data: BodyType<MatchLiveClipInput>}, TContext> => {
+
+const mutationKey = ['createMatchLiveClip'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createMatchLiveClip>>, {code: string;data: BodyType<MatchLiveClipInput>}> = (props) => {
+          const {code,data} = props ?? {};
+
+          return  createMatchLiveClip(code,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateMatchLiveClipMutationResult = NonNullable<Awaited<ReturnType<typeof createMatchLiveClip>>>
+    export type CreateMatchLiveClipMutationBody = BodyType<MatchLiveClipInput>
+    export type CreateMatchLiveClipMutationError = ErrorType<void>
+
+    /**
+ * @summary Capture a live DVR window into a user clip
+ */
+export const useCreateMatchLiveClip = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMatchLiveClip>>, TError,{code: string;data: BodyType<MatchLiveClipInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createMatchLiveClip>>,
+        TError,
+        {code: string;data: BodyType<MatchLiveClipInput>},
+        TContext
+      > => {
+      return useMutation(getCreateMatchLiveClipMutationOptions(options));
+    }
+
+export const getGetMatchLiveClipStatusUrl = (code: string,
+    id: number,) => {
+
+
+
+
+  return `/api/matches/${code}/live-clips/${id}/status`
+}
+
+/**
+ * @summary Get the current user's live clip processing state
+ */
+export const getMatchLiveClipStatus = async (code: string,
+    id: number, options?: RequestInit): Promise<MatchLiveClipStatusResponse> => {
+
+  return customFetch<MatchLiveClipStatusResponse>(getGetMatchLiveClipStatusUrl(code,id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMatchLiveClipStatusQueryKey = (code: string,
+    id: number,) => {
+    return [
+    `/api/matches/${code}/live-clips/${id}/status`
+    ] as const;
+    }
+
+
+export const getGetMatchLiveClipStatusQueryOptions = <TData = Awaited<ReturnType<typeof getMatchLiveClipStatus>>, TError = ErrorType<void>>(code: string,
+    id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveClipStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMatchLiveClipStatusQueryKey(code,id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMatchLiveClipStatus>>> = ({ signal }) => getMatchLiveClipStatus(code,id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: code !== null && code !== undefined && id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveClipStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMatchLiveClipStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getMatchLiveClipStatus>>>
+export type GetMatchLiveClipStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the current user's live clip processing state
+ */
+
+export function useGetMatchLiveClipStatus<TData = Awaited<ReturnType<typeof getMatchLiveClipStatus>>, TError = ErrorType<void>>(
+ code: string,
+    id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMatchLiveClipStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMatchLiveClipStatusQueryOptions(code,id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getCreateUserClipUrl = () => {
 

@@ -31,6 +31,12 @@ export const userClipsTable = pgTable("user_clips", {
   academyId: integer("academy_id").references(() => academiesTable.id, { onDelete: "set null" }),
   /** Owner footage request that supplied this clip's source, if any. */
   footageRequestId: integer("footage_request_id").references(() => footageRequestsTable.id, { onDelete: "set null" }),
+  /** Match room code for clips captured from public live match playback. */
+  matchCode: text("match_code"),
+  /** Control-service job ID and lifecycle state for live DVR captures. */
+  liveClipJobId: text("live_clip_job_id"),
+  liveClipStatus: text("live_clip_status"),
+  liveClipError: text("live_clip_error"),
   visibility: text("visibility").notNull().default("private"),
   thumbnailTime: numeric("thumbnail_time", { precision: 10, scale: 3 }),
   likeCount: integer("like_count").notNull().default(0),

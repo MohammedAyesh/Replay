@@ -20,7 +20,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { VarPlayer } from "@/components/var-player/VarPlayer";
+import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import {
   Countdown,
@@ -972,29 +972,160 @@ function TeamLegend({ side, name, color, editable, onColor }: { side: TeamSide; 
 
 // ---------------------------------------------------------------- live VAR
 
-type VarStatus = { varActive: boolean; cdnUrl?: string; fieldName: string };
+type VarStatus = {
+  live: boolean;
+  varActive: boolean;
+  panAvailable: boolean;
+  startUtc: string | null;
+  endUtc: string | null;
+  error?: string | null;
+};
+
+type MatchLiveClipProgress = {
+  id: number;
+  matchCode: string;
+  liveClipStatus: string | null;
+  liveClipError: string | null;
+  exportStatus: string | null;
+};
+
+const PENDING_LIVE_CLIP_PREFIX = "replay_pending_live_clip:";
 
 function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; preview?: boolean }) {
   const flag = useFlagMoment(room.code);
   const { toast } = useToast();
+  const { user, isGuest, isLoading: authLoading } = useAuth();
+  const [, setLocation] = useLocation();
   const [status, setStatus] = useState<VarStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [frameMs, setFrameMs] = useState<number | null>(null);
-  const [seekMs, setSeekMs] = useState<number | null>(null);
-  const requestId = room.var.requestId;
+  const [seekUtcMs, setSeekUtcMs] = useState<number | null>(null);
+  const [ballFollow, setBallFollow] = useState(false);
+  const [processing, setProcessing] = useState<MatchLiveClipProgress | null>(null);
+  const [processingId, setProcessingId] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!requestId || !room.var.active) return;
+    if (preview) return;
     let cancelled = false;
-    const load = () => fetch(`${apiBase}/owner/requests/${requestId}/var/status`, { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((s) => { if (!cancelled && s) setStatus(s as VarStatus); })
-      .catch(() => undefined);
+    const load = async () => {
+      try {
+        const response = await fetch(`${apiBase}/matches/${encodeURIComponent(room.code)}/live/status`, { credentials: "include" });
+        const result = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(result?.error || "Live status unavailable");
+        if (!cancelled) {
+          setStatus(result as VarStatus);
+          setStatusError(null);
+        }
+      } catch (error) {
+        if (!cancelled) setStatusError(error instanceof Error ? error.message : "Live status unavailable");
+      }
+    };
     void load();
-    const timer = window.setInterval(load, 20_000);
+    const timer = window.setInterval(load, 10_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [requestId, room.var.active]);
+  }, [preview, room.code]);
 
-  const markTicks = useMemo(() => room.marks.map((m) => ({ atUtcMs: Date.parse(m.atUtc), kind: m.kind })), [room.marks]);
+  const saveLiveClip = useCallback(async (draft: ClipDraft, useBallPan: boolean) => {
+    const response = await fetch(`${apiBase}/matches/${encodeURIComponent(room.code)}/live-clips`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start: draft.startTime,
+        end: draft.endTime,
+        title: draft.title,
+        cropPath: draft.cropPath,
+        aspectRatio: draft.aspectRatio,
+        useBallPan,
+      }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(result?.error || "Could not save live clip");
+    const saved = result as MatchLiveClipProgress;
+    setProcessing(saved);
+    setProcessingId(saved.id);
+  }, [room.code]);
+
+  const requireAuth = useCallback((draft: ClipDraft) => {
+    try {
+      sessionStorage.setItem(`${PENDING_LIVE_CLIP_PREFIX}${room.code}`, JSON.stringify({
+        code: room.code,
+        at: Date.now(),
+        draft,
+        useBallPan: ballFollow,
+      }));
+    } catch {
+      // The clip remains in the editor if session storage is unavailable.
+    }
+    const redirectPath = `/m/${room.code}`;
+    const authPath = isGuest ? "/sign-up" : "/sign-in";
+    setLocation(`${authPath}?redirect_url=${encodeURIComponent(redirectPath)}`);
+  }, [ballFollow, isGuest, room.code, setLocation]);
+
+  useEffect(() => {
+    if (authLoading || !user || isGuest) return;
+    const key = `${PENDING_LIVE_CLIP_PREFIX}${room.code}`;
+    type PendingLiveClip = { code?: string; at?: number; draft?: ClipDraft; useBallPan?: boolean };
+    const saved: PendingLiveClip | null = (() => {
+      try {
+        const raw = sessionStorage.getItem(key);
+        return raw ? JSON.parse(raw) as PendingLiveClip : null;
+      } catch {
+        return null;
+      }
+    })();
+    if (!saved) return;
+    sessionStorage.removeItem(key);
+    if (
+      saved.code === room.code
+      && typeof saved.at === "number"
+      && Date.now() - saved.at <= 60 * 60 * 1000
+      && saved.draft
+    ) {
+      void saveLiveClip(saved.draft, saved.useBallPan === true).catch((error) => {
+        toast({ title: error instanceof Error ? error.message : "Could not save live clip", variant: "destructive" });
+      });
+    }
+  }, [authLoading, isGuest, room.code, saveLiveClip, toast, user]);
+
+  useEffect(() => {
+    if (!processingId || preview) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const startedAt = Date.now();
+    const poll = async () => {
+      if (cancelled) return;
+      if (Date.now() - startedAt > 60 * 60 * 1000) {
+        setProcessing((current) => current ? {
+          ...current,
+          liveClipStatus: "failed",
+          liveClipError: "Live clip processing timed out",
+        } : current);
+        return;
+      }
+      try {
+        const response = await fetch(
+          `${apiBase}/matches/${encodeURIComponent(room.code)}/live-clips/${processingId}/status`,
+          { credentials: "include" },
+        );
+        if (response.ok) {
+          const result = await response.json() as MatchLiveClipProgress;
+          if (cancelled) return;
+          setProcessing(result);
+          const captureFinished = result.liveClipStatus === "ready" || result.liveClipStatus === "failed";
+          if (captureFinished && result.exportStatus !== "pending") return;
+        }
+      } catch {
+        // Retry transient network errors while the one-hour worker window remains open.
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 5_000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [preview, processingId, room.code]);
 
   const onFlag = async (kind: "goal" | "foul" | "offside" | "other") => {
     if (preview) {
@@ -1010,9 +1141,6 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
     }
   };
 
-  if (!room.isMember && !room.canManage) {
-    return <Card className="text-center"><Lock className="mx-auto h-5 w-5 text-muted-text" /><p className="mt-2 text-sm">{copy.varOnlyPlayers}</p></Card>;
-  }
   if (preview) {
     return (
       <>
@@ -1033,41 +1161,91 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
       </>
     );
   }
-  if (!room.var.active || !requestId) {
-    return <Card><p className="text-sm">{room.varOpensAt ? copy.varOpensAt(formatClock(Date.parse(room.varOpensAt), copy.locale)) : copy.phase[room.phase]}</p></Card>;
-  }
-  const proxy = `${apiBase}/owner/requests/${requestId}/var/hls/playlist.m3u8`;
+
+  const canFlag = room.isMember || room.canManage;
+  const windowStartUtcMs = status?.startUtc ? Date.parse(status.startUtc) : room.startMs - 3 * 60 * 1000;
+  const windowEndUtcMs = status?.endUtc ? Date.parse(status.endUtc) : room.endMs + 5 * 60 * 1000;
+  const liveDvr = useMemo(() => (
+    status?.live && Number.isFinite(windowStartUtcMs) && Number.isFinite(windowEndUtcMs)
+      ? {
+        windowStartUtcMs,
+        windowEndUtcMs,
+        maxDurationSeconds: 600,
+        onCurrentTimeUtcChange: setFrameMs,
+      }
+      : undefined
+  ), [status?.live, windowEndUtcMs, windowStartUtcMs]);
+  const playerSrc = `${apiBase}/matches/${encodeURIComponent(room.code)}/live/${ballFollow ? "pan" : "hls"}/playlist.m3u8`;
+  const clipFinished = processing?.liveClipStatus === "ready" || processing?.liveClipStatus === "failed";
+  const processingLabel = processing?.liveClipStatus === "ready"
+    ? (processing.exportStatus === "done"
+      ? "Clip ready"
+      : processing.exportStatus === "error" ? "Capture ready; export failed" : "Capture ready; export processing")
+    : processing?.liveClipStatus === "failed" ? "Live clip failed" : "Live clip processing";
+
   return (
     <>
-      <div className="-mx-4">
-        <VarPlayer
-          src={status?.cdnUrl ?? proxy}
-          fallbackSrc={proxy}
-          hevcSrc={proxy}
-          title={room.field.name}
-          marks={markTicks}
-          minStartUtcMs={room.startMs - 3 * 60 * 1000}
-          onCurrentTimeChange={setFrameMs}
-          seekToUtcMs={seekMs}
-        />
-      </div>
-      <p className="text-center text-[11px] text-muted-text">{copy.varBehind}</p>
-      <Card>
-        <p className="flex items-center gap-2 text-sm font-bold"><Flag className="h-4 w-4 text-violet" />{copy.flag}</p>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <button type="button" disabled={flag.isPending} onClick={() => void onFlag("goal")} className="col-span-2 min-h-12 rounded-full bg-floodlight text-base font-bold text-void disabled:opacity-60">{copy.flagKinds.goal}</button>
-          {(["foul", "offside", "other"] as const).map((k) => (
-            <button key={k} type="button" disabled={flag.isPending} onClick={() => void onFlag(k)} className={cn("min-h-11 rounded-full border text-sm font-semibold disabled:opacity-60", k === "other" ? "col-span-2 border-violet/60 text-violet" : "border-line text-text")}>{copy.flagKinds[k]}</button>
-          ))}
-        </div>
-      </Card>
+      {status?.live && liveDvr ? (
+        <>
+          <div className="-mx-4">
+            <ClipPlayer
+              src={playerSrc}
+              title={room.title || room.field.name}
+              source={{ kind: "bunny", videoId: `live:${room.code}` }}
+              liveCameraId={room.field.name}
+              isLive
+              liveDvr={liveDvr}
+              layout="inline"
+              canSave={Boolean(user) && !isGuest}
+              onRequireAuth={requireAuth}
+              onSave={(draft) => saveLiveClip(draft, ballFollow)}
+              seekToUtcMs={seekUtcMs}
+            />
+          </div>
+          <p className="text-center text-[11px] text-muted-text">{copy.varBehind} · UTC DVR</p>
+          {status.panAvailable && (
+            <button
+              type="button"
+              aria-pressed={ballFollow}
+              onClick={() => setBallFollow((value) => !value)}
+              className={cn("min-h-11 rounded-full border px-4 text-sm font-semibold", ballFollow ? "border-turf bg-turf/10 text-turf" : "border-line text-text")}
+            >
+              {ballFollow ? "Ball-follow view on" : "Enable ball-follow view"}
+            </button>
+          )}
+        </>
+      ) : (
+        <Card>
+          <p className="text-sm">{statusError || status?.error || (
+            room.varOpensAt
+              ? copy.varOpensAt(formatClock(Date.parse(room.varOpensAt), copy.locale))
+              : copy.phase[room.phase]
+          )}</p>
+          {status && !status.live && !statusError && (
+            <p className="mt-1 text-xs text-muted-text">Live match footage is not available right now.</p>
+          )}
+        </Card>
+      )}
+
+      {canFlag && (
+        <Card>
+          <p className="flex items-center gap-2 text-sm font-bold"><Flag className="h-4 w-4 text-violet" />{copy.flag}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button type="button" disabled={flag.isPending} onClick={() => void onFlag("goal")} className="col-span-2 min-h-12 rounded-full bg-floodlight text-base font-bold text-void disabled:opacity-60">{copy.flagKinds.goal}</button>
+            {(["foul", "offside", "other"] as const).map((k) => (
+              <button key={k} type="button" disabled={flag.isPending} onClick={() => void onFlag(k)} className={cn("min-h-11 rounded-full border text-sm font-semibold disabled:opacity-60", k === "other" ? "col-span-2 border-violet/60 text-violet" : "border-line text-text")}>{copy.flagKinds[k]}</button>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <Card>
         <p className="text-xs font-semibold text-muted-text">{copy.flags}</p>
         {room.marks.length === 0 ? <p className="mt-2 text-xs text-muted-text">{copy.noFlags}</p> : (
           <ul className="mt-2 flex flex-col gap-1.5">
             {[...room.marks].reverse().map((m) => (
               <li key={m.id}>
-                <button type="button" onClick={() => setSeekMs(Date.parse(m.atUtc))} className="flex w-full items-center gap-3 rounded-xl border border-line bg-raised px-3 py-2 text-start">
+                <button type="button" onClick={() => setSeekUtcMs(Date.parse(m.atUtc))} className="flex w-full items-center gap-3 rounded-xl border border-line bg-raised px-3 py-2 text-start">
                   <span className="font-mono text-sm font-bold text-turf">{copy.atMinute(Math.max(0, Math.floor((m.offsetSeconds ?? 0) / 60)))}</span>
                   <span className="flex-1 text-sm font-semibold">{copy.flagKinds[m.kind] ?? m.kind}</span>
                   {m.byName && <span className="truncate text-[11px] text-muted-text">{copy.byName(m.byName)}</span>}
@@ -1077,6 +1255,16 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
           </ul>
         )}
       </Card>
+
+      {processing && (
+        <Card>
+          <p className="text-sm font-semibold">{processingLabel}</p>
+          {processing.liveClipError && <p className="mt-1 text-xs text-live">{processing.liveClipError}</p>}
+          {clipFinished && processing.exportStatus === "error" && (
+            <p className="mt-1 text-xs text-muted-text">The source clip is saved. Its downloadable export could not be generated.</p>
+          )}
+        </Card>
+      )}
     </>
   );
 }

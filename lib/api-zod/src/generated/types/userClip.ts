@@ -39,4 +39,10 @@ export interface UserClip {
      * @nullable
      */
   introVideoUrl?: string | null;
+  /** @nullable */
+  matchCode?: string | null;
+  /** @nullable */
+  liveClipStatus?: string | null;
+  /** @nullable */
+  liveClipError?: string | null;
 }

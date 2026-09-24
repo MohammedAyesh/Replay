@@ -562,6 +562,36 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
 }
 
 /**
+ * Queue the existing MP4 export pipeline for a live capture after its Bunny
+ * Stream source is ready. The persisted fractions must already be normalized
+ * against the source duration before this is called.
+ */
+export async function queueUserClipExport(clip: typeof userClipsTable.$inferSelect): Promise<string | null> {
+  if (isLiveVideoId(clip.videoId)) return null;
+  if (clip.exportStatus === "done" && clip.exportedUrl) return "done";
+  if (inFlight.has(clip.id)) return "pending";
+
+  if (!isBunnyConfigured() || !isBunnyStorageConfigured()) {
+    await db.update(userClipsTable)
+      .set({ exportStatus: "error" })
+      .where(eq(userClipsTable.id, clip.id));
+    return "error";
+  }
+
+  inFlight.add(clip.id);
+  try {
+    await db.update(userClipsTable)
+      .set({ exportStatus: "pending", exportedUrl: null })
+      .where(eq(userClipsTable.id, clip.id));
+    startBackgroundExport({ ...clip, exportStatus: "pending", exportedUrl: null });
+    return "pending";
+  } catch (error) {
+    inFlight.delete(clip.id);
+    throw error;
+  }
+}
+
+/**
  * Source-rendition pinning lives in lib/exportSource.ts, which has no database
  * imports so it can be unit-tested on its own. Re-exported here because this
  * module is the historical import site.
@@ -708,6 +738,9 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
       footageRequestId: row.footageRequestId ?? null,
+      matchCode: row.matchCode ?? null,
+      liveClipStatus: row.liveClipStatus ?? null,
+      liveClipError: row.liveClipError ?? null,
       introVideoUrl,
     })
   );
@@ -752,6 +785,9 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
+      matchCode: row.matchCode ?? null,
+      liveClipStatus: row.liveClipStatus ?? null,
+      liveClipError: row.liveClipError ?? null,
       // Intro suppressed in playback — appears only in downloaded exports.
       introVideoUrl: null,
     };

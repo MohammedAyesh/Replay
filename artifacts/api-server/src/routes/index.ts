@@ -30,6 +30,7 @@ import claimChainRouter from "./claimChain";
 import camerasRouter from "./cameras";
 import ownerRouter from "./owner";
 import matchRoomsRouter from "./matchRooms";
+import matchLiveRouter from "./matchLive";
 
 const router: IRouter = Router();
 
@@ -64,5 +65,6 @@ router.use(claimChainRouter);
 router.use(camerasRouter);
 router.use(ownerRouter);
 router.use(matchRoomsRouter);
+router.use(matchLiveRouter);
 
 export default router;

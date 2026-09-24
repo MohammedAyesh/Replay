@@ -636,6 +636,70 @@ export interface UserClip {
      * @nullable
      */
   introVideoUrl?: string | null;
+  /** @nullable */
+  matchCode?: string | null;
+  /** @nullable */
+  liveClipStatus?: string | null;
+  /** @nullable */
+  liveClipError?: string | null;
+}
+
+export interface MatchLiveStatusResponse {
+  matchCode: string;
+  live: boolean;
+  varActive: boolean;
+  panAvailable: boolean;
+  /** @nullable */
+  startUtc: string | null;
+  /** @nullable */
+  endUtc: string | null;
+  /** @nullable */
+  error?: string | null;
+}
+
+export type MatchLiveClipInputAspectRatio = typeof MatchLiveClipInputAspectRatio[keyof typeof MatchLiveClipInputAspectRatio];
+
+
+export const MatchLiveClipInputAspectRatio = {
+  '16:9': '16:9',
+  '9:16': '9:16',
+} as const;
+
+export interface MatchLiveClipInput {
+  /** Start time as UTC epoch seconds */
+  start: number;
+  /** End time as UTC epoch seconds */
+  end: number;
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  title: string;
+  cropPath: CropKeyframe[];
+  aspectRatio: MatchLiveClipInputAspectRatio;
+  useBallPan: boolean;
+}
+
+export interface MatchLiveClipResponse {
+  id: number;
+  matchCode: string;
+  /** @nullable */
+  liveClipStatus: string | null;
+  /** @nullable */
+  liveClipError: string | null;
+  /** @nullable */
+  exportStatus: string | null;
+}
+
+export interface MatchLiveClipStatusResponse {
+  id: number;
+  matchCode: string;
+  /** @nullable */
+  liveClipStatus: string | null;
+  /** @nullable */
+  liveClipError: string | null;
+  /** @nullable */
+  exportStatus: string | null;
 }
 
 export interface SocialLikeUser {

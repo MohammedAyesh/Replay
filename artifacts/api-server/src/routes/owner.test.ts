@@ -725,7 +725,7 @@ describe("admin owner and billing management", () => {
     ]));
   });
 
-  it("approves a delivered-footage refund, revokes access, and writes a negative ledger entry", async () => {
+  it("approves a delivered-footage refund and removes the refunded charge without adding a payment", async () => {
     mockedGetLocalUserRecord.mockResolvedValue({
       id: ownerId,
       isGuest: false,
@@ -771,8 +771,13 @@ describe("admin owner and billing management", () => {
       cancellationStatus: "approved",
     });
     const overview = await request(app).get("/api/admin/footage-billing").expect(200);
-    expect(overview.body.payments).toEqual(expect.arrayContaining([
-      expect.objectContaining({ amountFils: -1000, method: "Refund" }),
+    expect(overview.body.payments).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        amountFils: -1000,
+        method: "Refund",
+        fieldId: fieldAId,
+        note: "Refunded after review",
+      }),
     ]));
   });
 

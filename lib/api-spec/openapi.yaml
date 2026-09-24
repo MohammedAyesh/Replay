@@ -1297,6 +1297,160 @@ paths:
         "403":
           description: Forbidden
 
+  /matches/{code}/live/status:
+    get:
+      operationId: getMatchLiveStatus
+      tags: [matches]
+      summary: Get public live playback availability for a match code
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Live playback and ball-follow availability; contains no upstream media URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchLiveStatusResponse"
+        "404":
+          description: Match not found
+        "429":
+          description: Rate limited
+
+  /matches/{code}/live/{variant}/playlist.m3u8:
+    get:
+      operationId: getMatchLivePlaylist
+      tags: [matches]
+      summary: Proxy a match-scoped HLS playlist
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: variant
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [hls, hevc, pan]
+      responses:
+        "200":
+          description: Rewritten HLS playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        "404":
+          description: Match or playback window unavailable
+        "429":
+          description: Rate limited
+
+  /matches/{code}/live/{variant}/seg/{name}:
+    get:
+      operationId: getMatchLiveSegment
+      tags: [matches]
+      summary: Proxy a segment from a match-scoped live playlist
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: variant
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [hls, hevc, pan]
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Proxied media segment
+          content:
+            video/mp2t:
+              schema:
+                type: string
+                format: binary
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Match or playback window unavailable
+        "429":
+          description: Rate limited
+
+  /matches/{code}/live-clips:
+    post:
+      operationId: createMatchLiveClip
+      tags: [matches, clips]
+      summary: Capture a live DVR window into a user clip
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MatchLiveClipInput"
+      responses:
+        "201":
+          description: Live clip capture queued or failed during setup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchLiveClipResponse"
+        "400":
+          description: Invalid time window
+        "401":
+          description: Sign in required
+        "409":
+          description: Ball-follow path unavailable
+        "429":
+          description: Rate limited
+
+  /matches/{code}/live-clips/{id}/status:
+    get:
+      operationId: getMatchLiveClipStatus
+      tags: [matches, clips]
+      summary: Get the current user's live clip processing state
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Current clip processing and export state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchLiveClipStatusResponse"
+        "401":
+          description: Sign in required
+        "404":
+          description: Clip not found
+        "429":
+          description: Rate limited
+
   /user-clips:
     post:
       operationId: createUserClip
@@ -2886,6 +3040,87 @@ components:
         introVideoUrl:
           type: ["string", "null"]
           description: Branding intro to play before this clip, if its academy has one set.
+        matchCode:
+          type: ["string", "null"]
+        liveClipStatus:
+          type: ["string", "null"]
+        liveClipError:
+          type: ["string", "null"]
+
+    MatchLiveStatusResponse:
+      type: object
+      required: [matchCode, live, varActive, panAvailable, startUtc, endUtc]
+      properties:
+        matchCode:
+          type: string
+        live:
+          type: boolean
+        varActive:
+          type: boolean
+        panAvailable:
+          type: boolean
+        startUtc:
+          type: ["string", "null"]
+          format: date-time
+        endUtc:
+          type: ["string", "null"]
+          format: date-time
+        error:
+          type: ["string", "null"]
+
+    MatchLiveClipInput:
+      type: object
+      required: [start, end, title, cropPath, aspectRatio, useBallPan]
+      properties:
+        start:
+          type: number
+          description: Start time as UTC epoch seconds
+        end:
+          type: number
+          description: End time as UTC epoch seconds
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        cropPath:
+          type: array
+          items:
+            $ref: "#/components/schemas/CropKeyframe"
+        aspectRatio:
+          type: string
+          enum: ["16:9", "9:16"]
+        useBallPan:
+          type: boolean
+
+    MatchLiveClipResponse:
+      type: object
+      required: [id, matchCode, liveClipStatus, liveClipError, exportStatus]
+      properties:
+        id:
+          type: integer
+        matchCode:
+          type: string
+        liveClipStatus:
+          type: ["string", "null"]
+        liveClipError:
+          type: ["string", "null"]
+        exportStatus:
+          type: ["string", "null"]
+
+    MatchLiveClipStatusResponse:
+      type: object
+      required: [id, matchCode, liveClipStatus, liveClipError, exportStatus]
+      properties:
+        id:
+          type: integer
+        matchCode:
+          type: string
+        liveClipStatus:
+          type: ["string", "null"]
+        liveClipError:
+          type: ["string", "null"]
+        exportStatus:
+          type: ["string", "null"]
 
     SocialLikeUser:
       type: object

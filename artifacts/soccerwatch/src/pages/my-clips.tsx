@@ -1521,14 +1521,85 @@ function UserClipCard({
   onPlay: (clip: UserClip) => void;
 }) {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const deleteUserClip = useDeleteUserClip();
   const [showDelete, setShowDelete] = useState(false);
+  const [liveProgress, setLiveProgress] = useState({
+    liveClipStatus: clip.liveClipStatus ?? null,
+    liveClipError: clip.liveClipError ?? null,
+    exportStatus: clip.exportStatus ?? null,
+  });
 
   const startPct = (clip.startTime * 100).toFixed(0);
   const endPct = (clip.endTime * 100).toFixed(0);
   const durationHint = `${startPct}%–${endPct}%`;
   const isPrivate = clip.visibility === "private";
+  const isLiveClip = Boolean(clip.matchCode);
+  const canPlay = !isLiveClip || Boolean(clip.playbackUrl);
+  const shouldPollLiveStatus = isLiveClip && (
+    (liveProgress.liveClipStatus !== "ready" && liveProgress.liveClipStatus !== "failed")
+    || (liveProgress.liveClipStatus === "ready" && liveProgress.exportStatus !== "done" && liveProgress.exportStatus !== "error")
+  );
+
+  useEffect(() => {
+    setLiveProgress({
+      liveClipStatus: clip.liveClipStatus ?? null,
+      liveClipError: clip.liveClipError ?? null,
+      exportStatus: clip.exportStatus ?? null,
+    });
+  }, [clip.exportStatus, clip.id, clip.liveClipError, clip.liveClipStatus]);
+
+  useEffect(() => {
+    if (!clip.matchCode || !shouldPollLiveStatus) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const response = await fetch(
+          `/api/matches/${encodeURIComponent(clip.matchCode!)}/live-clips/${clip.id}/status`,
+          { credentials: "include" },
+        );
+        if (response.ok) {
+          const result = await response.json() as {
+            liveClipStatus: string | null;
+            liveClipError: string | null;
+            exportStatus: string | null;
+          };
+          if (cancelled) return;
+          setLiveProgress(result);
+          const captureFailed = result.liveClipStatus === "failed";
+          const processingFinished = result.liveClipStatus === "ready"
+            && (result.exportStatus === "done" || result.exportStatus === "error");
+          if (captureFailed || processingFinished) {
+            void queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+            return;
+          }
+        }
+      } catch {
+        // Keep the last known state and retry after a temporary network issue.
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 5_000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [clip.id, clip.matchCode, queryClient, shouldPollLiveStatus]);
+
+  const liveStatusText = !isLiveClip
+    ? null
+    : liveProgress.liveClipStatus === "failed"
+      ? t.myClips.liveCaptureFailed
+      : liveProgress.liveClipStatus !== "ready"
+        ? t.myClips.liveCaptureProcessing
+        : liveProgress.exportStatus === "pending"
+          ? t.myClips.liveExportProcessing
+          : liveProgress.exportStatus === "error"
+            ? t.myClips.liveExportFailed
+            : t.myClips.liveClipReady;
 
   const handleDelete = async () => {
     try {
@@ -1547,8 +1618,9 @@ function UserClipCard({
         transition: { delay: index * 0.07, duration: 0.4, ease: "easeOut" as const },
       }}
       whileTap={{ scale: 0.95 }}
-      onClick={() => onPlay(clip)}
-      className="group relative flex min-h-[86px] items-center gap-3 overflow-hidden rounded-[18px] border border-border bg-card p-2 shadow-sm"
+      onClick={() => { if (canPlay) onPlay(clip); }}
+      aria-disabled={!canPlay}
+      className={cn("group relative flex min-h-[86px] items-center gap-3 overflow-hidden rounded-[18px] border border-border bg-card p-2 shadow-sm", canPlay ? "cursor-pointer" : "cursor-default")}
     >
       <div className="relative h-[70px] w-[112px] shrink-0 overflow-hidden rounded-xl">
         {clip.thumbnailUrl ? (
@@ -1571,11 +1643,15 @@ function UserClipCard({
             <Play className="ms-0.5 h-3.5 w-3.5 fill-current" />
           </span>
         </div>
-        {/* Live clip overlay — no playback URL yet */}
+        {/* Live clip status remains visible until the captured source can play. */}
         {!clip.playbackUrl && (
           <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-black/70">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Live recording</span>
-            <span className="px-3 text-center text-[9px] text-white/50">Playback available once the recording uploads</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">
+              {isLiveClip ? liveStatusText : "Live recording"}
+            </span>
+            <span className="px-3 text-center text-[9px] text-white/60">
+              {isLiveClip ? liveProgress.liveClipError || t.myClips.livePlaybackPending : "Playback available once the recording uploads"}
+            </span>
           </div>
         )}
       </div>
@@ -1585,6 +1661,14 @@ function UserClipCard({
         <p className="mt-1 text-[10px] font-medium text-primary">
           {new Date(clip.createdAt).toLocaleDateString()}
         </p>
+        {isLiveClip && (
+        <p className={cn("mt-1 text-[10px] font-semibold", liveProgress.liveClipStatus === "failed" || liveProgress.exportStatus === "error" ? "text-live" : "text-muted-foreground")}>
+            {liveStatusText}
+            {(liveProgress.liveClipError || (liveProgress.exportStatus === "error" && liveProgress.liveClipStatus === "ready")) && (
+              <span className="block truncate font-normal">{liveProgress.liveClipError || t.myClips.liveExportFailed}</span>
+            )}
+          </p>
+        )}
         {isPrivate ? (
           <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
             <Lock className="h-2.5 w-2.5" />

@@ -1613,6 +1613,99 @@ export const RemoveAcademyRecordingResponse = zod.void()
 
 
 /**
+ * @summary Get public live playback availability for a match code
+ */
+export const GetMatchLiveStatusParams = zod.object({
+  "code": zod.coerce.string()
+})
+
+export const GetMatchLiveStatusResponse = zod.object({
+  "matchCode": zod.string(),
+  "live": zod.boolean(),
+  "varActive": zod.boolean(),
+  "panAvailable": zod.boolean(),
+  "startUtc": zod.coerce.date().nullable(),
+  "endUtc": zod.coerce.date().nullable(),
+  "error": zod.string().nullish()
+})
+
+
+/**
+ * @summary Proxy a match-scoped HLS playlist
+ */
+export const GetMatchLivePlaylistParams = zod.object({
+  "code": zod.coerce.string(),
+  "variant": zod.enum(['hls', 'hevc', 'pan'])
+})
+
+export const GetMatchLivePlaylistResponse = zod.unknown()
+
+
+/**
+ * @summary Proxy a segment from a match-scoped live playlist
+ */
+export const GetMatchLiveSegmentParams = zod.object({
+  "code": zod.coerce.string(),
+  "variant": zod.enum(['hls', 'hevc', 'pan']),
+  "name": zod.coerce.string()
+})
+
+export const GetMatchLiveSegmentResponse = zod.unknown()
+
+
+/**
+ * @summary Capture a live DVR window into a user clip
+ */
+export const CreateMatchLiveClipParams = zod.object({
+  "code": zod.coerce.string()
+})
+
+export const createMatchLiveClipBodyTitleMax = 120;
+
+
+
+export const CreateMatchLiveClipBody = zod.object({
+  "start": zod.number().describe('Start time as UTC epoch seconds'),
+  "end": zod.number().describe('End time as UTC epoch seconds'),
+  "title": zod.string().min(1).max(createMatchLiveClipBodyTitleMax),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
+  "aspectRatio": zod.enum(['16:9', '9:16']),
+  "useBallPan": zod.boolean()
+})
+
+export const CreateMatchLiveClipResponse = zod.object({
+  "id": zod.number(),
+  "matchCode": zod.string(),
+  "liveClipStatus": zod.string().nullable(),
+  "liveClipError": zod.string().nullable(),
+  "exportStatus": zod.string().nullable()
+})
+
+
+/**
+ * @summary Get the current user's live clip processing state
+ */
+export const GetMatchLiveClipStatusParams = zod.object({
+  "code": zod.coerce.string(),
+  "id": zod.coerce.number()
+})
+
+export const GetMatchLiveClipStatusResponse = zod.object({
+  "id": zod.number(),
+  "matchCode": zod.string(),
+  "liveClipStatus": zod.string().nullable(),
+  "liveClipError": zod.string().nullable(),
+  "exportStatus": zod.string().nullable()
+})
+
+
+/**
  * @summary Create a user clip from a full match video
  */
 export const CreateUserClipBody = zod.object({
@@ -1658,7 +1751,10 @@ export const CreateUserClipResponse = zod.object({
   "createdAt": zod.string(),
   "academyId": zod.number().nullish(),
   "footageRequestId": zod.number().nullish(),
-  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.'),
+  "matchCode": zod.string().nullish(),
+  "liveClipStatus": zod.string().nullish(),
+  "liveClipError": zod.string().nullish()
 })
 
 
@@ -1690,7 +1786,10 @@ export const ListUserClipsResponseItem = zod.object({
   "createdAt": zod.string(),
   "academyId": zod.number().nullish(),
   "footageRequestId": zod.number().nullish(),
-  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.'),
+  "matchCode": zod.string().nullish(),
+  "liveClipStatus": zod.string().nullish(),
+  "liveClipError": zod.string().nullish()
 })
 export const ListUserClipsResponse = zod.array(ListUserClipsResponseItem)
 
@@ -1743,7 +1842,10 @@ export const UpdateUserClipResponse = zod.object({
   "createdAt": zod.string(),
   "academyId": zod.number().nullish(),
   "footageRequestId": zod.number().nullish(),
-  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.')
+  "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.'),
+  "matchCode": zod.string().nullish(),
+  "liveClipStatus": zod.string().nullish(),
+  "liveClipError": zod.string().nullish()
 })
 
 
