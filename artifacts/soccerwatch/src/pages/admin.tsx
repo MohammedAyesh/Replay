@@ -3349,9 +3349,11 @@ function CameraCard({
   }, [adminPassword]);
 
   const fetchAutoPanStatus = useCallback(async () => {
-    if (document.visibilityState !== "visible") return;
     try {
       const data = await autoPanFetch(`/admin/contabo/livepan/status/${camera}`);
+      if (!data || typeof data !== "object" || typeof (data as { on?: unknown }).on !== "boolean") {
+        throw new Error("Invalid Auto-pan status response");
+      }
       setAutoPanStatus(data as LivePanStatus);
       setAutoPanError(null);
     } catch (e) {
@@ -3360,18 +3362,18 @@ function CameraCard({
     }
   }, [autoPanFetch, camera]);
 
+  const autoPanPollIntervalMs = autoPanStatus?.state === "starting" || autoPanStatus?.state === "stopping"
+    ? 2_000
+    : 10_000;
+
   useEffect(() => {
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void fetchAutoPanStatus();
-    };
-    refreshWhenVisible();
-    const timer = setInterval(refreshWhenVisible, 10_000);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
+    void fetchAutoPanStatus();
   }, [fetchAutoPanStatus]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => { void fetchAutoPanStatus(); }, autoPanPollIntervalMs);
+    return () => window.clearInterval(timer);
+  }, [autoPanPollIntervalMs, fetchAutoPanStatus]);
 
   const handleAutoPanToggle = async () => {
     if (!autoPanStatus) return;
@@ -3693,7 +3695,7 @@ function CameraCard({
               )}
               {autoPanStatus.note && <p className="text-muted-text text-[11px]">{autoPanStatus.note}</p>}
             </>
-          ) : (
+          ) : autoPanError ? null : (
             <p className="text-muted-text text-[11px]">Checking Auto-pan status…</p>
           )}
         </div>
