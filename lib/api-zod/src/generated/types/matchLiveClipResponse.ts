@@ -13,6 +13,7 @@ export interface MatchLiveClipResponse {
   liveClipStatus: string | null;
   /** @nullable */
   liveClipError: string | null;
+  liveClipPartial: boolean;
   /** @nullable */
   exportStatus: string | null;
 }

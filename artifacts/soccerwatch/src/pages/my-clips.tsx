@@ -25,6 +25,7 @@ import { saveLocalClip, getLocalClip, listLocalClips, deleteLocalClip, createLoc
 import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { applyFrameToVideo, frameToVideoStyle, interpolateFrame } from "@/lib/cropFrame";
+import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
 import {
   fetchDownloadQuota,
   formatQuotaLabel,
@@ -1528,8 +1529,10 @@ function UserClipCard({
   const [liveProgress, setLiveProgress] = useState({
     liveClipStatus: clip.liveClipStatus ?? null,
     liveClipError: clip.liveClipError ?? null,
+    liveClipPartial: clip.liveClipPartial ?? false,
     exportStatus: clip.exportStatus ?? null,
   });
+  const partialReadyInvalidatedRef = useRef(clip.liveClipStatus === "ready" && clip.liveClipPartial);
 
   const startPct = (clip.startTime * 100).toFixed(0);
   const endPct = (clip.endTime * 100).toFixed(0);
@@ -1546,9 +1549,13 @@ function UserClipCard({
     setLiveProgress({
       liveClipStatus: clip.liveClipStatus ?? null,
       liveClipError: clip.liveClipError ?? null,
+      liveClipPartial: clip.liveClipPartial ?? false,
       exportStatus: clip.exportStatus ?? null,
     });
-  }, [clip.exportStatus, clip.id, clip.liveClipError, clip.liveClipStatus]);
+    if (clip.liveClipStatus === "ready" && clip.liveClipPartial) {
+      partialReadyInvalidatedRef.current = true;
+    }
+  }, [clip.exportStatus, clip.id, clip.liveClipError, clip.liveClipPartial, clip.liveClipStatus]);
 
   useEffect(() => {
     if (!clip.matchCode || !shouldPollLiveStatus) return;
@@ -1565,10 +1572,19 @@ function UserClipCard({
           const result = await response.json() as {
             liveClipStatus: string | null;
             liveClipError: string | null;
+            liveClipPartial: boolean;
             exportStatus: string | null;
           };
           if (cancelled) return;
           setLiveProgress(result);
+          if (
+            result.liveClipStatus === "ready"
+            && result.liveClipPartial
+            && !partialReadyInvalidatedRef.current
+          ) {
+            partialReadyInvalidatedRef.current = true;
+            void queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+          }
           const captureFailed = result.liveClipStatus === "failed";
           const processingFinished = result.liveClipStatus === "ready"
             && (result.exportStatus === "done" || result.exportStatus === "error");
@@ -1667,6 +1683,15 @@ function UserClipCard({
             {(liveProgress.liveClipError || (liveProgress.exportStatus === "error" && liveProgress.liveClipStatus === "ready")) && (
               <span className="block truncate font-normal">{liveProgress.liveClipError || t.myClips.liveExportFailed}</span>
             )}
+          </p>
+        )}
+        {isLiveClip && liveProgress.liveClipPartial && liveProgress.liveClipStatus === "ready" && (
+          <p
+            role="status"
+            data-testid={`status-live-clip-partial-${clip.id}`}
+            className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-200"
+          >
+            {LIVE_CLIP_PARTIAL_NOTICE}
           </p>
         )}
         {isPrivate ? (

@@ -2996,7 +2996,7 @@ components:
 
     UserClip:
       type: object
-      required: [id, userId, videoId, title, startTime, endTime, cropPath, visibility, likeCount, createdAt, aspectRatio]
+      required: [id, userId, videoId, title, startTime, endTime, cropPath, visibility, likeCount, createdAt, aspectRatio, liveClipPartial]
       properties:
         id:
           type: integer
@@ -3046,6 +3046,8 @@ components:
           type: ["string", "null"]
         liveClipError:
           type: ["string", "null"]
+        liveClipPartial:
+          type: boolean
 
     MatchLiveStatusResponse:
       type: object
@@ -3094,7 +3096,7 @@ components:
 
     MatchLiveClipResponse:
       type: object
-      required: [id, matchCode, liveClipStatus, liveClipError, exportStatus]
+      required: [id, matchCode, liveClipStatus, liveClipError, liveClipPartial, exportStatus]
       properties:
         id:
           type: integer
@@ -3104,12 +3106,14 @@ components:
           type: ["string", "null"]
         liveClipError:
           type: ["string", "null"]
+        liveClipPartial:
+          type: boolean
         exportStatus:
           type: ["string", "null"]
 
     MatchLiveClipStatusResponse:
       type: object
-      required: [id, matchCode, liveClipStatus, liveClipError, exportStatus]
+      required: [id, matchCode, liveClipStatus, liveClipError, liveClipPartial, exportStatus]
       properties:
         id:
           type: integer
@@ -3119,6 +3123,8 @@ components:
           type: ["string", "null"]
         liveClipError:
           type: ["string", "null"]
+        liveClipPartial:
+          type: boolean
         exportStatus:
           type: ["string", "null"]
 

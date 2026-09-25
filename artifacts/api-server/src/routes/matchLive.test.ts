@@ -214,7 +214,7 @@ describe("match live clip control contract", () => {
       ok: true,
       status: 200,
       body: {
-        state: "ready",
+        state: "failed",
         guid,
         duration: 60,
         offsetStart: 10,
@@ -232,9 +232,8 @@ describe("match live clip control contract", () => {
       .expect(200);
     expect(ready.body.liveClipStatus).toBe("ready");
     expect(ready.body.exportStatus).toBe("pending");
-    expect(ready.body.liveClipError).toBe(
-      "Part of this moment wasn't recorded (camera gap) — the clip is shorter than you picked.",
-    );
+    expect(ready.body.liveClipError).toBeNull();
+    expect(ready.body.liveClipPartial).toBe(true);
     expect(queueUserClipExport).toHaveBeenCalledOnce();
 
     const [captured] = await db.select().from(userClipsTable)
@@ -242,6 +241,9 @@ describe("match live clip control contract", () => {
     expect(captured.videoId).toBe(guid);
     expect(Number(captured.startTime)).toBeCloseTo(10 / 60);
     expect(Number(captured.endTime)).toBeCloseTo(20 / 60);
+    expect(captured.liveClipStatus).toBe("ready");
+    expect(captured.liveClipError).toBeNull();
+    expect(captured.liveClipPartial).toBe(true);
   });
 
   it("rejects future end timestamps before calling the control service", async () => {

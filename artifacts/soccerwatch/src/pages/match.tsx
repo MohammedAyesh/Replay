@@ -21,6 +21,7 @@ import {
   Users,
 } from "lucide-react";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
+import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import {
   Countdown,
@@ -986,6 +987,7 @@ type MatchLiveClipProgress = {
   matchCode: string;
   liveClipStatus: string | null;
   liveClipError: string | null;
+  liveClipPartial: boolean;
   exportStatus: string | null;
 };
 
@@ -1297,6 +1299,11 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
       {processing && (
         <Card>
           <p className="text-sm font-semibold">{processingLabel}</p>
+          {processing.liveClipPartial && processing.liveClipStatus === "ready" && (
+            <p role="status" data-testid={`status-live-clip-partial-${processing.id}`} className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-200">
+              {LIVE_CLIP_PARTIAL_NOTICE}
+            </p>
+          )}
           {processing.liveClipError && <p className="mt-1 text-xs text-live">{processing.liveClipError}</p>}
           {clipFinished && processing.exportStatus === "error" && (
             <p className="mt-1 text-xs text-muted-text">The source clip is saved. Its downloadable export could not be generated.</p>

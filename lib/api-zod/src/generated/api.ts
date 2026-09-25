@@ -1684,6 +1684,7 @@ export const CreateMatchLiveClipResponse = zod.object({
   "matchCode": zod.string(),
   "liveClipStatus": zod.string().nullable(),
   "liveClipError": zod.string().nullable(),
+  "liveClipPartial": zod.boolean(),
   "exportStatus": zod.string().nullable()
 })
 
@@ -1701,6 +1702,7 @@ export const GetMatchLiveClipStatusResponse = zod.object({
   "matchCode": zod.string(),
   "liveClipStatus": zod.string().nullable(),
   "liveClipError": zod.string().nullable(),
+  "liveClipPartial": zod.boolean(),
   "exportStatus": zod.string().nullable()
 })
 
@@ -1754,7 +1756,8 @@ export const CreateUserClipResponse = zod.object({
   "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.'),
   "matchCode": zod.string().nullish(),
   "liveClipStatus": zod.string().nullish(),
-  "liveClipError": zod.string().nullish()
+  "liveClipError": zod.string().nullish(),
+  "liveClipPartial": zod.boolean()
 })
 
 
@@ -1789,7 +1792,8 @@ export const ListUserClipsResponseItem = zod.object({
   "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.'),
   "matchCode": zod.string().nullish(),
   "liveClipStatus": zod.string().nullish(),
-  "liveClipError": zod.string().nullish()
+  "liveClipError": zod.string().nullish(),
+  "liveClipPartial": zod.boolean()
 })
 export const ListUserClipsResponse = zod.array(ListUserClipsResponseItem)
 
@@ -1845,7 +1849,8 @@ export const UpdateUserClipResponse = zod.object({
   "introVideoUrl": zod.string().nullish().describe('Branding intro to play before this clip, if its academy has one set.'),
   "matchCode": zod.string().nullish(),
   "liveClipStatus": zod.string().nullish(),
-  "liveClipError": zod.string().nullish()
+  "liveClipError": zod.string().nullish(),
+  "liveClipPartial": zod.boolean()
 })
 
 

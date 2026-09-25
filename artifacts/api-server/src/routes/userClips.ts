@@ -741,6 +741,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       matchCode: row.matchCode ?? null,
       liveClipStatus: row.liveClipStatus ?? null,
       liveClipError: row.liveClipError ?? null,
+      liveClipPartial: row.liveClipPartial,
       introVideoUrl,
     })
   );
@@ -788,6 +789,7 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       matchCode: row.matchCode ?? null,
       liveClipStatus: row.liveClipStatus ?? null,
       liveClipError: row.liveClipError ?? null,
+      liveClipPartial: row.liveClipPartial,
       // Intro suppressed in playback — appears only in downloaded exports.
       introVideoUrl: null,
     };

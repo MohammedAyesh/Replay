@@ -30,8 +30,6 @@ export function isValidLiveClipDurationMs(durationMs: number): boolean {
     && durationMs >= MIN_LIVE_CLIP_SECONDS * 1000
     && durationMs <= MAX_LIVE_CLIP_SECONDS * 1000;
 }
-const PARTIAL_LIVE_CLIP_NOTICE =
-  "Part of this moment wasn't recorded (camera gap) — the clip is shorter than you picked.";
 const MAX_UNKNOWN_JOB_WAIT_MS = 60 * 60 * 1000;
 
 type LiveVariant = "hls" | "hevc" | "pan";
@@ -516,6 +514,7 @@ router.post("/matches/:code/live-clips", async (req, res): Promise<void> => {
     matchCode: updated.matchCode,
     liveClipStatus: updated.liveClipStatus,
     liveClipError: updated.liveClipError,
+    liveClipPartial: updated.liveClipPartial,
     exportStatus: updated.exportStatus,
   }));
 });
@@ -561,82 +560,101 @@ router.get(
         );
         if (job.ok) {
           const payload = jobPayload(job.body);
-          const partialNotice = recordValue(payload, "partial") === true
-            || clip.liveClipError === PARTIAL_LIVE_CLIP_NOTICE
-            ? PARTIAL_LIVE_CLIP_NOTICE
-            : null;
+          const partial = recordValue(payload, "partial") === true || clip.liveClipPartial;
           const nextStatus = captureStatus(payload);
-          if (nextStatus === "failed") {
+          const guid = stringValue(payload, "guid", "videoId", "video_id");
+          const duration = numberValue(payload, "duration", "durationSeconds", "duration_seconds");
+          const offsetStart = numberValue(payload, "offsetStart", "offset_start", "startOffset", "start_offset", "sourceStart");
+          const offsetEnd = numberValue(payload, "offsetEnd", "offset_end", "endOffset", "end_offset", "sourceEnd");
+          const hasPlayableSource = validBunnyGuid(guid)
+            && duration != null && duration > 0
+            && offsetStart != null && offsetEnd != null
+            && offsetStart >= 0 && offsetEnd > offsetStart && offsetEnd <= duration;
+
+          let readyClipForExport: typeof clip | null = null;
+          if (hasPlayableSource && (partial || nextStatus === "ready")) {
+            const [readyClip] = await db.update(userClipsTable)
+              .set({
+                videoId: guid,
+                startTime: String(offsetStart / duration),
+                endTime: String(offsetEnd / duration),
+                liveClipStatus: "ready",
+                liveClipError: null,
+                liveClipPartial: partial,
+              })
+              .where(eq(userClipsTable.id, clip.id))
+              .returning();
+            clip = readyClip;
+            readyClipForExport = readyClip;
+          } else if (partial) {
+            const progressStatus = stringValue(payload, "status", "state")?.toLowerCase() ?? "processing";
+            [clip] = await db.update(userClipsTable)
+              .set({
+                liveClipStatus: nextStatus === "failed" || nextStatus === "ready" ? "processing" : progressStatus,
+                liveClipError: null,
+                liveClipPartial: true,
+              })
+              .where(eq(userClipsTable.id, clip.id))
+              .returning();
+          } else if (nextStatus === "failed") {
             const message = safeError(
               stringValue(payload, "error", "message", "note"),
               "Live clip processing failed",
             );
             [clip] = await db.update(userClipsTable)
-              .set({ liveClipStatus: "failed", liveClipError: partialNotice ?? message })
+              .set({ liveClipStatus: "failed", liveClipError: message, liveClipPartial: false })
               .where(eq(userClipsTable.id, clip.id))
               .returning();
           } else if (nextStatus === "ready") {
-            const guid = stringValue(payload, "guid", "videoId", "video_id");
-            const duration = numberValue(payload, "duration", "durationSeconds", "duration_seconds");
-            const offsetStart = numberValue(payload, "offsetStart", "offset_start", "startOffset", "start_offset", "sourceStart");
-            const offsetEnd = numberValue(payload, "offsetEnd", "offset_end", "endOffset", "end_offset", "sourceEnd");
-            if (
-              !validBunnyGuid(guid)
-              || duration == null || duration <= 0
-              || offsetStart == null || offsetEnd == null
-              || offsetStart < 0 || offsetEnd <= offsetStart || offsetEnd > duration
-            ) {
-              [clip] = await db.update(userClipsTable)
-                .set({
-                  liveClipStatus: "failed",
-                  liveClipError: partialNotice ?? "Live clip worker returned incomplete source offsets",
-                })
-                .where(eq(userClipsTable.id, clip.id))
-                .returning();
-            } else {
-              const [readyClip] = await db.update(userClipsTable)
-                .set({
-                  videoId: guid,
-                  startTime: String(offsetStart / duration),
-                  endTime: String(offsetEnd / duration),
-                  liveClipStatus: "ready",
-                  liveClipError: partialNotice,
-                })
-                .where(eq(userClipsTable.id, clip.id))
-                .returning();
-              clip = readyClip;
-              try {
-                const exportStatus = await queueUserClipExport(readyClip);
-                clip = { ...readyClip, exportStatus };
-              } catch (error) {
-                logger.error({ error, clipId: clip.id }, "Could not queue live clip export");
-                await db.update(userClipsTable)
-                  .set({ exportStatus: "error" })
-                  .where(eq(userClipsTable.id, clip.id));
-                clip = { ...clip, exportStatus: "error" };
-              }
-            }
+            [clip] = await db.update(userClipsTable)
+              .set({
+                liveClipStatus: "failed",
+                liveClipError: "Live clip worker returned incomplete source offsets",
+                liveClipPartial: false,
+              })
+              .where(eq(userClipsTable.id, clip.id))
+              .returning();
           } else {
             const progressStatus = stringValue(payload, "status", "state")?.toLowerCase() ?? "processing";
             [clip] = await db.update(userClipsTable)
-              .set({ liveClipStatus: progressStatus, liveClipError: partialNotice })
+              .set({ liveClipStatus: progressStatus, liveClipError: null, liveClipPartial: false })
               .where(eq(userClipsTable.id, clip.id))
               .returning();
           }
+
+          if (readyClipForExport) {
+            try {
+              const exportStatus = await queueUserClipExport(readyClipForExport);
+              clip = { ...readyClipForExport, exportStatus };
+            } catch (error) {
+              logger.error({ error, clipId: clip.id }, "Could not queue live clip export");
+              await db.update(userClipsTable)
+                .set({ exportStatus: "error" })
+                .where(eq(userClipsTable.id, clip.id));
+              clip = { ...clip, exportStatus: "error" };
+            }
+          }
         } else if (job.status === 404 && Date.now() - clip.createdAt.getTime() > MAX_UNKNOWN_JOB_WAIT_MS) {
-          [clip] = await db.update(userClipsTable)
-            .set({
-              liveClipStatus: "failed",
-              liveClipError: "The live clip job expired before it finished",
-            })
-            .where(eq(userClipsTable.id, clip.id))
-            .returning();
+          if (!clip.liveClipPartial) {
+            [clip] = await db.update(userClipsTable)
+              .set({
+                liveClipStatus: "failed",
+                liveClipError: "The live clip job expired before it finished",
+              })
+              .where(eq(userClipsTable.id, clip.id))
+              .returning();
+          }
         }
       } catch (error) {
         // Keep the last persisted state while the upstream worker is temporarily unavailable.
         logger.warn({ error, clipId: clip.id }, "Live clip status poll failed");
       }
-    } else if (!clip.liveClipJobId && clip.liveClipStatus === "queued" && Date.now() - clip.createdAt.getTime() > 60_000) {
+    } else if (
+      !clip.liveClipJobId
+      && clip.liveClipStatus === "queued"
+      && !clip.liveClipPartial
+      && Date.now() - clip.createdAt.getTime() > 60_000
+    ) {
       [clip] = await db.update(userClipsTable)
         .set({
           liveClipStatus: "failed",
@@ -651,6 +669,7 @@ router.get(
       matchCode: clip.matchCode,
       liveClipStatus: clip.liveClipStatus,
       liveClipError: clip.liveClipError,
+      liveClipPartial: clip.liveClipPartial,
       exportStatus: clip.exportStatus,
     }));
   },

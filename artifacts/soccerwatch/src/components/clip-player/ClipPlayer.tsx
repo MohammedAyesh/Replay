@@ -38,6 +38,12 @@ import {
   liveProgramTimeAtPosition,
 } from "./liveTime";
 import { normalizeClipKeyframes } from "./normalize";
+import {
+  FRAME_DURATION_SECONDS,
+  PLAYBACK_SPEEDS,
+  playbackSpeedForKey,
+  playbackStepForKey,
+} from "./playbackControls";
 
 export type ClipSource =
   | { kind: "bunny"; videoId: string }
@@ -231,6 +237,8 @@ export function ClipPlayer({
   } = usePanoramaFrame();
   const seekDraggingRef = useRef(false);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const frameRepeatDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const frameRepeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const clipModeRef = useRef<ClipMode>("idle");
   const stopRecordingRef = useRef<(overrideEndTime?: number) => void>(() => {});
   const clipStartRef = useRef(0);
@@ -286,6 +294,11 @@ export function ClipPlayer({
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = playbackRate;
   }, [playbackRate]);
+
+  useEffect(() => () => {
+    if (frameRepeatDelayRef.current != null) window.clearTimeout(frameRepeatDelayRef.current);
+    if (frameRepeatIntervalRef.current != null) window.clearInterval(frameRepeatIntervalRef.current);
+  }, []);
 
   const mediaPositionAtUtc = useCallback((targetUtcMs: number): number | null => {
     let nearest: { position: number; distance: number } | null = null;
@@ -572,54 +585,70 @@ export function ClipPlayer({
     resetControlsTimer();
   };
 
-  const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 2];
-  const changePlaybackRate = (direction: -1 | 1) => {
-    const currentIndex = playbackRates.findIndex((rate) => Math.abs(rate - playbackRate) < 0.01);
-    const nextIndex = (currentIndex + direction + playbackRates.length) % playbackRates.length;
-    setPlaybackRate(playbackRates[nextIndex] ?? 1);
+  const stepVideoBy = (delta: number) => {
+    if ((isLive && !isLiveDvr) || !videoRef.current) return;
+    const element = videoRef.current;
+    element.pause();
+    setIsPlaying(false);
+    const target = Math.max(
+      0,
+      Math.min(element.duration || Infinity, element.currentTime + delta),
+    );
+    // Setting currentTime seeks even when the target is outside the buffered range.
+    // The video stays paused while HLS/the browser fetches the target segment.
+    element.currentTime = target;
     resetControlsTimer();
+  };
+
+  const stopFrameRepeat = () => {
+    if (frameRepeatDelayRef.current != null) {
+      window.clearTimeout(frameRepeatDelayRef.current);
+      frameRepeatDelayRef.current = null;
+    }
+    if (frameRepeatIntervalRef.current != null) {
+      window.clearInterval(frameRepeatIntervalRef.current);
+      frameRepeatIntervalRef.current = null;
+    }
+  };
+
+  const startFrameRepeat = (event: React.PointerEvent<HTMLButtonElement>, delta: number) => {
+    if (event.button !== 0) return;
+    stopFrameRepeat();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture may be unavailable in older embedded browsers.
+    }
+    stepVideoBy(delta);
+    frameRepeatDelayRef.current = window.setTimeout(() => {
+      frameRepeatDelayRef.current = null;
+      frameRepeatIntervalRef.current = window.setInterval(() => stepVideoBy(delta), 100);
+    }, 350);
   };
 
   const handlePlayerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
-    if (
-      clipMode !== "idle"
-      || target.closest("button, input, select, textarea, [contenteditable='true']")
-    ) return;
+    if (clipMode !== "idle" || target.closest("input, select, textarea, [contenteditable='true']")) return;
+    const shortcutSpeed = playbackSpeedForKey(event.key);
+    const shortcutStep = playbackStepForKey(event.key, event.shiftKey);
+    if (target.closest("button") && shortcutSpeed == null && shortcutStep == null) return;
+    if (shortcutSpeed != null) {
+      event.preventDefault();
+      setPlaybackRate(shortcutSpeed);
+      resetControlsTimer();
+      return;
+    }
+    if (shortcutStep != null) {
+      event.preventDefault();
+      stepVideoBy(shortcutStep);
+      return;
+    }
     switch (event.key) {
       case " ":
       case "k":
       case "K":
         event.preventDefault();
         togglePlay();
-        break;
-      case "ArrowLeft":
-      case "j":
-      case "J":
-        event.preventDefault();
-        seek(-5);
-        break;
-      case "ArrowRight":
-      case "l":
-      case "L":
-        event.preventDefault();
-        seek(5);
-        break;
-      case "ArrowUp":
-        event.preventDefault();
-        changePlaybackRate(1);
-        break;
-      case "ArrowDown":
-        event.preventDefault();
-        changePlaybackRate(-1);
-        break;
-      case ",":
-        event.preventDefault();
-        seek(-1 / 25);
-        break;
-      case ".":
-        event.preventDefault();
-        seek(1 / 25);
         break;
     }
   };
@@ -992,27 +1021,60 @@ export function ClipPlayer({
                   )}
                 </div>
               )}
-              <div className="flex items-center justify-center gap-2 overflow-x-auto pb-1">
-                <button
-                  type="button"
-                  aria-label="Step back one frame"
-                  title="Step back one frame (,)"
-                  disabled={isLive && !isLiveDvr}
-                  onClick={() => seek(-1 / 25)}
-                  className="min-h-10 shrink-0 rounded-full border border-white/20 bg-black/40 px-3 text-xs font-semibold text-white disabled:opacity-40"
-                >
-                  −1 frame
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Playback speed ${playbackRate} times`}
-                  title="Playback speed (up/down arrows)"
-                  onClick={() => changePlaybackRate(1)}
-                  className="min-h-10 shrink-0 rounded-full border border-white/20 bg-black/40 px-3 text-xs font-semibold text-white"
-                >
-                  {playbackRate}×
-                </button>
-                <label className="flex min-h-10 shrink-0 items-center gap-2 rounded-full border border-white/20 bg-black/40 px-3 text-xs font-semibold text-white">
+              <div className="space-y-2">
+                <div role="group" aria-label="Frame stepping" data-testid="player-step-controls" className="grid grid-cols-6 gap-1">
+                  {([
+                    { label: "−1 s", seconds: -1, testId: "step-back-one-second" },
+                    { label: "−2 frames", seconds: -2 * FRAME_DURATION_SECONDS, testId: "step-back-two-frames" },
+                    { label: "−1 frame", seconds: -FRAME_DURATION_SECONDS, testId: "step-back-one-frame", repeat: true },
+                    { label: "+1 frame", seconds: FRAME_DURATION_SECONDS, testId: "step-forward-one-frame", repeat: true },
+                    { label: "+2 frames", seconds: 2 * FRAME_DURATION_SECONDS, testId: "step-forward-two-frames" },
+                    { label: "+1 s", seconds: 1, testId: "step-forward-one-second" },
+                  ]).map(({ label, seconds, testId, repeat }) => (
+                    <button
+                      key={testId}
+                      type="button"
+                      data-testid={testId}
+                      aria-label={label}
+                      title={repeat ? `${label}; hold to repeat` : label}
+                      disabled={isLive && !isLiveDvr}
+                      onPointerDown={repeat ? (event) => startFrameRepeat(event, seconds) : undefined}
+                      onPointerUp={repeat ? stopFrameRepeat : undefined}
+                      onPointerCancel={repeat ? stopFrameRepeat : undefined}
+                      onLostPointerCapture={repeat ? stopFrameRepeat : undefined}
+                      onClick={repeat
+                        ? (event) => { if (event.detail === 0) stepVideoBy(seconds); }
+                        : () => stepVideoBy(seconds)}
+                      className="min-h-12 min-w-0 touch-manipulation rounded-lg border border-white/20 bg-black/50 px-1 text-[10px] font-semibold leading-tight text-white disabled:opacity-40 sm:px-2 sm:text-xs"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                  {PLAYBACK_SPEEDS.map((rate, index) => (
+                    <button
+                      key={rate}
+                      type="button"
+                      data-testid={`playback-speed-${index + 1}`}
+                      aria-label={`Playback speed ${rate} times`}
+                      aria-pressed={Math.abs(playbackRate - rate) < 0.01}
+                      title={`${rate}× (key ${index + 1})`}
+                      onClick={() => {
+                        setPlaybackRate(rate);
+                        resetControlsTimer();
+                      }}
+                      className={cn(
+                        "min-h-11 min-w-14 rounded-lg border px-3 text-xs font-bold",
+                        Math.abs(playbackRate - rate) < 0.01
+                          ? "border-primary bg-primary/20 text-white"
+                          : "border-white/20 bg-black/50 text-white",
+                      )}
+                    >
+                      {rate}×
+                    </button>
+                  ))}
+                <label className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-white/20 bg-black/50 px-3 text-xs font-semibold text-white">
                   <span>Look</span>
                   <select
                     aria-label="Video look filter"
@@ -1029,19 +1091,10 @@ export function ClipPlayer({
                     <option value="noir" className="bg-black">Noir</option>
                   </select>
                 </label>
-                <button
-                  type="button"
-                  aria-label="Step forward one frame"
-                  title="Step forward one frame (.)"
-                  disabled={isLive && !isLiveDvr}
-                  onClick={() => seek(1 / 25)}
-                  className="min-h-10 shrink-0 rounded-full border border-white/20 bg-black/40 px-3 text-xs font-semibold text-white disabled:opacity-40"
-                >
-                  +1 frame
-                </button>
+              </div>
               </div>
               <p className="hidden text-center text-[10px] text-white/50 sm:block">
-                Space: play/pause · ←/→: seek 5s · ,/.: step one frame · ↑/↓: speed
+                ←/→: 1 frame · ,/.: 2 frames · Shift+←/→: 1 s · 1/2/3: 0.25×/0.5×/1×
               </p>
               <div className="flex justify-center">
                 <FrameSizeSlider zoom={frameZoom} frame={frame} maxZoom={maxZoomFor(selectedRatio)} onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)} />

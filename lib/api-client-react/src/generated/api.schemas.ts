@@ -642,6 +642,7 @@ export interface UserClip {
   liveClipStatus?: string | null;
   /** @nullable */
   liveClipError?: string | null;
+  liveClipPartial: boolean;
 }
 
 export interface MatchLiveStatusResponse {
@@ -687,6 +688,7 @@ export interface MatchLiveClipResponse {
   liveClipStatus: string | null;
   /** @nullable */
   liveClipError: string | null;
+  liveClipPartial: boolean;
   /** @nullable */
   exportStatus: string | null;
 }
@@ -698,6 +700,7 @@ export interface MatchLiveClipStatusResponse {
   liveClipStatus: string | null;
   /** @nullable */
   liveClipError: string | null;
+  liveClipPartial: boolean;
   /** @nullable */
   exportStatus: string | null;
 }

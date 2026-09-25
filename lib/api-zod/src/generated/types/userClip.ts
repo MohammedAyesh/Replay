@@ -45,4 +45,5 @@ export interface UserClip {
   liveClipStatus?: string | null;
   /** @nullable */
   liveClipError?: string | null;
+  liveClipPartial: boolean;
 }
