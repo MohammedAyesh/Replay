@@ -197,6 +197,8 @@ export function QuietAction({
  * Deliberately NOT Floodlight. A gallery of twelve people would otherwise
  * carry twelve primary actions, which is twelve answers to "what do I do
  * now"; the screen's action is choosing a row, and the rows are the choice.
+ * Violet outline, compact, at the end of the row -- as drawn in the
+ * wireframe (CL04).
  */
 export function RowAction({
   children,
@@ -209,10 +211,80 @@ export function RowAction({
     <button
       type="button"
       onClick={onClick}
-      className="flex min-h-11 w-full items-center justify-center rounded-full border border-turf bg-turf/10 px-4 py-2 text-center text-sm font-bold leading-snug text-turf transition-colors hover:bg-turf/20"
+      className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-full border border-violet px-5 py-2 text-center font-display text-base font-bold leading-snug text-[#A98CFF] transition-colors hover:bg-violet/10"
     >
       {children}
     </button>
+  );
+}
+
+/** A link-weight action in Turf: the flow's "other way" lines. */
+export function TextLink({
+  children,
+  onClick,
+  className,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex min-h-11 w-full items-center justify-center px-2 text-center text-sm font-medium text-turf underline-offset-4 hover:underline",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The top of every step (CL03-CL06): back, "Step n of 4", the saved-as-you-go
+ * chip, and the rail under them. Back is a chevron that flips in RTL.
+ */
+export function StepHeader({
+  label,
+  step,
+  of,
+  savedLabel,
+  backLabel,
+  onBack,
+}: {
+  label: string;
+  step: number;
+  of: number;
+  savedLabel: string;
+  backLabel: string;
+  onBack?: () => void;
+}) {
+  return (
+    <div className="-mx-4 -mt-4 mb-6 border-b border-line px-4 pb-3 pt-3">
+      <div className="flex items-center gap-3">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label={backLabel}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line text-text hover:border-muted-text"
+          >
+            <span aria-hidden="true" className="text-lg leading-none rtl:rotate-180">&#8249;</span>
+          </button>
+        )}
+        <p className="min-w-0 flex-1 font-display text-xs font-bold uppercase tracking-[0.3em] text-turf">{label}</p>
+        <span className="shrink-0 rounded-full bg-turf/10 px-2.5 py-1 font-display text-[11px] font-bold uppercase tracking-[0.06em] text-turf">
+          {savedLabel}
+        </span>
+      </div>
+      <div className="mt-3 flex gap-1.5" role="presentation">
+        {Array.from({ length: of }, (_, index) => (
+          <span key={index} className={cn("h-1 flex-1 rounded-full", index < step ? "bg-turf" : "bg-line")} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -275,7 +347,7 @@ export function CropTile({
       {image}
       {struck && (
         <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center">
-          <span className="h-px w-[130%] rotate-[-30deg] bg-live" />
+          <span className="h-px w-[130%] rotate-[-30deg] bg-muted-text" />
         </span>
       )}
     </button>
@@ -313,7 +385,9 @@ export function StateBlock({
         className={cn(
           "mb-3 block h-1.5 w-10 rounded-full",
           tone === "busy" && "animate-pulse bg-turf",
-          tone === "failed" && "bg-live",
+          // Live red means a camera is broadcasting and nothing else -- a
+          // failure is neutral (Foundations board).
+          tone === "failed" && "bg-muted-text/60",
           tone === "quiet" && "bg-line",
         )}
       />

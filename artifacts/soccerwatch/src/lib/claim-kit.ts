@@ -333,3 +333,45 @@ export function combineColours(colours: Array<TorsoColour | null>): TorsoColour 
     lightness: readable.reduce((total, c) => total + c.lightness, 0) / readable.length,
   };
 }
+
+/**
+ * A plain colour name for a kit tile ("Royal blue", "Dark / black"), keyed
+ * into the copy's `kit.names`. The wireframe (CL03) labels every tile; a bare
+ * swatch asks the player to name the colour themselves.
+ *
+ * Read off the tile's own swatch, so it can never disagree with what is drawn.
+ * Dark is decided by lightness first: under floodlights black and maroon
+ * separate by brightness, not hue (the same rule the split uses).
+ */
+export function kitColourKey(swatch: string): string {
+  const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(swatch.trim());
+  if (!match) return "dark";
+  const [r, g, b] = [match[1], match[2], match[3]].map((hex) => parseInt(hex, 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  const delta = max - min;
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+  if (lightness < 0.2) return "dark";
+  if (saturation < 0.18) return lightness > 0.6 ? "light" : "dark";
+  let hue = 0;
+  if (max === r) hue = 60 * (((g - b) / delta) % 6);
+  else if (max === g) hue = 60 * ((b - r) / delta + 2);
+  else hue = 60 * ((r - g) / delta + 4);
+  if (hue < 0) hue += 360;
+  if (hue < 15 || hue >= 345) return lightness < 0.33 ? "maroon" : "red";
+  if (hue < 42) return "orange";
+  if (hue < 68) return "yellow";
+  if (hue < 160) return "green";
+  if (hue < 190) return "teal";
+  if (hue < 205) return "sky";
+  if (hue < 255) return "blue";
+  if (hue < 290) return "purple";
+  return lightness < 0.33 ? "maroon" : "pink";
+}
+
+/** True when the swatch is dark enough that black/maroon confusion applies. */
+export function isDarkKit(swatch: string): boolean {
+  const key = kitColourKey(swatch);
+  return key === "dark" || key === "maroon";
+}

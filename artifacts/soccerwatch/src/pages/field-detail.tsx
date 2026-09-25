@@ -135,21 +135,7 @@ function formatShortDate(isoDate: string): string {
   return `${parseInt(d)} ${months[parseInt(m) - 1]} ${y}`;
 }
 
-function formatRecordingDateTime(
-  date: string,
-  timeSlot: string,
-  locale: "en" | "ar",
-  fallback: (date: string, time: string) => string,
-): string {
-  const parsed = new Date(`${date}T${timeSlot.length === 5 ? `${timeSlot}:00` : timeSlot}`);
-  if (Number.isNaN(parsed.getTime())) return fallback(date, timeSlot);
-  return new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
-}
-
-function ClaimableRecordingRow({
+export function ClaimableRecordingRow({
   recording,
   index,
   locale,
@@ -171,7 +157,7 @@ function ClaimableRecordingRow({
 }) {
   const state = recording.viewerClaimState;
   const claimCopy = useClaimCopy();
-  const dateTime = formatRecordingDateTime(recording.date, recording.timeSlot, locale, copy.dateTimeFallback);
+  const dateTime = formatClaimCardDateTime(recording.date, recording.timeSlot, locale, copy.dateTimeFallback);
   /*
    * "disputed" is a server state that no longer means what it says.
    *
@@ -186,52 +172,82 @@ function ClaimableRecordingRow({
   const isShared = state === "disputed";
   const needsResolution = state === "needs_resolution";
   const isSettled = state === "confirmed";
-  const actionLabel = isSettled ? copy.result : state === null ? copy.invite : copy.continue;
+  const inProgress = state === "in_progress" || state === "pending";
   // The gallery is the primary flow; the chain stays reachable from inside it
   // as "find me in the video".
   const href = `/find/${recording.id}`;
+
+  /* One card per match, as drawn on the Find Yourself canvas (CL01): the
+     status line says what tapping does, the pill says where the claim is. */
+  const line = needsResolution
+    ? { text: copy.needsResolutionDesc, className: "text-muted-foreground" }
+    : isShared
+      ? { text: claimCopy.entry.sharedNoName, className: "text-[#A98CFF]" }
+      : isSettled
+        ? { text: claimCopy.entry.resultLine, className: "text-floodlight" }
+        : inProgress
+          ? { text: claimCopy.entry.continueLine, className: "text-turf" }
+          : { text: claimCopy.entry.claimLine, className: "text-turf" };
+  const badge = needsResolution
+    ? { text: claimCopy.entry.badgeReview, className: "bg-white/5 text-muted-foreground" }
+    : isShared
+      ? { text: claimCopy.entry.badgeShared, className: "bg-violet/15 text-[#A98CFF]" }
+      : isSettled
+        ? { text: claimCopy.entry.badgeDone, className: "bg-floodlight/15 text-floodlight" }
+        : inProgress
+          ? null
+          : { text: claimCopy.entry.badgeNew, className: "bg-turf/10 text-turf" };
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0, transition: { delay: index * 0.05, duration: 0.22 } }}
-      className="flex items-center gap-3 border-t border-border px-4 py-3.5 first:border-t-0"
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-        <CheckCircle2 className="h-4 w-4 text-primary" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-foreground">{dateTime}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {recording.court}
-        </p>
-        {isShared && (
-          <p className="mt-1 text-xs font-medium text-turf">
-            {claimCopy.entry.sharedNoName}
-            <span className="block font-normal text-muted-foreground">
-              {claimCopy.entry.sharedDesc}
-            </span>
-          </p>
-        )}
-        {needsResolution && (
-          <p className="mt-1 text-xs font-medium text-floodlight">
-            {claimCopy.entry.replaced}
-            <span className="block font-normal text-muted-foreground">
-              {claimCopy.entry.replacedDesc}
-            </span>
-          </p>
-        )}
-      </div>
       <Link
         href={href}
-        className="flex shrink-0 items-center gap-1 rounded-xl bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20"
+        className={cn(
+          "flex items-center gap-2.5 rounded-2xl border bg-card p-3 text-start transition-colors hover:border-muted-foreground",
+          inProgress ? "border-turf" : "border-border",
+        )}
       >
-        <span>{needsResolution ? claimCopy.entry.replacedAction : isShared ? copy.result : actionLabel}</span>
-        <ChevronRight className="h-3.5 w-3.5 rtl:hidden" />
-        <ChevronLeft className="h-3.5 w-3.5 ltr:hidden" />
+        <span
+          aria-hidden="true"
+          className="h-[42px] w-14 shrink-0 rounded-[9px] border border-border bg-[linear-gradient(140deg,#12302f,#1d1840)]"
+        />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="break-words text-[13.5px] text-foreground">{dateTime}</span>
+          <span className={cn("text-[11px] leading-snug", line.className)}>{line.text}</span>
+        </span>
+        {badge ? (
+          <span className={cn("shrink-0 rounded-full px-2.5 py-1 font-display text-[11px] font-bold uppercase tracking-[0.06em]", badge.className)}>
+            {badge.text}
+          </span>
+        ) : (
+          <>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground rtl:hidden" />
+            <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground ltr:hidden" />
+          </>
+        )}
       </Link>
     </motion.div>
   );
+}
+
+/** "Thu 24 Sep · 19:00" -- digits stay Latin and LTR in both languages. */
+function formatClaimCardDateTime(
+  date: string,
+  timeSlot: string,
+  locale: "en" | "ar",
+  fallback: (date: string, time: string) => string,
+): string {
+  const parsed = new Date(`${date}T${timeSlot.length === 5 ? `${timeSlot}:00` : timeSlot}`);
+  if (Number.isNaN(parsed.getTime())) return fallback(date, timeSlot);
+  const day = new Intl.DateTimeFormat(locale === "ar" ? "ar-u-nu-latn" : "en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(parsed);
+  return `${day} · ${timeSlot.slice(0, 5)}`;
 }
 
 // ── Calendar ──────────────────────────────────────────────────────────────────
@@ -382,6 +398,7 @@ export default function FieldDetail() {
   const { t, locale } = useTranslation();
   const { user, isGuest } = useAuth();
   const canClaim = CLAIM_YOUR_MATCH_ENABLED && Boolean(user) && !isGuest;
+  const claimCopy = useClaimCopy();
 
   const { data: collections } = useGetBunnyCollections({
     query: {
@@ -514,18 +531,18 @@ export default function FieldDetail() {
 
       <div className="field-detail-recordings flex-1 overflow-y-auto no-scrollbar pb-24">
           {canClaim && (fieldRecordingsLoading || claimableRecordings.length > 0) && (
-            <section className="mx-4 mt-4 overflow-hidden rounded-[22px] border border-primary/20 bg-card">
-              <div className="border-b border-border px-4 py-4">
-                <h2 className="font-display text-base font-bold text-foreground">{t.fieldDetail.claimYourMatch.title}</h2>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">{t.fieldDetail.claimYourMatch.subtitle}</p>
-              </div>
+            <section className="mx-4 mt-4">
+              <p className="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-turf">
+                {claimCopy.entry.heading}
+              </p>
+              <p className="mt-1.5 text-[13px] leading-5 text-muted-foreground">{claimCopy.entry.headingDesc}</p>
               {fieldRecordingsLoading ? (
-                <div className="space-y-2 p-4">
-                  <div className="h-14 animate-pulse rounded-xl bg-muted" />
-                  <div className="h-14 animate-pulse rounded-xl bg-muted" />
+                <div className="mt-3 space-y-2.5">
+                  <div className="h-16 animate-pulse rounded-2xl bg-muted" />
+                  <div className="h-16 animate-pulse rounded-2xl bg-muted" />
                 </div>
               ) : (
-                <div>
+                <div className="mt-3 space-y-2.5">
                   {claimableRecordings.map((recording, index) => (
                     <ClaimableRecordingRow
                       key={recording.id}

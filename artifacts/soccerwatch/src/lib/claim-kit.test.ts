@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { averageHue, bucketFor, rgbToHsl, splitKits, torsoColourFromPixels } from "./claim-kit";
+import { averageHue, bucketFor, isDarkKit, kitColourKey, rgbToHsl, splitKits, torsoColourFromPixels } from "./claim-kit";
 
 const colour = (hue: number | null, saturation = 0.7, lightness = 0.45) =>
   ({ hue, saturation, lightness });
@@ -170,5 +170,28 @@ describe("torsoColourFromPixels", () => {
     expect(read.hue).toBeGreaterThan(40);
     expect(read.hue).toBeLessThan(70);
     expect(read.saturation).toBeGreaterThan(0.5);
+  });
+});
+
+describe("kitColourKey — the name on a kit tile", () => {
+  it("names the common kit colours", () => {
+    expect(kitColourKey("#2860dc")).toBe("blue");
+    expect(kitColourKey("#e95f28")).toBe("orange");
+    expect(kitColourKey("#d02828")).toBe("red");
+    expect(kitColourKey("#2e9e3e")).toBe("green");
+    expect(kitColourKey("#e8d020")).toBe("yellow");
+  });
+
+  it("decides dark by lightness before hue, as the split does", () => {
+    expect(kitColourKey("#1c1c20")).toBe("dark");
+    expect(kitColourKey("#5a1020")).toBe("maroon");
+    expect(isDarkKit("#1c1c20")).toBe(true);
+    expect(isDarkKit("#5a1020")).toBe(true);
+    expect(isDarkKit("#2860dc")).toBe(false);
+  });
+
+  it("calls a colourless light torso white/grey, and never throws on junk", () => {
+    expect(kitColourKey("#ebebee")).toBe("light");
+    expect(kitColourKey("not a colour")).toBe("dark");
   });
 });
