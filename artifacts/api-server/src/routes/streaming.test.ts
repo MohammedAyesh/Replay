@@ -1,184 +1,244 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import express from "express";
 import request from "supertest";
-import express, { type Express } from "express";
-import { eq, inArray } from "drizzle-orm";
-import { db, fieldOwnersTable, fieldsTable, usersTable } from "@workspace/db";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockGetLocalUserRecord = vi.fn();
+const mockIsFieldOwner = vi.fn();
+const mockCaptainMatches = vi.fn();
+const mockLoadRoomByCode = vi.fn();
+const mockControlFetch = vi.fn();
 
 vi.mock("../lib/clerkUserBridge", () => ({
-  getLocalUserRecord: vi.fn(),
-  unauthenticatedResponse: (res: { status: (status: number) => { json: (body: unknown) => void } }) => {
-    res.status(401).json({ error: "Unauthorized" });
-  },
+  getLocalUserRecord: (...args: unknown[]) => mockGetLocalUserRecord(...args),
+  unauthenticatedResponse: (_res: express.Response, _req: express.Request) => {},
+}));
+vi.mock("@workspace/db", () => {
+  const fieldsTable = { id: "fields.id", cameraId: "fields.cameraId" };
+  const fieldOwnersTable = { id: "owners.id", userId: "owners.userId", fieldId: "owners.fieldId" };
+  const matchRoomsTable = { code: "rooms.code", fieldId: "rooms.fieldId", captainUserId: "rooms.captainUserId" };
+  return {
+    db: {
+      select: () => {
+        let selectedTable: unknown;
+        return {
+          from: (table: unknown) => {
+            selectedTable = table;
+            return {
+              where: () => ({
+                limit: async () => {
+                  if (selectedTable === fieldsTable) return [{ id: 5, cameraId: "camera1" }];
+                  if (selectedTable === fieldOwnersTable) return mockIsFieldOwner() ? [{ id: 1 }] : [];
+                  if (selectedTable === matchRoomsTable) return mockCaptainMatches() ? [{ code: "ABC123" }] : [];
+                  return [];
+                },
+              }),
+            };
+          },
+        };
+      },
+    },
+    fieldOwnersTable,
+    fieldsTable,
+    matchRoomsTable,
+  };
+});
+vi.mock("drizzle-orm", () => ({
+  and: (...args: unknown[]) => args,
+  eq: (...args: unknown[]) => args,
 }));
 vi.mock("../lib/matchRooms", () => ({
-  loadRoomByCode: vi.fn(),
+  loadRoomByCode: (...args: unknown[]) => mockLoadRoomByCode(...args),
+  matchPhase: () => "live",
+}));
+vi.mock("../lib/logger", () => ({
+  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() },
+}));
+vi.mock("./contabo", () => ({
+  controlFetch: (...args: unknown[]) => mockControlFetch(...args),
 }));
 
-import { getLocalUserRecord } from "../lib/clerkUserBridge";
-import { loadRoomByCode } from "../lib/matchRooms";
 import streamingRouter from "./streaming";
 
-const mockedGetLocalUserRecord = vi.mocked(getLocalUserRecord);
-const mockedLoadRoomByCode = vi.mocked(loadRoomByCode);
-const TAG = `social_stream_${Date.now()}`;
+const YOUTUBE_URL = "rtmp://a.rtmp.youtube.com/live2";
+const FACEBOOK_URL = "rtmps://live-api-s.facebook.com:443/rtmp/";
+const streamKeyForTest = "secret-stream-key";
 
-let app: Express;
-let adminId: number;
-let ownerId: number;
-let otherId: number;
-let captainId: number;
-let fieldId: number;
-let realFetch: typeof fetch;
-let requests: Array<{ url: string; body?: string }> = [];
-let currentUser: { id: number; isAdmin: boolean; isGuest: boolean } | null = null;
-const TEST_STREAM_KEY = "test-secret-stream-key";
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-beforeAll(async () => {
-  process.env.CONTABO_CONTROL_URL = "https://stream-control.test";
-  process.env.CONTABO_CONTROL_KEY = "test-control-key";
-
-  const [admin] = await db.insert(usersTable).values({
-    name: `Stream Admin ${TAG}`,
-    email: `${TAG}_admin@test.local`,
-    isAdmin: true,
-  }).returning({ id: usersTable.id });
-  const [owner] = await db.insert(usersTable).values({
-    name: `Stream Owner ${TAG}`,
-    email: `${TAG}_owner@test.local`,
-  }).returning({ id: usersTable.id });
-  const [other] = await db.insert(usersTable).values({
-    name: `Stream Other ${TAG}`,
-    email: `${TAG}_other@test.local`,
-  }).returning({ id: usersTable.id });
-  const [captain] = await db.insert(usersTable).values({
-    name: `Stream Captain ${TAG}`,
-    email: `${TAG}_captain@test.local`,
-  }).returning({ id: usersTable.id });
-  const [field] = await db.insert(fieldsTable).values({
-    name: `Stream Field ${TAG}`,
-    cameraId: "camera1",
-  }).returning({ id: fieldsTable.id });
-  await db.insert(fieldOwnersTable).values({ userId: owner.id, fieldId: field.id });
-
-  adminId = admin.id;
-  ownerId = owner.id;
-  otherId = other.id;
-  captainId = captain.id;
-  fieldId = field.id;
-
-  app = express();
+function appFor(user: { id: number; isAdmin: boolean; isGuest: boolean } | null) {
+  mockGetLocalUserRecord.mockResolvedValue(user);
+  const app = express();
   app.use(express.json());
   app.use("/api", streamingRouter);
-  mockedGetLocalUserRecord.mockImplementation(async () => currentUser as never);
-  mockedLoadRoomByCode.mockResolvedValue({
-    room: { captainUserId: captainId, fieldId },
-    field: { cameraId: "camera1" },
-  } as never);
+  return app;
+}
 
-  realFetch = globalThis.fetch;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input);
-    const body = typeof init?.body === "string" ? init.body : undefined;
-    requests.push({ url, body });
-    if (url.endsWith("/streaming/status/camera1")) {
-      return jsonResponse({ state: "live", live: true, platform: "youtube", stream_key: TEST_STREAM_KEY });
-    }
-    if (url.endsWith("/streaming/start/camera1")) {
-      if (body?.includes('"platform":"facebook"')) {
-        return jsonResponse({ detail: `Rejected ${TEST_STREAM_KEY}` }, 409);
-      }
-      return jsonResponse({ state: "starting", message: `Accepted ${TEST_STREAM_KEY}`, streamKey: TEST_STREAM_KEY });
-    }
-    if (url.endsWith("/streaming/stop/camera1")) {
-      return jsonResponse({ state: "offline", live: false, stream_key: TEST_STREAM_KEY });
-    }
-    return realFetch(input, init);
-  });
-});
+function controlResult(
+  body: unknown,
+  status = 200,
+): { ok: boolean; status: number; body: unknown } {
+  return { ok: status >= 200 && status < 300, status, body };
+}
 
-afterAll(async () => {
-  vi.restoreAllMocks();
-  await db.delete(fieldOwnersTable).where(eq(fieldOwnersTable.fieldId, fieldId));
-  await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
-  await db.delete(usersTable).where(inArray(usersTable.id, [adminId, ownerId, otherId, captainId]));
-});
-
-beforeEach(() => {
-  requests = [];
-  currentUser = { id: adminId, isAdmin: true, isGuest: false };
-});
-
-describe("social streaming access", () => {
-  it("limits direct camera control to admins", async () => {
-    currentUser = { id: otherId, isAdmin: false, isGuest: false };
-    await request(app).get("/api/streaming/status?camera=camera1").expect(403);
-    expect(requests).toHaveLength(0);
+describe("RTMP streaming routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONTABO_CONTROL_KEY = "test-control-key";
+    mockIsFieldOwner.mockReturnValue(false);
+    mockLoadRoomByCode.mockResolvedValue({
+      room: { captainUserId: 2, fieldId: 5 },
+      field: { cameraId: "camera1" },
+    });
   });
 
-  it("allows a field owner and rejects another user", async () => {
-    currentUser = { id: ownerId, isAdmin: false, isGuest: false };
-    const ownerResponse = await request(app)
-      .get(`/api/streaming/status?fieldId=${fieldId}`)
-      .expect(200);
-    expect(ownerResponse.body).toMatchObject({ state: "live", live: true, platform: "youtube" });
+  it("proxies status only for admins when no field or match context is supplied", async () => {
+    mockControlFetch.mockResolvedValue(controlResult({
+      cam: "camera1",
+      state: "running",
+      variant: "pan",
+      rtmp_url: YOUTUBE_URL,
+      startedAt: 123,
+      stream_key: streamKeyForTest,
+      privateToken: "must-not-leak",
+    }));
 
-    currentUser = { id: otherId, isAdmin: false, isGuest: false };
-    await request(app).get(`/api/streaming/status?fieldId=${fieldId}`).expect(403);
-    expect(requests).toHaveLength(1);
+    const response = await request(appFor({ id: 1, isAdmin: true, isGuest: false }))
+      .get("/api/live/rtmp/status/camera1");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      cam: "camera1",
+      state: "running",
+      variant: "pan",
+      rtmp_url: YOUTUBE_URL,
+      startedAt: 123,
+    });
+    expect(mockControlFetch).toHaveBeenCalledWith(
+      "/live/rtmp/status/camera1",
+      {},
+      15_000,
+      "http://169.58.73.17:8080",
+    );
   });
 
-  it("allows the match captain without granting access to other players", async () => {
-    currentUser = { id: captainId, isAdmin: false, isGuest: false };
-    await request(app).get("/api/streaming/status?matchCode=ABC123").expect(200);
+  it("allows a field owner only when the camera matches that field", async () => {
+    mockIsFieldOwner.mockReturnValue(true);
+    mockControlFetch.mockResolvedValue(controlResult({ cam: "camera1", state: "off" }));
 
-    currentUser = { id: otherId, isAdmin: false, isGuest: false };
-    await request(app).get("/api/streaming/status?matchCode=ABC123").expect(403);
-    expect(requests).toHaveLength(1);
-  });
-});
+    const response = await request(appFor({ id: 2, isAdmin: false, isGuest: false }))
+      .get("/api/live/rtmp/status/camera1");
+    expect(response.status).toBe(200);
 
-describe("social streaming proxy", () => {
-  it("does not expose stream keys in status responses", async () => {
-    const response = await request(app)
-      .get("/api/streaming/status?camera=camera1")
-      .expect(200);
-    expect(response.headers["cache-control"]).toBe("no-store");
-    expect(JSON.stringify(response.body)).not.toContain(TEST_STREAM_KEY);
-    expect(requests.map((entry) => entry.url)).toContain("https://stream-control.test/streaming/status/camera1");
+    const wrongCamera = await request(appFor({ id: 2, isAdmin: false, isGuest: false }))
+      .get("/api/live/rtmp/status/camera2");
+    expect(wrongCamera.status).toBe(404);
+    expect(mockControlFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("sends a stream key only to the upstream start call and omits it from responses", async () => {
-    const response = await request(app)
-      .post("/api/streaming/start")
-      .send({ camera: "camera1", platform: "youtube", streamKey: TEST_STREAM_KEY })
-      .expect(200);
-    expect(JSON.stringify(response.body)).not.toContain(TEST_STREAM_KEY);
-    const upstream = requests.find((entry) => entry.url.endsWith("/streaming/start/camera1"));
-    expect(upstream?.body).toBe(JSON.stringify({ platform: "youtube", stream_key: TEST_STREAM_KEY }));
+  it("allows the captain of an active match to read the camera status", async () => {
+    mockCaptainMatches.mockReturnValue(true);
+    mockControlFetch.mockResolvedValue(controlResult({ cam: "camera1", state: "off" }));
+
+    const response = await request(appFor({ id: 2, isAdmin: false, isGuest: false }))
+      .get("/api/live/rtmp/status/camera1");
+    expect(response.status).toBe(200);
+    expect(mockLoadRoomByCode).toHaveBeenCalledWith("ABC123");
+
+    mockCaptainMatches.mockReturnValue(false);
+    const denied = await request(appFor({ id: 3, isAdmin: false, isGuest: false }))
+      .get("/api/live/rtmp/status/camera1");
+    expect(denied.status).toBe(403);
+    expect(mockControlFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("proxies stop without a key and returns sanitized state", async () => {
-    const response = await request(app)
-      .post("/api/streaming/stop")
-      .send({ camera: "camera1" })
-      .expect(200);
-    expect(response.body).toMatchObject({ state: "offline", live: false });
-    expect(JSON.stringify(response.body)).not.toContain(TEST_STREAM_KEY);
-    expect(requests[0]?.body).toBeUndefined();
+  it("keeps the stream key out of the browser-facing response and POST body", async () => {
+    mockControlFetch.mockResolvedValue(controlResult({
+      cam: "camera1",
+      state: "starting",
+      variant: "hevc",
+      rtmp_url: YOUTUBE_URL,
+      startedAt: 456,
+      stream_key: streamKeyForTest,
+    }));
+
+    const response = await request(appFor({ id: 1, isAdmin: true, isGuest: false }))
+      .post("/api/live/rtmp/start/camera1")
+      .send({
+        platform: "youtube",
+        rtmpUrl: YOUTUBE_URL,
+        streamKey: streamKeyForTest,
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      cam: "camera1",
+      state: "starting",
+      variant: "hevc",
+      rtmp_url: YOUTUBE_URL,
+      startedAt: 456,
+    });
+    expect(JSON.stringify(response.body)).not.toContain(streamKeyForTest);
+
+    const [upstreamPath, upstreamOptions, timeoutMs, baseUrl] = mockControlFetch.mock.calls[0] as [
+      string,
+      RequestInit,
+      number,
+      string,
+    ];
+    const upstreamUrl = new URL(upstreamPath, baseUrl);
+    expect(baseUrl).toBe("http://169.58.73.17:8080");
+    expect(upstreamUrl.pathname).toBe("/live/rtmp/start/camera1");
+    expect(upstreamUrl.searchParams.get("rtmp_url")).toBe(YOUTUBE_URL);
+    expect(upstreamUrl.searchParams.get("stream_key")).toBe(streamKeyForTest);
+    expect(upstreamOptions.method).toBe("POST");
+    expect(upstreamOptions.body).toBeUndefined();
+    expect(timeoutMs).toBe(15_000);
   });
 
-  it("does not echo a rejected stream key in an upstream error", async () => {
-    const response = await request(app)
-      .post("/api/streaming/start")
-      .send({ camera: "camera1", platform: "facebook", streamKey: TEST_STREAM_KEY })
-      .expect(409);
-    expect(JSON.stringify(response.body)).not.toContain(TEST_STREAM_KEY);
+  it("rejects RTMP URLs with query parameters before forwarding credentials", async () => {
+    const response = await request(appFor({ id: 1, isAdmin: true, isGuest: false }))
+      .post("/api/live/rtmp/start/camera1")
+      .send({
+        platform: "youtube",
+        rtmpUrl: `${YOUTUBE_URL}?key=should-not-be-forwarded`,
+        streamKey: streamKeyForTest,
+      });
+
+    expect(response.status).toBe(400);
+    expect(mockControlFetch).not.toHaveBeenCalled();
+  });
+
+  it("stops an authorized stream and returns only the off state", async () => {
+    mockControlFetch.mockResolvedValue(controlResult({
+      cam: "camera1",
+      state: "off",
+      stream_key: streamKeyForTest,
+      rtmp_url: `${YOUTUBE_URL}?key=${streamKeyForTest}`,
+    }));
+
+    const response = await request(appFor({ id: 1, isAdmin: true, isGuest: false }))
+      .post("/api/live/rtmp/stop/camera1")
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ cam: "camera1", state: "off" });
+    expect(mockControlFetch).toHaveBeenCalledWith(
+      "/live/rtmp/stop/camera1",
+      { method: "POST" },
+      15_000,
+      "http://169.58.73.17:8080",
+    );
+  });
+
+  it("does not allow a regular signed-in user to use direct camera controls", async () => {
+    const response = await request(appFor({ id: 3, isAdmin: false, isGuest: false }))
+      .get("/api/live/rtmp/status/camera1");
+    expect(response.status).toBe(403);
+    expect(mockControlFetch).not.toHaveBeenCalled();
+  });
+
+  it("does not allow guest accounts to control streams", async () => {
+    const response = await request(appFor({ id: 4, isAdmin: false, isGuest: true }))
+      .get("/api/live/rtmp/status/camera1");
+    expect(response.status).toBe(403);
+    expect(mockControlFetch).not.toHaveBeenCalled();
   });
 });

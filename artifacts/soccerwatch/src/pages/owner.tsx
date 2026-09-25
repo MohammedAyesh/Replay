@@ -695,7 +695,7 @@ export default function Owner() {
       {tab === "streaming" && selectedField && (
         <StreamingPanel
           key={selectedField.cameraId}
-          target={{ kind: "owner", fieldId }}
+          target={{ kind: "owner", camera: selectedField.cameraId, fieldId }}
           preferenceKey={selectedField.cameraId}
         />
       )}

@@ -112,12 +112,13 @@ export async function controlFetch(
   path: string,
   opts: RequestInit = {},
   timeoutMs = 15_000,
+  baseUrl?: string,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
   // Every other outbound call in this codebase is bounded; this one was not, so
   // a control API that accepts the connection and never answers (hung ffmpeg,
   // camera off WiFi) held the admin's request open until the platform edge
   // timeout, and each retry added another.
-  const res = await controlResponse(path, opts, timeoutMs);
+  const res = await controlResponse(path, opts, timeoutMs, baseUrl);
 
   let body: unknown = null;
   const ct = res.headers.get("content-type") ?? "";
@@ -133,8 +134,9 @@ export async function controlResponse(
   path: string,
   opts: RequestInit = {},
   timeoutMs = 15_000,
+  baseUrl?: string,
 ): Promise<Response> {
-  const base = CONTROL_URL();
+  const base = baseUrl?.replace(/\/+$/, "") ?? CONTROL_URL();
   const key = CONTROL_KEY();
   return fetch(`${base}${path}`, {
     ...opts,

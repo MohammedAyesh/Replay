@@ -41,7 +41,7 @@ tags:
     description: Social stream controls
 
 paths:
-  /streaming/status:
+  /live/rtmp/status/{cam}:
     get:
       operationId: getStreamingStatus
       tags: [streaming]
@@ -49,28 +49,19 @@ paths:
       security:
         - clerkSession: []
       parameters:
-        - name: camera
-          in: query
-          required: false
+        - name: cam
+          in: path
+          required: true
           schema:
             type: string
-        - name: fieldId
-          in: query
-          required: false
-          schema:
-            type: integer
-        - name: matchCode
-          in: query
-          required: false
-          schema:
-            type: string
+            enum: [camera1, camera2]
       responses:
         "200":
           description: Sanitized streaming status
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StreamingStatus"
+                $ref: "#/components/schemas/LiveRtmpStatus"
         "401":
           description: Unauthenticated
         "403":
@@ -81,13 +72,20 @@ paths:
           description: Control server is not configured
         "502":
           description: Control server unavailable
-  /streaming/start:
+  /live/rtmp/start/{cam}:
     post:
       operationId: startStreaming
       tags: [streaming]
       summary: Start streaming to a social platform
       security:
         - clerkSession: []
+      parameters:
+        - name: cam
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [camera1, camera2]
       requestBody:
         required: true
         content:
@@ -100,7 +98,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StreamingStatus"
+                $ref: "#/components/schemas/LiveRtmpStatus"
         "400":
           description: Invalid streaming request
         "401":
@@ -115,13 +113,20 @@ paths:
           description: Control server is not configured
         "502":
           description: Control server unavailable
-  /streaming/stop:
+  /live/rtmp/stop/{cam}:
     post:
       operationId: stopStreaming
       tags: [streaming]
       summary: Stop social streaming for an authorized camera
       security:
         - clerkSession: []
+      parameters:
+        - name: cam
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [camera1, camera2]
       requestBody:
         required: true
         content:
@@ -134,7 +139,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StreamingStatus"
+                $ref: "#/components/schemas/LiveRtmpStatus"
         "400":
           description: Invalid streaming request
         "401":
@@ -2328,25 +2333,28 @@ paths:
 
 components:
   schemas:
-    StreamingStatus:
+    LiveRtmpStatus:
       type: object
-      required: [state, live, platform, message]
+      required: [cam, state]
       properties:
+        cam:
+          type: string
+          enum: [camera1, camera2]
         state:
           type: string
-          enum: [offline, starting, live, stopping, failed, unknown]
-        live:
-          type: boolean
-        platform:
+          enum: [off, running, starting, failed]
+        variant:
           type: ["string", "null"]
-        message:
+          enum: [pan, hevc, null]
+        rtmp_url:
           type: ["string", "null"]
+          description: RTMP ingest base URL without a stream key.
+        startedAt:
+          type: ["number", "null"]
     StreamingStartInput:
       type: object
-      required: [platform, streamKey]
+      required: [platform, rtmpUrl, streamKey]
       properties:
-        camera:
-          type: string
         fieldId:
           type: integer
           minimum: 1
@@ -2355,17 +2363,20 @@ components:
           minLength: 1
         platform:
           type: string
-          enum: [youtube, facebook, twitch]
+          enum: [youtube, facebook, tiktok, twitch]
+        rtmpUrl:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: '^rtmps?://'
         streamKey:
           type: string
           minLength: 1
           maxLength: 1024
-          description: Secret stream key, accepted only for this start request and never persisted.
+          description: Secret sent only to the VPS start endpoint as a query parameter; never stored, logged, or returned.
     StreamingStopInput:
       type: object
       properties:
-        camera:
-          type: string
         fieldId:
           type: integer
           minimum: 1

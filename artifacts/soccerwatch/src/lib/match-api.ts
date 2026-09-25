@@ -92,7 +92,7 @@ export type MatchRoom = {
   voteClosesAt: string | null;
   startMs: number;
   endMs: number;
-  field: { id: number; name: string; location: string | null; imageUrl: string | null };
+  field: { id: number; name: string; location: string | null; imageUrl: string | null; cameraId?: string | null };
   title: string | null;
   playersPerSide: number;
   teamCount: 2 | 3;

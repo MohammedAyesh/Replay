@@ -298,6 +298,7 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
       name: field.name,
       location: field.location,
       imageUrl: field.thumbnailUrl,
+      cameraId: isOwner || isCaptain ? (field.cameraId ?? null) : null,
     },
     title: room.title,
     playersPerSide: room.playersPerSide,

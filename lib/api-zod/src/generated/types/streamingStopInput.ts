@@ -7,7 +7,6 @@
  */
 
 export interface StreamingStopInput {
-  camera?: string;
   /** @minimum 1 */
   fieldId?: number;
   /** @minLength 1 */

@@ -8,14 +8,19 @@
 import type { StreamingStartInputPlatform } from './streamingStartInputPlatform';
 
 export interface StreamingStartInput {
-  camera?: string;
   /** @minimum 1 */
   fieldId?: number;
   /** @minLength 1 */
   matchCode?: string;
   platform: StreamingStartInputPlatform;
   /**
-     * Secret stream key, accepted only for this start request and never persisted.
+     * @minLength 1
+     * @maxLength 512
+     * @pattern ^rtmps?://
+     */
+  rtmpUrl: string;
+  /**
+     * Secret sent only to the VPS start endpoint as a query parameter; never stored, logged, or returned.
      * @minLength 1
      * @maxLength 1024
      */

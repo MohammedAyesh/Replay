@@ -1,29 +1,24 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, eq } from "drizzle-orm";
+import { db, fieldOwnersTable, fieldsTable } from "@workspace/db";
 import {
-  db,
-  fieldOwnersTable,
-  fieldsTable,
-} from "@workspace/db";
-import {
-  GetStreamingStatusQueryParams,
   GetStreamingStatusResponse,
   StartStreamingBody,
   StopStreamingBody,
 } from "@workspace/api-zod";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
-import { loadRoomByCode } from "../lib/matchRooms";
+import { loadRoomByCode, matchPhase } from "../lib/matchRooms";
 import { logger } from "../lib/logger";
 import { parseLiveCamera } from "../lib/liveCameras";
 import { controlFetch } from "./contabo";
+import { matchRoomsTable } from "@workspace/db";
 
 const router: IRouter = Router();
-
 type LocalUser = NonNullable<Awaited<ReturnType<typeof getLocalUserRecord>>>;
-type Target = { camera?: string; fieldId?: number; matchCode?: string };
+const RTMP_VPS_BASE_URL = "http://169.58.73.17:8080";
 
 function controlIsConfigured(): boolean {
-  return Boolean(process.env.CONTABO_CONTROL_URL?.trim() && process.env.CONTABO_CONTROL_KEY);
+  return Boolean(process.env.CONTABO_CONTROL_KEY);
 }
 
 async function requireUser(req: Request, res: Response): Promise<LocalUser | null> {
@@ -50,34 +45,30 @@ async function isFieldOwner(userId: number, fieldId: number): Promise<boolean> {
   return Boolean(owned);
 }
 
-async function cameraForTarget(
+type AccessContext = { fieldId?: number; matchCode?: string };
+
+async function authorizeCamera(
   user: LocalUser,
-  target: Target,
+  camValue: unknown,
+  context: AccessContext,
   res: Response,
 ): Promise<string | null> {
-  const targetCount = Number(target.camera !== undefined)
-    + Number(target.fieldId !== undefined)
-    + Number(target.matchCode !== undefined);
-  if (targetCount !== 1) {
-    res.status(400).json({ error: "Provide exactly one camera, fieldId, or matchCode" });
+  const camera = parseLiveCamera(typeof camValue === "string" ? camValue : undefined);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid camera" });
     return null;
   }
 
-  if (target.camera !== undefined) {
-    if (!user.isAdmin) {
-      res.status(403).json({ error: "Admin access required for direct camera controls" });
-      return null;
-    }
-    const camera = parseLiveCamera(target.camera);
-    if (!camera) {
-      res.status(400).json({ error: "Invalid camera" });
-      return null;
-    }
-    return camera;
+  const contextCount = Number(context.fieldId !== undefined) + Number(context.matchCode !== undefined);
+  if (contextCount > 1) {
+    res.status(400).json({ error: "Provide either fieldId or matchCode, not both" });
+    return null;
   }
 
-  if (target.fieldId !== undefined) {
-    const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, target.fieldId)).limit(1);
+  if (context.fieldId !== undefined) {
+    const [field] = await db.select().from(fieldsTable)
+      .where(eq(fieldsTable.id, context.fieldId))
+      .limit(1);
     if (!field) {
       res.status(404).json({ error: "Field not found" });
       return null;
@@ -86,81 +77,121 @@ async function cameraForTarget(
       res.status(403).json({ error: "Field owner access required" });
       return null;
     }
-    const camera = parseLiveCamera(field.cameraId ?? undefined);
-    if (!camera) {
-      res.status(404).json({ error: "Field has no supported camera" });
+    if (parseLiveCamera(field.cameraId ?? undefined) !== camera) {
+      res.status(403).json({ error: "Camera does not belong to this field" });
       return null;
     }
     return camera;
   }
 
-  const code = target.matchCode?.trim().toUpperCase() ?? "";
-  const ctx = await loadRoomByCode(code);
-  if (!ctx) {
-    res.status(404).json({ error: "Match not found" });
-    return null;
-  }
-  if (!user.isAdmin) {
-    const captain = ctx.room.captainUserId === user.id;
-    const owner = await isFieldOwner(user.id, ctx.room.fieldId);
-    if (!captain && !owner) {
-      res.status(403).json({ error: "Match captain or field owner access required" });
+  if (context.matchCode !== undefined) {
+    const ctx = await loadRoomByCode(context.matchCode.trim().toUpperCase());
+    if (!ctx) {
+      res.status(404).json({ error: "Match not found" });
       return null;
     }
+    if (!user.isAdmin) {
+      const captain = ctx.room.captainUserId === user.id;
+      const owner = await isFieldOwner(user.id, ctx.room.fieldId);
+      if (!captain && !owner) {
+        res.status(403).json({ error: "Match captain or field owner access required" });
+        return null;
+      }
+    }
+    if (parseLiveCamera(ctx.field.cameraId ?? undefined) !== camera) {
+      res.status(403).json({ error: "Camera does not belong to this match" });
+      return null;
+    }
+    return camera;
   }
-  const camera = parseLiveCamera(ctx.field.cameraId ?? undefined);
-  if (!camera) {
-    res.status(404).json({ error: "Match field has no supported camera" });
+
+  if (!user.isAdmin) {
+    res.status(403).json({ error: "Admin access required for direct camera controls" });
     return null;
   }
   return camera;
 }
 
-function objectRecord(body: unknown): Record<string, unknown> {
+async function authorizeStatusCamera(
+  user: LocalUser,
+  camValue: unknown,
+  res: Response,
+): Promise<string | null> {
+  const camera = parseLiveCamera(typeof camValue === "string" ? camValue : undefined);
+  if (!camera) {
+    res.status(400).json({ error: "Invalid camera" });
+    return null;
+  }
+  if (user.isAdmin) return camera;
+
+  const [field] = await db.select().from(fieldsTable)
+    .where(eq(fieldsTable.cameraId, camera))
+    .limit(1);
+  if (!field || parseLiveCamera(field.cameraId ?? undefined) !== camera) {
+    res.status(404).json({ error: "Camera not found" });
+    return null;
+  }
+  if (await isFieldOwner(user.id, field.id)) return camera;
+
+  const candidateRooms = await db.select({ code: matchRoomsTable.code })
+    .from(matchRoomsTable)
+    .where(and(
+      eq(matchRoomsTable.fieldId, field.id),
+      eq(matchRoomsTable.captainUserId, user.id),
+    ))
+    .limit(20);
+  for (const candidate of candidateRooms) {
+    const ctx = await loadRoomByCode(candidate.code);
+    if (ctx && (matchPhase(ctx.request) === "pre" || matchPhase(ctx.request) === "live")) {
+      return camera;
+    }
+  }
+
+  res.status(403).json({ error: "Match captain or field owner access required" });
+  return null;
+}
+
+function record(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" && !Array.isArray(body)
     ? body as Record<string, unknown>
     : {};
 }
 
-function stringValue(body: Record<string, unknown>, ...keys: string[]): string | null {
-  for (const key of keys) {
-    const value = body[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
+function safeRtmpUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = new URL(value);
+    if (
+      !["rtmp:", "rtmps:"].includes(parsed.protocol)
+      || !parsed.hostname
+      || parsed.username
+      || parsed.password
+      || parsed.search
+      || parsed.hash
+    ) return null;
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return null;
   }
-  return null;
 }
 
-function safeMessage(body: unknown, streamKey?: string): string | null {
-  const record = objectRecord(body);
-  const message = stringValue(record, "message", "error", "detail", "note");
-  if (!message || (streamKey && message.includes(streamKey))) return null;
-  return message.slice(0, 240);
-}
-
-function normalizeStatus(
-  body: unknown,
-  fallbackState: "offline" | "starting" | "unknown",
-  streamKey?: string,
-) {
-  const record = objectRecord(body);
-  const rawState = (stringValue(record, "state", "status", "phase") ?? "").toLowerCase();
-  const rawLive = record.live === true || record.on === true || record.active === true;
-  let state: "offline" | "starting" | "live" | "stopping" | "failed" | "unknown";
-  if (["live", "running", "active", "streaming"].includes(rawState) || rawLive) state = "live";
-  else if (["starting", "queued", "pending"].includes(rawState)) state = "starting";
-  else if (["stopping", "shutting_down"].includes(rawState)) state = "stopping";
-  else if (["offline", "off", "stopped", "idle"].includes(rawState) || record.on === false || record.live === false) state = "offline";
-  else if (["failed", "error"].includes(rawState)) state = "failed";
-  else state = fallbackState;
-
-  const platform = stringValue(record, "platform", "destination");
-  const normalized = {
+function normalizedStatus(body: unknown, camera: string, fallback: "off" | "starting") {
+  const payload = record(body);
+  const rawState = typeof payload.state === "string" ? payload.state.toLowerCase() : "";
+  const state = ["off", "running", "starting", "failed"].includes(rawState)
+    ? rawState as "off" | "running" | "starting" | "failed"
+    : fallback;
+  const rawVariant = payload.variant;
+  const variant = rawVariant === "pan" || rawVariant === "hevc" ? rawVariant : null;
+  const rawStartedAt = payload.startedAt;
+  const startedAt = typeof rawStartedAt === "number" && Number.isFinite(rawStartedAt) ? rawStartedAt : null;
+  return GetStreamingStatusResponse.parse({
+    cam: camera,
     state,
-    live: state === "live",
-    platform: platform ? platform.slice(0, 40) : null,
-    message: safeMessage(body, streamKey),
-  };
-  return GetStreamingStatusResponse.parse(normalized);
+    variant,
+    rtmp_url: safeRtmpUrl(payload.rtmp_url),
+    startedAt,
+  });
 }
 
 function missingControlConfig(res: Response): boolean {
@@ -169,95 +200,110 @@ function missingControlConfig(res: Response): boolean {
   return true;
 }
 
-function upstreamFailure(
-  res: Response,
-  result: { status: number; body: unknown },
-  streamKey?: string,
-): void {
-  const status = result.status >= 400 && result.status < 600 ? result.status : 502;
-  const message = safeMessage(result.body, streamKey);
-  res.status(status).json({ error: message ?? "Streaming control request failed" });
+function sendUpstreamError(res: Response, status: number): void {
+  // Never reflect an upstream body here: it may contain request parameters, including stream_key.
+  const safeStatus = status >= 400 && status < 600 ? status : 502;
+  res.status(safeStatus).json({ error: safeStatus === 409 ? "RTMP stream could not be started" : "RTMP control request failed" });
 }
 
-router.get("/streaming/status", async (req, res): Promise<void> => {
+router.get("/live/rtmp/status/:cam", async (req, res): Promise<void> => {
   const user = await requireUser(req, res);
   if (!user) return;
 
-  const parsed = GetStreamingStatusQueryParams.safeParse(req.query);
-  if (!parsed.success) {
-    res.status(400).json({ error: "Invalid streaming target" });
-    return;
-  }
-  const camera = await cameraForTarget(user, parsed.data, res);
+  const camera = await authorizeStatusCamera(user, req.params.cam, res);
   if (!camera) return;
   if (missingControlConfig(res)) return;
 
   try {
-    const result = await controlFetch(`/streaming/status/${encodeURIComponent(camera)}`);
+    const result = await controlFetch(
+      `/live/rtmp/status/${encodeURIComponent(camera)}`,
+      {},
+      15_000,
+      RTMP_VPS_BASE_URL,
+    );
     if (!result.ok) {
-      upstreamFailure(res, result);
+      sendUpstreamError(res, result.status);
       return;
     }
     res.setHeader("Cache-Control", "no-store");
-    res.json(normalizeStatus(result.body, "unknown"));
+    res.json(normalizedStatus(result.body, camera, "off"));
   } catch {
-    logger.warn({ camera }, "Social streaming status request failed");
+    logger.warn({ camera }, "RTMP status request failed");
     res.status(502).json({ error: "Streaming control server unavailable" });
   }
 });
 
-router.post("/streaming/start", async (req, res): Promise<void> => {
+router.post("/live/rtmp/start/:cam", async (req, res): Promise<void> => {
   const user = await requireUser(req, res);
   if (!user) return;
 
   const parsed = StartStreamingBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Invalid streaming start request" });
+    res.status(400).json({ error: "Invalid RTMP start request" });
     return;
   }
-  const { camera: targetCamera, fieldId, matchCode, platform, streamKey } = parsed.data;
-  const camera = await cameraForTarget(user, { camera: targetCamera, fieldId, matchCode }, res);
+  const { fieldId, matchCode, platform, rtmpUrl, streamKey } = parsed.data;
+  if (!safeRtmpUrl(rtmpUrl)) {
+    res.status(400).json({ error: "RTMP URL must be a base ingest URL without credentials or query parameters" });
+    return;
+  }
+  if (!streamKey.trim()) {
+    res.status(400).json({ error: "Stream key is required" });
+    return;
+  }
+
+  const camera = await authorizeCamera(user, req.params.cam, { fieldId, matchCode }, res);
   if (!camera) return;
   if (missingControlConfig(res)) return;
 
   try {
-    const result = await controlFetch(`/streaming/start/${encodeURIComponent(camera)}`, {
-      method: "POST",
-      body: JSON.stringify({ platform, stream_key: streamKey }),
-    });
+    const query = new URLSearchParams({ rtmp_url: safeRtmpUrl(rtmpUrl)!, stream_key: streamKey });
+    const result = await controlFetch(
+      `/live/rtmp/start/${encodeURIComponent(camera)}?${query.toString()}`,
+      { method: "POST" },
+      15_000,
+      RTMP_VPS_BASE_URL,
+    );
     if (!result.ok) {
-      upstreamFailure(res, result, streamKey);
+      sendUpstreamError(res, result.status);
       return;
     }
-    res.json(normalizeStatus(result.body, "starting", streamKey));
+    res.setHeader("Cache-Control", "no-store");
+    res.json(normalizedStatus(result.body, camera, "starting"));
   } catch {
-    logger.warn({ camera, platform }, "Social streaming start request failed");
+    logger.warn({ camera, platform }, "RTMP start request failed");
     res.status(502).json({ error: "Streaming control server unavailable" });
   }
 });
 
-router.post("/streaming/stop", async (req, res): Promise<void> => {
+router.post("/live/rtmp/stop/:cam", async (req, res): Promise<void> => {
   const user = await requireUser(req, res);
   if (!user) return;
 
   const parsed = StopStreamingBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Invalid streaming stop request" });
+    res.status(400).json({ error: "Invalid RTMP stop request" });
     return;
   }
-  const camera = await cameraForTarget(user, parsed.data, res);
+  const camera = await authorizeCamera(user, req.params.cam, parsed.data, res);
   if (!camera) return;
   if (missingControlConfig(res)) return;
 
   try {
-    const result = await controlFetch(`/streaming/stop/${encodeURIComponent(camera)}`, { method: "POST" });
+    const result = await controlFetch(
+      `/live/rtmp/stop/${encodeURIComponent(camera)}`,
+      { method: "POST" },
+      15_000,
+      RTMP_VPS_BASE_URL,
+    );
     if (!result.ok) {
-      upstreamFailure(res, result);
+      sendUpstreamError(res, result.status);
       return;
     }
-    res.json(normalizeStatus(result.body, "offline"));
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ cam: camera, state: "off" });
   } catch {
-    logger.warn({ camera }, "Social streaming stop request failed");
+    logger.warn({ camera }, "RTMP stop request failed");
     res.status(502).json({ error: "Streaming control server unavailable" });
   }
 });

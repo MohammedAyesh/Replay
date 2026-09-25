@@ -12,5 +12,6 @@ export type StreamingStartInputPlatform = typeof StreamingStartInputPlatform[key
 export const StreamingStartInputPlatform = {
   youtube: 'youtube',
   facebook: 'facebook',
+  tiktok: 'tiktok',
   twitch: 'twitch',
 } as const;

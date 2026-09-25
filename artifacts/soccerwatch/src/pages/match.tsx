@@ -219,9 +219,12 @@ export default function MatchPage() {
         </div>
       )}
       <Hero room={room} copy={copy} now={now} colors={colors} names={names} onShare={onShare} />
-      {realRoom?.phase === "live" && (realRoom.isOwner || realRoom.isCaptain) && (
+      {realRoom?.phase === "live" && (realRoom.isOwner || realRoom.isCaptain) && realRoom.field.cameraId && (
         <div className="px-4 pt-3">
-          <StreamingPanel target={{ kind: "match", matchCode: realRoom.code }} preferenceKey={`match-${realRoom.code}`} />
+          <StreamingPanel
+            target={{ kind: "match", camera: realRoom.field.cameraId, matchCode: realRoom.code }}
+            preferenceKey={`match-${realRoom.code}`}
+          />
         </div>
       )}
       <div className="px-4">
@@ -285,6 +288,57 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 // ---------------------------------------------------------------- hero
 
+const MATCH_PHASE_STEPS = ["invited", "preGame", "live", "whistle", "postGame", "memory"] as const;
+type MatchPhaseStep = (typeof MATCH_PHASE_STEPS)[number];
+
+function currentMatchPhaseStep(room: MatchRoom): MatchPhaseStep | null {
+  if (room.phase === "pre") return room.me ? "preGame" : "invited";
+  if (room.phase === "live") return "live";
+  if (room.phase === "processing") return "whistle";
+  if (room.phase === "ready") return "postGame";
+  if (room.phase === "expired") return "memory";
+  return null;
+}
+
+function MatchPhasePills({ room, copy }: {
+  room: MatchRoom;
+  copy: ReturnType<typeof useMatchCopy>;
+}) {
+  const current = currentMatchPhaseStep(room);
+  const currentIndex = current === null ? -1 : MATCH_PHASE_STEPS.indexOf(current);
+  const sequence = MATCH_PHASE_STEPS.map((step) => copy.phaseSteps[step]).join(" → ");
+  return (
+    <ol
+      aria-label={sequence}
+      className="mt-6 flex items-center gap-1 overflow-x-auto pb-1"
+    >
+      {MATCH_PHASE_STEPS.map((step, index) => {
+        const active = index === currentIndex;
+        const complete = currentIndex >= 0 && index < currentIndex;
+        return (
+          <li key={step} className="flex shrink-0 items-center gap-1">
+            <span
+              aria-current={active ? "step" : undefined}
+              className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                active
+                  ? "border-turf/50 bg-turf/10 text-turf"
+                  : complete
+                    ? "border-line bg-raised text-muted-text"
+                    : "border-line/70 bg-void/50 text-muted-text/70"
+              }`}
+            >
+              {copy.phaseSteps[step]}
+            </span>
+            {index < MATCH_PHASE_STEPS.length - 1 && (
+              <span className="text-xs text-muted-text/50 rtl:rotate-180" aria-hidden="true">→</span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function Hero({ room, copy, now, colors, names, onShare }: {
   room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; now: number;
   colors: Record<TeamSide, string>; names: Record<TeamSide, string>; onShare: () => void;
@@ -318,8 +372,11 @@ function Hero({ room, copy, now, colors, names, onShare }: {
           </div>
         </div>
 
-        <div className="mt-6 flex items-center gap-2">
-          <PhaseChip phase={room.phase} label={copy.phase[room.phase] ?? room.phase} />
+        <MatchPhasePills room={room} copy={copy} />
+        <div className="mt-2 flex items-center gap-2">
+          {(room.phase === "failed" || room.phase === "cancelled") && (
+            <PhaseChip phase={room.phase} label={copy.phase[room.phase] ?? room.phase} />
+          )}
           <span className="font-mono text-xs font-semibold tracking-[0.2em] text-muted-text">#{room.code}</span>
         </div>
         <h1 className="mt-2 font-display text-3xl font-bold leading-tight">{room.title || room.field.name}</h1>

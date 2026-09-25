@@ -5,25 +5,47 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
-export type StreamingStatusState = typeof StreamingStatusState[keyof typeof StreamingStatusState];
+export type LiveRtmpStatusCam = typeof LiveRtmpStatusCam[keyof typeof LiveRtmpStatusCam];
 
 
-export const StreamingStatusState = {
-  offline: 'offline',
-  starting: 'starting',
-  live: 'live',
-  stopping: 'stopping',
-  failed: 'failed',
-  unknown: 'unknown',
+export const LiveRtmpStatusCam = {
+  camera1: 'camera1',
+  camera2: 'camera2',
 } as const;
 
-export interface StreamingStatus {
-  state: StreamingStatusState;
-  live: boolean;
+export type LiveRtmpStatusState = typeof LiveRtmpStatusState[keyof typeof LiveRtmpStatusState];
+
+
+export const LiveRtmpStatusState = {
+  off: 'off',
+  running: 'running',
+  starting: 'starting',
+  failed: 'failed',
+} as const;
+
+/**
+ * @nullable
+ */
+export type LiveRtmpStatusVariant = typeof LiveRtmpStatusVariant[keyof typeof LiveRtmpStatusVariant] | null;
+
+
+export const LiveRtmpStatusVariant = {
+  pan: 'pan',
+  hevc: 'hevc',
+} as const;
+
+export interface LiveRtmpStatus {
+  cam: LiveRtmpStatusCam;
+  state: LiveRtmpStatusState;
   /** @nullable */
-  platform: string | null;
+  variant?: LiveRtmpStatusVariant;
+  /**
+     * RTMP ingest base URL without a stream key.
+     * @nullable
+     */
+  rtmp_url?: string | null;
   /** @nullable */
-  message: string | null;
+  startedAt?: number | null;
 }
 
 export type StreamingStartInputPlatform = typeof StreamingStartInputPlatform[keyof typeof StreamingStartInputPlatform];
@@ -32,18 +54,24 @@ export type StreamingStartInputPlatform = typeof StreamingStartInputPlatform[key
 export const StreamingStartInputPlatform = {
   youtube: 'youtube',
   facebook: 'facebook',
+  tiktok: 'tiktok',
   twitch: 'twitch',
 } as const;
 
 export interface StreamingStartInput {
-  camera?: string;
   /** @minimum 1 */
   fieldId?: number;
   /** @minLength 1 */
   matchCode?: string;
   platform: StreamingStartInputPlatform;
   /**
-     * Secret stream key, accepted only for this start request and never persisted.
+     * @minLength 1
+     * @maxLength 512
+     * @pattern ^rtmps?://
+     */
+  rtmpUrl: string;
+  /**
+     * Secret sent only to the VPS start endpoint as a query parameter; never stored, logged, or returned.
      * @minLength 1
      * @maxLength 1024
      */
@@ -51,7 +79,6 @@ export interface StreamingStartInput {
 }
 
 export interface StreamingStopInput {
-  camera?: string;
   /** @minimum 1 */
   fieldId?: number;
   /** @minLength 1 */
@@ -1734,12 +1761,6 @@ export type ClaimMatchDisputesResponse = ClaimMatchDispute[];
 export interface ResolveClaimMatchDisputeInput {
   winnerUserId: number;
 }
-
-export type GetStreamingStatusParams = {
-camera?: string;
-fieldId?: number;
-matchCode?: string;
-};
 
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */

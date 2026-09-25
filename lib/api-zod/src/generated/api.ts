@@ -11,63 +11,75 @@ import * as zod from 'zod';
 /**
  * @summary Get social streaming status for an authorized camera
  */
-export const GetStreamingStatusQueryParams = zod.object({
-  "camera": zod.coerce.string().optional(),
-  "fieldId": zod.coerce.number().optional(),
-  "matchCode": zod.coerce.string().optional()
+export const GetStreamingStatusParams = zod.object({
+  "cam": zod.enum(['camera1', 'camera2'])
 })
 
 export const GetStreamingStatusResponse = zod.object({
-  "state": zod.enum(['offline', 'starting', 'live', 'stopping', 'failed', 'unknown']),
-  "live": zod.boolean(),
-  "platform": zod.string().nullable(),
-  "message": zod.string().nullable()
+  "cam": zod.enum(['camera1', 'camera2']),
+  "state": zod.enum(['off', 'running', 'starting', 'failed']),
+  "variant": zod.union([zod.literal('pan'),zod.literal('hevc'),zod.literal(null)]).nullish(),
+  "rtmp_url": zod.string().nullish().describe('RTMP ingest base URL without a stream key.'),
+  "startedAt": zod.number().nullish()
 })
 
 
 /**
  * @summary Start streaming to a social platform
  */
+export const StartStreamingParams = zod.object({
+  "cam": zod.enum(['camera1', 'camera2'])
+})
 
 
+
+export const startStreamingBodyRtmpUrlMax = 512;
+
+
+export const startStreamingBodyRtmpUrlRegExp = new RegExp('^rtmps?:/');
 export const startStreamingBodyStreamKeyMax = 1024;
 
 
 
 export const StartStreamingBody = zod.object({
-  "camera": zod.string().optional(),
   "fieldId": zod.number().min(1).optional(),
   "matchCode": zod.string().min(1).optional(),
-  "platform": zod.enum(['youtube', 'facebook', 'twitch']),
-  "streamKey": zod.string().min(1).max(startStreamingBodyStreamKeyMax).describe('Secret stream key, accepted only for this start request and never persisted.')
+  "platform": zod.enum(['youtube', 'facebook', 'tiktok', 'twitch']),
+  "rtmpUrl": zod.string().min(1).max(startStreamingBodyRtmpUrlMax).regex(startStreamingBodyRtmpUrlRegExp),
+  "streamKey": zod.string().min(1).max(startStreamingBodyStreamKeyMax).describe('Secret sent only to the VPS start endpoint as a query parameter; never stored, logged, or returned.')
 })
 
 export const StartStreamingResponse = zod.object({
-  "state": zod.enum(['offline', 'starting', 'live', 'stopping', 'failed', 'unknown']),
-  "live": zod.boolean(),
-  "platform": zod.string().nullable(),
-  "message": zod.string().nullable()
+  "cam": zod.enum(['camera1', 'camera2']),
+  "state": zod.enum(['off', 'running', 'starting', 'failed']),
+  "variant": zod.union([zod.literal('pan'),zod.literal('hevc'),zod.literal(null)]).nullish(),
+  "rtmp_url": zod.string().nullish().describe('RTMP ingest base URL without a stream key.'),
+  "startedAt": zod.number().nullish()
 })
 
 
 /**
  * @summary Stop social streaming for an authorized camera
  */
+export const StopStreamingParams = zod.object({
+  "cam": zod.enum(['camera1', 'camera2'])
+})
+
 
 
 
 
 export const StopStreamingBody = zod.object({
-  "camera": zod.string().optional(),
   "fieldId": zod.number().min(1).optional(),
   "matchCode": zod.string().min(1).optional()
 })
 
 export const StopStreamingResponse = zod.object({
-  "state": zod.enum(['offline', 'starting', 'live', 'stopping', 'failed', 'unknown']),
-  "live": zod.boolean(),
-  "platform": zod.string().nullable(),
-  "message": zod.string().nullable()
+  "cam": zod.enum(['camera1', 'camera2']),
+  "state": zod.enum(['off', 'running', 'starting', 'failed']),
+  "variant": zod.union([zod.literal('pan'),zod.literal('hevc'),zod.literal(null)]).nullish(),
+  "rtmp_url": zod.string().nullish().describe('RTMP ingest base URL without a stream key.'),
+  "startedAt": zod.number().nullish()
 })
 
 

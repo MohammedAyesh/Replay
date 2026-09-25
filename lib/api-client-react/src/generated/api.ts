@@ -62,10 +62,10 @@ import type {
   Field,
   FieldRecording,
   FollowResult,
-  GetStreamingStatusParams,
   HealthStatus,
   ImpressionInput,
   LikeResult,
+  LiveRtmpStatus,
   LocaleInput,
   LoginInput,
   MatchLiveClipInput,
@@ -90,7 +90,6 @@ import type {
   ResolveClaimMatchDisputeInput,
   ShareLinkResult,
   StreamingStartInput,
-  StreamingStatus,
   StreamingStopInput,
   TrackingBundle,
   TrackingBundleSummary,
@@ -131,27 +130,20 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   return result;
 };
 
-export const getGetStreamingStatusUrl = (params?: GetStreamingStatusParams,) => {
-  const normalizedParams = new URLSearchParams();
+export const getGetStreamingStatusUrl = (cam: 'camera1' | 'camera2',) => {
 
-  Object.entries(params || {}).forEach(([key, value]) => {
 
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
 
-  const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/streaming/status?${stringifiedParams}` : `/api/streaming/status`
+  return `/api/live/rtmp/status/${cam}`
 }
 
 /**
  * @summary Get social streaming status for an authorized camera
  */
-export const getStreamingStatus = async (params?: GetStreamingStatusParams, options?: RequestInit): Promise<StreamingStatus> => {
+export const getStreamingStatus = async (cam: 'camera1' | 'camera2', options?: RequestInit): Promise<LiveRtmpStatus> => {
 
-  return customFetch<StreamingStatus>(getGetStreamingStatusUrl(params),
+  return customFetch<LiveRtmpStatus>(getGetStreamingStatusUrl(cam),
   {
     ...options,
     method: 'GET'
@@ -164,29 +156,29 @@ export const getStreamingStatus = async (params?: GetStreamingStatusParams, opti
 
 
 
-export const getGetStreamingStatusQueryKey = (params?: GetStreamingStatusParams,) => {
+export const getGetStreamingStatusQueryKey = (cam: 'camera1' | 'camera2',) => {
     return [
-    `/api/streaming/status`, ...(params ? [params] : [])
+    `/api/live/rtmp/status/${cam}`
     ] as const;
     }
 
 
-export const getGetStreamingStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStreamingStatus>>, TError = ErrorType<void>>(params?: GetStreamingStatusParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetStreamingStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStreamingStatus>>, TError = ErrorType<void>>(cam: 'camera1' | 'camera2', options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetStreamingStatusQueryKey(params);
+  const queryKey =  queryOptions?.queryKey ?? getGetStreamingStatusQueryKey(cam);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStreamingStatus>>> = ({ signal }) => getStreamingStatus(params, { signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStreamingStatus>>> = ({ signal }) => getStreamingStatus(cam, { signal, ...requestOptions });
 
 
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, enabled: cam !== null && cam !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData> & { queryKey: QueryKey }
 }
 
 export type GetStreamingStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getStreamingStatus>>>
@@ -198,11 +190,11 @@ export type GetStreamingStatusQueryError = ErrorType<void>
  */
 
 export function useGetStreamingStatus<TData = Awaited<ReturnType<typeof getStreamingStatus>>, TError = ErrorType<void>>(
- params?: GetStreamingStatusParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ cam: 'camera1' | 'camera2', options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetStreamingStatusQueryOptions(params,options)
+  const queryOptions = getGetStreamingStatusQueryOptions(cam,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -215,20 +207,21 @@ export function useGetStreamingStatus<TData = Awaited<ReturnType<typeof getStrea
 
 
 
-export const getStartStreamingUrl = () => {
+export const getStartStreamingUrl = (cam: 'camera1' | 'camera2',) => {
 
 
 
 
-  return `/api/streaming/start`
+  return `/api/live/rtmp/start/${cam}`
 }
 
 /**
  * @summary Start streaming to a social platform
  */
-export const startStreaming = async (streamingStartInput: StreamingStartInput, options?: RequestInit): Promise<StreamingStatus> => {
+export const startStreaming = async (cam: 'camera1' | 'camera2',
+    streamingStartInput: StreamingStartInput, options?: RequestInit): Promise<LiveRtmpStatus> => {
 
-  return customFetch<StreamingStatus>(getStartStreamingUrl(),
+  return customFetch<LiveRtmpStatus>(getStartStreamingUrl(cam),
   {
     ...options,
     method: 'POST',
@@ -241,8 +234,8 @@ export const startStreaming = async (streamingStartInput: StreamingStartInput, o
 
 
 export const getStartStreamingMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{data: BodyType<StreamingStartInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{data: BodyType<StreamingStartInput>}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{cam: 'camera1' | 'camera2';data: BodyType<StreamingStartInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{cam: 'camera1' | 'camera2';data: BodyType<StreamingStartInput>}, TContext> => {
 
 const mutationKey = ['startStreaming'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -254,10 +247,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startStreaming>>, {data: BodyType<StreamingStartInput>}> = (props) => {
-          const {data} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startStreaming>>, {cam: 'camera1' | 'camera2';data: BodyType<StreamingStartInput>}> = (props) => {
+          const {cam,data} = props ?? {};
 
-          return  startStreaming(data,requestOptions)
+          return  startStreaming(cam,data,requestOptions)
         }
 
 
@@ -275,30 +268,31 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
  * @summary Start streaming to a social platform
  */
 export const useStartStreaming = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{data: BodyType<StreamingStartInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{cam: 'camera1' | 'camera2';data: BodyType<StreamingStartInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof startStreaming>>,
         TError,
-        {data: BodyType<StreamingStartInput>},
+        {cam: 'camera1' | 'camera2';data: BodyType<StreamingStartInput>},
         TContext
       > => {
       return useMutation(getStartStreamingMutationOptions(options));
     }
 
-export const getStopStreamingUrl = () => {
+export const getStopStreamingUrl = (cam: 'camera1' | 'camera2',) => {
 
 
 
 
-  return `/api/streaming/stop`
+  return `/api/live/rtmp/stop/${cam}`
 }
 
 /**
  * @summary Stop social streaming for an authorized camera
  */
-export const stopStreaming = async (streamingStopInput: StreamingStopInput, options?: RequestInit): Promise<StreamingStatus> => {
+export const stopStreaming = async (cam: 'camera1' | 'camera2',
+    streamingStopInput: StreamingStopInput, options?: RequestInit): Promise<LiveRtmpStatus> => {
 
-  return customFetch<StreamingStatus>(getStopStreamingUrl(),
+  return customFetch<LiveRtmpStatus>(getStopStreamingUrl(cam),
   {
     ...options,
     method: 'POST',
@@ -311,8 +305,8 @@ export const stopStreaming = async (streamingStopInput: StreamingStopInput, opti
 
 
 export const getStopStreamingMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{data: BodyType<StreamingStopInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{data: BodyType<StreamingStopInput>}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{cam: 'camera1' | 'camera2';data: BodyType<StreamingStopInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{cam: 'camera1' | 'camera2';data: BodyType<StreamingStopInput>}, TContext> => {
 
 const mutationKey = ['stopStreaming'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -324,10 +318,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stopStreaming>>, {data: BodyType<StreamingStopInput>}> = (props) => {
-          const {data} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stopStreaming>>, {cam: 'camera1' | 'camera2';data: BodyType<StreamingStopInput>}> = (props) => {
+          const {cam,data} = props ?? {};
 
-          return  stopStreaming(data,requestOptions)
+          return  stopStreaming(cam,data,requestOptions)
         }
 
 
@@ -345,11 +339,11 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
  * @summary Stop social streaming for an authorized camera
  */
 export const useStopStreaming = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{data: BodyType<StreamingStopInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{cam: 'camera1' | 'camera2';data: BodyType<StreamingStopInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof stopStreaming>>,
         TError,
-        {data: BodyType<StreamingStopInput>},
+        {cam: 'camera1' | 'camera2';data: BodyType<StreamingStopInput>},
         TContext
       > => {
       return useMutation(getStopStreamingMutationOptions(options));

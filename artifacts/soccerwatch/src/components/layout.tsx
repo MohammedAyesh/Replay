@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, Bookmark, User as UserIcon, LayoutGrid, CalendarDays, School } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays, School } from "lucide-react";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
@@ -88,8 +88,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           />
           <NavItem
             href="/view"
-            icon={<LayoutGrid className="w-6 h-6" />}
-            label={t.nav.view}
+            icon={<MapPin className="w-6 h-6" />}
+            label={t.nav.fields}
             isActive={location === "/view"}
             isTranslucent={useTranslucentBar}
           />
@@ -103,7 +103,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <NavItem
             href="/matches"
             icon={<CalendarDays className="w-6 h-6" />}
-            label={matchCopy.matches}
+            label={t.nav.myMatches}
             isActive={location === "/matches"}
             isTranslucent={useTranslucentBar}
           />
@@ -117,7 +117,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <NavItem
             href="/account"
             icon={<UserIcon className="w-6 h-6" />}
-            label={t.nav.account}
+            label={t.nav.me}
             isActive={location === "/account"}
             isTranslucent={useTranslucentBar}
           />
