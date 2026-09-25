@@ -18,6 +18,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isLogin = location === "/";
   const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find/") || location.startsWith("/find-quick/");
+  const isWholeGameClaim = location.startsWith("/find/");
   const isWatchFeed = location === "/home";
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");
@@ -32,7 +33,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <div
       className={cn(
         "app-shell mx-auto w-full max-w-[440px] bg-background relative flex flex-col rp-glow",
-        (isLogin || isAuthPage) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
+        (isLogin || isAuthPage || isWholeGameClaim) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
       )}
     >
       {!hideTabBar && (
@@ -61,7 +62,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <main
         className={cn(
           "w-full flex flex-col relative",
-          (isLogin || isAuthPage) ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden",
+          (isLogin || isAuthPage || isWholeGameClaim) ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden",
         )}
       >
         {children}
