@@ -547,8 +547,9 @@ describe("players book a future recording and pay by CliQ", () => {
       expect(page.body.booking.mine).toBe(true);
       expect(page.body.var.active).toBe(false);
       expect(recordCalls).toHaveLength(0);
-      // Paying for a booking does not unlock stats.
-      expect(page.body.stats.unlocked).toBe(false);
+      // Paying for a booking is not a stats purchase: nothing pending. (Stats
+      // are free while the paywall setting is off, which is the default.)
+      expect(page.body.stats.paywall).toBe(false);
       expect(page.body.stats.pending).toBeNull();
 
       // Past windows and too-short windows are refused.
