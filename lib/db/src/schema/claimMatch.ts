@@ -95,6 +95,13 @@ export type TrackingManifest = {
     objectPath: string;
     /** crop strips for the identity board, when the bundle carried them */
     spritesPath?: string;
+    /**
+     * Ball data (pack_ball.py), when the bundle carried it: raw touches, a
+     * 4 Hz ball path and every track's torso colour. Read by lib/matchPlay.ts.
+     */
+    ballPath?: string;
+    /** Probable people (pack_people.py): the pipeline's grouping of this segment's tracks. */
+    peoplePath?: string;
   }>;
   /**
    * Optional camera-to-pitch calibration. Grid rows run from the top of the

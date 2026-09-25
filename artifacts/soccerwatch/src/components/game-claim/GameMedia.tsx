@@ -341,7 +341,7 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
         <div
           ref={wrapRef}
           dir="ltr"
-          className="overflow-x-auto overflow-y-hidden"
+          className="overflow-x-auto overflow-y-hidden [scrollbar-color:rgba(255,255,255,.25)_transparent] [scrollbar-width:thin]"
           style={{ height: mh + 12 }}
         >
           <div ref={innerRef} className="relative" style={{ height: mh }} onClick={onClick}>

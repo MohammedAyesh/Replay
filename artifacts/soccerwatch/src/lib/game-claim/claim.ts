@@ -47,6 +47,8 @@ export type ClaimState = {
   elapsed: number;
   mk: number;
   autoAdded: number;
+  /** the two team shirt colours picked on the stats screen (OpenCV 8-bit Lab) */
+  teams?: { a: [number, number, number]; b: [number, number, number] } | null;
 };
 
 export function newState(game: Game): ClaimState {

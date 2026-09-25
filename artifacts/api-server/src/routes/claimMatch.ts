@@ -59,6 +59,9 @@ import {
 } from "../lib/playerMetrics";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { logger } from "../lib/logger";
+import { parseBallSidecar, type BallSidecar } from "../lib/matchPlay";
+import { playCache } from "../lib/matchPlayLoad";
+import { parsePeopleSidecar, type PeopleSidecar } from "../lib/peopleSidecar";
 import { ensureClaimMomentUserClip } from "./userClips";
 import {
   deleteClaimSegment,
@@ -445,6 +448,36 @@ function namespaceSegment(segment: TrackingSegmentPayload): TrackingSegmentPaylo
   };
 }
 
+/**
+ * Sprite strips keyed by segment-namespaced track id, with frames on the
+ * recording timeline. sprites.py writes chunk-local frames (it decodes one
+ * chunk), and every reader compares them with absolute part frames -- which
+ * held only for the first segment, so segment 2 onward showed no pictures.
+ * A file with any frame below its segment's start is chunk-local; shift it.
+ */
+export function namespaceSprites(raw: Record<string, unknown>, index: number, startFrame: number): Record<string, unknown> {
+  const prefix = `s${index}:`;
+  let local = false;
+  if (startFrame > 0) {
+    for (const strips of Object.values(raw)) {
+      if (Array.isArray(strips) && strips.some((s) => typeof (s as { f?: unknown })?.f === "number" && (s as { f: number }).f < startFrame)) {
+        local = true;
+        break;
+      }
+    }
+  }
+  const out: Record<string, unknown> = {};
+  for (const [trackId, strips] of Object.entries(raw)) {
+    const id = trackId.startsWith(prefix) ? trackId : `${prefix}${trackId}`;
+    out[id] = local && Array.isArray(strips)
+      ? strips.map((s) => (s && typeof s === "object" && typeof (s as { f?: unknown }).f === "number"
+        ? { ...(s as object), f: (s as { f: number }).f + startFrame }
+        : s))
+      : strips;
+  }
+  return out;
+}
+
 export type UploadBundle = {
   manifest: Omit<TrackingManifest, "segments"> & { segments: Array<TrackingManifest["segments"][number] & { file?: string; path?: string }> };
   segments: TrackingSegmentPayload[];
@@ -455,6 +488,10 @@ export type UploadBundle = {
    * claim page never downloads them.
    */
   sprites?: Record<number, unknown>;
+  /** Optional per-segment ball data from ball/<segment name>.json (lib/matchPlay.ts). */
+  ball?: Record<number, BallSidecar>;
+  /** Optional per-segment grouping from people/<segment name>.json (lib/peopleSidecar.ts). */
+  people?: Record<number, PeopleSidecar>;
 };
 
 export function summarizeTrackingSegments(segments: TrackingSegmentPayload[]): TrackingBundleSummary {
@@ -758,6 +795,8 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
   const selectedEntries = new Set([manifestName]);
   const segments: TrackingSegmentPayload[] = [];
   const sprites: Record<number, unknown> = {};
+  const ball: Record<number, BallSidecar> = {};
+  const people: Record<number, PeopleSidecar> = {};
   for (let index = 0; index < rawSegments.length; index++) {
     const entry = asRecord(rawSegments[index]);
     const startFrame = Math.max(0, Math.round(firstNumber(entry.startFrame, entry.start_frame) ?? 0));
@@ -817,14 +856,31 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
       selectedEntries.add(spriteEntry);
       try {
         const raw = JSON.parse(strFromU8(entries[spriteEntry])) as Record<string, unknown>;
-        const prefix = `s${index}:`;
-        const namespaced: Record<string, unknown> = {};
-        for (const [trackId, strips] of Object.entries(raw)) {
-          namespaced[trackId.startsWith(prefix) ? trackId : `${prefix}${trackId}`] = strips;
-        }
-        sprites[index] = namespaced;
+        sprites[index] = namespaceSprites(raw, index, segment.startFrame);
       } catch {
         // A broken optional sprite file does not invalidate tracking data.
+      }
+    }
+
+    const peopleEntry = `people/${name}.json`;
+    if (entries[peopleEntry] && !selectedEntries.has(peopleEntry)) {
+      selectedEntries.add(peopleEntry);
+      try {
+        const parsed = parsePeopleSidecar(JSON.parse(strFromU8(entries[peopleEntry])), index);
+        if (parsed) people[index] = parsed;
+      } catch {
+        // Grouping is optional: without it the page groups tracks itself.
+      }
+    }
+
+    const ballEntry = `ball/${name}.json`;
+    if (entries[ballEntry] && !selectedEntries.has(ballEntry)) {
+      selectedEntries.add(ballEntry);
+      try {
+        const parsed = parseBallSidecar(JSON.parse(strFromU8(entries[ballEntry])), index);
+        if (parsed) ball[index] = parsed;
+      } catch {
+        // Ball data is optional too.
       }
     }
   }
@@ -848,6 +904,8 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
   return {
     upload: {
       sprites,
+      ball,
+      people,
       manifest: {
         version: Math.max(1, Math.round(firstNumber(rawManifest.version) ?? 1)),
         label: firstString(rawManifest.label, rawManifest.name) ?? "Match tracking",
@@ -2010,6 +2068,8 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
   const previousObjectPaths = previousBundle?.manifest.segments.flatMap((segment) => [
     segment.objectPath,
     ...(segment.spritesPath ? [segment.spritesPath] : []),
+    ...(segment.ballPath ? [segment.ballPath] : []),
+    ...(segment.peoplePath ? [segment.peoplePath] : []),
   ]) ?? [];
   const storedSegments: Array<{
     segment: TrackingSegmentPayload;
@@ -2017,6 +2077,8 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
     compressedBytes: number;
   }> = [];
   const spritePaths: Record<number, string> = {};
+  const ballPaths: Record<number, string> = {};
+  const peoplePaths: Record<number, string> = {};
   try {
     for (const segment of upload.segments) {
       const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}.json.gz`, segment);
@@ -2025,6 +2087,16 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       if (strips) {
         const storedSprites = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}-sprites.json.gz`, strips);
         spritePaths[segment.segmentIndex] = storedSprites.objectPath;
+      }
+      const ballData = upload.ball?.[segment.segmentIndex];
+      if (ballData) {
+        const storedBall = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}-ball.json.gz`, ballData);
+        ballPaths[segment.segmentIndex] = storedBall.objectPath;
+      }
+      const peopleData = upload.people?.[segment.segmentIndex];
+      if (peopleData) {
+        const storedPeople = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}-people.json.gz`, peopleData);
+        peoplePaths[segment.segmentIndex] = storedPeople.objectPath;
       }
     }
     const bundleFingerprint = trackingBundleFingerprint(upload.manifest, upload.segments);
@@ -2047,6 +2119,8 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
         endSeconds: segment.endSeconds,
         objectPath,
         ...(spritePaths[segment.segmentIndex] ? { spritesPath: spritePaths[segment.segmentIndex] } : {}),
+        ...(ballPaths[segment.segmentIndex] ? { ballPath: ballPaths[segment.segmentIndex] } : {}),
+        ...(peoplePaths[segment.segmentIndex] ? { peoplePath: peoplePaths[segment.segmentIndex] } : {}),
       })),
     };
     const bindingsTableExists = await identityBindingsTableExists();
@@ -2109,6 +2183,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
         action: previousModel && nextModel ? "replace" : nextModel ? "attach" : "remove",
       }, "Tracking bundle pitch model changed during bundle upload");
     }
+    playCache.delete(recordingId);
     await cleanupClaimObjects(previousObjectPaths, "successful replacement");
     return {
       recordingId,
@@ -2127,11 +2202,195 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
     const newObjectPaths = [
       ...storedSegments.map((segment) => segment.objectPath),
       ...Object.values(spritePaths),
+      ...Object.values(ballPaths),
+      ...Object.values(peoplePaths),
     ];
     await cleanupClaimObjects(newObjectPaths, "failed replacement");
     throw error;
   }
 }
+
+/**
+ * PUT /admin/recordings/:id/tracking-bundle/extras  (multipart "bundle": a zip)
+ *
+ * Attach sprites/, ball/ and people/<segment>.json to a bundle that is
+ * already stored, without touching its tracks. Re-uploading the whole bundle
+ * would do the same job but also reset every claim on the recording (a
+ * replacement is treated as new tracking, deliberately). Extras never change
+ * a track, so they never change the fingerprint and never cost a claim.
+ * Segments are matched by name; a zip may carry any subset of them.
+ */
+router.put("/admin/recordings/:id/tracking-bundle/extras", bundleUploadSingle, async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const recordingId = parseId(req.params.id);
+  if (!recordingId) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const buffer = req.file?.buffer;
+  if (!buffer?.byteLength) {
+    res.status(400).json({ error: "Attach a ZIP file as 'bundle'" });
+    return;
+  }
+  const [existing] = await db
+    .select({ id: recordingTrackingBundlesTable.id, manifest: recordingTrackingBundlesTable.manifest })
+    .from(recordingTrackingBundlesTable)
+    .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+  if (!existing) {
+    res.status(404).json({ error: "Tracking bundle not found. Upload the bundle first." });
+    return;
+  }
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipBundleEntries(buffer);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Not a readable ZIP" });
+    return;
+  }
+  const written: string[] = [];
+  const replaced: string[] = [];
+  const report: Array<{ name: string; sprites: boolean; ball: boolean; people: boolean }> = [];
+  try {
+    const segments = [];
+    for (const segment of existing.manifest.segments) {
+      const next = { ...segment };
+      const line = { name: segment.name, sprites: false, ball: false, people: false };
+      const spriteBytes = entries[`sprites/${segment.name}.json`];
+      if (spriteBytes) {
+        const raw = JSON.parse(strFromU8(spriteBytes)) as Record<string, unknown>;
+        const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.index}-sprites.json.gz`, namespaceSprites(raw, segment.index, segment.startFrame));
+        written.push(stored.objectPath);
+        if (segment.spritesPath) replaced.push(segment.spritesPath);
+        next.spritesPath = stored.objectPath;
+        line.sprites = true;
+      }
+      const ballBytes = entries[`ball/${segment.name}.json`];
+      if (ballBytes) {
+        const parsed = parseBallSidecar(JSON.parse(strFromU8(ballBytes)), segment.index);
+        if (parsed) {
+          const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.index}-ball.json.gz`, parsed);
+          written.push(stored.objectPath);
+          if (segment.ballPath) replaced.push(segment.ballPath);
+          next.ballPath = stored.objectPath;
+          line.ball = true;
+        }
+      }
+      const peopleBytes = entries[`people/${segment.name}.json`];
+      if (peopleBytes) {
+        const parsed = parsePeopleSidecar(JSON.parse(strFromU8(peopleBytes)), segment.index);
+        if (parsed) {
+          const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.index}-people.json.gz`, parsed);
+          written.push(stored.objectPath);
+          if (segment.peoplePath) replaced.push(segment.peoplePath);
+          next.peoplePath = stored.objectPath;
+          line.people = true;
+        }
+      }
+      segments.push(next);
+      report.push(line);
+    }
+    if (!report.some((line) => line.sprites || line.ball || line.people)) {
+      res.status(400).json({ error: "The ZIP carried no sprites/, ball/ or people/<segment>.json for this bundle's segments" });
+      return;
+    }
+    const manifest: TrackingManifest = { ...existing.manifest, segments };
+    await db
+      .update(recordingTrackingBundlesTable)
+      .set({ manifest, updatedAt: new Date(), uploadedBy: adminId })
+      .where(eq(recordingTrackingBundlesTable.id, existing.id));
+    playCache.delete(recordingId);
+  } catch (error) {
+    await cleanupClaimObjects(written, "failed extras attach");
+    logger.error({ recordingId, err: error }, "Could not attach bundle extras");
+    res.status(500).json({ error: "Could not attach the extras. The bundle was kept as it was." });
+    return;
+  }
+  await cleanupClaimObjects(replaced, "extras replaced");
+  res.json({ recordingId, segments: report });
+});
+
+/**
+ * GET /recordings/:id/claim-match/ball/:segmentIndex
+ * The segment's ball data (raw touches, 4 Hz ball path, kit colours), for the
+ * map from above. The resolved touches and passes come from
+ * /claim-match/game/play instead.
+ */
+router.get("/recordings/:id/claim-match/ball/:segmentIndex", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+  const params = GetClaimMatchSegmentParams.safeParse({
+    id: recordingIdFromRequest(req.params.id),
+    segmentIndex: Number.parseInt(Array.isArray(req.params.segmentIndex) ? req.params.segmentIndex[0] : req.params.segmentIndex, 10),
+  });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const access = await getClaimMatchBundleForRequest(req, params.data.id);
+  if (access.error) {
+    res.status(404).json({ error: access.error ?? "Recording not found", code: access.code ?? "recording_not_found" });
+    return;
+  }
+  const manifestSegment = access.row?.bundle?.manifest?.segments.find((segment) => segment.index === params.data.segmentIndex);
+  if (!manifestSegment?.ballPath) {
+    res.status(404).json({ error: "No ball data for this segment" });
+    return;
+  }
+  try {
+    const compressed = await readCompressedClaimSegment(manifestSegment.ballPath);
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Encoding", "gzip");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("Content-Length", String(compressed.byteLength));
+    res.status(200).send(compressed);
+  } catch {
+    res.status(404).json({ error: "Ball data not found" });
+  }
+});
+
+/** GET /recordings/:id/claim-match/people/:segmentIndex -- the pipeline's grouping of this segment. */
+router.get("/recordings/:id/claim-match/people/:segmentIndex", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+  const params = GetClaimMatchSegmentParams.safeParse({
+    id: recordingIdFromRequest(req.params.id),
+    segmentIndex: Number.parseInt(Array.isArray(req.params.segmentIndex) ? req.params.segmentIndex[0] : req.params.segmentIndex, 10),
+  });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const access = await getClaimMatchBundleForRequest(req, params.data.id);
+  if (access.error) {
+    res.status(404).json({ error: access.error ?? "Recording not found", code: access.code ?? "recording_not_found" });
+    return;
+  }
+  const manifestSegment = access.row?.bundle?.manifest?.segments.find((segment) => segment.index === params.data.segmentIndex);
+  if (!manifestSegment?.peoplePath) {
+    res.status(404).json({ error: "No grouping for this segment" });
+    return;
+  }
+  try {
+    const compressed = await readCompressedClaimSegment(manifestSegment.peoplePath);
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Encoding", "gzip");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("Content-Length", String(compressed.byteLength));
+    res.status(200).send(compressed);
+  } catch {
+    res.status(404).json({ error: "Grouping not found" });
+  }
+});
 
 /**
  * The only thing left to correct on a stored bundle is where its tracking

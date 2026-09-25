@@ -134,12 +134,79 @@ export async function measureChunk(
 ): Promise<void> {
   const hr = heightRatios(chunk);
   for (const piece of Object.values(chunk.pieces)) {
+    if (piece.feat) continue; // already read by the pipeline (applyPeople)
     const keys = pieceCropKeys(chunk, piece.id);
     const features: Array<CropFeature | null> = [];
     for (const key of keys) features.push(await measure(chunk.crops[key]));
     piece.feat = combineFeatures(features, hr[piece.id] ?? 1);
     piece.nr = keys.length;
   }
+}
+
+/* ------------------------------------------------------ pipeline grouping */
+
+/** The pipeline's grouping of a segment (people/<segment>.json, served by the API). */
+export type PeopleSidecar = {
+  pieces: Record<string, { to: [number, number, number]; sh: [number, number, number]; hi: number[]; hr: number; nr: number; kit: number }>;
+  groups: Array<{
+    cid: string;
+    dur: number;
+    team: string | null;
+    torso: [number, number, number] | null;
+    members: string[];
+    junctions: Junction[];
+    nb: Array<[number, string]>;
+  }>;
+};
+
+/** Groups shorter than this are left out of the gallery, as the prototype did. */
+export const MIN_GROUP_SECONDS = 15;
+
+/**
+ * Use the pipeline's grouping instead of grouping in the browser. Its
+ * features are medians over every clean detection of a track at full
+ * resolution (hundreds of readings, not six crops), and its groups come from
+ * average-linkage clustering under hard cannot-links -- the prototype's
+ * persons step, run on this bundle's own tracks.
+ */
+export function applyPeople(chunk: Chunk, people: PeopleSidecar): void {
+  for (const [id, f] of Object.entries(people.pieces)) {
+    const piece = chunk.pieces[id];
+    if (!piece) continue;
+    piece.feat = { to: f.to, sh: f.sh, hi: f.hi, hr: f.hr > 0 ? f.hr : 1 };
+    piece.nr = Math.max(1, f.nr);
+  }
+  const groups: Group[] = [];
+  for (const g of people.groups) {
+    const members = g.members.filter((m) => chunk.pieces[m]);
+    if (!members.length) continue;
+    let dur = 0;
+    let end = -Infinity;
+    for (const [a, b] of members.map((m) => [chunk.pieces[m].t0, chunk.pieces[m].t1] as [number, number]).sort((x, y) => x[0] - y[0])) {
+      dur += Math.max(0, b - Math.max(a, end));
+      end = Math.max(end, b);
+    }
+    if (dur < MIN_GROUP_SECONDS) continue;
+    const keep = new Set(members);
+    groups.push({
+      cid: members.includes(g.cid) ? g.cid : members[0],
+      dur: Math.round(dur * 10) / 10,
+      team: null,
+      members,
+      junctions: g.junctions.filter((j) => keep.has(j.a) && keep.has(j.b)),
+      nb: [],
+    });
+  }
+  const ids = new Set(groups.map((g) => g.cid));
+  const byOld = new Map(people.groups.map((g) => [g.cid, g]));
+  for (const g of groups) {
+    g.nb = (byOld.get(g.cid)?.nb ?? []).filter(([, cid]) => ids.has(cid)).slice(0, 5);
+  }
+  groups.sort((a, b) => b.dur - a.dur);
+  chunk.groups = groups;
+  chunk.byCid = Object.fromEntries(groups.map((g) => [g.cid, g]));
+  chunk.gOf = {};
+  for (const g of groups) for (const m of g.members) chunk.gOf[m] = g.cid;
 }
 
 /* ----------------------------------------------------------------- grouping */

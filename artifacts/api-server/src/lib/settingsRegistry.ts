@@ -187,9 +187,9 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: "stats.paywallEnabled",
     group: "Match stats",
     label: "Stats cost money",
-    description: "Off makes stats free for everyone in the match. On asks them to pay by CliQ first.",
+    description: "Off makes stats free for everyone in the match. On asks them to pay by CliQ first. Off by default: the claim now feeds each player's stats into the match, and charging is switched on deliberately.",
     type: "boolean",
-    defaultValue: true,
+    defaultValue: false,
   },
   {
     key: "stats.teamPackEnabled",

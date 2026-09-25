@@ -12,6 +12,9 @@
  *                                             spans, and the binding, coverage,
  *                                             completion and clips follow
  *   DELETE /recordings/:id/claim-match/game   start over
+ *   GET    /recordings/:id/claim-match/game/play
+ *                                             touches, passes and teams for the
+ *                                             stats screen (lib/matchPlay.ts)
  *
  * The identity row is written by the same persistChain / syncChainClaim the
  * claim chain uses, so the board, player stats, earned clips and "claimed
@@ -28,7 +31,22 @@ import {
   type TrackingSegmentPayload,
 } from "@workspace/db";
 import { normaliseChain, type ChainPart } from "../lib/claimChain";
-import { begin, persistChain, syncChainClaim, type ChainContext } from "./claimChain";
+import {
+  kitOfParts,
+  parseLab,
+  passEvents,
+  PASS,
+  playerPlay,
+  seedTeams,
+  teamStats,
+  type ClaimedPart,
+  type Lab,
+  type TeamPick,
+} from "../lib/matchPlay";
+import { loadRecordingPlay } from "../lib/matchPlayLoad";
+import { joinMatchesFromClaim } from "../lib/matchFeed";
+import { begin, claimIdentityId, persistChain, syncChainClaim, type ChainContext } from "./claimChain";
+import { getClaimMatchWritableBundle, requireAccountUser } from "./claimMatch";
 
 const router: IRouter = Router();
 
@@ -147,6 +165,17 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
 
   await syncChainClaim(ctx, chain, !parsed.data.done);
 
+  // A finished claim puts the claimant on the roster of every match booked
+  // over this recording, on the team their shirt matches. Best effort: the
+  // claim itself is saved either way.
+  if (parsed.data.done && chain.length) {
+    try {
+      await joinMatchesFromClaim(ctx.userId, ctx.recordingId, chain);
+    } catch (error) {
+      console.error("[claim-game] match roster join failed", { recordingId: ctx.recordingId, error });
+    }
+  }
+
   const state = { ...parsed.data.state, bundle: ctx.fingerprint };
   await db
     .insert(claimMatchProgressTable)
@@ -188,6 +217,79 @@ router.delete("/recordings/:id/claim-match/game", async (req, res): Promise<void
     console.error("[claim-game] reset failed", { recordingId: ctx.recordingId, error });
     res.status(500).json({ error: "Could not start over" });
   }
+});
+
+/**
+ * GET /recordings/:id/claim-match/game/play[?a=L,a,b&b=L,a,b]
+ *
+ * The claimant's touches and passes, and the whole match split into two teams
+ * by shirt colour. `a`/`b` override the saved team colours; without them the
+ * saved choice is used, and without that the claimant's own kit against the
+ * most contrasting kit on camera.
+ */
+router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    res.status(401).json({ error: "Sign in to see your stats" });
+    return;
+  }
+  const recordingId = Number.parseInt(String(req.params.id), 10);
+  if (!Number.isSafeInteger(recordingId) || recordingId <= 0) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const access = await getClaimMatchWritableBundle(req, recordingId);
+  if (access.status) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+  const play = await loadRecordingPlay(recordingId);
+  if (!play) {
+    res.status(404).json({ error: "No tracking bundle" });
+    return;
+  }
+  const identity = (access.row?.bundle?.manifest.identities ?? []).find((item) => item.id === claimIdentityId(userId, recordingId));
+  const parts: ClaimedPart[] = (identity?.parts ?? []).map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame }));
+  const ownKit = kitOfParts(parts, play.sidecars, play.fps);
+
+  const [row] = await db
+    .select({ gameState: claimMatchProgressTable.gameState })
+    .from(claimMatchProgressTable)
+    .where(and(eq(claimMatchProgressTable.userId, userId), eq(claimMatchProgressTable.recordingId, recordingId)));
+  const saved = (row?.gameState as { teams?: { a?: unknown; b?: unknown } } | null)?.teams;
+  const savedPick = saved && Array.isArray(saved.a) && Array.isArray(saved.b)
+    ? { a: saved.a as Lab, b: saved.b as Lab }
+    : null;
+  const qa = parseLab(req.query.a);
+  const qb = parseLab(req.query.b);
+  let pick: TeamPick | null = null;
+  let source: "query" | "saved" | "seeded" | null = null;
+  if (qa && qb) { pick = { a: qa, b: qb }; source = "query"; }
+  else if (savedPick) { pick = savedPick; source = "saved"; }
+  else { pick = seedTeams(ownKit, play.kitOptions); source = pick ? "seeded" : null; }
+  if (!play.hasKits) { pick = null; source = null; }
+
+  const events = passEvents(play.touches, pick);
+  const mine = playerPlay(play.touches, events, parts, Boolean(pick));
+  res.json({
+    available: play.hasBall,
+    hasPitch: play.hasPitch,
+    hasKits: play.hasKits,
+    fps: play.fps,
+    kits: play.kitOptions,
+    ownKit,
+    teams: pick ? { a: pick.a, b: pick.b, source } : null,
+    team: pick ? teamStats(play.touches, events, pick) : null,
+    totals: { touches: play.touches.length, rejected: play.rejected },
+    rule: { passMetres: PASS.passMetres, contestMetres: PASS.contestMetres, maxGapSeconds: PASS.maxGapSeconds },
+    mine: {
+      touches: mine.touches.map((t) => ({ f: t.f, t: t.t, trackId: t.trackId, ball: t.ball, foot: t.foot })),
+      passes: mine.passes,
+      passesTried: mine.passesTried,
+      passesCompleted: mine.passesCompleted,
+      passesReceived: mine.passesReceived,
+    },
+  });
 });
 
 export default router;

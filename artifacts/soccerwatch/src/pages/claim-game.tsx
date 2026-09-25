@@ -166,6 +166,10 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
           const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/sprites/${index}`, { credentials: "include" });
           return r.ok ? r.json() : {};
         },
+        fetchPeople: async (index) => {
+          const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/people/${index}`, { credentials: "include" });
+          return r.ok ? r.json() : null;
+        },
       }).then((c) => {
         chunks.current[k] = c;
         setChunkVer((v) => v + 1);
@@ -613,6 +617,8 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
       }} />;
   } else if (S.step === "stats") {
     body = <StatsScreen ctx={ctx} copy={copy} mediaSlot={mediaSlot} now={mediaNow} eyebrow={eyebrow}
+      recordingId={recordingId} videoUrl={videoUrl}
+      onTeams={(pick) => act(() => { S.teams = pick; }, false)}
       onBack={() => go("done")} onExport={() => exportClaim(S, recordingId)} ensure={ensure} />;
   }
 

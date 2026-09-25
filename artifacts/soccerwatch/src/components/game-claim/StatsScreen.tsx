@@ -5,12 +5,16 @@ import { youIds, type Ctx } from "@/lib/game-claim/claim";
 import { computeStats, peopleAt, type ZoneKey } from "@/lib/game-claim/stats";
 import type { GameStrings } from "@/i18n/game-strings";
 import { Btn, Eyebrow, Lede, Row, Section, Stat, Title } from "./bits";
+import { ballAt, fetchPlay, loadBall, type Lab, type Play } from "@/lib/game-claim/play";
+import { ReelSection } from "./Reel";
+import { TeamsSection } from "./TeamsSection";
 
 /**
  * The prototype's stats screen on the bundle: six numbers, the match from
  * above following the video, the heat map, speed zones and distance per ten
- * minutes. Touches, passes, teams and the ball are not in Replay's bundle, so
- * the prototype's sections built on them are left out.
+ * minutes, your highlights reel, and teams / passes / possession. Touches and
+ * passes come from the server (one definition of a pass for this page and the
+ * match page); the ball on the map comes from the bundle's ball data.
  */
 
 const ZONE_COLOUR: Record<ZoneKey, string> = { walk: "#3a4f6b", jog: "#2FD8C4", run: "#D4FF4F", sprint: "#FF5A3C" };
@@ -25,7 +29,14 @@ export function StatsScreen({
   onBack,
   onExport,
   ensure,
+  recordingId,
+  videoUrl,
+  onTeams,
 }: {
+  recordingId: number;
+  videoUrl: string | null;
+  /** save the picked team colours with the claim */
+  onTeams: (pick: { a: Lab; b: Lab }) => void;
   ctx: Ctx;
   copy: GameStrings;
   mediaSlot: React.ReactNode;
@@ -44,6 +55,20 @@ export function StatsScreen({
   const heatRef = useRef<HTMLCanvasElement>(null);
   const mapRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState("—");
+  const [play, setPlay] = useState<Play | null>(null);
+  const [playLoading, setPlayLoading] = useState(true);
+
+  // Touches and passes, with the saved team colours (the server falls back to
+  // the saved ones itself, and seeds yours against the most contrasting kit).
+  useEffect(() => {
+    let live = true;
+    setPlayLoading(true);
+    void fetchPlay(recordingId, ctx.S.teams ?? null).then((p) => { if (live) { setPlay(p); setPlayLoading(false); } });
+    return () => { live = false; };
+  }, [recordingId, ctx.S.teams]);
+  // Saving the pick re-renders with ctx.S.teams changed, which refetches above.
+  const pickTeams = (pick: { a: Lab; b: Lab }) => onTeams(pick);
+  const balls = useRef(new Map<number, Awaited<ReturnType<typeof loadBall>>>());
 
   useEffect(() => {
     if (game.pitch) drawHeat(heatRef.current, st.heat);
@@ -79,6 +104,11 @@ export function StatsScreen({
         return;
       }
       const people = peopleAt(ctx, k, lt);
+      if (!balls.current.has(k)) {
+        balls.current.set(k, null);
+        void loadBall(recordingId, game, k).then((b) => { balls.current.set(k, b); shown = -1; });
+      }
+      const ball = ballAt(balls.current.get(k), gt);
       const mine = youIds(ctx, k);
       if (Math.abs(gt - last) > 1.2) { trail = []; step = -1; } // a seek breaks the trail
       last = gt;
@@ -107,6 +137,12 @@ export function StatsScreen({
         cx.lineWidth = 1.5;
         cx.stroke();
       }
+      if (ball) {
+        cx.beginPath();
+        cx.arc(px(ball.X), py(ball.Y), 5.5, 0, 7);
+        if (ball.ok) { cx.fillStyle = "#fff"; cx.fill(); cx.strokeStyle = "#111"; cx.lineWidth = 2; cx.stroke(); }
+        else { cx.strokeStyle = "rgba(255,255,255,.45)"; cx.lineWidth = 2; cx.stroke(); }
+      }
       if (me) {
         cx.beginPath();
         cx.arc(px(me[0]), py(me[1]), 10, 0, 7);
@@ -125,7 +161,7 @@ export function StatsScreen({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [ctx, game, now, ensure, c, copy.common.loadingChunk]);
+  }, [ctx, game, now, ensure, c, copy.common.loadingChunk, recordingId]);
 
   const zt = Object.values(st.zones).reduce((s, z) => s + z[0], 0) || 1;
   const maxK = Math.max(1, ...Object.values(st.perK));
@@ -207,6 +243,9 @@ export function StatsScreen({
               ))}
             </div>
           </Section>
+
+          <ReelSection ctx={ctx} copy={copy} play={play} videoUrl={videoUrl} recordingId={recordingId} />
+          <TeamsSection copy={copy} play={play} loading={playLoading} onPick={pickTeams} />
 
           <p className="rounded-xl border border-line bg-surface p-3 text-xs leading-5 text-muted-text">
             {c.note(mmss(st.time), (st.dist / 1000).toFixed(2), mmss(st.found), game.pitch.w.toFixed(0), game.pitch.h.toFixed(1), st.dropped)}

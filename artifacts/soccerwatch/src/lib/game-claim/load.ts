@@ -1,7 +1,7 @@
 import type { TrackingManifest } from "@workspace/api-client-react";
 import { rgbToHsl, splitKits, kitColourKey, type KitSplit } from "@/lib/claim-kit";
 import { featureFromJpeg, lab8ToRgb } from "./appearance";
-import { buildChunk, groupChunk, groupProfileOf, measureChunk, type BundleChunkInput } from "./build";
+import { applyPeople, buildChunk, groupChunk, groupProfileOf, measureChunk, type BundleChunkInput, type PeopleSidecar } from "./build";
 import type { Chunk, Game } from "./model";
 import { complement, union } from "./model";
 import { pitchFromManifest } from "./pitch";
@@ -40,7 +40,7 @@ export type ChunkExtras = {
   kits: KitSplit;
 };
 
-export type LoadedChunk = Chunk & ChunkExtras;
+export type LoadedChunk = Chunk & ChunkExtras & { grouping: "pipeline" | "browser" };
 
 /**
  * Seed groups from the identity board's rows: tracks it already put together
@@ -62,11 +62,17 @@ export async function loadChunkData(opts: {
     crossings: BundleChunkInput["crossings"];
   }>;
   fetchSprites: (index: number) => Promise<BundleChunkInput["sprites"]>;
+  /** the pipeline's grouping, when the bundle carries it (null otherwise) */
+  fetchPeople?: (index: number) => Promise<PeopleSidecar | null>;
 }): Promise<LoadedChunk> {
   const { manifest, k } = opts;
   const meta = manifest.segments.find((s) => s.index === k);
   if (!meta) throw new Error(`No segment ${k}`);
-  const [segment, sprites] = await Promise.all([opts.fetchSegment(k), opts.fetchSprites(k).catch(() => ({}))]);
+  const [segment, sprites, people] = await Promise.all([
+    opts.fetchSegment(k),
+    opts.fetchSprites(k).catch(() => ({})),
+    opts.fetchPeople ? opts.fetchPeople(k).catch(() => null) : Promise.resolve(null),
+  ]);
   const chunk = buildChunk({
     k,
     start: meta.startSeconds,
@@ -76,8 +82,15 @@ export async function loadChunkData(opts: {
     crossings: segment.crossings,
     sprites,
   });
-  await measureChunk(chunk, featureFromJpeg);
-  groupChunk(chunk, seedFromIdentities(manifest, new Set(Object.keys(chunk.pieces))));
+  if (people?.groups?.length) {
+    // The pipeline read every track at full resolution and grouped them the
+    // prototype's way; crops only fill pieces it had no reading for.
+    applyPeople(chunk, people);
+    await measureChunk(chunk, featureFromJpeg);
+  } else {
+    await measureChunk(chunk, featureFromJpeg);
+    groupChunk(chunk, seedFromIdentities(manifest, new Set(Object.keys(chunk.pieces))));
+  }
   const kits = splitKits(
     chunk.groups.map((g) => {
       const p = groupProfileOf(chunk, g.members);
@@ -89,7 +102,7 @@ export async function loadChunkData(opts: {
   if (kits.separated) {
     for (const kit of kits.groups) for (const cid of kit.memberIds) if (chunk.byCid[cid]) chunk.byCid[cid].team = kit.key;
   }
-  return Object.assign(chunk, { kits });
+  return Object.assign(chunk, { kits, grouping: people?.groups?.length ? "pipeline" as const : "browser" as const });
 }
 
 /** A kit's colour name key for the copy's `kit.names`. */

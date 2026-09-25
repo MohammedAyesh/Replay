@@ -341,6 +341,7 @@ describe("a match from invite to vote", () => {
     expect(off.status).toBe(409);
     expect((await request(app).get(`/api/m/${room.code}`).set(as("ali"))).body.stats.enabled).toBe(false);
     await fieldRule("stats.enabled", true);
+    await fieldRule("stats.paywallEnabled", true); // off by default since 2026-09-26
 
     expect((await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("outsider")).send({ kind: "match" })).status).toBe(403);
     expect((await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("ali")).send({ kind: "team" })).status).toBe(403);
@@ -380,6 +381,7 @@ describe("a match from invite to vote", () => {
     const { room } = await booking(Date.now() - 3 * 60 * 60 * 1000, 60, "ready");
     await request(app).post(`/api/m/${room.code}/join`).set(as("sami")).send({ rsvp: "in" });
     await fieldRule("stats.enabled", true);
+    await fieldRule("stats.paywallEnabled", true); // off by default since 2026-09-26
     await fieldRule("pricing.statsPerMatch", 0.75);
     await fieldRule("pricing.statsTeamPerPlayer", 0.25);
     await fieldRule("payments.cliqAlias", "TESTALIAS");
@@ -396,6 +398,7 @@ describe("a match from invite to vote", () => {
     expect((await request(app).post(`/api/m/${room.code}/stats/unlock`).set(as("sami")).send({ kind: "team" })).status).toBe(409);
 
     // Paywall off: stats are simply open.
+    await db.delete(settingsRulesTable).where(and(eq(settingsRulesTable.key, "stats.paywallEnabled"), eq(settingsRulesTable.scopeType, "field"), eq(settingsRulesTable.scopeId, fieldId)));
     await fieldRule("stats.paywallEnabled", false);
     page = await request(app).get(`/api/m/${room.code}`).set(as("sami"));
     expect(page.body.stats.unlocked).toBe(true);

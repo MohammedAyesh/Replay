@@ -24,6 +24,7 @@ import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer"
 import { StreamingPanel } from "@/components/StreamingPanel";
 import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
+import { MatchStats } from "@/components/match/MatchStats";
 import {
   Countdown,
   PhaseChip,
@@ -1475,11 +1476,14 @@ function StatsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
   );
   if (room.stats.unlocked) {
     return (
+      <>
+      <MatchStats room={room} copy={copy} />
       <Card className="border-turf/30">
         <p className="flex items-center gap-2 text-base font-bold"><Check className="h-4 w-4 text-turf" />{copy.statsUnlocked}</p>
         <p className="mt-1 text-xs text-muted-text">{copy.statsLockedDesc}</p>
         {room.me?.userId && <Link href={`/players/${room.me.userId}`} className="mt-3 flex min-h-11 items-center justify-center rounded-full bg-floodlight text-sm font-bold text-void">{copy.openStats}</Link>}
       </Card>
+      </>
     );
   }
   const start = async (kind: "match" | "team" | "monthly") => {
@@ -1492,6 +1496,7 @@ function StatsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
   };
   return (
     <>
+      <MatchStats room={room} copy={copy} />
       <section className="relative overflow-hidden rounded-2xl border border-line bg-surface p-4">
         <div className="pointer-events-none absolute inset-0 opacity-40 blur-[6px]" aria-hidden="true">
           <div className="grid h-full grid-cols-3 gap-2 p-4">

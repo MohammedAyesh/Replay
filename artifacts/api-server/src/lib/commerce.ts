@@ -57,7 +57,7 @@ export async function loadCommerce(ctx: SettingsContext = {}): Promise<Commerce>
     bookingMaxAwaiting: Math.max(1, int(all["booking.maxAwaitingPayment"], 3)),
     bookingMaxMinutes: Math.max(30, int(all["booking.maxMinutes"], 180)),
     statsEnabled: bool(all["stats.enabled"], false),
-    statsPaywall: bool(all["stats.paywallEnabled"], true),
+    statsPaywall: bool(all["stats.paywallEnabled"], false),
     statsTeamPack: bool(all["stats.teamPackEnabled"], true),
     statsMonthly: bool(all["stats.monthlyEnabled"], true),
   };

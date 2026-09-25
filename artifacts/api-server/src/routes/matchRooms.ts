@@ -54,6 +54,7 @@ import {
   uploadBufferToBunnyStorage,
 } from "../lib/bunny";
 import { logger } from "../lib/logger";
+import { matchStats } from "../lib/matchFeed";
 
 const router: IRouter = Router();
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 6 * 1024 * 1024 } });
@@ -397,6 +398,32 @@ router.get("/m/:code", async (req, res): Promise<void> => {
   if (!ctx) return;
   const viewer = await optionalUser(req);
   res.json(await roomPayload(req, ctx, viewer));
+});
+
+/**
+ * GET /m/:code/stats -- what the claims on this match's footage add up to.
+ * Team numbers (possession, passing) are open to anyone who can see the
+ * match; each player's own numbers follow the stats paywall, which is a
+ * setting (stats.paywallEnabled, off by default).
+ */
+router.get("/m/:code/stats", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const viewer = await optionalUser(req);
+  const viewerId = viewer && !viewer.isGuest ? viewer.id : null;
+  const commerce = await loadCommerce({ userId: viewerId, fieldId: ctx.room.fieldId });
+  if (!commerce.statsEnabled) {
+    res.status(404).json({ error: "Stats are not switched on for this field" });
+    return;
+  }
+  const access = await statsAccess(viewerId, ctx.room.id, commerce);
+  try {
+    const stats = await matchStats(ctx, access.unlocked);
+    res.json({ ...stats, unlocked: access.unlocked });
+  } catch (error) {
+    logger.error({ code: ctx.room.code, err: error }, "match stats failed");
+    res.status(500).json({ error: "Could not compute the match stats" });
+  }
 });
 
 router.get("/me/matches", async (req, res): Promise<void> => {
