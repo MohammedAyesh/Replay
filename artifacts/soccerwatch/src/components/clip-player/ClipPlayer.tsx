@@ -237,8 +237,8 @@ export function ClipPlayer({
   } = usePanoramaFrame();
   const seekDraggingRef = useRef(false);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const frameRepeatDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const frameRepeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const frameRepeatDelayRef = useRef<number | null>(null);
+  const frameRepeatIntervalRef = useRef<number | null>(null);
   const clipModeRef = useRef<ClipMode>("idle");
   const stopRecordingRef = useRef<(overrideEndTime?: number) => void>(() => {});
   const clipStartRef = useRef(0);
