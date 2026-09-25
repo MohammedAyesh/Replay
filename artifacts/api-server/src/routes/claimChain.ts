@@ -201,7 +201,7 @@ function collidesWithForeignVouch(
   return null;
 }
 
-type ChainContext = {
+export type ChainContext = {
   userId: number;
   recordingId: number;
   bundleId: number;
@@ -257,7 +257,7 @@ async function answeredFramesFor(
   }
 }
 
-async function loadContext(
+export async function loadContext(
   req: Parameters<typeof requireAccountUser>[0],
   recordingId: number,
   userId: number,
@@ -474,7 +474,7 @@ export function subtractParts(
  * may be seconds old, and the board may have saved since; merging into a stale
  * copy is exactly how one editor's work disappears.
  */
-async function persistChain(
+export async function persistChain(
   ctx: ChainContext,
   chain: ChainPart[],
   /**
@@ -624,7 +624,7 @@ async function persistChain(
  * the person is mid-flow, and losing their tap because a clip could not be
  * materialised would be a worse trade than a late award.
  */
-async function syncChainClaim(
+export async function syncChainClaim(
   ctx: ChainContext,
   chain: ChainPart[],
   hasOpenQuestion: boolean,
@@ -762,7 +762,7 @@ function parseId(value: unknown): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-async function begin(req: any, res: any) {
+export async function begin(req: any, res: any) {
   const userId = await requireAccountUser(req);
   if (!userId) {
     unauthenticatedResponse(res, req, "Authenticated account required");

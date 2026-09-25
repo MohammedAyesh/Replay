@@ -285,6 +285,13 @@ export const claimMatchProgressTable = pgTable(
       .notNull()
       .$type<ClaimEarnedClip[]>()
       .default([]),
+    /**
+     * The whole-game claim's own state (/find/:id): every chunk's answers,
+     * out-of-play edits, taps and time, exactly as the page saves it. The
+     * identity row, bindings and off-pitch spans are derived from it on every
+     * save; this is what lets the claimant resume on any device.
+     */
+    gameState: jsonb("game_state").$type<Record<string, unknown>>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

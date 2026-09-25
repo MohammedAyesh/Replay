@@ -1090,7 +1090,7 @@ export default function MyClips() {
                 isLoading={matchMomentsLoading}
                 userClipsById={userClipsById}
                 onPlayClip={setActiveClip}
-                onOpenMatch={(recordingId) => setLocation(`/claim/${recordingId}`)}
+                onOpenMatch={(recordingId) => setLocation(`/find/${recordingId}`)}
               />
             </motion.div>
           )}
