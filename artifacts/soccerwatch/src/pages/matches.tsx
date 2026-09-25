@@ -66,6 +66,60 @@ export default function Matches() {
   return (
     <div dir={copy.locale === "ar" ? "rtl" : "ltr"} className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-2">
       <div className="flex min-h-full flex-col">
+      <section
+        aria-labelledby="join-match-by-code-title"
+        className="mb-4 rounded-2xl border border-line bg-surface p-4"
+      >
+        <h2 id="join-match-by-code-title" className="font-display text-lg font-bold">
+          {copy.joinByCodeTitle}
+        </h2>
+        <p className="mt-1 text-sm text-muted-text">{copy.joinByCodeDesc}</p>
+        <Form {...codeForm}>
+          <form onSubmit={onJoinByCode} className="mt-3 flex items-start gap-2">
+            <FormField
+              control={codeForm.control}
+              name="code"
+              rules={{
+                required: copy.matchCodeRequired,
+                validate: (value) =>
+                  /^[A-Z0-9]{6}$/.test(value.trim().toUpperCase()) || copy.matchCodeInvalid,
+              }}
+              render={({ field }) => (
+                <FormItem className="min-w-0 flex-1">
+                  <FormLabel>{copy.matchCode}</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      data-testid="input-match-code"
+                      dir="ltr"
+                      autoComplete="off"
+                      autoCapitalize="characters"
+                      maxLength={6}
+                      placeholder={copy.matchCodePlaceholder}
+                      onChange={(event) => {
+                        codeForm.clearErrors("code");
+                        field.onChange(event.target.value.replace(/[^a-z0-9]/gi, "").toUpperCase());
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage data-testid="status-match-code-error" />
+                </FormItem>
+              )}
+            />
+            <Button
+              type="submit"
+              className="mt-8 shrink-0"
+              disabled={isLoading || joinByCode.isPending || codeForm.formState.isSubmitting}
+              data-testid="button-join-match-by-code"
+            >
+              {joinByCode.isPending || codeForm.formState.isSubmitting
+                ? copy.joiningByCode
+                : copy.joinByCodeButton}
+            </Button>
+          </form>
+        </Form>
+      </section>
+
       {profile.data && (
         <Link href={`/players/${profile.data.id}`} className="mb-4 flex items-center gap-3 rounded-2xl border border-line bg-surface p-3">
           <PlayerAvatar name={profile.data.name} avatarUrl={profile.data.avatarUrl} size={48} />
