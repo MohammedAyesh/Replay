@@ -62,6 +62,7 @@ import type {
   Field,
   FieldRecording,
   FollowResult,
+  GetStreamingStatusParams,
   HealthStatus,
   ImpressionInput,
   LikeResult,
@@ -88,6 +89,9 @@ import type {
   ReplaceTrackingBundleBodyTwo,
   ResolveClaimMatchDisputeInput,
   ShareLinkResult,
+  StreamingStartInput,
+  StreamingStatus,
+  StreamingStopInput,
   TrackingBundle,
   TrackingBundleSummary,
   TrackingSegment,
@@ -126,6 +130,230 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetStreamingStatusUrl = (params?: GetStreamingStatusParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/streaming/status?${stringifiedParams}` : `/api/streaming/status`
+}
+
+/**
+ * @summary Get social streaming status for an authorized camera
+ */
+export const getStreamingStatus = async (params?: GetStreamingStatusParams, options?: RequestInit): Promise<StreamingStatus> => {
+
+  return customFetch<StreamingStatus>(getGetStreamingStatusUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStreamingStatusQueryKey = (params?: GetStreamingStatusParams,) => {
+    return [
+    `/api/streaming/status`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetStreamingStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStreamingStatus>>, TError = ErrorType<void>>(params?: GetStreamingStatusParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStreamingStatusQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStreamingStatus>>> = ({ signal }) => getStreamingStatus(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStreamingStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getStreamingStatus>>>
+export type GetStreamingStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get social streaming status for an authorized camera
+ */
+
+export function useGetStreamingStatus<TData = Awaited<ReturnType<typeof getStreamingStatus>>, TError = ErrorType<void>>(
+ params?: GetStreamingStatusParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStreamingStatusQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getStartStreamingUrl = () => {
+
+
+
+
+  return `/api/streaming/start`
+}
+
+/**
+ * @summary Start streaming to a social platform
+ */
+export const startStreaming = async (streamingStartInput: StreamingStartInput, options?: RequestInit): Promise<StreamingStatus> => {
+
+  return customFetch<StreamingStatus>(getStartStreamingUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(streamingStartInput)
+  }
+);}
+
+
+
+
+export const getStartStreamingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{data: BodyType<StreamingStartInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{data: BodyType<StreamingStartInput>}, TContext> => {
+
+const mutationKey = ['startStreaming'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startStreaming>>, {data: BodyType<StreamingStartInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  startStreaming(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartStreamingMutationResult = NonNullable<Awaited<ReturnType<typeof startStreaming>>>
+    export type StartStreamingMutationBody = BodyType<StreamingStartInput>
+    export type StartStreamingMutationError = ErrorType<void>
+
+    /**
+ * @summary Start streaming to a social platform
+ */
+export const useStartStreaming = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startStreaming>>, TError,{data: BodyType<StreamingStartInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startStreaming>>,
+        TError,
+        {data: BodyType<StreamingStartInput>},
+        TContext
+      > => {
+      return useMutation(getStartStreamingMutationOptions(options));
+    }
+
+export const getStopStreamingUrl = () => {
+
+
+
+
+  return `/api/streaming/stop`
+}
+
+/**
+ * @summary Stop social streaming for an authorized camera
+ */
+export const stopStreaming = async (streamingStopInput: StreamingStopInput, options?: RequestInit): Promise<StreamingStatus> => {
+
+  return customFetch<StreamingStatus>(getStopStreamingUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(streamingStopInput)
+  }
+);}
+
+
+
+
+export const getStopStreamingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{data: BodyType<StreamingStopInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{data: BodyType<StreamingStopInput>}, TContext> => {
+
+const mutationKey = ['stopStreaming'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stopStreaming>>, {data: BodyType<StreamingStopInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  stopStreaming(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StopStreamingMutationResult = NonNullable<Awaited<ReturnType<typeof stopStreaming>>>
+    export type StopStreamingMutationBody = BodyType<StreamingStopInput>
+    export type StopStreamingMutationError = ErrorType<void>
+
+    /**
+ * @summary Stop social streaming for an authorized camera
+ */
+export const useStopStreaming = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopStreaming>>, TError,{data: BodyType<StreamingStopInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof stopStreaming>>,
+        TError,
+        {data: BodyType<StreamingStopInput>},
+        TContext
+      > => {
+      return useMutation(getStopStreamingMutationOptions(options));
+    }
 
 export const getHealthCheckUrl = () => {
 

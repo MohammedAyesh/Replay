@@ -31,6 +31,7 @@ import camerasRouter from "./cameras";
 import ownerRouter from "./owner";
 import matchRoomsRouter from "./matchRooms";
 import matchLiveRouter from "./matchLive";
+import streamingRouter from "./streaming";
 
 const router: IRouter = Router();
 
@@ -66,5 +67,6 @@ router.use(camerasRouter);
 router.use(ownerRouter);
 router.use(matchRoomsRouter);
 router.use(matchLiveRouter);
+router.use(streamingRouter);
 
 export default router;

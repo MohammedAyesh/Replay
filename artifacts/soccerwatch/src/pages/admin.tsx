@@ -13,6 +13,7 @@ import {
 import Hls from "hls.js";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import AdminVarTab from "@/components/admin/AdminVarTab";
+import { StreamingPanel } from "@/components/StreamingPanel";
 import StatPaymentsTab from "@/components/admin/StatPaymentsTab";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
@@ -3699,6 +3700,8 @@ function CameraCard({
             <p className="text-muted-text text-[11px]">Checking Auto-pan status…</p>
           )}
         </div>
+
+        <StreamingPanel target={{ kind: "admin", camera }} preferenceKey={camera} />
 
         {!loading && isLive && (
           <div className="flex items-center gap-1.5 text-xs text-muted-text">

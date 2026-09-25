@@ -38,6 +38,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Radio,
   RotateCcw,
   ShieldCheck,
   Sparkles,
@@ -46,6 +47,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { HlsPlayer } from "@/components/HlsPlayer";
+import { StreamingPanel } from "@/components/StreamingPanel";
 import { VarPlayer } from "@/components/var-player/VarPlayer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -293,7 +295,7 @@ export default function Owner() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"request" | "footage" | "billing">(() =>
+  const [tab, setTab] = useState<"request" | "footage" | "billing" | "streaming">(() =>
     // Bookings first: new recordings are booked on /book, so this page opens on what's already booked.
     ({ request: "request", billing: "billing" } as const)[new URLSearchParams(window.location.search).get("tab") ?? ""] ?? "footage",
   );
@@ -669,11 +671,12 @@ export default function Owner() {
         <Plus className="h-4 w-4" aria-hidden="true" />
         {locale === "ar" ? "احجز تسجيل لماتش جاي" : "Book a recording for an upcoming match"}
       </button>
-      <nav className="mt-4 grid grid-cols-3 gap-1 rounded-2xl border border-line bg-surface p-1" aria-label={copy.title} data-testid="owner-tabs">
+      <nav className="mt-4 grid grid-cols-4 gap-1 rounded-2xl border border-line bg-surface p-1" aria-label={copy.title} data-testid="owner-tabs">
         {([
           ["footage", copy.myFootage, Film],
           ["request", copy.pastFootage, Plus],
           ["billing", copy.billing, WalletCards],
+          ["streaming", locale === "ar" ? "البث" : "Stream", Radio],
         ] as const).map(([value, label, Icon]) => (
           <button
             key={value}
@@ -689,6 +692,13 @@ export default function Owner() {
         ))}
       </nav>
 
+      {tab === "streaming" && selectedField && (
+        <StreamingPanel
+          key={selectedField.cameraId}
+          target={{ kind: "owner", fieldId }}
+          preferenceKey={selectedField.cameraId}
+        />
+      )}
       {tab === "request" && (
         <RequestPanel
           copy={copy}

@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, Bookmark, User as UserIcon, LayoutGrid, CalendarDays } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, LayoutGrid, CalendarDays, School } from "lucide-react";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
@@ -91,6 +91,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
             icon={<LayoutGrid className="w-6 h-6" />}
             label={t.nav.view}
             isActive={location === "/view"}
+            isTranslucent={useTranslucentBar}
+          />
+          <NavItem
+            href="/academies"
+            icon={<School className="w-6 h-6" />}
+            label={t.nav.academies}
+            isActive={location === "/academies"}
             isTranslucent={useTranslucentBar}
           />
           <NavItem

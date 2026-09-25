@@ -21,6 +21,7 @@ import {
   Users,
 } from "lucide-react";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
+import { StreamingPanel } from "@/components/StreamingPanel";
 import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import {
@@ -218,6 +219,11 @@ export default function MatchPage() {
         </div>
       )}
       <Hero room={room} copy={copy} now={now} colors={colors} names={names} onShare={onShare} />
+      {realRoom?.phase === "live" && (realRoom.isOwner || realRoom.isCaptain) && (
+        <div className="px-4 pt-3">
+          <StreamingPanel target={{ kind: "match", matchCode: realRoom.code }} preferenceKey={`match-${realRoom.code}`} />
+        </div>
+      )}
       <div className="px-4">
         <RsvpCard room={room} copy={copy} onRsvp={onRsvp} busy={join.isPending} signedIn={Boolean(user) && !isGuest} />
       </div>

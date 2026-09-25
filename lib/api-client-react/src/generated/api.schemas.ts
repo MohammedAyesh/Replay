@@ -5,6 +5,59 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+export type StreamingStatusState = typeof StreamingStatusState[keyof typeof StreamingStatusState];
+
+
+export const StreamingStatusState = {
+  offline: 'offline',
+  starting: 'starting',
+  live: 'live',
+  stopping: 'stopping',
+  failed: 'failed',
+  unknown: 'unknown',
+} as const;
+
+export interface StreamingStatus {
+  state: StreamingStatusState;
+  live: boolean;
+  /** @nullable */
+  platform: string | null;
+  /** @nullable */
+  message: string | null;
+}
+
+export type StreamingStartInputPlatform = typeof StreamingStartInputPlatform[keyof typeof StreamingStartInputPlatform];
+
+
+export const StreamingStartInputPlatform = {
+  youtube: 'youtube',
+  facebook: 'facebook',
+  twitch: 'twitch',
+} as const;
+
+export interface StreamingStartInput {
+  camera?: string;
+  /** @minimum 1 */
+  fieldId?: number;
+  /** @minLength 1 */
+  matchCode?: string;
+  platform: StreamingStartInputPlatform;
+  /**
+     * Secret stream key, accepted only for this start request and never persisted.
+     * @minLength 1
+     * @maxLength 1024
+     */
+  streamKey: string;
+}
+
+export interface StreamingStopInput {
+  camera?: string;
+  /** @minimum 1 */
+  fieldId?: number;
+  /** @minLength 1 */
+  matchCode?: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -1681,6 +1734,12 @@ export type ClaimMatchDisputesResponse = ClaimMatchDispute[];
 export interface ResolveClaimMatchDisputeInput {
   winnerUserId: number;
 }
+
+export type GetStreamingStatusParams = {
+camera?: string;
+fieldId?: number;
+matchCode?: string;
+};
 
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */

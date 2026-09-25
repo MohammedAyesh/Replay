@@ -9,6 +9,69 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary Get social streaming status for an authorized camera
+ */
+export const GetStreamingStatusQueryParams = zod.object({
+  "camera": zod.coerce.string().optional(),
+  "fieldId": zod.coerce.number().optional(),
+  "matchCode": zod.coerce.string().optional()
+})
+
+export const GetStreamingStatusResponse = zod.object({
+  "state": zod.enum(['offline', 'starting', 'live', 'stopping', 'failed', 'unknown']),
+  "live": zod.boolean(),
+  "platform": zod.string().nullable(),
+  "message": zod.string().nullable()
+})
+
+
+/**
+ * @summary Start streaming to a social platform
+ */
+
+
+export const startStreamingBodyStreamKeyMax = 1024;
+
+
+
+export const StartStreamingBody = zod.object({
+  "camera": zod.string().optional(),
+  "fieldId": zod.number().min(1).optional(),
+  "matchCode": zod.string().min(1).optional(),
+  "platform": zod.enum(['youtube', 'facebook', 'twitch']),
+  "streamKey": zod.string().min(1).max(startStreamingBodyStreamKeyMax).describe('Secret stream key, accepted only for this start request and never persisted.')
+})
+
+export const StartStreamingResponse = zod.object({
+  "state": zod.enum(['offline', 'starting', 'live', 'stopping', 'failed', 'unknown']),
+  "live": zod.boolean(),
+  "platform": zod.string().nullable(),
+  "message": zod.string().nullable()
+})
+
+
+/**
+ * @summary Stop social streaming for an authorized camera
+ */
+
+
+
+
+export const StopStreamingBody = zod.object({
+  "camera": zod.string().optional(),
+  "fieldId": zod.number().min(1).optional(),
+  "matchCode": zod.string().min(1).optional()
+})
+
+export const StopStreamingResponse = zod.object({
+  "state": zod.enum(['offline', 'starting', 'live', 'stopping', 'failed', 'unknown']),
+  "live": zod.boolean(),
+  "platform": zod.string().nullable(),
+  "message": zod.string().nullable()
+})
+
+
+/**
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({

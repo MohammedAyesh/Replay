@@ -37,8 +37,119 @@ tags:
     description: Claim Your Match tracking and player identity
   - name: owner
     description: Field owner footage console
+  - name: streaming
+    description: Social stream controls
 
 paths:
+  /streaming/status:
+    get:
+      operationId: getStreamingStatus
+      tags: [streaming]
+      summary: Get social streaming status for an authorized camera
+      security:
+        - clerkSession: []
+      parameters:
+        - name: camera
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: fieldId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: matchCode
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sanitized streaming status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamingStatus"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Camera access denied
+        "404":
+          description: Camera or match not found
+        "503":
+          description: Control server is not configured
+        "502":
+          description: Control server unavailable
+  /streaming/start:
+    post:
+      operationId: startStreaming
+      tags: [streaming]
+      summary: Start streaming to a social platform
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StreamingStartInput"
+      responses:
+        "200":
+          description: Stream started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamingStatus"
+        "400":
+          description: Invalid streaming request
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Camera access denied
+        "404":
+          description: Camera or match not found
+        "409":
+          description: Stream could not be started
+        "503":
+          description: Control server is not configured
+        "502":
+          description: Control server unavailable
+  /streaming/stop:
+    post:
+      operationId: stopStreaming
+      tags: [streaming]
+      summary: Stop social streaming for an authorized camera
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StreamingStopInput"
+      responses:
+        "200":
+          description: Stream stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamingStatus"
+        "400":
+          description: Invalid streaming request
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Camera access denied
+        "404":
+          description: Camera or match not found
+        "409":
+          description: Stream could not be stopped
+        "503":
+          description: Control server is not configured
+        "502":
+          description: Control server unavailable
+
   /healthz:
     get:
       operationId: healthCheck
@@ -2217,6 +2328,51 @@ paths:
 
 components:
   schemas:
+    StreamingStatus:
+      type: object
+      required: [state, live, platform, message]
+      properties:
+        state:
+          type: string
+          enum: [offline, starting, live, stopping, failed, unknown]
+        live:
+          type: boolean
+        platform:
+          type: ["string", "null"]
+        message:
+          type: ["string", "null"]
+    StreamingStartInput:
+      type: object
+      required: [platform, streamKey]
+      properties:
+        camera:
+          type: string
+        fieldId:
+          type: integer
+          minimum: 1
+        matchCode:
+          type: string
+          minLength: 1
+        platform:
+          type: string
+          enum: [youtube, facebook, twitch]
+        streamKey:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Secret stream key, accepted only for this start request and never persisted.
+    StreamingStopInput:
+      type: object
+      properties:
+        camera:
+          type: string
+        fieldId:
+          type: integer
+          minimum: 1
+        matchCode:
+          type: string
+          minLength: 1
+
     HealthStatus:
       type: object
       properties:
