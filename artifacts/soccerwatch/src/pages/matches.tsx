@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { CalendarDays, Crown, Loader2, Trophy } from "lucide-react";
+import { useForm } from "react-hook-form";
 import { MatchCard } from "@/components/match/MatchCard";
 import { PlayerAvatar } from "@/components/match/bits";
+import { Button } from "@/components/ui/button";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { useAuth } from "@/lib/auth";
-import { useMyMatches, useReplayProfile, type MyMatchItem } from "@/lib/match-api";
+import { useJoinMatch, useMyMatches, useReplayProfile, type MyMatchItem } from "@/lib/match-api";
+
+type MatchCodeFormValues = { code: string };
 
 function useNow(tick = 30_000) {
   const [now, setNow] = useState(Date.now());
@@ -24,10 +30,35 @@ export default function Matches() {
   const matches = useMyMatches(signedIn);
   const profile = useReplayProfile(signedIn ? user?.id : null);
   const now = useNow();
+  const codeForm = useForm<MatchCodeFormValues>({ defaultValues: { code: "" } });
+  const codeValue = codeForm.watch("code");
+  const joinByCode = useJoinMatch(codeValue.trim().toUpperCase());
 
   useEffect(() => {
     if (!isLoading && !user) setLocation(`/sign-in?redirect_url=${encodeURIComponent("/matches")}`);
   }, [isLoading, setLocation, user]);
+
+  const onJoinByCode = codeForm.handleSubmit(async ({ code }) => {
+    const matchCode = code.trim().toUpperCase();
+    codeForm.clearErrors("code");
+
+    // Guests can open the room first; its existing RSVP flow will sign them
+    // in and resume the join. Signed-in players join immediately.
+    if (!signedIn) {
+      setLocation(`/m/${matchCode}`);
+      return;
+    }
+
+    try {
+      await joinByCode.mutateAsync({ rsvp: "in" });
+      setLocation(`/m/${matchCode}`);
+    } catch (error) {
+      codeForm.setError("code", {
+        type: "server",
+        message: error instanceof Error ? error.message : copy.error,
+      });
+    }
+  });
 
   const data = matches.data;
   const empty = data && !data.live.length && !data.upcoming.length && !data.recent.length && !data.invites.length;
