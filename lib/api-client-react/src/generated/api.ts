@@ -21,6 +21,7 @@ import type {
 
 import type {
   AcademySummary,
+  AccountDeletionError,
   AccountDeletionResponse,
   AccountStats,
   Ad,
@@ -2136,7 +2137,7 @@ export const deleteAccount = async ( options?: RequestInit): Promise<AccountDele
 
 
 
-export const getDeleteAccountMutationOptions = <TError = ErrorType<void>,
+export const getDeleteAccountMutationOptions = <TError = ErrorType<AccountDeletionError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAccount>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteAccount>>, TError,void, TContext> => {
 
@@ -2165,12 +2166,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteAccountMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAccount>>>
 
-    export type DeleteAccountMutationError = ErrorType<void>
+    export type DeleteAccountMutationError = ErrorType<AccountDeletionError>
 
     /**
  * @summary Delete the authenticated player's account and associated personal data
  */
-export const useDeleteAccount = <TError = ErrorType<void>,
+export const useDeleteAccount = <TError = ErrorType<AccountDeletionError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAccount>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof deleteAccount>>,
@@ -6828,7 +6829,7 @@ export const deleteAdminUser = async (id: number, options?: RequestInit): Promis
 
 
 
-export const getDeleteAdminUserMutationOptions = <TError = ErrorType<void>,
+export const getDeleteAdminUserMutationOptions = <TError = ErrorType<AccountDeletionError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminUser>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteAdminUser>>, TError,{id: number}, TContext> => {
 
@@ -6857,12 +6858,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteAdminUserMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAdminUser>>>
 
-    export type DeleteAdminUserMutationError = ErrorType<void>
+    export type DeleteAdminUserMutationError = ErrorType<AccountDeletionError>
 
     /**
  * @summary Delete a user account as an administrator
  */
-export const useDeleteAdminUser = <TError = ErrorType<void>,
+export const useDeleteAdminUser = <TError = ErrorType<AccountDeletionError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminUser>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof deleteAdminUser>>,

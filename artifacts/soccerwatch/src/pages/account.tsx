@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useLocation } from "wouter";
-import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdateProfile, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
+import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,6 +15,16 @@ import { Camera, Loader2 } from "lucide-react";
 import { useAvatarUpload, useReplayProfile } from "@/lib/match-api";
 import { useSupportContact, supportMailto } from "@/lib/client-settings";
 import { useLegalCopy } from "@/i18n/legal-strings";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { isDeleteConfirmation, deletionErrorMessage } from "@/lib/account-deletion";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -48,8 +58,40 @@ export default function Account() {
 
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
   const [isEditOpen, setIsEditOpen] = React.useState(false);
+  const [isDeleteAccountOpen, setIsDeleteAccountOpen] = React.useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = React.useState("");
 
   const updateProfile = useUpdateProfile();
+  const deleteAccount = useDeleteAccount();
+
+  const confirmAccountDeletion = () => {
+    if (!isDeleteConfirmation(deleteConfirmation) || deleteAccount.isPending) return;
+    deleteAccount.mutate(undefined, {
+      onSuccess: async () => {
+        queryClient.clear();
+        try {
+          sessionStorage.setItem("replay_account_deleted", "1");
+        } catch {
+          // Continue to the landing page if browser storage is unavailable.
+        }
+        try {
+          await signOut();
+        } catch {
+          // The identity may already be unavailable after successful deletion.
+        }
+        window.location.replace(`${basePath}/`);
+      },
+      onError: (error) => {
+        const data = (error as { data?: { reason?: unknown } } | null)?.data;
+        const reason = typeof data?.reason === "string" ? data.reason : undefined;
+        toast({
+          variant: "destructive",
+          title: legal.accountDeletion.errorTitle,
+          description: deletionErrorMessage(reason, locale),
+        });
+      },
+    });
+  };
 
   const handleLogout = () => {
     setIsLoggingOut(true);
@@ -316,8 +358,79 @@ export default function Account() {
               ? (isGuest ? "Redirecting..." : "Signing out...")
               : (isGuest ? t.account.signInRegister : t.account.signOut)}
           </Button>
+          {!isGuest && (
+            <div className="mt-2 text-center">
+              <button
+                type="button"
+                onClick={() => setIsDeleteAccountOpen(true)}
+                className="min-h-11 rounded-xl px-4 text-sm font-semibold text-[#FF5A3C] transition-colors hover:bg-[#FF5A3C]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A3C] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              >
+                {legal.accountDeletion.button}
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      <AlertDialog
+        open={isDeleteAccountOpen}
+        onOpenChange={(open) => {
+          setIsDeleteAccountOpen(open);
+          if (!open) setDeleteConfirmation("");
+        }}
+      >
+        <AlertDialogContent dir={locale === "ar" ? "rtl" : "ltr"} className="max-h-[90dvh] overflow-y-auto border-line bg-surface text-text">
+          <AlertDialogHeader className="text-start">
+            <AlertDialogTitle>{legal.accountDeletion.dialogTitle}</AlertDialogTitle>
+            <AlertDialogDescription className="text-start text-muted-text">
+              {legal.accountDeletion.warning}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <section className="space-y-2 text-sm">
+            <h3 className="font-semibold">{legal.accountDeletion.deletedHeading}</h3>
+            <ul className="list-disc space-y-1 ps-6 text-muted-text">
+              {legal.accountDeletion.deletedItems.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </section>
+          <section className="space-y-2 text-sm">
+            <h3 className="font-semibold">{legal.accountDeletion.retainedHeading}</h3>
+            <ul className="list-disc space-y-1 ps-6 text-muted-text">
+              {legal.accountDeletion.retainedItems.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </section>
+          <div className="space-y-2">
+            <Label htmlFor="delete-account-confirmation">
+              {legal.accountDeletion.confirmLabel}
+            </Label>
+            <Input
+              id="delete-account-confirmation"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              value={deleteConfirmation}
+              placeholder={legal.accountDeletion.confirmPlaceholder}
+              onChange={(event) => setDeleteConfirmation(event.target.value)}
+              className="min-h-11 text-start"
+            />
+            <p className="text-xs text-muted-text">{legal.accountDeletion.confirmInstruction}</p>
+          </div>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel disabled={deleteAccount.isPending} className="min-h-11">
+              {legal.accountDeletion.cancel}
+            </AlertDialogCancel>
+            <button
+              type="button"
+              disabled={!isDeleteConfirmation(deleteConfirmation) || deleteAccount.isPending}
+              onClick={confirmAccountDeletion}
+              className="inline-flex min-h-11 items-center justify-center rounded-md bg-[#FF5A3C] px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {deleteAccount.isPending
+                ? legal.accountDeletion.deleting
+                : legal.accountDeletion.confirmButton}
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit Profile Dialog */}
       {isEditOpen && displayUser && !isGuest && (

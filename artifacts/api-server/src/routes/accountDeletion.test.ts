@@ -1,17 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
-import { eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import {
   db,
   clipsTable,
   footageCancellationRequestsTable,
   footagePaymentsTable,
   footageRequestsTable,
+  fieldOwnersTable,
   fieldsTable,
   likesTable,
   recordingsTable,
   statUnlocksTable,
+  settingsRulesTable,
   userClipsTable,
   usersTable,
   varMarksTable,
@@ -31,13 +33,17 @@ vi.mock("../lib/bunny", async (importOriginal) => {
   return {
     ...actual,
     deleteBunnyClipAssets: vi.fn().mockResolvedValue(undefined),
+    deleteBunnyStoragePath: vi.fn().mockResolvedValue(undefined),
   };
 });
 
-import { deleteBunnyClipAssets } from "../lib/bunny";
+import { deleteBunnyClipAssets, deleteBunnyStoragePath } from "../lib/bunny";
 import { deleteClerkUserAccount, getLocalAccountUserId, getLocalUserId } from "../lib/clerkUserBridge";
+import * as accountDeletionModule from "../lib/accountDeletion";
+import { accountDeletionHttpResponse, isLastActiveAdmin } from "../lib/accountDeletion";
 
 const mockedDeleteBunnyAssets = vi.mocked(deleteBunnyClipAssets);
+const mockedDeleteBunnyStoragePath = vi.mocked(deleteBunnyStoragePath);
 const mockedDeleteClerkUser = vi.mocked(deleteClerkUserAccount);
 const mockedGetLocalAccountUserId = vi.mocked(getLocalAccountUserId);
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
@@ -56,7 +62,7 @@ const recordingIds: number[] = [];
 const legacyClipIds: number[] = [];
 const unlockReferences: string[] = [];
 
-async function createTarget(label: string) {
+async function createTarget(label: string, options: { isAdmin?: boolean } = {}) {
   sequence += 1;
   const clerkId = `clerk_${TAG}_${sequence}`;
   const [user] = await db.insert(usersTable).values({
@@ -64,6 +70,7 @@ async function createTarget(label: string) {
     email: `${label.toLowerCase()}-${TAG}-${sequence}@test.local`,
     clerkId,
     isGuest: false,
+    isAdmin: options.isAdmin ?? false,
   }).returning({ id: usersTable.id });
   targetIds.push(user.id);
   return { id: user.id, clerkId };
@@ -129,6 +136,10 @@ async function cleanupPreviousTestRuns(): Promise<void> {
     }
     await db.delete(statUnlocksTable).where(like(statUnlocksTable.reference, `${tag}-unlock-%`));
     if (priorUserIds.length > 0) {
+      await db.delete(settingsRulesTable).where(and(
+        eq(settingsRulesTable.scopeType, "user"),
+        inArray(settingsRulesTable.scopeId, priorUserIds),
+      ));
       await db.delete(usersTable).where(inArray(usersTable.id, priorUserIds));
     }
     if (priorFields.length > 0) {
@@ -184,9 +195,12 @@ beforeAll(async () => {
 
 beforeEach(() => {
   mockedDeleteBunnyAssets.mockReset().mockResolvedValue(undefined);
+  mockedDeleteBunnyStoragePath.mockReset().mockResolvedValue(undefined);
   mockedDeleteClerkUser.mockReset().mockResolvedValue(undefined);
   mockedGetLocalAccountUserId.mockReset().mockResolvedValue(null);
-  mockedGetLocalUserId.mockReset().mockResolvedValue(adminId);
+  mockedGetLocalUserId.mockReset().mockImplementation(async (req?: any) =>
+    Number(req?.headers?.["x-test-admin-id"]) || adminId,
+  );
 });
 
 afterAll(async () => {
@@ -207,6 +221,10 @@ afterAll(async () => {
   }
   if (targetIds.length > 0) {
     await db.delete(likesTable).where(inArray(likesTable.userId, targetIds));
+    await db.delete(settingsRulesTable).where(and(
+      eq(settingsRulesTable.scopeType, "user"),
+      inArray(settingsRulesTable.scopeId, targetIds),
+    ));
     await db.delete(usersTable).where(inArray(usersTable.id, targetIds));
   }
   if (recordingIds.length > 0) {
@@ -223,6 +241,14 @@ describe("account deletion", () => {
   it("deletes the account and clips while preserving historical records under Deleted player", async () => {
     const target = await createTarget("self-delete");
     mockedGetLocalAccountUserId.mockResolvedValue(target.id);
+    const avatarPath = `avatars/u${target.id}-fixture.jpg`;
+    await db.update(usersTable).set({ avatarPath }).where(eq(usersTable.id, target.id));
+    await db.insert(settingsRulesTable).values({
+      key: `${TAG}.delete-user-rule`,
+      value: true,
+      scopeType: "user",
+      scopeId: target.id,
+    });
     const requestId = await createFootageRequest(target.id, "ready", "history");
 
     await db.insert(footageCancellationRequestsTable).values({
@@ -292,7 +318,12 @@ describe("account deletion", () => {
 
     expect(mockedDeleteClerkUser).toHaveBeenCalledWith(target.clerkId);
     expect(mockedDeleteBunnyAssets).toHaveBeenCalledWith(ownedClip.id, posterPath);
+    expect(mockedDeleteBunnyStoragePath).toHaveBeenCalledWith(avatarPath);
     expect(await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, target.id))).toHaveLength(0);
+    expect(await db.select().from(settingsRulesTable).where(and(
+      eq(settingsRulesTable.scopeType, "user"),
+      eq(settingsRulesTable.scopeId, target.id),
+    ))).toHaveLength(0);
 
     const [updatedSurvivingClip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, survivingClip.id));
     expect(updatedSurvivingClip.likeCount).toBe(0);
@@ -333,6 +364,20 @@ describe("account deletion", () => {
     expect(await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, target.id))).toHaveLength(0);
   });
 
+  it("keeps administrator self-deletion blocked with a machine-readable reason", async () => {
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+
+    const response = await request(app).delete(`/api/admin/users/${adminId}`).expect(409);
+
+    expect(response.body.reason).toBe("self_delete");
+    expect(mockedDeleteClerkUser).not.toHaveBeenCalled();
+  });
+
+  it("does not include the retained placeholder in the admin users list", async () => {
+    const response = await request(app).get("/api/admin/users").expect(200);
+    expect(response.body.some((user: { email: string }) => user.email === DELETED_PLAYER_EMAIL)).toBe(false);
+  });
+
   it("blocks deletion before Clerk when active owner footage requests exist", async () => {
     const target = await createTarget("active-footage");
     mockedGetLocalAccountUserId.mockResolvedValue(target.id);
@@ -341,9 +386,24 @@ describe("account deletion", () => {
     const response = await request(app).delete("/api/account").expect(409);
 
     expect(response.body.activeFootageRequests).toBe(1);
+    expect(response.body.reason).toBe("upcoming_booking");
     expect(mockedDeleteClerkUser).not.toHaveBeenCalled();
     const [stillPresent] = await db.select().from(usersTable).where(eq(usersTable.id, target.id));
     expect(stillPresent.isDisabled).toBe(false);
+  });
+
+  it("maps the last-admin guard to a reasoned 409 on the administrator route", async () => {
+    const target = await createTarget("last-admin-route");
+    const guardSpy = vi.spyOn(accountDeletionModule, "deleteUserAccount")
+      .mockResolvedValueOnce({ status: "last_admin" });
+
+    try {
+      const response = await request(app).delete(`/api/admin/users/${target.id}`).expect(409);
+      expect(response.body.reason).toBe("last_admin");
+      expect(guardSpy).toHaveBeenCalledWith(target.id, { actor: "admin" });
+    } finally {
+      guardSpy.mockRestore();
+    }
   });
 
   it("makes no local changes when Clerk deletion fails", async () => {
@@ -359,11 +419,69 @@ describe("account deletion", () => {
     }).returning({ id: userClipsTable.id });
     userClipIds.push(clip.id);
 
-    await request(app).delete("/api/account").expect(502);
+    const response = await request(app).delete("/api/account").expect(502);
+    expect(response.body.reason).toBe("clerk_failed");
 
     const [stillPresent] = await db.select().from(usersTable).where(eq(usersTable.id, target.id));
     expect(stillPresent.isDisabled).toBe(false);
     expect(await db.select().from(userClipsTable).where(eq(userClipsTable.id, clip.id))).toHaveLength(1);
+  });
+
+  it("blocks self-deletion by an administrator before calling Clerk", async () => {
+    mockedGetLocalAccountUserId.mockResolvedValue(adminId);
+
+    const response = await request(app).delete("/api/account").expect(403);
+
+    expect(response.body.reason).toBe("admin");
+    expect(mockedDeleteClerkUser).not.toHaveBeenCalled();
+    expect(await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, adminId))).toHaveLength(1);
+  });
+
+  it("blocks self-deletion by a field owner before calling Clerk", async () => {
+    const target = await createTarget("field-owner");
+    mockedGetLocalAccountUserId.mockResolvedValue(target.id);
+    await db.insert(fieldOwnersTable).values({ userId: target.id, fieldId });
+
+    const response = await request(app).delete("/api/account").expect(409);
+
+    expect(response.body.reason).toBe("field_owner");
+    expect(mockedDeleteClerkUser).not.toHaveBeenCalled();
+    expect(await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, target.id))).toHaveLength(1);
+  });
+
+  it("treats awaiting-payment footage as an active deletion blocker", async () => {
+    const target = await createTarget("awaiting-payment");
+    mockedGetLocalAccountUserId.mockResolvedValue(target.id);
+    await createFootageRequest(target.id, "awaiting_payment", "payment");
+
+    const response = await request(app).delete("/api/account").expect(409);
+
+    expect(response.body.reason).toBe("upcoming_booking");
+    expect(mockedDeleteClerkUser).not.toHaveBeenCalled();
+  });
+
+  it("limits self-deletion to three attempts per user per hour", async () => {
+    const target = await createTarget("rate-limited");
+    mockedGetLocalAccountUserId.mockResolvedValue(target.id);
+    mockedDeleteClerkUser.mockRejectedValue(new Error("Clerk unavailable"));
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await request(app).delete("/api/account").expect(502);
+      expect(response.body.reason).toBe("clerk_failed");
+    }
+    const limitedResponse = await request(app).delete("/api/account").expect(429);
+
+    expect(limitedResponse.body.reason).toBe("rate_limited");
+    expect(mockedDeleteClerkUser).toHaveBeenCalledTimes(3);
+  });
+
+  it("blocks deletion of the last active administrator with a reasoned 409 response", () => {
+    expect(isLastActiveAdmin(1)).toBe(true);
+    expect(isLastActiveAdmin(2)).toBe(false);
+    expect(accountDeletionHttpResponse({ status: "last_admin" })).toMatchObject({
+      statusCode: 409,
+      body: { reason: "last_admin" },
+    });
   });
 
   it("disables the local account if the database transaction fails", async () => {
@@ -372,7 +490,8 @@ describe("account deletion", () => {
     const transactionSpy = vi.spyOn(db, "transaction").mockRejectedValueOnce(new Error("Forced transaction failure"));
 
     try {
-      await request(app).delete("/api/account").expect(500);
+      const response = await request(app).delete("/api/account").expect(500);
+      expect(response.body.reason).toBe("data_failed");
     } finally {
       transactionSpy.mockRestore();
     }
@@ -384,7 +503,8 @@ describe("account deletion", () => {
 
   it("rejects guest or unauthenticated self-service deletion", async () => {
     mockedGetLocalAccountUserId.mockResolvedValue(null);
-    await request(app).delete("/api/account").expect(401);
+    const response = await request(app).delete("/api/account").expect(401);
+    expect(response.body.reason).toBe("unauthenticated");
     expect(mockedDeleteClerkUser).not.toHaveBeenCalled();
   });
 });

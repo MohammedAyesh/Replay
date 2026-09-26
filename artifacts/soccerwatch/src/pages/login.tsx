@@ -15,6 +15,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/react";
 import heroImage from "@/assets/hero-floodlit-pitch.png";
 import { useSupportContact, supportMailto } from "@/lib/client-settings";
+import { useLegalCopy } from "@/i18n/legal-strings";
 
 // ─── bilingual copy ────────────────────────────────────────────────────────────
 
@@ -255,9 +256,23 @@ const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const legal = useLegalCopy();
   const { t, locale, setLocale } = useTranslation();
   const { supportEmail } = useSupportContact();
   const supportHref = supportMailto(supportEmail);
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("replay_account_deleted") !== "1") return;
+      sessionStorage.removeItem("replay_account_deleted");
+      toast({
+        title: legal.accountDeletion.successTitle,
+        description: legal.accountDeletion.successDescription,
+      });
+    } catch {
+      // Storage may be unavailable in restricted browser contexts.
+    }
+  }, [legal.accountDeletion.successDescription, legal.accountDeletion.successTitle, toast]);
   const guestMutation = useLoginAsGuest();
   const queryClient = useQueryClient();
   const { signOut } = useClerk();

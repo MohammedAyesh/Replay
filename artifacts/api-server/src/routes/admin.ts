@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, count, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, count, and, desc, sql, inArray, ne } from "drizzle-orm";
 import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable } from "@workspace/db";
 import {
   UpdateAdParams,
@@ -30,7 +30,7 @@ import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type Banne
 import { logger } from "../lib/logger";
 import { isLiveVideoId } from "./userClips";
 import multer from "multer";
-import { accountDeletionHttpResponse, deleteUserAccount } from "../lib/accountDeletion";
+import { accountDeletionHttpResponse, deleteUserAccount, DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
 
 const router: IRouter = Router();
 
@@ -386,7 +386,7 @@ router.get("/admin/users", async (req, res): Promise<void> => {
   const users = await db
     .select()
     .from(usersTable)
-    .where(eq(usersTable.isGuest, false))
+    .where(and(eq(usersTable.isGuest, false), ne(usersTable.email, DELETED_PLAYER_EMAIL)))
     .orderBy(desc(usersTable.createdAt));
 
   res.json(users.map((u) => ({
@@ -414,7 +414,9 @@ router.get("/admin/access", async (req, res): Promise<void> => {
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
 
   const [users, fields, assignments] = await Promise.all([
-    db.select().from(usersTable).where(eq(usersTable.isGuest, false)).orderBy(desc(usersTable.createdAt)),
+    db.select().from(usersTable)
+      .where(and(eq(usersTable.isGuest, false), ne(usersTable.email, DELETED_PLAYER_EMAIL)))
+      .orderBy(desc(usersTable.createdAt)),
     db.select({ id: fieldsTable.id, name: fieldsTable.name }).from(fieldsTable).orderBy(fieldsTable.name),
     db
       .select({
@@ -576,16 +578,24 @@ router.patch("/admin/users/:id", async (req, res): Promise<void> => {
 });
 
 router.delete("/admin/users/:id", async (req, res): Promise<void> => {
-  const adminId = await requireAdmin(req);
-  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  try {
+    const adminId = await requireAdmin(req);
+    if (!adminId) { res.status(403).json({ error: "Forbidden", reason: "forbidden" }); return; }
 
-  const id = parseInt(req.params.id as string, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id", reason: "invalid_id" }); return; }
 
-  if (id === adminId) { res.status(409).json({ error: "Cannot delete yourself" }); return; }
+    if (id === adminId) {
+      res.status(409).json({ error: "Cannot delete yourself", reason: "self_delete" });
+      return;
+    }
 
-  const response = accountDeletionHttpResponse(await deleteUserAccount(id));
-  res.status(response.statusCode).json(response.body);
+    const response = accountDeletionHttpResponse(await deleteUserAccount(id, { actor: "admin" }));
+    res.status(response.statusCode).json(response.body);
+  } catch (error) {
+    logger.error({ err: error }, "Unexpected administrator account deletion failure");
+    res.status(500).json({ error: "Could not complete account deletion.", reason: "data_failed" });
+  }
 });
 
 // ─── Admin: Fields ────────────────────────────────────────────────────────────

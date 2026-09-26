@@ -39,6 +39,7 @@ import MatchPage from "@/pages/match";
 import Matches from "@/pages/matches";
 import BookPage from "@/pages/book";
 import { LegalPage } from "@/pages/legal";
+import DeleteAccountPage from "@/pages/delete-account";
 import { useAuth } from "@/lib/auth";
 import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from "@/lib/auth-redirect";
 import { isPublicStandalonePath } from "@/lib/public-paths";
@@ -496,6 +497,7 @@ function AppRouter() {
         <Route path="/book" component={BookPage} />
         <Route path="/privacy"><LegalPage doc="privacy" /></Route>
         <Route path="/terms"><LegalPage doc="terms" /></Route>
+        <Route path="/delete-account" component={DeleteAccountPage} />
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />

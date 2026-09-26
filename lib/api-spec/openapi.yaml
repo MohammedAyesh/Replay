@@ -745,14 +745,46 @@ paths:
                 $ref: "#/components/schemas/AccountDeletionResponse"
         "401":
           description: An authenticated non-guest account is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
+        "403":
+          description: Self-service deletion is not available for administrators
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "404":
           description: Account not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "409":
-          description: Account has active footage requests
+          description: Account has active footage requests or is a field owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
+        "429":
+          description: Self-service deletion attempt limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "500":
           description: Local account cleanup failed; the local account was disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "502":
           description: Identity provider deletion failed; local account data was not changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
 
   /account/consents:
     patch:
@@ -2170,16 +2202,40 @@ paths:
                 $ref: "#/components/schemas/AccountDeletionResponse"
         "400":
           description: Invalid user ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "403":
           description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "404":
           description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "409":
-          description: User has active footage requests or the administrator is deleting themselves
+          description: Active footage, last administrator, or administrator self-delete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "500":
           description: Local account cleanup failed; the local account was disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
         "502":
           description: Identity provider deletion failed; local account data was not changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionError"
 
   /admin/ads:
     get:
@@ -4811,6 +4867,30 @@ components:
       properties:
         ok:
           type: boolean
+
+    AccountDeletionError:
+      type: object
+      required: [error, reason]
+      properties:
+        error:
+          type: string
+        reason:
+          type: string
+          enum:
+            - upcoming_booking
+            - admin
+            - field_owner
+            - rate_limited
+            - clerk_failed
+            - data_failed
+            - not_found
+            - unauthenticated
+            - forbidden
+            - invalid_id
+            - self_delete
+            - last_admin
+        activeFootageRequests:
+          type: integer
 
   securitySchemes:
     clerkSession:

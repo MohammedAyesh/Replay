@@ -4,18 +4,52 @@ import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTabl
 import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody, UpdateLocaleBody, UpdateLocaleResponse, UpdateConsentsBody, UpdateConsentsResponse } from "@workspace/api-zod";
 import { getLocalAccountUserId, getLocalUserId, getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { accountDeletionHttpResponse, deleteUserAccount } from "../lib/accountDeletion";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
-router.delete("/account", async (req, res): Promise<void> => {
-  const userId = await getLocalAccountUserId(req);
-  if (!userId) {
-    unauthenticatedResponse(res, req, "Authenticated account required");
-    return;
-  }
+const SELF_DELETE_LIMIT = 3;
+const SELF_DELETE_WINDOW_MS = 60 * 60 * 1000;
+const selfDeleteAttempts = new Map<number, number[]>();
 
-  const response = accountDeletionHttpResponse(await deleteUserAccount(userId));
-  res.status(response.statusCode).json(response.body);
+function takeSelfDeleteAttempt(userId: number, now = Date.now()): boolean {
+  const cutoff = now - SELF_DELETE_WINDOW_MS;
+  const attempts = (selfDeleteAttempts.get(userId) ?? []).filter((timestamp) => timestamp > cutoff);
+  if (attempts.length >= SELF_DELETE_LIMIT) {
+    selfDeleteAttempts.set(userId, attempts);
+    return false;
+  }
+  attempts.push(now);
+  selfDeleteAttempts.set(userId, attempts);
+
+  for (const [id, timestamps] of selfDeleteAttempts) {
+    if (timestamps.every((timestamp) => timestamp <= cutoff)) selfDeleteAttempts.delete(id);
+  }
+  return true;
+}
+
+router.delete("/account", async (req, res): Promise<void> => {
+  try {
+    const userId = await getLocalAccountUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: "Authenticated account required", reason: "unauthenticated" });
+      return;
+    }
+
+    if (!takeSelfDeleteAttempt(userId)) {
+      res.status(429).json({
+        error: "Too many account deletion attempts. Try again in an hour.",
+        reason: "rate_limited",
+      });
+      return;
+    }
+
+    const response = accountDeletionHttpResponse(await deleteUserAccount(userId, { actor: "self" }));
+    res.status(response.statusCode).json(response.body);
+  } catch (error) {
+    logger.error({ err: error }, "Unexpected self-service account deletion failure");
+    res.status(500).json({ error: "Could not complete account deletion.", reason: "data_failed" });
+  }
 });
 
 router.get("/account/claimed-matches", async (req, res): Promise<void> => {

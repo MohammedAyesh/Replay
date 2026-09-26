@@ -227,6 +227,38 @@ export async function deleteBunnyExport(clipId: number): Promise<void> {
 }
 
 /**
+ * Delete an arbitrary relative Bunny Storage object path.
+ *
+ * The path must be a clean object key rather than a URL or filesystem path.
+ * Missing objects are already deleted; all other remote failures are surfaced
+ * so account cleanup can log them without undoing the database transaction.
+ */
+export async function deleteBunnyStoragePath(path: string): Promise<void> {
+  if (!isBunnyStorageConfigured()) {
+    throw new Error("Bunny Storage is not configured");
+  }
+
+  const segments = path.split("/");
+  if (
+    !path
+    || path.startsWith("/")
+    || path.includes("\\")
+    || segments.some((segment) => !segment || segment === "." || segment === ".." || !/^[A-Za-z0-9._-]+$/.test(segment))
+  ) {
+    throw new Error("Invalid Bunny Storage object path");
+  }
+
+  const encodedPath = segments.map(encodeURIComponent).join("/");
+  const response = await fetch(
+    `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${encodedPath}`,
+    { method: "DELETE", headers: { AccessKey: BUNNY_STORAGE_API_KEY } },
+  );
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Bunny Storage object deletion failed: ${response.status}`);
+  }
+}
+
+/**
  * Remove all Bunny Storage derivatives owned by a user's clip.
  * The poster path is accepted only when it matches this clip's generated poster
  * namespace, so a database value can never be used to delete an arbitrary object.

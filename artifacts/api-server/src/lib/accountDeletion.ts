@@ -7,26 +7,35 @@ import {
   footageCancellationRequestsTable,
   footagePaymentsTable,
   footageRequestsTable,
+  fieldOwnersTable,
   followsTable,
   likesTable,
   savedClipsTable,
+  settingsRulesTable,
   statUnlocksTable,
   userClipsTable,
   usersTable,
   varMarksTable,
 } from "@workspace/db";
-import { deleteBunnyClipAssets } from "./bunny";
+import { deleteBunnyClipAssets, deleteBunnyStoragePath } from "./bunny";
 import { deleteClerkUserAccount } from "./clerkUserBridge";
 import { logger } from "./logger";
 
-const ACTIVE_FOOTAGE_STATUSES = ["queued", "running", "scheduled", "recording"];
-const DELETED_PLAYER_EMAIL = "deleted-player@soccerwatch.local";
+const ACTIVE_FOOTAGE_STATUSES = ["queued", "running", "scheduled", "recording", "awaiting_payment"];
+export const DELETED_PLAYER_EMAIL = "deleted-player@soccerwatch.local";
 const DELETED_PLAYER_NAME = "Deleted player";
+
+export function isLastActiveAdmin(activeAdminCount: number): boolean {
+  return activeAdminCount <= 1;
+}
 
 export type AccountDeletionResult =
   | { status: "deleted" }
   | { status: "not_found" }
   | { status: "active_footage"; activeFootageRequests: number }
+  | { status: "admin" }
+  | { status: "field_owner" }
+  | { status: "last_admin" }
   | { status: "clerk_failure" }
   | { status: "database_failure" };
 
@@ -68,19 +77,46 @@ async function disableAfterDeletionFailure(userId: number): Promise<void> {
  * Retained financial and footage records are attributed to a disabled system
  * placeholder; user-generated clips and their likes are removed.
  */
-export async function deleteUserAccount(userId: number): Promise<AccountDeletionResult> {
-  let user: { id: number; clerkId: string | null; email: string } | undefined;
+async function deleteUserAccountNow(
+  userId: number,
+  actor: "self" | "admin",
+): Promise<AccountDeletionResult> {
+  let user: {
+    id: number;
+    clerkId: string | null;
+    email: string;
+    isAdmin: boolean;
+    isDisabled: boolean;
+    avatarPath: string | null;
+  } | undefined;
   let activeRequests: { id: number }[];
 
   try {
     [user] = await db
-      .select({ id: usersTable.id, clerkId: usersTable.clerkId, email: usersTable.email })
+      .select({
+        id: usersTable.id,
+        clerkId: usersTable.clerkId,
+        email: usersTable.email,
+        isAdmin: usersTable.isAdmin,
+        isDisabled: usersTable.isDisabled,
+        avatarPath: usersTable.avatarPath,
+      })
       .from(usersTable)
       .where(eq(usersTable.id, userId));
     if (!user) return { status: "not_found" };
 
     if (user.email === DELETED_PLAYER_EMAIL) {
       return { status: "not_found" };
+    }
+
+    if (actor === "self") {
+      if (user.isAdmin) return { status: "admin" };
+      const [fieldOwnership] = await db
+        .select({ id: fieldOwnersTable.id })
+        .from(fieldOwnersTable)
+        .where(eq(fieldOwnersTable.userId, userId))
+        .limit(1);
+      if (fieldOwnership) return { status: "field_owner" };
     }
 
     activeRequests = await db
@@ -90,6 +126,17 @@ export async function deleteUserAccount(userId: number): Promise<AccountDeletion
         eq(footageRequestsTable.requestedBy, userId),
         inArray(footageRequestsTable.status, ACTIVE_FOOTAGE_STATUSES),
       ));
+    if (activeRequests.length === 0 && actor === "admin" && user.isAdmin && !user.isDisabled) {
+      const activeAdmins = await db
+        .select({ id: usersTable.id })
+        .from(usersTable)
+        .where(and(
+          eq(usersTable.isAdmin, true),
+          eq(usersTable.isDisabled, false),
+          ne(usersTable.email, DELETED_PLAYER_EMAIL),
+        ));
+      if (isLastActiveAdmin(activeAdmins.length)) return { status: "last_admin" };
+    }
   } catch (error) {
     logger.error({ err: error, userId }, "Could not check account deletion prerequisites");
     return { status: "database_failure" };
@@ -256,6 +303,10 @@ export async function deleteUserAccount(userId: number): Promise<AccountDeletion
       await tx.delete(likesTable).where(eq(likesTable.userId, userId));
       await tx.delete(followsTable).where(eq(followsTable.followerId, userId));
       await tx.delete(followsTable).where(eq(followsTable.followeeId, userId));
+      await tx.delete(settingsRulesTable).where(and(
+        eq(settingsRulesTable.scopeType, "user"),
+        eq(settingsRulesTable.scopeId, userId),
+      ));
       await tx.delete(userClipsTable).where(eq(userClipsTable.userId, userId));
       await tx.delete(usersTable).where(eq(usersTable.id, userId));
 
@@ -267,19 +318,52 @@ export async function deleteUserAccount(userId: number): Promise<AccountDeletion
     return { status: "database_failure" };
   }
 
-  const assetCleanup = await Promise.allSettled(
-    deletedClipAssets.map(({ id, posterPath }) => deleteBunnyClipAssets(id, posterPath)),
-  );
+  const assetCleanup = await Promise.allSettled([
+    ...deletedClipAssets.map(({ id, posterPath }) => deleteBunnyClipAssets(id, posterPath)),
+    ...(user.avatarPath ? [deleteBunnyStoragePath(user.avatarPath)] : []),
+  ]);
   assetCleanup.forEach((result, index) => {
     if (result.status === "rejected") {
+      const isAvatarCleanup = index >= deletedClipAssets.length;
       logger.warn(
-        { err: result.reason, userId, clipId: deletedClipAssets[index]?.id },
-        "Could not remove Bunny assets for deleted user clip",
+        {
+          err: result.reason,
+          userId,
+          ...(isAvatarCleanup ? {} : { clipId: deletedClipAssets[index]?.id }),
+        },
+        isAvatarCleanup
+          ? "Could not remove Bunny avatar for deleted account"
+          : "Could not remove Bunny assets for deleted user clip",
       );
     }
   });
 
   return { status: "deleted" };
+}
+
+let adminDeletionQueue: Promise<void> = Promise.resolve();
+
+async function serializeAdminDeletion<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = adminDeletionQueue;
+  let release!: () => void;
+  adminDeletionQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
+}
+
+export function deleteUserAccount(
+  userId: number,
+  options: { actor: "self" | "admin" },
+): Promise<AccountDeletionResult> {
+  return options.actor === "admin"
+    ? serializeAdminDeletion(() => deleteUserAccountNow(userId, options.actor))
+    : deleteUserAccountNow(userId, options.actor);
 }
 
 export function accountDeletionHttpResponse(result: AccountDeletionResult): {
@@ -290,24 +374,34 @@ export function accountDeletionHttpResponse(result: AccountDeletionResult): {
     case "deleted":
       return { statusCode: 200, body: { ok: true } };
     case "not_found":
-      return { statusCode: 404, body: { error: "User not found" } };
+      return { statusCode: 404, body: { error: "User not found", reason: "not_found" } };
     case "active_footage":
       return {
         statusCode: 409,
         body: {
           error: "Finish or cancel active footage requests before deleting this account.",
+          reason: "upcoming_booking",
           activeFootageRequests: result.activeFootageRequests,
         },
       };
+    case "admin":
+      return { statusCode: 403, body: { error: "Admins cannot delete their own account here", reason: "admin" } };
+    case "field_owner":
+      return { statusCode: 409, body: { error: "Field ownership must be transferred first", reason: "field_owner" } };
+    case "last_admin":
+      return { statusCode: 409, body: { error: "The last active administrator cannot be deleted", reason: "last_admin" } };
     case "clerk_failure":
       return {
         statusCode: 502,
-        body: { error: "Could not delete the sign-in account. No account data was changed." },
+        body: { error: "Could not delete the sign-in account. No account data was changed.", reason: "clerk_failed" },
       };
     case "database_failure":
       return {
         statusCode: 500,
-        body: { error: "Could not finish deleting this account. The local account has been disabled." },
+        body: {
+          error: "Could not finish deleting this account. The local account has been disabled.",
+          reason: "data_failed",
+        },
       };
   }
 }

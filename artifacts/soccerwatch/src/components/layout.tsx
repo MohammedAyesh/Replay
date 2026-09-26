@@ -21,7 +21,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find/") || location.startsWith("/find-quick/");
   const isWholeGameClaim = location.startsWith("/find/");
   const isWatchFeed = location === "/home";
-  const isLegalDocument = location === "/privacy" || location === "/terms";
+  const isLegalDocument = location === "/privacy" || location === "/terms" || location === "/delete-account";
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");
   const isMatchRoom = location.startsWith("/m/");

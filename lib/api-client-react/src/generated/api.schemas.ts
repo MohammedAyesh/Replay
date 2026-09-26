@@ -1802,6 +1802,30 @@ export interface AccountDeletionResponse {
   ok: boolean;
 }
 
+export type AccountDeletionErrorReason = typeof AccountDeletionErrorReason[keyof typeof AccountDeletionErrorReason];
+
+
+export const AccountDeletionErrorReason = {
+  upcoming_booking: 'upcoming_booking',
+  admin: 'admin',
+  field_owner: 'field_owner',
+  rate_limited: 'rate_limited',
+  clerk_failed: 'clerk_failed',
+  data_failed: 'data_failed',
+  not_found: 'not_found',
+  unauthenticated: 'unauthenticated',
+  forbidden: 'forbidden',
+  invalid_id: 'invalid_id',
+  self_delete: 'self_delete',
+  last_admin: 'last_admin',
+} as const;
+
+export interface AccountDeletionError {
+  error: string;
+  reason: AccountDeletionErrorReason;
+  activeFootageRequests?: number;
+}
+
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */
   bundle: string;
