@@ -184,6 +184,19 @@ export const SETTINGS: readonly SettingDefinition[] = [
     defaultValue: false,
   },
   {
+    key: "stats.liveAnalysis",
+    group: "Match stats",
+    label: "Analyse bookings during the match",
+    description:
+      "Analyses every booked match while it is played: the VPS finds the real kick-off, rents a GPU " +
+      "as the footage comes off the camera, and the analysis is queued automatically when the " +
+      "booking's footage is ready, so stats arrive about half an hour after the final whistle " +
+      "instead of hours later. Costs roughly $0.5-1 of GPU per 2-hour booking. Scope it to a field " +
+      "with a rule to roll out one field at a time.",
+    type: "boolean",
+    defaultValue: false,
+  },
+  {
     key: "stats.paywallEnabled",
     group: "Match stats",
     label: "Stats cost money",

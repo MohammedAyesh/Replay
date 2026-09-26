@@ -23,6 +23,7 @@ import { controlFetch, controlResponse } from "./contabo";
 import { logger } from "../lib/logger";
 import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
+import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -606,7 +607,7 @@ async function completeRequest(row: FootageRequest, body: unknown, status: "read
   );
   const videoId = bodyString(body, "videoId", "video_id") ?? row.videoId;
 
-  await db.update(footageRequestsTable)
+  const completed = await db.update(footageRequestsTable)
     .set({
       status,
       progress: 100,
@@ -624,7 +625,16 @@ async function completeRequest(row: FootageRequest, body: unknown, status: "read
     .where(and(
       eq(footageRequestsTable.id, row.id),
       inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES),
-    ));
+    )).returning({ id: footageRequestsTable.id });
+
+  // Only the call that actually completed the request queues its analysis.
+  if (completed.length > 0) {
+    try {
+      await queueLiveAnalysisForBooking(row, videoId, deliveredSeconds);
+    } catch (error) {
+      logger.warn({ requestId: row.id, error }, "Could not queue the booking's analysis");
+    }
+  }
 }
 
 export async function refreshOwnerRequest(
@@ -1149,8 +1159,11 @@ export async function startCameraJob(row: FootageRequest, cameraId: string): Pro
     // contract intentionally stays at minute precision.
     const remoteStart = `${row.startLocal}:00`;
     const remoteEnd = `${row.endLocal}:00`;
+    // "Analyse bookings during the match": tells the VPS to watch this booking
+    // for its kick-off and analyse it as it is played (lib/liveAnalysis.ts).
+    const live = future && await liveAnalysisEnabled(row.fieldId);
     const result = await controlFetch(
-      `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}`,
+      `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}`,
       { method: "POST" },
       90_000,
     );
