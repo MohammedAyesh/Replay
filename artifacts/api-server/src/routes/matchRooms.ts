@@ -2,7 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import multer from "multer";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import {
   db,
@@ -20,6 +20,7 @@ import {
   type MatchPlayer,
 } from "@workspace/db";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { blockedUserIdsFor, isBlockedEitherWay } from "../lib/safety";
 import { activatePaidBooking, cancelUnpaidBooking } from "./owner";
 import { loadCommerce, type Commerce } from "../lib/commerce";
 import {
@@ -282,7 +283,11 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
       .where(and(eq(userClipsTable.footageRequestId, request.id), eq(userClipsTable.userId, viewerId)))
     : [];
   const matchClipCount = await db.select({ n: sql<number>`count(*)::int` }).from(userClipsTable)
-    .where(and(eq(userClipsTable.footageRequestId, request.id), inArray(userClipsTable.visibility, ["match", "public"])));
+    .where(and(
+      eq(userClipsTable.footageRequestId, request.id),
+      inArray(userClipsTable.visibility, ["match", "public"]),
+      eq(userClipsTable.isHidden, false),
+    ));
 
   return {
     code: room.code,
@@ -1126,6 +1131,7 @@ router.get("/m/:code/clips", async (req, res): Promise<void> => {
   const viewer = await optionalUser(req);
   const me = viewer && !viewer.isGuest ? await playerForUser(ctx.room.id, viewer.id) : null;
   const member = Boolean(viewer && (isPlaying(me) || ctx.room.captainUserId === viewer.id));
+  const blockedIds = viewer && !viewer.isGuest ? await blockedUserIdsFor(viewer.id) : new Set<number>();
   const visibilities = member ? ["match", "public"] : ["public"];
   const rows = await db.select({
     clip: userClipsTable,
@@ -1139,6 +1145,7 @@ router.get("/m/:code/clips", async (req, res): Promise<void> => {
       viewer && !viewer.isGuest
         ? or(inArray(userClipsTable.visibility, visibilities), eq(userClipsTable.userId, viewer.id))!
         : inArray(userClipsTable.visibility, visibilities),
+      blockedIds.size > 0 ? notInArray(userClipsTable.userId, [...blockedIds]) : undefined,
     ))
     .orderBy(desc(userClipsTable.createdAt));
   const w = matchWindow(ctx.request);
@@ -1397,6 +1404,11 @@ router.get("/users/:id/replay-profile", async (req, res): Promise<void> => {
   const id = intParam(req, "id");
   if (!id) {
     res.status(404).json({ error: "Not found" });
+    return;
+  }
+  const viewer = await optionalUser(req);
+  if (viewer && !viewer.isGuest && await isBlockedEitherWay(viewer.id, id)) {
+    res.status(404).json({ error: "Not available", reason: "blocked" });
     return;
   }
   const [user] = await db.select({

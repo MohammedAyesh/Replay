@@ -1858,6 +1858,8 @@ export const CreateUserClipResponse = zod.object({
   "h": zod.number()
 })),
   "visibility": zod.enum(['public', 'followers', 'private', 'match']),
+  "isHidden": zod.boolean(),
+  "hiddenReason": zod.string().nullable(),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
   "thumbnailTime": zod.number().nullish(),
@@ -1894,6 +1896,8 @@ export const ListUserClipsResponseItem = zod.object({
   "h": zod.number()
 })),
   "visibility": zod.enum(['public', 'followers', 'private', 'match']),
+  "isHidden": zod.boolean(),
+  "hiddenReason": zod.string().nullable(),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
   "thumbnailTime": zod.number().nullish(),
@@ -1951,6 +1955,8 @@ export const UpdateUserClipResponse = zod.object({
   "h": zod.number()
 })),
   "visibility": zod.enum(['public', 'followers', 'private', 'match']),
+  "isHidden": zod.boolean(),
+  "hiddenReason": zod.string().nullable(),
   "likeCount": zod.number(),
   "aspectRatio": zod.string(),
   "thumbnailTime": zod.number().nullish(),

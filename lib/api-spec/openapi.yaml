@@ -3316,7 +3316,7 @@ components:
 
     UserClip:
       type: object
-      required: [id, userId, videoId, title, startTime, endTime, cropPath, visibility, likeCount, createdAt, aspectRatio, liveClipPartial]
+      required: [id, userId, videoId, title, startTime, endTime, cropPath, visibility, isHidden, hiddenReason, likeCount, createdAt, aspectRatio, liveClipPartial]
       properties:
         id:
           type: integer
@@ -3337,6 +3337,10 @@ components:
         visibility:
           type: string
           enum: ["public", "followers", "private", "match"]
+        isHidden:
+          type: boolean
+        hiddenReason:
+          type: ["string", "null"]
         likeCount:
           type: integer
         aspectRatio:

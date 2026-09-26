@@ -33,6 +33,7 @@ import ownerRouter from "./owner";
 import matchRoomsRouter from "./matchRooms";
 import matchLiveRouter from "./matchLive";
 import streamingRouter from "./streaming";
+import safetyRouter from "./safety";
 
 const router: IRouter = Router();
 
@@ -70,5 +71,6 @@ router.use(ownerRouter);
 router.use(matchRoomsRouter);
 router.use(matchLiveRouter);
 router.use(streamingRouter);
+router.use(safetyRouter);
 
 export default router;

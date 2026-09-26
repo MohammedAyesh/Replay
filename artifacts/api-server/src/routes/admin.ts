@@ -354,7 +354,10 @@ router.patch("/admin/clips/:id", async (req, res): Promise<void> => {
 
   const { isHidden, visibility } = req.body as { isHidden?: boolean; visibility?: string };
   const updates: Partial<typeof userClipsTable.$inferInsert> = {};
-  if (isHidden !== undefined) updates.isHidden = isHidden;
+  if (isHidden !== undefined) {
+    updates.isHidden = isHidden;
+    updates.hiddenReason = isHidden ? "admin" : null;
+  }
   if (visibility !== undefined) updates.visibility = visibility;
 
   const [clip] = await db.update(userClipsTable).set(updates).where(eq(userClipsTable.id, id)).returning();

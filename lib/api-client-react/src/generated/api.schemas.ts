@@ -694,6 +694,9 @@ export interface UserClip {
   endTime: number;
   cropPath: CropKeyframe[];
   visibility: UserClipVisibility;
+  isHidden: boolean;
+  /** @nullable */
+  hiddenReason: string | null;
   likeCount: number;
   aspectRatio: string;
   /** @nullable */

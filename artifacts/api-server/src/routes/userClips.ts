@@ -34,6 +34,7 @@ import {
   RecordShareResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { blockedUserIdsFor, isBlockedEitherWay } from "../lib/safety";
 import {
   getBunnyThumbnailUrl,
   getBunnyProxiedPlaybackUrl,
@@ -731,6 +732,8 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       endTime: parseFloat(row.endTime),
       cropPath: row.cropPath,
       visibility: row.visibility,
+      isHidden: row.isHidden,
+      hiddenReason: row.hiddenReason ?? null,
       aspectRatio: row.aspectRatio,
       likeCount: row.likeCount,
       viewCount: row.viewCount,
@@ -780,6 +783,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       endTime: parseFloat(row.endTime),
       cropPath: row.cropPath,
       visibility: row.visibility,
+      isHidden: row.isHidden,
+      hiddenReason: row.hiddenReason ?? null,
       aspectRatio: row.aspectRatio,
       likeCount: row.likeCount,
       viewCount: row.viewCount,
@@ -947,6 +952,11 @@ router.post("/user-clips/:id/like", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Clip not found" });
     return;
   }
+  if (await isBlockedEitherWay(userId, clip.userId)
+    || (clip.isHidden && clip.userId !== userId)) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
 
   const [existing] = await db
     .select()
@@ -1077,6 +1087,7 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
 
 router.get("/feed", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
+  const blockedIds = userId ? await blockedUserIdsFor(userId) : new Set<number>();
   const visibilityContext = await createPublicFootageContext(req);
 
   // Get the set of creator IDs the current user follows
@@ -1117,6 +1128,7 @@ router.get("/feed", async (req, res): Promise<void> => {
 
   // Filter by visibility and admin-hidden status
   const visible = rows.filter((row) => {
+    if (blockedIds.has(row.creatorId)) return false;
     if ((row as { isHidden?: boolean }).isHidden) return false;
     if (visibilityContext.ownerVideoIds.has(row.videoId)) return false;
     if (row.visibility === "public") return true;
@@ -1147,7 +1159,8 @@ router.get("/feed", async (req, res): Promise<void> => {
     likedSet = new Set(liked.map((l) => l.userClipId).filter((id): id is number => id !== null));
 
     // Fetch social likes: followers of current user who liked visible clips
-    if (followedIds.length > 0) {
+    const socialLikerIds = followedIds.filter((id) => !blockedIds.has(id));
+    if (socialLikerIds.length > 0) {
       const socialRows = await db
         .select({
           userClipId: likesTable.userClipId,
@@ -1159,7 +1172,7 @@ router.get("/feed", async (req, res): Promise<void> => {
         .where(
           and(
             inArray(likesTable.userClipId, visibleIds),
-            inArray(likesTable.userId, followedIds)
+            inArray(likesTable.userId, socialLikerIds)
           )
         );
 
@@ -1459,6 +1472,11 @@ router.get("/user-clips/:id/share-link", async (req, res): Promise<void> => {
 
   const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  if (await isBlockedEitherWay(userId, clip.userId)
+    || (clip.isHidden && clip.userId !== userId)) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
   if (clip.userId !== userId && clip.visibility !== "public") {
     res.status(404).json({ error: "Clip not found" });
     return;

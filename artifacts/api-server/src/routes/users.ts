@@ -18,6 +18,7 @@ import {
 } from "@workspace/db";
 import { GetPublicPlayerStatsResponse } from "@workspace/api-zod";
 import { getLocalAccountUserId, getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { isBlockedEitherWay } from "../lib/safety";
 import { isRecordingVisible } from "../lib/recordingVisibility";
 import { readClaimSegment } from "../lib/claimMatchStorage";
 import { chainPlayerMetrics, deriveChainClaimState } from "../lib/claimChainState";
@@ -32,7 +33,7 @@ const router: IRouter = Router();
 
 async function buildPublicProfile(targetId: number, viewerId: number | null) {
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, targetId));
-  if (!user || user.isGuest) return null;
+  if (!user || user.isGuest || user.isDisabled) return null;
 
   const [followerResult] = await db
     .select({ count: sql<number>`count(*)` })
@@ -85,6 +86,10 @@ router.get("/users/:id", async (req, res): Promise<void> => {
   }
 
   const viewerId = await getLocalUserId(req);
+  if (viewerId && await isBlockedEitherWay(viewerId, targetId)) {
+    res.status(404).json({ error: "Not available", reason: "blocked" });
+    return;
+  }
   const profile = await buildPublicProfile(targetId, viewerId);
   if (!profile) {
     res.status(404).json({ error: "User not found" });
@@ -378,6 +383,10 @@ router.post("/users/:id/follow", async (req, res): Promise<void> => {
 
   if (viewerId === targetId) {
     res.status(400).json({ error: "Cannot follow yourself" });
+    return;
+  }
+  if (await isBlockedEitherWay(viewerId, targetId)) {
+    res.status(403).json({ reason: "blocked" });
     return;
   }
 
