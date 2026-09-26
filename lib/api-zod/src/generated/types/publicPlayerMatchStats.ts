@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { PlayerDribbleStats } from './playerDribbleStats';
 import type { PublicPlayerHeatmap } from './publicPlayerHeatmap';
 
 export interface PublicPlayerMatchStats {
@@ -26,4 +27,6 @@ export interface PublicPlayerMatchStats {
   /** @minimum 0 */
   offPitchSeconds: number;
   heatmap: PublicPlayerHeatmap;
+  /** This match's dribbles, or null when the recording has no ball tracking. */
+  dribbles?: PlayerDribbleStats | null;
 }

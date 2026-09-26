@@ -2352,6 +2352,12 @@ export const getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemYMax = 1;
 
 export const getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemWeightMin = 0;
 
+export const getPublicPlayerStatsResponseMatchesItemDribblesOneTotalMin = 0;
+
+export const getPublicPlayerStatsResponseMatchesItemDribblesOneSucceededMin = 0;
+
+export const getPublicPlayerStatsResponseMatchesItemDribblesOneFailedMin = 0;
+
 export const getPublicPlayerStatsResponseTotalsTotalMatchesClaimedMin = 0;
 
 export const getPublicPlayerStatsResponseTotalsTotalMinutesPlayedMin = 0;
@@ -2363,6 +2369,12 @@ export const getPublicPlayerStatsResponseTotalsTotalHumanVouchedSecondsMin = 0;
 export const getPublicPlayerStatsResponseTotalsTotalInferredSecondsMin = 0;
 
 export const getPublicPlayerStatsResponseTotalsTotalOffPitchSecondsMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsDribblesOneTotalMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsDribblesOneSucceededMin = 0;
+
+export const getPublicPlayerStatsResponseTotalsDribblesOneFailedMin = 0;
 
 export const getPublicPlayerStatsResponseExcludedClaimCountMin = 0;
 
@@ -2385,7 +2397,12 @@ export const GetPublicPlayerStatsResponse = zod.object({
   "y": zod.number().min(getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemYMin).max(getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemYMax),
   "weight": zod.number().min(getPublicPlayerStatsResponseMatchesItemHeatmapCellsItemWeightMin)
 }))
-})
+}),
+  "dribbles": zod.union([zod.object({
+  "total": zod.number().min(getPublicPlayerStatsResponseMatchesItemDribblesOneTotalMin),
+  "succeeded": zod.number().min(getPublicPlayerStatsResponseMatchesItemDribblesOneSucceededMin),
+  "failed": zod.number().min(getPublicPlayerStatsResponseMatchesItemDribblesOneFailedMin)
+}).describe('Runs with the ball past at least one opponent. Successful when his side still had it after; failed when the other side got it. Dribbles nobody touched after are counted in total only.'),zod.null()]).optional().describe('This match\'s dribbles, or null when the recording has no ball tracking.')
 })),
   "totals": zod.object({
   "totalMatchesClaimed": zod.number().min(getPublicPlayerStatsResponseTotalsTotalMatchesClaimedMin),
@@ -2393,7 +2410,12 @@ export const GetPublicPlayerStatsResponse = zod.object({
   "totalDistanceMetres": zod.number().min(getPublicPlayerStatsResponseTotalsTotalDistanceMetresMin).nullable().describe('Sum of calibrated distances, or null when any claimed recording has no pitch model.'),
   "totalHumanVouchedSeconds": zod.number().min(getPublicPlayerStatsResponseTotalsTotalHumanVouchedSecondsMin),
   "totalInferredSeconds": zod.number().min(getPublicPlayerStatsResponseTotalsTotalInferredSecondsMin),
-  "totalOffPitchSeconds": zod.number().min(getPublicPlayerStatsResponseTotalsTotalOffPitchSecondsMin)
+  "totalOffPitchSeconds": zod.number().min(getPublicPlayerStatsResponseTotalsTotalOffPitchSecondsMin),
+  "dribbles": zod.union([zod.object({
+  "total": zod.number().min(getPublicPlayerStatsResponseTotalsDribblesOneTotalMin),
+  "succeeded": zod.number().min(getPublicPlayerStatsResponseTotalsDribblesOneSucceededMin),
+  "failed": zod.number().min(getPublicPlayerStatsResponseTotalsDribblesOneFailedMin)
+}).describe('Runs with the ball past at least one opponent. Successful when his side still had it after; failed when the other side got it. Dribbles nobody touched after are counted in total only.'),zod.null()]).optional().describe('Dribbles summed over the matches that have ball tracking, or null when none do.')
 }),
   "excludedClaimCount": zod.number().min(getPublicPlayerStatsResponseExcludedClaimCountMin).describe('Claims awaiting review because they are disputed or need resolution.')
 })

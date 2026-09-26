@@ -3022,6 +3022,26 @@ components:
         totalOffPitchSeconds:
           type: number
           minimum: 0
+        dribbles:
+          description: Dribbles summed over the matches that have ball tracking, or null when none do.
+          oneOf:
+            - $ref: "#/components/schemas/PlayerDribbleStats"
+            - type: "null"
+
+    PlayerDribbleStats:
+      type: object
+      description: Runs with the ball past at least one opponent. Successful when his side still had it after; failed when the other side got it. Dribbles nobody touched after are counted in total only.
+      required: [total, succeeded, failed]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
 
     PublicPlayerMatchStats:
       type: object
@@ -3051,6 +3071,11 @@ components:
           minimum: 0
         heatmap:
           $ref: "#/components/schemas/PublicPlayerHeatmap"
+        dribbles:
+          description: This match's dribbles, or null when the recording has no ball tracking.
+          oneOf:
+            - $ref: "#/components/schemas/PlayerDribbleStats"
+            - type: "null"
 
     PublicPlayerHeatmap:
       type: object

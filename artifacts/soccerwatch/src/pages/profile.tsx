@@ -12,6 +12,7 @@ import {
   PublicPlayerHeatmap,
   PublicPlayerMatchStats,
   PublicPlayerStats,
+  PlayerDribbleStats,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Users, UserCheck, Video, UserPlus, UserMinus, MapPinned } from "lucide-react";
@@ -378,7 +379,7 @@ function PlayerStatsSection({
         ))}
       </div>
 
-      <UnavailableMetricTiles />
+      <UnavailableMetricTiles dribbles={stats.totals.dribbles ?? null} />
     </section>
   );
 }
@@ -416,6 +417,13 @@ function PlayerMatchStatsRow({
           <b>{formatDistance(match.distanceMetres, t.profile.distanceUnavailable)}</b>
           {match.distanceMetres === null && <small>{t.profile.matchUnavailableDistance}</small>}
         </div>
+        {match.dribbles && (
+          <div>
+            <span>{t.profile.dribbles}</span>
+            <b>{match.dribbles.total}</b>
+            <small>{t.profile.dribblesSplit(match.dribbles.succeeded, match.dribbles.failed)}</small>
+          </div>
+        )}
         <div>
           <span>{t.profile.humanVouched}</span>
           <b>{formatMinutes(match.humanVouchedSeconds / 60)} min</b>
@@ -467,17 +475,28 @@ function PlayerStatsHeatmap({ heatmap, label }: { heatmap: PublicPlayerHeatmap; 
   );
 }
 
-function UnavailableMetricTiles() {
+/**
+ * Metrics the ball tracking can't stand behind yet, plus dribbles once any
+ * claimed game has them (runs past an opponent, graded successful or failed).
+ */
+function UnavailableMetricTiles({ dribbles = null }: { dribbles?: PlayerDribbleStats | null }) {
   const { t } = useTranslation();
   const metrics = [
     t.profile.touches,
     t.profile.passes,
     t.profile.shots,
-    t.profile.dribbles,
+    ...(dribbles ? [] : [t.profile.dribbles]),
     t.profile.topSpeed,
   ];
   return (
     <div className="player-stats-unavailable-grid">
+      {dribbles && (
+        <div className="player-stats-unavailable-tile is-measured" title={t.profile.dribblesDesc}>
+          <span>{t.profile.dribbles}</span>
+          <b>{dribbles.total}</b>
+          <small>{t.profile.dribblesSplit(dribbles.succeeded, dribbles.failed)}</small>
+        </div>
+      )}
       {metrics.map((label) => (
         <div className="player-stats-unavailable-tile" key={label}>
           <span>{label}</span>

@@ -978,6 +978,8 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 .player-stats-unavailable-tile span { color: hsl(var(--muted-foreground)); font-size: .65rem; }
 .player-stats-unavailable-tile b { font-size: .77rem; }
 .player-stats-unavailable-tile small { color: hsl(var(--muted-foreground)); font-size: .6rem; line-height: 1.35; }
+.player-stats-unavailable-tile.is-measured { border-style: solid; border-color: hsl(var(--primary) / .45); background: hsl(var(--primary) / .08); }
+.player-stats-unavailable-tile.is-measured b { font-size: 1.05rem; }
 .player-stats-loading, .player-stats-error { padding: 18px 0; color: hsl(var(--muted-foreground)); font-size: .75rem; text-align: center; }
 .player-stats-error { color: hsl(var(--destructive)); }
 .player-stats-empty { display: grid; justify-items: center; gap: 8px; padding: 24px 12px; border: 1px dashed hsl(var(--border)); border-radius: 12px; text-align: center; }

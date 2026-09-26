@@ -106,6 +106,7 @@ export * from './ownerRequestCancellationStatus';
 export * from './ownerRequestInput';
 export * from './ownerRequestMatch';
 export * from './patchAdInput';
+export * from './playerDribbleStats';
 export * from './profileInput';
 export * from './profileInputGender';
 export * from './profileInputPosition';

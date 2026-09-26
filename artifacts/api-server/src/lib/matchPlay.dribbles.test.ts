@@ -4,6 +4,7 @@ import {
   detectedGoals,
   detectedShots,
   dribbleEvents,
+  dropTeleports,
   playerMoments,
   sideOfKit,
   teamDribbles,
@@ -58,48 +59,93 @@ const segment = (tracks: ReturnType<typeof track>[]) =>
   ({ segmentIndex: 0, tracks, crossings: [], inPlaySpans: [], events: [] }) as unknown as TrackingSegmentPayload;
 
 describe("dribbleEvents", () => {
-  // "me" (white) runs the ball from x=10 to x=16 over 2 s; "opp" (black) stands at x=13.
-  const me = track("s0:me", 0, 200, (f) => [10 + (f / 40) * 3, 10]);
-  const opp = track("s0:opp", 0, 200, () => [13, 10.5]);
+  // "me" (white) runs the ball from x=5 to x=17 over 4 s; "opp" (black) stands
+  // in his path at x=11 and ends up behind him; "mate" (white) waits at x=25.
+  const me = track("s0:me", 0, 200, (f) => [5 + (f / 20) * 3, 10]);
+  const opp = track("s0:opp", 0, 200, () => [11, 10.5]);
   const mate = track("s0:mate", 0, 200, () => [25, 10]);
   const kits = new Map<string, Lab>([["s0:me", WHITE], ["s0:opp", BLACK], ["s0:mate", WHITE]]);
-  const spell = [touch(0, "s0:me", 10, WHITE), touch(1, "s0:me", 11.5, WHITE), touch(2, "s0:me", 13, WHITE)];
+  const run = [0, 1, 2, 3, 4].map((t) => touch(t, "s0:me", 5 + t * 3, WHITE));
+  const segs = [segment([me, opp, mate])];
 
-  it("is a take-on won when his side touches it next", () => {
-    const T = [...spell, touch(3.5, "s0:mate", 25, WHITE)];
-    const d = dribbleEvents(manifest, [segment([me, opp, mate])], T, kits, null);
+  it("is a successful dribble when he runs past an opponent and his side has it next", () => {
+    const d = dribbleEvents(manifest, segs, [...run, touch(5.5, "s0:mate", 25, WHITE)], kits, null);
     expect(d).toHaveLength(1);
     expect(d[0].outcome).toBe("won");
+    expect(d[0].beaten).toBe(1);
     expect(d[0].opponentTrackId).toBe("s0:opp");
-    expect(d[0].closestMetres).toBeLessThanOrEqual(1.8);
-    expect(d[0].touches).toBe(3);
+    expect(d[0].metres).toBeGreaterThanOrEqual(11);
+    expect(d[0].touches).toBe(5);
   });
 
-  it("is lost when the other side touches it next", () => {
-    const T = [...spell, touch(2.6, "s0:opp", 13, BLACK)];
-    const d = dribbleEvents(manifest, [segment([me, opp, mate])], T, kits, null);
+  it("is a failed dribble when the other side touches it next", () => {
+    const d = dribbleEvents(manifest, segs, [...run, touch(4.5, "s0:opp", 17, BLACK)], kits, null);
     expect(d.map((x) => x.outcome)).toEqual(["lost"]);
-    expect(teamDribbles(d, kits, { a: WHITE, b: BLACK })).toEqual({ won: [0, 0], lost: [1, 0] });
+    expect(teamDribbles(d, kits, { a: WHITE, b: BLACK })).toEqual({ total: [1, 0], won: [0, 0], lost: [1, 0] });
   });
 
-  it("is not a dribble with nobody near, and not graded with nobody after", () => {
-    const far = track("s0:opp", 0, 200, () => [30, 0]);
-    expect(dribbleEvents(manifest, [segment([me, far])], [...spell, touch(3, "s0:mate", 25, WHITE)], kits, null)).toEqual([]);
-    const lonely = dribbleEvents(manifest, [segment([me, opp])], spell, kits, null);
-    expect(lonely.map((x) => x.outcome)).toEqual([null]);
+  it("does not end the run or call it lost on one stray touch the carrier wins straight back", () => {
+    const stray = [...run.slice(0, 3), touch(2.4, "s0:opp", 11, BLACK), ...run.slice(3), touch(5.5, "s0:mate", 25, WHITE)];
+    const d = dribbleEvents(manifest, segs, stray, kits, null);
+    expect(d).toHaveLength(1);
+    expect(d[0].touches).toBe(6);
+    expect(d[0].outcome).toBe("won");
+    // the other side "touches" it 3.8 s later and the carrier has it again 0.7 s after that
+    const regained = dribbleEvents(manifest, segs, [...run, touch(7.8, "s0:opp", 17, BLACK), touch(8.5, "s0:me", 17.5, WHITE)], kits, null);
+    expect(regained.map((x) => x.outcome)).toEqual(["won"]);
   });
 
-  it("does not count a single touch, and needs a pitch model", () => {
-    expect(dribbleEvents(manifest, [segment([me, opp])], [spell[0], touch(9, "s0:opp", 13, BLACK)], kits, null)).toEqual([]);
+  it("is not a dribble without getting past anyone", () => {
+    const wide = track("s0:opp", 0, 200, () => [11, 0]);
+    expect(dribbleEvents(manifest, [segment([me, wide, mate])], run, kits, null)).toEqual([]);
+    // an opponent who stays in front the whole way was never passed
+    const chased = track("s0:opp", 0, 200, (f) => [8 + (f / 20) * 3, 10]);
+    expect(dribbleEvents(manifest, [segment([me, chased, mate])], run, kits, null)).toEqual([]);
+  });
+
+  it("is not a dribble standing still in a 1-v-1, or with one touch, or without a pitch model", () => {
+    const still = track("s0:me", 0, 200, () => [10, 10]);
+    const spell = [0, 1, 2, 3].map((t) => touch(t, "s0:me", 10, WHITE));
+    expect(dribbleEvents(manifest, [segment([still, opp])], spell, kits, null)).toEqual([]);
+    expect(dribbleEvents(manifest, segs, [run[0], touch(3, "s0:mate", 25, WHITE)], kits, null)).toEqual([]);
     const noPitch = { ...manifest, pitchModel: undefined } as unknown as TrackingManifest;
-    expect(dribbleEvents(noPitch, [segment([me, opp])], spell, kits, null)).toEqual([]);
+    expect(dribbleEvents(noPitch, segs, run, kits, null)).toEqual([]);
   });
 
   it("belongs to the claimant whose part covers its first touch", () => {
-    const d = dribbleEvents(manifest, [segment([me, opp, mate])], [...spell, touch(3.5, "s0:mate", 25, WHITE)], kits, null);
+    const d = dribbleEvents(manifest, segs, [...run, touch(5.5, "s0:mate", 25, WHITE)], kits, null);
     const mine = playerMoments([{ trackId: "s0:me", fromFrame: 0, toFrame: 100 }], d, [], []);
-    expect([mine.dribblesWon, mine.dribblesLost]).toEqual([1, 0]);
+    expect([mine.dribbles.length, mine.dribblesWon, mine.dribblesLost]).toEqual([1, 1, 0]);
     expect(playerMoments([{ trackId: "s0:mate", fromFrame: 0, toFrame: 100 }], d, [], []).dribbles).toEqual([]);
+  });
+});
+
+describe("dropTeleports", () => {
+  // pitch x metres -> px = x * 96; y = 0 m -> py = 540
+  const px = (x: number) => x * 96;
+  const sidecar = {
+    v: 1 as const,
+    fps: 20,
+    touches: [
+      [5, 0, 0, 10, 10, px(10.2), 540, 1],
+      [21, 0, 0, 10, 10, px(16), 540, 1],
+      [40, 0, 0, 10, 10, px(11.4), 540, 1],
+    ] as Array<[number, number, number, number, number, number, number, number]>,
+    ball: [[0, px(10), 540], [5, px(10.2), 540], [10, px(10.4), 540], [15, px(10.6), 540], [20, px(16), 540], [25, px(16.1), 540], [30, px(11), 540], [35, px(11.2), 540], [40, px(11.4), 540]] as Array<[number, number, number]>,
+    kits: {},
+  };
+
+  it("drops a jump onto a boot that comes straight back, and the touch it made", () => {
+    const r = dropTeleports(sidecar, manifest);
+    expect(r.teleports).toBe(1);
+    expect(r.touchesDropped).toBe(1);
+    expect(r.sidecar!.touches.map((t) => t[0])).toEqual([5, 40]);
+    expect(r.sidecar!.ball.map((b) => b[0])).toEqual([0, 5, 10, 15, 30, 35, 40]);
+  });
+
+  it("keeps a ball that really flies away", () => {
+    const shot = { ...sidecar, ball: [[0, px(10), 540], [5, px(10.2), 540], [10, px(14), 540], [15, px(18), 540], [20, px(22), 540], [25, px(26), 540]] as Array<[number, number, number]> };
+    expect(dropTeleports(shot, manifest).teleports).toBe(0);
   });
 });
 
@@ -112,6 +158,19 @@ describe("detected goals and shots", () => {
     expect(g[0].trackId).toBe("s0:a");
     expect(g[1].trackId).toBe(null); // 42 s after the last touch: nobody is credited
     expect(sideOfKit(g[0].kit, { a: WHITE, b: BLACK })).toBe(0);
+  });
+
+  it("never credits the goalkeeper with the goal or the shot", () => {
+    const pitch = { length: 40, width: 20 };
+    // the keeper came out to 35 m first, then was beaten from 1.8 m out and picked it out of the net
+    const play = [touch(99, "s0:keeper", 35, WHITE), touch(100, "s0:passer", 30, BLACK), touch(101, "s0:striker", 38.2, BLACK), touch(101.6, "s0:keeper", 39, WHITE)];
+    const g = detectedGoals([{ type: "goal", t: 102 }], play, pitch);
+    expect(g[0].trackId).toBe("s0:striker");
+    expect(detectedGoals([{ type: "goal", t: 102 }], play)[0].trackId).toBe("s0:keeper"); // no pitch: the old rule
+    const s = detectedShots([{ type: "shot", t: 101.6 }], play, pitch);
+    expect(s[0].trackId).toBe("s0:striker");
+    // only the keeper touched it: nobody is credited rather than him
+    expect(detectedShots([{ type: "shot", t: 101.6 }], [play[3]], pitch)[0].trackId).toBe(null);
   });
 
   it("credits a shot to a touch just before it", () => {

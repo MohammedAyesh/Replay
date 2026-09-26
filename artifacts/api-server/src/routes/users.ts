@@ -27,6 +27,9 @@ import {
   pitchModelCacheKey,
 } from "../lib/cameraPitchModel";
 import { normaliseOffPitchSpans } from "./claimOffPitch";
+import { logger } from "../lib/logger";
+import { loadRecordingPlay } from "../lib/matchPlayLoad";
+import { playerMoments } from "../lib/matchPlay";
 
 const router: IRouter = Router();
 
@@ -125,6 +128,22 @@ function timestampForFingerprint(value: Date | string | null | undefined): strin
  * without the calibration in this key, every cached distance and heatmap would
  * go on serving numbers from the grid it replaced, silently and forever.
  */
+/** Bumped when what a cached statistic contains changes, so every cached row is rebuilt once. */
+const PUBLIC_STATS_VERSION = "dribbles-1";
+
+/** One claim's dribbles from the recording's ball play, or null without ball tracking. */
+async function claimDribbles(recordingId: number, chain: Array<{ trackId: string; fromFrame: number; toFrame: number }>) {
+  try {
+    const play = await loadRecordingPlay(recordingId);
+    if (!play?.hasBall || !play.hasPitch) return null;
+    const own = playerMoments(chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })), play.dribbles, [], []);
+    return { total: own.dribbles.length, succeeded: own.dribblesWon, failed: own.dribblesLost };
+  } catch (error) {
+    logger.warn({ recordingId, err: error }, "Could not read dribbles for player stats");
+    return null;
+  }
+}
+
 async function publicStatsInputFingerprint(
   userId: number,
   recordingId: number,
@@ -143,6 +162,7 @@ async function publicStatsInputFingerprint(
       eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
     ));
   const input = [
+    PUBLIC_STATS_VERSION,
     bundleFingerprint,
     pitchKey,
     chain.map((part) => `${part.trackId}:${part.fromFrame}-${part.toFrame}`).join(","),
@@ -212,6 +232,7 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
       coordinateSpace: "pitch" | "camera";
       cells: Array<{ x: number; y: number; weight: number }>;
     };
+    dribbles: { total: number; succeeded: number; failed: number } | null;
   }> = [];
 
   for (const binding of bindings) {
@@ -303,6 +324,7 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
         inferredSeconds: 0,
         offPitchSeconds: roundStat(offPitchSeconds),
         heatmap: metrics.heatmap,
+        dribbles: await claimDribbles(binding.recordingId, chain),
       };
       await db
         .update(claimMatchIdentityBindingsTable)
@@ -324,6 +346,7 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
       inferredSeconds: computedStats.inferredSeconds,
       offPitchSeconds: computedStats.offPitchSeconds,
       heatmap: computedStats.heatmap,
+      dribbles: computedStats.dribbles ?? null,
     });
   }
 
@@ -341,6 +364,13 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
       totalHumanVouchedSeconds: roundStat(matches.reduce((sum, match) => sum + match.humanVouchedSeconds, 0)),
       totalInferredSeconds: roundStat(matches.reduce((sum, match) => sum + match.inferredSeconds, 0)),
       totalOffPitchSeconds: roundStat(matches.reduce((sum, match) => sum + match.offPitchSeconds, 0)),
+      dribbles: matches.some((match) => match.dribbles)
+        ? matches.reduce((sum, match) => ({
+          total: sum.total + (match.dribbles?.total ?? 0),
+          succeeded: sum.succeeded + (match.dribbles?.succeeded ?? 0),
+          failed: sum.failed + (match.dribbles?.failed ?? 0),
+        }), { total: 0, succeeded: 0, failed: 0 })
+        : null,
     },
     excludedClaimCount: reviewClaims.length,
   }));

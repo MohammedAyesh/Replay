@@ -7,7 +7,7 @@
  * shots, almost all of them other people's.
  *
  * With ball data the claim can say what the claimant did: the goals and shots
- * whose last touch was theirs, the take-ons they won, the long passes they
+ * whose last touch was theirs, their successful dribbles, the long passes they
  * found a team-mate with. Each becomes a moment, and each carries a follow
  * path -- the claimant's own position through the clip's sixteen seconds --
  * so the exported clip is framed on them instead of the whole panorama.
@@ -18,6 +18,7 @@ import type { ChainEarnedClip } from "./claimChainState";
 import {
   detectedGoals,
   detectedShots,
+  pitchSizeOf,
   kitOfParts,
   passEvents,
   playerMoments,
@@ -137,8 +138,9 @@ export function personalMoments(
   manifest: TrackingManifest,
 ): PersonalMoment[] {
   if (!play.hasBall || !parts.length) return [];
-  const goals = detectedGoals(play.events, play.touches);
-  const shots = detectedShots(play.events, play.touches);
+  const pitch = pitchSizeOf(play.manifest);
+  const goals = detectedGoals(play.events, play.touches, pitch);
+  const shots = detectedShots(play.events, play.touches, pitch);
   const own = playerMoments(parts, play.dribbles, goals, shots);
   const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions);
   const passes = playerPlay(play.touches, passEvents(play.touches, pick), parts, Boolean(pick)).passes
@@ -154,13 +156,16 @@ export function personalMoments(
     if (own.goals.some((g) => Math.abs(g.t - s.t) < 10)) continue;
     moments.push({ id: `me-shot-${Math.round(s.t)}`, title: `Your shot on target · ${clock(s.t)}`, momentSeconds: s.t, kind: "your-shot", status: "ready", follow: follow(s.t) });
   }
-  const won = own.dribbles
-    .filter((d) => d.outcome === "won")
-    .sort((a, b) => (b.metres ?? 0) - (a.metres ?? 0) || a.closestMetres - b.closestMetres)
+  // successful dribbles first, then the ones nobody touched after; the best
+  // are the ones past the most people over the longest run
+  const runs = own.dribbles
+    .filter((d) => d.outcome !== "lost")
+    .sort((a, b) => (a.outcome === "won" ? 0 : 1) - (b.outcome === "won" ? 0 : 1) || b.beaten - a.beaten || (b.metres ?? 0) - (a.metres ?? 0))
     .slice(0, PERSONAL.maxDribbles);
-  for (const d of won) {
+  for (const d of runs) {
     const t = (d.t0 + d.t1) / 2;
-    moments.push({ id: `me-dribble-${Math.round(d.t0)}`, title: `You beat your man · ${clock(d.t0)}`, momentSeconds: t, kind: "dribble", status: "ready", follow: follow(t) });
+    const past = d.beaten === 1 ? "past 1 player" : `past ${d.beaten} players`;
+    moments.push({ id: `me-dribble-${Math.round(d.t0)}`, title: `Your dribble · ${Math.round(d.metres ?? 0)} m ${past} · ${clock(d.t0)}`, momentSeconds: t, kind: "dribble", status: "ready", follow: follow(t) });
   }
   for (const p of passes) {
     const t = (p.t0 + p.t1) / 2;

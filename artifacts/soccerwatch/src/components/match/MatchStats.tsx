@@ -24,6 +24,7 @@ type PlayerStats = {
   passesTried: number | null;
   passesCompleted: number | null;
   passesReceived: number | null;
+  dribbles?: number | null;
   dribblesWon: number | null;
   dribblesLost: number | null;
   shots: number | null;
@@ -39,6 +40,7 @@ type TeamStats = {
   passesCompleted: [number, number];
   possessionPercent: [number, number];
   completionPercent: number;
+  dribbles?: [number, number];
   dribblesWon?: [number, number];
   dribblesLost?: [number, number];
   shots?: [number, number];
@@ -137,7 +139,9 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
     [copy.pvpTop, (p) => p.topSpeedKmh, (v) => v.toFixed(1)],
     [copy.pvpTouches, (p) => p.touches, int],
     [copy.pvpPasses, (p) => p.passesCompleted, int],
-    [copy.pvpDribbles, (p) => p.dribblesWon, int],
+    [copy.pvpDribbles, (p) => p.dribbles ?? (p.dribblesWon === null ? null : p.dribblesWon + (p.dribblesLost ?? 0)), int],
+    [copy.pvpDribblesWon, (p) => p.dribblesWon, int],
+    [copy.pvpDribblesLost, (p) => p.dribblesLost, int],
     [copy.pvpShots, (p) => p.shots, int],
     [copy.pvpGoals, (p) => p.goals, int],
   ];
@@ -179,7 +183,7 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
           />
           {t.dribblesWon && (
             <>
-              <MirrorRow label={copy.h2hDribbles} a={t.dribblesWon[0]} b={t.dribblesWon[1]} fmt={int} colors={colors} />
+              <MirrorRow label={copy.h2hDribbles} a={(t.dribbles ?? t.dribblesWon)[0]} b={(t.dribbles ?? t.dribblesWon)[1]} fmt={int} colors={colors} />
               <MirrorRow
                 label={copy.h2hDribbleRate}
                 a={pct(t.dribblesWon[0], t.dribblesWon[0] + (t.dribblesLost?.[0] ?? 0))}
