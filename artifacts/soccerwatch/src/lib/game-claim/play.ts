@@ -36,6 +36,8 @@ export type PlayTeamStats = {
   longestPassRun: number;
   ambiguous: number;
   total: number;
+  /** dribbles by each side, and of them successful (won) and failed (lost) */
+  dribbles?: [number, number];
   dribblesWon?: [number, number];
   dribblesLost?: [number, number];
   shots?: [number, number];
@@ -51,7 +53,8 @@ export type PlayDribble = {
   to: [number, number] | null;
   metres: number | null;
   touches: number;
-  closestMetres: number;
+  /** opponents run past */
+  beaten: number;
   outcome: "won" | "lost" | null;
   trackId: string;
 };
@@ -79,7 +82,7 @@ export type Play = {
     goals?: Array<{ t: number; trackId: string | null }>;
     shots?: Array<{ t: number; trackId: string | null }>;
   };
-  dribbleRule?: { pressureMetres: number; outcomeSeconds: number; total: number };
+  dribbleRule?: { minMetres: number; outcomeSeconds: number; total: number };
 };
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");

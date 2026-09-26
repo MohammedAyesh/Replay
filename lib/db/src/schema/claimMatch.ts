@@ -33,6 +33,8 @@ export type ClaimMatchComputedPlayerStats = {
     coordinateSpace: "pitch" | "camera";
     cells: Array<{ x: number; y: number; weight: number }>;
   };
+  /** runs with the ball past an opponent (matchPlay.dribbleEvents); absent on stats cached before dribbles, null without ball tracking */
+  dribbles?: { total: number; succeeded: number; failed: number } | null;
 };
 
 export type TrackingSegmentPayload = {

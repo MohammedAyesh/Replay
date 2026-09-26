@@ -22,6 +22,7 @@ import { logger } from "./logger";
 import { hasUsablePitchModel } from "./pitchModel";
 import {
   dribbleEvents,
+  dropTeleports,
   kitOptions,
   parseBallSidecar,
   resolveTouches,
@@ -48,12 +49,14 @@ export type RecordingPlay = {
   kits: Map<string, Lab>;
   /** goals and shots on target from the bundle (goals.py), tracking seconds */
   events: BundleEvent[];
-  /** take-ons, sided by shirt colour alone (matchPlay.dribbleEvents) */
+  /** dribbles (runs past an opponent), sided by shirt colour alone (matchPlay.dribbleEvents) */
   dribbles: Dribble[];
+  /** ball-tracker jumps dropped before touches were resolved (matchPlay.dropTeleports) */
+  teleports: number;
 };
 
 /** Bumped whenever what is derived here changes, so cached results are rebuilt. */
-const DERIVE_VERSION = 2;
+const DERIVE_VERSION = 3;
 
 const MAX_CACHED = 6;
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
@@ -91,6 +94,16 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
 
   const sidecars: Array<BallSidecar | null> = [];
   for (const segment of manifest.segments) sidecars[segment.index] = await readSidecar(segment.ballPath, segment.index);
+  // the ball tracker's jumps onto a boot or a head make touches that never
+  // happened; drop them before anything reads a touch
+  let teleports = 0;
+  if (manifest.pitchModel) {
+    for (let k = 0; k < sidecars.length; k++) {
+      const cleaned = dropTeleports(sidecars[k] ?? null, manifest);
+      sidecars[k] = cleaned.sidecar;
+      teleports += cleaned.teleports;
+    }
+  }
   const hasBall = sidecars.some((sc) => sc && sc.touches.length > 0);
 
   let segments: TrackingSegmentPayload[] | null = null;
@@ -136,6 +149,7 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
     kits,
     events,
     dribbles,
+    teleports,
   };
   playCache.set(recordingId, { key, data, at: Date.now() });
   if (playCache.size > MAX_CACHED) {

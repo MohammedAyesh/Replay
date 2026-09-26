@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { PlayerDribbleStats } from './playerDribbleStats';
 
 export interface PublicPlayerStatsTotals {
   /** @minimum 0 */
@@ -23,4 +24,6 @@ export interface PublicPlayerStatsTotals {
   totalInferredSeconds: number;
   /** @minimum 0 */
   totalOffPitchSeconds: number;
+  /** Dribbles summed over the matches that have ball tracking, or null when none do. */
+  dribbles?: PlayerDribbleStats | null;
 }

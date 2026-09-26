@@ -526,21 +526,93 @@ export function parseLab(value: unknown): Lab | null {
   return parts as Lab;
 }
 
+/* ------------------------------------------------------------------ teleports */
+
+export const TELEPORT = {
+  /** a jump this far between two ball samples is a candidate, metres */
+  jumpMetres: 3,
+  /** it has to come back within this many samples (~4 Hz, so about a second) */
+  lookSamples: 4,
+  /** while "away" a glitch sits still on what it latched onto; a real ball keeps moving, metres per sample */
+  parkedMetres: 1,
+  /** samples further apart than this are not compared, frames */
+  maxGapFrames: 12,
+  /** touches this close to a teleport's window are dropped with it, frames */
+  padFrames: 3,
+} as const;
+
+/**
+ * Ball teleports. The ball detector sometimes jumps to something ball-like --
+ * a boot, a knee, a hand, a head -- for a sample or two and then comes back
+ * to where the real ball was going. A real ball that jumps that far (a shot)
+ * does not come back. The jump samples are dropped, and so is any touch made
+ * while the ball was "away", because that touch is the glitch touching a
+ * player. Checked by eye on 9 random teleports of the 19 Sep game: all 9 were
+ * the tracker on a boot, a hand or a head (420 in two hours, 414 touches).
+ */
+export function dropTeleports(
+  sidecar: BallSidecar | null,
+  manifest: Pick<TrackingManifest, "width" | "height" | "pitchModel">,
+): { sidecar: BallSidecar | null; teleports: number; touchesDropped: number } {
+  if (!sidecar || sidecar.ball.length < 3 || !manifest.pitchModel) return { sidecar, teleports: 0, touchesDropped: 0 };
+  const P = sidecar.ball.map(([f, x, y]) => {
+    const p = interpolatePitchPosition(x, y, manifest as TrackingManifest);
+    return p ? { f, x: p.x, y: p.y } : null;
+  });
+  const d = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  const bad = new Set<number>();
+  const windows: Array<[number, number]> = [];
+  for (let k = 1; k < P.length; k++) {
+    const pre = P[k - 1], cur = P[k];
+    if (!pre || !cur || cur.f - pre.f > TELEPORT.maxGapFrames) continue;
+    const jump = d(pre, cur);
+    if (jump < TELEPORT.jumpMetres) continue;
+    for (let m = k + 1; m <= Math.min(P.length - 1, k + TELEPORT.lookSamples); m++) {
+      const back = P[m];
+      if (!back) continue;
+      if (d(back, pre) < jump * 0.5 && d(back, cur) >= TELEPORT.jumpMetres) {
+        let parked = true;
+        for (let q = k + 1; q < m; q++) {
+          const a = P[q], z = P[q - 1];
+          if (!a || !z || d(a, z) > TELEPORT.parkedMetres) parked = false;
+        }
+        if (!parked) break;
+        for (let q = k; q < m; q++) bad.add(q);
+        windows.push([cur.f - TELEPORT.padFrames, P[m - 1]!.f + TELEPORT.padFrames]);
+        k = m - 1;
+        break;
+      }
+    }
+  }
+  if (!windows.length) return { sidecar, teleports: 0, touchesDropped: 0 };
+  const touches = sidecar.touches.filter((t) => !windows.some(([lo, hi]) => t[0] >= lo && t[0] <= hi));
+  return {
+    sidecar: { ...sidecar, touches, ball: sidecar.ball.filter((_, i) => !bad.has(i)) },
+    teleports: windows.length,
+    touchesDropped: sidecar.touches.length - touches.length,
+  };
+}
+
 /* ------------------------------------------------------------------ dribbles */
 
 export const DRIBBLE = {
-  /** consecutive touches by one player this close together are one spell on the ball, seconds */
+  /** consecutive touches by the carrier this close together are one run, seconds */
   maxTouchGapSeconds: 3,
-  /** a spell is a dribble only when he kept it this long (first to last touch), seconds... */
-  minSeconds: 0.6,
-  /** ...or took the ball this far, metres */
-  minMetres: 2,
-  /** an opponent's feet this close to his, at any moment of the spell, is a take-on, metres */
-  pressureMetres: 1.8,
-  /** how often the pressure test samples the spell, frames */
-  sampleFrames: 5,
-  /** the spell's pressure window runs this far past the last touch, frames */
-  tailFrames: 10,
+  /** one stray "touch" by someone else, with the carrier back on it within this long, does not end the run, seconds */
+  regainSeconds: 1.5,
+  /** the carrier has to travel this far with the ball, metres... */
+  minMetres: 5,
+  /** ...over at least this long, seconds */
+  minSeconds: 1.2,
+  /** how often the run is sampled, frames */
+  sampleFrames: 4,
+  /** an opponent counts as "in front" up to this far ahead of the carrier... */
+  aheadMetres: 7,
+  /** ...and this far either side of his line, metres */
+  lateralMetres: 3.5,
+  /** and is "passed" once he is this far behind the carrier (and still within passedRadius) */
+  behindMetres: 0.5,
+  passedRadiusMetres: 6,
   /** the next touch decides it only when it comes within this long, seconds */
   outcomeSeconds: 4,
   /** without team colours: another shirt this far from his is an opponent... */
@@ -555,15 +627,17 @@ export type Dribble = {
   f1: number;
   t0: number;
   t1: number;
-  /** ball at the first and last touch, metres */
+  /** ball at the first and last touch of the run, metres */
   from: [number, number] | null;
   to: [number, number] | null;
+  /** how far the carrier travelled with it, metres */
   metres: number | null;
   touches: number;
-  /** the opponent who came closest, and how close */
+  /** opponents he went past, and the first of them */
+  beaten: number;
+  beatenTrackIds: string[];
   opponentTrackId: string;
-  closestMetres: number;
-  /** won: his side touched it next. lost: the other side did. null: nobody within 4 s (out of play, lost to the camera) */
+  /** won = successful (he or his side still had it after), lost = failed (the other side got it), null = nobody touched it within 4 s */
   outcome: "won" | "lost" | null;
 };
 
@@ -582,22 +656,24 @@ function sameSide(p: Lab | null, q: Lab | null, pick: TeamPick | null): boolean 
 }
 
 /**
- * Take-ons, won and lost. Nothing in the pipeline marks a dribble, so it is
- * read off what the touches and the tracks already say:
+ * Dribbles, successful and failed. A dribble is a RUN with the ball that gets
+ * past people -- not a standing 1-v-1, not a pass (Mohammed's definition,
+ * checked against his calls on the 19 Sep game):
  *
- *   1. A SPELL on the ball: one player touching it again and again, each
- *      touch within 3 s of the last, for 0.6 s or 2 m or more. A single touch
- *      is a pass or a shot or a clearance, never a dribble.
- *   2. PRESSURE: at some moment of the spell an opponent's feet came within
- *      1.8 m of his. Keeping the ball with nobody near is a carry; the
- *      question a dribble answers is whether he got past someone.
- *   3. The OUTCOME is who touched it next: his side (himself after a pause,
- *      or a team-mate from his pass) is a dribble won; the other side is a
- *      dribble lost. Nobody within 4 s is not graded: the ball went out, or
- *      the camera lost it, and neither says who won.
+ *   1. A RUN: one player's touches, each within 3 s of the last, over at least
+ *      1.2 s, while he himself travels at least 5 m. A single stray "touch" by
+ *      someone else with the carrier back on it within 1.5 s is the touch
+ *      detector misreading a tackle attempt, and the run carries on through it.
+ *   2. PAST SOMEONE: an opponent who was in front of him (up to 7 m ahead,
+ *      within 3.5 m of his line) ends up behind him. Nobody passed: a carry,
+ *      not a dribble.
+ *   3. The OUTCOME is who touched it next: his side is successful; the other
+ *      side is failed -- unless his side has it back within 1.5 s, which again
+ *      is a misread. Nobody within 4 s is not graded.
  *
- * Needs the pitch model (metres) and the tracks' boxes (who was near). Sides
- * come from the team pick when there is one, else from shirt colour alone.
+ * Needs the pitch model (metres) and the tracks' boxes. Sides come from the
+ * team pick when there is one, else from shirt colour alone. Feed it touches
+ * resolved from teleport-free sidecars (dropTeleports).
  */
 export function dribbleEvents(
   manifest: TrackingManifest,
@@ -607,28 +683,37 @@ export function dribbleEvents(
   pick: TeamPick | null,
 ): Dribble[] {
   if (!hasUsablePitchModel(manifest) || touches.length < 2) return [];
-  type Spell = { i: number; j: number };
-  const spells: Spell[] = [];
+  const T = touches;
+  const sideOf = (id: string, fallback: Lab | null) => kits.get(id) ?? fallback ?? null;
+  type Run = { i: number; j: number };
+  const runs: Run[] = [];
   let i = 0;
-  while (i < touches.length) {
+  while (i < T.length) {
+    const c = T[i].trackId;
     let j = i;
-    while (j + 1 < touches.length && touches[j + 1].trackId === touches[i].trackId
-      && touches[j + 1].t - touches[j].t <= DRIBBLE.maxTouchGapSeconds) j++;
-    if (j > i) {
-      const a = touches[i], b = touches[j];
-      const metres = a.ball && b.ball ? Math.hypot(b.ball[0] - a.ball[0], b.ball[1] - a.ball[1]) : 0;
-      if (b.t - a.t >= DRIBBLE.minSeconds || metres >= DRIBBLE.minMetres) spells.push({ i, j });
+    for (;;) {
+      const n1 = T[j + 1], n2 = T[j + 2];
+      if (n1 && n1.trackId === c && n1.t - T[j].t <= DRIBBLE.maxTouchGapSeconds) { j += 1; continue; }
+      if (n1 && n2 && n1.trackId !== c && n2.trackId === c
+        && n2.t - T[j].t <= DRIBBLE.maxTouchGapSeconds + 0.5 && n2.t - n1.t <= DRIBBLE.regainSeconds) { j += 2; continue; }
+      break;
     }
+    if (j > i && T[j].t - T[i].t >= DRIBBLE.minSeconds) runs.push({ i, j });
     i = j + 1;
   }
-  if (!spells.length) return [];
+  if (!runs.length) return [];
 
-  // every box at every sampled frame of every spell, in one pass per segment
+  const framesOf = (r: Run) => {
+    const out: number[] = [];
+    for (let f = T[r.i].f; f <= T[r.j].f; f += DRIBBLE.sampleFrames) out.push(f);
+    if (out[out.length - 1] !== T[r.j].f) out.push(T[r.j].f);
+    return out;
+  };
   const bySegment = new Map<number, number[]>();
-  for (const s of spells) {
-    const seg = touches[s.i].segmentIndex;
+  for (const r of runs) {
+    const seg = T[r.i].segmentIndex;
     const list = bySegment.get(seg) ?? [];
-    for (let f = touches[s.i].f; f <= touches[s.j].f + DRIBBLE.tailFrames; f += DRIBBLE.sampleFrames) list.push(f);
+    list.push(...framesOf(r));
     bySegment.set(seg, list);
   }
   const index = new Map<number, Box[]>();
@@ -644,38 +729,53 @@ export function dribbleEvents(
   const footOf = (box: Box) => interpolatePitchPosition(box.x + box.w / 2, box.y + box.h, manifest);
 
   const out: Dribble[] = [];
-  for (const s of spells) {
-    const first = touches[s.i];
-    const last = touches[s.j];
-    const own = kits.get(first.trackId) ?? first.kit;
-    let closest = Number.POSITIVE_INFINITY;
-    let opponent = "";
-    for (let f = first.f; f <= last.f + DRIBBLE.tailFrames; f += DRIBBLE.sampleFrames) {
-      const boxes = near(index, f, 1);
-      const me = boxes.find((b) => b.id === first.trackId);
-      if (!me) continue;
-      const mine = footOf(me);
-      if (!mine) continue;
-      for (const box of boxes) {
-        if (box.id === first.trackId) continue;
-        if (sameSide(own, kits.get(box.id) ?? null, pick) !== false) continue;
-        const p = footOf(box);
+  for (const r of runs) {
+    const first = T[r.i], last = T[r.j];
+    const own = sideOf(first.trackId, first.kit);
+    const me: Array<{ x: number; y: number }> = [];
+    const opp = new Map<string, Array<{ p: { x: number; y: number }; mp: { x: number; y: number } }>>();
+    for (const f of framesOf(r)) {
+      const boxes = near(index, f, 2);
+      const mb = boxes.find((b) => b.id === first.trackId);
+      const mp = mb ? footOf(mb) : null;
+      if (!mp) continue;
+      me.push(mp);
+      for (const b of boxes) {
+        if (b.id === first.trackId || sameSide(own, sideOf(b.id, null), pick) !== false) continue;
+        const p = footOf(b);
         if (!p) continue;
-        const d = Math.hypot(p.x - mine.x, p.y - mine.y);
-        if (d < closest) { closest = d; opponent = box.id; }
+        const list = opp.get(b.id) ?? [];
+        list.push({ p, mp });
+        opp.set(b.id, list);
       }
     }
-    if (!(closest <= DRIBBLE.pressureMetres)) continue;
-    const next = touches[s.j + 1];
+    if (me.length < 2) continue;
+    const c0 = me[0], c1 = me[me.length - 1];
+    const L = Math.hypot(c1.x - c0.x, c1.y - c0.y);
+    if (L < DRIBBLE.minMetres) continue;
+    const ux = (c1.x - c0.x) / L, uy = (c1.y - c0.y) / L;
+    const beaten: string[] = [];
+    for (const [id, seq] of opp) {
+      let ahead = false;
+      for (const { p, mp } of seq) {
+        const rx = p.x - mp.x, ry = p.y - mp.y;
+        const along = rx * ux + ry * uy, lateral = Math.abs(rx * uy - ry * ux);
+        if (along > 0.3 && along <= DRIBBLE.aheadMetres && lateral <= DRIBBLE.lateralMetres) ahead = true;
+        else if (ahead && along < -DRIBBLE.behindMetres && Math.hypot(rx, ry) < DRIBBLE.passedRadiusMetres) { beaten.push(id); break; }
+      }
+    }
+    if (!beaten.length) continue;
+    const next = T[r.j + 1];
     let outcome: Dribble["outcome"] = null;
     if (next && next.t - last.t <= DRIBBLE.outcomeSeconds) {
-      if (next.trackId === first.trackId) outcome = "won";
-      else {
-        const same = sameSide(own, kits.get(next.trackId) ?? next.kit, pick);
-        outcome = same === null ? null : same ? "won" : "lost";
+      const same = next.trackId === first.trackId ? true : sameSide(own, sideOf(next.trackId, next.kit), pick);
+      if (same === true) outcome = "won";
+      else if (same === false) {
+        const back = T.slice(r.j + 2, r.j + 6).find((x) => x.t - next.t <= DRIBBLE.regainSeconds
+          && (x.trackId === first.trackId || sameSide(own, sideOf(x.trackId, x.kit), pick) === true));
+        outcome = back ? "won" : "lost";
       }
     }
-    const metres = first.ball && last.ball ? round1(Math.hypot(last.ball[0] - first.ball[0], last.ball[1] - first.ball[1])) : null;
     out.push({
       trackId: first.trackId,
       f0: first.f,
@@ -684,28 +784,31 @@ export function dribbleEvents(
       t1: last.t,
       from: first.ball,
       to: last.ball,
-      metres,
-      touches: s.j - s.i + 1,
-      opponentTrackId: opponent,
-      closestMetres: round1(closest),
+      metres: round1(L),
+      touches: r.j - r.i + 1,
+      beaten: beaten.length,
+      beatenTrackIds: beaten,
+      opponentTrackId: beaten[0],
       outcome,
     });
   }
   return out;
 }
 
-/** Dribbles won and lost per team: [won, lost] for side 0 and side 1. */
-export function teamDribbles(dribbles: Dribble[], kits: Map<string, Lab>, pick: TeamPick): { won: [number, number]; lost: [number, number] } {
+/** Dribbles per team: all of them, successful (won) and failed (lost), [side 0, side 1]. */
+export function teamDribbles(dribbles: Dribble[], kits: Map<string, Lab>, pick: TeamPick): { total: [number, number]; won: [number, number]; lost: [number, number] } {
+  const total: [number, number] = [0, 0];
   const won: [number, number] = [0, 0];
   const lost: [number, number] = [0, 0];
   for (const d of dribbles) {
     const kit = kits.get(d.trackId);
-    if (!kit || !d.outcome) continue;
+    if (!kit) continue;
     const side = kitDistance(kit, pick.a) <= kitDistance(kit, pick.b) ? 0 : 1;
+    total[side]++;
     if (d.outcome === "won") won[side]++;
-    else lost[side]++;
+    else if (d.outcome === "lost") lost[side]++;
   }
-  return { won, lost };
+  return { total, won, lost };
 }
 
 /* ------------------------------------------------------------------ goals */
@@ -740,19 +843,59 @@ export type DetectedGoal = {
 
 export type DetectedShot = { t: number; trackId: string | null; kit: Lab | null; touchF: number | null };
 
-function lastTouchBefore(touches: Touch[], t: number, window: number): Touch | null {
+/** The pitch in metres, for telling a goalkeeper's touch from the shot. */
+export type PitchSize = { length: number; width: number };
+
+export function pitchSizeOf(manifest: Pick<TrackingManifest, "pitchModel">): PitchSize | null {
+  const m = manifest.pitchModel;
+  return m && m.pitchWidthMetres > 0 && m.pitchHeightMetres > 0 ? { length: m.pitchWidthMetres, width: m.pitchHeightMetres } : null;
+}
+
+export const KEEPER = {
+  /**
+   * a touch with the player's feet this close to the goal line... On the
+   * 19 Sep game every keeper touch was within 1.2 m of the line and every
+   * real shooter at least 1.7 m out (3 m nulled real shots, 2026-09-26).
+   */
+  lineMetres: 1.4,
+  /** ...and this close to the middle of it is the goalkeeper's, metres */
+  halfWidthMetres: 4,
+} as const;
+
+/**
+ * Who struck it: the last touch before the ball went in (or was seen in the
+ * goal mouth) that was not the goalkeeper's. On a goal the keeper picks the
+ * ball out of the net; on a save he is the one who stopped it -- either way
+ * "the last touch" was his, and he was being credited with other people's
+ * goals and shots (Mohammed, 2026-09-26; 7 of 12 real shots on the 19 Sep
+ * game). So touches from inside the goal mouth at the end being attacked are
+ * skipped, and so is every touch by that same track in the window. Shirt
+ * colour is not used: a keeper's kit often looks like the attackers' and it
+ * took real shooters' credit away. Without a pitch model this falls back to
+ * the plain last touch.
+ */
+function strikerBefore(touches: Touch[], t: number, window: number, pitch: PitchSize | null): Touch | null {
   let lo = 0;
   let hi = touches.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
     if (touches[mid].t <= t + 0.5) lo = mid + 1; else hi = mid;
   }
-  const k = lo - 1;
-  return k >= 0 && t - touches[k].t <= window ? touches[k] : null;
+  const candidates: Touch[] = [];
+  for (let k = lo - 1; k >= 0 && t - touches[k].t <= window; k--) candidates.push(touches[k]);
+  if (!candidates.length) return null;
+  const at = candidates.find((c) => c.foot)?.foot ?? candidates.find((c) => c.ball)?.ball ?? null;
+  if (!pitch || !at) return candidates[0];
+  const goalX = at[0] < pitch.length / 2 ? 0 : pitch.length;
+  const inMouth = (c: Touch) => !!c.foot
+    && Math.abs(c.foot[0] - goalX) <= KEEPER.lineMetres
+    && Math.abs(c.foot[1] - pitch.width / 2) <= KEEPER.halfWidthMetres;
+  const keeperIds = new Set(candidates.filter(inMouth).map((c) => c.trackId));
+  return candidates.find((c) => !keeperIds.has(c.trackId)) ?? null;
 }
 
-/** Goals the detector saw, merged, each with whoever touched the ball last. */
-export function detectedGoals(events: BundleEvent[], touches: Touch[]): DetectedGoal[] {
+/** Goals the detector saw, merged, each with the player who scored it (never the goalkeeper). */
+export function detectedGoals(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null): DetectedGoal[] {
   const goals = events.filter((e) => e.type.toLowerCase() === "goal").map((e) => e.t).sort((a, b) => a - b);
   const merged: number[] = [];
   for (const t of goals) {
@@ -760,18 +903,18 @@ export function detectedGoals(events: BundleEvent[], touches: Touch[]): Detected
     else merged.push(t);
   }
   return merged.map((t) => {
-    const touch = lastTouchBefore(touches, t, GOAL.scorerSeconds);
+    const touch = strikerBefore(touches, t, GOAL.scorerSeconds, pitch);
     return { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null };
   });
 }
 
-/** Shots on target (the ball seen inside a goal mouth), each with the player who struck it. */
-export function detectedShots(events: BundleEvent[], touches: Touch[]): DetectedShot[] {
+/** Shots on target (the ball seen inside a goal mouth), each with the player who struck it (never the goalkeeper). */
+export function detectedShots(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null): DetectedShot[] {
   return events
     .filter((e) => e.type.toLowerCase() === "shot")
     .sort((a, b) => a.t - b.t)
     .map((e) => {
-      const touch = lastTouchBefore(touches, e.t, GOAL.shooterSeconds);
+      const touch = strikerBefore(touches, e.t, GOAL.shooterSeconds, pitch);
       return { t: e.t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, touchF: touch?.f ?? null };
     });
 }

@@ -36,6 +36,7 @@ import { ammanLocalInstant, randomToken, rosterFor, type RoomContext } from "./m
 import {
   detectedGoals,
   detectedShots,
+  pitchSizeOf,
   hexToLab,
   kitDistance,
   kitOfParts,
@@ -256,6 +257,8 @@ export type MatchPlayerStats = {
   passesTried: number | null;
   passesCompleted: number | null;
   passesReceived: number | null;
+  /** dribbles (runs past an opponent), and of them successful (won) and failed (lost) */
+  dribbles: number | null;
   dribblesWon: number | null;
   dribblesLost: number | null;
   shots: number | null;
@@ -274,6 +277,7 @@ export type MatchTeamStats = {
   completionPercent: number;
   contested: number;
   ambiguous: number;
+  dribbles: [number, number];
   dribblesWon: [number, number];
   dribblesLost: [number, number];
   shots: [number, number];
@@ -313,8 +317,8 @@ async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: 
       pick,
       kits,
       dribbles: play.dribbles.filter((d) => within(d.t0)),
-      goals: detectedGoals(play.events.filter((e) => within(e.t)), play.touches),
-      shots: detectedShots(play.events.filter((e) => within(e.t)), play.touches),
+      goals: detectedGoals(play.events.filter((e) => within(e.t)), play.touches, pitchSizeOf(play.manifest)),
+      shots: detectedShots(play.events.filter((e) => within(e.t)), play.touches, pitchSizeOf(play.manifest)),
     });
   }
   return out;
@@ -347,6 +351,7 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
     passesTried: null,
     passesCompleted: null,
     passesReceived: null,
+    dribbles: null,
     dribblesWon: null,
     dribblesLost: null,
     shots: null,
@@ -383,6 +388,7 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
           possessionSeconds: sum(prev.possessionSeconds, s.possessionSeconds),
           contested: prev.contested + s.contested,
           ambiguous: prev.ambiguous + s.ambiguous,
+          dribbles: sum(prev.dribbles, dr.total),
           dribblesWon: sum(prev.dribblesWon, dr.won),
           dribblesLost: sum(prev.dribblesLost, dr.lost),
           shots: sum(prev.shots, sh),
@@ -400,6 +406,7 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
           completionPercent: s.completionPercent,
           contested: s.contested,
           ambiguous: s.ambiguous,
+          dribbles: dr.total,
           dribblesWon: dr.won,
           dribblesLost: dr.lost,
           shots: sh,
@@ -429,6 +436,7 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
         row.passesCompleted = pick ? add(row.passesCompleted, mine.passesCompleted) : null;
         row.passesReceived = pick ? add(row.passesReceived, mine.passesReceived) : null;
         const own = playerMoments(parts, dribbles, goals, shots);
+        row.dribbles = add(row.dribbles, own.dribbles.length);
         row.dribblesWon = add(row.dribblesWon, own.dribblesWon);
         row.dribblesLost = add(row.dribblesLost, own.dribblesLost);
         row.shots = add(row.shots, own.shots.length);

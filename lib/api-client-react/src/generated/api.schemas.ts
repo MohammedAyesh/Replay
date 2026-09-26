@@ -568,6 +568,18 @@ export interface PublicPlayerHeatmap {
   cells: PublicPlayerHeatmapCellsItem[];
 }
 
+/**
+ * Runs with the ball past at least one opponent. Successful when his side still had it after; failed when the other side got it. Dribbles nobody touched after are counted in total only.
+ */
+export interface PlayerDribbleStats {
+  /** @minimum 0 */
+  total: number;
+  /** @minimum 0 */
+  succeeded: number;
+  /** @minimum 0 */
+  failed: number;
+}
+
 export interface PublicPlayerMatchStats {
   recordingId: number;
   title: string;
@@ -587,6 +599,8 @@ export interface PublicPlayerMatchStats {
   /** @minimum 0 */
   offPitchSeconds: number;
   heatmap: PublicPlayerHeatmap;
+  /** This match's dribbles, or null when the recording has no ball tracking. */
+  dribbles?: PlayerDribbleStats | null;
 }
 
 export interface PublicPlayerStatsTotals {
@@ -606,6 +620,8 @@ export interface PublicPlayerStatsTotals {
   totalInferredSeconds: number;
   /** @minimum 0 */
   totalOffPitchSeconds: number;
+  /** Dribbles summed over the matches that have ball tracking, or null when none do. */
+  dribbles?: PlayerDribbleStats | null;
 }
 
 export interface PublicPlayerStats {

@@ -34,6 +34,7 @@ import { normaliseChain, type ChainPart } from "../lib/claimChain";
 import {
   detectedGoals,
   detectedShots,
+  pitchSizeOf,
   DRIBBLE,
   kitOfParts,
   parseLab,
@@ -277,8 +278,9 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
 
   const events = passEvents(play.touches, pick);
   const mine = playerPlay(play.touches, events, parts, Boolean(pick));
-  const goals = detectedGoals(play.events, play.touches);
-  const shots = detectedShots(play.events, play.touches);
+  const pitch = pitchSizeOf(play.manifest);
+  const goals = detectedGoals(play.events, play.touches, pitch);
+  const shots = detectedShots(play.events, play.touches, pitch);
   const own = playerMoments(parts, play.dribbles, goals, shots);
   const perSide = <T extends { kit: Lab | null }>(rows: T[]): [number, number] => {
     const n: [number, number] = [0, 0];
@@ -296,6 +298,7 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
     teams: pick ? { a: pick.a, b: pick.b, source } : null,
     team: pick ? {
       ...teamStats(play.touches, events, pick),
+      dribbles: dribbleTeams!.total,
       dribblesWon: dribbleTeams!.won,
       dribblesLost: dribbleTeams!.lost,
       shots: perSide(shots),
@@ -309,13 +312,13 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
       passesTried: mine.passesTried,
       passesCompleted: mine.passesCompleted,
       passesReceived: mine.passesReceived,
-      dribbles: own.dribbles.map((d) => ({ f0: d.f0, f1: d.f1, t0: d.t0, t1: d.t1, from: d.from, to: d.to, metres: d.metres, touches: d.touches, closestMetres: d.closestMetres, outcome: d.outcome, trackId: d.trackId })),
+      dribbles: own.dribbles.map((d) => ({ f0: d.f0, f1: d.f1, t0: d.t0, t1: d.t1, from: d.from, to: d.to, metres: d.metres, touches: d.touches, beaten: d.beaten, outcome: d.outcome, trackId: d.trackId })),
       dribblesWon: own.dribblesWon,
       dribblesLost: own.dribblesLost,
       goals: own.goals.map((g) => ({ t: g.t, trackId: g.trackId })),
       shots: own.shots.map((x) => ({ t: x.t, trackId: x.trackId })),
     },
-    dribbleRule: { pressureMetres: DRIBBLE.pressureMetres, outcomeSeconds: DRIBBLE.outcomeSeconds, total: play.dribbles.length },
+    dribbleRule: { minMetres: DRIBBLE.minMetres, outcomeSeconds: DRIBBLE.outcomeSeconds, total: play.dribbles.length },
   });
 });
 
