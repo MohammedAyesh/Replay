@@ -40,3 +40,4 @@
 - [Bunny title parser formats](bunny-title-parser.md) — public archive titles may omit the camera prefix; parse bare ISO date/time titles in both archive and admin flows.
 - [Replay visual tokens](replay-visual-tokens.md) — Floodlight is the single primary action, Turf marks ready/active states, and live red is reserved for live recording signals.
 - [Account deletion retention](account-deletion.md) — delete Clerk first, anonymize retained records under a disabled placeholder, and disable the local account if its transaction fails.
+- [Menus inside linked cards](linked-card-menu-closure.md) — preventDefault stops link navigation but can skip Radix auto-dismiss; explicitly close the menu before opening an overlay.

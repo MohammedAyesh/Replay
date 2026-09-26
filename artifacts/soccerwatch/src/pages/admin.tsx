@@ -15,6 +15,8 @@ import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import AdminVarTab from "@/components/admin/AdminVarTab";
 import { StreamingPanel } from "@/components/StreamingPanel";
 import StatPaymentsTab from "@/components/admin/StatPaymentsTab";
+import { ReportsTab } from "@/components/admin/ReportsTab";
+import { useAdminReports } from "@/lib/safety-api";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
@@ -38,7 +40,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "claim-disputes" | "analysis" | "branding" | "settings";
+type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -6288,6 +6290,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   live: { label: "Live Control", render: () => <LiveTab /> },
   var: { label: "VAR", render: () => <AdminVarTab /> },
   "stat-payments": { label: "Payments", render: () => <StatPaymentsTab /> },
+  reports: { label: "Reports", render: () => <ReportsTab /> },
   "claim-disputes": { label: "Claim Disputes", render: () => <ClaimDisputesTab /> },
   analysis: { label: "Analysis", render: () => <AnalysisTab /> },
   branding: { label: "Branding", render: () => <BrandingTab /> },
@@ -6300,6 +6303,7 @@ export default function Admin() {
   const { user, isLoading, isAdmin } = useAuth();
   const [, setLocation] = useLocation();
   const [tab, setTab] = useState<Tab>("clips");
+  const openReports = useAdminReports("open", Boolean(user) && isAdmin && !isLoading);
 
   useEffect(() => {
     if (!isLoading && (!user || !isAdmin)) {
@@ -6340,6 +6344,14 @@ export default function Admin() {
             )}
           >
             {TABS[id].label}
+            {id === "reports" && (openReports.data?.length ?? 0) > 0 && (
+              <span
+                data-testid="badge-open-report-count"
+                className="ms-2 inline-flex min-w-5 items-center justify-center rounded-full bg-turf px-1.5 py-0.5 text-[10px] font-bold leading-none text-void"
+              >
+                {openReports.data?.length}
+              </span>
+            )}
             {tab === id && (
               <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-turf rounded-full" />
             )}

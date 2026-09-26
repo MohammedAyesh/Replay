@@ -27,6 +27,9 @@ import {
   shouldShowPerMatchHeatmaps,
 } from "@/lib/player-stats";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
+import { SafetyMenu } from "@/components/safety/SafetyMenu";
+import { useMyBlocks, useUnblockUser, type BlockedPlayer } from "@/lib/safety-api";
+import { useSafetyCopy } from "@/i18n/safety-strings";
 
 function getInitials(name: string): string {
   return name
@@ -41,12 +44,20 @@ function getProfileQueryKey(id: number) {
   return ["getUserProfile", id];
 }
 
+function apiErrorReason(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("data" in error)) return undefined;
+  const data = (error as { data?: { reason?: unknown } }).data;
+  return typeof data?.reason === "string" ? data.reason : undefined;
+}
+
 export default function Profile() {
   const [, params] = useRoute("/players/:id");
   const userId = parseInt(params?.id || "0", 10);
   const { t } = useTranslation();
+  const { user, isGuest } = useAuth();
+  const blocks = useMyBlocks(Boolean(user) && !isGuest);
 
-  const { data: profile, isLoading, isError } = useGetUserProfile(userId, {
+  const { data: profile, isLoading, isError, error } = useGetUserProfile(userId, {
     query: {
       enabled: !!userId,
       queryKey: getProfileQueryKey(userId),
@@ -62,6 +73,14 @@ export default function Profile() {
   }
 
   if (isError || !profile) {
+    if (apiErrorReason(error) === "blocked") {
+      return (
+        <BlockedProfileNotice
+          userId={userId}
+          isMyBlock={(blocks.data ?? []).some((row) => row.userId === userId)}
+        />
+      );
+    }
     return (
       <div className="flex-1 bg-background flex items-center justify-center">
         <div className="text-muted-foreground text-sm">{t.profile.notFound}</div>
@@ -69,15 +88,56 @@ export default function Profile() {
     );
   }
 
-  return <ProfileScreen profile={profile} />;
+  return <ProfileScreen profile={profile} myBlocks={blocks.data ?? []} />;
 }
 
-function ProfileScreen({ profile }: { profile: PublicProfile }) {
+function BlockedProfileNotice({ userId, isMyBlock }: { userId: number; isMyBlock: boolean }) {
+  const copy = useSafetyCopy();
+  const unblock = useUnblockUser();
+  const { toast } = useToast();
+
+  const restoreProfile = async () => {
+    try {
+      await unblock.mutateAsync(userId);
+      toast({ title: copy.unblocked });
+    } catch {
+      toast({ title: copy.unblockFailed, variant: "destructive" });
+    }
+  };
+
+  return (
+    <main
+      dir={copy.locale === "ar" ? "rtl" : "ltr"}
+      className="flex flex-1 items-center justify-center bg-void px-5 py-10 text-text"
+    >
+      <section data-testid="card-profile-not-available" className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 text-center">
+        <h1 className="font-display text-xl font-bold">{copy.notAvailable}</h1>
+        {isMyBlock && (
+          <>
+            <p className="mt-2 text-sm text-muted-text">{copy.youBlocked}</p>
+            <button
+              type="button"
+              disabled={unblock.isPending}
+              data-testid="button-profile-unblock"
+              onClick={() => void restoreProfile()}
+              className="mt-5 min-h-11 rounded-full bg-floodlight px-5 text-sm font-bold text-void disabled:opacity-50"
+            >
+              {copy.unblock}
+            </button>
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks: BlockedPlayer[] }) {
   const [, setLocation] = useLocation();
   const { user, isGuest } = useAuth();
   const { toast } = useToast();
   const { t, locale } = useTranslation();
   const queryClient = useQueryClient();
+  const replayProfile = useReplayProfile(profile.id);
   const { data: playerStats, isLoading: statsLoading, isError: statsError } = useGetPublicPlayerStats(profile.id, {
     query: {
       enabled: Boolean(profile.id),
@@ -89,6 +149,7 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
   const unfollowMutation = useUnfollowUser();
 
   const isOwnProfile = !isGuest && user?.id === profile.id;
+  const blockedByViewer = myBlocks.some((row) => row.userId === profile.id);
 
   const handleFollow = () => {
     if (isGuest) {
@@ -132,6 +193,10 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
 
   const isMutating = followMutation.isPending || unfollowMutation.isPending;
 
+  if (apiErrorReason(replayProfile.error) === "blocked") {
+    return <BlockedProfileNotice userId={profile.id} isMyBlock={blockedByViewer} />;
+  }
+
   return (
     <div className="flex-1 bg-background flex flex-col h-full overflow-y-auto no-scrollbar">
       {/* Top bar */}
@@ -144,6 +209,15 @@ function ProfileScreen({ profile }: { profile: PublicProfile }) {
           <ChevronRight className="w-5 h-5 ltr:hidden" />
         </button>
         <span className="text-sm font-semibold text-muted-foreground flex-1 truncate">{profile.name}</span>
+        {!isGuest && user && !isOwnProfile && (
+          <SafetyMenu
+            target={{ type: "user", id: profile.id, name: profile.name }}
+            onBlocked={() => {
+              if (window.history.length > 1) window.history.back();
+              else setLocation("/matches");
+            }}
+          />
+        )}
       </div>
 
       <div className="px-5 py-8">

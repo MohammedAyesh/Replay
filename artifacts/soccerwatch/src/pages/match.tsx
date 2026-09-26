@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
 import { StreamingPanel } from "@/components/StreamingPanel";
+import { SafetyMenu } from "@/components/safety/SafetyMenu";
 import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import { MatchStats } from "@/components/match/MatchStats";
@@ -1398,6 +1399,11 @@ function ClipsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings & { loca
                 <div className="absolute inset-0 flex items-center justify-center"><Play className="h-6 w-6 text-muted-text" /></div>
                 <span className="absolute bottom-1.5 end-1.5 rounded bg-void/80 px-1.5 font-mono text-[11px]">{Math.round(clip.duration)}s</span>
                 {clip.mine && <span className="absolute start-1.5 top-1.5 rounded-full bg-violet px-2 py-0.5 text-[10px] font-bold">{copy.yourClip}</span>}
+                {!clip.mine && (
+                  <div className="absolute end-1 top-1 z-10 rounded-full bg-black/45">
+                    <SafetyMenu target={{ type: "user_clip", id: clip.id, ownerId: clip.by.userId, ownerName: clip.by.name }} />
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2 p-2">
                 <PlayerAvatar name={clip.by.name} avatarUrl={clip.by.avatarUrl} size={22} />

@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { applyFrameToVideo, frameToVideoStyle, interpolateFrame } from "@/lib/cropFrame";
 import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
+import { useSafetyCopy, hiddenClipNoticeText } from "@/i18n/safety-strings";
 import {
   fetchDownloadQuota,
   formatQuotaLabel,
@@ -1543,6 +1544,7 @@ function UserClipCard({
 }) {
   const { toast } = useToast();
   const { t } = useTranslation();
+  const safetyCopy = useSafetyCopy();
   const queryClient = useQueryClient();
   const deleteUserClip = useDeleteUserClip();
   const [showDelete, setShowDelete] = useState(false);
@@ -1697,6 +1699,15 @@ function UserClipCard({
         <p className="mt-1 text-[10px] font-medium text-primary">
           {new Date(clip.createdAt).toLocaleDateString()}
         </p>
+        {clip.isHidden && (
+          <p
+            role="status"
+            data-testid={`status-hidden-clip-${clip.id}`}
+            className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-200"
+          >
+            {hiddenClipNoticeText(clip.hiddenReason, safetyCopy.locale)}
+          </p>
+        )}
         {isLiveClip && (
         <p className={cn("mt-1 text-[10px] font-semibold", liveProgress.liveClipStatus === "failed" || liveProgress.exportStatus === "error" ? "text-live" : "text-muted-foreground")}>
             {liveStatusText}
@@ -1717,7 +1728,7 @@ function UserClipCard({
         {isPrivate ? (
           <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
             <Lock className="h-2.5 w-2.5" />
-            Private
+            {t.myClips.private}
           </span>
         ) : (
           <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">

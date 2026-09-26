@@ -4,7 +4,7 @@ import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdatePro
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video, FileText, Mail } from "lucide-react";
+import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import { Camera, Loader2 } from "lucide-react";
 import { useAvatarUpload, useReplayProfile } from "@/lib/match-api";
 import { useSupportContact, supportMailto } from "@/lib/client-settings";
 import { useLegalCopy } from "@/i18n/legal-strings";
+import { useSafetyCopy } from "@/i18n/safety-strings";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -45,6 +46,7 @@ export default function Account() {
   const { isGuest, user: authUser, isAdmin } = useAuth();
   const { t, locale } = useTranslation();
   const legal = useLegalCopy();
+  const safety = useSafetyCopy();
   const { supportEmail } = useSupportContact();
   const supportHref = supportMailto(supportEmail);
   const { signOut } = useClerk();
@@ -263,6 +265,22 @@ export default function Account() {
               <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
               <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
             </button>
+          )}
+          {!isGuest && user && (
+            <Link
+              href="/account/blocked"
+              data-testid="link-blocked-players"
+              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
+            >
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+                  <Ban className="h-4 w-4 text-primary" />
+                </span>
+                <span className="font-medium text-foreground">{safety.blockedPlayers}</span>
+              </div>
+              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
+            </Link>
           )}
           {/* Language toggle */}
           <LanguageToggle />

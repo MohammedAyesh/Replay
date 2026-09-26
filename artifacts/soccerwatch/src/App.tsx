@@ -40,6 +40,7 @@ import Matches from "@/pages/matches";
 import BookPage from "@/pages/book";
 import { LegalPage } from "@/pages/legal";
 import DeleteAccountPage from "@/pages/delete-account";
+import BlockedPlayers from "@/pages/blocked-players";
 import { useAuth } from "@/lib/auth";
 import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from "@/lib/auth-redirect";
 import { isPublicStandalonePath } from "@/lib/public-paths";
@@ -489,6 +490,7 @@ function AppRouter() {
         <Route path="/find-quick/:id" component={ClaimFind} />
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
+        <Route path="/account/blocked" component={BlockedPlayers} />
         <Route path="/owner" component={Owner} />
         <Route path="/owner/var/:requestId" component={OwnerVar} />
         <Route path="/w/:token" component={OwnerShare} />

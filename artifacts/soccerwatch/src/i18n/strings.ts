@@ -306,6 +306,7 @@ const strings = {
       liveClipReady: "Live clip captured.",
       liveExportProcessing: "Download export is processing.",
       liveExportFailed: "Capture is saved, but the download export failed.",
+      private: "Private",
     },
     clipping: {
       record: "Record Clip",
@@ -887,6 +888,7 @@ const strings = {
       liveClipReady: "تم تجهيز المقطع المباشر.",
       liveExportProcessing: "جارٍ تجهيز ملف التنزيل.",
       liveExportFailed: "تم حفظ المقطع، لكن تعذّر تجهيز ملف التنزيل.",
+      private: "خاص",
     },
     clipping: {
       record: "تسجيل مقطع",
