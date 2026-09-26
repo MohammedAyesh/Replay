@@ -28,6 +28,7 @@ const en = {
   requestDeclined: "Friend request declined",
   friendAdded: "Friend added",
   signInToAdd: "Sign in to add friends",
+  signIn: "Sign in",
   error: "Couldn't update friends. Try again.",
   retry: "Try again",
   errors: {
@@ -113,6 +114,7 @@ const ar: FriendsStrings = {
   requestDeclined: "انرفض طلب الصحبة",
   friendAdded: "صرتوا أصحاب",
   signInToAdd: "سجّل دخولك لتضيف أصحاب",
+  signIn: "سجّل دخولك",
   error: "ما قدرنا نحدّث الأصحاب. جرّب كمان مرة.",
   retry: "جرّب كمان مرة",
   errors: {

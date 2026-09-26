@@ -732,28 +732,23 @@ function InviteCard({ room, copy, inviteText, onShare }: { room: MatchRoom; copy
   return (
     <Card>
       <h2 className="flex items-center gap-2 text-base font-bold"><UserPlus className="h-4 w-4 text-violet" />{copy.inviteFriends}</h2>
+      {canInviteFriends && (
+        <button
+          type="button"
+          onClick={() => { setSearch(""); setSheetOpen(true); }}
+          className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-floodlight px-4 text-sm font-bold text-void"
+        >
+          <UserPlus className="h-4 w-4" aria-hidden="true" />{friendCopy.inviteFriends}
+        </button>
+      )}
       <div className="mt-3 flex gap-2">
         <a href={whatsappLink(inviteText)} target="_blank" rel="noopener noreferrer" className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full border border-violet/60 px-4 text-sm font-bold text-violet">
           {copy.inviteByWhatsapp}
         </a>
         <button type="button" onClick={onShare} aria-label={copy.share} className="flex h-11 w-11 items-center justify-center rounded-full border border-line"><Share2 className="h-4 w-4" /></button>
       </div>
-      {lastInvited && (
-        <a href={whatsappLink(inviteText)} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 items-center justify-center rounded-full border border-violet/60 px-4 text-sm font-bold text-violet">
-          {friendCopy.sendWhatsAppNudge}
-        </a>
-      )}
       {canInvite && (
         <>
-          {canInviteFriends && (
-            <button
-              type="button"
-              onClick={() => { setSearch(""); setSheetOpen(true); }}
-              className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-floodlight px-4 text-sm font-bold text-void"
-            >
-              <UserPlus className="h-4 w-4" aria-hidden="true" />{friendCopy.inviteFriends}
-            </button>
-          )}
           <button type="button" onClick={() => setOpen((v) => !v)} className="mt-3 min-h-11 text-xs font-semibold text-muted-text underline underline-offset-2">{copy.addPlaceholder}</button>
           {open && (
             <div className="mt-2 flex flex-col gap-2">
@@ -854,6 +849,11 @@ function InviteCard({ room, copy, inviteText, onShare }: { room: MatchRoom; copy
             </div>
           )}
         </>
+      )}
+      {lastInvited && (
+        <a href={whatsappLink(inviteText)} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 items-center justify-center rounded-full border border-violet/60 px-4 text-sm font-bold text-violet">
+          {friendCopy.sendWhatsAppNudge}
+        </a>
       )}
     </Card>
   );

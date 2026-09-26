@@ -1,8 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays, Users } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays } from "lucide-react";
 import { useMatchCopy } from "@/i18n/match-strings";
-import { useFriendsCopy } from "@/i18n/friends-strings";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -17,7 +16,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { t, locale, setLocale } = useTranslation();
   const { user, isGuest } = useAuth();
   const matchCopy = useMatchCopy();
-  const friendsCopy = useFriendsCopy();
   const myMatches = useMyMatches(Boolean(user) && !isGuest);
   const inviteCount = myMatches.data?.invites.length ?? 0;
 
@@ -111,13 +109,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isTranslucent={useTranslucentBar}
             badge={inviteCount}
             badgeLabel={matchCopy.invites}
-          />
-          <NavItem
-            href="/friends"
-            icon={<Users className="w-6 h-6" />}
-            label={friendsCopy.title}
-            isActive={location === "/friends"}
-            isTranslucent={useTranslucentBar}
           />
           <NavItem
             href="/my-clips"

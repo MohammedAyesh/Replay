@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { ArrowLeft, ArrowRight, Loader2, MoreHorizontal, Search, Share2, Users } from "lucide-react";
 import { PlayerAvatar } from "@/components/match/bits";
@@ -30,7 +30,7 @@ type Tab = "friends" | "requests" | "suggestions";
 
 export default function FriendsPage() {
   const copy = useFriendsCopy();
-  const { user, isGuest, isLoading: authLoading, isSignedIn } = useAuth();
+  const { user, isGuest, isLoading: authLoading } = useAuth();
   const signedIn = Boolean(user) && !isGuest;
   const friendsQuery = useFriends(signedIn);
   const suggestionsQuery = useFriendSuggestions(signedIn);
@@ -43,14 +43,6 @@ export default function FriendsPage() {
   const [, setLocation] = useLocation();
   const [tab, setTab] = useState<Tab>("friends");
   const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    if (!authLoading && !user && !isGuest && !isSignedIn) {
-      setLocation(`/sign-in?redirect_url=${encodeURIComponent("/friends")}`);
-    } else if (!authLoading && isGuest) {
-      setLocation(`/sign-in?redirect_url=${encodeURIComponent("/friends")}`);
-    }
-  }, [authLoading, isGuest, isSignedIn, setLocation, user]);
 
   const data = friendsQuery.data ?? { friends: [], incoming: [], outgoing: [] };
   const requestCount = data.incoming.length + data.outgoing.length;
@@ -103,11 +95,28 @@ export default function FriendsPage() {
     }
   };
 
-  if (authLoading || !signedIn) {
+  if (authLoading) {
     return (
       <div className="flex flex-1 items-center justify-center bg-void text-muted-text" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
         <Loader2 className="h-5 w-5 animate-spin" aria-label={copy.title} />
       </div>
+    );
+  }
+
+  if (!signedIn) {
+    return (
+      <main dir={copy.locale === "ar" ? "rtl" : "ltr"} className="flex min-h-0 flex-1 items-center justify-center bg-void px-4 pb-24 pt-4 text-text">
+        <section className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 text-center">
+          <Users className="mx-auto h-8 w-8 text-turf" aria-hidden="true" />
+          <h1 className="mt-3 font-display text-lg font-bold">{copy.signInToAdd}</h1>
+          <Link
+            href={`/sign-in?redirect_url=${encodeURIComponent("/friends")}`}
+            className="mt-5 flex min-h-11 w-full items-center justify-center rounded-full bg-floodlight px-4 text-sm font-bold text-void"
+          >
+            {copy.signIn}
+          </Link>
+        </section>
+      </main>
     );
   }
 
