@@ -25,12 +25,11 @@ import { StreamingPanel } from "@/components/StreamingPanel";
 import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import { MatchStats } from "@/components/match/MatchStats";
+import { FindYourselfCard, Scoreboard } from "@/components/match/Scoreboard";
 import {
-  Countdown,
   PhaseChip,
   PitchBoard,
   PlayerAvatar,
-  ScoreLine,
   SquadBar,
   StandingsTable,
   TEAM_SWATCHES,
@@ -55,6 +54,7 @@ import {
   useJoinMatch,
   useMakeCaptain,
   useMatchClips,
+  useMatchReplay,
   useMatchRoom,
   useRemovePlayer,
   useSetGames,
@@ -70,6 +70,7 @@ import {
   whatsappLink,
   type JoinInput,
   type MatchPlayer,
+  type MatchReplay,
   type MatchRoom,
   type TeamSide,
 } from "@/lib/match-api";
@@ -119,6 +120,7 @@ export default function MatchPage() {
   const room = useMemo(() => (realRoom && preview ? previewRoom(realRoom, preview) : realRoom), [realRoom, preview]);
   const now = useServerNow(room?.serverNow);
   const join = useJoinMatch(code);
+  const replay = useMatchReplay(code, Boolean(room) && ["processing", "ready", "expired"].includes(room!.phase));
   const [tab, setTab] = useState<Tab | null>(null);
   const autoJoinDone = useRef(false);
 
@@ -219,7 +221,7 @@ export default function MatchPage() {
           <Link href={`/m/${room.code}`} className="shrink-0 rounded-full bg-void/30 px-3 py-1 text-xs font-bold">{copy.exitPreview}</Link>
         </div>
       )}
-      <Hero room={room} copy={copy} now={now} colors={colors} names={names} onShare={onShare} />
+      <Hero room={room} copy={copy} now={now} colors={colors} names={names} onShare={onShare} replay={replay.data} />
       {realRoom?.phase === "live" && (realRoom.isOwner || realRoom.isCaptain) && realRoom.field.cameraId && (
         <div className="px-4 pt-3">
           <StreamingPanel
@@ -256,7 +258,7 @@ export default function MatchPage() {
 
       <div className="flex flex-col gap-4 px-4 pb-16 pt-4">
         {activeTab === "overview" && (
-          <Overview room={room} copy={copy} colors={colors} names={names} now={now} inviteText={inviteText} onShare={onShare} />
+          <Overview room={room} copy={copy} colors={colors} names={names} now={now} inviteText={inviteText} onShare={onShare} findRecordingId={replay.data?.recordings[0] ?? null} />
         )}
         {activeTab === "overview" && !preview && (room.isOwner || room.canManage) && (
           <div className="flex flex-wrap gap-2">
@@ -340,9 +342,10 @@ function MatchPhasePills({ room, copy }: {
   );
 }
 
-function Hero({ room, copy, now, colors, names, onShare }: {
+function Hero({ room, copy, now, colors, names, onShare, replay }: {
   room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; now: number;
   colors: Record<TeamSide, string>; names: Record<TeamSide, string>; onShare: () => void;
+  replay: MatchReplay | undefined;
 }) {
   const [, setLocation] = useLocation();
   const post = ["processing", "ready", "expired"].includes(room.phase);
@@ -386,18 +389,12 @@ function Hero({ room, copy, now, colors, names, onShare }: {
           {room.title ? `${room.field.name} · ` : ""}{copy.startsAt(formatDay(room.startMs, copy.locale, now, copy), `${formatClock(room.startMs, copy.locale)}–${formatClock(room.endMs, copy.locale)}`)}
         </p>
 
-        {room.phase === "pre" && (
-          <div className="mt-5">
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-turf">{copy.kickoffIn}</p>
-            <Countdown targetMs={room.startMs} now={now} labels={copy} />
-          </div>
-        )}
-        {post && (
+        {post && room.teamCount === 3 && room.standings ? (
           <div className="mt-6 rounded-2xl border border-line bg-surface/80 p-4 backdrop-blur">
-            {room.teamCount === 3 && room.standings
-              ? <StandingsTable rows={room.standings} colors={colors} names={names} leader={room.leader} labels={copy} compact />
-              : <ScoreLine score={room.score} colors={colors} names={names} />}
+            <StandingsTable rows={room.standings} colors={colors} names={names} leader={room.leader} labels={copy} compact />
           </div>
+        ) : room.phase !== "cancelled" && room.phase !== "failed" && (
+          <Scoreboard room={room} copy={copy} now={now} colors={colors} names={names} replay={replay} />
         )}
       </div>
     </section>
@@ -477,13 +474,14 @@ function RsvpButtons({ copy, onRsvp, busy }: { copy: MatchStrings; onRsvp: (r: J
 
 // ---------------------------------------------------------------- overview
 
-function Overview({ room, copy, colors, names, now, inviteText, onShare }: {
+function Overview({ room, copy, colors, names, now, inviteText, onShare, findRecordingId }: {
   room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
-  now: number; inviteText: string; onShare: () => void;
+  now: number; inviteText: string; onShare: () => void; findRecordingId: number | null;
 }) {
   const post = ["processing", "ready", "expired"].includes(room.phase);
   return (
     <>
+      {post && findRecordingId !== null && <FindYourselfCard recordingId={findRecordingId} copy={copy} />}
       {room.booking && <BookingPaymentCard room={room} copy={copy} />}
       {room.phase === "cancelled" && <Card><p className="font-bold">{copy.phase.cancelled}</p></Card>}
       {room.phase === "failed" && <Card><p className="font-bold">{copy.phase.failed}</p></Card>}

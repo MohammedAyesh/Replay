@@ -29,7 +29,7 @@ type Clip = {
   ts: number[];
   ps: Array<PlayPass & { ok: boolean }>;
 };
-export type ReelMode = "touches" | "runs" | "passes" | "both";
+export type ReelMode = "touches" | "runs" | "passes" | "dribbles" | "both";
 
 const RUN_MS = 4.0; // 14.4 km/h, the same threshold the runs stat uses
 const vCache = new WeakMap<Seg, Array<number | null>>();
@@ -90,6 +90,20 @@ function touchClips(segs: Seg[], play: Play | null): Clip[] {
   return out.filter((c) => c.b - c.a >= 1.2);
 }
 
+/** Take-ons: every spell on the ball where an opponent closed you down, the ones you won first. */
+function dribbleClips(segs: Seg[], play: Play | null): Clip[] {
+  const out: Clip[] = [];
+  const list = [...(play?.mine.dribbles ?? [])].sort((p, q) => Number(q.outcome === "won") - Number(p.outcome === "won"));
+  for (const d of list) {
+    const seg = segAt(segs, d.trackId, d.t0);
+    if (!seg) continue;
+    const a = Math.max(seg[0].t, d.t0 - 1.8), b = Math.min(seg[seg.length - 1].t, d.t1 + 2.2);
+    if (b - a < 1.2) continue;
+    out.push({ seg, v: vOf(seg), kind: "touch", a, b, n: d.touches, ps: [], ts: [d.t0, d.t1], peak: 0, bang: d.metres ?? 0 });
+  }
+  return out;
+}
+
 function passClips(segs: Seg[], play: Play | null): Clip[] {
   const out: Clip[] = [];
   for (const p of play?.mine.passes ?? []) {
@@ -146,7 +160,7 @@ function budget(list: Clip[], cap: number, score: (p: Clip, q: Clip) => number):
 const byTouch = (p: Clip, q: Clip) => (q.n - p.n) || (q.bang - p.bang);
 
 export function reelFor(mode: ReelMode, segs: Seg[], play: Play | null): Clip[] {
-  const CAP = { runs: 80, touches: 130, both: 150, passes: 140 }[mode];
+  const CAP = { runs: 80, touches: 130, both: 150, passes: 140, dribbles: 120 }[mode];
   const runs = (cap: number) => {
     const c = runClips(segs, RUN_MS, cap);
     if (c.reduce((s, x) => s + (x.b - x.a), 0) < 20) { const c2 = runClips(segs, 3.3, cap); if (c2.length > c.length) return c2; }
@@ -154,6 +168,7 @@ export function reelFor(mode: ReelMode, segs: Seg[], play: Play | null): Clip[] 
   };
   let cl: Clip[];
   if (mode === "passes") cl = passClips(segs, play);
+  else if (mode === "dribbles") cl = dribbleClips(segs, play);
   else if (mode === "touches") cl = touchClips(segs, play);
   else if (mode === "both") cl = budget(touchClips(segs, play), 90, byTouch).concat(runs(60));
   else cl = runs(80);
@@ -219,8 +234,8 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
   const nPassOk = clips.reduce((s, x) => s + x.ps.filter((p) => p.ok).length, 0);
   const summary = !game.pitch ? c.noPitch
     : mode === "passes" && !play?.teams ? c.pickTeams
-      : !clips.length ? (mode === "runs" ? c.noRuns : mode === "passes" ? c.noPasses : c.noTouches)
-        : `${mode === "passes" ? c.passes(nPass, nPassOk) : mode === "touches" ? c.touches(nTouch) : mode === "runs" ? c.runs(clips.length) : c.both(nTouch)} · ${c.clips(clips.length, mmss(secs))}`;
+      : !clips.length ? (mode === "runs" ? c.noRuns : mode === "passes" ? c.noPasses : mode === "dribbles" ? c.noDribbles : c.noTouches)
+        : `${mode === "passes" ? c.passes(nPass, nPassOk) : mode === "touches" ? c.touches(nTouch) : mode === "runs" ? c.runs(clips.length) : mode === "dribbles" ? c.dribbles(play?.mine.dribbles?.length ?? 0, play?.mine.dribblesWon ?? 0) : c.both(nTouch)} · ${c.clips(clips.length, mmss(secs))}`;
 
   const make = async () => {
     if (busy || !clips.length || !mime) return;
@@ -354,7 +369,7 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
     <Section title={c.title}>
       <p className="max-w-[62ch] text-sm leading-6 text-muted-text">{c.lead}</p>
       <Row>
-        {(["touches", "runs", "passes", "both"] as ReelMode[]).map((m) => (
+        {(["touches", "runs", "passes", "dribbles", "both"] as ReelMode[]).filter((m) => m !== "dribbles" || (play?.mine.dribbles?.length ?? 0) > 0).map((m) => (
           <Btn key={m} size="sm" kind={mode === m ? "primary" : "ghost"} onClick={() => setMode(m)}>{c.modes[m]}</Btn>
         ))}
       </Row>

@@ -10,7 +10,7 @@ import {
 } from "@workspace/api-client-react";
 import type { ClaimMatchClipGroup } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Pause, Download, Maximize, Minimize, Lock } from "lucide-react";
+import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Pause, Download, Maximize, Minimize, Lock, Target, Trophy, Zap, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
@@ -1204,9 +1204,7 @@ function MatchMomentsTab({
                 }}
                 className="group flex items-center gap-3 rounded-[18px] border border-border bg-card p-3 text-start transition-colors hover:border-primary/50"
               >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <Sparkles className="h-4 w-4" />
-                </span>
+                <MomentIcon kind={clip.kind} />
                 <span className="min-w-0 flex-1">
                   <span className="block line-clamp-2 text-sm font-bold leading-tight text-foreground">{clip.title}</span>
                   <span className="mt-1 flex items-center gap-2 text-[10px] font-medium text-muted-foreground">
@@ -1221,6 +1219,28 @@ function MatchMomentsTab({
         </section>
       ))}
     </div>
+  );
+}
+
+/**
+ * Moments you made (your goal, your shot, a take-on won, a long pass found)
+ * stand out from the ones you were on the pitch for.
+ */
+const MOMENT_STYLE: Record<string, { icon: typeof Sparkles; tone: string }> = {
+  "your-goal": { icon: Trophy, tone: "bg-[#D4FF4F]/20 text-[#D4FF4F]" },
+  "your-shot": { icon: Target, tone: "bg-[#FF8A3D]/15 text-[#FF8A3D]" },
+  dribble: { icon: Zap, tone: "bg-[#7B5CFF]/20 text-[#B7A6FF]" },
+  "long-pass": { icon: Send, tone: "bg-[#2FD8C4]/15 text-[#2FD8C4]" },
+  goal: { icon: Trophy, tone: "bg-primary/10 text-primary" },
+};
+
+function MomentIcon({ kind }: { kind: string }) {
+  const style = MOMENT_STYLE[kind.toLowerCase()] ?? { icon: Sparkles, tone: "bg-primary/10 text-primary" };
+  const Icon = style.icon;
+  return (
+    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${style.tone}`}>
+      <Icon className="h-4 w-4" />
+    </span>
   );
 }
 

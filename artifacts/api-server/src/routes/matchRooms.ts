@@ -54,7 +54,7 @@ import {
   uploadBufferToBunnyStorage,
 } from "../lib/bunny";
 import { logger } from "../lib/logger";
-import { matchStats } from "../lib/matchFeed";
+import { matchStats, matchReplay, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 
 const router: IRouter = Router();
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 6 * 1024 * 1024 } });
@@ -426,6 +426,23 @@ router.get("/m/:code/stats", async (req, res): Promise<void> => {
   }
 });
 
+/**
+ * GET /m/:code/replay -- what Replay saw of the match, for the scoreboard:
+ * the recordings that can be claimed at /find, the goals the detector found
+ * (a suggestion for the captain, not the score) and shots on target per side.
+ * Open to anyone who can see the match, like the score itself.
+ */
+router.get("/m/:code/replay", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  try {
+    res.json(await matchReplay(ctx));
+  } catch (error) {
+    logger.error({ code: ctx.room.code, err: error }, "match replay failed");
+    res.json({ recordings: [], goals: [], shots: null, suggested: null });
+  }
+});
+
 router.get("/me/matches", async (req, res): Promise<void> => {
   const user = await getLocalUserRecord(req);
   if (!user) {
@@ -462,6 +479,7 @@ router.get("/me/matches", async (req, res): Promise<void> => {
   const rooms = [...memberRooms, ...ownerRooms.filter((r) => !seen.has(r.room.id))];
   const ownedSet = new Set(ownedFieldIds);
   const base = publicBaseUrl(req);
+  const fieldRecordings: FieldRecordingCache = new Map();
   const items = await Promise.all(rooms.map(async (ctx) => {
     const roster = await rosterFor(ctx.room.id);
     const me = roster.find((p) => p.userId === user.id) ?? null;
@@ -487,6 +505,10 @@ router.get("/me/matches", async (req, res): Promise<void> => {
       teamCount: ctx.room.teamCount >= 3 ? 3 : 2,
       score: ctx.room.teamCount < 3 && ctx.room.scoreA !== null && ctx.room.scoreB !== null ? { a: ctx.room.scoreA, b: ctx.room.scoreB } : null,
       voteOpen: voteOpen(ctx.request),
+      // After the whistle: the recording to find yourself in, when it has tracking.
+      findRecordingId: ["processing", "ready", "expired"].includes(phase)
+        ? (await recordingsForRoom(ctx, fieldRecordings).catch(() => []))[0]?.recordingId ?? null
+        : null,
     };
   }));
 

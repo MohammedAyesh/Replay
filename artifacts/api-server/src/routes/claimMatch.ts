@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import type { FollowPoint } from "../lib/personalMoments";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import multer from "multer";
 import { unzipSync, strFromU8 } from "fflate";
@@ -1240,9 +1241,9 @@ export async function materializeClaimMoments(
   userId: number,
   recording: typeof recordingsTable.$inferSelect,
   manifest: TrackingManifest,
-  clips: ClaimEarnedClip[],
+  clips: Array<ClaimEarnedClip & { follow?: FollowPoint[] }>,
 ): Promise<ClaimEarnedClip[]> {
-  return Promise.all(clips.map(async (clip) => {
+  return Promise.all(clips.map(async ({ follow, ...clip }) => {
     if (clip.userClipId) return clip;
     try {
       const materialized = await ensureClaimMomentUserClip({
@@ -1251,6 +1252,8 @@ export async function materializeClaimMoments(
         moment: clip,
         videoStartSeconds: manifest.videoStartSeconds,
         trackingDuration: manifest.duration,
+        follow,
+        sourceAspect: manifest.width > 0 && manifest.height > 0 ? manifest.width / manifest.height : undefined,
       });
       return { ...clip, userClipId: materialized.userClipId };
     } catch (error) {

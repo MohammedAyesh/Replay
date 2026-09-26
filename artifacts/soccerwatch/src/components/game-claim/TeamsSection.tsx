@@ -78,6 +78,8 @@ export function TeamsSection({ copy, play, loading, onPick }: {
             {bar(c.completionRow, pct(s.passesCompleted[0], s.passesTried[0]) / 100, `${pct(s.passesCompleted[0], s.passesTried[0])}% / ${pct(s.passesCompleted[1], s.passesTried[1])}%`)}
             {bar(c.tried, s.passesTried[0] / Math.max(1, aT), `${s.passesTried[0]} / ${s.passesTried[1]}`)}
             {bar(c.touches, s.touches[0] / Math.max(1, s.total), `${s.touches[0]} / ${s.touches[1]}`)}
+            {s.dribblesWon && bar(c.dribblesRow, s.dribblesWon[0] / Math.max(1, s.dribblesWon[0] + s.dribblesWon[1]), `${s.dribblesWon[0]} / ${s.dribblesWon[1]}`)}
+            {s.shots && (s.shots[0] + s.shots[1] > 0) && bar(c.shotsRow, s.shots[0] / Math.max(1, s.shots[0] + s.shots[1]), `${s.shots[0]} / ${s.shots[1]}`)}
           </div>
           <p className="text-xs leading-5 text-muted-text">{c.alsoSeen(s.contested, play.rule.passMetres, s.carries, s.longestPassRun)}</p>
         </>
@@ -87,6 +89,16 @@ export function TeamsSection({ copy, play, loading, onPick }: {
         <Stat value={`${play.mine.passesCompleted}/${play.mine.passesTried}`} label={c.yourPasses} />
         <Stat value={play.mine.passesReceived} label={c.toYou} />
       </div>
+      {play.mine.dribblesWon !== undefined && (
+        <div className="grid grid-cols-3 gap-2">
+          <Stat value={play.mine.dribblesWon} label={c.yourDribbles} />
+          <Stat value={play.mine.dribblesLost ?? 0} label={c.yourDribblesLost} />
+          <Stat value={play.mine.shots?.length ?? 0} label={c.yourShots} />
+        </div>
+      )}
+      {play.dribbleRule && (
+        <p className="text-xs leading-5 text-muted-text">{c.dribbleNote(play.dribbleRule.pressureMetres, play.dribbleRule.outcomeSeconds)}</p>
+      )}
       <p className="rounded-xl border border-line bg-surface p-3 text-xs leading-5 text-muted-text">
         {c.note(play.rule.maxGapSeconds, play.rule.contestMetres, play.rule.passMetres, s?.ambiguous ?? 0, s?.total ?? play.totals.touches)}
       </p>

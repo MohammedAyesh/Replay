@@ -174,6 +174,8 @@ export type MyMatchItem = {
   score?: { a: number; b: number } | null;
   voteOpen?: boolean;
   inviteToken?: string;
+  /** after the whistle: the recording to find yourself in, when it has tracking */
+  findRecordingId?: number | null;
 };
 
 export type MyMatches = { live: MyMatchItem[]; upcoming: MyMatchItem[]; recent: MyMatchItem[]; invites: MyMatchItem[] };
@@ -259,6 +261,29 @@ export function useMatchClips(code: string, enabled = true) {
     queryFn: () => call<MatchClip[]>(`/m/${encodeURIComponent(code)}/clips`),
     enabled: Boolean(code) && enabled,
     staleTime: 30_000,
+  });
+}
+
+/** What Replay saw of the match (GET /m/:code/replay): claimable recordings and the goals it spotted. */
+export type MatchReplay = {
+  recordings: number[];
+  goals: Array<{
+    atSeconds: number;
+    side: "A" | "B" | null;
+    scorer: { playerId: number; name: string } | null;
+    recordingId: number;
+    t: number;
+  }>;
+  shots: [number, number] | null;
+  suggested: { a: number; b: number } | null;
+};
+
+export function useMatchReplay(code: string, enabled = true) {
+  return useQuery({
+    queryKey: [...matchKey(code), "replay"],
+    queryFn: () => call<MatchReplay>(`/m/${encodeURIComponent(code)}/replay`),
+    enabled: Boolean(code) && enabled,
+    staleTime: 60_000,
   });
 }
 

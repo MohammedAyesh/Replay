@@ -176,6 +176,11 @@ describe("a match from invite to vote", () => {
     expect(anon.body.captainUrl).toBeNull();
     expect(anon.body.counts.needed).toBe(12);
 
+    // What Replay saw: nothing yet, and open to anyone with the link.
+    const replay = await request(app).get(`/api/m/${room.code}/replay`);
+    expect(replay.status).toBe(200);
+    expect(replay.body).toEqual({ recordings: [], goals: [], shots: null, suggested: null });
+
     // The owner sees the captain link.
     const owner = await request(app).get(`/api/m/${room.code}`).set(as("owner"));
     expect(owner.body.isOwner).toBe(true);

@@ -21,10 +21,13 @@ import { readClaimSegment } from "./claimMatchStorage";
 import { logger } from "./logger";
 import { hasUsablePitchModel } from "./pitchModel";
 import {
+  dribbleEvents,
   kitOptions,
   parseBallSidecar,
   resolveTouches,
   type BallSidecar,
+  type BundleEvent,
+  type Dribble,
   type Lab,
   type Touch,
 } from "./matchPlay";
@@ -41,7 +44,16 @@ export type RecordingPlay = {
   rejected: { noTrack: number; tooFar: number };
   kitOptions: Array<{ lab: Lab; secs: number }>;
   segments: TrackingSegmentPayload[] | null;
+  /** every track's torso colour, from the ball sidecars */
+  kits: Map<string, Lab>;
+  /** goals and shots on target from the bundle (goals.py), tracking seconds */
+  events: BundleEvent[];
+  /** take-ons, sided by shirt colour alone (matchPlay.dribbleEvents) */
+  dribbles: Dribble[];
 };
+
+/** Bumped whenever what is derived here changes, so cached results are rebuilt. */
+const DERIVE_VERSION = 2;
 
 const MAX_CACHED = 6;
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
@@ -70,7 +82,7 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
   if (!bundle) return null;
   const camera = await cameraForRecording(recordingId);
   const manifest = manifestWithPitchModel(bundle.manifest, camera.pitchModel, camera.cameraId);
-  const key = `${bundle.id}:${bundle.updatedAt.toISOString()}:${manifest.pitchModel?.calibrationId ?? "-"}`;
+  const key = `${DERIVE_VERSION}:${bundle.id}:${bundle.updatedAt.toISOString()}:${manifest.pitchModel?.calibrationId ?? "-"}`;
   const cached = playCache.get(recordingId);
   if (cached && cached.key === key && (!opts.keepSegments || cached.data.segments)) {
     cached.at = Date.now();
@@ -97,6 +109,18 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
   const resolved = hasBall && segments
     ? resolveTouches(manifest, segments, sidecars)
     : { touches: [], rejected: { noTrack: 0, tooFar: 0 } };
+  const kits = new Map<string, Lab>();
+  for (const sc of sidecars) for (const [id, v] of Object.entries(sc?.kits ?? {})) kits.set(id, [v[0], v[1], v[2]]);
+  const events: BundleEvent[] = (segments ?? []).flatMap((segment) =>
+    (segment.events ?? []).filter((e) => typeof e.time === "number" && Number.isFinite(e.time)).map((e) => ({ type: String(e.type), t: e.time })));
+  let dribbles: Dribble[] = [];
+  if (segments && resolved.touches.length) {
+    try {
+      dribbles = dribbleEvents(manifest, segments, resolved.touches, kits, null);
+    } catch (error) {
+      logger.warn({ recordingId, err: error }, "Could not read dribbles");
+    }
+  }
   const data: RecordingPlay = {
     recordingId,
     manifest,
@@ -109,6 +133,9 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
     rejected: resolved.rejected,
     kitOptions: kitOptions(sidecars),
     segments: opts.keepSegments ? segments : null,
+    kits,
+    events,
+    dribbles,
   };
   playCache.set(recordingId, { key, data, at: Date.now() });
   if (playCache.size > MAX_CACHED) {

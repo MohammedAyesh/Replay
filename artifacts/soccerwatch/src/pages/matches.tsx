@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { CalendarDays, Crown, Loader2, Trophy } from "lucide-react";
+import { CalendarDays, Crown, Loader2, Sparkles, Trophy } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { MatchCard } from "@/components/match/MatchCard";
 import { PlayerAvatar } from "@/components/match/bits";
@@ -171,7 +171,19 @@ function Section({ title, items, copy, now, icon }: {
     <section>
       <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold">{icon}{title}</h2>
       <div className="flex flex-col gap-2">
-        {items.map((m) => <MatchCard key={`${m.code}-${m.inviteToken ?? ""}`} item={m} copy={copy} now={now} />)}
+        {items.map((m) => (
+          <div key={`${m.code}-${m.inviteToken ?? ""}`} className="flex flex-col gap-1.5">
+            <MatchCard item={m} copy={copy} now={now} />
+            {m.findRecordingId ? (
+              <Link
+                href={`/find/${m.findRecordingId}`}
+                className="ms-4 inline-flex w-fit items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
+              >
+                <Sparkles className="h-3.5 w-3.5" />{copy.findTitle}
+              </Link>
+            ) : null}
+          </div>
+        ))}
       </div>
     </section>
   );

@@ -34,13 +34,22 @@ import {
 import { claimIdentityId } from "../routes/claimChain";
 import { ammanLocalInstant, randomToken, rosterFor, type RoomContext } from "./matchRooms";
 import {
+  detectedGoals,
+  detectedShots,
   hexToLab,
   kitDistance,
   kitOfParts,
+  mineTest,
   passEvents,
+  playerMoments,
   playerPlay,
+  sideOfKit,
+  teamDribbles,
   teamStats,
   type ClaimedPart,
+  type DetectedGoal,
+  type DetectedShot,
+  type Dribble,
   type Lab,
   type TeamPick,
   type Touch,
@@ -86,15 +95,29 @@ export type LinkedRecording = {
 };
 
 /** Recordings with tracking that overlap a booking on its field. */
-export async function recordingsForRoom(ctx: RoomContext): Promise<LinkedRecording[]> {
+type FieldRecordingRows = Array<{ recording: Recording; manifest: TrackingManifest }>;
+export type FieldRecordingCache = Map<number, Promise<FieldRecordingRows>>;
+
+/**
+ * Recordings with tracking that overlap a booking on its field. `perField`
+ * lets a caller listing many matches (My matches) read each field's
+ * recordings once instead of once per match.
+ */
+export async function recordingsForRoom(ctx: RoomContext, perField?: FieldRecordingCache): Promise<LinkedRecording[]> {
   const start = ammanLocalInstant(ctx.request.startLocal);
   const end = ammanLocalInstant(ctx.request.endLocal);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
-  const rows = await db
+  const load = () => db
     .select({ recording: recordingsTable, manifest: recordingTrackingBundlesTable.manifest })
     .from(recordingsTable)
     .innerJoin(recordingTrackingBundlesTable, eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id))
     .where(eq(recordingsTable.fieldId, ctx.room.fieldId));
+  let pending = perField?.get(ctx.room.fieldId);
+  if (!pending) {
+    pending = load();
+    perField?.set(ctx.room.fieldId, pending);
+  }
+  const rows = await pending;
   const out: LinkedRecording[] = [];
   for (const { recording, manifest } of rows) {
     const w = recordingWindow(recording, manifest);
@@ -233,6 +256,10 @@ export type MatchPlayerStats = {
   passesTried: number | null;
   passesCompleted: number | null;
   passesReceived: number | null;
+  dribblesWon: number | null;
+  dribblesLost: number | null;
+  shots: number | null;
+  goals: number | null;
 };
 
 export type MatchTeamStats = {
@@ -247,7 +274,51 @@ export type MatchTeamStats = {
   completionPercent: number;
   contested: number;
   ambiguous: number;
+  dribblesWon: [number, number];
+  dribblesLost: [number, number];
+  shots: [number, number];
+  goals: [number, number];
 };
+
+/** One recording's share of a booking: its touches, sides and detected events inside the booking's window. */
+type LinkPlay = {
+  link: LinkedRecording;
+  play: RecordingPlay;
+  touches: Touch[];
+  pick: TeamPick | null;
+  kits: ReturnType<typeof sideKits> | null;
+  dribbles: Dribble[];
+  goals: DetectedGoal[];
+  shots: DetectedShot[];
+};
+
+async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: boolean): Promise<LinkPlay[]> {
+  const linked = await recordingsForRoom(ctx);
+  const out: LinkPlay[] = [];
+  for (const link of linked) {
+    const play = await loadRecordingPlay(link.recordingId, { keepSegments });
+    if (!play) continue;
+    const within = (t: number) => t >= link.fromSeconds && t <= link.toSeconds;
+    const touches = play.touches.filter((t) => within(t.t));
+    let pick: TeamPick | null = null;
+    let kits: ReturnType<typeof sideKits> | null = null;
+    if (play.hasKits && ctx.room.teamCount < 3) {
+      kits = sideKits(ctx.room, roster, play, link.recordingId, link);
+      if (kits.A && kits.B) pick = { a: kits.A.lab, b: kits.B.lab };
+    }
+    out.push({
+      link,
+      play,
+      touches,
+      pick,
+      kits,
+      dribbles: play.dribbles.filter((d) => within(d.t0)),
+      goals: detectedGoals(play.events.filter((e) => within(e.t)), play.touches),
+      shots: detectedShots(play.events.filter((e) => within(e.t)), play.touches),
+    });
+  }
+  return out;
+}
 
 export async function matchStats(ctx: RoomContext, includePlayers: boolean): Promise<{
   available: boolean;
@@ -257,9 +328,9 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
   players: MatchPlayerStats[] | null;
   team: MatchTeamStats | null;
 }> {
-  const linked = await recordingsForRoom(ctx);
   const roster = await rosterFor(ctx.room.id);
-  if (!linked.length) {
+  const plays = await linkPlays(ctx, roster, includePlayers);
+  if (!plays.length) {
     return { available: false, recordings: [], hasBall: false, hasPitch: false, players: null, team: null };
   }
   // One recording is the common case; a booking spanning two hours sums them.
@@ -276,41 +347,46 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
     passesTried: null,
     passesCompleted: null,
     passesReceived: null,
+    dribblesWon: null,
+    dribblesLost: null,
+    shots: null,
+    goals: null,
   });
   for (const p of roster) perPlayer.set(p.id, blank(p));
   let hasBall = false;
   let hasPitch = false;
   let team: MatchTeamStats | null = null;
   const add = (a: number | null, b: number | null) => (a === null && b === null ? null : (a ?? 0) + (b ?? 0));
+  const sum = (p: [number, number], q: [number, number]): [number, number] => [p[0] + q[0], p[1] + q[1]];
+  const perSide = <T extends { kit: Lab | null }>(rows: T[], pick: TeamPick): [number, number] => {
+    const n: [number, number] = [0, 0];
+    for (const r of rows) { const side = sideOfKit(r.kit, pick); if (side !== null) n[side]++; }
+    return n;
+  };
 
-  for (const link of linked) {
-    const play = await loadRecordingPlay(link.recordingId, { keepSegments: includePlayers });
-    if (!play) continue;
+  for (const { link, play, touches, pick, kits, dribbles, goals, shots } of plays) {
     hasBall ||= play.hasBall;
     hasPitch ||= play.hasPitch;
-    const inWindow = (t: Touch) => t.t >= link.fromSeconds && t.t <= link.toSeconds;
-    const touches = play.touches.filter(inWindow);
-
-    // Team colours, from the claimants on each side.
-    let pick: TeamPick | null = null;
-    let kits: ReturnType<typeof sideKits> | null = null;
-    if (play.hasKits && ctx.room.teamCount < 3) {
-      kits = sideKits(ctx.room, roster, play, link.recordingId, link);
-      if (kits.A && kits.B) pick = { a: kits.A.lab, b: kits.B.lab };
-    }
     const events = passEvents(touches, pick);
     if (pick && kits && touches.length) {
       const s = teamStats(touches, events, pick);
+      const dr = teamDribbles(dribbles, play.kits, pick);
+      const sh = perSide(shots, pick);
+      const gl = perSide(goals, pick);
       const prev = team as MatchTeamStats | null;
       team = prev
         ? {
           ...prev,
-          touches: [prev.touches[0] + s.touches[0], prev.touches[1] + s.touches[1]],
-          passesTried: [prev.passesTried[0] + s.passesTried[0], prev.passesTried[1] + s.passesTried[1]],
-          passesCompleted: [prev.passesCompleted[0] + s.passesCompleted[0], prev.passesCompleted[1] + s.passesCompleted[1]],
-          possessionSeconds: [prev.possessionSeconds[0] + s.possessionSeconds[0], prev.possessionSeconds[1] + s.possessionSeconds[1]],
+          touches: sum(prev.touches, s.touches),
+          passesTried: sum(prev.passesTried, s.passesTried),
+          passesCompleted: sum(prev.passesCompleted, s.passesCompleted),
+          possessionSeconds: sum(prev.possessionSeconds, s.possessionSeconds),
           contested: prev.contested + s.contested,
           ambiguous: prev.ambiguous + s.ambiguous,
+          dribblesWon: sum(prev.dribblesWon, dr.won),
+          dribblesLost: sum(prev.dribblesLost, dr.lost),
+          shots: sum(prev.shots, sh),
+          goals: sum(prev.goals, gl),
         }
         : {
           sides: ["A", "B"],
@@ -324,6 +400,10 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
           completionPercent: s.completionPercent,
           contested: s.contested,
           ambiguous: s.ambiguous,
+          dribblesWon: dr.won,
+          dribblesLost: dr.lost,
+          shots: sh,
+          goals: gl,
         };
     }
 
@@ -348,6 +428,11 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
         row.passesTried = add(row.passesTried, mine.passesTried);
         row.passesCompleted = pick ? add(row.passesCompleted, mine.passesCompleted) : null;
         row.passesReceived = pick ? add(row.passesReceived, mine.passesReceived) : null;
+        const own = playerMoments(parts, dribbles, goals, shots);
+        row.dribblesWon = add(row.dribblesWon, own.dribblesWon);
+        row.dribblesLost = add(row.dribblesLost, own.dribblesLost);
+        row.shots = add(row.shots, own.shots.length);
+        row.goals = add(row.goals, own.goals.length);
       }
     }
   }
@@ -361,10 +446,71 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
   }
   return {
     available: true,
-    recordings: linked.map((l) => l.recordingId),
+    recordings: plays.map((l) => l.link.recordingId),
     hasBall,
     hasPitch,
     players: includePlayers ? [...perPlayer.values()] : null,
     team,
   };
+}
+
+export type ReplayGoal = {
+  /** seconds from the booked kick-off */
+  atSeconds: number;
+  side: "A" | "B" | null;
+  /** a claimed player on the roster whose touch it was */
+  scorer: { playerId: number; name: string } | null;
+  recordingId: number;
+  /** tracking seconds on that recording (for the footage player) */
+  t: number;
+};
+
+/**
+ * What Replay saw of a booked match, for the scoreboard: the recordings that
+ * have tracking (and so can be claimed at /find), and the goals the detector
+ * found, each put on a side by the shirt of whoever touched the ball last.
+ * The goal count is a suggestion for the captain, never the score itself --
+ * goals.py has one externally verified goal behind it (2026-08-28), and on the
+ * 19 Sep game its inferred goals had to be merged to stop one kick-off
+ * counting two or three times.
+ */
+export async function matchReplay(ctx: RoomContext): Promise<{
+  recordings: number[];
+  goals: ReplayGoal[];
+  shots: [number, number] | null;
+  suggested: { a: number; b: number } | null;
+}> {
+  const roster = await rosterFor(ctx.room.id);
+  const plays = await linkPlays(ctx, roster, false);
+  const goals: ReplayGoal[] = [];
+  let shots: [number, number] | null = null;
+  for (const { link, play, pick, goals: found, shots: sh } of plays) {
+    const claimed = roster
+      .filter((p) => p.userId)
+      .map((p) => ({ p, test: mineTest(clipParts(partsOf(play.manifest, p.userId!, link.recordingId), link.fromSeconds, link.toSeconds, play.fps)) }));
+    for (const g of found) {
+      const side = sideOfKit(g.kit, pick);
+      const who = g.trackId && g.touchF !== null
+        ? claimed.find((c) => c.test({ trackId: g.trackId!, f: g.touchF! } as Touch))?.p ?? null
+        : null;
+      goals.push({
+        atSeconds: Math.max(0, g.t - link.fromSeconds),
+        side: side === null ? null : side === 0 ? "A" : "B",
+        scorer: who ? { playerId: who.id, name: who.displayName } : null,
+        recordingId: link.recordingId,
+        t: g.t,
+      });
+    }
+    if (pick) {
+      const n: [number, number] = [0, 0];
+      for (const x of sh) { const side = sideOfKit(x.kit, pick); if (side !== null) n[side]++; }
+      shots = shots ? [shots[0] + n[0], shots[1] + n[1]] : n;
+    }
+  }
+  goals.sort((a, b) => a.atSeconds - b.atSeconds);
+  const sided = goals.filter((g) => g.side);
+  const suggested = goals.length && sided.length === goals.length
+    ? { a: sided.filter((g) => g.side === "A").length, b: sided.filter((g) => g.side === "B").length }
+    : null;
+  return { recordings: plays.map((p) => p.link.recordingId), goals, shots, suggested };
 }

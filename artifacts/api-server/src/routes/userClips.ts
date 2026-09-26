@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { followCrop, type FollowPoint } from "../lib/personalMoments";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { eq, and, desc, inArray, count, sql, like } from "drizzle-orm";
@@ -231,6 +232,10 @@ export async function ensureClaimMomentUserClip(options: {
   moment: ClaimMomentForClip;
   videoStartSeconds?: number;
   trackingDuration?: number;
+  /** the claimant's position through the moment (personalMoments.followPath): frames the clip on them */
+  follow?: FollowPoint[];
+  /** source width / height, for the follow frame's shape */
+  sourceAspect?: number;
 }): Promise<{ userClipId: number; exportStatus: string | null }> {
   const { userId, recording, moment } = options;
   const videoId = extractBunnyVideoId(recording.videoUrl);
@@ -276,6 +281,7 @@ export async function ensureClaimMomentUserClip(options: {
   );
 
   if (!clip) {
+    const cropPath = followCrop(options.follow, videoStartSeconds, startSeconds, endSeconds, options.sourceAspect ?? 3840 / 1080);
     const [created] = await db
       .insert(userClipsTable)
       .values({
@@ -284,7 +290,7 @@ export async function ensureClaimMomentUserClip(options: {
         title,
         startTime: String(startTime),
         endTime: String(endTime),
-        cropPath: [],
+        cropPath,
         visibility: "private",
         aspectRatio: "16:9",
       })

@@ -21,6 +21,9 @@
  * than trusting the copy it was handed.
  */
 import { Router, type IRouter } from "express";
+import { loadRecordingPlay } from "../lib/matchPlayLoad";
+import { mergeMoments, personalMoments, type FollowPoint } from "../lib/personalMoments";
+import type { ClaimEarnedClip } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "crypto";
 import { z } from "zod";
@@ -682,7 +685,20 @@ export async function syncChainClaim(
     // handing the clips to whoever tapped first would make the dispute
     // pointless to resolve. The claim stays; the clips wait for an admin.
     const bindingAwards = !binding || binding.state === "confirmed";
-    let earnedClips = state.earnedClips.map((clip) => ({ ...clip }));
+    let earnedClips: Array<ClaimEarnedClip & { follow?: FollowPoint[] }> = state.earnedClips.map((clip) => ({ ...clip }));
+    if (state.completed && bindingAwards) {
+      // With ball data the claim earns the claimant's OWN moments -- their
+      // goals, shots, take-ons won and long passes -- each framed on them.
+      try {
+        const play = await loadRecordingPlay(ctx.recordingId);
+        if (play?.hasBall) {
+          const parts = chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame }));
+          earnedClips = mergeMoments(earnedClips, personalMoments(play, parts, ctx.segments, ctx.manifest));
+        }
+      } catch (error) {
+        console.error("[claim-chain] personal moments failed", { recordingId: ctx.recordingId, error });
+      }
+    }
     if (state.completed && bindingAwards) {
       const [recording] = await db
         .select()
@@ -706,7 +722,7 @@ export async function syncChainClaim(
       clipsUnlocked: state.completed && bindingAwards ? earnedClips.length : 0,
       correctionCount: ctx.answeredFrames.size,
       completed: state.completed,
-      earnedClips,
+      earnedClips: earnedClips.map(({ follow: _follow, ...clip }) => clip),
       updatedAt: new Date(),
     };
     await db

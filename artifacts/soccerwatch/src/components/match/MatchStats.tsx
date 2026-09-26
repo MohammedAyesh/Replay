@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import type { MatchStrings } from "@/i18n/match-strings";
-import type { MatchRoom } from "@/lib/match-api";
-import { labCss, type Lab } from "@/lib/game-claim/play";
+import type { MatchRoom, TeamSide } from "@/lib/match-api";
+import type { Lab } from "@/lib/game-claim/play";
+import { cn } from "@/lib/utils";
 
 /**
- * What the claims on this match's footage add up to (GET /m/:code/stats):
- * possession and passing per team, and each claimed player's own numbers
- * once stats are unlocked (or free, when the paywall setting is off).
+ * The match, head to head (GET /m/:code/stats): the two sides mirrored
+ * metric by metric, then any two claimed players side by side. Team numbers
+ * come from the ball (possession, passing, dribbles, shots, goals spotted);
+ * distance and speed add up the players who have claimed themselves.
  */
 
 type PlayerStats = {
@@ -22,6 +24,10 @@ type PlayerStats = {
   passesTried: number | null;
   passesCompleted: number | null;
   passesReceived: number | null;
+  dribblesWon: number | null;
+  dribblesLost: number | null;
+  shots: number | null;
+  goals: number | null;
 };
 
 type TeamStats = {
@@ -33,6 +39,10 @@ type TeamStats = {
   passesCompleted: [number, number];
   possessionPercent: [number, number];
   completionPercent: number;
+  dribblesWon?: [number, number];
+  dribblesLost?: [number, number];
+  shots?: [number, number];
+  goals?: [number, number];
 };
 
 type Stats = {
@@ -47,6 +57,38 @@ type Stats = {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+const pct = (x: number, y: number) => (y > 0 ? Math.round((100 * x) / y) : 0);
+
+/** One metric, mirrored: side A grows left from the middle, side B grows right. */
+function MirrorRow({ label, a, b, fmt, colors, lowerIsBetter = false }: {
+  label: string;
+  a: number;
+  b: number;
+  fmt: (v: number) => string;
+  colors: [string, string];
+  lowerIsBetter?: boolean;
+}) {
+  const max = Math.max(a, b, 1e-9);
+  const lead = a === b ? null : (a > b) !== lowerIsBetter ? 0 : 1;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="grid grid-cols-[3.5rem_1fr_3.5rem] items-baseline text-sm" dir="ltr">
+        <span className={cn("tabular-nums", lead === 0 ? "font-black text-text" : "text-muted-text")}>{fmt(a)}</span>
+        <span className="text-center text-xs font-semibold uppercase tracking-wider text-muted-text">{label}</span>
+        <span className={cn("text-end tabular-nums", lead === 1 ? "font-black text-text" : "text-muted-text")}>{fmt(b)}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-1" dir="ltr">
+        <div className="flex h-2 justify-end overflow-hidden rounded-s-full bg-white/5">
+          <i className="block h-full rounded-s-full" style={{ width: `${(100 * a) / max}%`, background: colors[0], opacity: lead === 1 ? 0.55 : 1 }} />
+        </div>
+        <div className="flex h-2 overflow-hidden rounded-e-full bg-white/5">
+          <i className="block h-full rounded-e-full" style={{ width: `${(100 * b) / max}%`, background: colors[1], opacity: lead === 0 ? 0.55 : 1 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [failed, setFailed] = useState(false);
@@ -58,6 +100,20 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
       .catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
   }, [room.code, room.stats.unlocked]);
+
+  const claimed = useMemo(() => (stats?.players ?? []).filter((p) => p.claimed), [stats]);
+  const [pa, setPa] = useState<number | null>(null);
+  const [pb, setPb] = useState<number | null>(null);
+  useEffect(() => {
+    if (!claimed.length) return;
+    // default: the busiest player on each side, or the two busiest overall
+    const byKm = [...claimed].sort((p, q) => (q.distanceKm ?? 0) - (p.distanceKm ?? 0));
+    const first = byKm.find((p) => p.team === "A") ?? byKm[0];
+    const second = byKm.find((p) => p.team && p.team !== first.team) ?? byKm.find((p) => p.playerId !== first.playerId) ?? null;
+    setPa((v) => v ?? first.playerId);
+    setPb((v) => v ?? second?.playerId ?? null);
+  }, [claimed]);
+
   if (failed) return null;
   if (!stats) return <section className="rounded-2xl border border-line bg-surface p-4 text-sm text-muted-text">…</section>;
   const findHref = stats.recordings[0] ? `/find/${stats.recordings[0]}` : null;
@@ -65,77 +121,131 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
     return <section className="rounded-2xl border border-line bg-surface p-4 text-sm text-muted-text">{copy.matchStatsNoFootage}</section>;
   }
   const t = stats.team;
-  const name = (side: string) => room.teams[side as "A" | "B"]?.name || side;
-  const bar = (label: string, a: number, b: number, fmt: (v: number) => string) => {
-    const tot = a + b || 1;
-    return (
-      <div className="grid grid-cols-[6.5rem_1fr] items-center gap-3 text-sm">
-        <span className="text-muted-text">{label}</span>
-        <div className="flex flex-col gap-1">
-          <div className="flex h-2.5 overflow-hidden rounded-full">
-            <i className="block h-full" style={{ width: `${(100 * a) / tot}%`, background: labCss(t!.colours[0]) }} />
-            <i className="block h-full" style={{ width: `${(100 * b) / tot}%`, background: labCss(t!.colours[1]) }} />
-          </div>
-          <div dir="ltr" className="flex justify-between text-xs tabular-nums text-muted-text"><span>{fmt(a)}</span><span>{fmt(b)}</span></div>
+  const name = (side: string) => room.teams[side as TeamSide]?.name || side;
+  const colors: [string, string] = [room.teams.A.color, room.teams.B.color];
+  const bySide = (side: "A" | "B") => claimed.filter((p) => p.team === side);
+  const km = (side: "A" | "B") => bySide(side).reduce((s, p) => s + (p.distanceKm ?? 0), 0);
+  const top = (side: "A" | "B") => bySide(side).reduce((s, p) => Math.max(s, p.topSpeedKmh ?? 0), 0);
+  const hasSideKm = km("A") > 0 || km("B") > 0;
+  const int = (v: number) => String(Math.round(v));
+
+  const playerA = claimed.find((p) => p.playerId === pa) ?? null;
+  const playerB = claimed.find((p) => p.playerId === pb) ?? null;
+  const pvpRows: Array<[string, (p: PlayerStats) => number | null, (v: number) => string]> = [
+    [copy.pvpMinutes, (p) => p.minutes, int],
+    [copy.pvpKm, (p) => p.distanceKm, (v) => v.toFixed(2)],
+    [copy.pvpTop, (p) => p.topSpeedKmh, (v) => v.toFixed(1)],
+    [copy.pvpTouches, (p) => p.touches, int],
+    [copy.pvpPasses, (p) => p.passesCompleted, int],
+    [copy.pvpDribbles, (p) => p.dribblesWon, int],
+    [copy.pvpShots, (p) => p.shots, int],
+    [copy.pvpGoals, (p) => p.goals, int],
+  ];
+  const playerColor = (p: PlayerStats | null, fallback: string) => (p?.team ? room.teams[p.team as TeamSide]?.color ?? fallback : fallback);
+  const pvpA = playerColor(playerA, colors[0]);
+  const pvpB = playerColor(playerB, colors[1]);
+  // two players on one side still need two colours to be told apart
+  const pvpColors: [string, string] = pvpA.toLowerCase() === pvpB.toLowerCase() ? [pvpA, "#7B5CFF"] : [pvpA, pvpB];
+
+  return (
+    <section className="flex flex-col gap-5 rounded-2xl border border-line bg-surface p-4">
+      <div>
+        <p className="text-base font-bold">{copy.h2hTitle}</p>
+        <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2" dir="ltr">
+          <span className="flex min-w-0 items-center gap-2 text-sm font-bold">
+            <i className="inline-block h-3 w-3 shrink-0 rounded-full ring-1 ring-white/25" style={{ background: colors[0] }} />
+            <span className="truncate">{name("A")}</span>
+          </span>
+          <span className="font-mono text-xs text-muted-text">vs</span>
+          <span className="flex min-w-0 items-center justify-end gap-2 text-sm font-bold">
+            <span className="truncate">{name("B")}</span>
+            <i className="inline-block h-3 w-3 shrink-0 rounded-full ring-1 ring-white/25" style={{ background: colors[1] }} />
+          </span>
         </div>
       </div>
-    );
-  };
-  const players = (stats.players ?? []).filter((p) => p.claimed).sort((p, q) => (p.team ?? "Z").localeCompare(q.team ?? "Z") || (q.distanceKm ?? 0) - (p.distanceKm ?? 0));
-  const unclaimed = (stats.players ?? []).filter((p) => !p.claimed);
-  return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-4">
-      <p className="text-base font-bold">{copy.matchStatsTitle}</p>
-      {t ? (
-        <div className="flex flex-col gap-3">
-          <div className="flex justify-between text-sm font-semibold">
-            {t.sides.map((side, i) => (
-              <span key={side} className="flex items-center gap-2">
-                <i className="inline-block h-3 w-3 rounded-full ring-1 ring-white/25" style={{ background: labCss(t.colours[i]) }} />
-                {name(side)}
-              </span>
+
+      {t && (
+        <div className="flex flex-col gap-3.5">
+          {t.goals && (t.goals[0] + t.goals[1] > 0) && <MirrorRow label={copy.h2hGoals} a={t.goals[0]} b={t.goals[1]} fmt={int} colors={colors} />}
+          {t.shots && <MirrorRow label={copy.h2hShots} a={t.shots[0]} b={t.shots[1]} fmt={int} colors={colors} />}
+          <MirrorRow label={copy.teamPossession} a={t.possessionPercent[0]} b={t.possessionPercent[1]} fmt={(v) => `${Math.round(v)}%`} colors={colors} />
+          <MirrorRow label={copy.teamPasses} a={t.passesCompleted[0]} b={t.passesCompleted[1]} fmt={int} colors={colors} />
+          <MirrorRow
+            label={copy.teamCompletion}
+            a={pct(t.passesCompleted[0], t.passesTried[0])}
+            b={pct(t.passesCompleted[1], t.passesTried[1])}
+            fmt={(v) => `${v}%`}
+            colors={colors}
+          />
+          {t.dribblesWon && (
+            <>
+              <MirrorRow label={copy.h2hDribbles} a={t.dribblesWon[0]} b={t.dribblesWon[1]} fmt={int} colors={colors} />
+              <MirrorRow
+                label={copy.h2hDribbleRate}
+                a={pct(t.dribblesWon[0], t.dribblesWon[0] + (t.dribblesLost?.[0] ?? 0))}
+                b={pct(t.dribblesWon[1], t.dribblesWon[1] + (t.dribblesLost?.[1] ?? 0))}
+                fmt={(v) => `${v}%`}
+                colors={colors}
+              />
+            </>
+          )}
+          <MirrorRow label={copy.teamTouches} a={t.touches[0]} b={t.touches[1]} fmt={int} colors={colors} />
+          {hasSideKm && (
+            <>
+              <MirrorRow label={copy.h2hDistance} a={km("A")} b={km("B")} fmt={(v) => `${v.toFixed(1)} km`} colors={colors} />
+              <MirrorRow label={copy.h2hTopSpeed} a={top("A")} b={top("B")} fmt={(v) => (v ? v.toFixed(1) : "—")} colors={colors} />
+              <p className="text-[11px] text-muted-text">{copy.h2hClaimedOnly}</p>
+            </>
+          )}
+        </div>
+      )}
+
+      {stats.players && claimed.length >= 2 && (
+        <div className="flex flex-col gap-3 border-t border-line pt-4">
+          <div>
+            <p className="text-base font-bold">{copy.pvpTitle}</p>
+            <p className="mt-0.5 text-xs text-muted-text">{copy.pvpHint}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {[{ v: pa, set: setPa, other: pb }, { v: pb, set: setPb, other: pa }].map((sel, i) => (
+              <select
+                key={i}
+                value={sel.v ?? ""}
+                onChange={(e) => sel.set(Number(e.target.value))}
+                className="min-h-11 rounded-xl border border-line bg-raised px-3 text-sm font-semibold text-text"
+              >
+                {claimed.map((p) => (
+                  <option key={p.playerId} value={p.playerId} disabled={p.playerId === sel.other}>{p.name}</option>
+                ))}
+              </select>
             ))}
           </div>
-          {bar(copy.teamPossession, t.possessionPercent[0], t.possessionPercent[1], (v) => `${Math.round(v)}%`)}
-          {bar(copy.teamPasses, t.passesCompleted[0], t.passesCompleted[1], (v) => String(v))}
-          {bar(copy.teamTouches, t.touches[0], t.touches[1], (v) => String(v))}
-          <p className="text-xs text-muted-text">{copy.teamCompletion} {Math.round(t.completionPercent)}% · {t.measured.map((m) => copy.teamColoursFrom(m)).join(" / ")}</p>
+          {playerA && playerB && (
+            <div className="flex flex-col gap-3">
+              {pvpRows.map(([label, get, fmt]) => {
+                const a = get(playerA);
+                const b = get(playerB);
+                if (a === null && b === null) return null;
+                return (
+                  <MirrorRow
+                    key={label}
+                    label={label}
+                    a={a ?? 0}
+                    b={b ?? 0}
+                    fmt={(v) => (v === 0 && (label === copy.pvpTop) ? "—" : fmt(v))}
+                    colors={pvpColors}
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
-      ) : null}
-      {stats.players ? (
-        players.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-muted-text">
-                  <th className="py-1 text-start font-medium">{copy.playerCol}</th>
-                  <th className="py-1 text-end font-medium">{copy.kmCol}</th>
-                  <th className="py-1 text-end font-medium">{copy.topCol}</th>
-                  <th className="py-1 text-end font-medium">{copy.touchesCol}</th>
-                  <th className="py-1 text-end font-medium">{copy.passesCol}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {players.map((p) => (
-                  <tr key={p.playerId} className="border-t border-line">
-                    <td className="py-2">
-                      <span className="flex items-center gap-2">
-                        {p.team && <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: room.teams[p.team as "A" | "B"]?.color }} />}
-                        {p.name}
-                      </span>
-                    </td>
-                    <td dir="ltr" className="py-2 text-end tabular-nums">{p.distanceKm?.toFixed(1) ?? "—"}</td>
-                    <td dir="ltr" className="py-2 text-end tabular-nums">{p.topSpeedKmh?.toFixed(1) ?? "—"}</td>
-                    <td dir="ltr" className="py-2 text-end tabular-nums">{p.touches ?? "—"}</td>
-                    <td dir="ltr" className="py-2 text-end tabular-nums">{p.passesTried === null ? "—" : `${p.passesCompleted ?? "–"}/${p.passesTried}`}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {unclaimed.length > 0 && <p className="mt-2 text-xs text-muted-text">{unclaimed.map((p) => p.name).join(", ")} · {copy.notClaimed}</p>}
-          </div>
-        ) : <p className="text-sm text-muted-text">{copy.matchStatsNone}</p>
-      ) : null}
+      )}
+
+      {stats.players && claimed.length === 0 && <p className="text-sm text-muted-text">{copy.matchStatsNone}</p>}
+      {stats.players && claimed.length > 0 && (stats.players.length - claimed.length) > 0 && (
+        <p className="text-xs text-muted-text">{stats.players.filter((p) => !p.claimed).map((p) => p.name).join(", ")} · {copy.notClaimed}</p>
+      )}
       {findHref && (
         <Link href={findHref} className="flex min-h-11 items-center justify-center rounded-full border border-floodlight/60 text-sm font-bold text-floodlight">{copy.matchStatsClaim}</Link>
       )}
