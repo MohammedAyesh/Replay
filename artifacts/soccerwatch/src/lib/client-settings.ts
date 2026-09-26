@@ -7,6 +7,11 @@ export type ClientSettingsResponse = {
   settings: Record<string, number | boolean | string>;
 };
 
+export function supportMailto(email: string): string | null {
+  const trimmedEmail = email.trim();
+  return trimmedEmail.includes("@") ? `mailto:${trimmedEmail}` : null;
+}
+
 export function useClientSettings() {
   return useQuery({
     queryKey: ["client-settings"],

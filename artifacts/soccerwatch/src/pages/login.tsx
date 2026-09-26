@@ -14,6 +14,7 @@ import { useTranslation } from "@/i18n";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/react";
 import heroImage from "@/assets/hero-floodlit-pitch.png";
+import { useSupportContact, supportMailto } from "@/lib/client-settings";
 
 // ─── bilingual copy ────────────────────────────────────────────────────────────
 
@@ -73,6 +74,9 @@ const COPY = {
     contactSub:
       "We're always looking for new partner pitches and academies across Amman.",
     getInTouch: "Get in touch",
+    footerPrivacy: "Privacy",
+    footerTerms: "Terms",
+    footerContact: "Contact",
     faqTitle: "FAQ",
     faqs: [
       {
@@ -154,6 +158,9 @@ const COPY = {
     contactTitle: "هل لديك ملعب أو أكاديمية؟",
     contactSub: "نبحث دائمًا عن ملاعب وأكاديميات شريكة جديدة في عمّان.",
     getInTouch: "تواصل معنا",
+    footerPrivacy: "الخصوصية",
+    footerTerms: "الشروط",
+    footerContact: "تواصل معنا",
     faqTitle: "الأسئلة الشائعة",
     faqs: [
       {
@@ -249,6 +256,8 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { t, locale, setLocale } = useTranslation();
+  const { supportEmail } = useSupportContact();
+  const supportHref = supportMailto(supportEmail);
   const guestMutation = useLoginAsGuest();
   const queryClient = useQueryClient();
   const { signOut } = useClerk();
@@ -975,10 +984,11 @@ export default function Login() {
               >
                 {tc.contactSub}
               </p>
-              {/* Intentionally non-functional — no onClick, no href */}
-              <button
-                type="button"
+              {supportHref && (
+                <a
+                  href={supportHref}
                 style={{
+                    display: "block",
                   width: "100%",
                   marginTop: 18,
                   padding: 15,
@@ -988,13 +998,16 @@ export default function Login() {
                   color: "var(--replay-void)",
                   fontSize: 14.5,
                   fontWeight: 800,
-                  cursor: "default",
+                    cursor: "pointer",
                   fontFamily: bodyFont,
                   boxShadow: "0 10px 30px rgba(212,255,79,.18)",
+                    textDecoration: "none",
+                    textAlign: "center",
                 }}
               >
                 {tc.getInTouch}
-              </button>
+                </a>
+              )}
             </div>
           </motion.section>
 
@@ -1211,6 +1224,77 @@ export default function Login() {
               >
                 {tc.createAccount}
               </a>
+            </div>
+
+            {/* Legal and support links */}
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
+              <a
+                href={`${basePath}/privacy`}
+                style={{
+                  border: 0,
+                  background: "transparent",
+                  color: "rgba(243,246,250,.6)",
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: bodyFont,
+                  textDecoration: "none",
+                }}
+              >
+                {tc.footerPrivacy}
+              </a>
+              <span
+                style={{
+                  width: 3,
+                  height: 3,
+                  borderRadius: 99,
+                  background: "rgba(243,246,250,.3)",
+                  flexShrink: 0,
+                }}
+              />
+              <a
+                href={`${basePath}/terms`}
+                style={{
+                  border: 0,
+                  background: "transparent",
+                  color: "rgba(243,246,250,.6)",
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: bodyFont,
+                  textDecoration: "none",
+                }}
+              >
+                {tc.footerTerms}
+              </a>
+              {supportHref && (
+                <>
+                  <span
+                    style={{
+                      width: 3,
+                      height: 3,
+                      borderRadius: 99,
+                      background: "rgba(243,246,250,.3)",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <a
+                    href={supportHref}
+                    style={{
+                      border: 0,
+                      background: "transparent",
+                      color: "rgba(243,246,250,.6)",
+                      fontSize: 12.5,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: bodyFont,
+                      textDecoration: "none",
+                    }}
+                  >
+                    {tc.footerContact}
+                  </a>
+                </>
+              )}
             </div>
 
             <p

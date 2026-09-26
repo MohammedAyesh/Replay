@@ -4,7 +4,7 @@ import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdatePro
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video } from "lucide-react";
+import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video, FileText, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,8 @@ import type { Strings } from "@/i18n/strings";
 import { useToast } from "@/hooks/use-toast";
 import { Camera, Loader2 } from "lucide-react";
 import { useAvatarUpload, useReplayProfile } from "@/lib/match-api";
+import { useSupportContact, supportMailto } from "@/lib/client-settings";
+import { useLegalCopy } from "@/i18n/legal-strings";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -32,6 +34,9 @@ const GENDERS = [
 export default function Account() {
   const { isGuest, user: authUser, isAdmin } = useAuth();
   const { t, locale } = useTranslation();
+  const legal = useLegalCopy();
+  const { supportEmail } = useSupportContact();
+  const supportHref = supportMailto(supportEmail);
   const { signOut } = useClerk();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -219,6 +224,50 @@ export default function Account() {
           )}
           {/* Language toggle */}
           <LanguageToggle />
+
+          <Link
+            href="/privacy"
+            className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
+          >
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+                <Shield className="h-4 w-4 text-primary" />
+              </span>
+              <span className="font-medium text-foreground">{legal.privacyPolicy}</span>
+            </div>
+            <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+            <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
+          </Link>
+
+          <Link
+            href="/terms"
+            className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
+          >
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+                <FileText className="h-4 w-4 text-primary" />
+              </span>
+              <span className="font-medium text-foreground">{legal.termsOfUse}</span>
+            </div>
+            <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+            <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
+          </Link>
+
+          {supportHref && (
+            <a
+              href={supportHref}
+              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
+            >
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+                  <Mail className="h-4 w-4 text-primary" />
+                </span>
+                <span className="font-medium text-foreground">{legal.contactSupport}</span>
+              </div>
+              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
+            </a>
+          )}
 
           {(displayUser?.ownedFieldIds?.length ?? 0) > 0 && (
             <Link

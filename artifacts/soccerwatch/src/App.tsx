@@ -257,6 +257,11 @@ function SignUpPage() {
         required: "مطلوب",
         optional: "اختياري",
         error: "يرجى الموافقة على التصوير للمتابعة.",
+         agreementBeforeTerms: "بإنشاء حساب، أنت توافق على ",
+         agreementBetween: " و",
+         agreementAfterPrivacy: ".",
+         termsLabel: "شروط الاستخدام",
+         privacyLabel: "سياسة الخصوصية",
       }
     : {
         recordingTitle: "I agree to be recorded",
@@ -266,8 +271,14 @@ function SignUpPage() {
         required: "Required",
         optional: "Optional",
         error: "Please agree to being recorded to continue.",
+         agreementBeforeTerms: "By creating an account you agree to our ",
+         agreementBetween: " and ",
+         agreementAfterPrivacy: ".",
+         termsLabel: "Terms of Use",
+         privacyLabel: "Privacy Policy",
       };
   const blockWithoutRecordingConsent = (event: React.SyntheticEvent) => {
+    if (event.target instanceof Element && event.target.closest("[data-legal-link]")) return;
     if (recordingConsent) return;
     event.preventDefault();
     event.stopPropagation();
@@ -280,6 +291,7 @@ function SignUpPage() {
         className="flex w-[440px] max-w-full flex-col items-stretch gap-3"
         onSubmitCapture={blockWithoutRecordingConsent}
         onClickCapture={(event) => {
+          if (event.target instanceof Element && event.target.closest("[data-legal-link]")) return;
           const button = (event.target as HTMLElement).closest("button");
           if (!button) return;
           const buttonText = `${button.textContent ?? ""} ${button.getAttribute("aria-label") ?? ""}`.toLowerCase();
@@ -321,6 +333,29 @@ function SignUpPage() {
             description={copy.socialDescription}
             badge={copy.optional}
           />
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            {copy.agreementBeforeTerms}
+            <a
+              href={`${basePath}/terms`}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-legal-link
+              className="underline underline-offset-2"
+            >
+              {copy.termsLabel}
+            </a>
+            {copy.agreementBetween}
+            <a
+              href={`${basePath}/privacy`}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-legal-link
+              className="underline underline-offset-2"
+            >
+              {copy.privacyLabel}
+            </a>
+            {copy.agreementAfterPrivacy}
+          </p>
           {showConsentError && (
             <p className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground" role="alert">
               <span aria-hidden="true">!</span>{copy.error}
