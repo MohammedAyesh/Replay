@@ -67,7 +67,7 @@ const en = {
     everyoneDesc: "The kits didn't separate on this recording.",
     names: {
       red: "Red", orange: "Orange", yellow: "Yellow", green: "Green", teal: "Teal", sky: "Sky blue",
-      blue: "Blue", purple: "Purple", pink: "Pink", maroon: "Maroon", dark: "Black / dark", light: "White / grey",
+      blue: "Blue", purple: "Purple", pink: "Pink", maroon: "Maroon", dark: "Black / dark", light: "White / grey", bib: "Bibs",
     } as Record<string, string>,
   },
   gallery: {
@@ -295,7 +295,7 @@ const ar: GameStrings = {
     everyoneDesc: "لم تنفصل الأطقم في هذا التسجيل.",
     names: {
       red: "أحمر", orange: "برتقالي", yellow: "أصفر", green: "أخضر", teal: "فيروزي", sky: "سماوي",
-      blue: "أزرق", purple: "بنفسجي", pink: "وردي", maroon: "خمري", dark: "أسود / داكن", light: "أبيض / رمادي",
+      blue: "أزرق", purple: "بنفسجي", pink: "وردي", maroon: "خمري", dark: "أسود / داكن", light: "أبيض / رمادي", bib: "صدريات",
     } as Record<string, string>,
   },
   gallery: {

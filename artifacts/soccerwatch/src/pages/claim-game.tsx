@@ -491,7 +491,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
                 <div>
                   <strong className="font-display text-lg text-text">
                     <span className="me-2 inline-block h-3 w-3 rounded-full align-[-1px] ring-1 ring-white/25" style={{ background: kit.swatch }} />
-                    {copy.kit.names[kitNameKey(kit.swatch)] ?? kit.key}
+                    {copy.kit.names[kit.key] ?? copy.kit.names[kitNameKey(kit.swatch)] ?? kit.key}
                   </strong>
                   <div className="text-xs text-muted-text">{copy.kit.people(gs.length)}</div>
                 </div>

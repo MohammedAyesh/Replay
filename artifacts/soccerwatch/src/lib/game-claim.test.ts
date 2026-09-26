@@ -12,7 +12,7 @@ import {
   Y,
   type Ctx,
 } from "./game-claim/claim";
-import { gameFromManifest } from "./game-claim/load";
+import { gameFromManifest, kitsFromPeople } from "./game-claim/load";
 import type { Chunk, Game, Group } from "./game-claim/model";
 import { complement, union } from "./game-claim/model";
 import { benchSpansOut, chainParts } from "./game-claim/parts";
@@ -221,6 +221,12 @@ describe("gameFromManifest", () => {
     expect(g.total).toBe(1200);
     // the 2 s gap is too short to mark
     expect(g.outOfPlay).toEqual([[0, 10], [900, 1000], [1150, 1200]]);
+  });
+
+  it("shows stoppages, not every dead ball", () => {
+    const g = gameFromManifest(manifest, [[10, 300], [308, 400], [420, 500], [510, 520], [590, 900], [940, 1200]]);
+    // 300-308 is a restart; 500-590 merges across 10 s of play; 900-940 is 40 s, too short
+    expect(g.outOfPlay).toEqual([[0, 10], [500, 590]]);
     expect(g.pitch).toBeNull();
   });
 
@@ -245,5 +251,27 @@ describe("splitAtColourJumps", () => {
     expect(out[0].junctions.map((j) => j.b)).toEqual(["B"]);
     c.pieces.C.feat = { ...red, to: [118, 189, 171] };
     expect(splitAtColourJumps(c, { members: ["A", "B", "C"], junctions: [] }, 2.2).length).toBe(1);
+  });
+});
+
+describe("kitsFromPeople", () => {
+  const g = (cid: string, dur: number) => ({ cid, dur, team: null as string | null, members: [cid], junctions: [], nb: [] });
+  const sidecar = (rows: Array<[string, string | null, number]>) => ({
+    pieces: {},
+    groups: rows.map(([cid, team, L]) => ({ cid, dur: 1, team, torso: [L, 128, 128] as [number, number, number], members: [cid], junctions: [], nb: [] })),
+  });
+
+  it("makes kit tiles from the pipeline's labels, biggest first, and tags every group", () => {
+    const chunk = { groups: [g("a", 500), g("b", 400), g("c", 300), g("d", 200), g("e", 100)] } as unknown as Parameters<typeof kitsFromPeople>[0];
+    const kits = kitsFromPeople(chunk, sidecar([["a", "bib", 150], ["b", "bib", 150], ["c", "dark", 20], ["d", "dark", 20], ["e", "blue", 60]]));
+    expect(kits?.separated).toBe(true);
+    expect(kits?.groups.map((k) => k.key)).toEqual(["bib", "dark"]);
+    expect(kits?.unreadableIds).toEqual(["e"]);
+    expect(chunk.groups.map((x) => x.team)).toEqual(["bib", "bib", "dark", "dark", "blue"]);
+  });
+
+  it("gives up when only one kit has two people", () => {
+    const chunk = { groups: [g("a", 500), g("b", 400), g("c", 300)] } as unknown as Parameters<typeof kitsFromPeople>[0];
+    expect(kitsFromPeople(chunk, sidecar([["a", "dark", 20], ["b", "dark", 20], ["c", "light", 200]]))).toBeNull();
   });
 });
