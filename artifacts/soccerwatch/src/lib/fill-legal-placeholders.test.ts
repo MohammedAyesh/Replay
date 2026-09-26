@@ -10,19 +10,19 @@ describe("fillLegalPlaceholders", () => {
     )).toBe("Replay Ltd · help@replay.example");
   });
 
-  it("uses the English contact-form fallback when support email is empty", () => {
+  it("uses the English support label when support email is empty", () => {
     expect(fillLegalPlaceholders(
       "Contact {{SUPPORT_EMAIL}}",
       { company: "Replay", supportEmail: "" },
       "en",
-    )).toBe("Contact the contact form in the app");
+    )).toBe("Contact Replay support");
   });
 
-  it("uses the Arabic contact-form fallback when support email is empty", () => {
+  it("uses the Arabic support label when support email is empty", () => {
     expect(fillLegalPlaceholders(
       "تواصل عبر {{SUPPORT_EMAIL}}",
       { company: "Replay", supportEmail: "" },
       "ar",
-    )).toBe("تواصل عبر نموذج التواصل في التطبيق");
+    )).toBe("تواصل عبر دعم ريبلاي");
   });
 });

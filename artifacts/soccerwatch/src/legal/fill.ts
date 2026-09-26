@@ -6,7 +6,7 @@ export function fillLegalPlaceholders(
   locale: LegalLocale,
 ): string {
   const supportContact = values.supportEmail.trim()
-    || (locale === "ar" ? "نموذج التواصل في التطبيق" : "the contact form in the app");
+    || (locale === "ar" ? "دعم ريبلاي" : "Replay support");
 
   return text
     .replaceAll("{{COMPANY}}", values.company)

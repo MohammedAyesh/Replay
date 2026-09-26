@@ -80,6 +80,14 @@ export function LegalPage({ doc }: { doc: "privacy" | "terms" }) {
                   ))}
                 </ul>
               )}
+              {section.paragraphsAfterBullets?.map((paragraph, paragraphIndex) => (
+                <p
+                  key={paragraphIndex}
+                  className="mt-3 text-sm leading-7 text-muted-text"
+                >
+                  {fill(paragraph)}
+                </p>
+              ))}
             </section>
           ))}
         </div>

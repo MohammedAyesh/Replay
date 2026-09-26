@@ -6,5 +6,6 @@ export type LegalDoc = {
     heading: string;
     paragraphs: string[];
     bullets?: string[];
+    paragraphsAfterBullets?: string[];
   }[];
 };
