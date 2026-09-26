@@ -434,15 +434,24 @@ describe("the bundle the worker sends back", () => {
 
 describe("the queue as the console sees it", () => {
   it("numbers the waiting jobs and reports whether the workstation is online", async () => {
-    await queueJob().expect(201);
-    await request(app).post("/api/admin/analysis-jobs").send({
+    const first = await queueJob().expect(201);
+    const second = await request(app).post("/api/admin/analysis-jobs").send({
       recordingId: recB, sourceRecordingIds: [recB], matchStartSeconds: 0,
     }).expect(201);
     await asWorker("/api/worker/analysis/ping").expect(200);
 
     const res = await request(app).get("/api/admin/analysis-jobs").expect(200);
-    const positions = res.body.jobs.map((job: { queuePosition: number }) => job.queuePosition).sort();
-    expect(positions).toEqual([1, 2]);
+    const jobs = res.body.jobs as Array<{ id: number; status: string; queuePosition: number | null }>;
+    const firstJob = jobs.find((job) => job.id === first.body.id);
+    const secondJob = jobs.find((job) => job.id === second.body.id);
+
+    // The endpoint also returns recent job history. Only queued jobs have a
+    // queue position; claimed, running, and terminal jobs intentionally have null.
+    expect(firstJob).toMatchObject({ status: "queued" });
+    expect(secondJob).toMatchObject({ status: "queued" });
+    expect(firstJob?.queuePosition).toBeGreaterThan(0);
+    expect(secondJob?.queuePosition).toBeGreaterThan(firstJob?.queuePosition ?? 0);
+    expect(jobs.filter((job) => job.status !== "queued").every((job) => job.queuePosition === null)).toBe(true);
     expect(res.body.workers.find((w: { id: string }) => w.id === "w1").online).toBe(true);
   });
 
