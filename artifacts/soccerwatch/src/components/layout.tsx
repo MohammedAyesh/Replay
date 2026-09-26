@@ -1,7 +1,8 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays, Users } from "lucide-react";
 import { useMatchCopy } from "@/i18n/match-strings";
+import { useFriendsCopy } from "@/i18n/friends-strings";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
@@ -9,12 +10,16 @@ import { InstallBanner } from "@/components/install-banner";
 import { OrientationLock } from "@/components/orientation-lock";
 import { useAuth } from "@/lib/auth";
 import { isPublicStandalonePath } from "@/lib/public-paths";
+import { useMyMatches } from "@/lib/match-api";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { t, locale, setLocale } = useTranslation();
-  const { user } = useAuth();
+  const { user, isGuest } = useAuth();
   const matchCopy = useMatchCopy();
+  const friendsCopy = useFriendsCopy();
+  const myMatches = useMyMatches(Boolean(user) && !isGuest);
+  const inviteCount = myMatches.data?.invites.length ?? 0;
 
 
   const isLogin = location === "/";
@@ -29,7 +34,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
   const hideHeader = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom;
-  const hideTabBar = hideHeader || isPublicStandalonePath(location);
+  const hideTabBar = hideHeader || location.startsWith("/f/") || isPublicStandalonePath(location);
   const useTranslucentBar = isWatchFeed;
 
   return (
@@ -104,6 +109,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
             label={t.nav.myMatches}
             isActive={location === "/matches"}
             isTranslucent={useTranslucentBar}
+            badge={inviteCount}
+            badgeLabel={matchCopy.invites}
+          />
+          <NavItem
+            href="/friends"
+            icon={<Users className="w-6 h-6" />}
+            label={friendsCopy.title}
+            isActive={location === "/friends"}
+            isTranslucent={useTranslucentBar}
           />
           <NavItem
             href="/my-clips"
@@ -131,16 +145,21 @@ function NavItem({
   label,
   isActive,
   isTranslucent,
+  badge = 0,
+  badgeLabel,
 }: {
   href: string;
   icon: React.ReactNode;
   label: string;
   isActive: boolean;
   isTranslucent: boolean;
+  badge?: number;
+  badgeLabel?: string;
 }) {
   return (
     <Link
       href={href}
+      aria-label={badge > 0 ? `${label}: ${badge} ${badgeLabel ?? ""}`.trim() : label}
       className={cn(
         "flex h-[54px] min-w-0 flex-1 max-w-16 flex-col items-center justify-center gap-0.5 rounded-xl border-0 py-1 transition-colors",
         isActive ? "bg-turf/10" : "bg-transparent"
@@ -148,7 +167,7 @@ function NavItem({
     >
       <div
         className={cn(
-          "transition-colors",
+          "relative transition-colors",
           isActive
              ? "text-turf"
             : isTranslucent
@@ -157,6 +176,11 @@ function NavItem({
         )}
       >
         {icon}
+        {badge > 0 && (
+          <span aria-hidden="true" className="absolute -end-2 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-floodlight px-1 text-[9px] font-black leading-none text-void">
+            {badge > 9 ? "9+" : badge}
+          </span>
+        )}
       </div>
       <span
         className={cn(

@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { FriendButton } from "@/components/friends/FriendButton";
 import {
   aggregatePitchHeatmaps,
   formatDistance,
@@ -259,28 +260,33 @@ function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
           >
-            <button
-              onClick={handleFollow}
-              disabled={isMutating}
-              className={cn(
-                "w-full py-3.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-95",
-                profile.isFollowing
-                  ? "bg-muted text-foreground"
-                  : "bg-primary text-white"
-              )}
-            >
-              {profile.isFollowing ? (
-                <>
-                  <UserMinus className="w-4 h-4" />
-                  {t.profile.unfollow}
-                </>
-              ) : (
-                <>
-                  <UserPlus className="w-4 h-4" />
-                  {t.profile.follow}
-                </>
-              )}
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={handleFollow}
+                disabled={isMutating}
+                className={cn(
+                  "min-h-11 flex-1 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-95",
+                  profile.isFollowing
+                    ? "bg-muted text-foreground"
+                    : "bg-primary text-white"
+                )}
+              >
+                {profile.isFollowing ? (
+                  <>
+                    <UserMinus className="w-4 h-4" />
+                    {t.profile.unfollow}
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="w-4 h-4" />
+                    {t.profile.follow}
+                  </>
+                )}
+              </button>
+              <div className="min-w-0 flex-1">
+                <FriendButton userId={profile.id} name={profile.name} />
+              </div>
+            </div>
           </motion.div>
         )}
 

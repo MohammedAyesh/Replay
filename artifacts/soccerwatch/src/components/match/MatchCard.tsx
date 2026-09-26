@@ -75,7 +75,10 @@ export function MatchCard({ item, copy, now, variant = "row" }: {
           {title}
           {item.isCaptain && <Crown className="h-3.5 w-3.5 shrink-0 text-floodlight" aria-label={copy.captainTag} />}
         </p>
-        <p className="truncate text-xs text-muted-text">{day}{item.title ? ` · ${item.field.name}` : ""}{item.isOwner && !item.myRsvp ? ` · ${copy.ownerTag}` : ""}</p>
+        <p className="truncate text-xs text-muted-text">
+          {item.myRsvp === "invited" && item.invitedBy?.name ? `${copy.invitedYou(item.invitedBy.name)} · ` : ""}
+          {day}{item.title ? ` · ${item.field.name}` : ""}{item.isOwner && !item.myRsvp ? ` · ${copy.ownerTag}` : ""}
+        </p>
       </div>
       {item.score ? (
         <span className="flex flex-col items-end">
@@ -86,6 +89,8 @@ export function MatchCard({ item, copy, now, variant = "row" }: {
             </span>
           )}
         </span>
+      ) : item.myRsvp === "invited" ? (
+        <span className="rounded-full bg-floodlight px-2.5 py-1 text-[11px] font-bold text-void">{copy.phaseSteps.invited}</span>
       ) : item.voteOpen ? (
         <span className="rounded-full bg-violet/15 px-2.5 py-1 text-[11px] font-bold text-violet">{copy.voteNow}</span>
       ) : item.inviteToken ? (

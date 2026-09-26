@@ -42,7 +42,24 @@ import {
 } from "@/components/match/bits";
 import { useToast } from "@/hooks/use-toast";
 import { useMatchCopy, type MatchStrings } from "@/i18n/match-strings";
+import { useFriendsCopy } from "@/i18n/friends-strings";
 import { useAuth } from "@/lib/auth";
+import { FriendButton } from "@/components/friends/FriendButton";
+import {
+  friendErrorKey,
+  friendStatusFor,
+  normalizeFriendInviteSelection,
+  useFriendLink,
+  useFriends,
+  useInviteFriends,
+} from "@/lib/friends-api";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   MatchApiError,
   apiBase,
@@ -411,9 +428,22 @@ function RsvpCard({ room, copy, onRsvp, busy, signedIn }: {
   if (room.phase === "cancelled" || room.phase === "failed" || room.phase === "expired") return null;
   const post = room.phase === "processing" || room.phase === "ready";
   const me = room.me;
-  const inviter = room.invitedBy && !me ? room.invitedBy : null;
+  const inviter = room.invitedBy && (!me || me.rsvp === "invited") ? room.invitedBy : null;
 
   if (me && !editing) {
+    if (me.rsvp === "invited") {
+      return (
+        <div className="rounded-2xl border border-violet/40 bg-surface p-4">
+          {inviter && (
+            <div className="mb-3 flex items-center gap-3">
+              <PlayerAvatar name={inviter.name} avatarUrl={inviter.avatarUrl} size={36} />
+              <p className="text-sm font-semibold">{copy.invitedYou(inviter.name)}</p>
+            </div>
+          )}
+          <RsvpButtons copy={copy} onRsvp={onRsvp} busy={busy} />
+        </div>
+      );
+    }
     if (post) return null;
     const label = me.rsvp === "in" ? copy.youAreIn : me.rsvp === "maybe" ? copy.youAreMaybe : me.rsvp === "out" ? copy.youAreOut : null;
     if (!label) return <RsvpButtons copy={copy} onRsvp={onRsvp} busy={busy} />;
@@ -530,6 +560,8 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
 function Roster({ room, copy, colors }: { room: MatchRoom; copy: MatchStrings & { locale: "en" | "ar" }; colors: Record<TeamSide, string> }) {
   const remove = useRemovePlayer(room.code);
   const makeCaptain = useMakeCaptain(room.code);
+  const postWhistle = room.phase === "processing" || room.phase === "ready" || room.phase === "expired";
+  const friends = useFriends(room.signedIn && postWhistle);
   // Two taps to hand over the armband, so a stray tap can't do it.
   const [confirmCaptain, setConfirmCaptain] = useState<number | null>(null);
   const { toast } = useToast();
@@ -563,6 +595,9 @@ function Roster({ room, copy, colors }: { room: MatchRoom; copy: MatchStrings & 
               </p>
             </div>
             <RsvpDot rsvp={p.rsvp} copy={copy} />
+            {postWhistle && room.signedIn && !friends.isLoading && p.signedUp && !p.isMe && p.userId != null
+              && friendStatusFor(p.userId, friends.data).status !== "friends"
+              && <FriendButton userId={p.userId} name={p.name} compact />}
             {room.canManage && p.signedUp && p.userId !== captainId && room.phase !== "cancelled" && (
               confirmCaptain === p.id ? (
                 <button
@@ -620,12 +655,38 @@ function RsvpDot({ rsvp, copy }: { rsvp: string; copy: MatchStrings }) {
 
 function InviteCard({ room, copy, inviteText, onShare }: { room: MatchRoom; copy: MatchStrings; inviteText: string; onShare: () => void }) {
   const invite = useInvitePlayer(room.code);
+  const replayInvite = useInviteFriends(room.code);
+  const canInvite = room.isMember || room.canManage;
+  const canInviteFriends = canInvite && room.signedIn;
+  const friendCopy = useFriendsCopy();
+  const friends = useFriends(canInviteFriends);
+  const friendLink = useFriendLink(canInviteFriends);
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [lastInvited, setLastInvited] = useState(false);
   const [lastLink, setLastLink] = useState<{ name: string; url: string } | null>(null);
-  const canInvite = room.isMember || room.canManage;
+  const rosterUserIds = new Set(room.players.flatMap((player) => player.userId == null ? [] : [player.userId]));
+  const friendRows = friends.data?.friends ?? [];
+  const query = search.trim().toLocaleLowerCase(friendCopy.locale);
+  const filteredFriends = friendRows.filter((friend) => (
+    !query
+    || friend.name.toLocaleLowerCase(friendCopy.locale).includes(query)
+    || (friend.position ?? "").toLocaleLowerCase(friendCopy.locale).includes(query)
+  ));
+
+  const showFriendError = (error: unknown) => {
+    const key = friendErrorKey(error);
+    toast({
+      title: key ? friendCopy.errors[key as keyof typeof friendCopy.errors] ?? friendCopy.errors.unknown : friendCopy.error,
+      variant: "destructive",
+    });
+  };
+
   const submit = async () => {
     if (!name.trim()) return;
     try {
@@ -637,6 +698,37 @@ function InviteCard({ room, copy, inviteText, onShare }: { room: MatchRoom; copy
       toast({ title: error instanceof Error ? error.message : copy.error, variant: "destructive" });
     }
   };
+
+  const changeSelection = (userId: number, checked: boolean) => {
+    const next = checked ? [...selectedIds, userId] : selectedIds.filter((id) => id !== userId);
+    setSelectedIds(normalizeFriendInviteSelection(next, friendRows, room.players));
+  };
+
+  const submitFriendInvites = async () => {
+    if (!selectedIds.length) return;
+    try {
+      const result = await replayInvite.mutateAsync(selectedIds);
+      setSelectedIds([]);
+      setSheetOpen(false);
+      setLastInvited(result.invited.length > 0);
+      toast({ title: result.invited.length ? friendCopy.invitedCount(result.invited.length) : friendCopy.noInvitesAdded });
+    } catch (error) {
+      showFriendError(error);
+    }
+  };
+
+  const shareMyFriendLink = async () => {
+    if (!friendLink.data?.url) return;
+    const result = await shareOrCopy({
+      title: friendCopy.shareTitle,
+      text: friendCopy.sharePrefix,
+      url: friendLink.data.url,
+    });
+    if (result === "copied") toast({ title: friendCopy.linkCopied });
+    else if (result === "shared") toast({ title: friendCopy.linkShared });
+    else toast({ title: friendCopy.shareFailed, variant: "destructive" });
+  };
+
   return (
     <Card>
       <h2 className="flex items-center gap-2 text-base font-bold"><UserPlus className="h-4 w-4 text-violet" />{copy.inviteFriends}</h2>
@@ -646,15 +738,114 @@ function InviteCard({ room, copy, inviteText, onShare }: { room: MatchRoom; copy
         </a>
         <button type="button" onClick={onShare} aria-label={copy.share} className="flex h-11 w-11 items-center justify-center rounded-full border border-line"><Share2 className="h-4 w-4" /></button>
       </div>
+      {lastInvited && (
+        <a href={whatsappLink(inviteText)} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 items-center justify-center rounded-full border border-violet/60 px-4 text-sm font-bold text-violet">
+          {friendCopy.sendWhatsAppNudge}
+        </a>
+      )}
       {canInvite && (
         <>
-          <button type="button" onClick={() => setOpen((v) => !v)} className="mt-3 text-xs font-semibold text-muted-text underline underline-offset-2">{copy.addPlaceholder}</button>
+          {canInviteFriends && (
+            <button
+              type="button"
+              onClick={() => { setSearch(""); setSheetOpen(true); }}
+              className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-floodlight px-4 text-sm font-bold text-void"
+            >
+              <UserPlus className="h-4 w-4" aria-hidden="true" />{friendCopy.inviteFriends}
+            </button>
+          )}
+          <button type="button" onClick={() => setOpen((v) => !v)} className="mt-3 min-h-11 text-xs font-semibold text-muted-text underline underline-offset-2">{copy.addPlaceholder}</button>
           {open && (
             <div className="mt-2 flex flex-col gap-2">
               <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder={copy.placeholderName} className="min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" />
               <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" maxLength={24} placeholder={copy.placeholderPhone} className="min-h-11 rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf" dir="ltr" />
               <button type="button" disabled={!name.trim() || invite.isPending} onClick={() => void submit()} className="min-h-11 rounded-full border border-violet/60 text-sm font-bold text-violet disabled:opacity-50">{copy.add}</button>
             </div>
+          )}
+          {canInviteFriends && (
+            <Sheet
+              open={sheetOpen}
+              onOpenChange={(nextOpen) => {
+                setSheetOpen(nextOpen);
+                if (!nextOpen) setSelectedIds([]);
+              }}
+            >
+              <SheetContent side="bottom" dir={friendCopy.locale === "ar" ? "rtl" : "ltr"} closeLabel={friendCopy.close} className="flex max-h-[88dvh] flex-col overflow-hidden rounded-t-3xl border-line bg-surface px-4 pb-0 pt-5 text-text">
+                <SheetHeader className="shrink-0 pe-8 text-start">
+                  <SheetTitle className="font-display text-lg font-bold">{friendCopy.inviteSheetTitle}</SheetTitle>
+                  <SheetDescription className="text-xs text-muted-text">{friendCopy.inviteSheetDescription}</SheetDescription>
+                </SheetHeader>
+                {friends.isLoading ? (
+                  <div className="flex min-h-32 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-text" aria-label={friendCopy.title} /></div>
+                ) : friendRows.length ? (
+                  <>
+                    <div className="mt-3 shrink-0">
+                      <input
+                        type="search"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder={friendCopy.searchFriends}
+                        className="min-h-11 w-full rounded-xl border border-line bg-void px-3 text-sm outline-none focus:border-turf"
+                      />
+                    </div>
+                    <div className="mt-2 flex-1 overflow-y-auto pb-4">
+                      {filteredFriends.length ? filteredFriends.map((friend) => {
+                        const onRoster = rosterUserIds.has(friend.userId);
+                        const checked = selectedIds.includes(friend.userId);
+                        return (
+                          <label key={friend.userId} className={cn("flex min-h-[60px] items-center gap-3 border-b border-line px-1 py-2", onRoster && "opacity-50")}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={onRoster || replayInvite.isPending}
+                              onChange={(event) => changeSelection(friend.userId, event.target.checked)}
+                              className="h-5 w-5 shrink-0 accent-turf"
+                            />
+                            <PlayerAvatar name={friend.name} avatarUrl={friend.avatarUrl} size={40} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-semibold">{friend.name}</span>
+                              <span className="block truncate text-xs text-muted-text">{friend.position || friendCopy.positionUnknown}</span>
+                            </span>
+                            {onRoster && <span className="rounded-full bg-raised px-2 py-1 text-[10px] font-bold text-muted-text">{friendCopy.inSquad}</span>}
+                          </label>
+                        );
+                      }) : (
+                        <p className="py-8 text-center text-sm text-muted-text">{friendCopy.noSearchResults}</p>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="my-4 rounded-2xl border border-dashed border-line px-4 py-6 text-center">
+                    <p className="font-semibold">{friendCopy.noFriendsToInvite}</p>
+                    <p className="mt-1 text-xs text-muted-text">{friendCopy.friendsLinkHint}</p>
+                    <div className="mt-4 flex flex-col gap-2">
+                      <Link href="/friends" className="flex min-h-11 items-center justify-center rounded-full border border-line px-3 text-sm font-semibold text-turf">{friendCopy.openFriends}</Link>
+                      <button
+                        type="button"
+                        disabled={!friendLink.data?.url || friendLink.isLoading}
+                        onClick={() => void shareMyFriendLink()}
+                        className="flex min-h-11 items-center justify-center gap-2 rounded-full bg-floodlight px-3 text-sm font-bold text-void disabled:opacity-50"
+                      >
+                        <Share2 className="h-4 w-4" />{friendCopy.shareFriendLink}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {friendRows.length > 0 && (
+                  <div className="sticky bottom-0 shrink-0 border-t border-line bg-surface/95 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+                    <button
+                      type="button"
+                      disabled={!selectedIds.length || replayInvite.isPending}
+                      onClick={() => void submitFriendInvites()}
+                      className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-floodlight px-4 text-sm font-bold text-void disabled:opacity-50"
+                    >
+                      {replayInvite.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {friendCopy.inviteN(selectedIds.length)}
+                    </button>
+                  </div>
+                )}
+              </SheetContent>
+            </Sheet>
           )}
           {lastLink && (
             <div className="mt-3 rounded-xl border border-line bg-raised p-3">

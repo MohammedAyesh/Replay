@@ -60,19 +60,27 @@ router.get("/friends/suggestions", async (req, res): Promise<void> => {
   const viewerRows = await db.select({ matchId: matchPlayersTable.matchId }).from(matchPlayersTable)
     .innerJoin(matchRoomsTable, eq(matchRoomsTable.id, matchPlayersTable.matchId))
     .where(and(eq(matchPlayersTable.userId, viewer), inArray(matchPlayersTable.rsvp, ["in", "maybe"]), sql`${matchRoomsTable.createdAt} >= ${cutoff}`));
-  const matchIds = viewerRows.map((r) => r.matchId);
+  const matchIds = Array.from(new Set(viewerRows.map((r) => r.matchId)));
   if (!matchIds.length) { res.json([]); return; }
-  const candidates = await db.select({ user: usersTable }).from(matchPlayersTable)
+  const candidates = await db.select({ user: usersTable, matchId: matchPlayersTable.matchId }).from(matchPlayersTable)
     .innerJoin(usersTable, eq(usersTable.id, matchPlayersTable.userId))
     .where(and(inArray(matchPlayersTable.matchId, matchIds), inArray(matchPlayersTable.rsvp, ["in", "maybe"]),
       sql`${usersTable.id} <> ${viewer}`, eq(usersTable.isGuest, false), eq(usersTable.isDisabled, false),
-      sql`${usersTable.email} <> ${DELETED_PLAYER_EMAIL}`)).limit(100);
-  const blocked = new Set<number>();
-  const seen = new Set<number>();
+      sql`${usersTable.email} <> ${DELETED_PLAYER_EMAIL}`));
+  const shared = new Map<number, { user: typeof candidates[number]["user"]; matchIds: Set<number> }>();
+  for (const { user, matchId } of candidates) {
+    let item = shared.get(user.id);
+    if (!item) {
+      item = { user, matchIds: new Set<number>() };
+      shared.set(user.id, item);
+    }
+    item.matchIds.add(matchId);
+  }
+  const ranked = Array.from(shared.values()).sort((a, b) => b.matchIds.size - a.matchIds.size);
   const result = [];
-  for (const { user } of candidates) {
-    if (seen.has(user.id) || blocked.has(user.id) || await blockedEitherWay(viewer, user.id) || await friendshipBetween(viewer, user.id)) continue;
-    seen.add(user.id); result.push(userItem(user));
+  for (const { user, matchIds: sharedMatchIds } of ranked) {
+    if (await blockedEitherWay(viewer, user.id) || await friendshipBetween(viewer, user.id)) continue;
+    result.push(userItem(user, { matchesTogether: sharedMatchIds.size }));
     if (result.length >= 20) break;
   }
   res.json(result);

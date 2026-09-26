@@ -37,6 +37,8 @@ import OwnerVar from "@/pages/owner-var";
 import OwnerShare from "@/pages/owner-share";
 import MatchPage from "@/pages/match";
 import Matches from "@/pages/matches";
+import FriendsPage from "@/pages/friends";
+import FriendLinkPage from "@/pages/friend-link";
 import BookPage from "@/pages/book";
 import { LegalPage } from "@/pages/legal";
 import DeleteAccountPage from "@/pages/delete-account";
@@ -495,6 +497,8 @@ function AppRouter() {
         <Route path="/owner/var/:requestId" component={OwnerVar} />
         <Route path="/w/:token" component={OwnerShare} />
         <Route path="/m/:code" component={MatchPage} />
+        <Route path="/friends" component={FriendsPage} />
+        <Route path="/f/:code" component={FriendLinkPage} />
         <Route path="/matches" component={Matches} />
         <Route path="/book" component={BookPage} />
         <Route path="/privacy"><LegalPage doc="privacy" /></Route>

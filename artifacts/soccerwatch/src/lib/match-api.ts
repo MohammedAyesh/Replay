@@ -166,6 +166,7 @@ export type MyMatchItem = {
   field: { id: number; name: string; location: string | null; imageUrl: string | null };
   title: string | null;
   myRsvp?: Rsvp | null;
+  invitedBy?: { name: string | null; avatarUrl: string | null } | null;
   myTeam?: TeamSide | null;
   isCaptain?: boolean;
   isOwner?: boolean;

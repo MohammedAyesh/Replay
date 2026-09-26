@@ -269,6 +269,7 @@ describe("friends API", () => {
     expect(suggestions.body).toHaveLength(20);
     const suggestedIds = new Set<number>(suggestions.body.map((item: { userId: number }) => item.userId));
     expect(Array.from(suggestedIds).every((id) => [good, ...additionalGood].includes(id))).toBe(true);
+    expect(suggestions.body.find((item: { userId: number }) => item.userId === good)?.matchesTogether).toBe(1);
     expect([owner, old, invited, out, blocked, pending, accepted, guest, disabled, deletedPlayer?.id]
       .filter((id): id is number => id !== undefined).every((id) => !suggestedIds.has(id))).toBe(true);
     await db.delete(fieldsTable).where(eq(fieldsTable.id, field.id));

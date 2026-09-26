@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { CalendarDays, Crown, Loader2, Sparkles, Trophy } from "lucide-react";
+import { CalendarDays, Crown, Loader2, Sparkles, Trophy, Users } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { MatchCard } from "@/components/match/MatchCard";
 import { PlayerAvatar } from "@/components/match/bits";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useMatchCopy } from "@/i18n/match-strings";
+import { useFriendsCopy } from "@/i18n/friends-strings";
 import { useAuth } from "@/lib/auth";
 import { useJoinMatch, useMyMatches, useReplayProfile, type MyMatchItem } from "@/lib/match-api";
 
@@ -24,6 +25,7 @@ function useNow(tick = 30_000) {
 
 export default function Matches() {
   const copy = useMatchCopy();
+  const friendsCopy = useFriendsCopy();
   const { user, isGuest, isLoading } = useAuth();
   const [, setLocation] = useLocation();
   const signedIn = Boolean(user) && !isGuest;
@@ -121,16 +123,22 @@ export default function Matches() {
       </section>
 
       {profile.data && (
-        <Link href={`/players/${profile.data.id}`} className="mb-4 flex items-center gap-3 rounded-2xl border border-line bg-surface p-3">
-          <PlayerAvatar name={profile.data.name} avatarUrl={profile.data.avatarUrl} size={48} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-display text-lg font-bold">{profile.data.name}</p>
-            <p className="text-[11px] text-muted-text">{copy.playerCard}</p>
-          </div>
-          <Stat value={profile.data.matchesPlayed} label={copy.played} />
-          <Stat value={profile.data.wins} label={copy.wins} />
-          <Stat value={profile.data.motmCount} label={copy.motmShort} icon={<Crown className="h-3 w-3 text-floodlight" />} />
-        </Link>
+        <div className="mb-4 flex items-center gap-2">
+          <Link href={`/players/${profile.data.id}`} className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-line bg-surface p-3">
+            <PlayerAvatar name={profile.data.name} avatarUrl={profile.data.avatarUrl} size={44} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-display text-base font-bold">{profile.data.name}</p>
+              <p className="text-[11px] text-muted-text">{copy.playerCard}</p>
+            </div>
+            <Stat value={profile.data.matchesPlayed} label={copy.played} />
+            <Stat value={profile.data.wins} label={copy.wins} />
+            <Stat value={profile.data.motmCount} label={copy.motmShort} icon={<Crown className="h-3 w-3 text-floodlight" />} />
+          </Link>
+          <Link href="/friends" aria-label={friendsCopy.title} className="flex min-h-11 shrink-0 flex-col items-center justify-center gap-0.5 rounded-2xl border border-line bg-surface px-2 text-[10px] font-bold text-turf">
+            <Users className="h-4 w-4" aria-hidden="true" />
+            {friendsCopy.title}
+          </Link>
+        </div>
       )}
 
       {matches.isLoading || isLoading ? (
