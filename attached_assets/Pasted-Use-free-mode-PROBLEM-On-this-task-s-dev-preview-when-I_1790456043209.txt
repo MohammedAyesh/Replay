@@ -1,0 +1,24 @@
+Use free mode.
+
+PROBLEM
+On this task's dev preview, when I sign in with my own account I end up signed in as a demo account instead of myself. This does NOT happen on the main app (replayjo.com). Find out why and fix it, so I can do the owner checks as myself.
+
+HARD RULES
+- Do NOT add, keep, or enable any authentication bypass, impersonation, "login as", dev-user fallback, or auto-login shortcut. If you (or earlier work in this task) added one while trying to get an owner session for verification, remove it and say so.
+- Do not merge, re-assign, or edit any user rows; do not change anyone's clerk_id or email. No drizzle push, no SQL writes.
+- Do not change production auth behaviour. Any fix must be correct for the published app too, or be limited to this workspace's environment/config.
+
+DIAGNOSE FIRST (report each with evidence)
+1. What changed in this task vs main that touches auth: run `git diff main --stat` and `git diff main -- artifacts/api-server/src/lib/clerkUserBridge.ts artifacts/api-server/src/routes/auth.ts artifacts/api-server/src/app.ts artifacts/soccerwatch/src/lib/auth.tsx artifacts/soccerwatch/src/App.tsx`, and list any new/changed env vars or secrets in this workspace related to Clerk, cookies, guest users or demo users. Grep the whole repo for demo/impersonation paths: "alex@soccerwatch.com", "sam@soccerwatch.com", "demo", "impersonat", "DEV_USER", "AUTH_BYPASS", "loginAs", "guestId".
+2. Which Clerk instance this preview uses: publishableKeyFromHost picks the key by hostname. Report which publishable key prefix (pk_test / pk_live, first 12 chars only — never print secrets) the task preview host resolves to versus the main dev preview, and whether CLERK_SECRET_KEY in this workspace belongs to the same instance.
+3. Reproduce from the server side: read the API server logs around my sign-in (last 30 min). For the request that resolved me, report the resolution reason and diagnostics logged by clerkUserBridge (resolved_clerk / resolved_guest, localRowStatus, splitAccount, emailMatchLocalUserId, resolvedLocalUserId) — without printing tokens, cookies or email addresses in full.
+4. Check the guest-cookie path: is a signed `guestId` cookie from an earlier guest/demo session winning over the Clerk session on this host? Check the order in resolveLocalUser and whether logout clears it on this host.
+5. State the root cause in one or two sentences, with the evidence.
+
+THEN FIX IT
+Apply the smallest correct fix for the root cause (e.g. remove a bypass the task added, correct a host→Clerk-key mapping, correct env config for this workspace, or make the Clerk session take precedence over a stale guest cookie if that is the bug and it is also correct for production). If the only fix is something I must do (e.g. clear site cookies, sign out of the demo account, or set a secret in this workspace), do not work around it — tell me the exact steps instead.
+
+VERIFY
+- pnpm run typecheck clean; API tests at the task's current baseline (report counts).
+- Tell me exactly how to confirm: sign out, clear this preview's site data if needed, sign in, then /account should show my own name and email (not a demo account). Tell me which local user id I should expect to resolve to if you can determine it without printing personal data.
+- Report the full diff of anything you changed.
