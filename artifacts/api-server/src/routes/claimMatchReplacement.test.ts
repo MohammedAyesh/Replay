@@ -153,7 +153,9 @@ async function insertPreviousBundle(): Promise<void> {
     segments: upload.manifest.segments.map((segment, index) => ({
       ...segment,
       objectPath: `/objects/old-segment-${index}`,
-      ...(index === 0 ? { spritesPath: "/objects/old-sprites-0" } : {}),
+      ...(index === 0
+        ? { spritesPath: "/objects/old-sprites-0", jerseyPath: "/objects/old-jersey-0" }
+        : {}),
     })),
   };
   const [bundle] = await db
@@ -330,7 +332,7 @@ describe("Claim Match tracking bundle replacement", () => {
     transactionSpy.mockRestore();
   });
 
-  it("removes the previous segment and sprite objects only after a successful replacement", async () => {
+  it("removes previous segment, sprite, and jersey objects only after a successful replacement", async () => {
     mockedWriteClaimSegment
       .mockResolvedValueOnce({ objectPath: "/objects/new-segment-0", compressedBytes: 10 })
       .mockResolvedValueOnce({ objectPath: "/objects/new-segment-1", compressedBytes: 10 });
@@ -340,8 +342,34 @@ describe("Claim Match tracking bundle replacement", () => {
     expect(mockedDeleteClaimSegment).toHaveBeenCalledWith("/objects/old-segment-0");
     expect(mockedDeleteClaimSegment).toHaveBeenCalledWith("/objects/old-segment-1");
     expect(mockedDeleteClaimSegment).toHaveBeenCalledWith("/objects/old-sprites-0");
+    expect(mockedDeleteClaimSegment).toHaveBeenCalledWith("/objects/old-jersey-0");
     expect(mockedDeleteClaimSegment).not.toHaveBeenCalledWith("/objects/new-segment-0");
     expect((await currentManifest()).segments[0].objectPath).toBe("/objects/new-segment-0");
+  });
+
+  it("stores normalized jersey data in a separate compressed sidecar path on its segment", async () => {
+    const upload = makeUpload();
+    const sidecar = {
+      v: 1 as const,
+      tracks: { "s0:t7": { number: "7", seenFrames: 3, confidence: 0.9 } },
+      numbers: { "7": ["s0:t7"] },
+    };
+    upload.jersey = { 0: sidecar };
+    mockedWriteClaimSegment.mockImplementation(async (relativePath, payload) => ({
+      objectPath: `/objects/${relativePath}`,
+      compressedBytes: Buffer.byteLength(JSON.stringify(payload)),
+    }));
+
+    await storeUploadBundle(recordingId, adminId, upload);
+
+    const manifest = await currentManifest();
+    expect(manifest.segments[0].jerseyPath).toMatch(/-0-jersey\.json\.gz$/);
+    expect(manifest.segments[1].jerseyPath).toBeUndefined();
+    expect(mockedWriteClaimSegment).toHaveBeenCalledWith(
+      expect.stringMatching(/-0-jersey\.json\.gz$/),
+      sidecar,
+    );
+    expect(mockedDeleteClaimSegment).toHaveBeenCalledWith("/objects/old-jersey-0");
   });
 
   it("keeps one owner, disputes a second claimant, and transfers ownership atomically", async () => {

@@ -102,6 +102,8 @@ export type TrackingManifest = {
     ballPath?: string;
     /** Probable people (pack_people.py): the pipeline's grouping of this segment's tracks. */
     peoplePath?: string;
+    /** Normalized shirt-number readings from jersey/<segment>.json, when present. */
+    jerseyPath?: string;
   }>;
   /**
    * Optional camera-to-pitch calibration. Grid rows run from the top of the

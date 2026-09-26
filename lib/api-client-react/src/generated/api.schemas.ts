@@ -1146,6 +1146,42 @@ export interface TrackingSegmentManifest {
   objectPath: string;
   /** Object path of the crop strips for the identity board, when the bundle carried them. */
   spritesPath?: string;
+  /** Object path of normalized shirt-number readings for this segment, when present. */
+  jerseyPath?: string;
+}
+
+export interface JerseyTrackReading {
+  /** Shirt number, kept as text so leading-zero artefacts can be rejected without numeric coercion. */
+  number: string;
+  /** @minimum 0 */
+  seenFrames: number;
+  confidence: number;
+  /**
+     * Absolute recording-frame numbers contributing to this reading, when supplied by the pipeline.
+     * @items.minimum 0
+     */
+  frames?: number[];
+}
+
+export type JerseySidecarV = typeof JerseySidecarV[keyof typeof JerseySidecarV];
+
+
+export const JerseySidecarV = {
+  NUMBER_1: 1,
+} as const;
+
+export type JerseySidecarTracks = {[key: string]: JerseyTrackReading};
+
+/**
+ * Rebuilt map from shirt number to namespaced track ids.
+ */
+export type JerseySidecarNumbers = {[key: string]: string[]};
+
+export interface JerseySidecar {
+  v: JerseySidecarV;
+  tracks: JerseySidecarTracks;
+  /** Rebuilt map from shirt number to namespaced track ids. */
+  numbers: JerseySidecarNumbers;
 }
 
 export interface TrackingIdentityPart {

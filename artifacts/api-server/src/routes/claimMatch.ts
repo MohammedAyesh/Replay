@@ -63,6 +63,7 @@ import { logger } from "../lib/logger";
 import { parseBallSidecar, type BallSidecar } from "../lib/matchPlay";
 import { playCache } from "../lib/matchPlayLoad";
 import { parsePeopleSidecar, type PeopleSidecar } from "../lib/peopleSidecar";
+import { parseJerseySidecar, type JerseySidecar } from "../lib/jerseySidecar";
 import { ensureClaimMomentUserClip } from "./userClips";
 import {
   deleteClaimSegment,
@@ -493,6 +494,8 @@ export type UploadBundle = {
   ball?: Record<number, BallSidecar>;
   /** Optional per-segment grouping from people/<segment name>.json (lib/peopleSidecar.ts). */
   people?: Record<number, PeopleSidecar>;
+  /** Optional per-segment shirt numbers from jersey/<segment name>.json. */
+  jersey?: Record<number, JerseySidecar>;
 };
 
 export function summarizeTrackingSegments(segments: TrackingSegmentPayload[]): TrackingBundleSummary {
@@ -798,6 +801,7 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
   const sprites: Record<number, unknown> = {};
   const ball: Record<number, BallSidecar> = {};
   const people: Record<number, PeopleSidecar> = {};
+  const jersey: Record<number, JerseySidecar> = {};
   for (let index = 0; index < rawSegments.length; index++) {
     const entry = asRecord(rawSegments[index]);
     const startFrame = Math.max(0, Math.round(firstNumber(entry.startFrame, entry.start_frame) ?? 0));
@@ -884,6 +888,32 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
         // Ball data is optional too.
       }
     }
+
+    const jerseyCandidates = [...new Set([
+      `jersey/${name}.json`,
+      `jersey/segment-${String(index + 1).padStart(2, "0")}.json`,
+    ])];
+    const matchingJerseyEntries = jerseyCandidates.filter((candidate) => Boolean(entries[candidate]));
+    if (matchingJerseyEntries.length > 1) {
+      return { upload: null, error: `Segment ${index + 1} has duplicate jersey files` };
+    }
+    const jerseyEntry = matchingJerseyEntries[0];
+    if (jerseyEntry) {
+      if (selectedEntries.has(jerseyEntry)) {
+        return { upload: null, error: `Segment ${index + 1} reuses a jersey file already assigned to another bundle entry` };
+      }
+      selectedEntries.add(jerseyEntry);
+      try {
+        const parsed = parseJerseySidecar(
+          JSON.parse(strFromU8(entries[jerseyEntry])),
+          index,
+          segment.startFrame,
+        );
+        if (parsed) jersey[index] = parsed;
+      } catch {
+        // Jersey data is optional; a malformed sidecar must not reject tracking.
+      }
+    }
   }
 
   const declaredFrameCount = firstNumber(rawManifest.frameCount, rawManifest.frames);
@@ -907,6 +937,7 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
       sprites,
       ball,
       people,
+      jersey,
       manifest: {
         version: Math.max(1, Math.round(firstNumber(rawManifest.version) ?? 1)),
         label: firstString(rawManifest.label, rawManifest.name) ?? "Match tracking",
@@ -2073,6 +2104,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
     ...(segment.spritesPath ? [segment.spritesPath] : []),
     ...(segment.ballPath ? [segment.ballPath] : []),
     ...(segment.peoplePath ? [segment.peoplePath] : []),
+    ...(segment.jerseyPath ? [segment.jerseyPath] : []),
   ]) ?? [];
   const storedSegments: Array<{
     segment: TrackingSegmentPayload;
@@ -2082,6 +2114,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
   const spritePaths: Record<number, string> = {};
   const ballPaths: Record<number, string> = {};
   const peoplePaths: Record<number, string> = {};
+  const jerseyPaths: Record<number, string> = {};
   try {
     for (const segment of upload.segments) {
       const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}.json.gz`, segment);
@@ -2100,6 +2133,11 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       if (peopleData) {
         const storedPeople = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}-people.json.gz`, peopleData);
         peoplePaths[segment.segmentIndex] = storedPeople.objectPath;
+      }
+      const jerseyData = upload.jersey?.[segment.segmentIndex];
+      if (jerseyData) {
+        const storedJersey = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}-jersey.json.gz`, jerseyData);
+        jerseyPaths[segment.segmentIndex] = storedJersey.objectPath;
       }
     }
     const bundleFingerprint = trackingBundleFingerprint(upload.manifest, upload.segments);
@@ -2124,6 +2162,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
         ...(spritePaths[segment.segmentIndex] ? { spritesPath: spritePaths[segment.segmentIndex] } : {}),
         ...(ballPaths[segment.segmentIndex] ? { ballPath: ballPaths[segment.segmentIndex] } : {}),
         ...(peoplePaths[segment.segmentIndex] ? { peoplePath: peoplePaths[segment.segmentIndex] } : {}),
+        ...(jerseyPaths[segment.segmentIndex] ? { jerseyPath: jerseyPaths[segment.segmentIndex] } : {}),
       })),
     };
     const bindingsTableExists = await identityBindingsTableExists();
@@ -2207,6 +2246,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       ...Object.values(spritePaths),
       ...Object.values(ballPaths),
       ...Object.values(peoplePaths),
+      ...Object.values(jerseyPaths),
     ];
     await cleanupClaimObjects(newObjectPaths, "failed replacement");
     throw error;
@@ -2216,7 +2256,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
 /**
  * PUT /admin/recordings/:id/tracking-bundle/extras  (multipart "bundle": a zip)
  *
- * Attach sprites/, ball/ and people/<segment>.json to a bundle that is
+ * Attach sprites/, ball/, people/ and jersey/<segment>.json to a bundle that is
  * already stored, without touching its tracks. Re-uploading the whole bundle
  * would do the same job but also reset every claim on the recording (a
  * replacement is treated as new tracking, deliberately). Extras never change
@@ -2256,12 +2296,12 @@ router.put("/admin/recordings/:id/tracking-bundle/extras", bundleUploadSingle, a
   }
   const written: string[] = [];
   const replaced: string[] = [];
-  const report: Array<{ name: string; sprites: boolean; ball: boolean; people: boolean }> = [];
+  const report: Array<{ name: string; sprites: boolean; ball: boolean; people: boolean; jersey: boolean }> = [];
   try {
     const segments = [];
     for (const segment of existing.manifest.segments) {
       const next = { ...segment };
-      const line = { name: segment.name, sprites: false, ball: false, people: false };
+      const line = { name: segment.name, sprites: false, ball: false, people: false, jersey: false };
       const spriteBytes = entries[`sprites/${segment.name}.json`];
       if (spriteBytes) {
         const raw = JSON.parse(strFromU8(spriteBytes)) as Record<string, unknown>;
@@ -2293,11 +2333,22 @@ router.put("/admin/recordings/:id/tracking-bundle/extras", bundleUploadSingle, a
           line.people = true;
         }
       }
+      const jerseyBytes = entries[`jersey/${segment.name}.json`];
+      if (jerseyBytes) {
+        const parsed = parseJerseySidecar(JSON.parse(strFromU8(jerseyBytes)), segment.index, segment.startFrame);
+        if (parsed) {
+          const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.index}-jersey.json.gz`, parsed);
+          written.push(stored.objectPath);
+          if (segment.jerseyPath) replaced.push(segment.jerseyPath);
+          next.jerseyPath = stored.objectPath;
+          line.jersey = true;
+        }
+      }
       segments.push(next);
       report.push(line);
     }
-    if (!report.some((line) => line.sprites || line.ball || line.people)) {
-      res.status(400).json({ error: "The ZIP carried no sprites/, ball/ or people/<segment>.json for this bundle's segments" });
+    if (!report.some((line) => line.sprites || line.ball || line.people || line.jersey)) {
+      res.status(400).json({ error: "The ZIP carried no sprites/, ball/, people/ or jersey/<segment>.json for this bundle's segments" });
       return;
     }
     const manifest: TrackingManifest = { ...existing.manifest, segments };
@@ -2392,6 +2443,43 @@ router.get("/recordings/:id/claim-match/people/:segmentIndex", async (req, res):
     res.status(200).send(compressed);
   } catch {
     res.status(404).json({ error: "Grouping not found" });
+  }
+});
+
+/** GET /recordings/:id/claim-match/jersey/:segmentIndex -- shirt readings for one segment. */
+router.get("/recordings/:id/claim-match/jersey/:segmentIndex", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+  const params = GetClaimMatchSegmentParams.safeParse({
+    id: recordingIdFromRequest(req.params.id),
+    segmentIndex: Number.parseInt(Array.isArray(req.params.segmentIndex) ? req.params.segmentIndex[0] : req.params.segmentIndex, 10),
+  });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const access = await getClaimMatchBundleForRequest(req, params.data.id);
+  if (access.error) {
+    res.status(404).json({ error: access.error ?? "Recording not found", code: access.code ?? "recording_not_found" });
+    return;
+  }
+  const manifestSegment = access.row?.bundle?.manifest?.segments.find((segment) => segment.index === params.data.segmentIndex);
+  if (!manifestSegment?.jerseyPath) {
+    res.status(404).json({ error: "No jersey data for this segment" });
+    return;
+  }
+  try {
+    const compressed = await readCompressedClaimSegment(manifestSegment.jerseyPath);
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Encoding", "gzip");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("Content-Length", String(compressed.byteLength));
+    res.status(200).send(compressed);
+  } catch {
+    res.status(404).json({ error: "Jersey data not found" });
   }
 });
 

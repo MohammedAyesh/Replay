@@ -41,6 +41,9 @@ export type ClaimPerson = {
   firstFrame: number;
   lastFrame: number;
   onCameraSeconds: number;
+  jerseyNumber?: string | null;
+  /** True only for fallback rows assembled from separate tracks with one number. */
+  joinedByShirtNumber?: boolean;
 };
 
 export type ClaimCrop = {
@@ -52,6 +55,20 @@ export type ClaimCrop = {
 
 /** {trackId: [{f: frame, j: base64 jpeg}]}, one object per segment. */
 export type SpriteStrips = Record<string, Array<{ f: number; j: string }>>;
+
+export type JerseyTrackReading = {
+  number: string;
+  seenFrames: number;
+  confidence: number;
+  frames?: number[];
+};
+
+export type JerseySidecar = {
+  tracks: Record<string, JerseyTrackReading>;
+  numbers: Record<string, string[]>;
+};
+
+export type JerseyTracks = Record<string, JerseyTrackReading>;
 
 export type GallerySource = "identities" | "tracks";
 
@@ -79,9 +96,26 @@ function secondsOfParts(parts: ClaimPersonPart[], frameRate: number): number {
   return parts.reduce((total, part) => total + Math.max(0, part.toFrame - part.fromFrame), 0) / frameRate;
 }
 
+function jerseyNumberForParts(parts: ClaimPersonPart[], jersey: JerseyTracks): string | null {
+  const support = new Map<string, { frames: number; confidence: number }>();
+  for (const part of parts) {
+    const reading = jersey[part.trackId];
+    if (!reading) continue;
+    const current = support.get(reading.number) ?? { frames: 0, confidence: 0 };
+    current.frames += reading.seenFrames;
+    current.confidence = Math.max(current.confidence, reading.confidence);
+    support.set(reading.number, current);
+  }
+  return [...support.entries()]
+    .sort(([numberA, a], [numberB, b]) =>
+      b.frames - a.frames || b.confidence - a.confidence || numberA.localeCompare(numberB))
+    .at(0)?.[0] ?? null;
+}
+
 export function buildGallery(
   manifest: TrackingManifest,
   sprites: SpriteStrips = {},
+  jersey: JerseyTracks = {},
 ): ClaimGallery {
   const frameRate = frameRateOf(manifest);
 
@@ -92,7 +126,7 @@ export function buildGallery(
           trackId: part.trackId,
           fromFrame: part.fromFrame,
           toFrame: part.toFrame,
-        }));
+        })).sort((a, b) => a.fromFrame - b.fromFrame || a.toFrame - b.toFrame);
         return {
           id: identity.id,
           name: identity.name ?? null,
@@ -100,6 +134,8 @@ export function buildGallery(
           firstFrame: Math.min(...parts.map((part) => part.fromFrame)),
           lastFrame: Math.max(...parts.map((part) => part.toFrame)),
           onCameraSeconds: secondsOfParts(parts, frameRate),
+          jerseyNumber: jerseyNumberForParts(parts, jersey),
+          joinedByShirtNumber: false,
         };
       })
       .filter((person) => person.parts.length > 0)
@@ -107,7 +143,7 @@ export function buildGallery(
     return { source: "identities", people, frameRate };
   }
 
-  const people = Object.entries(sprites)
+  const candidates = Object.entries(sprites)
     .map(([trackId, strips]): ClaimPerson | null => {
       const frames = strips.filter((strip) => strip.j).map((strip) => strip.f);
       if (frames.length === 0) return null;
@@ -121,9 +157,39 @@ export function buildGallery(
         firstFrame: fromFrame,
         lastFrame: toFrame,
         onCameraSeconds: secondsOfParts(parts, frameRate),
+        jerseyNumber: jersey[trackId]?.number ?? null,
+        joinedByShirtNumber: false,
       };
     })
-    .filter((person): person is ClaimPerson => person !== null)
+    .filter((person): person is ClaimPerson => person !== null);
+
+  // Combine numbered track fragments before applying the minimum duration:
+  // separate short fragments of one shirt-numbered player can add up to a
+  // useful gallery row. Unnumbered rows deliberately keep their original ID.
+  const unnumbered = candidates.filter((person) => person.jerseyNumber === null);
+  const numbered = new Map<string, ClaimPerson[]>();
+  for (const person of candidates) {
+    const number = person.jerseyNumber;
+    if (!number) continue;
+    const rows = numbered.get(number) ?? [];
+    rows.push(person);
+    numbered.set(number, rows);
+  }
+  const joined = [...numbered.entries()].map(([number, rows]): ClaimPerson => {
+    const parts = rows.flatMap((person) => person.parts)
+      .sort((a, b) => a.fromFrame - b.fromFrame || a.toFrame - b.toFrame || a.trackId.localeCompare(b.trackId));
+    return {
+      id: parts.length > 1 ? `jersey:${number}` : parts[0].trackId,
+      name: null,
+      parts,
+      firstFrame: Math.min(...parts.map((part) => part.fromFrame)),
+      lastFrame: Math.max(...parts.map((part) => part.toFrame)),
+      onCameraSeconds: secondsOfParts(parts, frameRate),
+      jerseyNumber: number,
+      joinedByShirtNumber: parts.length > 1,
+    };
+  });
+  const people = [...unnumbered, ...joined]
     .filter((person) => person.onCameraSeconds >= MIN_PERSON_SECONDS)
     .sort((a, b) => b.onCameraSeconds - a.onCameraSeconds)
     .slice(0, MAX_UNGROUPED_PEOPLE);
@@ -179,6 +245,16 @@ export function mergeSprites(parts: SpriteStrips[]): SpriteStrips {
   }
   for (const trackId of Object.keys(merged)) {
     merged[trackId] = merged[trackId].sort((a, b) => a.f - b.f);
+  }
+  return merged;
+}
+
+/** Merge normalized per-segment jersey readings by their namespaced track IDs. */
+export function mergeJersey(parts: Array<JerseySidecar | null>): JerseyTracks {
+  const merged: JerseyTracks = {};
+  for (const sidecar of parts) {
+    if (!sidecar?.tracks) continue;
+    Object.assign(merged, sidecar.tracks);
   }
   return merged;
 }

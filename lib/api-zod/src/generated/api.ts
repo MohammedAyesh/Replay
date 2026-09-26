@@ -879,7 +879,8 @@ export const GetClaimMatchResponse = zod.object({
   "startSeconds": zod.number().min(getClaimMatchResponseManifestSegmentsItemStartSecondsMin),
   "endSeconds": zod.number().min(getClaimMatchResponseManifestSegmentsItemEndSecondsMin),
   "objectPath": zod.string(),
-  "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
+  "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.'),
+  "jerseyPath": zod.string().optional().describe('Object path of normalized shirt-number readings for this segment, when present.')
 })),
   "pitchModel": zod.object({
   "calibrationId": zod.string().min(1).describe('Immutable identifier for the calibration fit that produced this model.'),
@@ -1170,6 +1171,36 @@ export const GetClaimMatchSegmentResponse = zod.object({
 
 
 /**
+ * @summary Get shirt-number readings for one tracking segment
+ */
+export const getClaimMatchJerseyPathSegmentIndexMin = 0;
+
+
+
+export const GetClaimMatchJerseyParams = zod.object({
+  "id": zod.coerce.number(),
+  "segmentIndex": zod.coerce.number().min(getClaimMatchJerseyPathSegmentIndexMin)
+})
+
+export const getClaimMatchJerseyResponseTracksSeenFramesMin = 0;
+
+export const getClaimMatchJerseyResponseTracksFramesItemMin = 0;
+
+
+
+export const GetClaimMatchJerseyResponse = zod.object({
+  "v": zod.literal(1),
+  "tracks": zod.record(zod.string(), zod.object({
+  "number": zod.string().describe('Shirt number, kept as text so leading-zero artefacts can be rejected without numeric coercion.'),
+  "seenFrames": zod.number().min(getClaimMatchJerseyResponseTracksSeenFramesMin),
+  "confidence": zod.number(),
+  "frames": zod.array(zod.number().min(getClaimMatchJerseyResponseTracksFramesItemMin)).optional().describe('Absolute recording-frame numbers contributing to this reading, when supplied by the pipeline.')
+})),
+  "numbers": zod.record(zod.string(), zod.array(zod.string())).describe('Rebuilt map from shirt number to namespaced track ids.')
+})
+
+
+/**
  * @summary Declare a tracking-time period with no playable pitch action
  */
 export const CreateClaimMatchOffPitchSpanParams = zod.object({
@@ -1392,7 +1423,8 @@ export const ReplaceTrackingBundleResponse = zod.object({
   "startSeconds": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemStartSecondsMin),
   "endSeconds": zod.number().min(replaceTrackingBundleResponseSegmentRangesItemEndSecondsMin),
   "objectPath": zod.string(),
-  "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.')
+  "spritesPath": zod.string().optional().describe('Object path of the crop strips for the identity board, when the bundle carried them.'),
+  "jerseyPath": zod.string().optional().describe('Object path of normalized shirt-number readings for this segment, when present.')
 })).optional(),
   "pitchModel": zod.union([zod.object({
   "calibrationId": zod.string().nullable(),

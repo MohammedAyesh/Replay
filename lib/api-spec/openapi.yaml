@@ -1070,6 +1070,45 @@ paths:
         "404":
           description: Recording or tracking segment not found
 
+  /recordings/{id}/claim-match/jersey/{segmentIndex}:
+    get:
+      operationId: getClaimMatchJersey
+      tags: [claimMatch]
+      summary: Get shirt-number readings for one tracking segment
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: segmentIndex
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Normalized jersey readings without per-frame retuning data
+          headers:
+            Content-Encoding:
+              schema:
+                type: string
+                enum: [gzip]
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JerseySidecar"
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Recording or jersey sidecar not found
+
   /recordings/{id}/claim-match/off-pitch:
     post:
       operationId: createClaimMatchOffPitchSpan
@@ -3814,6 +3853,47 @@ components:
         spritesPath:
           type: string
           description: Object path of the crop strips for the identity board, when the bundle carried them.
+        jerseyPath:
+          type: string
+          description: Object path of normalized shirt-number readings for this segment, when present.
+
+    JerseyTrackReading:
+      type: object
+      required: [number, seenFrames, confidence]
+      properties:
+        number:
+          type: string
+          description: Shirt number, kept as text so leading-zero artefacts can be rejected without numeric coercion.
+        seenFrames:
+          type: integer
+          minimum: 0
+        confidence:
+          type: number
+        frames:
+          type: array
+          description: Absolute recording-frame numbers contributing to this reading, when supplied by the pipeline.
+          items:
+            type: integer
+            minimum: 0
+
+    JerseySidecar:
+      type: object
+      required: [v, tracks, numbers]
+      properties:
+        v:
+          type: integer
+          enum: [1]
+        tracks:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JerseyTrackReading"
+        numbers:
+          type: object
+          description: Rebuilt map from shirt number to namespaced track ids.
+          additionalProperties:
+            type: array
+            items:
+              type: string
 
     TrackingIdentityPart:
       type: object

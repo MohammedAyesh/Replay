@@ -16,6 +16,7 @@
 - [FFmpeg crop w/h per-frame](ffmpeg-crop-wh-per-frame.md) — crop w/h expressions evaluate with t=NaN at init (never per-frame); if(lt(t,...)) zoom expressions never animate; sendcmd w/h changes are silently ignored (not stream-terminating) in FFmpeg 7.1.1.
 - [Zoompan renderer geometry](zoompan-renderer.md) — map the padded 32:9 source onto an output-aspect canvas before zoompan; supersample 4x by default, 2x for large vertical canvases.
 - [Development schema push](development-schema-push.md) — the DB push wrapper requires an interactive shell; noninteractive agents should not assume it can apply migrations.
+- [Workspace type declarations](workspace-type-declarations.md) — run `pnpm run typecheck:libs` after editing public `lib/db` types so package checks do not use stale declarations.
 - [Claim queue invalidation loop](claim-queue-invalidation-loop.md) — never invalidate Claim Match queries after an empty offline-queue flush; unstable mutation dependencies can create a permanent refetch skeleton.
 - [GCS gzip downloads](gcs-gzip-downloads.md) — Google Cloud Storage auto-decompresses gzip objects unless download uses `{ decompress: false }`; preserve bytes when forwarding Content-Encoding.
 - [Progressive HLS browser cache](progressive-hls-browser-cache.md) — keep persisted cache reads independent from per-client post-Play writes, and make every Cache API failure fall back to network.

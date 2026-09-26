@@ -21,4 +21,6 @@ export interface TrackingSegmentManifest {
   objectPath: string;
   /** Object path of the crop strips for the identity board, when the bundle carried them. */
   spritesPath?: string;
+  /** Object path of normalized shirt-number readings for this segment, when present. */
+  jerseyPath?: string;
 }

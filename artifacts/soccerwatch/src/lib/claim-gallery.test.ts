@@ -60,6 +60,29 @@ describe("buildGallery", () => {
     expect(gallery.people[0].onCameraSeconds).toBeGreaterThanOrEqual(MIN_PERSON_SECONDS);
   });
 
+  it("joins equal shirt numbers before filtering short fragments and keeps no-number IDs intact", () => {
+    const gallery = buildGallery(base, {
+      "s0:fragment-a": [{ f: 0, j: "a" }, { f: 100, j: "a" }],
+      "s0:fragment-b": [{ f: 200, j: "b" }, { f: 300, j: "b" }],
+      "s0:unlabelled": [{ f: 400, j: "c" }, { f: 500, j: "c" }],
+    }, {
+      "s0:fragment-a": { number: "10", seenFrames: 4, confidence: 0.9 },
+      "s0:fragment-b": { number: "10", seenFrames: 3, confidence: 0.8 },
+    });
+
+    expect(gallery.people).toHaveLength(1);
+    expect(gallery.people[0]).toMatchObject({
+      id: "jersey:10",
+      jerseyNumber: "10",
+      joinedByShirtNumber: true,
+      onCameraSeconds: MIN_PERSON_SECONDS,
+    });
+    expect(gallery.people[0].parts.map((part) => part.trackId)).toEqual([
+      "s0:fragment-a",
+      "s0:fragment-b",
+    ]);
+  });
+
   it("has no people rather than fake ones when there is nothing to offer", () => {
     expect(buildGallery(base).people).toEqual([]);
   });

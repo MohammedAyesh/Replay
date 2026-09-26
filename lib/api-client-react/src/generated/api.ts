@@ -64,6 +64,7 @@ import type {
   FollowResult,
   HealthStatus,
   ImpressionInput,
+  JerseySidecar,
   LikeResult,
   LiveRtmpStatus,
   LocaleInput,
@@ -3237,6 +3238,88 @@ export function useGetClaimMatchSegment<TData = Awaited<ReturnType<typeof getCla
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetClaimMatchSegmentQueryOptions(id,segmentIndex,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetClaimMatchJerseyUrl = (id: number,
+    segmentIndex: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/jersey/${segmentIndex}`
+}
+
+/**
+ * @summary Get shirt-number readings for one tracking segment
+ */
+export const getClaimMatchJersey = async (id: number,
+    segmentIndex: number, options?: RequestInit): Promise<JerseySidecar> => {
+
+  return customFetch<JerseySidecar>(getGetClaimMatchJerseyUrl(id,segmentIndex),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetClaimMatchJerseyQueryKey = (id: number,
+    segmentIndex: number,) => {
+    return [
+    `/api/recordings/${id}/claim-match/jersey/${segmentIndex}`
+    ] as const;
+    }
+
+
+export const getGetClaimMatchJerseyQueryOptions = <TData = Awaited<ReturnType<typeof getClaimMatchJersey>>, TError = ErrorType<void>>(id: number,
+    segmentIndex: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchJersey>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetClaimMatchJerseyQueryKey(id,segmentIndex);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getClaimMatchJersey>>> = ({ signal }) => getClaimMatchJersey(id,segmentIndex, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined && segmentIndex !== null && segmentIndex !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchJersey>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetClaimMatchJerseyQueryResult = NonNullable<Awaited<ReturnType<typeof getClaimMatchJersey>>>
+export type GetClaimMatchJerseyQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get shirt-number readings for one tracking segment
+ */
+
+export function useGetClaimMatchJersey<TData = Awaited<ReturnType<typeof getClaimMatchJersey>>, TError = ErrorType<void>>(
+ id: number,
+    segmentIndex: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchJersey>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetClaimMatchJerseyQueryOptions(id,segmentIndex,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

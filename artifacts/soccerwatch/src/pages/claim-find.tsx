@@ -31,11 +31,15 @@ import { useAuth } from "@/lib/auth";
 import { useClaimCopy } from "@/i18n/claim-strings";
 import {
   type ClaimPerson,
+  type ClaimPersonPart,
+  type JerseySidecar,
+  type JerseyTracks,
   type SpriteStrips,
   buildGallery,
   displaySecondsForFrame,
   formatClock,
   galleryCrops,
+  mergeJersey,
   mergeSprites,
 } from "@/lib/claim-gallery";
 import {
@@ -101,35 +105,66 @@ export default function ClaimFindPage() {
   const [kitKey, setKitKey] = useState<string | null>(null);
   /* Back from the gallery returns to the kit step only if that step was shown. */
   const [kitShown, setKitShown] = useState(false);
-  const [pending, setPending] = useState<ClaimPerson | null>(null);
+  const [pending, setPending] = useState<{ person: ClaimPerson; selectedPart?: ClaimPersonPart } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   /* ------------------------------------------------------------------ crops */
 
   const [spriteState, setSpriteState] = useState<SpriteState>({ status: "loading" });
+  const [jerseyTracks, setJerseyTracks] = useState<JerseyTracks>({});
 
   useEffect(() => {
-    if (!manifest || !enabled) return;
+    if (!manifest || !enabled) {
+      setJerseyTracks({});
+      return;
+    }
     let cancelled = false;
     setSpriteState({ status: "loading" });
+    setJerseyTracks({});
     (async () => {
       const perSegment = await Promise.all(
-        manifest.segments.map(async (segment) => {
-          try {
-            const response = await fetch(
-              `${basePath}/api/recordings/${recordingId}/claim-match/sprites/${segment.index}`,
-              { credentials: "include" },
-            );
-            if (!response.ok) return null;
-            return await response.json() as SpriteStrips;
-          } catch {
-            return null;
-          }
+        manifest.segments.map(async (segment): Promise<{
+          sprites: SpriteStrips | null;
+          jersey: JerseySidecar | null;
+        }> => {
+          const [sprites, jersey] = await Promise.all([
+            (async (): Promise<SpriteStrips | null> => {
+              try {
+                const response = await fetch(
+                  `${basePath}/api/recordings/${recordingId}/claim-match/sprites/${segment.index}`,
+                  { credentials: "include" },
+                );
+                if (!response.ok) return null;
+                return await response.json() as SpriteStrips;
+              } catch {
+                return null;
+              }
+            })(),
+            (async (): Promise<JerseySidecar | null> => {
+              try {
+                const response = await fetch(
+                  `${basePath}/api/recordings/${recordingId}/claim-match/jersey/${segment.index}`,
+                  { credentials: "include" },
+                );
+                if (!response.ok) return null;
+                const sidecar = await response.json() as JerseySidecar;
+                return sidecar && sidecar.tracks && typeof sidecar.tracks === "object"
+                  ? sidecar
+                  : null;
+              } catch {
+                return null;
+              }
+            })(),
+          ]);
+          return { sprites, jersey };
         }),
       );
       if (cancelled) return;
-      const present = perSegment.filter((entry): entry is SpriteStrips => entry !== null);
+      setJerseyTracks(mergeJersey(perSegment.map((entry) => entry.jersey)));
+      const present = perSegment
+        .map((entry) => entry.sprites)
+        .filter((entry): entry is SpriteStrips => entry !== null);
       // A bundle with no sprites at all is not a failure to retry — it is a
       // bundle that never carried crops, and no amount of reloading will
       // produce them. The gallery cannot run without pictures, so this is the
@@ -148,8 +183,8 @@ export default function ClaimFindPage() {
   /* --------------------------------------------------------------- people */
 
   const gallery = useMemo(
-    () => (manifest ? buildGallery(manifest, sprites ?? {}) : null),
-    [manifest, sprites],
+    () => (manifest ? buildGallery(manifest, sprites ?? {}, jerseyTracks) : null),
+    [manifest, sprites, jerseyTracks],
   );
 
   const cropsFor = useCallback(
@@ -198,10 +233,10 @@ export default function ClaimFindPage() {
   /* ------------------------------------------------------------- the pick */
 
   const claimPerson = useCallback(
-    async (person: ClaimPerson, name: string | null) => {
+    async (person: ClaimPerson, name: string | null, selectedPart?: ClaimPersonPart) => {
       setSaving(true);
       setSaveError(null);
-      const part = person.parts[0];
+      const part = selectedPart ?? person.parts[0];
       try {
         const response = await fetch(
           `${basePath}/api/recordings/${recordingId}/claim-match/chain/tap`,
@@ -367,7 +402,7 @@ export default function ClaimFindPage() {
         canChangeKit={Boolean(kitSplit?.separated)}
         onBack={() => setStep(kitShown ? "kit" : "intro")}
         onChangeKit={() => { setKitShown(true); setStep("kit"); }}
-        onPick={(person) => { setSaveError(null); setPending(person); }}
+        onPick={(person, selectedPart) => { setSaveError(null); setPending({ person, selectedPart }); }}
         onChain={() => setLocation(`/claim/${recordingId}`)}
         onNotInMatch={() => setLocation(fieldHref)}
         saveError={saveError}
@@ -377,10 +412,10 @@ export default function ClaimFindPage() {
           copy={copy}
           defaultName={chain?.name ?? user?.name ?? ""}
           accountName={user?.name ?? ""}
-          crops={cropsFor(pending, 3)}
+          crops={cropsFor(pending.person, 3)}
           saving={saving}
           onCancel={() => { setPending(null); setSaveError(null); }}
-          onConfirm={(name) => claimPerson(pending, name)}
+          onConfirm={(name) => claimPerson(pending.person, name, pending.selectedPart)}
         />
       )}
     </>
@@ -684,7 +719,7 @@ export function GalleryScreen({
   canChangeKit: boolean;
   onBack: () => void;
   onChangeKit: () => void;
-  onPick: (person: ClaimPerson) => void;
+  onPick: (person: ClaimPerson, selectedPart?: ClaimPersonPart) => void;
   onChain: () => void;
   onNotInMatch: () => void;
   saveError: string | null;
@@ -692,6 +727,7 @@ export function GalleryScreen({
 }) {
   const clock = { frameRate, matchOffset };
   const [showHelp, setShowHelp] = useState(initialShowHelp);
+  const [fragmentIndices, setFragmentIndices] = useState<Record<string, number>>({});
   const helpRef = useRef<HTMLDivElement | null>(null);
 
   const yours = people.filter((person) => person.id === yourIdentityId);
@@ -704,13 +740,53 @@ export function GalleryScreen({
   }, [showHelp]);
 
   const row = (person: ClaimPerson, kind: "open" | "yours" | "claimed") => {
-    const crops = cropsFor(person, 6);
+    const fragments = [...person.parts].sort((a, b) =>
+      a.fromFrame - b.fromFrame || a.toFrame - b.toFrame || a.trackId.localeCompare(b.trackId));
+    const canStepThroughFragments = Boolean(person.joinedByShirtNumber && fragments.length > 1);
+    const activeIndex = Math.min(fragmentIndices[person.id] ?? 0, Math.max(0, fragments.length - 1));
+    const activePart = fragments[activeIndex];
+    const cropPerson = canStepThroughFragments && activePart
+      ? { ...person, parts: [activePart] }
+      : person;
+    const crops = cropsFor(cropPerson, 6);
     const struck = kind === "claimed";
     return (
       <li
         key={person.id}
         className={`rounded-2xl border bg-surface p-3 ${kind === "yours" ? "border-turf" : "border-line"} ${struck ? "opacity-55" : ""}`}
       >
+        {canStepThroughFragments && activePart && (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-raised px-2 py-1">
+            <button
+              type="button"
+              data-testid={`button-previous-fragment-${person.id}`}
+              aria-label={copy.gallery.previousFragment}
+              title={copy.gallery.previousFragment}
+              disabled={activeIndex === 0}
+              onClick={() => setFragmentIndices((current) => ({ ...current, [person.id]: activeIndex - 1 }))}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-lg text-text disabled:opacity-30"
+            >
+              ‹
+            </button>
+            <p className="min-w-0 text-center text-xs text-muted-text">
+              {copy.gallery.fragmentOf(activeIndex + 1, fragments.length)}{" "}
+              <Num>
+                {formatClock(displaySecondsForFrame(activePart.fromFrame, clock))}–{formatClock(displaySecondsForFrame(activePart.toFrame, clock))}
+              </Num>
+            </p>
+            <button
+              type="button"
+              data-testid={`button-next-fragment-${person.id}`}
+              aria-label={copy.gallery.nextFragment}
+              title={copy.gallery.nextFragment}
+              disabled={activeIndex >= fragments.length - 1}
+              onClick={() => setFragmentIndices((current) => ({ ...current, [person.id]: activeIndex + 1 }))}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-lg text-text disabled:opacity-30"
+            >
+              ›
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-6 gap-1.5">
           {Array.from({ length: 6 }, (_, index) => {
             const crop = crops[index];
@@ -726,6 +802,15 @@ export function GalleryScreen({
             </Num>
             <span className="mt-1 block text-[11px] leading-none text-muted-text">{copy.gallery.onCameraWord}</span>
           </div>
+          {person.jerseyNumber && (
+            <span
+              data-testid={`badge-shirt-number-${person.id}`}
+              aria-label={`${copy.gallery.shirtNumber} ${person.jerseyNumber}`}
+              className="shrink-0 rounded-full border border-turf/40 bg-turf/10 px-2 py-1 font-display text-xs font-bold text-turf"
+            >
+              {copy.gallery.shirtNumberShort} <Num>{person.jerseyNumber}</Num>
+            </span>
+          )}
           <p className="min-w-0 flex-1 truncate text-xs text-muted-text">
             {copy.gallery.seenWord}{" "}
             {/* One LTR run: in RTL an en dash between two numbers would
@@ -734,7 +819,7 @@ export function GalleryScreen({
               {formatClock(displaySecondsForFrame(person.firstFrame, clock))}–{formatClock(displaySecondsForFrame(person.lastFrame, clock))}
             </Num>
           </p>
-          {kind === "open" && <RowAction onClick={() => onPick(person)}>{copy.gallery.thisIsMe}</RowAction>}
+          {kind === "open" && <RowAction onClick={() => onPick(person, canStepThroughFragments ? activePart : undefined)}>{copy.gallery.thisIsMe}</RowAction>}
           {kind === "yours" && <Chip tone="turf">{copy.gallery.takenByYou}</Chip>}
           {kind === "claimed" && (
             <span className="shrink-0 rounded-full bg-raised px-2.5 py-1 font-display text-[11px] font-bold uppercase tracking-[0.08em] text-muted-text">
@@ -767,6 +852,16 @@ export function GalleryScreen({
       {ungrouped && (
         <p className="mt-4 rounded-2xl border border-violet/40 bg-violet/10 p-3 text-xs leading-5 text-[#A98CFF]">
           {copy.gallery.ungrouped}
+        </p>
+      )}
+      {people.some((person) => person.joinedByShirtNumber) && (
+        <p className="mt-3 rounded-2xl border border-turf/30 bg-turf/5 p-3 text-xs leading-5 text-muted-text">
+          {copy.gallery.joinedByShirtNumber}
+        </p>
+      )}
+      {ungrouped && people.some((person) => person.jerseyNumber && !person.joinedByShirtNumber) && (
+        <p className="mt-3 rounded-2xl border border-line bg-surface p-3 text-xs leading-5 text-muted-text">
+          {copy.gallery.numberedButUngrouped}
         </p>
       )}
 

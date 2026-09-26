@@ -20,12 +20,12 @@ describe("claim match segmented bundles", () => {
       width: 1920,
       height: 1080,
       frameRate: 25,
-      frameCount: 4,
-      duration: 0.16,
+      frameCount: 20,
+      duration: 0.8,
       segmentCount: 2,
       segments: [
-        { index: 0, name: "one", startFrame: 0, endFrame: 1, startSeconds: 0, endSeconds: 0.08 },
-        { index: 1, name: "two", startFrame: 2, endFrame: 3, startSeconds: 0.08, endSeconds: 0.16 },
+        { index: 0, name: "one", startFrame: 0, endFrame: 9, startSeconds: 0, endSeconds: 0.4 },
+        { index: 1, name: "two", startFrame: 10, endFrame: 19, startSeconds: 0.4, endSeconds: 0.8 },
       ],
     };
     const payload = {
@@ -75,6 +75,43 @@ describe("claim match segmented bundles", () => {
     expect(result.upload?.sprites?.[0]).toEqual({
       "s0:player-1": [{ f: 0, j: "base64-jpeg" }],
     });
+  });
+
+  it("reads jersey sidecars for every segment in a two-segment bundle", () => {
+    const manifest = {
+      version: 1,
+      label: "two segments with jerseys",
+      width: 1920,
+      height: 1080,
+      frameRate: 25,
+      frameCount: 20,
+      duration: 0.8,
+      segmentCount: 2,
+      segments: [
+        { index: 0, name: "one", startFrame: 0, endFrame: 9, startSeconds: 0, endSeconds: 0.4 },
+        { index: 1, name: "two", startFrame: 10, endFrame: 19, startSeconds: 0.4, endSeconds: 0.8 },
+      ],
+    };
+    const payload = { tracks: [], crossings: [], inPlaySpans: [], events: [] };
+    const zip = zipSync({
+      "manifest.json": strToU8(JSON.stringify(manifest)),
+      "segments/one.json": strToU8(JSON.stringify(payload)),
+      "segments/two.json": strToU8(JSON.stringify(payload)),
+      "jersey/one.json": strToU8(JSON.stringify({
+        tracks: { t7: { number: "7", seenFrames: 3, confidence: 0.8, frames: [0, 1, 2] } },
+      })),
+      "jersey/two.json": strToU8(JSON.stringify({
+        tracks: { t7: { number: "7", seenFrames: 3, confidence: 0.9, frames: [0, 1, 2] } },
+      })),
+    });
+
+    const result = parseZipBundleDetailed(Buffer.from(zip));
+
+    expect(result.error).toBeNull();
+    expect(result.upload?.jersey?.[0].tracks["s0:t7"].frames).toEqual([0, 1, 2]);
+    expect(result.upload?.jersey?.[1].tracks["s1:t7"].frames).toEqual([10, 11, 12]);
+    expect(result.upload?.jersey?.[0].numbers).toEqual({ "7": ["s0:t7"] });
+    expect(result.upload?.jersey?.[1].numbers).toEqual({ "7": ["s1:t7"] });
   });
 
   it("rejects gaps between segment frame ranges", () => {
