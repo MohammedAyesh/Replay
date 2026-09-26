@@ -729,6 +729,31 @@ paths:
         "404":
           description: Field not found
 
+  /account:
+    delete:
+      operationId: deleteAccount
+      tags: [account]
+      summary: Delete the authenticated player's account and associated personal data
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionResponse"
+        "401":
+          description: An authenticated non-guest account is required
+        "404":
+          description: Account not found
+        "409":
+          description: Account has active footage requests
+        "500":
+          description: Local account cleanup failed; the local account was disabled
+        "502":
+          description: Identity provider deletion failed; local account data was not changed
+
   /account/consents:
     patch:
       operationId: updateConsents
@@ -2122,6 +2147,39 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Banner"
+
+  /admin/users/{id}:
+    delete:
+      operationId: deleteAdminUser
+      tags: [admin]
+      summary: Delete a user account as an administrator
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountDeletionResponse"
+        "400":
+          description: Invalid user ID
+        "403":
+          description: Admin access required
+        "404":
+          description: User not found
+        "409":
+          description: User has active footage requests or the administrator is deleting themselves
+        "500":
+          description: Local account cleanup failed; the local account was disabled
+        "502":
+          description: Identity provider deletion failed; local account data was not changed
 
   /admin/ads:
     get:
@@ -4746,6 +4804,13 @@ components:
       properties:
         winnerUserId:
           type: integer
+
+    AccountDeletionResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
 
   securitySchemes:
     clerkSession:

@@ -7,6 +7,7 @@
  */
 
 export * from './academySummary';
+export * from './accountDeletionResponse';
 export * from './accountStats';
 export * from './ad';
 export * from './addAcademyRecordingInput';

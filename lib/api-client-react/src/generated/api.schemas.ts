@@ -1798,6 +1798,10 @@ export interface ResolveClaimMatchDisputeInput {
   winnerUserId: number;
 }
 
+export interface AccountDeletionResponse {
+  ok: boolean;
+}
+
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */
   bundle: string;

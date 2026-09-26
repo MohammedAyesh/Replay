@@ -625,6 +625,14 @@ export const RecordAdminFootagePaymentResponse = zod.object({
 
 
 /**
+ * @summary Delete the authenticated player's account and associated personal data
+ */
+export const DeleteAccountResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
  * @summary Save recording and social media consent
  */
 export const UpdateConsentsBody = zod.object({
@@ -2469,6 +2477,18 @@ export const ListBannersResponseItem = zod.object({
   "hyperlink": zod.string().nullish()
 })
 export const ListBannersResponse = zod.array(ListBannersResponseItem)
+
+
+/**
+ * @summary Delete a user account as an administrator
+ */
+export const DeleteAdminUserParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteAdminUserResponse = zod.object({
+  "ok": zod.boolean()
+})
 
 
 /**

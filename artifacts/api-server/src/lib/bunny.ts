@@ -227,6 +227,28 @@ export async function deleteBunnyExport(clipId: number): Promise<void> {
 }
 
 /**
+ * Remove all Bunny Storage derivatives owned by a user's clip.
+ * The poster path is accepted only when it matches this clip's generated poster
+ * namespace, so a database value can never be used to delete an arbitrary object.
+ */
+export async function deleteBunnyClipAssets(clipId: number, posterPath: string | null): Promise<void> {
+  await deleteBunnyExport(clipId);
+  if (!posterPath || !isBunnyStorageConfigured()) return;
+
+  const safePosterPattern = new RegExp(`^posters/${clipId}-[a-zA-Z0-9_-]+\\.jpg$`);
+  if (!safePosterPattern.test(posterPath)) return;
+
+  const encodedPath = posterPath.split("/").map(encodeURIComponent).join("/");
+  const response = await fetch(
+    `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${encodedPath}`,
+    { method: "DELETE", headers: { AccessKey: BUNNY_STORAGE_API_KEY } },
+  );
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Bunny Storage poster deletion failed: ${response.status}`);
+  }
+}
+
+/**
  * Upload a buffer to Bunny Storage at a given path and return its public CDN URL.
  */
 export async function uploadBufferToBunnyStorage(

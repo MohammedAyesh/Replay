@@ -6,6 +6,27 @@ import { logger } from "./logger";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
+function isClerkNotFoundError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { status?: unknown; statusCode?: unknown; cause?: unknown };
+  return candidate.status === 404
+    || candidate.statusCode === 404
+    || isClerkNotFoundError(candidate.cause);
+}
+
+/**
+ * Delete the upstream identity before local account data is removed.
+ * Treat an already-absent Clerk user as success so a partially completed
+ * deletion can be retried by an administrator.
+ */
+export async function deleteClerkUserAccount(clerkId: string): Promise<void> {
+  try {
+    await clerkClient.users.deleteUser(clerkId);
+  } catch (error) {
+    if (!isClerkNotFoundError(error)) throw error;
+  }
+}
+
 export type UserResolutionReason =
   | "resolved_clerk"
   | "resolved_guest"

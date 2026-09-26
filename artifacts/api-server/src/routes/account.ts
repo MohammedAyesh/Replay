@@ -2,9 +2,21 @@ import { Router, type IRouter } from "express";
 import { desc, eq, sql } from "drizzle-orm";
 import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable, fieldsTable, claimMatchIdentityBindingsTable } from "@workspace/db";
 import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody, UpdateLocaleBody, UpdateLocaleResponse, UpdateConsentsBody, UpdateConsentsResponse } from "@workspace/api-zod";
-import { getLocalUserId, getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { getLocalAccountUserId, getLocalUserId, getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { accountDeletionHttpResponse, deleteUserAccount } from "../lib/accountDeletion";
 
 const router: IRouter = Router();
+
+router.delete("/account", async (req, res): Promise<void> => {
+  const userId = await getLocalAccountUserId(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+
+  const response = accountDeletionHttpResponse(await deleteUserAccount(userId));
+  res.status(response.statusCode).json(response.body);
+});
 
 router.get("/account/claimed-matches", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);

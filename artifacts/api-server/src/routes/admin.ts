@@ -30,6 +30,7 @@ import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type Banne
 import { logger } from "../lib/logger";
 import { isLiveVideoId } from "./userClips";
 import multer from "multer";
+import { accountDeletionHttpResponse, deleteUserAccount } from "../lib/accountDeletion";
 
 const router: IRouter = Router();
 
@@ -583,31 +584,8 @@ router.delete("/admin/users/:id", async (req, res): Promise<void> => {
 
   if (id === adminId) { res.status(409).json({ error: "Cannot delete yourself" }); return; }
 
-  // One transaction, so a failure part-way cannot leave the account alive with
-  // its clips already destroyed.
-  //
-  // ad_impressions.user_id / ad_clicks.user_id reference users.id with no
-  // ON DELETE action, so deleting a user who has ever been served an ad used to
-  // raise 23503 on the final statement — after the clips were gone. Both columns
-  // are nullable, so detach them first and keep the ad analytics rows.
-  try {
-    await db.transaction(async (tx) => {
-      await tx.update(adImpressionsTable).set({ userId: null }).where(eq(adImpressionsTable.userId, id));
-      await tx.update(adClicksTable).set({ userId: null }).where(eq(adClicksTable.userId, id));
-      await tx.delete(savedClipsTable).where(eq(savedClipsTable.userId, id));
-      await tx.delete(likesTable).where(eq(likesTable.userId, id));
-      await tx.delete(followsTable).where(eq(followsTable.followerId, id));
-      await tx.delete(followsTable).where(eq(followsTable.followeeId, id));
-      await tx.delete(userClipsTable).where(eq(userClipsTable.userId, id));
-      await tx.delete(usersTable).where(eq(usersTable.id, id));
-    });
-  } catch (err) {
-    logger.error({ err, userId: id }, "Failed to delete user");
-    res.status(500).json({ error: "Could not delete user — nothing was changed" });
-    return;
-  }
-
-  res.json({ ok: true });
+  const response = accountDeletionHttpResponse(await deleteUserAccount(id));
+  res.status(response.statusCode).json(response.body);
 });
 
 // ─── Admin: Fields ────────────────────────────────────────────────────────────
