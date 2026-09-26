@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, integer, timestamp, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -34,8 +34,11 @@ export const usersTable = pgTable("users", {
   avatarPath: text("avatar_path"),
   /** Preferred shirt number, reused on every new roster. */
   shirtNumber: integer("shirt_number"),
+  friendCode: text("friend_code"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  unique("users_friend_code_unique").on(table.friendCode),
+]);
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true });
 export type InsertUser = z.infer<typeof insertUserSchema>;

@@ -68,6 +68,7 @@ export const userClipsTable = pgTable("user_clips", {
    *  seconds. Kept for diagnosis: a poster that looks wrong is usually a poster
    *  taken from the wrong second. */
   posterAtSec: numeric("poster_at_sec", { precision: 10, scale: 3 }),
+  hiddenReason: text("hidden_reason").$type<"reports" | "removal_request" | "admin">(),
 });
 
 export type UserClipRow = typeof userClipsTable.$inferSelect;
