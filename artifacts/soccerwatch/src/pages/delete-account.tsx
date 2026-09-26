@@ -3,12 +3,14 @@ import { Link, useLocation } from "wouter";
 import { useTranslation } from "@/i18n";
 import { useLegalCopy } from "@/i18n/legal-strings";
 import { supportMailto, useSupportContact } from "@/lib/client-settings";
+import { useAuth } from "@/lib/auth";
 
 export default function DeleteAccountPage() {
   const { locale } = useTranslation();
   const copy = useLegalCopy();
   const { supportEmail } = useSupportContact();
   const supportHref = supportMailto(supportEmail);
+  const { user, isGuest, isSignedIn, isLoading } = useAuth();
   const [, setLocation] = useLocation();
 
   return (
@@ -28,18 +30,21 @@ export default function DeleteAccountPage() {
           <p className="mt-3 text-sm leading-6 text-muted-text">{copy.accountDeletion.pageIntro}</p>
           <p className="mt-2 text-sm font-medium leading-6">{copy.accountDeletion.appGuide}</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link
-              href="/account"
-              className="inline-flex min-h-11 items-center justify-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"
-            >
-              {copy.accountDeletion.openAccount}
-            </Link>
-            <Link
-              href="/sign-in?redirect_url=/account"
-              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line bg-raised px-4 text-sm font-semibold text-text"
-            >
-              {copy.accountDeletion.signIn}
-            </Link>
+            {!isLoading && user && isSignedIn && !isGuest ? (
+              <Link
+                href="/account"
+                className="inline-flex min-h-11 items-center justify-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"
+              >
+                {copy.accountDeletion.openAccount}
+              </Link>
+            ) : !isLoading ? (
+              <Link
+                href="/sign-in?redirect_url=/account"
+                className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line bg-raised px-4 text-sm font-semibold text-text"
+              >
+                {copy.accountDeletion.signIn}
+              </Link>
+            ) : null}
           </div>
         </header>
 

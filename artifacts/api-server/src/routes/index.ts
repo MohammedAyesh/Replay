@@ -34,6 +34,7 @@ import matchRoomsRouter from "./matchRooms";
 import matchLiveRouter from "./matchLive";
 import streamingRouter from "./streaming";
 import safetyRouter from "./safety";
+import friendsRouter from "./friends";
 
 const router: IRouter = Router();
 
@@ -72,5 +73,6 @@ router.use(matchRoomsRouter);
 router.use(matchLiveRouter);
 router.use(streamingRouter);
 router.use(safetyRouter);
+router.use(friendsRouter);
 
 export default router;

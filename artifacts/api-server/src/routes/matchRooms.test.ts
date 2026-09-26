@@ -5,16 +5,18 @@ import {
   db,
   fieldOwnersTable,
   fieldsTable,
+  friendshipsTable,
   footageRequestsTable,
   matchPlayersTable,
   matchRoomsTable,
   settingsRulesTable,
   statUnlocksTable,
   userClipsTable,
+  userBlocksTable,
   usersTable,
   varMarksTable,
 } from "@workspace/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { invalidateSettingsCache } from "../lib/settings";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -125,6 +127,16 @@ afterAll(async () => {
   await db.delete(fieldOwnersTable).where(eq(fieldOwnersTable.fieldId, fieldId));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
   const ids = Object.values(users);
+  if (ids.length) {
+    await db.delete(friendshipsTable).where(or(
+      inArray(friendshipsTable.userLowId, ids),
+      inArray(friendshipsTable.userHighId, ids),
+    ));
+    await db.delete(userBlocksTable).where(or(
+      inArray(userBlocksTable.blockerId, ids),
+      inArray(userBlocksTable.blockedId, ids),
+    ));
+  }
   await db.delete(statUnlocksTable).where(inArray(statUnlocksTable.userId, ids));
   await db.delete(usersTable).where(inArray(usersTable.id, ids));
 });
@@ -210,7 +222,8 @@ describe("a match from invite to vote", () => {
     // Ali sees the invite on his matches list and says he's in.
     const aliMatches = await request(app).get("/api/me/matches").set(as("ali"));
     expect(aliMatches.status).toBe(200);
-    expect(aliMatches.body.upcoming.map((m: { code: string }) => m.code)).toContain(room.code);
+    expect(aliMatches.body.upcoming.map((m: { code: string }) => m.code)).not.toContain(room.code);
+    expect(aliMatches.body.invites.map((m: { code: string }) => m.code)).toContain(room.code);
     const ali = await request(app).post(`/api/m/${room.code}/join`).set(as("ali")).send({ rsvp: "in" });
     expect(ali.body.me.rsvp).toBe("in");
     expect(ali.body.me.invitedBy?.id).toBe(omarPlayerId);
@@ -504,6 +517,100 @@ describe("a match from invite to vote", () => {
     expect(stored.footageRequestId).toBe(req.id);
     const players = await db.select().from(matchPlayersTable).where(eq(matchPlayersTable.matchId, room.id));
     expect(players).toHaveLength(0);
+  });
+});
+
+describe("friend match invitations", () => {
+  it("invites accepted friends, shows account invites, permits inviter withdrawal, and claims an invite on join", async () => {
+    const { room } = await booking(Date.now() + 4 * 24 * 60 * 60 * 1000, 60);
+    const omarId = users.omar;
+    const aliId = users.ali;
+    const samiId = users.sami;
+    for (const friendId of [aliId, samiId]) {
+      await db.insert(friendshipsTable).values({
+        userLowId: Math.min(omarId, friendId),
+        userHighId: Math.max(omarId, friendId),
+        requestedBy: omarId,
+        status: "accepted",
+        respondedAt: new Date(),
+      });
+    }
+    await db.insert(friendshipsTable).values({
+      userLowId: Math.min(aliId, samiId),
+      userHighId: Math.max(aliId, samiId),
+      requestedBy: aliId,
+      status: "accepted",
+      respondedAt: new Date(),
+    });
+    await db.update(usersTable).set({ avatarPath: "avatars/friend-invite-test.png" })
+      .where(eq(usersTable.id, omarId));
+
+    const nonMember = await request(app).post(`/api/m/${room.code}/invite-friends`).set(as("outsider"))
+      .send({ userIds: [aliId] });
+    expect(nonMember.status).toBe(403);
+
+    // First-in captain assignment remains unchanged.
+    const omarJoin = await request(app).post(`/api/m/${room.code}/join`).set(as("omar")).send({ rsvp: "in" });
+    expect(omarJoin.body.isCaptain).toBe(true);
+    const omarPlayerId = omarJoin.body.me.id as number;
+
+    await db.insert(userBlocksTable).values({ blockerId: samiId, blockedId: omarId });
+    const blockedInvite = await request(app).post(`/api/m/${room.code}/invite-friends`).set(as("omar"))
+      .send({ userIds: [samiId] });
+    expect(blockedInvite.status).toBe(403);
+    expect(blockedInvite.body.reason).toBe("blocked");
+    await db.delete(userBlocksTable).where(and(
+      eq(userBlocksTable.blockerId, samiId),
+      eq(userBlocksTable.blockedId, omarId),
+    ));
+
+    const invite = await request(app).post(`/api/m/${room.code}/invite-friends`).set(as("omar"))
+      .send({ userIds: [aliId] });
+    expect(invite.status).toBe(201);
+    expect(invite.body.invited).toHaveLength(1);
+    expect(invite.body.shareText).toContain(`/m/${room.code}`);
+    const roster = await db.select().from(matchPlayersTable).where(eq(matchPlayersTable.matchId, room.id));
+    const aliRow = roster.find((player) => player.userId === aliId)!;
+    expect(aliRow.rsvp).toBe("invited");
+    expect(aliRow.invitedByPlayerId).toBe(omarPlayerId);
+
+    const repeated = await request(app).post(`/api/m/${room.code}/invite-friends`).set(as("omar"))
+      .send({ userIds: [aliId, users.outsider] });
+    expect(repeated.status).toBe(201);
+    expect(repeated.body.invited).toHaveLength(0);
+    expect(repeated.body.skipped).toEqual([
+      { userId: aliId, reason: "already_on_roster" },
+      { userId: users.outsider, reason: "not_friend" },
+    ]);
+
+    const aliMatches = await request(app).get("/api/me/matches").set(as("ali"));
+    expect(aliMatches.body.upcoming.some((item: { code: string }) => item.code === room.code)).toBe(false);
+    const accountInvite = aliMatches.body.invites.find((item: { code: string }) => item.code === room.code);
+    expect(accountInvite.invitedBy).toEqual({
+      name: omarJoin.body.me.name,
+      avatarUrl: expect.any(String),
+    });
+
+    // Joining claims the existing row, preserves inviter attribution, and leaves captaincy unchanged.
+    const aliJoin = await request(app).post(`/api/m/${room.code}/join`).set(as("ali")).send({ rsvp: "in" });
+    expect(aliJoin.body.me.id).toBe(aliRow.id);
+    expect(aliJoin.body.me.rsvp).toBe("in");
+    expect(aliJoin.body.invitedBy.name).toBe(omarJoin.body.me.name);
+    expect(aliJoin.body.isCaptain).toBe(false);
+    expect(aliJoin.body.captain.userId).toBe(omarId);
+
+    // A playing non-captain can invite an accepted friend and delete that still-invited account row.
+    const samiInvite = await request(app).post(`/api/m/${room.code}/invite-friends`).set(as("ali"))
+      .send({ userIds: [samiId] });
+    expect(samiInvite.status).toBe(201);
+    const [samiRow] = await db.select().from(matchPlayersTable).where(and(
+      eq(matchPlayersTable.matchId, room.id),
+      eq(matchPlayersTable.userId, samiId),
+    ));
+    expect(samiRow.rsvp).toBe("invited");
+    expect(samiRow.invitedByPlayerId).toBe(aliJoin.body.me.id);
+    expect((await request(app).delete(`/api/m/${room.code}/players/${samiRow.id}`).set(as("ali"))).status).toBe(204);
+    expect((await db.select().from(matchPlayersTable).where(eq(matchPlayersTable.id, samiRow.id))).length).toBe(0);
   });
 });
 

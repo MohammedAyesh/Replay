@@ -21,6 +21,8 @@ import {
 } from "@workspace/db";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { blockedUserIdsFor, isBlockedEitherWay } from "../lib/safety";
+import { DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
+import { acceptedFriendshipBetween } from "../lib/friends";
 import { activatePaidBooking, cancelUnpaidBooking } from "./owner";
 import { loadCommerce, type Commerce } from "../lib/commerce";
 import {
@@ -225,13 +227,16 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
   const commerce = await loadCommerce({ userId: viewerId, fieldId: room.fieldId });
   const teamCount = room.teamCount >= 3 ? 3 : 2;
 
-  // "Invited by" from ?by=<playerId> or a personal invite ?i=<token>.
+  // Signed-in invitees use the inviter saved on their roster row; link visitors
+  // can still resolve "invited by" from ?by or a placeholder's ?i token.
   const byId = Number.parseInt(String(req.query.by ?? ""), 10);
   const inviteToken = typeof req.query.i === "string" ? req.query.i : "";
   const personal = inviteToken ? roster.find((p) => p.inviteToken === inviteToken && !p.userId) : undefined;
-  const inviterPlayer = personal?.invitedByPlayerId
-    ? roster.find((p) => p.id === personal.invitedByPlayerId)
-    : Number.isSafeInteger(byId) ? roster.find((p) => p.id === byId) : undefined;
+  const inviterPlayer = me?.rsvp === "invited"
+    ? (me.invitedByPlayerId ? roster.find((p) => p.id === me.invitedByPlayerId) : undefined)
+    : personal?.invitedByPlayerId
+      ? roster.find((p) => p.id === personal.invitedByPlayerId)
+      : Number.isSafeInteger(byId) ? roster.find((p) => p.id === byId) : undefined;
   const inviterUser = inviterPlayer?.userId ? users.get(inviterPlayer.userId) : undefined;
   const captainUser = room.captainUserId ? users.get(room.captainUserId) : undefined;
 
@@ -488,6 +493,13 @@ router.get("/me/matches", async (req, res): Promise<void> => {
   const items = await Promise.all(rooms.map(async (ctx) => {
     const roster = await rosterFor(ctx.room.id);
     const me = roster.find((p) => p.userId === user.id) ?? null;
+    const inviter = me?.rsvp === "invited" && me.invitedByPlayerId
+      ? roster.find((p) => p.id === me.invitedByPlayerId) ?? null
+      : null;
+    const inviterUserId = inviter?.userId ?? ctx.room.captainUserId;
+    const inviterUser = me?.rsvp === "invited" && inviterUserId
+      ? (await usersById([inviterUserId])).get(inviterUserId)
+      : undefined;
     const phase = matchPhase(ctx.request);
     const w = matchWindow(ctx.request);
     return {
@@ -502,6 +514,10 @@ router.get("/me/matches", async (req, res): Promise<void> => {
       field: { id: ctx.field.id, name: ctx.field.name, location: ctx.field.location, imageUrl: ctx.field.thumbnailUrl },
       title: ctx.room.title,
       myRsvp: me?.rsvp ?? (ctx.room.captainUserId === user.id ? "in" : null),
+      invitedBy: me?.rsvp === "invited" ? {
+        name: inviter?.displayName || inviterUser?.name || null,
+        avatarUrl: inviterUser ? avatarUrlFor(inviterUser.id, inviterUser.avatarPath) : null,
+      } : null,
       myTeam: me?.team ?? null,
       isCaptain: ctx.room.captainUserId === user.id,
       isOwner: ownedSet.has(ctx.room.fieldId),
@@ -553,12 +569,15 @@ router.get("/me/matches", async (req, res): Promise<void> => {
 
   const now = Date.now();
   const byStart = (a: { startMs: number }, b: { startMs: number }) => a.startMs - b.startMs;
-  const active = items.filter((item) => item.myRsvp !== "out");
+  const accountInvites = items
+    .filter((item) => item.myRsvp === "invited" && (item.phase === "pre" || item.phase === "live"))
+    .sort(byStart);
+  const active = items.filter((item) => item.myRsvp !== "out" && item.myRsvp !== "invited");
   res.json({
     live: active.filter((i) => i.phase === "live").sort(byStart),
     upcoming: active.filter((i) => i.phase === "pre" && i.startMs > now - 60 * 60 * 1000).sort(byStart),
     recent: items.filter((i) => ["processing", "ready", "expired"].includes(i.phase)).sort((a, b) => b.startMs - a.startMs).slice(0, 30),
-    invites: inviteRooms.filter(Boolean),
+    invites: [...accountInvites, ...inviteRooms.filter(Boolean)],
   });
 });
 
@@ -731,6 +750,90 @@ router.post("/m/:code/players", async (req, res): Promise<void> => {
   });
 });
 
+const inviteFriendsSchema = z.object({
+  userIds: z.array(z.number().int().positive()).min(1).max(30),
+});
+
+router.post("/m/:code/invite-friends", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  const me = await playerForUser(ctx.room.id, user.id);
+  const manager = await canManage(user, ctx);
+  if (!manager && !isPlaying(me)) {
+    res.status(403).json({ error: "Join the match to invite people" });
+    return;
+  }
+  const body = inviteFriendsSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Choose between 1 and 30 friends" });
+    return;
+  }
+
+  const userIds = Array.from(new Set(body.data.userIds));
+  for (const friendId of userIds) {
+    if (await isBlockedEitherWay(user.id, friendId)) {
+      res.status(403).json({ error: "A blocked user cannot be invited", reason: "blocked" });
+      return;
+    }
+  }
+
+  const roster = await rosterFor(ctx.room.id);
+  const rosterUserIds = new Set(roster.map((player) => player.userId).filter((id): id is number => id !== null));
+  const friendshipChecks = await Promise.all(userIds.map(async (friendId) => [
+    friendId,
+    await acceptedFriendshipBetween(user.id, friendId),
+  ] as const));
+  const acceptedFriends = new Set(friendshipChecks.filter(([, accepted]) => accepted).map(([friendId]) => friendId));
+  const accounts = userIds.length ? await db.select({
+    id: usersTable.id,
+    name: usersTable.name,
+    email: usersTable.email,
+    isGuest: usersTable.isGuest,
+    isDisabled: usersTable.isDisabled,
+  }).from(usersTable).where(inArray(usersTable.id, userIds)) : [];
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
+  const invited: Array<{ userId: number; name: string; playerId: number; inviteUrl: string }> = [];
+  const skipped: Array<{ userId: number; reason: "already_on_roster" | "not_friend" }> = [];
+  const base = publicBaseUrl(req);
+
+  for (const friendId of body.data.userIds) {
+    if (rosterUserIds.has(friendId)) {
+      skipped.push({ userId: friendId, reason: "already_on_roster" });
+      continue;
+    }
+    const account = accountById.get(friendId);
+    if (!acceptedFriends.has(friendId) || !account || account.isGuest || account.isDisabled || account.email === DELETED_PLAYER_EMAIL) {
+      skipped.push({ userId: friendId, reason: "not_friend" });
+      continue;
+    }
+    const [player] = await db.insert(matchPlayersTable).values({
+      matchId: ctx.room.id,
+      userId: friendId,
+      displayName: account.name,
+      invitedByPlayerId: me?.id ?? null,
+      inviteToken: randomToken(10),
+      rsvp: "invited",
+    }).onConflictDoNothing().returning({ id: matchPlayersTable.id });
+    if (!player) {
+      rosterUserIds.add(friendId);
+      skipped.push({ userId: friendId, reason: "already_on_roster" });
+      continue;
+    }
+    rosterUserIds.add(friendId);
+    const inviteUrl = `${base}/m/${ctx.room.code}`;
+    invited.push({ userId: friendId, name: account.name, playerId: player.id, inviteUrl });
+  }
+
+  const matchName = ctx.room.title || "a match";
+  res.status(201).json({
+    invited,
+    skipped,
+    shareText: `Join ${user.name} for ${matchName}: ${base}/m/${ctx.room.code}`,
+  });
+});
+
 const playerPatchSchema = z.object({
   team: z.enum(["A", "B", "C"]).nullable().optional(),
   shirtNumber: z.number().int().min(0).max(99).nullable().optional(),
@@ -805,12 +908,14 @@ router.delete("/m/:code/players/:playerId", async (req, res): Promise<void> => {
   }
   const manager = await canManage(user, ctx);
   const inviter = await playerForUser(ctx.room.id, user.id);
-  const mayRemove = manager || (!player.userId && inviter && player.invitedByPlayerId === inviter.id);
+  const invitedByCaller = Boolean(inviter && player.invitedByPlayerId === inviter.id);
+  const isInvitedAccount = Boolean(player.userId && player.rsvp === "invited" && invitedByCaller);
+  const mayRemove = manager || (!player.userId && invitedByCaller) || isInvitedAccount;
   if (!mayRemove) {
     res.status(403).json({ error: "Only the captain can remove players" });
     return;
   }
-  if (player.userId) {
+  if (player.userId && !isInvitedAccount) {
     // Signed-up players are marked out rather than deleted, so their votes and clips keep a home.
     await db.update(matchPlayersTable).set({ rsvp: "out", team: null, slotX: null, slotY: null, updatedAt: new Date() })
       .where(eq(matchPlayersTable.id, playerId));

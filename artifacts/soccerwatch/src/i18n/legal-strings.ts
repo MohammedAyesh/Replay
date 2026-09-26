@@ -21,7 +21,7 @@ const en = {
     retainedHeading: "Kept without your name:",
     retainedItems: [
       "Past bookings and payments",
-      "VAR review flags and clips already shared with a team",
+      "VAR review flags",
       "Records we must keep for accounting and platform integrity",
     ],
     confirmInstruction: "Type DELETE or حذف to confirm.",
@@ -83,7 +83,7 @@ const ar: LegalStrings = {
     retainedHeading: "سيتم الاحتفاظ بما يلي دون اسمك:",
     retainedItems: [
       "الحجوزات والمدفوعات السابقة",
-      "علامات مراجعة VAR والمقاطع التي تمت مشاركتها مع فريق",
+      "علامات مراجعة VAR",
       "السجلات التي يجب الاحتفاظ بها لأغراض المحاسبة وسلامة المنصة",
     ],
     confirmInstruction: "اكتب DELETE أو حذف للتأكيد.",
