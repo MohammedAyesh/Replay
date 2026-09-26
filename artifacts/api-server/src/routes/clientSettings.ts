@@ -21,6 +21,8 @@ const CLIENT_VISIBLE = [
   "downloads.enabled",
   "share.enabled",
   "clip.maxDurationSeconds",
+  "legal.companyName",
+  "support.email",
 ] as const;
 
 router.get("/client-settings", async (req, res): Promise<void> => {

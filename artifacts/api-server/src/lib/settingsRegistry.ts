@@ -113,6 +113,23 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: "string",
     defaultValue: process.env.REPLAY_CLIQ_ALIAS || "REPLAYJO",
   },
+  // ── Legal & support ────────────────────────────────────────────────────
+  {
+    key: "legal.companyName",
+    group: "Legal & support",
+    label: "Company legal name",
+    description: "Shown in the Privacy Policy and Terms as the operator of Replay.",
+    type: "string",
+    defaultValue: "Replay",
+  },
+  {
+    key: "support.email",
+    group: "Legal & support",
+    label: "Support email",
+    description: "Shown on the landing page, Account page and legal pages; leave empty to hide contact links.",
+    type: "string",
+    defaultValue: "",
+  },
 
   // ── Bookings ───────────────────────────────────────────────────────────
   {

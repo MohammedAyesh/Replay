@@ -8,6 +8,7 @@ import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import { InstallBanner } from "@/components/install-banner";
 import { OrientationLock } from "@/components/orientation-lock";
 import { useAuth } from "@/lib/auth";
+import { isPublicStandalonePath } from "@/lib/public-paths";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -20,23 +21,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find/") || location.startsWith("/find-quick/");
   const isWholeGameClaim = location.startsWith("/find/");
   const isWatchFeed = location === "/home";
+  const isLegalDocument = location === "/privacy" || location === "/terms";
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");
   const isMatchRoom = location.startsWith("/m/");
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
-  const hideTabBar = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom;
+  const hideHeader = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom;
+  const hideTabBar = hideHeader || isPublicStandalonePath(location);
   const useTranslucentBar = isWatchFeed;
 
   return (
     <div
       className={cn(
-        "app-shell mx-auto w-full max-w-[440px] bg-background relative flex flex-col rp-glow",
+        "app-shell mx-auto w-full bg-background relative flex flex-col rp-glow",
+        isLegalDocument ? "max-w-[680px]" : "max-w-[440px]",
         (isLogin || isAuthPage || isWholeGameClaim) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
       )}
     >
-      {!hideTabBar && (
+      {!hideHeader && (
         <header className="replay-header sticky top-3 z-40 mx-3 mt-3 mb-2 shrink-0 rounded-2xl border border-line bg-surface/95 px-4 py-2.5 backdrop-blur-md">
           <div className="flex items-center justify-between gap-3">
             <div className="replay-lockup flex min-w-0 items-center gap-2">

@@ -38,8 +38,10 @@ import OwnerShare from "@/pages/owner-share";
 import MatchPage from "@/pages/match";
 import Matches from "@/pages/matches";
 import BookPage from "@/pages/book";
+import { LegalPage } from "@/pages/legal";
 import { useAuth } from "@/lib/auth";
 import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from "@/lib/auth-redirect";
+import { isPublicStandalonePath } from "@/lib/public-paths";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
 
@@ -393,7 +395,6 @@ function AuthRedirectGuard() {
   useEffect(() => {
     if (isLoading) return;
     const pathname = location.split("?")[0];
-    const isOwnerShare = pathname.startsWith("/w/") || pathname.startsWith("/m/");
     const isAuthPage = pathname === "/" || pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up");
 
     // If Clerk says the user IS signed in but our local user record isn't
@@ -403,9 +404,8 @@ function AuthRedirectGuard() {
 
     if (!user || isGuest) return;
 
-    // Public owner links must remain usable for signed-in users, including
-    // users whose profile still needs onboarding.
-    if (isOwnerShare) return;
+    // Public standalone pages must remain available, even before onboarding.
+    if (isPublicStandalonePath(pathname)) return;
 
     if (isAuthPage) {
       if (pathname !== "/" && !user.profileComplete) {
@@ -459,6 +459,8 @@ function AppRouter() {
         <Route path="/m/:code" component={MatchPage} />
         <Route path="/matches" component={Matches} />
         <Route path="/book" component={BookPage} />
+        <Route path="/privacy"><LegalPage doc="privacy" /></Route>
+        <Route path="/terms"><LegalPage doc="terms" /></Route>
         <Route path="/admin" component={Admin} />
         <Route path="/admin/setup" component={AdminSetup} />
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />
