@@ -1,0 +1,2203 @@
+{
+  "progress": [
+    {
+      "id": 815,
+      "user_id": 314,
+      "recording_id": 381,
+      "current_track_id": "s3:t234",
+      "stage": "follow",
+      "confirmed_from_seconds": 1840.6,
+      "current_position_seconds": 2400,
+      "claimed_percent": 2.92,
+      "clips_unlocked": 0,
+      "correction_count": 41,
+      "completed": false,
+      "earned_clips": [
+        {
+          "id": "claim-shot-2332",
+          "kind": "shot",
+          "title": "Shot on target · 38:51",
+          "status": "ready",
+          "momentSeconds": 2331.9
+        }
+      ],
+      "updated_at": "2026-09-27T12:34:45.064+00:00",
+      "game_state": {
+        "k": 3,
+        "v": 1,
+        "mk": 0,
+        "oi": 0,
+        "qi": 0,
+        "off": [
+          [
+            3.85,
+            1652.7,
+            "play"
+          ],
+          [
+            1800.35,
+            1840.6,
+            "bench"
+          ],
+          [
+            6623.35,
+            6691,
+            "play"
+          ],
+          [
+            6722.15,
+            6820.6,
+            "play"
+          ]
+        ],
+        "you": {
+          "3": {
+            "cid": "s3:t7",
+            "out": [
+              "s3:t7",
+              "s3:t34",
+              "s3:t55",
+              "s3:t249",
+              "s3:t123",
+              "s3:t232",
+              "s3:t172"
+            ],
+            "seen": [],
+            "added": [
+              "s3:t30"
+            ],
+            "extra": [],
+            "manual": [],
+            "dropped": [],
+            "skipped": false
+          }
+        },
+        "step": "gaps",
+        "taps": 13,
+        "team": "light",
+        "order": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        "saved": 1790512481012,
+        "bundle": "1fffcec00ad21b65b7bfcce32941ef7e6effce6e57f9312bd51707c8c9a67f4a",
+        "elapsed": 40251,
+        "autoAdded": 1,
+        "shirtIdentity": {
+          "kitKey": "light",
+          "number": "8"
+        },
+        "shirtCandidate": null
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "id": 100,
+      "user_id": 314,
+      "recording_id": 381,
+      "person_id": "claim:34b6106318bb",
+      "tracking_bundle_id": 24,
+      "bundle_fingerprint": "1fffcec00ad21b65b7bfcce32941ef7e6effce6e57f9312bd51707c8c9a67f4a",
+      "resolution_method": "chain",
+      "support_count": 5,
+      "accepted_answer_count": 41,
+      "support_percent": 100,
+      "state": "confirmed",
+      "resolved_at": "2026-09-27T12:34:45.016+00:00",
+      "created_at": "2026-09-27T07:10:30.750887+00:00",
+      "updated_at": "2026-09-27T12:34:45.016+00:00",
+      "person_parts": [
+        "[\"s3:t161\",43537,44194]",
+        "[\"s3:t209\",46336,47999]",
+        "[\"s3:t234\",47356,47696]",
+        "[\"s3:t30\",36812,37498]",
+        "[\"s3:t78\",39193,40360]"
+      ],
+      "vouched_fragments": [
+        {
+          "toFrame": 44194,
+          "trackId": "s3:t161",
+          "fromFrame": 43537
+        },
+        {
+          "toFrame": 47999,
+          "trackId": "s3:t209",
+          "fromFrame": 46336
+        },
+        {
+          "toFrame": 47696,
+          "trackId": "s3:t234",
+          "fromFrame": 47356
+        },
+        {
+          "toFrame": 37498,
+          "trackId": "s3:t30",
+          "fromFrame": 36812
+        },
+        {
+          "toFrame": 40360,
+          "trackId": "s3:t78",
+          "fromFrame": 39193
+        }
+      ],
+      "computed_stats": null,
+      "stats_computed_at": null,
+      "stats_input_fingerprint": null
+    }
+  ],
+  "off_pitch": [
+    {
+      "id": 3,
+      "user_id": 314,
+      "recording_id": 381,
+      "client_id": "game-bench-0",
+      "from_seconds": 1800.35,
+      "to_seconds": 1840.6,
+      "created_at": "2026-09-27T12:34:44.901029+00:00"
+    }
+  ],
+  "manifest_identities": [
+    {
+      "id": "claim:34b6106318bb",
+      "name": "Mohammed Ayesh",
+      "parts": [
+        {
+          "toFrame": 37498,
+          "trackId": "s3:t30",
+          "fromFrame": 36812,
+          "reviewedThrough": 37499
+        },
+        {
+          "toFrame": 40360,
+          "trackId": "s3:t78",
+          "fromFrame": 39193,
+          "reviewedThrough": 40361
+        },
+        {
+          "toFrame": 44194,
+          "trackId": "s3:t161",
+          "fromFrame": 43537,
+          "reviewedThrough": 44195
+        },
+        {
+          "toFrame": 47999,
+          "trackId": "s3:t209",
+          "fromFrame": 46336,
+          "reviewedThrough": 48000
+        },
+        {
+          "toFrame": 47696,
+          "trackId": "s3:t234",
+          "fromFrame": 47356,
+          "reviewedThrough": 47697
+        }
+      ],
+      "history": [
+        {
+          "parts": [
+            {
+              "toFrame": 36274,
+              "trackId": "s3:t3",
+              "fromFrame": 36000,
+              "reviewedThrough": 36275
+            },
+            {
+              "toFrame": 39088,
+              "trackId": "s3:t20",
+              "fromFrame": 36274,
+              "reviewedThrough": 39089
+            },
+            {
+              "toFrame": 39328,
+              "trackId": "s3:t41",
+              "fromFrame": 39088,
+              "reviewedThrough": 39329
+            },
+            {
+              "toFrame": 44193,
+              "trackId": "s3:t84",
+              "fromFrame": 39328,
+              "reviewedThrough": 44194
+            },
+            {
+              "toFrame": 45057,
+              "trackId": "s3:t167",
+              "fromFrame": 44193,
+              "reviewedThrough": 45058
+            },
+            {
+              "toFrame": 45165,
+              "trackId": "s3:t167",
+              "fromFrame": 45078,
+              "reviewedThrough": 45166
+            },
+            {
+              "toFrame": 46182,
+              "trackId": "s3:t189",
+              "fromFrame": 45165,
+              "reviewedThrough": 46183
+            },
+            {
+              "toFrame": 46595,
+              "trackId": "s3:t254",
+              "fromFrame": 46218,
+              "reviewedThrough": 46596
+            },
+            {
+              "toFrame": 46664,
+              "trackId": "s3:t220",
+              "fromFrame": 46595,
+              "reviewedThrough": 46665
+            },
+            {
+              "toFrame": 46953,
+              "trackId": "s3:t257",
+              "fromFrame": 46665,
+              "reviewedThrough": 46954
+            },
+            {
+              "toFrame": 47538,
+              "trackId": "s3:t258",
+              "fromFrame": 46954,
+              "reviewedThrough": 47539
+            },
+            {
+              "toFrame": 47999,
+              "trackId": "s3:t260",
+              "fromFrame": 47538,
+              "reviewedThrough": 48000
+            },
+            {
+              "toFrame": 48123,
+              "trackId": "s4:t5",
+              "fromFrame": 48000,
+              "reviewedThrough": 48124
+            },
+            {
+              "toFrame": 48385,
+              "trackId": "s4:t219",
+              "fromFrame": 48124,
+              "reviewedThrough": 48386
+            },
+            {
+              "toFrame": 48605,
+              "trackId": "s4:t221",
+              "fromFrame": 48420,
+              "reviewedThrough": 48606
+            },
+            {
+              "toFrame": 48710,
+              "trackId": "s4:t222",
+              "fromFrame": 48606,
+              "reviewedThrough": 48711
+            },
+            {
+              "toFrame": 49025,
+              "trackId": "s4:t223",
+              "fromFrame": 48711,
+              "reviewedThrough": 49026
+            },
+            {
+              "toFrame": 49092,
+              "trackId": "s4:t224",
+              "fromFrame": 49026,
+              "reviewedThrough": 49093
+            },
+            {
+              "toFrame": 49183,
+              "trackId": "s4:t31",
+              "fromFrame": 49092,
+              "reviewedThrough": 49184
+            },
+            {
+              "toFrame": 49550,
+              "trackId": "s4:t226",
+              "fromFrame": 49184,
+              "reviewedThrough": 49551
+            },
+            {
+              "toFrame": 49685,
+              "trackId": "s4:t227",
+              "fromFrame": 49551,
+              "reviewedThrough": 49686
+            },
+            {
+              "toFrame": 49740,
+              "trackId": "s4:t228",
+              "fromFrame": 49686,
+              "reviewedThrough": 49741
+            },
+            {
+              "toFrame": 49895,
+              "trackId": "s4:t47",
+              "fromFrame": 49740,
+              "reviewedThrough": 49896
+            },
+            {
+              "toFrame": 49947,
+              "trackId": "s4:t52",
+              "fromFrame": 49895,
+              "reviewedThrough": 49948
+            },
+            {
+              "toFrame": 50321,
+              "trackId": "s4:t231",
+              "fromFrame": 49966,
+              "reviewedThrough": 50322
+            },
+            {
+              "toFrame": 50070,
+              "trackId": "s4:t53",
+              "fromFrame": 49975,
+              "reviewedThrough": 50071
+            },
+            {
+              "toFrame": 50228,
+              "trackId": "s4:t240",
+              "fromFrame": 50071,
+              "reviewedThrough": 50229
+            },
+            {
+              "toFrame": 50361,
+              "trackId": "s4:t232",
+              "fromFrame": 50322,
+              "reviewedThrough": 50362
+            },
+            {
+              "toFrame": 50548,
+              "trackId": "s4:t233",
+              "fromFrame": 50362,
+              "reviewedThrough": 50549
+            },
+            {
+              "toFrame": 50652,
+              "trackId": "s4:t234",
+              "fromFrame": 50549,
+              "reviewedThrough": 50653
+            },
+            {
+              "toFrame": 52383,
+              "trackId": "s4:t235",
+              "fromFrame": 50667,
+              "reviewedThrough": 52384
+            },
+            {
+              "toFrame": 51632,
+              "trackId": "s4:t229",
+              "fromFrame": 50748,
+              "reviewedThrough": 51633
+            },
+            {
+              "toFrame": 51816,
+              "trackId": "s4:t77",
+              "fromFrame": 51114,
+              "reviewedThrough": 51817
+            },
+            {
+              "toFrame": 51503,
+              "trackId": "s4:t244",
+              "fromFrame": 51259,
+              "reviewedThrough": 51504
+            },
+            {
+              "toFrame": 51546,
+              "trackId": "s4:t245",
+              "fromFrame": 51504,
+              "reviewedThrough": 51547
+            },
+            {
+              "toFrame": 51616,
+              "trackId": "s4:t247",
+              "fromFrame": 51566,
+              "reviewedThrough": 51617
+            },
+            {
+              "toFrame": 51984,
+              "trackId": "s4:t248",
+              "fromFrame": 51617,
+              "reviewedThrough": 51985
+            },
+            {
+              "toFrame": 52037,
+              "trackId": "s4:t241",
+              "fromFrame": 51817,
+              "reviewedThrough": 52038
+            },
+            {
+              "toFrame": 52489,
+              "trackId": "s4:t237",
+              "fromFrame": 52405,
+              "reviewedThrough": 52490
+            },
+            {
+              "toFrame": 52572,
+              "trackId": "s4:t238",
+              "fromFrame": 52490,
+              "reviewedThrough": 52573
+            },
+            {
+              "toFrame": 52880,
+              "trackId": "s4:t239",
+              "fromFrame": 52573,
+              "reviewedThrough": 52881
+            },
+            {
+              "toFrame": 53030,
+              "trackId": "s4:t105",
+              "fromFrame": 52880,
+              "reviewedThrough": 53031
+            },
+            {
+              "toFrame": 53116,
+              "trackId": "s4:t251",
+              "fromFrame": 53031,
+              "reviewedThrough": 53117
+            },
+            {
+              "toFrame": 53160,
+              "trackId": "s4:t252",
+              "fromFrame": 53117,
+              "reviewedThrough": 53161
+            },
+            {
+              "toFrame": 53337,
+              "trackId": "s4:t253",
+              "fromFrame": 53161,
+              "reviewedThrough": 53338
+            },
+            {
+              "toFrame": 53590,
+              "trackId": "s4:t112",
+              "fromFrame": 53337,
+              "reviewedThrough": 53591
+            },
+            {
+              "toFrame": 53652,
+              "trackId": "s4:t254",
+              "fromFrame": 53592,
+              "reviewedThrough": 53653
+            },
+            {
+              "toFrame": 53785,
+              "trackId": "s4:t255",
+              "fromFrame": 53653,
+              "reviewedThrough": 53786
+            },
+            {
+              "toFrame": 53810,
+              "trackId": "s4:t117",
+              "fromFrame": 53714,
+              "reviewedThrough": 53811
+            },
+            {
+              "toFrame": 53887,
+              "trackId": "s4:t256",
+              "fromFrame": 53811,
+              "reviewedThrough": 53888
+            },
+            {
+              "toFrame": 58535,
+              "trackId": "s4:t257",
+              "fromFrame": 53888,
+              "reviewedThrough": 58536
+            },
+            {
+              "toFrame": 55770,
+              "trackId": "s4:t137",
+              "fromFrame": 55300,
+              "reviewedThrough": 55771
+            },
+            {
+              "toFrame": 59203,
+              "trackId": "s4:t196",
+              "fromFrame": 58542,
+              "reviewedThrough": 59204
+            },
+            {
+              "toFrame": 59262,
+              "trackId": "s4:t263",
+              "fromFrame": 59204,
+              "reviewedThrough": 59263
+            },
+            {
+              "toFrame": 59999,
+              "trackId": "s4:t264",
+              "fromFrame": 59263,
+              "reviewedThrough": 60000
+            },
+            {
+              "toFrame": 60184,
+              "trackId": "s5:t7",
+              "fromFrame": 60000,
+              "reviewedThrough": 60185
+            },
+            {
+              "toFrame": 60251,
+              "trackId": "s5:t231",
+              "fromFrame": 60185,
+              "reviewedThrough": 60252
+            },
+            {
+              "toFrame": 60411,
+              "trackId": "s5:t232",
+              "fromFrame": 60252,
+              "reviewedThrough": 60412
+            },
+            {
+              "toFrame": 60458,
+              "trackId": "s5:t233",
+              "fromFrame": 60412,
+              "reviewedThrough": 60459
+            },
+            {
+              "toFrame": 60986,
+              "trackId": "s5:t234",
+              "fromFrame": 60459,
+              "reviewedThrough": 60987
+            },
+            {
+              "toFrame": 61105,
+              "trackId": "s5:t235",
+              "fromFrame": 60987,
+              "reviewedThrough": 61106
+            },
+            {
+              "toFrame": 61284,
+              "trackId": "s5:t236",
+              "fromFrame": 61117,
+              "reviewedThrough": 61285
+            },
+            {
+              "toFrame": 61367,
+              "trackId": "s5:t237",
+              "fromFrame": 61285,
+              "reviewedThrough": 61368
+            },
+            {
+              "toFrame": 61624,
+              "trackId": "s5:t239",
+              "fromFrame": 61580,
+              "reviewedThrough": 61625
+            },
+            {
+              "toFrame": 61716,
+              "trackId": "s5:t240",
+              "fromFrame": 61625,
+              "reviewedThrough": 61717
+            },
+            {
+              "toFrame": 62006,
+              "trackId": "s5:t242",
+              "fromFrame": 61753,
+              "reviewedThrough": 62007
+            },
+            {
+              "toFrame": 62136,
+              "trackId": "s5:t243",
+              "fromFrame": 62007,
+              "reviewedThrough": 62137
+            },
+            {
+              "toFrame": 62259,
+              "trackId": "s5:t244",
+              "fromFrame": 62137,
+              "reviewedThrough": 62260
+            },
+            {
+              "toFrame": 62737,
+              "trackId": "s5:t245",
+              "fromFrame": 62260,
+              "reviewedThrough": 62738
+            },
+            {
+              "toFrame": 63072,
+              "trackId": "s5:t249",
+              "fromFrame": 62903,
+              "reviewedThrough": 63073
+            },
+            {
+              "toFrame": 63426,
+              "trackId": "s5:t250",
+              "fromFrame": 63073,
+              "reviewedThrough": 63427
+            },
+            {
+              "toFrame": 63536,
+              "trackId": "s5:t251",
+              "fromFrame": 63427,
+              "reviewedThrough": 63537
+            },
+            {
+              "toFrame": 63762,
+              "trackId": "s5:t252",
+              "fromFrame": 63537,
+              "reviewedThrough": 63763
+            },
+            {
+              "toFrame": 64170,
+              "trackId": "s5:t82",
+              "fromFrame": 63572,
+              "reviewedThrough": 64171
+            },
+            {
+              "toFrame": 63702,
+              "trackId": "s5:t84",
+              "fromFrame": 63650,
+              "reviewedThrough": 63703
+            },
+            {
+              "toFrame": 64372,
+              "trackId": "s5:t256",
+              "fromFrame": 64171,
+              "reviewedThrough": 64373
+            },
+            {
+              "toFrame": 64608,
+              "trackId": "s5:t257",
+              "fromFrame": 64373,
+              "reviewedThrough": 64609
+            },
+            {
+              "toFrame": 64889,
+              "trackId": "s5:t258",
+              "fromFrame": 64609,
+              "reviewedThrough": 64890
+            },
+            {
+              "toFrame": 64951,
+              "trackId": "s5:t259",
+              "fromFrame": 64890,
+              "reviewedThrough": 64952
+            },
+            {
+              "toFrame": 65045,
+              "trackId": "s5:t260",
+              "fromFrame": 64952,
+              "reviewedThrough": 65046
+            },
+            {
+              "toFrame": 65270,
+              "trackId": "s5:t261",
+              "fromFrame": 65046,
+              "reviewedThrough": 65271
+            },
+            {
+              "toFrame": 65478,
+              "trackId": "s5:t262",
+              "fromFrame": 65271,
+              "reviewedThrough": 65479
+            },
+            {
+              "toFrame": 65672,
+              "trackId": "s5:t263",
+              "fromFrame": 65479,
+              "reviewedThrough": 65673
+            },
+            {
+              "toFrame": 65716,
+              "trackId": "s5:t264",
+              "fromFrame": 65673,
+              "reviewedThrough": 65717
+            },
+            {
+              "toFrame": 65780,
+              "trackId": "s5:t265",
+              "fromFrame": 65717,
+              "reviewedThrough": 65781
+            },
+            {
+              "toFrame": 65862,
+              "trackId": "s5:t266",
+              "fromFrame": 65781,
+              "reviewedThrough": 65863
+            },
+            {
+              "toFrame": 66149,
+              "trackId": "s5:t267",
+              "fromFrame": 65863,
+              "reviewedThrough": 66150
+            },
+            {
+              "toFrame": 66299,
+              "trackId": "s5:t125",
+              "fromFrame": 66230,
+              "reviewedThrough": 66300
+            },
+            {
+              "toFrame": 66373,
+              "trackId": "s5:t269",
+              "fromFrame": 66300,
+              "reviewedThrough": 66374
+            },
+            {
+              "toFrame": 66540,
+              "trackId": "s5:t270",
+              "fromFrame": 66374,
+              "reviewedThrough": 66541
+            },
+            {
+              "toFrame": 66651,
+              "trackId": "s5:t271",
+              "fromFrame": 66541,
+              "reviewedThrough": 66652
+            },
+            {
+              "toFrame": 67168,
+              "trackId": "s5:t272",
+              "fromFrame": 66652,
+              "reviewedThrough": 67169
+            },
+            {
+              "toFrame": 67239,
+              "trackId": "s5:t274",
+              "fromFrame": 67199,
+              "reviewedThrough": 67240
+            },
+            {
+              "toFrame": 67527,
+              "trackId": "s5:t276",
+              "fromFrame": 67266,
+              "reviewedThrough": 67528
+            },
+            {
+              "toFrame": 67888,
+              "trackId": "s5:t152",
+              "fromFrame": 67487,
+              "reviewedThrough": 67889
+            },
+            {
+              "toFrame": 68227,
+              "trackId": "s5:t165",
+              "fromFrame": 67957,
+              "reviewedThrough": 68228
+            },
+            {
+              "toFrame": 68437,
+              "trackId": "s5:t288",
+              "fromFrame": 68240,
+              "reviewedThrough": 68438
+            },
+            {
+              "toFrame": 68552,
+              "trackId": "s5:t290",
+              "fromFrame": 68472,
+              "reviewedThrough": 68553
+            },
+            {
+              "toFrame": 68751,
+              "trackId": "s5:t292",
+              "fromFrame": 68592,
+              "reviewedThrough": 68752
+            },
+            {
+              "toFrame": 68874,
+              "trackId": "s5:t293",
+              "fromFrame": 68752,
+              "reviewedThrough": 68875
+            },
+            {
+              "toFrame": 69148,
+              "trackId": "s5:t187",
+              "fromFrame": 68840,
+              "reviewedThrough": 69149
+            },
+            {
+              "toFrame": 69000,
+              "trackId": "s5:t294",
+              "fromFrame": 68875,
+              "reviewedThrough": 69001
+            },
+            {
+              "toFrame": 69547,
+              "trackId": "s5:t296",
+              "fromFrame": 69020,
+              "reviewedThrough": 69548
+            },
+            {
+              "toFrame": 70833,
+              "trackId": "s5:t277",
+              "fromFrame": 70139,
+              "reviewedThrough": 70834
+            },
+            {
+              "toFrame": 70916,
+              "trackId": "s5:t278",
+              "fromFrame": 70834,
+              "reviewedThrough": 70917
+            },
+            {
+              "toFrame": 70961,
+              "trackId": "s5:t279",
+              "fromFrame": 70917,
+              "reviewedThrough": 70962
+            },
+            {
+              "toFrame": 71128,
+              "trackId": "s5:t280",
+              "fromFrame": 70962,
+              "reviewedThrough": 71129
+            },
+            {
+              "toFrame": 71267,
+              "trackId": "s5:t281",
+              "fromFrame": 71157,
+              "reviewedThrough": 71268
+            },
+            {
+              "toFrame": 71407,
+              "trackId": "s5:t282",
+              "fromFrame": 71268,
+              "reviewedThrough": 71408
+            },
+            {
+              "toFrame": 71990,
+              "trackId": "s5:t284",
+              "fromFrame": 71436,
+              "reviewedThrough": 71991
+            }
+          ],
+          "reviewedThroughFrame": 0
+        },
+        {
+          "parts": [
+            {
+              "toFrame": 36274,
+              "trackId": "s3:t3",
+              "fromFrame": 36000,
+              "reviewedThrough": 36275
+            },
+            {
+              "toFrame": 39088,
+              "trackId": "s3:t20",
+              "fromFrame": 36274,
+              "reviewedThrough": 39089
+            },
+            {
+              "toFrame": 39328,
+              "trackId": "s3:t41",
+              "fromFrame": 39088,
+              "reviewedThrough": 39329
+            },
+            {
+              "toFrame": 44193,
+              "trackId": "s3:t84",
+              "fromFrame": 39328,
+              "reviewedThrough": 44194
+            },
+            {
+              "toFrame": 45057,
+              "trackId": "s3:t167",
+              "fromFrame": 44193,
+              "reviewedThrough": 45058
+            },
+            {
+              "toFrame": 45165,
+              "trackId": "s3:t167",
+              "fromFrame": 45078,
+              "reviewedThrough": 45166
+            },
+            {
+              "toFrame": 46182,
+              "trackId": "s3:t189",
+              "fromFrame": 45165,
+              "reviewedThrough": 46183
+            },
+            {
+              "toFrame": 46595,
+              "trackId": "s3:t254",
+              "fromFrame": 46218,
+              "reviewedThrough": 46596
+            },
+            {
+              "toFrame": 46664,
+              "trackId": "s3:t220",
+              "fromFrame": 46595,
+              "reviewedThrough": 46665
+            },
+            {
+              "toFrame": 46953,
+              "trackId": "s3:t257",
+              "fromFrame": 46665,
+              "reviewedThrough": 46954
+            },
+            {
+              "toFrame": 47538,
+              "trackId": "s3:t258",
+              "fromFrame": 46954,
+              "reviewedThrough": 47539
+            },
+            {
+              "toFrame": 47999,
+              "trackId": "s3:t260",
+              "fromFrame": 47538,
+              "reviewedThrough": 48000
+            },
+            {
+              "toFrame": 48123,
+              "trackId": "s4:t5",
+              "fromFrame": 48000,
+              "reviewedThrough": 48124
+            },
+            {
+              "toFrame": 48385,
+              "trackId": "s4:t219",
+              "fromFrame": 48124,
+              "reviewedThrough": 48386
+            },
+            {
+              "toFrame": 48605,
+              "trackId": "s4:t221",
+              "fromFrame": 48420,
+              "reviewedThrough": 48606
+            },
+            {
+              "toFrame": 48710,
+              "trackId": "s4:t222",
+              "fromFrame": 48606,
+              "reviewedThrough": 48711
+            },
+            {
+              "toFrame": 49025,
+              "trackId": "s4:t223",
+              "fromFrame": 48711,
+              "reviewedThrough": 49026
+            },
+            {
+              "toFrame": 49092,
+              "trackId": "s4:t224",
+              "fromFrame": 49026,
+              "reviewedThrough": 49093
+            },
+            {
+              "toFrame": 49183,
+              "trackId": "s4:t31",
+              "fromFrame": 49092,
+              "reviewedThrough": 49184
+            },
+            {
+              "toFrame": 49550,
+              "trackId": "s4:t226",
+              "fromFrame": 49184,
+              "reviewedThrough": 49551
+            },
+            {
+              "toFrame": 49685,
+              "trackId": "s4:t227",
+              "fromFrame": 49551,
+              "reviewedThrough": 49686
+            },
+            {
+              "toFrame": 49740,
+              "trackId": "s4:t228",
+              "fromFrame": 49686,
+              "reviewedThrough": 49741
+            },
+            {
+              "toFrame": 49895,
+              "trackId": "s4:t47",
+              "fromFrame": 49740,
+              "reviewedThrough": 49896
+            },
+            {
+              "toFrame": 49947,
+              "trackId": "s4:t52",
+              "fromFrame": 49895,
+              "reviewedThrough": 49948
+            },
+            {
+              "toFrame": 50321,
+              "trackId": "s4:t231",
+              "fromFrame": 49966,
+              "reviewedThrough": 50322
+            },
+            {
+              "toFrame": 50070,
+              "trackId": "s4:t53",
+              "fromFrame": 49975,
+              "reviewedThrough": 50071
+            },
+            {
+              "toFrame": 50228,
+              "trackId": "s4:t240",
+              "fromFrame": 50071,
+              "reviewedThrough": 50229
+            },
+            {
+              "toFrame": 50361,
+              "trackId": "s4:t232",
+              "fromFrame": 50322,
+              "reviewedThrough": 50362
+            },
+            {
+              "toFrame": 50548,
+              "trackId": "s4:t233",
+              "fromFrame": 50362,
+              "reviewedThrough": 50549
+            },
+            {
+              "toFrame": 50652,
+              "trackId": "s4:t234",
+              "fromFrame": 50549,
+              "reviewedThrough": 50653
+            },
+            {
+              "toFrame": 52383,
+              "trackId": "s4:t235",
+              "fromFrame": 50667,
+              "reviewedThrough": 52384
+            },
+            {
+              "toFrame": 51632,
+              "trackId": "s4:t229",
+              "fromFrame": 50748,
+              "reviewedThrough": 51633
+            },
+            {
+              "toFrame": 51816,
+              "trackId": "s4:t77",
+              "fromFrame": 51114,
+              "reviewedThrough": 51817
+            },
+            {
+              "toFrame": 51503,
+              "trackId": "s4:t244",
+              "fromFrame": 51259,
+              "reviewedThrough": 51504
+            },
+            {
+              "toFrame": 51546,
+              "trackId": "s4:t245",
+              "fromFrame": 51504,
+              "reviewedThrough": 51547
+            },
+            {
+              "toFrame": 51616,
+              "trackId": "s4:t247",
+              "fromFrame": 51566,
+              "reviewedThrough": 51617
+            },
+            {
+              "toFrame": 51984,
+              "trackId": "s4:t248",
+              "fromFrame": 51617,
+              "reviewedThrough": 51985
+            },
+            {
+              "toFrame": 52037,
+              "trackId": "s4:t241",
+              "fromFrame": 51817,
+              "reviewedThrough": 52038
+            },
+            {
+              "toFrame": 52489,
+              "trackId": "s4:t237",
+              "fromFrame": 52405,
+              "reviewedThrough": 52490
+            },
+            {
+              "toFrame": 52572,
+              "trackId": "s4:t238",
+              "fromFrame": 52490,
+              "reviewedThrough": 52573
+            },
+            {
+              "toFrame": 52880,
+              "trackId": "s4:t239",
+              "fromFrame": 52573,
+              "reviewedThrough": 52881
+            },
+            {
+              "toFrame": 53030,
+              "trackId": "s4:t105",
+              "fromFrame": 52880,
+              "reviewedThrough": 53031
+            },
+            {
+              "toFrame": 53116,
+              "trackId": "s4:t251",
+              "fromFrame": 53031,
+              "reviewedThrough": 53117
+            },
+            {
+              "toFrame": 53160,
+              "trackId": "s4:t252",
+              "fromFrame": 53117,
+              "reviewedThrough": 53161
+            },
+            {
+              "toFrame": 53337,
+              "trackId": "s4:t253",
+              "fromFrame": 53161,
+              "reviewedThrough": 53338
+            },
+            {
+              "toFrame": 53590,
+              "trackId": "s4:t112",
+              "fromFrame": 53337,
+              "reviewedThrough": 53591
+            },
+            {
+              "toFrame": 53652,
+              "trackId": "s4:t254",
+              "fromFrame": 53592,
+              "reviewedThrough": 53653
+            },
+            {
+              "toFrame": 53785,
+              "trackId": "s4:t255",
+              "fromFrame": 53653,
+              "reviewedThrough": 53786
+            },
+            {
+              "toFrame": 53810,
+              "trackId": "s4:t117",
+              "fromFrame": 53714,
+              "reviewedThrough": 53811
+            },
+            {
+              "toFrame": 53887,
+              "trackId": "s4:t256",
+              "fromFrame": 53811,
+              "reviewedThrough": 53888
+            },
+            {
+              "toFrame": 58535,
+              "trackId": "s4:t257",
+              "fromFrame": 53888,
+              "reviewedThrough": 58536
+            },
+            {
+              "toFrame": 55770,
+              "trackId": "s4:t137",
+              "fromFrame": 55300,
+              "reviewedThrough": 55771
+            },
+            {
+              "toFrame": 59203,
+              "trackId": "s4:t196",
+              "fromFrame": 58542,
+              "reviewedThrough": 59204
+            },
+            {
+              "toFrame": 59262,
+              "trackId": "s4:t263",
+              "fromFrame": 59204,
+              "reviewedThrough": 59263
+            },
+            {
+              "toFrame": 59999,
+              "trackId": "s4:t264",
+              "fromFrame": 59263,
+              "reviewedThrough": 60000
+            },
+            {
+              "toFrame": 60184,
+              "trackId": "s5:t7",
+              "fromFrame": 60000,
+              "reviewedThrough": 60185
+            },
+            {
+              "toFrame": 60251,
+              "trackId": "s5:t231",
+              "fromFrame": 60185,
+              "reviewedThrough": 60252
+            },
+            {
+              "toFrame": 60411,
+              "trackId": "s5:t232",
+              "fromFrame": 60252,
+              "reviewedThrough": 60412
+            },
+            {
+              "toFrame": 60458,
+              "trackId": "s5:t233",
+              "fromFrame": 60412,
+              "reviewedThrough": 60459
+            },
+            {
+              "toFrame": 60986,
+              "trackId": "s5:t234",
+              "fromFrame": 60459,
+              "reviewedThrough": 60987
+            },
+            {
+              "toFrame": 61105,
+              "trackId": "s5:t235",
+              "fromFrame": 60987,
+              "reviewedThrough": 61106
+            },
+            {
+              "toFrame": 61284,
+              "trackId": "s5:t236",
+              "fromFrame": 61117,
+              "reviewedThrough": 61285
+            },
+            {
+              "toFrame": 61367,
+              "trackId": "s5:t237",
+              "fromFrame": 61285,
+              "reviewedThrough": 61368
+            },
+            {
+              "toFrame": 61624,
+              "trackId": "s5:t239",
+              "fromFrame": 61580,
+              "reviewedThrough": 61625
+            },
+            {
+              "toFrame": 61716,
+              "trackId": "s5:t240",
+              "fromFrame": 61625,
+              "reviewedThrough": 61717
+            },
+            {
+              "toFrame": 62006,
+              "trackId": "s5:t242",
+              "fromFrame": 61753,
+              "reviewedThrough": 62007
+            },
+            {
+              "toFrame": 62136,
+              "trackId": "s5:t243",
+              "fromFrame": 62007,
+              "reviewedThrough": 62137
+            },
+            {
+              "toFrame": 62259,
+              "trackId": "s5:t244",
+              "fromFrame": 62137,
+              "reviewedThrough": 62260
+            },
+            {
+              "toFrame": 62737,
+              "trackId": "s5:t245",
+              "fromFrame": 62260,
+              "reviewedThrough": 62738
+            },
+            {
+              "toFrame": 63072,
+              "trackId": "s5:t249",
+              "fromFrame": 62903,
+              "reviewedThrough": 63073
+            },
+            {
+              "toFrame": 63426,
+              "trackId": "s5:t250",
+              "fromFrame": 63073,
+              "reviewedThrough": 63427
+            },
+            {
+              "toFrame": 63536,
+              "trackId": "s5:t251",
+              "fromFrame": 63427,
+              "reviewedThrough": 63537
+            },
+            {
+              "toFrame": 63762,
+              "trackId": "s5:t252",
+              "fromFrame": 63537,
+              "reviewedThrough": 63763
+            },
+            {
+              "toFrame": 64170,
+              "trackId": "s5:t82",
+              "fromFrame": 63572,
+              "reviewedThrough": 64171
+            },
+            {
+              "toFrame": 63702,
+              "trackId": "s5:t84",
+              "fromFrame": 63650,
+              "reviewedThrough": 63703
+            },
+            {
+              "toFrame": 64372,
+              "trackId": "s5:t256",
+              "fromFrame": 64171,
+              "reviewedThrough": 64373
+            },
+            {
+              "toFrame": 64608,
+              "trackId": "s5:t257",
+              "fromFrame": 64373,
+              "reviewedThrough": 64609
+            },
+            {
+              "toFrame": 64889,
+              "trackId": "s5:t258",
+              "fromFrame": 64609,
+              "reviewedThrough": 64890
+            },
+            {
+              "toFrame": 64951,
+              "trackId": "s5:t259",
+              "fromFrame": 64890,
+              "reviewedThrough": 64952
+            },
+            {
+              "toFrame": 65045,
+              "trackId": "s5:t260",
+              "fromFrame": 64952,
+              "reviewedThrough": 65046
+            },
+            {
+              "toFrame": 65270,
+              "trackId": "s5:t261",
+              "fromFrame": 65046,
+              "reviewedThrough": 65271
+            },
+            {
+              "toFrame": 65478,
+              "trackId": "s5:t262",
+              "fromFrame": 65271,
+              "reviewedThrough": 65479
+            },
+            {
+              "toFrame": 65672,
+              "trackId": "s5:t263",
+              "fromFrame": 65479,
+              "reviewedThrough": 65673
+            },
+            {
+              "toFrame": 65716,
+              "trackId": "s5:t264",
+              "fromFrame": 65673,
+              "reviewedThrough": 65717
+            },
+            {
+              "toFrame": 65780,
+              "trackId": "s5:t265",
+              "fromFrame": 65717,
+              "reviewedThrough": 65781
+            },
+            {
+              "toFrame": 65862,
+              "trackId": "s5:t266",
+              "fromFrame": 65781,
+              "reviewedThrough": 65863
+            },
+            {
+              "toFrame": 66149,
+              "trackId": "s5:t267",
+              "fromFrame": 65863,
+              "reviewedThrough": 66150
+            },
+            {
+              "toFrame": 66299,
+              "trackId": "s5:t125",
+              "fromFrame": 66230,
+              "reviewedThrough": 66300
+            },
+            {
+              "toFrame": 66373,
+              "trackId": "s5:t269",
+              "fromFrame": 66300,
+              "reviewedThrough": 66374
+            },
+            {
+              "toFrame": 66540,
+              "trackId": "s5:t270",
+              "fromFrame": 66374,
+              "reviewedThrough": 66541
+            },
+            {
+              "toFrame": 66651,
+              "trackId": "s5:t271",
+              "fromFrame": 66541,
+              "reviewedThrough": 66652
+            },
+            {
+              "toFrame": 67168,
+              "trackId": "s5:t272",
+              "fromFrame": 66652,
+              "reviewedThrough": 67169
+            },
+            {
+              "toFrame": 67239,
+              "trackId": "s5:t274",
+              "fromFrame": 67199,
+              "reviewedThrough": 67240
+            },
+            {
+              "toFrame": 67527,
+              "trackId": "s5:t276",
+              "fromFrame": 67266,
+              "reviewedThrough": 67528
+            },
+            {
+              "toFrame": 67888,
+              "trackId": "s5:t152",
+              "fromFrame": 67487,
+              "reviewedThrough": 67889
+            },
+            {
+              "toFrame": 68227,
+              "trackId": "s5:t165",
+              "fromFrame": 67957,
+              "reviewedThrough": 68228
+            },
+            {
+              "toFrame": 68437,
+              "trackId": "s5:t288",
+              "fromFrame": 68240,
+              "reviewedThrough": 68438
+            },
+            {
+              "toFrame": 68552,
+              "trackId": "s5:t290",
+              "fromFrame": 68472,
+              "reviewedThrough": 68553
+            },
+            {
+              "toFrame": 68751,
+              "trackId": "s5:t292",
+              "fromFrame": 68592,
+              "reviewedThrough": 68752
+            },
+            {
+              "toFrame": 68874,
+              "trackId": "s5:t293",
+              "fromFrame": 68752,
+              "reviewedThrough": 68875
+            },
+            {
+              "toFrame": 69148,
+              "trackId": "s5:t187",
+              "fromFrame": 68840,
+              "reviewedThrough": 69149
+            },
+            {
+              "toFrame": 69000,
+              "trackId": "s5:t294",
+              "fromFrame": 68875,
+              "reviewedThrough": 69001
+            },
+            {
+              "toFrame": 69547,
+              "trackId": "s5:t296",
+              "fromFrame": 69020,
+              "reviewedThrough": 69548
+            },
+            {
+              "toFrame": 70833,
+              "trackId": "s5:t277",
+              "fromFrame": 70139,
+              "reviewedThrough": 70834
+            },
+            {
+              "toFrame": 70916,
+              "trackId": "s5:t278",
+              "fromFrame": 70834,
+              "reviewedThrough": 70917
+            },
+            {
+              "toFrame": 70961,
+              "trackId": "s5:t279",
+              "fromFrame": 70917,
+              "reviewedThrough": 70962
+            },
+            {
+              "toFrame": 71128,
+              "trackId": "s5:t280",
+              "fromFrame": 70962,
+              "reviewedThrough": 71129
+            },
+            {
+              "toFrame": 71267,
+              "trackId": "s5:t281",
+              "fromFrame": 71157,
+              "reviewedThrough": 71268
+            },
+            {
+              "toFrame": 71407,
+              "trackId": "s5:t282",
+              "fromFrame": 71268,
+              "reviewedThrough": 71408
+            },
+            {
+              "toFrame": 71990,
+              "trackId": "s5:t284",
+              "fromFrame": 71436,
+              "reviewedThrough": 71991
+            }
+          ],
+          "reviewedThroughFrame": 0
+        },
+        {
+          "parts": [
+            {
+              "toFrame": 36274,
+              "trackId": "s3:t3",
+              "fromFrame": 36000,
+              "reviewedThrough": 36275
+            },
+            {
+              "toFrame": 39088,
+              "trackId": "s3:t20",
+              "fromFrame": 36274,
+              "reviewedThrough": 39089
+            },
+            {
+              "toFrame": 39328,
+              "trackId": "s3:t41",
+              "fromFrame": 39088,
+              "reviewedThrough": 39329
+            },
+            {
+              "toFrame": 44193,
+              "trackId": "s3:t84",
+              "fromFrame": 39328,
+              "reviewedThrough": 44194
+            },
+            {
+              "toFrame": 45057,
+              "trackId": "s3:t167",
+              "fromFrame": 44193,
+              "reviewedThrough": 45058
+            },
+            {
+              "toFrame": 45165,
+              "trackId": "s3:t167",
+              "fromFrame": 45078,
+              "reviewedThrough": 45166
+            },
+            {
+              "toFrame": 46182,
+              "trackId": "s3:t189",
+              "fromFrame": 45165,
+              "reviewedThrough": 46183
+            },
+            {
+              "toFrame": 46595,
+              "trackId": "s3:t254",
+              "fromFrame": 46218,
+              "reviewedThrough": 46596
+            },
+            {
+              "toFrame": 46664,
+              "trackId": "s3:t220",
+              "fromFrame": 46595,
+              "reviewedThrough": 46665
+            },
+            {
+              "toFrame": 46953,
+              "trackId": "s3:t257",
+              "fromFrame": 46665,
+              "reviewedThrough": 46954
+            },
+            {
+              "toFrame": 47538,
+              "trackId": "s3:t258",
+              "fromFrame": 46954,
+              "reviewedThrough": 47539
+            },
+            {
+              "toFrame": 47999,
+              "trackId": "s3:t260",
+              "fromFrame": 47538,
+              "reviewedThrough": 48000
+            },
+            {
+              "toFrame": 48123,
+              "trackId": "s4:t5",
+              "fromFrame": 48000,
+              "reviewedThrough": 48124
+            },
+            {
+              "toFrame": 48385,
+              "trackId": "s4:t219",
+              "fromFrame": 48124,
+              "reviewedThrough": 48386
+            },
+            {
+              "toFrame": 48605,
+              "trackId": "s4:t221",
+              "fromFrame": 48420,
+              "reviewedThrough": 48606
+            },
+            {
+              "toFrame": 48710,
+              "trackId": "s4:t222",
+              "fromFrame": 48606,
+              "reviewedThrough": 48711
+            },
+            {
+              "toFrame": 49025,
+              "trackId": "s4:t223",
+              "fromFrame": 48711,
+              "reviewedThrough": 49026
+            },
+            {
+              "toFrame": 49092,
+              "trackId": "s4:t224",
+              "fromFrame": 49026,
+              "reviewedThrough": 49093
+            },
+            {
+              "toFrame": 49183,
+              "trackId": "s4:t31",
+              "fromFrame": 49092,
+              "reviewedThrough": 49184
+            },
+            {
+              "toFrame": 49550,
+              "trackId": "s4:t226",
+              "fromFrame": 49184,
+              "reviewedThrough": 49551
+            },
+            {
+              "toFrame": 49685,
+              "trackId": "s4:t227",
+              "fromFrame": 49551,
+              "reviewedThrough": 49686
+            },
+            {
+              "toFrame": 49740,
+              "trackId": "s4:t228",
+              "fromFrame": 49686,
+              "reviewedThrough": 49741
+            },
+            {
+              "toFrame": 49895,
+              "trackId": "s4:t47",
+              "fromFrame": 49740,
+              "reviewedThrough": 49896
+            },
+            {
+              "toFrame": 49947,
+              "trackId": "s4:t52",
+              "fromFrame": 49895,
+              "reviewedThrough": 49948
+            },
+            {
+              "toFrame": 50321,
+              "trackId": "s4:t231",
+              "fromFrame": 49966,
+              "reviewedThrough": 50322
+            },
+            {
+              "toFrame": 50070,
+              "trackId": "s4:t53",
+              "fromFrame": 49975,
+              "reviewedThrough": 50071
+            },
+            {
+              "toFrame": 50228,
+              "trackId": "s4:t240",
+              "fromFrame": 50071,
+              "reviewedThrough": 50229
+            },
+            {
+              "toFrame": 50361,
+              "trackId": "s4:t232",
+              "fromFrame": 50322,
+              "reviewedThrough": 50362
+            },
+            {
+              "toFrame": 50548,
+              "trackId": "s4:t233",
+              "fromFrame": 50362,
+              "reviewedThrough": 50549
+            },
+            {
+              "toFrame": 50652,
+              "trackId": "s4:t234",
+              "fromFrame": 50549,
+              "reviewedThrough": 50653
+            },
+            {
+              "toFrame": 52383,
+              "trackId": "s4:t235",
+              "fromFrame": 50667,
+              "reviewedThrough": 52384
+            },
+            {
+              "toFrame": 51632,
+              "trackId": "s4:t229",
+              "fromFrame": 50748,
+              "reviewedThrough": 51633
+            },
+            {
+              "toFrame": 51816,
+              "trackId": "s4:t77",
+              "fromFrame": 51114,
+              "reviewedThrough": 51817
+            },
+            {
+              "toFrame": 51503,
+              "trackId": "s4:t244",
+              "fromFrame": 51259,
+              "reviewedThrough": 51504
+            },
+            {
+              "toFrame": 51546,
+              "trackId": "s4:t245",
+              "fromFrame": 51504,
+              "reviewedThrough": 51547
+            },
+            {
+              "toFrame": 51616,
+              "trackId": "s4:t247",
+              "fromFrame": 51566,
+              "reviewedThrough": 51617
+            },
+            {
+              "toFrame": 51984,
+              "trackId": "s4:t248",
+              "fromFrame": 51617,
+              "reviewedThrough": 51985
+            },
+            {
+              "toFrame": 52037,
+              "trackId": "s4:t241",
+              "fromFrame": 51817,
+              "reviewedThrough": 52038
+            },
+            {
+              "toFrame": 52489,
+              "trackId": "s4:t237",
+              "fromFrame": 52405,
+              "reviewedThrough": 52490
+            },
+            {
+              "toFrame": 52572,
+              "trackId": "s4:t238",
+              "fromFrame": 52490,
+              "reviewedThrough": 52573
+            },
+            {
+              "toFrame": 52880,
+              "trackId": "s4:t239",
+              "fromFrame": 52573,
+              "reviewedThrough": 52881
+            },
+            {
+              "toFrame": 53030,
+              "trackId": "s4:t105",
+              "fromFrame": 52880,
+              "reviewedThrough": 53031
+            },
+            {
+              "toFrame": 53116,
+              "trackId": "s4:t251",
+              "fromFrame": 53031,
+              "reviewedThrough": 53117
+            },
+            {
+              "toFrame": 53160,
+              "trackId": "s4:t252",
+              "fromFrame": 53117,
+              "reviewedThrough": 53161
+            },
+            {
+              "toFrame": 53337,
+              "trackId": "s4:t253",
+              "fromFrame": 53161,
+              "reviewedThrough": 53338
+            },
+            {
+              "toFrame": 53590,
+              "trackId": "s4:t112",
+              "fromFrame": 53337,
+              "reviewedThrough": 53591
+            },
+            {
+              "toFrame": 53652,
+              "trackId": "s4:t254",
+              "fromFrame": 53592,
+              "reviewedThrough": 53653
+            },
+            {
+              "toFrame": 53785,
+              "trackId": "s4:t255",
+              "fromFrame": 53653,
+              "reviewedThrough": 53786
+            },
+            {
+              "toFrame": 53810,
+              "trackId": "s4:t117",
+              "fromFrame": 53714,
+              "reviewedThrough": 53811
+            },
+            {
+              "toFrame": 53887,
+              "trackId": "s4:t256",
+              "fromFrame": 53811,
+              "reviewedThrough": 53888
+            },
+            {
+              "toFrame": 58535,
+              "trackId": "s4:t257",
+              "fromFrame": 53888,
+              "reviewedThrough": 58536
+            },
+            {
+              "toFrame": 55770,
+              "trackId": "s4:t137",
+              "fromFrame": 55300,
+              "reviewedThrough": 55771
+            },
+            {
+              "toFrame": 59203,
+              "trackId": "s4:t196",
+              "fromFrame": 58542,
+              "reviewedThrough": 59204
+            },
+            {
+              "toFrame": 59262,
+              "trackId": "s4:t263",
+              "fromFrame": 59204,
+              "reviewedThrough": 59263
+            },
+            {
+              "toFrame": 59999,
+              "trackId": "s4:t264",
+              "fromFrame": 59263,
+              "reviewedThrough": 60000
+            },
+            {
+              "toFrame": 60184,
+              "trackId": "s5:t7",
+              "fromFrame": 60000,
+              "reviewedThrough": 60185
+            },
+            {
+              "toFrame": 60251,
+              "trackId": "s5:t231",
+              "fromFrame": 60185,
+              "reviewedThrough": 60252
+            },
+            {
+              "toFrame": 60411,
+              "trackId": "s5:t232",
+              "fromFrame": 60252,
+              "reviewedThrough": 60412
+            },
+            {
+              "toFrame": 60458,
+              "trackId": "s5:t233",
+              "fromFrame": 60412,
+              "reviewedThrough": 60459
+            },
+            {
+              "toFrame": 60986,
+              "trackId": "s5:t234",
+              "fromFrame": 60459,
+              "reviewedThrough": 60987
+            },
+            {
+              "toFrame": 61105,
+              "trackId": "s5:t235",
+              "fromFrame": 60987,
+              "reviewedThrough": 61106
+            },
+            {
+              "toFrame": 61284,
+              "trackId": "s5:t236",
+              "fromFrame": 61117,
+              "reviewedThrough": 61285
+            },
+            {
+              "toFrame": 61367,
+              "trackId": "s5:t237",
+              "fromFrame": 61285,
+              "reviewedThrough": 61368
+            },
+            {
+              "toFrame": 61624,
+              "trackId": "s5:t239",
+              "fromFrame": 61580,
+              "reviewedThrough": 61625
+            },
+            {
+              "toFrame": 61716,
+              "trackId": "s5:t240",
+              "fromFrame": 61625,
+              "reviewedThrough": 61717
+            },
+            {
+              "toFrame": 62006,
+              "trackId": "s5:t242",
+              "fromFrame": 61753,
+              "reviewedThrough": 62007
+            },
+            {
+              "toFrame": 62136,
+              "trackId": "s5:t243",
+              "fromFrame": 62007,
+              "reviewedThrough": 62137
+            },
+            {
+              "toFrame": 62259,
+              "trackId": "s5:t244",
+              "fromFrame": 62137,
+              "reviewedThrough": 62260
+            },
+            {
+              "toFrame": 62737,
+              "trackId": "s5:t245",
+              "fromFrame": 62260,
+              "reviewedThrough": 62738
+            },
+            {
+              "toFrame": 63072,
+              "trackId": "s5:t249",
+              "fromFrame": 62903,
+              "reviewedThrough": 63073
+            },
+            {
+              "toFrame": 63426,
+              "trackId": "s5:t250",
+              "fromFrame": 63073,
+              "reviewedThrough": 63427
+            },
+            {
+              "toFrame": 63536,
+              "trackId": "s5:t251",
+              "fromFrame": 63427,
+              "reviewedThrough": 63537
+            },
+            {
+              "toFrame": 63762,
+              "trackId": "s5:t252",
+              "fromFrame": 63537,
+              "reviewedThrough": 63763
+            },
+            {
+              "toFrame": 64170,
+              "trackId": "s5:t82",
+              "fromFrame": 63572,
+              "reviewedThrough": 64171
+            },
+            {
+              "toFrame": 63702,
+              "trackId": "s5:t84",
+              "fromFrame": 63650,
+              "reviewedThrough": 63703
+            },
+            {
+              "toFrame": 64372,
+              "trackId": "s5:t256",
+              "fromFrame": 64171,
+              "reviewedThrough": 64373
+            },
+            {
+              "toFrame": 64608,
+              "trackId": "s5:t257",
+              "fromFrame": 64373,
+              "reviewedThrough": 64609
+            },
+            {
+              "toFrame": 64889,
+              "trackId": "s5:t258",
+              "fromFrame": 64609,
+              "reviewedThrough": 64890
+            },
+            {
+              "toFrame": 64951,
+              "trackId": "s5:t259",
+              "fromFrame": 64890,
+              "reviewedThrough": 64952
+            },
+            {
+              "toFrame": 65045,
+              "trackId": "s5:t260",
+              "fromFrame": 64952,
+              "reviewedThrough": 65046
+            },
+            {
+              "toFrame": 65270,
+              "trackId": "s5:t261",
+              "fromFrame": 65046,
+              "reviewedThrough": 65271
+            },
+            {
+              "toFrame": 65478,
+              "trackId": "s5:t262",
+              "fromFrame": 65271,
+              "reviewedThrough": 65479
+            },
+            {
+              "toFrame": 65672,
+              "trackId": "s5:t263",
+              "fromFrame": 65479,
+              "reviewedThrough": 65673
+            },
+            {
+              "toFrame": 65716,
+              "trackId": "s5:t264",
+              "fromFrame": 65673,
+              "reviewedThrough": 65717
+            },
+            {
+              "toFrame": 65780,
+              "trackId": "s5:t265",
+              "fromFrame": 65717,
+              "reviewedThrough": 65781
+            },
+            {
+              "toFrame": 65862,
+              "trackId": "s5:t266",
+              "fromFrame": 65781,
+              "reviewedThrough": 65863
+            },
+            {
+              "toFrame": 66149,
+              "trackId": "s5:t267",
+              "fromFrame": 65863,
+              "reviewedThrough": 66150
+            },
+            {
+              "toFrame": 66299,
+              "trackId": "s5:t125",
+              "fromFrame": 66230,
+              "reviewedThrough": 66300
+            },
+            {
+              "toFrame": 66373,
+              "trackId": "s5:t269",
+              "fromFrame": 66300,
+              "reviewedThrough": 66374
+            },
+            {
+              "toFrame": 66540,
+              "trackId": "s5:t270",
+              "fromFrame": 66374,
+              "reviewedThrough": 66541
+            },
+            {
+              "toFrame": 66651,
+              "trackId": "s5:t271",
+              "fromFrame": 66541,
+              "reviewedThrough": 66652
+            },
+            {
+              "toFrame": 67168,
+              "trackId": "s5:t272",
+              "fromFrame": 66652,
+              "reviewedThrough": 67169
+            },
+            {
+              "toFrame": 67239,
+              "trackId": "s5:t274",
+              "fromFrame": 67199,
+              "reviewedThrough": 67240
+            },
+            {
+              "toFrame": 67527,
+              "trackId": "s5:t276",
+              "fromFrame": 67266,
+              "reviewedThrough": 67528
+            },
+            {
+              "toFrame": 67888,
+              "trackId": "s5:t152",
+              "fromFrame": 67487,
+              "reviewedThrough": 67889
+            },
+            {
+              "toFrame": 68227,
+              "trackId": "s5:t165",
+              "fromFrame": 67957,
+              "reviewedThrough": 68228
+            },
+            {
+              "toFrame": 68437,
+              "trackId": "s5:t288",
+              "fromFrame": 68240,
+              "reviewedThrough": 68438
+            },
+            {
+              "toFrame": 68552,
+              "trackId": "s5:t290",
+              "fromFrame": 68472,
+              "reviewedThrough": 68553
+            },
+            {
+              "toFrame": 68751,
+              "trackId": "s5:t292",
+              "fromFrame": 68592,
+              "reviewedThrough": 68752
+            },
+            {
+              "toFrame": 68874,
+              "trackId": "s5:t293",
+              "fromFrame": 68752,
+              "reviewedThrough": 68875
+            },
+            {
+              "toFrame": 69148,
+              "trackId": "s5:t187",
+              "fromFrame": 68840,
+              "reviewedThrough": 69149
+            },
+            {
+              "toFrame": 69000,
+              "trackId": "s5:t294",
+              "fromFrame": 68875,
+              "reviewedThrough": 69001
+            },
+            {
+              "toFrame": 69547,
+              "trackId": "s5:t296",
+              "fromFrame": 69020,
+              "reviewedThrough": 69548
+            },
+            {
+              "toFrame": 70833,
+              "trackId": "s5:t277",
+              "fromFrame": 70139,
+              "reviewedThrough": 70834
+            },
+            {
+              "toFrame": 70916,
+              "trackId": "s5:t278",
+              "fromFrame": 70834,
+              "reviewedThrough": 70917
+            },
+            {
+              "toFrame": 70961,
+              "trackId": "s5:t279",
+              "fromFrame": 70917,
+              "reviewedThrough": 70962
+            },
+            {
+              "toFrame": 71128,
+              "trackId": "s5:t280",
+              "fromFrame": 70962,
+              "reviewedThrough": 71129
+            },
+            {
+              "toFrame": 71267,
+              "trackId": "s5:t281",
+              "fromFrame": 71157,
+              "reviewedThrough": 71268
+            },
+            {
+              "toFrame": 71407,
+              "trackId": "s5:t282",
+              "fromFrame": 71268,
+              "reviewedThrough": 71408
+            },
+            {
+              "toFrame": 71990,
+              "trackId": "s5:t284",
+              "fromFrame": 71436,
+              "reviewedThrough": 71991
+            }
+          ],
+          "reviewedThroughFrame": 0
+        }
+      ],
+      "reviewedThroughFrame": 0
+    }
+  ]
+}
