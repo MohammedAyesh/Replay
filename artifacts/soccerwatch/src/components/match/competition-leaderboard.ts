@@ -36,7 +36,7 @@ export function rankCompetitionPlayers<T extends CompetitionLeaderboardPlayer>(
   const viewer = sorted.find((player) => player.playerId === viewerId) ?? null;
   const viewerRank = viewer ? ranks.get(viewer.playerId) ?? null : null;
   const above = viewerRank !== null && viewerRank > 1
-    ? sorted.find((player) => (ranks.get(player.playerId) ?? Number.POSITIVE_INFINITY) < viewerRank) ?? null
+    ? sorted.filter((player) => (ranks.get(player.playerId) ?? Number.POSITIVE_INFINITY) < viewerRank).at(-1) ?? null
     : null;
 
   return { sorted, ranks, viewer, viewerRank, above };

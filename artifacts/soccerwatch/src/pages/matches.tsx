@@ -64,6 +64,7 @@ export default function Matches() {
   });
 
   const data = matches.data;
+  const recentFindRecordingId = data?.recent.find((match) => match.findRecordingId != null)?.findRecordingId ?? null;
   const empty = data && !data.live.length && !data.upcoming.length && !data.recent.length && !data.invites.length;
 
   return (
@@ -142,7 +143,7 @@ export default function Matches() {
         </div>
       )}
 
-      {data && (data.personalForm || data.personalFormPending) && (
+      {data && (data.personalForm || data.personalFormPending === true) && (
         <section className="mb-5 rounded-2xl border border-floodlight/25 bg-surface p-4" data-testid="section-personal-form">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
@@ -150,7 +151,7 @@ export default function Matches() {
               <p className="mt-1 text-xs leading-5 text-muted-text">
                 {data.personalForm
                   ? copy.competitionRecentFormHint(data.personalForm.previousMatchesUsed ?? Math.max(0, data.personalForm.matchesUsed - 1))
-                  : copy.competitionFormPending}
+                  : data.personalFormPending === true ? copy.competitionFormPending : null}
               </p>
             </div>
             {data.personalForm && (
@@ -162,6 +163,21 @@ export default function Matches() {
           {data.personalForm
             ? <RecentFormPanel form={data.personalForm} copy={copy} />
             : <div className="h-20 animate-pulse rounded-xl bg-raised/60" aria-hidden="true" />}
+        </section>
+      )}
+      {data && !data.personalForm && data.personalFormPending !== true && (
+        <section className="mb-5 rounded-2xl border border-floodlight/25 bg-surface p-4" data-testid="section-personal-form-empty">
+          <p className="text-sm leading-5 text-muted-text">{copy.competitionFormStart}</p>
+          {recentFindRecordingId !== null && (
+            <Link
+              href={`/find/${recentFindRecordingId}`}
+              data-testid="button-find-yourself-start-form"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
+            >
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+              {copy.competitionFormFind}
+            </Link>
+          )}
         </section>
       )}
 

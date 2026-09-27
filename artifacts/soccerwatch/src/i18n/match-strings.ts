@@ -252,6 +252,8 @@ const en = {
     ? `Latest match compared with your average from ${matches} earlier cached matches`
     : "Latest match shown; there are no earlier cached matches to compare yet.",
   competitionFormPending: "Your form is being calculated from claimed matches.",
+  competitionFormStart: "Claim yourself in a match to start your form",
+  competitionFormFind: "Find yourself",
   competitionLastMatch: "Last match",
   competitionPersonalBests: "Personal bests",
   competitionDeltaAbove: (amount: string) => `▲ ${amount} above your average`,
@@ -643,6 +645,8 @@ const ar: MatchStrings = {
     ? `آخر ماتش مقارنة بمتوسط ${matches} ماتشات محفوظة قبله`
     : "آخر ماتش ظاهر، ولسه ما في ماتشات محفوظة قبله للمقارنة.",
   competitionFormPending: "عم نحسب فورمتك من الماتشات اللي لاقيت حالك فيها.",
+  competitionFormStart: "لاقي حالك بماتش عشان تبلش فورمتك",
+  competitionFormFind: "لاقي حالك",
   competitionLastMatch: "آخر ماتش",
   competitionPersonalBests: "أفضل أرقامك",
   competitionDeltaAbove: (amount) => `▲ أعلى من متوسطك بـ ${amount}`,

@@ -30,7 +30,21 @@ describe("competition leaderboard presentation", () => {
     expect(ranked.sorted.map((entry) => entry.playerId)).toEqual([1, 2, 3, 4]);
     expect(ranked.sorted.map((entry) => ranked.ranks.get(entry.playerId))).toEqual([1, 1, 3, 4]);
     expect(ranked.sorted.indexOf(ranked.viewer!)).toBe(2);
-    expect(ranked.above?.playerId).toBe(1);
+    expect(ranked.above?.playerId).toBe(2);
+  });
+
+  it("uses the closest better-ranked player as the viewer's player above", () => {
+    const players = [
+      player(1, 50),
+      player(2, 40),
+      player(3, 30),
+      player(4, 20),
+      player(5, 10),
+    ];
+    const ranked = rankCompetitionPlayers(players, "distanceKm", 5);
+
+    expect(ranked.viewerRank).toBe(5);
+    expect(ranked.above?.playerId).toBe(4);
   });
 
   it("keeps the top eight and pins an out-of-range viewer after the divider", () => {
