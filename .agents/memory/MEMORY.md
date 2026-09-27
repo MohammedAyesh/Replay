@@ -46,5 +46,5 @@
 - [Account deletion retention](account-deletion.md) — delete Clerk first, anonymize retained records under a disabled placeholder, and disable the local account if its transaction fails.
 - [Menus inside linked cards](linked-card-menu-closure.md) — preventDefault stops link navigation but can skip Radix auto-dismiss; explicitly close the menu before opening an overlay.
 - [API test database isolation](api-test-database-isolation.md) — API tests use ambient DATABASE_URL; require a disposable test database before running them.
-- [GitHub REST commit fallback](github-rest-commit-fallback.md) — preserve message bytes and verify the tree before fast-forwarding when shell push authentication fails.
+- [GitHub REST commit fallback](github-rest-commit-fallback.md) — source blobs by immutable commit SHA and verify each object before moving refs.
 - [Whole-game claim boundary](whole-game-claim-boundary.md) — `/find` persists names and identity through game saves; `/claim` remains a separate, explicit fallback.
