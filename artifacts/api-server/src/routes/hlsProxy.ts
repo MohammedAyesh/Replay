@@ -171,7 +171,8 @@ router.get("/hls-proxy/manifest", async (req, res): Promise<void> => {
 
 /**
  * GET /api/hls-proxy/segment?url=<encoded>
- * Streams a single .ts or .m4s segment from Bunny CDN.
+ * Streams an HLS segment or MP4 fallback from Bunny CDN, preserving byte ranges
+ * so native video elements can seek in progressive MP4 playback.
  */
 router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
   const raw = req.query.url as string | undefined;
@@ -192,9 +193,14 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
 
   try {
     const { hostname } = new URL(raw);
+    const requestHeaders: Record<string, string> = { Referer: `https://${hostname}/` };
+    const range = req.header("range");
+    const ifRange = req.header("if-range");
+    if (range) requestHeaders.Range = range;
+    if (ifRange) requestHeaders["If-Range"] = ifRange;
     const upstream = await fetch(raw, {
       signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30_000)]),
-      headers: { Referer: `https://${hostname}/` },
+      headers: requestHeaders,
     });
     // `upstream.ok && !upstream.body` used to send 200 with the literal string
     // "Segment unavailable" as the payload, which the player then tried to demux.
@@ -211,9 +217,11 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
     res.set("Content-Type", ct);
     res.set("Cache-Control", "public, max-age=300");
     res.set("Access-Control-Allow-Origin", "*");
-
-    const cl = upstream.headers.get("content-length");
-    if (cl) res.set("Content-Length", cl);
+    for (const header of ["accept-ranges", "content-range", "content-length"] as const) {
+      const value = upstream.headers.get(header);
+      if (value) res.set(header, value);
+    }
+    res.status(upstream.status);
 
     const nodeStream = Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>);
     await pipeline(nodeStream, res);

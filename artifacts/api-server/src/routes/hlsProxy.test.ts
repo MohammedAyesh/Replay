@@ -110,6 +110,33 @@ describe("hls-proxy manifest cache", () => {
     expect(res.text).toContain(encodeURIComponent("chunk.ts"));
   });
 
+  it("forwards byte ranges and partial-content headers for MP4 fallback playback", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    fetchMock.mockResolvedValueOnce(new Response("data", {
+      status: 206,
+      headers: {
+        "Content-Type": "video/mp4",
+        "Content-Length": "4",
+        "Content-Range": "bytes 0-3/100",
+        "Accept-Ranges": "bytes",
+      },
+    }));
+
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url })
+      .set("Range", "bytes=0-3");
+
+    expect(res.status).toBe(206);
+    expect(res.headers["content-range"]).toBe("bytes 0-3/100");
+    expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(res.headers["content-type"]).toContain("video/mp4");
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      Referer: "https://vz-test.b-cdn.net/",
+      Range: "bytes=0-3",
+    });
+  });
+
   it("reports WHY an upstream fetch failed instead of a bare 503", async () => {
     const url = `${UPSTREAM}?boom-${Date.now()}`;
     const err = new Error("The operation was aborted due to timeout");

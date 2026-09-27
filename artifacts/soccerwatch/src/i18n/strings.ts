@@ -137,6 +137,10 @@ const strings = {
     },
     player: {
       loading: "Loading clip...",
+      playbackLoading: "Loading video…",
+      fallbackLoading: "Switching to compatible playback…",
+      playbackError: "We couldn’t play this recording. Check your connection and try again.",
+      retryPlayback: "Try again",
       notFound: "Clip not found.",
       localPitch: "Local Pitch",
       court1: "Court 1",
@@ -721,6 +725,10 @@ const strings = {
     },
     player: {
       loading: "جارٍ تحميل المقطع...",
+      playbackLoading: "جارٍ تحميل الفيديو…",
+      fallbackLoading: "جارٍ التبديل إلى تشغيل متوافق…",
+      playbackError: "تعذّر تشغيل هذا التسجيل. تحقق من اتصالك وحاول مرة أخرى.",
+      retryPlayback: "حاول مرة أخرى",
       notFound: "لم يُعثر على المقطع.",
       localPitch: "ملعب محلي",
       court1: "ملعب ١",

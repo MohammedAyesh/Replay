@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  AlertTriangle,
   CheckCircle2,
   Circle,
+  LoaderCircle,
   Maximize,
   Minimize,
   Pause,
@@ -67,7 +69,7 @@ export type LiveDvrOptions = {
 export type ClipPlayerProps = {
   /** HLS manifest URL. The caller owns authorization/proxying. */
   src: string;
-  /** Optional alternate manifest used after the preferred stream fails. */
+  /** Optional alternate media source (HLS or MP4) used after the preferred stream fails. */
   fallbackSrc?: string;
   onFallback?: () => void;
   title: string;
@@ -270,6 +272,8 @@ export function ClipPlayer({
   const [liveUtcMs, setLiveUtcMs] = useState<number | null>(null);
   const [liveRange, setLiveRange] = useState<{ startUtcMs: number; endUtcMs: number } | null>(null);
   const [showControls, setShowControls] = useState(true);
+  const [playbackUiState, setPlaybackUiState] = useState<"loading" | "ready" | "error">("loading");
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
@@ -282,6 +286,13 @@ export function ClipPlayer({
   const maxLiveClipSeconds = Math.max(1, Math.min(600, liveDvr?.maxDurationSeconds ?? 600));
   const activeSrc = usingFallback && fallbackSrc ? fallbackSrc : src;
 
+  const retryPlayback = () => {
+    fallbackTriedRef.current = false;
+    setPlaybackUiState("loading");
+    setUsingFallback(false);
+    setPlaybackAttempt((attempt) => attempt + 1);
+  };
+
   const programTimeAt = useCallback((position: number): number | null => {
     return liveProgramTimeAtPosition(position, liveFragmentsRef.current);
   }, []);
@@ -289,6 +300,8 @@ export function ClipPlayer({
   useEffect(() => {
     setUsingFallback(false);
     fallbackTriedRef.current = false;
+    setPlaybackUiState("loading");
+    setIsPlaying(false);
   }, [src]);
 
   useEffect(() => {
@@ -436,16 +449,62 @@ export function ClipPlayer({
     }
     element.muted = isLive;
     let previousTime = -1;
+    let startupTimer: ReturnType<typeof setTimeout> | null = null;
+    let bufferingTimer: ReturnType<typeof setTimeout> | null = null;
+    let mediaRecoveryAttempted = false;
+    let networkRecoveryAttempts = 0;
+    const clearStartupTimer = () => {
+      if (startupTimer !== null) {
+        clearTimeout(startupTimer);
+        startupTimer = null;
+      }
+    };
+    const clearBufferingTimer = () => {
+      if (bufferingTimer !== null) {
+        clearTimeout(bufferingTimer);
+        bufferingTimer = null;
+      }
+    };
+    const showPlaybackError = () => {
+      clearStartupTimer();
+      clearBufferingTimer();
+      setShowControls(true);
+      setPlaybackUiState("error");
+    };
     const switchToFallback = () => {
       if (!fallbackSrc || fallbackTriedRef.current || activeSrc === fallbackSrc) return false;
       fallbackTriedRef.current = true;
       fallbackRestoreUtcRef.current = isLiveDvr ? liveUtcRef.current : null;
+      setPlaybackUiState("loading");
       setUsingFallback(true);
       onFallback?.();
       return true;
     };
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
+    const onCanPlay = () => {
+      clearStartupTimer();
+      clearBufferingTimer();
+      setPlaybackUiState("ready");
+    };
+    const onPlaying = () => {
+      clearStartupTimer();
+      clearBufferingTimer();
+      setPlaybackUiState("ready");
+      setIsPlaying(true);
+    };
+    const onWaiting = () => {
+      setPlaybackUiState("loading");
+      if (bufferingTimer !== null) return;
+      bufferingTimer = setTimeout(() => {
+        if (!switchToFallback()) showPlaybackError();
+      }, 20_000);
+    };
+    const onMediaError = () => {
+      clearStartupTimer();
+      clearBufferingTimer();
+      if (!switchToFallback()) showPlaybackError();
+    };
     const onDurationChange = () => { if (!isLive) setDuration(element.duration || 0); };
     const onTimeUpdate = () => {
       if (isLiveDvr && fallbackRestoreUtcRef.current != null) return;
@@ -505,15 +564,23 @@ export function ClipPlayer({
 
     element.addEventListener("play", onPlay);
     element.addEventListener("pause", onPause);
+    element.addEventListener("canplay", onCanPlay);
+    element.addEventListener("playing", onPlaying);
+    element.addEventListener("waiting", onWaiting);
+    element.addEventListener("stalled", onWaiting);
     element.addEventListener("durationchange", onDurationChange);
     element.addEventListener("timeupdate", onTimeUpdate);
     element.addEventListener("ended", onEnded);
-    element.addEventListener("error", switchToFallback);
+    element.addEventListener("error", onMediaError);
+    startupTimer = setTimeout(() => {
+      if (!switchToFallback()) showPlaybackError();
+    }, 20_000);
     setQualityLevels([]);
     setActiveQuality(-1);
     setShowQualityPicker(false);
 
-    if (Hls.isSupported()) {
+    const isHlsSource = /\.m3u8(?:$|\?)/i.test(activeSrc);
+    if (isHlsSource && Hls.isSupported()) {
       const hls = new Hls(isLive
         ? {
           enableWorker: false,
@@ -540,13 +607,25 @@ export function ClipPlayer({
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         if (switchToFallback()) return;
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-        else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-        else element.dispatchEvent(new Event("error"));
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecoveryAttempted) {
+          mediaRecoveryAttempted = true;
+          hls.recoverMediaError();
+        } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveryAttempts < 1) {
+          networkRecoveryAttempts += 1;
+          hls.startLoad();
+        } else {
+          onMediaError();
+        }
       });
-    } else if (element.canPlayType("application/vnd.apple.mpegurl")) {
+    } else if (isHlsSource && element.canPlayType("application/vnd.apple.mpegurl")) {
       element.src = activeSrc;
       element.addEventListener("canplay", () => element.play().catch(() => {}), { once: true });
+      element.load();
+    } else if (isHlsSource) {
+      if (!switchToFallback()) showPlaybackError();
+    } else {
+      element.src = activeSrc;
+      element.load();
     }
 
     return () => {
@@ -555,15 +634,21 @@ export function ClipPlayer({
       }
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      clearStartupTimer();
+      clearBufferingTimer();
       element.removeEventListener("play", onPlay);
       element.removeEventListener("pause", onPause);
+      element.removeEventListener("canplay", onCanPlay);
+      element.removeEventListener("playing", onPlaying);
+      element.removeEventListener("waiting", onWaiting);
+      element.removeEventListener("stalled", onWaiting);
       element.removeEventListener("durationchange", onDurationChange);
       element.removeEventListener("timeupdate", onTimeUpdate);
       element.removeEventListener("ended", onEnded);
-      element.removeEventListener("error", switchToFallback);
+      element.removeEventListener("error", onMediaError);
       liveFragmentsRef.current = [];
     };
-  }, [activeSrc, fallbackSrc, isLive, isLiveDvr, liveDvr, mediaPositionAtUtc, onFallback, programTimeAt]);
+  }, [activeSrc, fallbackSrc, isLive, isLiveDvr, liveDvr, mediaPositionAtUtc, onFallback, playbackAttempt, programTimeAt]);
 
   const onLoadedMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {
     if (isLive) return;
@@ -918,6 +1003,51 @@ export function ClipPlayer({
             playsInline
             onLoadedMetadata={onLoadedMetadata}
           />
+          <AnimatePresence>
+            {playbackUiState === "loading" && (
+              <motion.div
+                key="playback-loading"
+                role="status"
+                aria-live="polite"
+                data-testid="status-video-loading"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+                className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/70 px-6 text-center text-white"
+              >
+                <LoaderCircle className="h-9 w-9 animate-spin text-primary" aria-hidden="true" />
+                <p className="text-sm font-semibold">
+                  {usingFallback ? t.player.fallbackLoading : t.player.playbackLoading}
+                </p>
+              </motion.div>
+            )}
+            {playbackUiState === "error" && (
+              <motion.div
+                key="playback-error"
+                role="alert"
+                data-testid="status-video-error"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+                className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/90 px-6 text-center text-white"
+              >
+                <AlertTriangle className="h-9 w-9 text-amber-300" aria-hidden="true" />
+                <p className="max-w-sm text-sm leading-6">{t.player.playbackError}</p>
+                <button
+                  type="button"
+                  data-testid="button-retry-video"
+                  onClick={retryPlayback}
+                  className="min-h-11 rounded-full bg-primary px-5 text-sm font-bold text-primary-foreground"
+                >
+                  {t.player.retryPlayback}
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <SkipFlash flash={skipFlash} />
         </div>
       </div>

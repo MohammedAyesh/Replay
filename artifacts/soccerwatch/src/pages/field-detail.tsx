@@ -23,6 +23,7 @@ import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { useClaimCopy } from "@/i18n/claim-strings";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
+import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -663,6 +664,7 @@ export default function FieldDetail() {
         {activeVideo && (
           <ClipPlayer
             src={`/api/hls-proxy/manifest?url=${encodeURIComponent(activeVideo.playbackUrl)}`}
+            fallbackSrc={getBunnyMp4FallbackSource(activeVideo.playbackUrl, activeVideo.guid) ?? undefined}
             title={activeVideo.title}
             source={{ kind: "bunny", videoId: activeVideo.guid }}
             academyId={academyId}
