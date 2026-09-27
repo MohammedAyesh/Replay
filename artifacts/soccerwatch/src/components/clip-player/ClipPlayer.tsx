@@ -154,15 +154,26 @@ function QualityPicker({
   onToggle,
   onSelect,
 }: {
-  levels: Array<{ height: number; index: number }>;
+  levels: Array<{ width: number; height: number; index: number }>;
   active: number;
   open: boolean;
   onToggle: () => void;
   onSelect: (index: number) => void;
 }) {
-  if (levels.length <= 1) return null;
-  const label = (index: number, height?: number) =>
-    index === -1 ? "Auto" : (height ?? 0) >= 2160 ? "4K" : `${height ?? 0}p`;
+  if (levels.length === 0) return null;
+  const resolutionLabel = (level: { width: number; height: number }) =>
+    level.width > 0 && level.height > 0
+      ? `${level.width}×${level.height}`
+      : `${level.height}p`;
+  const singleLevel = levels.length === 1;
+  const activeLevel = levels.find((level) => level.index === active);
+  const buttonLabel = singleLevel
+    ? resolutionLabel(levels[0])
+    : active === -1
+      ? "Auto"
+      : activeLevel
+        ? resolutionLabel(activeLevel)
+        : "Auto";
   return (
     <div
       className="absolute end-3 z-30 pointer-events-auto"
@@ -170,23 +181,34 @@ function QualityPicker({
     >
       <div className="relative">
         <button
+          type="button"
+          data-testid="button-video-quality"
+          aria-label={singleLevel ? `Only resolution available: ${buttonLabel}` : "Select video quality"}
+          aria-haspopup={singleLevel ? undefined : "menu"}
+          aria-expanded={singleLevel ? undefined : open}
+          disabled={singleLevel}
+          title={singleLevel ? "Only one resolution is available in this Bunny stream" : "Select video quality"}
           onClick={onToggle}
-          className="px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-white text-xs font-bold border border-white/20"
+          className="px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-white text-xs font-bold border border-white/20 disabled:cursor-default"
         >
-          {label(active, levels.find((level) => level.index === active)?.height)}
+          {buttonLabel}
         </button>
-        {open && (
-          <div className="absolute top-full end-0 mt-1 bg-black/85 backdrop-blur-md rounded-xl overflow-hidden shadow-xl border border-white/10 min-w-[5rem]">
-            {[{ height: 0, index: -1 }, ...levels].map((level) => (
+        {open && !singleLevel && (
+          <div role="menu" aria-label="Video quality" className="absolute top-full end-0 mt-1 bg-black/85 backdrop-blur-md rounded-xl overflow-hidden shadow-xl border border-white/10 min-w-[7rem]">
+            {[{ width: 0, height: 0, index: -1 }, ...levels].map((level) => (
               <button
                 key={level.index}
+                type="button"
+                role="menuitemradio"
+                aria-checked={active === level.index}
+                data-testid={`video-quality-${level.index}`}
                 onClick={() => onSelect(level.index)}
                 className={cn(
                   "block w-full px-4 py-2.5 text-xs font-semibold text-left transition-colors",
                   active === level.index ? "text-primary" : "text-white hover:bg-white/10",
                 )}
               >
-                {label(level.index, level.height)}
+                {level.index === -1 ? "Auto" : resolutionLabel(level)}
               </button>
             ))}
           </div>
@@ -261,7 +283,7 @@ export function ClipPlayer({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [qualityLevels, setQualityLevels] = useState<Array<{ height: number; index: number }>>([]);
+  const [qualityLevels, setQualityLevels] = useState<Array<{ width: number; height: number; index: number }>>([]);
   const [activeQuality, setActiveQuality] = useState(-1);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
   const [usingFallback, setUsingFallback] = useState(false);
@@ -451,6 +473,7 @@ export function ClipPlayer({
     let previousTime = -1;
     let startupTimer: ReturnType<typeof setTimeout> | null = null;
     let bufferingTimer: ReturnType<typeof setTimeout> | null = null;
+    let hasDecodedFrame = false;
     let mediaRecoveryAttempted = false;
     let networkRecoveryAttempts = 0;
     const clearStartupTimer = () => {
@@ -482,16 +505,18 @@ export function ClipPlayer({
     };
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
-    const onCanPlay = () => {
+    const onLoadedData = () => {
+      hasDecodedFrame = true;
       clearStartupTimer();
       clearBufferingTimer();
       setPlaybackUiState("ready");
     };
     const onPlaying = () => {
+      setIsPlaying(true);
+      if (!hasDecodedFrame) return;
       clearStartupTimer();
       clearBufferingTimer();
       setPlaybackUiState("ready");
-      setIsPlaying(true);
     };
     const onWaiting = () => {
       setPlaybackUiState("loading");
@@ -564,7 +589,7 @@ export function ClipPlayer({
 
     element.addEventListener("play", onPlay);
     element.addEventListener("pause", onPause);
-    element.addEventListener("canplay", onCanPlay);
+    element.addEventListener("loadeddata", onLoadedData);
     element.addEventListener("playing", onPlaying);
     element.addEventListener("waiting", onWaiting);
     element.addEventListener("stalled", onWaiting);
@@ -583,7 +608,7 @@ export function ClipPlayer({
     if (isHlsSource && Hls.isSupported()) {
       const hls = new Hls(isLive
         ? {
-          enableWorker: false,
+          enableWorker: true,
           liveSyncDurationCount: 10,
           maxLiveSyncPlaybackRate: 1.05,
           liveMaxLatencyDurationCount: 20,
@@ -591,7 +616,7 @@ export function ClipPlayer({
           maxMaxBufferLength: 60,
           backBufferLength: 90,
         }
-        : { enableWorker: false });
+        : { enableWorker: true });
       hlsRef.current = hls;
       capPlaybackQuality(hls);
       hls.loadSource(activeSrc);
@@ -602,7 +627,9 @@ export function ClipPlayer({
       }
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         element.play().catch(() => {});
-        setQualityLevels(hls.levels.map((level, index) => ({ height: level.height, index })).sort((a, b) => b.height - a.height));
+        setQualityLevels(hls.levels
+          .map((level, index) => ({ width: level.width, height: level.height, index }))
+          .sort((a, b) => b.width - a.width || b.height - a.height));
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
@@ -638,7 +665,7 @@ export function ClipPlayer({
       clearBufferingTimer();
       element.removeEventListener("play", onPlay);
       element.removeEventListener("pause", onPause);
-      element.removeEventListener("canplay", onCanPlay);
+      element.removeEventListener("loadeddata", onLoadedData);
       element.removeEventListener("playing", onPlaying);
       element.removeEventListener("waiting", onWaiting);
       element.removeEventListener("stalled", onWaiting);
@@ -1015,7 +1042,7 @@ export function ClipPlayer({
                 exit={{ opacity: 0 }}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
-                className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/70 px-6 text-center text-white"
+                className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/80 px-6 text-center text-white"
               >
                 <LoaderCircle className="h-9 w-9 animate-spin text-primary" aria-hidden="true" />
                 <p className="text-sm font-semibold">
@@ -1033,7 +1060,7 @@ export function ClipPlayer({
                 exit={{ opacity: 0 }}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
-                className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/90 px-6 text-center text-white"
+                className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/90 px-6 text-center text-white"
               >
                 <AlertTriangle className="h-9 w-9 text-amber-300" aria-hidden="true" />
                 <p className="max-w-sm text-sm leading-6">{t.player.playbackError}</p>
