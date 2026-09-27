@@ -51,22 +51,45 @@ export async function getAllowedHlsLevelIndexes(
     if (maxWidth != null && Number.isFinite(maxWidth) && (level.width ?? 0) > maxWidth) {
       supported = false;
     }
-    if (supported && canCheckDecoding) {
+    if (
+      supported
+      && canCheckDecoding
+      && typeof level.width === "number"
+      && Number.isFinite(level.width)
+      && level.width > 0
+      && typeof level.height === "number"
+      && Number.isFinite(level.height)
+      && level.height > 0
+    ) {
       const codec = level.videoCodec || "avc1.4d401f";
+      const bitrate = typeof level.bitrate === "number"
+        && Number.isFinite(level.bitrate)
+        && level.bitrate > 0
+        ? level.bitrate
+        : 1_000_000;
+      const framerate = typeof level.frameRate === "number"
+        && Number.isFinite(level.frameRate)
+        && level.frameRate > 0
+        ? level.frameRate
+        : 30;
       try {
         const info = await mediaCapabilities!.decodingInfo({
           type: "media-source",
           video: {
             contentType: `video/mp4; codecs="${codec}"`,
-            width: level.width ?? 0,
-            height: level.height ?? 0,
-            bitrate: level.bitrate ?? 0,
-            framerate: level.frameRate ?? 0,
+            width: level.width,
+            height: level.height,
+            bitrate,
+            framerate,
           },
         });
-        supported = info.supported && info.smooth;
+        supported = !(
+          info.supported === false
+          || (info.supported === true && info.smooth === false)
+        );
       } catch {
-        supported = false;
+        // An unsupported query is unknown, not proof that the decoder cannot
+        // play this level. Let playback handle real decoder failures.
       }
     }
     if (supported) allowed.push(index);

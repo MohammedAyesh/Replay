@@ -34,6 +34,90 @@ describe("hls quality selection", () => {
     })).resolves.toEqual([0, 1, 2]);
   });
 
+  it("uses positive bitrate and frame-rate fallbacks for incomplete metadata", async () => {
+    const decodingInfo = vi.fn(async (_configuration: MediaDecodingConfiguration) => ({
+      supported: true,
+      smooth: true,
+      powerEfficient: true,
+    }));
+
+    await expect(getAllowedHlsLevelIndexes([{
+      width: 2560,
+      height: 720,
+      bitrate: 0,
+      videoCodec: "avc1.640032",
+    }], {
+      mediaCapabilities: { decodingInfo } as unknown as MediaCapabilities,
+    })).resolves.toEqual([0]);
+
+    expect(decodingInfo).toHaveBeenCalledWith(expect.objectContaining({
+      video: expect.objectContaining({
+        bitrate: 1_000_000,
+        framerate: 30,
+      }),
+    }));
+  });
+
+  it("keeps levels with missing dimensions without querying MediaCapabilities", async () => {
+    const decodingInfo = vi.fn(async (_configuration: MediaDecodingConfiguration) => ({
+      supported: true,
+      smooth: true,
+      powerEfficient: true,
+    }));
+
+    await expect(getAllowedHlsLevelIndexes([
+      levels[0],
+      { height: 720, bitrate: 5_000_000 },
+      { width: 3840, bitrate: 8_000_000 },
+    ], {
+      mediaCapabilities: { decodingInfo } as unknown as MediaCapabilities,
+    })).resolves.toEqual([0, 1, 2]);
+
+    expect(decodingInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a level when the MediaCapabilities query throws", async () => {
+    const decodingInfo = vi.fn(async (configuration: MediaDecodingConfiguration) => {
+      if (configuration.video?.width === 2560) {
+        throw new TypeError("decoder capability query unavailable");
+      }
+      return {
+        supported: true,
+        smooth: true,
+        powerEfficient: true,
+      };
+    });
+
+    await expect(getAllowedHlsLevelIndexes(levels.slice(0, 2), {
+      mediaCapabilities: { decodingInfo } as unknown as MediaCapabilities,
+    })).resolves.toEqual([0, 1]);
+  });
+
+  it("keeps both Bunny rungs when the master playlist omits FRAME-RATE", async () => {
+    const bunnyLevels = [
+      { width: 2560, height: 720, bitrate: 8_000_000, videoCodec: "avc1.640032" },
+      { width: 3840, height: 1080, bitrate: 8_000_000, videoCodec: "avc1.640032" },
+    ];
+    const decodingInfo = vi.fn(async (configuration: MediaDecodingConfiguration) => {
+      if ((configuration.video?.framerate ?? 0) <= 0) {
+        throw new TypeError("framerate must be positive");
+      }
+      return {
+        supported: true,
+        smooth: true,
+        powerEfficient: true,
+      };
+    });
+
+    await expect(getAllowedHlsLevelIndexes(bunnyLevels, {
+      mediaCapabilities: { decodingInfo } as unknown as MediaCapabilities,
+    })).resolves.toEqual([0, 1]);
+
+    expect(decodingInfo).toHaveBeenCalledTimes(2);
+    expect(decodingInfo.mock.calls.map(([configuration]) => configuration.video?.framerate))
+      .toEqual([30, 30]);
+  });
+
   it("does not capability-cap when MediaCapabilities is unavailable", async () => {
     await expect(getAllowedHlsLevelIndexes(levels, {
       mediaCapabilities: undefined,
