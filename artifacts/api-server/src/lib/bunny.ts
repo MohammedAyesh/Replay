@@ -18,6 +18,17 @@ export function isExcludedBunnyVideoTitle(title: string | null | undefined): boo
   return typeof title === "string" && title.toLowerCase().startsWith("liveclip_");
 }
 
+export function isBunnyVideoPlayable(video: {
+  status?: number;
+  availableResolutions?: string;
+}): boolean {
+  return video.status === undefined
+    || video.status === 4
+    || (video.status === 3
+      && typeof video.availableResolutions === "string"
+      && video.availableResolutions.trim().length > 0);
+}
+
 export function getBunnyPlaybackUrl(videoId: string): string {
   return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/playlist.m3u8`;
 }

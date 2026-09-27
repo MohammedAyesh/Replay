@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, getBunnyProxiedThumbnailUrl, isBunnyConfigured, isExcludedBunnyVideoTitle } from "../lib/bunny.js";
+import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, getBunnyProxiedThumbnailUrl, isBunnyConfigured, isBunnyVideoPlayable, isExcludedBunnyVideoTitle } from "../lib/bunny.js";
 import { db, fieldsTable, recordingsTable, recordingSchedulesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { matchesRecordingSchedule } from "../lib/recordingVisibility";
@@ -29,6 +29,7 @@ interface BunnyApiVideo {
   views?: number;
   length?: number;
   status?: number;
+  availableResolutions?: string;
 }
 
 /** Parse the date/time encoded in the Bunny recording title. */
@@ -177,7 +178,7 @@ router.get("/bunny/all-videos", async (req, res): Promise<void> => {
       return (raw as BunnyApiVideo[])
         .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
         .filter((v) => !isExcludedBunnyVideoTitle(v.title))
-        .filter((v) => v.status === undefined || v.status === 4)
+        .filter(isBunnyVideoPlayable)
         .map((v) => ({
           guid: v.guid as string,
           title: v.title as string,
@@ -268,7 +269,7 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
   const videos = (raw as BunnyApiVideo[])
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
     .filter((v) => !isExcludedBunnyVideoTitle(v.title))
-    .filter((v) => v.status === undefined || v.status === 4)
+    .filter(isBunnyVideoPlayable)
     .filter((v) => {
       const guid = v.guid as string;
       if (context.isAdmin) return true;
