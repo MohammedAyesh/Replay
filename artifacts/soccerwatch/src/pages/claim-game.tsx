@@ -66,6 +66,7 @@ type ClaimMatch = ClaimMatchWindow & {
 type ServerGame = {
   state: (ClaimState & { saved?: number }) | null;
   bundleFingerprint: string;
+  staleState?: boolean;
   inPlaySpans: Array<[number, number]>;
   /** Optional Part 2 match windows; older responses omit this field. */
   matches?: ClaimMatch[];
@@ -153,6 +154,7 @@ export default function ClaimGamePage() {
       eyebrow={recording ? `${recording.date ?? ""} · ${recording.court ?? ""}`.replace(/^ · | · $/g, "") : ""}
       saved={resetByAdmin ? null : server.state}
       fingerprint={server.bundleFingerprint}
+      staleState={server.staleState ?? false}
       copy={copy}
       identities={identities}
       identityId={chain?.identityId ?? null}
@@ -188,6 +190,7 @@ type Props = {
   eyebrow: string;
   saved: (ClaimState & { saved?: number }) | null;
   fingerprint: string;
+  staleState?: boolean;
   copy: ReturnType<typeof useGameCopy>;
   identities: ClaimStatusIdentity[];
   identityId: string | null;
@@ -208,6 +211,7 @@ type PendingNamePick = {
 
 export function GameClaim({
   game, manifest, recordingId, videoUrl, eyebrow, saved, fingerprint, copy,
+  staleState = false,
   identities, identityId, identityName, resetByAdmin, coveragePercent, accountName,
   matches, continuation,
 }: Props) {
@@ -243,6 +247,7 @@ export function GameClaim({
       : matches.filter((match) => match.rostered).map((match) => match.code);
   const [matchChoices, setMatchChoices] = useState<string[]>(initialMatchChoices);
   const [saveError, setSaveError] = useState(false);
+  const [staleNoticeDismissed, setStaleNoticeDismissed] = useState(false);
   const [labelError, setLabelError] = useState(false);
   const t0 = useRef<number | null>(null);
   const pendingNextGuess = useRef<string | null>(null);
@@ -289,43 +294,79 @@ export function GameClaim({
   /* -------------------------------------------------------------- saving */
 
   const saveTimer = useRef<number | null>(null);
-  const save = useCallback(() => {
+  const sendSave = useCallback(async (keepalive = false) => {
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
     if (!Object.keys(ctxRef.current.S.you).length) return;
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(async () => {
-      const currentCtx = ctxRef.current;
-      const currentState = currentCtx.S;
-      currentState.elapsed = t0.current ? Date.now() - t0.current : currentState.elapsed;
-      const body = {
-        state: { ...currentState, saved: Date.now() },
-        parts: chainParts(currentCtx),
-        bench: benchSpansOut(currentCtx),
-        done: currentState.step === "done" || currentState.step === "stats",
-        bundleFingerprint: fingerprint,
-        ...(pendingClaimName.current ? { name: pendingClaimName.current } : {}),
-      };
-      try {
-        const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, {
-          method: "PUT",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!r.ok) {
-          setSaveError(true);
-          return;
-        }
-        setSaveError(false);
-        if (body.name && pendingClaimName.current === body.name) {
-          pendingClaimName.current = null;
-          void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
-          void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
-        }
-      } catch {
+    const currentCtx = ctxRef.current;
+    const currentState = currentCtx.S;
+    currentState.elapsed = t0.current ? Date.now() - t0.current : currentState.elapsed;
+    const body = {
+      state: { ...currentState, saved: Date.now() },
+      parts: chainParts(currentCtx),
+      bench: benchSpansOut(currentCtx),
+      done: currentState.step === "done" || currentState.step === "stats",
+      bundleFingerprint: fingerprint,
+      ...(pendingClaimName.current ? { name: pendingClaimName.current } : {}),
+    };
+    try {
+      const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        ...(keepalive ? { keepalive: true } : {}),
+      });
+      if (!r.ok) {
         setSaveError(true);
+        return;
       }
-    }, 700);
+      setSaveError(false);
+      if (body.name && pendingClaimName.current === body.name) {
+        pendingClaimName.current = null;
+        void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
+        void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
+      }
+    } catch {
+      setSaveError(true);
+    }
   }, [fingerprint, recordingId, queryClient]);
+
+  const save = useCallback((options: { immediate?: boolean; keepalive?: boolean } = {}) => {
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    if (!Object.keys(ctxRef.current.S.you).length) return;
+    if (options.immediate) return sendSave(Boolean(options.keepalive));
+    saveTimer.current = window.setTimeout(() => {
+      saveTimer.current = null;
+      void sendSave();
+    }, 700);
+    return undefined;
+  }, [sendSave]);
+
+  const flushPendingSave = useCallback(() => {
+    if (saveTimer.current === null) return;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    void sendSave(true);
+  }, [sendSave]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushPendingSave();
+    };
+    window.addEventListener("pagehide", flushPendingSave);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushPendingSave);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      flushPendingSave();
+    };
+  }, [flushPendingSave]);
 
   /**
    * Labels are decision events, not snapshots of ClaimState. In particular,
@@ -802,8 +843,9 @@ export function GameClaim({
   const advance = async () => {
     pendingNextGuess.current = null;
     const where = afterChunk(ctx);
+    if (where === "done") await save({ immediate: true, keepalive: true });
+    else save();
     setVer((v) => v + 1);
-    save();
     window.scrollTo({ top: 0 });
     if (where === "next" && S.k !== null) {
       const nextK = S.k;
@@ -1241,6 +1283,12 @@ export function GameClaim({
 
   return (
     <Shell meter={meter}>
+      {staleState && !staleNoticeDismissed && (
+        <div role="status" aria-live="polite" className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+          <p className="text-sm leading-6 text-muted-text">{copy.common.staleStateNotice}</p>
+          <Btn kind="ghost" size="sm" onClick={() => setStaleNoticeDismissed(true)}>{copy.common.close}</Btn>
+        </div>
+      )}
       {saveError && <p className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.saveFailed}</p>}
       {labelError && <p role="status" className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.labelFailed}</p>}
       {body}

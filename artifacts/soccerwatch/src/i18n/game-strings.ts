@@ -23,6 +23,7 @@ const en = {
     noCropsDesc: "The tracking was made without crops, so there is nothing to pick yourself from yet.",
     saveFailed: "Not saved yet — we'll try again with your next tap.",
     labelFailed: "Your claim is saved, but this decision's training label could not be stored.",
+    staleStateNotice: "Your earlier progress was saved with an older version of this match's tracking and can't be carried over, so you're starting again.",
     saved: "Saved",
   },
   media: {
@@ -293,6 +294,7 @@ const ar: GameStrings = {
     noCropsDesc: "صُنع التتبّع دون صور، فلا يوجد بعد ما تختار نفسك منه.",
     saveFailed: "لم يُحفظ بعد — سنحاول مجددًا مع نقرتك التالية.",
     labelFailed: "حُفظت مطالبتك، لكن تعذّر حفظ تصنيف هذا القرار.",
+    staleStateNotice: "حُفظ تقدمك السابق على نسخة أقدم من تتبّع هذه المباراة ولا يمكن نقله، لذا ستبدأ من جديد.",
     saved: "محفوظ",
   },
   media: {
