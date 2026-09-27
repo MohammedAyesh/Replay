@@ -154,7 +154,7 @@ function QualityPicker({
   onToggle,
   onSelect,
 }: {
-  levels: Array<{ width: number; height: number; index: number }>;
+  levels: Array<{ width: number; height: number; bitrate: number; index: number }>;
   active: number;
   open: boolean;
   onToggle: () => void;
@@ -165,6 +165,12 @@ function QualityPicker({
     level.width > 0 && level.height > 0
       ? `${level.width}×${level.height}`
       : `${level.height}p`;
+  const levelLabel = (level: { width: number; height: number; bitrate: number }) => {
+    const resolution = resolutionLabel(level);
+    return level.bitrate > 0
+      ? `${resolution} · ${(level.bitrate / 1_000_000).toFixed(1)} Mbps`
+      : resolution;
+  };
   const singleLevel = levels.length === 1;
   const activeLevel = levels.find((level) => level.index === active);
   const buttonLabel = singleLevel
@@ -172,7 +178,7 @@ function QualityPicker({
     : active === -1
       ? "Auto"
       : activeLevel
-        ? resolutionLabel(activeLevel)
+        ? levelLabel(activeLevel)
         : "Auto";
   return (
     <div
@@ -200,10 +206,10 @@ function QualityPicker({
           >
             {singleLevel ? (
               <p className="max-w-64 px-3 py-2.5 text-xs leading-5 text-white/80">
-                Only {buttonLabel} is encoded for this video. Enable more Bunny Stream resolutions to switch quality.
+                This player received one compatible HLS quality level ({buttonLabel}). If Bunny lists more variants, they must be present in this video's HLS playlist and supported by the browser.
               </p>
             ) : (
-              [{ width: 0, height: 0, index: -1 }, ...levels].map((level) => (
+              [{ width: 0, height: 0, bitrate: 0, index: -1 }, ...levels].map((level) => (
                 <button
                   key={level.index}
                   type="button"
@@ -216,7 +222,7 @@ function QualityPicker({
                     active === level.index ? "text-primary" : "text-white hover:bg-white/10",
                   )}
                 >
-                  {level.index === -1 ? "Auto" : resolutionLabel(level)}
+                  {level.index === -1 ? "Auto" : levelLabel(level)}
                 </button>
               ))
             )}
@@ -292,7 +298,7 @@ export function ClipPlayer({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [qualityLevels, setQualityLevels] = useState<Array<{ width: number; height: number; index: number }>>([]);
+  const [qualityLevels, setQualityLevels] = useState<Array<{ width: number; height: number; bitrate: number; index: number }>>([]);
   const [activeQuality, setActiveQuality] = useState(-1);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
   const [usingFallback, setUsingFallback] = useState(false);
@@ -637,8 +643,8 @@ export function ClipPlayer({
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         element.play().catch(() => {});
         setQualityLevels(hls.levels
-          .map((level, index) => ({ width: level.width, height: level.height, index }))
-          .sort((a, b) => b.width - a.width || b.height - a.height));
+          .map((level, index) => ({ width: level.width, height: level.height, bitrate: level.bitrate, index }))
+          .sort((a, b) => b.width - a.width || b.height - a.height || b.bitrate - a.bitrate));
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
