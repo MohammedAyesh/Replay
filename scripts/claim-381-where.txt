@@ -1,0 +1,34 @@
+Development — workspace DATABASE_URL (database name: heliumdb)
+-- database --
+heliumdb
+-- counts --
+progress|0
+bindings|0
+offpitch|0
+labels|0
+-- bindings --
+-- claim_ids --
+none
+-- max_progress_updated_at --
+
+Production — read-only production connection (database name: neondb)
+-- database --
+database_name
+neondb
+-- counts --
+t,c
+progress,1
+bindings,1
+offpitch,1
+labels,42
+-- bindings --
+user_id,state,updated_at
+314,confirmed,2026-09-27 12:34:45.016+00
+-- claim_ids --
+claim_ids
+claim:34b6106318bb
+-- max_progress_updated_at --
+max
+2026-09-27 12:34:45.064+00
+
+Backup source: production read-only database (neondb), queried via executeSql environment=production.
