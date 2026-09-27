@@ -20,7 +20,7 @@
  * browser), and each save also becomes the claimant's identity row, so the
  * rest of Replay sees it.
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
@@ -42,11 +42,12 @@ import { StatsScreen } from "@/components/game-claim/StatsScreen";
 import { gameFromManifest, loadChunkData, kitNameKey, type LoadedChunk } from "@/lib/game-claim/load";
 import { groupsForShirtIdentity, shirtNumbersForKit, type ShirtIdentity } from "@/lib/game-claim/jersey";
 import { claimCountsForGroups, claimStatusForGroup, type ClaimStatusIdentity } from "@/lib/game-claim/claim-status";
+import { pictureForPiece, type PiecePicture } from "@/lib/game-claim/images";
 import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
   addTap, afterChunk, benchInHole, benchSpans, candidates, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
-  newState, nextHole, ovPos, pick, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
+  newState, nextHole, nextIllustratedJoin, ovPos, pick, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
   hkey, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts } from "@/lib/game-claim/parts";
@@ -709,6 +710,20 @@ export function GameClaim({
     });
   };
 
+  useLayoutEffect(() => {
+    if (S.step !== "joins" || S.k === null || !chunks.current[S.k]) return;
+    const next = nextIllustratedJoin(ctx, S.k, S.qi);
+    if (next.skipped > 0) {
+      act(() => {
+        for (let i = 1; i < next.skipped; i++) tap();
+        S.qi = next.index;
+      });
+    }
+    // Keep the saved question index aligned: an unillustratable prompt is the
+    // same as the claimant choosing "Can't tell".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ver, chunkVer]);
+
   /* -------------------------------------------------------------- render */
 
   const elapsed = t0.current ? ((S.step === "done" || S.step === "stats") && S.elapsed ? S.elapsed : now - t0.current) : S.elapsed;
@@ -767,12 +782,20 @@ export function GameClaim({
             const gs = d.groups.filter((g) => g.team === kit.key);
             if (!gs.length) return null;
             const claimCounts = claimCountsForGroups(gs, identities, identityId, claimName);
+            const kitPictures = gs.slice(0, 3).flatMap((g) => {
+              const picture = picturesForGroup(d, g, game.frameRate, 1)[0]?.picture;
+              return picture ? [{ id: g.cid, picture }] : [];
+            });
             return (
               <button key={kit.key} type="button" onClick={() => chooseKit(kit.key)}
                 className="flex flex-col gap-2.5 rounded-2xl border border-line bg-surface p-3 text-start hover:border-floodlight">
-                <div className="flex h-24 gap-1 overflow-hidden">
-                  {gs.slice(0, 3).map((g) => <Crop key={g.cid} chunk={d} keyName={d.pieces[spread(g.members, 1)[0]]?.img} h={96} />)}
-                </div>
+                {kitPictures.length > 0 && (
+                  <div className="flex h-24 gap-1 overflow-hidden">
+                    {kitPictures.map(({ id, picture }) => (
+                      <CropWithNote key={id} d={d} picture={picture} h={96} nearbyLabel={copy.media.nearbyPicture} />
+                    ))}
+                  </div>
+                )}
                 <div>
                   <strong className="font-display text-lg text-text">
                     <span className="me-2 inline-block h-3 w-3 rounded-full align-[-1px] ring-1 ring-white/25" style={{ background: kit.swatch }} />
@@ -919,9 +942,10 @@ export function GameClaim({
       writeGroupDecision={writeGroupDecision} writeRejectedGroup={writeRejectedGroup}
       writeRejectedTrack={writeRejectedTrack} />;
   } else if (S.step === "joins" && currentChunk && S.k !== null) {
-    const qs = questions(ctx, S.k);
-    const j = qs[S.qi];
-    if (!j) {
+    const next = nextIllustratedJoin(ctx, S.k, S.qi);
+    const j = next.junction;
+    const prompt = next.prompt;
+    if (next.skipped > 0 || !j || !prompt || prompt.kind === "skip") {
       body = null;
     } else {
       const d = currentChunk;
@@ -929,13 +953,13 @@ export function GameClaim({
       const B = d.pieces[j.b];
       body = (
         <div className="flex flex-col gap-4">
-          <Eyebrow>{copy.joins.eyebrow(S.qi + 1, qs.length)}</Eyebrow>
+          <Eyebrow>{copy.joins.eyebrow(S.qi + 1, questions(ctx, S.k).length)}</Eyebrow>
           <Title>{copy.joins.title}</Title>
           <Lede>{copy.joins.lead}</Lede>
           <div className="flex items-center justify-center gap-3">
-            <Tile d={d} img={A.img} label={copy.joins.before(disp(L2G(game, d.k, A.t1)))} />
+            <Tile d={d} photo={prompt.before} nearbyLabel={copy.media.nearbyPicture} label={copy.joins.before(disp(L2G(game, d.k, A.t1)))} />
             <div className="text-center text-xs text-muted-text">{copy.joins.later(j.gap < 1 ? copy.joins.moments : mmss(j.gap), Math.round(j.dm))}</div>
-            <Tile d={d} img={B.img} label={copy.joins.after(disp(L2G(game, d.k, B.t0)))} />
+            <Tile d={d} photo={prompt.after} nearbyLabel={copy.media.nearbyPicture} label={copy.joins.after(disp(L2G(game, d.k, B.t0)))} />
           </div>
           {mediaSlot}
           <Row>
@@ -1034,6 +1058,16 @@ function galleryGroups(d: LoadedChunk, team: string | null): Group[] {
   return d.groups.filter((g) => !team || g.team === team);
 }
 
+function picturesForGroup(d: LoadedChunk, group: Group, frameRate: number, count: number) {
+  const pictures = group.members.flatMap((id) => {
+    const piece = d.pieces[id];
+    if (!piece) return [];
+    const picture = pictureForPiece(d, piece, (piece.t0 + piece.t1) / 2, frameRate);
+    return picture ? [{ id: piece.id, picture }] : [];
+  });
+  return spread(pictures, count);
+}
+
 function exportClaim(S: ClaimState, recordingId: number) {
   const blob = new Blob([JSON.stringify(S)], { type: "application/json" });
   const a = document.createElement("a");
@@ -1042,8 +1076,25 @@ function exportClaim(S: ClaimState, recordingId: number) {
   a.click();
 }
 
-function Tile({ d, img, label, children, onClick, out, pickOn }: {
-  d: LoadedChunk; img: string | null | undefined; label: string; children?: React.ReactNode; onClick?: () => void; out?: boolean; pickOn?: boolean;
+function CropWithNote({ d, picture, h, nearbyLabel }: {
+  d: LoadedChunk; picture: PiecePicture | null; h: number; nearbyLabel: string;
+}) {
+  if (!picture || !d.crops[picture.key]) return null;
+  return (
+    <div className="relative inline-flex w-fit shrink-0">
+      <Crop chunk={d} keyName={picture.key} h={h} />
+      {picture.nearby && (
+        <span role="note" className="absolute bottom-1 start-1 rounded bg-black/80 px-1.5 py-0.5 text-[9px] leading-tight text-white shadow">
+          {nearbyLabel}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Tile({ d, photo, nearbyLabel, label, children, onClick, out, pickOn }: {
+  d: LoadedChunk; photo: PiecePicture | null; nearbyLabel: string; label: string; children?: React.ReactNode;
+  onClick?: () => void; out?: boolean; pickOn?: boolean;
 }) {
   return (
     <div
@@ -1053,7 +1104,7 @@ function Tile({ d, img, label, children, onClick, out, pickOn }: {
       className={`relative flex flex-col items-center gap-1 rounded-xl border bg-surface p-1 ${out ? "border-[#FF5A3C]" : pickOn ? "border-floodlight" : "border-line"} ${onClick ? "cursor-pointer" : ""}`}
     >
       <div className={out ? "opacity-25" : ""}>
-        {img && d.crops[img] ? <Crop chunk={d} keyName={img} h={108} /> : <span className="grid h-[108px] w-14 place-items-center text-[10px] text-muted-text">·</span>}
+        <CropWithNote d={d} picture={photo} h={108} nearbyLabel={nearbyLabel} />
       </div>
       <span dir="ltr" className="text-[11px] tabular-nums text-muted-text">{label}</span>
       {children}
@@ -1065,13 +1116,18 @@ function GroupCard({ d, g, copy, game, onWatch, action, claimLabel }: {
   d: LoadedChunk; g: Group; copy: GameStrings; game: Game; onWatch: () => void; action: React.ReactNode; claimLabel?: string;
 }) {
   const ms = g.members.map((m) => d.pieces[m]).filter(Boolean);
+  const photos = picturesForGroup(d, g, game.frameRate, 6);
   const t0 = Math.min(...ms.map((m) => m.t0));
   const t1 = Math.max(...ms.map((m) => m.t1));
   return (
     <div className="flex flex-col gap-2.5 rounded-2xl border border-line bg-surface p-3">
-      <div className="flex gap-1 overflow-x-auto">
-        {spread(ms, 6).map((m) => <Crop key={m.id} chunk={d} keyName={m.img} h={104} />)}
-      </div>
+      {photos.length > 0 && (
+        <div className="flex gap-1 overflow-x-auto">
+          {photos.map(({ id, picture }) => (
+            <CropWithNote key={id} d={d} picture={picture} h={104} nearbyLabel={copy.media.nearbyPicture} />
+          ))}
+        </div>
+      )}
       {claimLabel && <p role="note" className="text-xs font-medium text-muted-text">{claimLabel}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <div className="me-auto text-xs text-muted-text">
@@ -1180,18 +1236,22 @@ function ReviewScreen({
       {mediaSlot}
       <ChunkTimeline ctx={ctx} k={k} copy={copy.timeline} />
       <div className="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-2">
-        {ms.map((m) => (
-          <Tile key={m.id} d={d} img={m.img} out={y.out.includes(m.id)}
-            label={`${disp(L2G(G, k, m.t0))}–${disp(L2G(G, k, m.t1))}`}
-            onClick={() => {
-              const i = y.out.indexOf(m.id);
-              if (i < 0) writeRejectedTrack(k, m.manual ? m.src : m.id, (m.t0 + m.t1) / 2);
-              act(() => { if (i >= 0) y.out.splice(i, 1); else y.out.push(m.id); });
-            }}>
-            <button type="button" aria-label={copy.media.play} onClick={(e) => { e.stopPropagation(); watchPiece(m.id); }}
-              className="absolute bottom-7 end-2 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-[10px] text-white">▶</button>
-          </Tile>
-        ))}
+        {ms.map((m) => {
+          const photo = pictureForPiece(d, m, (m.t0 + m.t1) / 2, G.frameRate);
+          if (!photo) return null;
+          return (
+            <Tile key={m.id} d={d} photo={photo} nearbyLabel={copy.media.nearbyPicture} out={y.out.includes(m.id)}
+              label={`${disp(L2G(G, k, m.t0))}–${disp(L2G(G, k, m.t1))}`}
+              onClick={() => {
+                const i = y.out.indexOf(m.id);
+                if (i < 0) writeRejectedTrack(k, m.manual ? m.src : m.id, (m.t0 + m.t1) / 2);
+                act(() => { if (i >= 0) y.out.splice(i, 1); else y.out.push(m.id); });
+              }}>
+              <button type="button" aria-label={copy.media.play} onClick={(e) => { e.stopPropagation(); watchPiece(m.id); }}
+                className="absolute bottom-7 end-2 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-[10px] text-white">▶</button>
+            </Tile>
+          );
+        })}
       </div>
       {bs.length > 0 && (
         <Section title={copy.review.offPitchTitle}>
@@ -1266,6 +1326,15 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
   const bg = benchInHole(ctx, k, h);
   const c = candidates(ctx, k, h);
   const ref = [h.a, h.b].filter((p): p is NonNullable<Hole["a"]> => Boolean(p));
+  const refPictures = ref.flatMap((piece) => {
+    const at = piece === h.a ? piece.t1 : piece.t0;
+    const photo = pictureForPiece(d, piece, at, G.frameRate);
+    return photo ? [{ piece, photo }] : [];
+  });
+  const candidatePictures = c.flatMap((piece) => {
+    const photo = pictureForPiece(d, piece, (piece.t0 + piece.t1) / 2, G.frameRate);
+    return photo ? [{ piece, photo }] : [];
+  });
   const toG = (x: Hole): [number, number] => [L2G(G, k, x.t0), L2G(G, k, x.t1)];
   const y = Y(ctx, k);
   const lastManual = y.manual[y.manual.length - 1];
@@ -1277,10 +1346,11 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
       <Lede>{copy.gaps.lead(mmss(h.t1 - h.t0))}</Lede>
       <ChunkTimeline ctx={ctx} k={k} cur={h} copy={copy.timeline} />
       {mediaSlot}
-      {ref.some((p) => p.img) && (
+      {refPictures.length > 0 && (
         <Row>
-          {ref.filter((p) => p.img).map((p) => (
-            <Tile key={p.id} d={d} img={p.img} label={p === h.a ? copy.gaps.youBefore : copy.gaps.youAfter} />
+          {refPictures.map(({ piece, photo }) => (
+            <Tile key={piece.id} d={d} photo={photo} nearbyLabel={copy.media.nearbyPicture}
+              label={piece === h.a ? copy.gaps.youBefore : copy.gaps.youAfter} />
           ))}
         </Row>
       )}
@@ -1291,13 +1361,14 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
             action={<Btn kind="primary" size="sm" onClick={() => act(() => { const [, b] = toG(h); S.off.push([bg.a, Math.max(bg.b, b), "bench"]); S.off.sort((x, z) => x[0] - z[0]); })}>{copy.gaps.benchMe}</Btn>} />
         </Section>
       )}
-      {c.length > 0 && (
+      {candidatePictures.length > 0 && (
         <>
           <h3 className="font-display text-lg font-bold text-text">{copy.gaps.orOne}</h3>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-2">
-            {c.map((x) => (
-              <Tile key={x.id} d={d} img={x.img} pickOn={pickSet.has(x.id)} label={`${disp(L2G(G, k, x.t0))}–${disp(L2G(G, k, x.t1))}`}
-                onClick={() => { const n = new Set(pickSet); if (n.has(x.id)) n.delete(x.id); else n.add(x.id); setPickSet(n); }} />
+            {candidatePictures.map(({ piece, photo }) => (
+              <Tile key={piece.id} d={d} photo={photo} nearbyLabel={copy.media.nearbyPicture}
+                pickOn={pickSet.has(piece.id)} label={`${disp(L2G(G, k, piece.t0))}–${disp(L2G(G, k, piece.t1))}`}
+                onClick={() => { const n = new Set(pickSet); if (n.has(piece.id)) n.delete(piece.id); else n.add(piece.id); setPickSet(n); }} />
             ))}
           </div>
           <Row><Btn kind="primary" disabled={!pickSet.size} onClick={() => {

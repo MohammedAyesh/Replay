@@ -1,5 +1,6 @@
 import { averageProfiles, dist, isWeakColour } from "./appearance";
 import { groupProfileOf, reachOk } from "./build";
+import { pictureForPiece, type PiecePicture } from "./images";
 import type { ShirtIdentity } from "./jersey";
 import type { AnyPiece, Appearance, Chunk, Game, Group, Junction, ManualPiece, OffRange, Piece, Point } from "./model";
 import { L2G, OUT, overlapSeconds, union } from "./model";
@@ -301,6 +302,53 @@ export function questions(ctx: Ctx, k: number): Junction[] {
     }
   }
   return qs;
+}
+
+export type JoinPrompt =
+  | { kind: "ask"; before: PiecePicture; after: PiecePicture }
+  | { kind: "skip" };
+
+/** Return picture evidence for a handover, or mark it for an automatic skip. */
+export function resolveJoinPrompt(ctx: Ctx, k: number, junction: Junction): JoinPrompt {
+  const d = ctx.CH[k];
+  const beforePiece = d?.pieces[junction.a];
+  const afterPiece = d?.pieces[junction.b];
+  if (!d || !beforePiece || !afterPiece) return { kind: "skip" };
+
+  const before = pictureForPiece(
+    d,
+    beforePiece,
+    beforePiece.t1,
+    ctx.game.frameRate,
+    [Math.max(beforePiece.t0, beforePiece.t1 - 3), beforePiece.t1],
+  );
+  const after = pictureForPiece(
+    d,
+    afterPiece,
+    afterPiece.t0,
+    ctx.game.frameRate,
+    [afterPiece.t0, Math.min(afterPiece.t1, afterPiece.t0 + 3)],
+  );
+  return before && after ? { kind: "ask", before, after } : { kind: "skip" };
+}
+
+export function nextIllustratedJoin(
+  ctx: Ctx,
+  k: number,
+  startIndex: number,
+): { index: number; skipped: number; junction: Junction | null; prompt: JoinPrompt | null } {
+  const qs = questions(ctx, k);
+  const start = Math.max(0, startIndex);
+  let index = start;
+  while (index < qs.length) {
+    const junction = qs[index];
+    const prompt = resolveJoinPrompt(ctx, k, junction);
+    if (prompt.kind === "ask") {
+      return { index, skipped: index - start, junction, prompt };
+    }
+    index++;
+  }
+  return { index, skipped: index - start, junction: null, prompt: null };
 }
 
 /** The track ids that are you in chunk k (taps resolve to the track they landed on). */
