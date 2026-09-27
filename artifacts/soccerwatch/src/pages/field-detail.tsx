@@ -663,7 +663,8 @@ export default function FieldDetail() {
       <AnimatePresence>
         {activeVideo && (
           <ClipPlayer
-            src={`/api/hls-proxy/manifest?url=${encodeURIComponent(activeVideo.playbackUrl)}`}
+            src={activeVideo.playbackUrl}
+            proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(activeVideo.playbackUrl)}`}
             fallbackSrc={getBunnyMp4FallbackSource(activeVideo.playbackUrl, activeVideo.guid) ?? undefined}
             title={activeVideo.title}
             source={{ kind: "bunny", videoId: activeVideo.guid }}

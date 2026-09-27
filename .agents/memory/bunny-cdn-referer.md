@@ -4,17 +4,25 @@ description: Bunny CDN returns 403 to direct browser requests without a self-ref
 ---
 
 ## Rule
-Never return raw `https://vz-*.b-cdn.net/…` URLs in API responses that reach a browser. Always wrap them with the server-side HLS proxy.
 
-- `playbackUrl` → `/api/hls-proxy/manifest?url=${encodeURIComponent(rawCdnUrl)}`
-- `thumbnailUrl` → `/api/hls-proxy/segment?url=${encodeURIComponent(rawCdnUrl)}`
+Direct browser playback of Bunny HLS can work when requests carry the app's origin
+as the `Referer` and the CDN CORS policy allows that origin. Requests without a
+suitable `Referer` may still return 403.
 
-Helper functions: `getBunnyProxiedPlaybackUrl(videoId)` and `getBunnyProxiedThumbnailUrl(videoId, time?)` in `artifacts/api-server/src/lib/bunny.ts`.
+- For ordinary recordings in HLS.js browsers, use direct Bunny playback first
+  with `crossOrigin="anonymous"`; keep the same recording's proxy URL as fallback.
+- Prefer the proxy from the outset on native-HLS-only browsers when direct playback
+  is not reliable.
+- Keep proxy URLs for features that depend on the service-worker cache or
+  same-origin clip/export flows. Do not remove the proxy route or treat every
+  browser-facing playback URL as proxy-only.
+- Do not change server API response conventions globally without checking which
+  client features rely on the proxy URL.
 
-Raw CDN URL functions (`getBunnyPlaybackUrl`, `getBunnyThumbnailUrl`) are **only** for server-side use (FFmpeg export, Bunny API calls).
+**Why:** Testing confirmed that Bunny accepts direct playback with the site's
+`Referer` and CORS, but requests missing that referrer fail. This supersedes the
+earlier blanket assumption that all browser playback must use the proxy.
 
-**Why:** Bunny CDN enforces `Referer: https://<cdn-hostname>/` — a self-referrer a browser cannot send. The HLS proxy (`artifacts/api-server/src/routes/hlsProxy.ts`) adds this header before forwarding. Without it, every manifest, segment, and thumbnail request returns 403, leaving the player and card thumbnails black.
-
-**How to apply:** Any new endpoint that builds a `playbackUrl` or `thumbnailUrl` for a client response must use the proxied helpers. The export path (`artifacts/api-server/src/routes/userClips.ts` around `const videoUrl = getBunnyPlaybackUrl(videoId)`) is the single intentional exception — FFmpeg runs server-side and sets the referer manually.
-
-The `bunnyPlaybackUrl` field on field clips (`artifacts/api-server/src/routes/clips.ts`) is also a raw CDN URL — intentional because `field-detail.tsx` wraps it client-side at line 915 before passing it to HLS.js.
+**How to apply:** When a UI owns both URLs for a Bunny recording, give the player
+the direct URL and a proxy URL separately. Keep the proxy available for fallback,
+native HLS, cache preparation, and client-side export paths.

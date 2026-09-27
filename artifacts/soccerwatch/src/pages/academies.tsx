@@ -292,7 +292,8 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
         )}
         {recordingFor && recordingFor.rec.videoUrl && (
           <ClipPlayer
-            src={`/api/hls-proxy/manifest?url=${encodeURIComponent(recordingFor.rec.videoUrl)}`}
+            src={recordingFor.rec.videoUrl}
+            proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(recordingFor.rec.videoUrl)}`}
             fallbackSrc={getBunnyMp4FallbackSource(
               recordingFor.rec.videoUrl,
               extractBunnyGuid(recordingFor.rec.videoUrl),

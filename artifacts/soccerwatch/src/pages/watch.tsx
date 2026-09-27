@@ -310,7 +310,6 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
           const hls = new Hls({ enableWorker: false });
           capPlaybackQuality(hls);
           hlsRef.current = hls;
-          capPlaybackQuality(hls);
           hls.loadSource(src);
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, seekToStart);
@@ -403,7 +402,6 @@ function ClipScreen({ clip, index, slideHeight }: { clip: FeedClip; index: numbe
         const hls = new Hls({ enableWorker: false });
         capPlaybackQuality(hls);
         adHlsRef.current = hls;
-        capPlaybackQuality(hls);
         hls.loadSource(src);
         hls.attachMedia(adVideo);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {

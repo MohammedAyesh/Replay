@@ -31,8 +31,25 @@ import {
   type CropKeyframe,
   type Frame,
 } from "@/lib/cropFrame";
-import { capPlaybackQuality } from "@/lib/hlsQuality";
+import {
+  PLAYBACK_MAX_WIDTH,
+  capBelowFailedLevel,
+  capPlaybackQuality,
+  getAllowedHlsLevelIndexes,
+} from "@/lib/hlsQuality";
 import { cn } from "@/lib/utils";
+import {
+  beginSeekDrag,
+  changeSeekValue,
+  clampPlaybackPosition,
+  createPlaybackWatchdog,
+  createSeekDragState,
+  decidePlaybackRecovery,
+  endSeekDrag,
+  initialPlaybackSourceStage,
+  playbackPositionForRestore,
+  type PlaybackSourceStage,
+} from "./playbackRecovery";
 import {
   createLiveClipWindow,
   formatAmmanClock,
@@ -67,9 +84,11 @@ export type LiveDvrOptions = {
 };
 
 export type ClipPlayerProps = {
-  /** HLS manifest URL. The caller owns authorization/proxying. */
+  /** Preferred HLS manifest URL. Bunny recordings should use the direct CDN URL. */
   src: string;
-  /** Optional alternate media source (HLS or MP4) used after the preferred stream fails. */
+  /** Same recording through the app proxy, used when direct Bunny playback fails or native HLS is required. */
+  proxySrc?: string;
+  /** Optional MP4 source used after the preferred HLS sources fail. */
   fallbackSrc?: string;
   onFallback?: () => void;
   title: string;
@@ -235,6 +254,7 @@ function QualityPicker({
 
 export function ClipPlayer({
   src,
+  proxySrc,
   fallbackSrc,
   onFallback,
   title,
@@ -254,7 +274,10 @@ export function ClipPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const fallbackRestoreUtcRef = useRef<number | null>(null);
-  const fallbackTriedRef = useRef(false);
+  const sourceStageRef = useRef<PlaybackSourceStage>("direct");
+  const resumePositionRef = useRef<number | null>(null);
+  const lastKnownPositionRef = useRef(0);
+  const currentSourceRetryRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const {
     frameBoxRef,
@@ -274,7 +297,8 @@ export function ClipPlayer({
     handleFramePointerMove,
     handleFramePointerUp,
   } = usePanoramaFrame();
-  const seekDraggingRef = useRef(false);
+  const seekDragStateRef = useRef(createSeekDragState());
+  const seekInProgressRef = useRef(false);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frameRepeatDelayRef = useRef<number | null>(null);
   const frameRepeatIntervalRef = useRef<number | null>(null);
@@ -301,7 +325,7 @@ export function ClipPlayer({
   const [qualityLevels, setQualityLevels] = useState<Array<{ width: number; height: number; bitrate: number; index: number }>>([]);
   const [activeQuality, setActiveQuality] = useState(-1);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
-  const [usingFallback, setUsingFallback] = useState(false);
+  const [sourceStage, setSourceStageState] = useState<PlaybackSourceStage>("direct");
   const [playbackRate, setPlaybackRate] = useState(1);
   const [look, setLook] = useState<"original" | "warm" | "cinematic" | "noir">("original");
   const [duration, setDuration] = useState(0);
@@ -321,12 +345,31 @@ export function ClipPlayer({
   const sourceKey = source.kind === "bunny" ? source.videoId : source.token;
   const isLiveDvr = Boolean(liveDvr);
   const maxLiveClipSeconds = Math.max(1, Math.min(600, liveDvr?.maxDurationSeconds ?? 600));
-  const activeSrc = usingFallback && fallbackSrc ? fallbackSrc : src;
+  const activeSrc = sourceStage === "fallback"
+    ? fallbackSrc ?? src
+    : sourceStage === "proxy"
+      ? proxySrc ?? src
+      : src;
+  const usingFallback = sourceStage === "fallback";
+
+  const setPlaybackSourceStage = useCallback((stage: PlaybackSourceStage) => {
+    sourceStageRef.current = stage;
+    currentSourceRetryRef.current = false;
+    seekInProgressRef.current = false;
+    seekDragStateRef.current = createSeekDragState();
+    setSourceStageState(stage);
+  }, []);
 
   const retryPlayback = () => {
-    fallbackTriedRef.current = false;
+    const element = videoRef.current;
+    if (element && !isLive) {
+      resumePositionRef.current = playbackPositionForRestore(
+        element.currentTime,
+        lastKnownPositionRef.current,
+      );
+    }
     setPlaybackUiState("loading");
-    setUsingFallback(false);
+    setPlaybackSourceStage("direct");
     setPlaybackAttempt((attempt) => attempt + 1);
   };
 
@@ -335,11 +378,13 @@ export function ClipPlayer({
   }, []);
 
   useEffect(() => {
-    setUsingFallback(false);
-    fallbackTriedRef.current = false;
+    setPlaybackSourceStage("direct");
+    currentSourceRetryRef.current = false;
+    resumePositionRef.current = null;
+    lastKnownPositionRef.current = 0;
     setPlaybackUiState("loading");
     setIsPlaying(false);
-  }, [src]);
+  }, [proxySrc, setPlaybackSourceStage, src]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = playbackRate;
@@ -372,7 +417,9 @@ export function ClipPlayer({
     }
     if (lastExternalSeekRef.current === seekToSeconds || !videoRef.current) return;
     lastExternalSeekRef.current = seekToSeconds;
-    videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.duration || Infinity, seekToSeconds));
+    const position = Math.max(0, Math.min(videoRef.current.duration || Infinity, seekToSeconds));
+    videoRef.current.currentTime = position;
+    lastKnownPositionRef.current = position;
   }, [seekToSeconds]);
 
   const resetControlsTimer = useCallback(() => {
@@ -381,6 +428,29 @@ export function ClipPlayer({
     controlsTimerRef.current = setTimeout(() => setShowControls(false), 4000);
   }, []);
 
+  const commitSeekPosition = useCallback((value: number) => {
+    const element = videoRef.current;
+    if (!element) return;
+    const position = clampPlaybackPosition(value, element.duration);
+    seekInProgressRef.current = true;
+    element.currentTime = position;
+    lastKnownPositionRef.current = position;
+    setCurrentTime(position);
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
+  const handleSeekSliderChange = useCallback((value: number) => {
+    const update = changeSeekValue(seekDragStateRef.current, value);
+    setCurrentTime(update.previewValue);
+    if (update.seekValue != null) commitSeekPosition(update.seekValue);
+  }, [commitSeekPosition]);
+
+  const finishSeekSliderDrag = useCallback((value: number) => {
+    changeSeekValue(seekDragStateRef.current, value);
+    const position = endSeekDrag(seekDragStateRef.current);
+    if (position != null) commitSeekPosition(position);
+  }, [commitSeekPosition]);
+
   const seekToUtc = useCallback((targetUtcMs: number) => {
     const element = videoRef.current;
     if (!element || !liveRange) return;
@@ -388,6 +458,7 @@ export function ClipPlayer({
     const position = mediaPositionAtUtc(bounded);
     if (position == null) return;
     element.currentTime = position;
+    lastKnownPositionRef.current = position;
     liveUtcRef.current = bounded;
     setLiveUtcMs(bounded);
     liveDvr?.onCurrentTimeUtcChange?.(bounded);
@@ -462,9 +533,8 @@ export function ClipPlayer({
 
   const handleSkip = useCallback((delta: number) => {
     if ((isLive && !isLiveDvr) || !videoRef.current) return;
-    videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.duration || Infinity, videoRef.current.currentTime + delta));
-    resetControlsTimer();
-  }, [isLive, isLiveDvr, resetControlsTimer]);
+    commitSeekPosition(videoRef.current.currentTime + delta);
+  }, [commitSeekPosition, isLive, isLiveDvr]);
 
   const { flash: skipFlash, onTouchEnd: skipOnTouchEnd } = useSkipTap({
     onSkip: handleSkip,
@@ -475,6 +545,21 @@ export function ClipPlayer({
   useEffect(() => {
     const element = videoRef.current;
     if (!element) return;
+
+    const hlsSupported = Hls.isSupported();
+    const nativeHlsSupported = Boolean(element.canPlayType("application/vnd.apple.mpegurl"));
+    const preferredStage = initialPlaybackSourceStage({
+      hlsSupported,
+      nativeHlsSupported,
+      isLive,
+      proxySrc,
+      src,
+    });
+    if (preferredStage === "proxy" && sourceStageRef.current === "direct") {
+      setPlaybackSourceStage(preferredStage);
+      return;
+    }
+
     liveFragmentsRef.current = [];
     setLiveRange(null);
     if (fallbackRestoreUtcRef.current == null) {
@@ -487,70 +572,172 @@ export function ClipPlayer({
     element.muted = isLive;
     let previousTime = -1;
     let startupTimer: ReturnType<typeof setTimeout> | null = null;
-    let bufferingTimer: ReturnType<typeof setTimeout> | null = null;
-    let hasDecodedFrame = false;
+    let disposed = false;
+    let recoveryInProgress = false;
+    let seekInProgress = false;
+    let lastProgressPosition = Number.isFinite(element.currentTime) ? element.currentTime : 0;
     let mediaRecoveryAttempted = false;
-    let networkRecoveryAttempts = 0;
+    let mediaRecoveryPending = false;
+    let watchdog: ReturnType<typeof createPlaybackWatchdog> | null = null;
     const clearStartupTimer = () => {
       if (startupTimer !== null) {
         clearTimeout(startupTimer);
         startupTimer = null;
       }
     };
-    const clearBufferingTimer = () => {
-      if (bufferingTimer !== null) {
-        clearTimeout(bufferingTimer);
-        bufferingTimer = null;
-      }
-    };
     const showPlaybackError = () => {
       clearStartupTimer();
-      clearBufferingTimer();
+      watchdog?.dispose();
       setShowControls(true);
       setPlaybackUiState("error");
     };
-    const switchToFallback = () => {
-      if (!fallbackSrc || fallbackTriedRef.current || activeSrc === fallbackSrc) return false;
-      fallbackTriedRef.current = true;
-      fallbackRestoreUtcRef.current = isLiveDvr ? liveUtcRef.current : null;
-      setPlaybackUiState("loading");
-      setUsingFallback(true);
-      onFallback?.();
-      return true;
-    };
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
-    const onLoadedData = () => {
-      hasDecodedFrame = true;
+    const startStartupTimer = () => {
       clearStartupTimer();
-      clearBufferingTimer();
+      startupTimer = setTimeout(() => {
+        startupTimer = null;
+        void handlePlaybackFailure();
+      }, 20_000);
+    };
+    const preservePosition = () => {
+      if (isLiveDvr) {
+        fallbackRestoreUtcRef.current = liveUtcRef.current;
+      } else if (!isLive) {
+        resumePositionRef.current = playbackPositionForRestore(
+          element.currentTime,
+          lastKnownPositionRef.current,
+        );
+      }
+    };
+    const handlePlaybackFailure = async () => {
+      if (recoveryInProgress || disposed) return;
+      recoveryInProgress = true;
+      clearStartupTimer();
+      setPlaybackUiState("loading");
+      try {
+        const decision = await decidePlaybackRecovery({
+          currentStage: sourceStageRef.current,
+          hasProxy: Boolean(proxySrc && proxySrc !== src),
+          fallbackSrc,
+          currentRetryAttempted: currentSourceRetryRef.current,
+        });
+        if (disposed) return;
+
+        if (decision.type === "switch-source") {
+          preservePosition();
+          setPlaybackSourceStage(decision.stage);
+          if (decision.stage === "fallback") onFallback?.();
+          return;
+        }
+
+        if (decision.type === "retry-current") {
+          currentSourceRetryRef.current = true;
+          preservePosition();
+          const hls = hlsRef.current;
+          if (hls) {
+            const position = resumePositionRef.current ?? element.currentTime;
+            hls.startLoad(position);
+          } else {
+            element.src = activeSrc;
+            element.load();
+          }
+          startStartupTimer();
+          watchdog?.waiting();
+          return;
+        }
+
+        showPlaybackError();
+      } finally {
+        recoveryInProgress = false;
+      }
+    };
+    watchdog = createPlaybackWatchdog({
+      getSnapshot: () => ({
+        paused: element.paused,
+        currentTime: element.currentTime,
+        seeking: seekInProgress || seekInProgressRef.current || element.seeking,
+      }),
+      onStalled: () => { void handlePlaybackFailure(); },
+      onProgress: () => setPlaybackUiState("ready"),
+    });
+    const markPlaybackReady = () => {
+      clearStartupTimer();
+      mediaRecoveryPending = false;
+      watchdog?.progress();
       setPlaybackUiState("ready");
+    };
+    const applyPendingResumePosition = () => {
+      if (isLive || resumePositionRef.current == null) return;
+      if (!Number.isFinite(element.duration) || element.duration <= 0) return;
+      const position = clampPlaybackPosition(resumePositionRef.current, element.duration);
+      element.currentTime = position;
+      lastKnownPositionRef.current = position;
+      lastProgressPosition = position;
+      resumePositionRef.current = null;
+    };
+    const onPlay = () => {
+      setIsPlaying(true);
+      watchdog?.resume();
+    };
+    const onPause = () => {
+      setIsPlaying(false);
+      watchdog?.pause();
+      if (!seekInProgress && element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        setPlaybackUiState("ready");
+      }
+    };
+    const onLoadedData = () => {
+      applyPendingResumePosition();
+      markPlaybackReady();
+    };
+    const onCanPlay = () => {
+      applyPendingResumePosition();
+      markPlaybackReady();
     };
     const onPlaying = () => {
       setIsPlaying(true);
-      if (!hasDecodedFrame) return;
-      clearStartupTimer();
-      clearBufferingTimer();
-      setPlaybackUiState("ready");
+      applyPendingResumePosition();
+      markPlaybackReady();
     };
     const onWaiting = () => {
       setPlaybackUiState("loading");
-      if (bufferingTimer !== null) return;
-      bufferingTimer = setTimeout(() => {
-        if (!switchToFallback()) showPlaybackError();
-      }, 20_000);
+      watchdog?.waiting();
+    };
+    const onSeeking = () => {
+      seekInProgress = true;
+      seekInProgressRef.current = true;
+      lastProgressPosition = element.currentTime;
+      setPlaybackUiState("loading");
+      watchdog?.seeking();
+    };
+    const onSeeked = () => {
+      seekInProgress = false;
+      seekInProgressRef.current = false;
+      lastProgressPosition = element.currentTime;
+      lastKnownPositionRef.current = element.currentTime;
+      markPlaybackReady();
     };
     const onMediaError = () => {
-      clearStartupTimer();
-      clearBufferingTimer();
-      if (!switchToFallback()) showPlaybackError();
+      if (mediaRecoveryPending) return;
+      void handlePlaybackFailure();
     };
-    const onDurationChange = () => { if (!isLive) setDuration(element.duration || 0); };
+    const onDurationChange = () => {
+      if (!isLive) setDuration(element.duration || 0);
+      applyPendingResumePosition();
+    };
     const onTimeUpdate = () => {
       if (isLiveDvr && fallbackRestoreUtcRef.current != null) return;
-      if (seekDraggingRef.current) return;
       const now = element.currentTime;
+      if (!seekInProgress && now > lastProgressPosition + 0.02) {
+        lastProgressPosition = now;
+        lastKnownPositionRef.current = now;
+        clearStartupTimer();
+        watchdog?.progress();
+      } else if (now < lastProgressPosition - 0.1) {
+        lastProgressPosition = now;
+      }
+      if (seekDragStateRef.current.dragging) return;
       setCurrentTime(now);
+      lastKnownPositionRef.current = now;
       if (isLiveDvr) {
         const wallTime = programTimeAt(now);
         liveUtcRef.current = wallTime;
@@ -605,22 +792,23 @@ export function ClipPlayer({
     element.addEventListener("play", onPlay);
     element.addEventListener("pause", onPause);
     element.addEventListener("loadeddata", onLoadedData);
+    element.addEventListener("canplay", onCanPlay);
     element.addEventListener("playing", onPlaying);
     element.addEventListener("waiting", onWaiting);
     element.addEventListener("stalled", onWaiting);
+    element.addEventListener("seeking", onSeeking);
+    element.addEventListener("seeked", onSeeked);
     element.addEventListener("durationchange", onDurationChange);
     element.addEventListener("timeupdate", onTimeUpdate);
     element.addEventListener("ended", onEnded);
     element.addEventListener("error", onMediaError);
-    startupTimer = setTimeout(() => {
-      if (!switchToFallback()) showPlaybackError();
-    }, 20_000);
+    startStartupTimer();
     setQualityLevels([]);
     setActiveQuality(-1);
     setShowQualityPicker(false);
 
     const isHlsSource = /\.m3u8(?:$|\?)/i.test(activeSrc);
-    if (isHlsSource && Hls.isSupported()) {
+    if (isHlsSource && hlsSupported) {
       const hls = new Hls(isLive
         ? {
           enableWorker: true,
@@ -641,56 +829,93 @@ export function ClipPlayer({
         hls.on(Hls.Events.LEVEL_LOADED, updateLiveRange);
       }
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        const resumePosition = resumePositionRef.current;
+        if (resumePosition != null && !isLive) hls.startLoad(resumePosition);
         element.play().catch(() => {});
-        setQualityLevels(hls.levels
-          .map((level, index) => ({ width: level.width, height: level.height, bitrate: level.bitrate, index }))
-          .sort((a, b) => b.width - a.width || b.height - a.height || b.bitrate - a.bitrate));
+        void getAllowedHlsLevelIndexes(hls.levels, { maxWidth: PLAYBACK_MAX_WIDTH }).then((allowed) => {
+          if (disposed || hlsRef.current !== hls) return;
+          setQualityLevels(allowed
+            .map((index) => {
+              const level = hls.levels[index];
+              return { width: level.width, height: level.height, bitrate: level.bitrate, index };
+            })
+            .sort((a, b) => b.width - a.width || b.height - a.height || b.bitrate - a.bitrate));
+        });
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
-        if (switchToFallback()) return;
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecoveryAttempted) {
-          mediaRecoveryAttempted = true;
-          hls.recoverMediaError();
-        } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveryAttempts < 1) {
-          networkRecoveryAttempts += 1;
-          hls.startLoad();
-        } else {
-          onMediaError();
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          const fragmentLevel = data.frag?.level;
+          const failedLevel = typeof fragmentLevel === "number" && Number.isFinite(fragmentLevel)
+            ? fragmentLevel
+            : hls.currentLevel;
+          capBelowFailedLevel(hls, Math.max(0, failedLevel));
+          if (!mediaRecoveryAttempted) {
+            clearStartupTimer();
+            mediaRecoveryAttempted = true;
+            mediaRecoveryPending = true;
+            hls.recoverMediaError();
+            startStartupTimer();
+            return;
+          }
+          mediaRecoveryPending = false;
         }
+        void handlePlaybackFailure();
       });
-    } else if (isHlsSource && element.canPlayType("application/vnd.apple.mpegurl")) {
+    } else if (isHlsSource && nativeHlsSupported) {
       element.src = activeSrc;
       element.addEventListener("canplay", () => element.play().catch(() => {}), { once: true });
       element.load();
     } else if (isHlsSource) {
-      if (!switchToFallback()) showPlaybackError();
+      void handlePlaybackFailure();
     } else {
       element.src = activeSrc;
       element.load();
     }
 
     return () => {
+      disposed = true;
       if (isLiveDvr && liveUtcRef.current != null) {
         fallbackRestoreUtcRef.current = liveUtcRef.current;
+      } else if (!isLive && element.currentTime > 0) {
+        lastKnownPositionRef.current = playbackPositionForRestore(
+          element.currentTime,
+          lastKnownPositionRef.current,
+        );
       }
       hlsRef.current?.destroy();
       hlsRef.current = null;
       clearStartupTimer();
-      clearBufferingTimer();
+      watchdog?.dispose();
       element.removeEventListener("play", onPlay);
       element.removeEventListener("pause", onPause);
       element.removeEventListener("loadeddata", onLoadedData);
+      element.removeEventListener("canplay", onCanPlay);
       element.removeEventListener("playing", onPlaying);
       element.removeEventListener("waiting", onWaiting);
       element.removeEventListener("stalled", onWaiting);
+      element.removeEventListener("seeking", onSeeking);
+      element.removeEventListener("seeked", onSeeked);
       element.removeEventListener("durationchange", onDurationChange);
       element.removeEventListener("timeupdate", onTimeUpdate);
       element.removeEventListener("ended", onEnded);
       element.removeEventListener("error", onMediaError);
       liveFragmentsRef.current = [];
     };
-  }, [activeSrc, fallbackSrc, isLive, isLiveDvr, liveDvr, mediaPositionAtUtc, onFallback, playbackAttempt, programTimeAt]);
+  }, [
+    activeSrc,
+    fallbackSrc,
+    isLive,
+    isLiveDvr,
+    liveDvr,
+    mediaPositionAtUtc,
+    onFallback,
+    playbackAttempt,
+    programTimeAt,
+    proxySrc,
+    setPlaybackSourceStage,
+    src,
+  ]);
 
   const onLoadedMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {
     if (isLive) return;
@@ -708,8 +933,7 @@ export function ClipPlayer({
 
   const seek = (delta: number) => {
     if ((isLive && !isLiveDvr) || !videoRef.current) return;
-    videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.duration || Infinity, videoRef.current.currentTime + delta));
-    resetControlsTimer();
+    commitSeekPosition(videoRef.current.currentTime + delta);
   };
 
   const stepVideoBy = (delta: number) => {
@@ -724,6 +948,8 @@ export function ClipPlayer({
     // Setting currentTime seeks even when the target is outside the buffered range.
     // The video stays paused while HLS/the browser fetches the target segment.
     element.currentTime = target;
+    seekInProgressRef.current = true;
+    lastKnownPositionRef.current = target;
     resetControlsTimer();
   };
 
@@ -1040,6 +1266,7 @@ export function ClipPlayer({
         >
           <video
             ref={videoRef}
+            crossOrigin="anonymous"
             className="pointer-events-none select-none"
             style={{ ...frameToVideoStyle(frame), filter: videoFilter }}
             playsInline
@@ -1163,14 +1390,14 @@ export function ClipPlayer({
                     max={duration}
                     step={0.1}
                     value={currentTime}
-                    onMouseDown={() => { seekDraggingRef.current = true; }}
-                    onTouchStart={() => { seekDraggingRef.current = true; }}
-                    onMouseUp={() => { seekDraggingRef.current = false; }}
-                    onTouchEnd={() => { seekDraggingRef.current = false; }}
+                    onPointerDown={(event) => {
+                      beginSeekDrag(seekDragStateRef.current, parseFloat(event.currentTarget.value));
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }}
+                    onPointerUp={(event) => finishSeekSliderDrag(parseFloat(event.currentTarget.value))}
+                    onPointerCancel={(event) => finishSeekSliderDrag(parseFloat(event.currentTarget.value))}
                     onChange={(event) => {
-                      const value = parseFloat(event.target.value);
-                      setCurrentTime(value);
-                      if (videoRef.current) videoRef.current.currentTime = value;
+                      handleSeekSliderChange(parseFloat(event.currentTarget.value));
                     }}
                     className="flex-1 accent-primary h-1"
                   />
