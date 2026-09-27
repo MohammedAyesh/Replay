@@ -242,6 +242,19 @@ export async function loadRoomByRequestId(requestId: number): Promise<RoomContex
   return row ?? null;
 }
 
+/** Load a room by its internal match id for background stats-cache workers. */
+export async function loadRoomById(matchId: number): Promise<RoomContext | null> {
+  const [row] = await db.select({
+    room: matchRoomsTable,
+    request: footageRequestsTable,
+    field: fieldsTable,
+  }).from(matchRoomsTable)
+    .innerJoin(footageRequestsTable, eq(footageRequestsTable.id, matchRoomsTable.footageRequestId))
+    .innerJoin(fieldsTable, eq(fieldsTable.id, matchRoomsTable.fieldId))
+    .where(eq(matchRoomsTable.id, matchId));
+  return row ?? null;
+}
+
 export async function rosterFor(matchId: number): Promise<MatchPlayer[]> {
   return db.select().from(matchPlayersTable)
     .where(eq(matchPlayersTable.matchId, matchId))

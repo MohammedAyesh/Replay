@@ -28,3 +28,4 @@ export * from "./varMarks";
 export * from "./matchRooms";
 export * from "./safety";
 export * from "./friends";
+export * from "./matchPlayerStatsCache";

@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { CalendarDays, Crown, Loader2, Sparkles, Trophy, Users } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { MatchCard } from "@/components/match/MatchCard";
+import { FormPanel } from "@/components/match/MatchStats";
 import { PlayerAvatar } from "@/components/match/bits";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -139,6 +140,29 @@ export default function Matches() {
             {friendsCopy.title}
           </Link>
         </div>
+      )}
+
+      {data && (data.personalForm || data.personalFormPending) && (
+        <section className="mb-5 rounded-2xl border border-floodlight/25 bg-surface p-4" data-testid="section-personal-form">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <p className="font-display text-lg font-bold">{copy.competitionForm}</p>
+              <p className="mt-1 text-xs leading-5 text-muted-text">
+                {data.personalForm
+                  ? copy.competitionFormHint(data.personalForm.matchesUsed)
+                  : copy.competitionFormPending}
+              </p>
+            </div>
+            {data.personalForm && (
+              <span className="shrink-0 rounded-full bg-floodlight/10 px-2 py-1 font-mono text-xs font-bold text-floodlight">
+                {data.personalForm.matchesUsed} {copy.competitionMatches}
+              </span>
+            )}
+          </div>
+          {data.personalForm
+            ? <FormPanel form={data.personalForm} copy={copy} />
+            : <div className="h-20 animate-pulse rounded-xl bg-raised/60" aria-hidden="true" />}
+        </section>
       )}
 
       {matches.isLoading || isLoading ? (

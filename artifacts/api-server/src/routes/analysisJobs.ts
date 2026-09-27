@@ -13,6 +13,8 @@ import {
 } from "@workspace/db";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { logger } from "../lib/logger";
+import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
+import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { parseZipBundleDetailed, storeUploadBundle } from "./claimMatch";
 import {
   ACTIVE_STATUSES,
@@ -578,6 +580,8 @@ router.put("/worker/analysis/:id/bundle", bundleUploadSingle, async (req, res): 
       .update(analysisJobsTable)
       .set({ bundleRecordingIds: landed, heartbeatAt: new Date(), updatedAt: new Date() })
       .where(eq(analysisJobsTable.id, id));
+    await invalidateMatchStatsCacheForRecording(target);
+    queueMatchStatsCacheForRecording(target);
     logger.info({ jobId: id, workerId, recordingId: target }, "Analysis worker stored a tracking bundle");
     res.json({ ok: true, recordingId: target, remaining: job.sourceRecordingIds.filter((s) => !landed.includes(s)), stored });
   } catch (error) {

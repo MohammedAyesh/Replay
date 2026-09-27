@@ -179,7 +179,41 @@ export type MyMatchItem = {
   findRecordingId?: number | null;
 };
 
-export type MyMatches = { live: MyMatchItem[]; upcoming: MyMatchItem[]; recent: MyMatchItem[]; invites: MyMatchItem[] };
+export type PlayerMetricValues = {
+  minutes: number | null;
+  distanceKm: number | null;
+  topSpeedKmh: number | null;
+  touches: number | null;
+  passesTried: number | null;
+  passesCompleted: number | null;
+  passesReceived: number | null;
+  dribbles: number | null;
+  dribblesWon: number | null;
+  dribblesLost: number | null;
+  shots: number | null;
+  goals: number | null;
+};
+
+export type PlayerForm = {
+  matchesUsed: number;
+  averages: PlayerMetricValues;
+  bests: PlayerMetricValues;
+  lastFive: Array<{
+    matchId: number;
+    code: string;
+    startLocal: string;
+    stats: PlayerMetricValues;
+  }>;
+};
+
+export type MyMatches = {
+  live: MyMatchItem[];
+  upcoming: MyMatchItem[];
+  recent: MyMatchItem[];
+  invites: MyMatchItem[];
+  personalForm?: PlayerForm | null;
+  personalFormPending?: boolean;
+};
 
 export type MatchClip = {
   id: number;
@@ -252,6 +286,7 @@ export function useMyMatches(enabled = true) {
     queryFn: () => call<MyMatches>("/me/matches"),
     enabled,
     staleTime: 30_000,
+    refetchInterval: (query) => query.state.data?.personalFormPending ? 5_000 : false,
     retry: false,
   });
 }

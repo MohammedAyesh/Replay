@@ -57,7 +57,9 @@ import {
   uploadBufferToBunnyStorage,
 } from "../lib/bunny";
 import { logger } from "../lib/logger";
-import { matchStats, matchReplay, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
+import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
+import { buildMatchCompetition, playerMatchForm } from "../lib/matchStatsCache";
+import { canViewMatchPlayerRows } from "../lib/matchStatsRules";
 
 const router: IRouter = Router();
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 6 * 1024 * 1024 } });
@@ -428,8 +430,42 @@ router.get("/m/:code/stats", async (req, res): Promise<void> => {
   }
   const access = await statsAccess(viewerId, ctx.room.id, commerce);
   try {
-    const stats = await matchStats(ctx, access.unlocked);
-    res.json({ ...stats, unlocked: access.unlocked });
+    const roster = await rosterFor(ctx.room.id);
+    const ownerRows = viewerId && !viewer?.isAdmin
+      ? await db.select({ fieldId: fieldOwnersTable.fieldId }).from(fieldOwnersTable)
+        .where(and(eq(fieldOwnersTable.userId, viewerId), eq(fieldOwnersTable.fieldId, ctx.room.fieldId)))
+      : [];
+    const isMember = canViewMatchPlayerRows({
+      viewer,
+      captainUserId: ctx.room.captainUserId,
+      isFieldOwner: ownerRows.length > 0,
+      roster,
+    });
+    const includePlayers = access.unlocked && isMember;
+    const stats = await matchStats(ctx, includePlayers);
+    if (!includePlayers || !stats.players) {
+      res.json({ ...stats, players: null, competition: null, unlocked: access.unlocked });
+      return;
+    }
+
+    const blockedIds = viewerId ? await blockedUserIdsFor(viewerId) : new Set<number>();
+    const visibleRoster = roster.filter((player) => player.userId === null || !blockedIds.has(player.userId));
+    const visiblePlayerIds = new Set(visibleRoster.map((player) => player.id));
+    const visiblePlayers = stats.players.filter((player) => visiblePlayerIds.has(player.playerId));
+    const vote = await voteSummary(ctx, viewerId, visibleRoster);
+    const competition = await buildMatchCompetition({
+      matchId: ctx.room.id,
+      players: visiblePlayers,
+      roster: visibleRoster,
+      viewerId: viewerId!,
+      motmPlayerIds: vote.closed ? vote.winners : [],
+    });
+    res.json({
+      ...stats,
+      players: competition.players,
+      competition: competition.competition,
+      unlocked: access.unlocked,
+    });
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "match stats failed");
     res.status(500).json({ error: "Could not compute the match stats" });
@@ -460,7 +496,7 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     return;
   }
   if (user.isGuest) {
-    res.json({ upcoming: [], live: [], recent: [], invites: [] });
+    res.json({ upcoming: [], live: [], recent: [], invites: [], personalForm: null, personalFormPending: false });
     return;
   }
   const memberRooms = await roomsForUser(user.id);
@@ -573,11 +609,31 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     .filter((item) => item.myRsvp === "invited" && (item.phase === "pre" || item.phase === "live"))
     .sort(byStart);
   const active = items.filter((item) => item.myRsvp !== "out" && item.myRsvp !== "invited");
+  const recentItems = items
+    .filter((item) => ["processing", "ready", "expired"].includes(item.phase))
+    .sort((a, b) => b.startMs - a.startMs)
+    .slice(0, 30);
+  const contextsByCode = new Map(rooms.map((ctx) => [ctx.room.code, ctx]));
+  const recentContexts = recentItems
+    .map((item) => contextsByCode.get(item.code))
+    .filter((ctx): ctx is RoomContext => Boolean(ctx));
+  const [personalForm, queuedFills] = await Promise.all([
+    playerMatchForm(user.id).catch((error) => {
+      logger.warn({ userId: user.id, err: error }, "Could not load player match form");
+      return null;
+    }),
+    queueUncachedRecentMatchStats(recentContexts, 3, fieldRecordings).catch((error) => {
+      logger.warn({ userId: user.id, err: error }, "Could not queue recent match stats cache fills");
+      return 0;
+    }),
+  ]);
   res.json({
     live: active.filter((i) => i.phase === "live").sort(byStart),
     upcoming: active.filter((i) => i.phase === "pre" && i.startMs > now - 60 * 60 * 1000).sort(byStart),
-    recent: items.filter((i) => ["processing", "ready", "expired"].includes(i.phase)).sort((a, b) => b.startMs - a.startMs).slice(0, 30),
+    recent: recentItems,
     invites: [...accountInvites, ...inviteRooms.filter(Boolean)],
+    personalForm,
+    personalFormPending: queuedFills > 0,
   });
 });
 

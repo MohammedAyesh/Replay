@@ -22,6 +22,8 @@
  */
 import { Router, type IRouter } from "express";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
+import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
+import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { mergeMoments, personalMoments, type FollowPoint } from "../lib/personalMoments";
 import type { ClaimEarnedClip } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
@@ -732,6 +734,10 @@ export async function syncChainClaim(
         target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
         set: values,
       });
+    await invalidateMatchStatsCacheForRecording(ctx.recordingId);
+    if (state.completed && bindingAwards) {
+      queueMatchStatsCacheForRecording(ctx.recordingId, 700);
+    }
   } catch (error) {
     console.error("[claim-chain] claim sync failed", { recordingId: ctx.recordingId, error });
   }

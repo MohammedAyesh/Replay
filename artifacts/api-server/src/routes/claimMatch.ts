@@ -60,6 +60,8 @@ import {
 } from "../lib/playerMetrics";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { logger } from "../lib/logger";
+import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
+import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { parseBallSidecar, type BallSidecar } from "../lib/matchPlay";
 import { playCache } from "../lib/matchPlayLoad";
 import { parsePeopleSidecar, type PeopleSidecar } from "../lib/peopleSidecar";
@@ -2590,7 +2592,10 @@ router.put("/admin/recordings/:id/tracking-bundle", bundleUploadSingle, async (r
     return;
   }
   try {
-    res.json(await storeUploadBundle(recordingId, adminId, upload));
+    const stored = await storeUploadBundle(recordingId, adminId, upload);
+    await invalidateMatchStatsCacheForRecording(recordingId);
+    queueMatchStatsCacheForRecording(recordingId);
+    res.json(stored);
   } catch (error) {
     logger.error({ recordingId, err: error }, "Could not persist Claim Match tracking bundle");
     res.status(500).json({ error: "Could not save the tracking bundle. The previous bundle was kept." });

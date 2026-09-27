@@ -16,6 +16,7 @@
  *      captain's bib colour is only the fallback, because a picked swatch is a
  *      guess and a claimed player's shirt was measured.
  */
+import { createHash } from "node:crypto";
 import { and, eq, notInArray } from "drizzle-orm";
 import {
   db,
@@ -32,7 +33,10 @@ import {
 } from "@workspace/db";
 
 import { claimIdentityId } from "../routes/claimChain";
-import { ammanLocalInstant, randomToken, rosterFor, type RoomContext } from "./matchRooms";
+import { ammanLocalInstant, loadRoomById, randomToken, rosterFor, type RoomContext } from "./matchRooms";
+import { matchStatsCacheIsCurrent, persistMatchStatsCache, type MatchStatsCacheFingerprint, type MatchStatsCacheInput } from "./matchStatsCache";
+import { queueMatchStatsCacheForMatch } from "./matchStatsCacheJobs";
+import { logger } from "./logger";
 import {
   detectedGoals,
   detectedShots,
@@ -89,6 +93,7 @@ export function recordingWindow(recording: Pick<Recording, "date" | "timeSlot" |
 
 export type LinkedRecording = {
   recordingId: number;
+  bundleId: number;
   manifest: TrackingManifest;
   /** the booking's window on this recording's tracking clock, seconds */
   fromSeconds: number;
@@ -96,7 +101,7 @@ export type LinkedRecording = {
 };
 
 /** Recordings with tracking that overlap a booking on its field. */
-type FieldRecordingRows = Array<{ recording: Recording; manifest: TrackingManifest }>;
+type FieldRecordingRows = Array<{ recording: Recording; bundleId: number; manifest: TrackingManifest }>;
 export type FieldRecordingCache = Map<number, Promise<FieldRecordingRows>>;
 
 /**
@@ -109,7 +114,11 @@ export async function recordingsForRoom(ctx: RoomContext, perField?: FieldRecord
   const end = ammanLocalInstant(ctx.request.endLocal);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
   const load = () => db
-    .select({ recording: recordingsTable, manifest: recordingTrackingBundlesTable.manifest })
+    .select({
+      recording: recordingsTable,
+      bundleId: recordingTrackingBundlesTable.id,
+      manifest: recordingTrackingBundlesTable.manifest,
+    })
     .from(recordingsTable)
     .innerJoin(recordingTrackingBundlesTable, eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id))
     .where(eq(recordingsTable.fieldId, ctx.room.fieldId));
@@ -120,11 +129,12 @@ export async function recordingsForRoom(ctx: RoomContext, perField?: FieldRecord
   }
   const rows = await pending;
   const out: LinkedRecording[] = [];
-  for (const { recording, manifest } of rows) {
+  for (const { recording, bundleId, manifest } of rows) {
     const w = recordingWindow(recording, manifest);
     if (!Number.isFinite(w.startMs) || w.endMs <= start || w.startMs >= end) continue;
     out.push({
       recordingId: recording.id,
+      bundleId,
       manifest,
       fromSeconds: Math.max(0, (start - w.startMs) / 1000),
       toSeconds: Math.min(manifest.duration, (end - w.startMs) / 1000),
@@ -170,6 +180,117 @@ function clipParts(parts: ClaimedPart[], fromSeconds: number, toSeconds: number,
   return parts
     .map((p) => ({ trackId: p.trackId, fromFrame: Math.max(p.fromFrame, a), toFrame: Math.min(p.toFrame, b) }))
     .filter((p) => p.toFrame > p.fromFrame);
+}
+
+function cacheFingerprints(
+  matchId: number,
+  roster: MatchPlayer[],
+  links: LinkedRecording[],
+): MatchStatsCacheFingerprint[] {
+  const fingerprints: MatchStatsCacheFingerprint[] = [];
+  for (const player of roster) {
+    if (!player.userId) continue;
+    const sources: Array<{
+      recordingId: number;
+      bundleId: number;
+      fromSeconds: number;
+      toSeconds: number;
+      parts: ClaimedPart[];
+    }> = [];
+    for (const link of links) {
+      const fps = link.manifest.frameRate;
+      if (!Number.isFinite(fps) || fps <= 0) continue;
+      const parts = clipParts(
+        partsOf(link.manifest, player.userId, link.recordingId),
+        link.fromSeconds,
+        link.toSeconds,
+        fps,
+      );
+      if (!parts.length) continue;
+      sources.push({
+        recordingId: link.recordingId,
+        bundleId: link.bundleId,
+        fromSeconds: link.fromSeconds,
+        toSeconds: link.toSeconds,
+        parts,
+      });
+    }
+    if (!sources.length) continue;
+    const input = {
+      version: 1,
+      matchId,
+      matchPlayerId: player.id,
+      userId: player.userId,
+      sources,
+    };
+    fingerprints.push({
+      matchId,
+      matchPlayerId: player.id,
+      userId: player.userId,
+      recordingIds: sources.map((source) => source.recordingId),
+      fingerprint: createHash("sha256").update(JSON.stringify(input)).digest("hex"),
+    });
+  }
+  return fingerprints;
+}
+
+function cacheStatsValues(stats: MatchPlayerStats): MatchStatsCacheInput["stats"] {
+  return {
+    minutes: stats.minutes,
+    distanceKm: stats.distanceKm,
+    topSpeedKmh: stats.topSpeedKmh,
+    touches: stats.touches,
+    passesTried: stats.passesTried,
+    passesCompleted: stats.passesCompleted,
+    passesReceived: stats.passesReceived,
+    dribbles: stats.dribbles,
+    dribblesWon: stats.dribblesWon,
+    dribblesLost: stats.dribblesLost,
+    shots: stats.shots,
+    goals: stats.goals,
+  };
+}
+
+/** Queue at most `maxFills` stale recent matches without holding up /me/matches. */
+export async function queueUncachedRecentMatchStats(
+  contexts: RoomContext[],
+  maxFills = 3,
+  perField?: FieldRecordingCache,
+): Promise<number> {
+  let queued = 0;
+  for (const ctx of contexts) {
+    if (queued >= Math.max(0, maxFills)) break;
+    try {
+      const links = await recordingsForRoom(ctx, perField);
+      if (!links.length) continue;
+      const roster = await rosterFor(ctx.room.id);
+      const expected = cacheFingerprints(ctx.room.id, roster, links);
+      if (await matchStatsCacheIsCurrent(ctx.room.id, expected)) continue;
+      queueMatchStatsCacheForMatch(ctx.room.id);
+      queued++;
+    } catch (error) {
+      logger.warn({ matchId: ctx.room.id, err: error }, "Could not inspect recent match stats cache");
+    }
+  }
+  return queued;
+}
+
+export async function fillMatchStatsCacheForMatch(matchId: number): Promise<void> {
+  const ctx = await loadRoomById(matchId);
+  if (!ctx) return;
+  const links = await recordingsForRoom(ctx);
+  if (!links.length) return;
+  const roster = await rosterFor(matchId);
+  const expected = cacheFingerprints(matchId, roster, links);
+  if (await matchStatsCacheIsCurrent(matchId, expected)) return;
+  await matchStats(ctx, true);
+}
+
+export async function fillMatchStatsCacheForRecording(recordingId: number): Promise<void> {
+  const rooms = await roomsForRecording(recordingId);
+  for (const { room } of rooms) {
+    await fillMatchStatsCacheForMatch(room.id);
+  }
 }
 
 const SIDES = ["A", "B", "C"] as const;
@@ -451,6 +572,19 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
     t.possessionPercent = [Math.round((1000 * t.possessionSeconds[0]) / pt) / 10, Math.round((1000 * t.possessionSeconds[1]) / pt) / 10];
     const aT = t.passesTried[0] + t.passesTried[1];
     t.completionPercent = aT ? Math.round((1000 * (t.passesCompleted[0] + t.passesCompleted[1])) / aT) / 10 : 0;
+  }
+  if (includePlayers) {
+    try {
+      const byPlayerId = new Map([...perPlayer.values()].map((player) => [player.playerId, player]));
+      const cacheRows: MatchStatsCacheInput[] = cacheFingerprints(ctx.room.id, roster, plays.map((item) => item.link))
+        .flatMap((fingerprint) => {
+          const player = byPlayerId.get(fingerprint.matchPlayerId);
+          return player?.claimed ? [{ ...fingerprint, stats: cacheStatsValues(player) }] : [];
+        });
+      await persistMatchStatsCache(ctx.room.id, cacheRows);
+    } catch (error) {
+      logger.error({ matchId: ctx.room.id, err: error }, "Could not persist match player stats cache");
+    }
   }
   return {
     available: true,
