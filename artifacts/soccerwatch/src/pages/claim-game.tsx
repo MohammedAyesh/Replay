@@ -1090,7 +1090,11 @@ function ReviewScreen({
           <div className="flex flex-col gap-3">
             {nb.slice(0, 3).map(([, c]) => (
               <GroupCard key={c} d={d} g={d.byCid[c]} copy={copy} game={G} onWatch={() => previewGroup(d, d.byCid[c])}
-                action={<Btn size="sm" onClick={() => act(() => { y.added.push(c); })}>{copy.review.alsoMe}</Btn>} />
+                action={<Btn size="sm" onClick={() => {
+                  const candidate = d.byCid[c];
+                  if (candidate) writeGroupDecision(d, candidate);
+                  act(() => { y.added.push(c); });
+                }}>{copy.review.alsoMe}</Btn>} />
             ))}
           </div>
         </Section>

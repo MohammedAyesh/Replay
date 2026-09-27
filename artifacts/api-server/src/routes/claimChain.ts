@@ -26,9 +26,10 @@ import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { mergeMoments, personalMoments, type FollowPoint } from "../lib/personalMoments";
 import type { ClaimEarnedClip } from "@workspace/db";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "crypto";
 import { z } from "zod";
+import { writeFindDecisionLabelOnce, type FindDecisionLabelStore } from "../lib/idempotentFindDecisionLabel";
 
 import {
   db,
@@ -813,46 +814,43 @@ export async function recordFindDecisionLabel(
     geom: geom as unknown as Record<string, unknown>,
     detectorSwapEvidence: geom.detector.swapEvidence,
   };
-  const decisionKey = JSON.stringify([
-    row.userId,
-    row.recordingId,
-    row.bundleFingerprint,
-    row.kind,
-    row.atFrame,
-    row.wrongTrackId,
-    row.rightTrackId,
-  ]);
-
   try {
-    return await db.transaction(async (tx) => {
-      await tx.execute(sql`
-        select pg_advisory_xact_lock(
-          hashtext(${decisionKey}),
-          hashtext('claim_chain_labels')
-        )
-      `);
-      const [existing] = await tx
-        .select({ id: claimChainLabelsTable.id })
-        .from(claimChainLabelsTable)
-        .where(and(
-          eq(claimChainLabelsTable.userId, row.userId),
-          eq(claimChainLabelsTable.recordingId, row.recordingId),
-          eq(claimChainLabelsTable.bundleFingerprint, row.bundleFingerprint),
-          eq(claimChainLabelsTable.kind, row.kind),
-          eq(claimChainLabelsTable.atFrame, row.atFrame),
-          row.wrongTrackId === null
-            ? isNull(claimChainLabelsTable.wrongTrackId)
-            : eq(claimChainLabelsTable.wrongTrackId, row.wrongTrackId),
-          row.rightTrackId === null
-            ? isNull(claimChainLabelsTable.rightTrackId)
-            : eq(claimChainLabelsTable.rightTrackId, row.rightTrackId),
-        ))
-        .limit(1);
-      if (existing) return true;
-
-      await tx.insert(claimChainLabelsTable).values(row);
-      return true;
-    });
+    const store: FindDecisionLabelStore<typeof row> = {
+      withDecisionLock: (decisionKey, action) => db.transaction(async (tx) => {
+        await tx.execute(sql`
+          select pg_advisory_xact_lock(
+            hashtext(${decisionKey}),
+            hashtext('claim_chain_labels')
+          )
+        `);
+        return action({
+          exists: async (identity) => {
+            const [existing] = await tx
+              .select({ id: claimChainLabelsTable.id })
+              .from(claimChainLabelsTable)
+              .where(and(
+                eq(claimChainLabelsTable.userId, identity.userId),
+                eq(claimChainLabelsTable.recordingId, identity.recordingId),
+                eq(claimChainLabelsTable.bundleFingerprint, identity.bundleFingerprint),
+                eq(claimChainLabelsTable.kind, identity.kind),
+                eq(claimChainLabelsTable.atFrame, identity.atFrame),
+                identity.wrongTrackId === null
+                  ? sql`${claimChainLabelsTable.wrongTrackId} is null`
+                  : eq(claimChainLabelsTable.wrongTrackId, identity.wrongTrackId),
+                identity.rightTrackId === null
+                  ? sql`${claimChainLabelsTable.rightTrackId} is null`
+                  : eq(claimChainLabelsTable.rightTrackId, identity.rightTrackId),
+              ))
+              .limit(1);
+            return Boolean(existing);
+          },
+          insert: async (candidate) => {
+            await tx.insert(claimChainLabelsTable).values(candidate);
+          },
+        });
+      }),
+    };
+    return await writeFindDecisionLabelOnce(row, store);
   } catch (error) {
     console.error("[claim-game] label write failed", { recordingId: ctx.recordingId, kind, error });
     return false;
