@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Hls from "hls.js";
 import { capPlaybackQuality } from "@/lib/hlsQuality";
 import type { Chunk, Game, Point } from "@/lib/game-claim/model";
@@ -91,7 +91,7 @@ type Props = {
   onFrame?: (t: number) => void;
 };
 
-export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
+export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
   { game, chunks, videoUrl, copy, onFrame },
   ref,
 ) {
@@ -111,10 +111,22 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
   const mhRef = useRef(240);
   const [playing, setPlaying] = useState(false);
   const [clock, setClock] = useState(0);
+  const clockRef = useRef(0);
+  const [scrub, setScrub] = useState<number | null>(null);
+  const scrubRef = useRef<number | null>(null);
+  const resumeAfterScrubRef = useRef(false);
   const [range, setRange] = useState<[number, number]>([0, game.total]);
   const [label, setLabel] = useState("");
   const [videoError, setVideoError] = useState(false);
   const vs = game.videoStartSeconds || 0;
+
+  const publishClock = useCallback((t: number, force = false) => {
+    // The canvas still follows each video frame; React only needs to move the
+    // playhead a few times per second for a responsive, low-cost scrubber.
+    if (!force && Math.abs(t - clockRef.current) < 0.2) return;
+    clockRef.current = t;
+    setClock(t);
+  }, []);
 
   const trackingTime = useCallback(() => {
     const v = videoRef.current;
@@ -141,7 +153,7 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
     const Yp = (y: number) => g.oy + y * g.s;
     const gt = trackingTime();
     ctx.clearRect(0, 0, g.W, g.H);
-    setClock(gt);
+    publishClock(gt);
     const k = chunkAt(game, gt);
     const lt = G2L(game, k, gt);
     const vw = view.current;
@@ -164,7 +176,7 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
       ctx.fill();
     }
     onFrameRef.current?.(gt);
-  }, [game, trackingTime, vgeo]);
+  }, [game, publishClock, trackingTime, vgeo]);
 
   const layout = useCallback(() => {
     const wrap = wrapRef.current;
@@ -194,7 +206,8 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
     const vw = view.current;
     const clamped = Math.max(vw.lo, Math.min(vw.hi, t));
     v.currentTime = clamped + vs;
-  }, [vs]);
+    publishClock(clamped, true);
+  }, [publishClock, vs]);
 
   const loop = useCallback(() => {
     const v = videoRef.current;
@@ -224,6 +237,7 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
     };
     setRange([view.current.lo, view.current.hi]);
     setLabel(view.current.label);
+    publishClock(o.t, true);
     if (v) {
       v.pause();
       v.currentTime = o.t + vs;
@@ -237,7 +251,7 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
         wrap.scrollLeft = g.ox + f[0] * g.s - wrap.clientWidth / 2;
       }
     });
-  }, [draw, vgeo, vs]);
+  }, [draw, publishClock, vgeo, vs]);
 
   useImperativeHandle(ref, () => ({
     show,
@@ -330,9 +344,34 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) {
-      if (trackingTime() >= view.current.hi - 0.05) v.currentTime = view.current.lo + vs;
+      if (trackingTime() >= view.current.hi - 0.05) seek(view.current.lo);
       void v.play().catch(() => undefined);
     } else v.pause();
+  };
+
+  const beginScrub = () => {
+    const v = videoRef.current;
+    resumeAfterScrubRef.current = Boolean(v && !v.paused);
+    v?.pause();
+    const t = trackingTime();
+    scrubRef.current = t;
+    setScrub(t);
+  };
+
+  const updateScrub = (t: number) => {
+    scrubRef.current = t;
+    setScrub(t);
+  };
+
+  const finishScrub = () => {
+    const t = scrubRef.current;
+    if (t === null) return;
+    scrubRef.current = null;
+    setScrub(null);
+    seek(t);
+    const v = videoRef.current;
+    if (resumeAfterScrubRef.current) void v?.play().catch(() => setPlaying(false));
+    resumeAfterScrubRef.current = false;
   };
 
   return (
@@ -367,15 +406,20 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
         </button>
         <button type="button" onClick={() => seek(trackingTime() - 2)} className="rounded-full border border-line px-2.5 py-1 text-xs text-text">{copy.back2}</button>
         <button type="button" onClick={() => seek(trackingTime() + 2)} className="rounded-full border border-line px-2.5 py-1 text-xs text-text">{copy.fwd2}</button>
-        <span className="w-14 shrink-0 font-display text-xs tabular-nums text-text">{mmss(clock + (game.matchOffset || 0))}</span>
+        <span className="w-14 shrink-0 font-display text-xs tabular-nums text-text">{mmss((scrub ?? clock) + (game.matchOffset || 0))}</span>
         <input
           type="range"
           aria-label={copy.scrub}
           min={range[0]}
           max={range[1]}
           step={0.05}
-          value={Math.max(range[0], Math.min(range[1], clock))}
-          onChange={(e) => seek(Number(e.target.value))}
+          value={Math.max(range[0], Math.min(range[1], scrub ?? clock))}
+          onPointerDown={beginScrub}
+          onChange={(e) => updateScrub(Number(e.currentTarget.value))}
+          onPointerUp={finishScrub}
+          onPointerCancel={finishScrub}
+          onKeyUp={finishScrub}
+          onBlur={finishScrub}
           className="min-w-0 flex-1 accent-[#D4FF4F]"
         />
         <button type="button" aria-label={copy.zoomOut} onClick={() => zoom(1 / 1.35)} className="rounded-full border border-line px-2.5 py-1 text-xs text-text">−</button>
@@ -383,4 +427,4 @@ export const GameMedia = forwardRef<MediaHandle, Props>(function GameMedia(
       </div>
     </div>
   );
-});
+}));
