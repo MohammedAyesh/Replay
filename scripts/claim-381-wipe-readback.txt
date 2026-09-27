@@ -1,24 +1,3 @@
-1) ls -l scripts/backup-claim-381-users-196-314.json
--rw-r--r-- 1 runner runner 61078 Sep 27 13:16 scripts/backup-claim-381-users-196-314.json
-2) select count(*) from claim_match_progress where recording_id = 381;
-count
-1
-3) select user_id, state from claim_match_identity_bindings where recording_id = 381 order by user_id;
-user_id,state
-314,confirmed
-4) select count(*) from claim_match_off_pitch_spans where recording_id = 381;
-count
-1
-5) select jsonb_array_length(coalesce(manifest->'identities','[]'::jsonb)) from recording_tracking_bundles where recording_id = 381;
-jsonb_array_length
-1
-6) select elem->>'id' as id from recording_tracking_bundles b cross join lateral jsonb_array_elements(coalesce(b.manifest->'identities','[]'::jsonb)) as e(elem) where b.recording_id = 381 and elem->>'id' like 'claim:%' order by 1;
-id
-claim:34b6106318bb
-7) select user_id, kind, count(*) from claim_chain_labels where recording_id = 381 group by 1,2 order by 1,2;
-user_id,kind,count
-314,confirm,35
-314,lost,7
-8) select count(*) from claim_chain_labels where recording_id = 381;
-count
-42
+NOT RUN: The requested psql command would use the workspace DATABASE_URL, which resolves to the development database heliumdb. Production database access available here is read-only. No DELETE or UPDATE was executed.
+
+Preflight output: heliumdb|unix|postgres
