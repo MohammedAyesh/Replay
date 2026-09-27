@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { JerseySidecar } from "@workspace/api-client-react";
 import type { Group } from "./model";
-import { groupShirtIdentities } from "./jersey";
+import { groupShirtIdentities, groupsForShirtIdentity, shirtNumbersForKit } from "./jersey";
 
-function group(cid: string, team: string, members: string[]): Group {
-  return { cid, dur: 60, team, members, junctions: [], nb: [] };
+function group(cid: string, team: string | null, members: string[], dur = 60): Group {
+  return { cid, dur, team, members, junctions: [], nb: [] };
 }
 
 function sidecar(tracks: JerseySidecar["tracks"]): JerseySidecar {
@@ -67,5 +67,64 @@ describe("group shirt identities", () => {
       uncertain: false,
       identity: null,
     });
+  });
+
+  it("offers only numbers that resolve to the selected kit", () => {
+    const options = shirtNumbersForKit(
+      [
+        group("dark-ten", "dark", ["dark-ten-track"]),
+        group("light-ten", "light", ["light-ten-track"]),
+        group("unlabelled-eight", null, ["unlabelled-track"]),
+      ],
+      sidecar({
+        "dark-ten-track": { number: "10", seenFrames: 8, confidence: 0.9 },
+        "light-ten-track": { number: "10", seenFrames: 7, confidence: 0.9 },
+        "unlabelled-track": { number: "8", seenFrames: 9, confidence: 0.8 },
+      }),
+      "dark",
+    );
+
+    expect(options.map(({ number, kitKey }) => ({ number, kitKey }))).toEqual([
+      { number: "10", kitKey: "dark" },
+    ]);
+    expect(shirtNumbersForKit([], sidecar({}), null)).toEqual([]);
+  });
+
+  it("orders shirt numbers by combined on-camera coverage", () => {
+    const options = shirtNumbersForKit(
+      [
+        group("ten-a", "dark", ["ten-a-track"], 31),
+        group("ten-b", "dark", ["ten-b-track"], 19),
+        group("seven", "dark", ["seven-track"], 65),
+      ],
+      sidecar({
+        "ten-a-track": { number: "10", seenFrames: 20, confidence: 0.9 },
+        "ten-b-track": { number: "10", seenFrames: 12, confidence: 0.8 },
+        "seven-track": { number: "7", seenFrames: 10, confidence: 0.8 },
+      }),
+      "dark",
+    );
+
+    expect(options.map(({ number, coverageSeconds }) => ({ number, coverageSeconds }))).toEqual([
+      { number: "7", coverageSeconds: 65 },
+      { number: "10", coverageSeconds: 50 },
+    ]);
+  });
+
+  it("matches a later chunk by both number and kit", () => {
+    const laterGroups = [
+      group("other-kit-ten", "light", ["other-kit-track"], 90),
+      group("same-identity-ten", "dark", ["same-identity-track"], 40),
+      group("unlabelled-ten", null, ["unlabelled-track"], 80),
+    ];
+    const jersey = sidecar({
+      "other-kit-track": { number: "10", seenFrames: 15, confidence: 0.9 },
+      "same-identity-track": { number: "10", seenFrames: 12, confidence: 0.9 },
+      "unlabelled-track": { number: "10", seenFrames: 20, confidence: 0.9 },
+    });
+
+    expect(groupsForShirtIdentity(laterGroups, jersey, { number: "10", kitKey: "dark" }).map(({ groupId }) => groupId))
+      .toEqual(["same-identity-ten"]);
+    expect(groupsForShirtIdentity(laterGroups, jersey, { number: "10", kitKey: "bib" })).toEqual([]);
   });
 });

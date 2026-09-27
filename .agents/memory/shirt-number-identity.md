@@ -5,6 +5,6 @@ description: Correctness constraints for deriving player identities from jersey-
 
 For each pipeline group, choose the shirt number with the greatest sum of `seenFrames` across its numbered tracks. If the group's tracks report different numbers, keep the weighted winner but mark the group uncertain. A player identity is the pair of shirt number and kit key; never merge players by number alone. If a kit key is unavailable, do not create a pair identity.
 
-**Why:** The same shirt number can appear on opposing kits. A number-only merge can silently assign one player's playing time to an opponent.
+**Why:** The same shirt number can appear on opposing kits, and sidecar readings can conflict. A number-only merge can assign time to an opponent; a weighted winner alone is not proof.
 
-**How to apply:** When building number-based choices or carrying identities between chunks, key by both number and kit. Preserve uncertain groups for explicit confirmation; a weighted winner is not itself a verified claim.
+**How to apply:** Key number choices and later-chunk matches by both number and kit. Only picture confirmation establishes the game-wide identity; match it as each later chunk loads, and use the ordinary prompt when no exact pair is found. Do not preload all chunks to search.

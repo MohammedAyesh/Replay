@@ -1,5 +1,6 @@
 import { averageProfiles, dist, isWeakColour } from "./appearance";
 import { groupProfileOf, reachOk } from "./build";
+import type { ShirtIdentity } from "./jersey";
 import type { AnyPiece, Appearance, Chunk, Game, Group, Junction, ManualPiece, OffRange, Piece, Point } from "./model";
 import { L2G, OUT, overlapSeconds, union } from "./model";
 import { toPitch } from "./pitch";
@@ -29,12 +30,16 @@ export type ChunkAnswers = {
   skipped: boolean;
 };
 
-export type Step = "intro" | "kit" | "gallery" | "review" | "joins" | "gaps" | "next" | "done" | "stats";
+export type Step = "intro" | "kit" | "shirt" | "gallery" | "review" | "joins" | "gaps" | "next" | "done" | "stats";
 
 export type ClaimState = {
   v: 1;
   step: Step;
   team: string | null;
+  /** Confirmed shirt identity, carried between lazily loaded chunks. */
+  shirtIdentity: ShirtIdentity | null;
+  /** Number currently being checked in the shirt step; not a claim until confirmed. */
+  shirtCandidate: ShirtIdentity | null;
   /** the chunk being worked on */
   k: number | null;
   order: number[];
@@ -56,6 +61,8 @@ export function newState(game: Game): ClaimState {
     v: 1,
     step: "intro",
     team: null,
+    shirtIdentity: null,
+    shirtCandidate: null,
     k: null,
     order: [],
     oi: 0,

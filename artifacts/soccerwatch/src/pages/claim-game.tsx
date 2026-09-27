@@ -7,6 +7,7 @@
  *
  *   intro   whole-game video; check what was play, mark or remove out-of-play
  *   kit     what were you wearing (first ten minutes with play)
+ *   shirt   choose a shirt number and confirm it from the pictures
  *   gallery which one is you, with ▶ Watch
  *   review  check it's all you: strike pictures, bench, look-alikes
  *   joins   same person? at each handover the tracker was unsure of
@@ -30,6 +31,7 @@ import { GameMedia, type MediaHandle, type MediaView, type TapHit } from "@/comp
 import { Btn, ChunkTimeline, Crop, Eyebrow, GameTimeline, Lede, Row, Section, Stat, Title } from "@/components/game-claim/bits";
 import { StatsScreen } from "@/components/game-claim/StatsScreen";
 import { gameFromManifest, loadChunkData, kitNameKey, type LoadedChunk } from "@/lib/game-claim/load";
+import { groupsForShirtIdentity, shirtNumbersForKit } from "@/lib/game-claim/jersey";
 import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
@@ -190,15 +192,17 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
 
   const saveTimer = useRef<number | null>(null);
   const save = useCallback(() => {
-    if (!Object.keys(S.you).length) return;
+    if (!Object.keys(ctxRef.current.S.you).length) return;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(async () => {
-      S.elapsed = t0.current ? Date.now() - t0.current : S.elapsed;
+      const currentCtx = ctxRef.current;
+      const currentState = currentCtx.S;
+      currentState.elapsed = t0.current ? Date.now() - t0.current : currentState.elapsed;
       const body = {
-        state: { ...S, saved: Date.now() },
-        parts: chainParts(ctx),
-        bench: benchSpansOut(ctx),
-        done: S.step === "done" || S.step === "stats",
+        state: { ...currentState, saved: Date.now() },
+        parts: chainParts(currentCtx),
+        bench: benchSpansOut(currentCtx),
+        done: currentState.step === "done" || currentState.step === "stats",
         bundleFingerprint: fingerprint,
       };
       try {
@@ -213,11 +217,12 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
         setSaveError(true);
       }
     }, 700);
-  }, [S, ctx, fingerprint, recordingId]);
+  }, [fingerprint, recordingId]);
 
   const tap = () => {
-    S.taps++;
-    if (!t0.current) t0.current = Date.now() - S.elapsed;
+    const state = ctxRef.current.S;
+    state.taps++;
+    if (!t0.current) t0.current = Date.now() - state.elapsed;
   };
   /** Every action: mutate, re-render, save. */
   const act = (fn: () => void, counts = true) => {
@@ -227,7 +232,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     save();
   };
   const go = (step: Step) => {
-    S.step = step;
+    ctxRef.current.S.step = step;
     setVer((v) => v + 1);
     window.scrollTo({ top: 0 });
     save();
@@ -366,6 +371,17 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     ctx.CH = chunks.current;
   };
 
+  const applyShirtIdentityToChunk = (k: number): boolean => {
+    const d = chunks.current[k];
+    if (!d) return false;
+    const state = ctxRef.current.S;
+    const match = groupsForShirtIdentity(d.groups, d.jersey, state.shirtIdentity)[0];
+    if (!match) return false;
+    pick(ctxRef.current, k, match.groupId);
+    state.step = "review";
+    return true;
+  };
+
   const startNew = async () => {
     if (savedClaim) {
       try {
@@ -389,11 +405,55 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     t0.current = Date.now() - (s.elapsed || 0);
     await Promise.all(Object.keys(s.you).map((k) => ensure(Number(k))));
     if (s.k !== null) await ensure(s.k);
+    if (s.k !== null && s.step === "next") applyShirtIdentityToChunk(s.k);
     const st = s.step === "done" || s.step === "stats" ? s.step : s.step === "intro" ? "review" : s.step;
     go(st);
   };
 
   const pickGroup = (cid: string) => act(() => { pick(ctx, S.k!, cid); S.step = "review"; });
+
+  const chooseKit = (team: string | null) => {
+    const shirtIdentity = team && S.shirtIdentity?.kitKey === team ? S.shirtIdentity : null;
+    const hasNumbers = Boolean(currentChunk && shirtNumbersForKit(currentChunk.groups, currentChunk.jersey, team).length);
+    const nextStep: Step = shirtIdentity || !hasNumbers ? "gallery" : "shirt";
+    act(() => {
+      S.team = team;
+      S.shirtIdentity = shirtIdentity;
+      S.shirtCandidate = null;
+      S.step = nextStep;
+    });
+  };
+
+  const chooseShirtNumber = (number: string) => {
+    const kitKey = S.team;
+    if (!kitKey) return;
+    act(() => { S.shirtCandidate = { number, kitKey }; });
+  };
+
+  const chooseAnotherShirtNumber = () => act(() => { S.shirtCandidate = null; });
+
+  const continueWithoutShirtNumber = () => act(() => {
+    S.shirtIdentity = null;
+    S.shirtCandidate = null;
+    S.step = "gallery";
+  });
+
+  const backToKitFromShirt = () => act(() => {
+    S.shirtCandidate = null;
+    S.step = "kit";
+  });
+
+  const confirmShirtGroup = (cid: string) => act(() => {
+    const k = S.k;
+    const candidate = S.shirtCandidate;
+    const d = k === null ? null : chunks.current[k];
+    if (k === null || !candidate || !d) return;
+    if (!groupsForShirtIdentity(d.groups, d.jersey, candidate).some((match) => match.groupId === cid)) return;
+    S.shirtIdentity = { ...candidate };
+    S.shirtCandidate = null;
+    pick(ctx, k, cid);
+    S.step = "review";
+  });
 
   const advance = async () => {
     const where = afterChunk(ctx);
@@ -401,8 +461,11 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     save();
     window.scrollTo({ top: 0 });
     if (where === "next" && S.k !== null) {
-      await ensure(S.k);
+      const nextK = S.k;
+      await ensure(nextK);
+      applyShirtIdentityToChunk(nextK);
       setVer((v) => v + 1);
+      save();
     }
   };
 
@@ -451,7 +514,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
   };
   const disp = (t: number) => mmss(t + game.matchOffset);
 
-  const needsChunk = ["kit", "gallery", "review", "joins", "gaps", "next"].includes(S.step);
+  const needsChunk = ["kit", "shirt", "gallery", "review", "joins", "gaps", "next"].includes(S.step);
   let body: React.ReactNode = null;
 
   if (needsChunk && (S.k === null || !currentChunk)) {
@@ -487,7 +550,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
             const gs = d.groups.filter((g) => g.team === kit.key);
             if (!gs.length) return null;
             return (
-              <button key={kit.key} type="button" onClick={() => act(() => { S.team = kit.key; S.step = "gallery"; })}
+              <button key={kit.key} type="button" onClick={() => chooseKit(kit.key)}
                 className="flex flex-col gap-2.5 rounded-2xl border border-line bg-surface p-3 text-start hover:border-floodlight">
                 <div className="flex h-24 gap-1 overflow-hidden">
                   {gs.slice(0, 3).map((g) => <Crop key={g.cid} chunk={d} keyName={d.pieces[spread(g.members, 1)[0]]?.img} h={96} />)}
@@ -503,7 +566,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
             );
           })}
         </div>
-        <Row><Btn size="sm" onClick={() => act(() => { S.team = null; S.step = "gallery"; })}>{copy.kit.everyone}</Btn></Row>
+        <Row><Btn size="sm" onClick={() => chooseKit(null)}>{copy.kit.everyone}</Btn></Row>
         <Row>
           <span className="text-xs text-muted-text">{copy.kit.startElsewhere}</span>
           <select
@@ -523,6 +586,91 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
             ))}
           </select>
         </Row>
+      </div>
+    );
+  } else if (S.step === "shirt" && currentChunk) {
+    const d = currentChunk;
+    const kitLabel = S.team ? copy.kit.names[S.team] ?? S.team : "";
+    const options = shirtNumbersForKit(d.groups, d.jersey, S.team);
+    const candidate = S.shirtCandidate;
+    const matches = candidate?.kitKey === S.team
+      ? groupsForShirtIdentity(d.groups, d.jersey, candidate)
+      : [];
+    body = (
+      <div className="flex flex-col gap-4">
+        <Eyebrow>{span(d.k)}</Eyebrow>
+        <Title>
+          {candidate
+            ? copy.shirtNumber.confirmTitle(candidate.number, kitLabel)
+            : copy.shirtNumber.title}
+        </Title>
+        <Lede>
+          {candidate
+            ? copy.shirtNumber.confirmLead
+            : options.length
+              ? copy.shirtNumber.lead(kitLabel)
+              : copy.shirtNumber.noNumbers}
+        </Lede>
+        {!candidate && options.length > 0 && (
+          <div className="grid grid-cols-2 gap-3">
+            {options.map((option) => (
+              <button
+                key={`${option.kitKey}:${option.number}`}
+                type="button"
+                onClick={() => chooseShirtNumber(option.number)}
+                className="flex min-h-24 flex-col items-center justify-center gap-1 rounded-2xl border border-line bg-surface px-3 py-4 text-center hover:border-floodlight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-floodlight"
+              >
+                <span dir="ltr" className="font-display text-4xl font-bold tabular-nums text-text">{option.number}</span>
+                <span className="text-xs text-muted-text">{copy.shirtNumber.coverage(mmss(option.coverageSeconds))}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {candidate && matches.length > 0 && (
+          <div className="flex flex-col gap-3">
+            {matches.map((match) => {
+              const group = d.byCid[match.groupId];
+              if (!group) return null;
+              return (
+                <div key={match.groupId} className="flex flex-col gap-2">
+                  {match.uncertain && (
+                    <p role="note" className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-text">
+                      {copy.shirtNumber.hardToRead}
+                    </p>
+                  )}
+                  <GroupCard
+                    d={d}
+                    g={group}
+                    copy={copy}
+                    game={game}
+                    onWatch={() => previewGroup(d, group)}
+                    action={
+                      <Btn kind="primary" size="sm" onClick={() => confirmShirtGroup(group.cid)}>
+                        {copy.shirtNumber.confirmAction}
+                      </Btn>
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {candidate && matches.length === 0 && (
+          <p role="status" className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-muted-text">
+            {copy.shirtNumber.noMatch}
+          </p>
+        )}
+        {candidate ? (
+          <Row>
+            <Btn onClick={chooseAnotherShirtNumber}>{copy.shirtNumber.pickAnother}</Btn>
+            <Btn onClick={continueWithoutShirtNumber}>{copy.shirtNumber.skip}</Btn>
+          </Row>
+        ) : (
+          <Row>
+            <Btn onClick={backToKitFromShirt}>{copy.shirtNumber.backToKit}</Btn>
+            <Btn kind="primary" onClick={continueWithoutShirtNumber}>{copy.shirtNumber.skip}</Btn>
+          </Row>
+        )}
       </div>
     );
   } else if (S.step === "gallery" && currentChunk) {
