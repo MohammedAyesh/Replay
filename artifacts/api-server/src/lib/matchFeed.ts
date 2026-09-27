@@ -17,17 +17,21 @@
  *      guess and a claimed player's shirt was measured.
  */
 import { createHash } from "node:crypto";
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray } from "drizzle-orm";
 import {
   db,
   footageRequestsTable,
   matchPlayersTable,
+  matchTeamSpansTable,
+  matchGamesTable,
+  claimMatchProgressTable,
   matchRoomsTable,
   recordingTrackingBundlesTable,
   recordingsTable,
   usersTable,
   type MatchPlayer,
   type MatchRoom,
+  type MatchGame,
   type Recording,
   type TrackingManifest,
 } from "@workspace/db";
@@ -46,6 +50,7 @@ import {
   kitOfParts,
   mineTest,
   passEvents,
+  PASS,
   playerMoments,
   playerPlay,
   sideOfKit,
@@ -61,6 +66,18 @@ import {
 } from "./matchPlay";
 import { loadRecordingPlay, type RecordingPlay } from "./matchPlayLoad";
 import { buildPlayerMetrics } from "./playerMetrics";
+import { teamAtTime, type TeamSpanAtTime, type TeamSpanTeam } from "./matchTeamSpans";
+import * as workspaceDb from "@workspace/db";
+
+// The addendum's renamed export is preferred; retain compatibility while the
+// schema migration is rolled out to all workspaces.
+const playerTeamSpansTable = (workspaceDb as typeof workspaceDb & {
+  matchPlayerTeamSpansTable?: typeof matchTeamSpansTable;
+}).matchPlayerTeamSpansTable ?? matchTeamSpansTable;
+
+function teamFor(base: string | null, spans: readonly unknown[], offsetSec: number): string | null {
+  return teamAtTime(base as TeamSpanTeam, spans as readonly TeamSpanAtTime[], offsetSec);
+}
 
 const DEAD_BOOKINGS = ["cancelled", "refunded", "failed"];
 
@@ -98,6 +115,8 @@ export type LinkedRecording = {
   /** the booking's window on this recording's tracking clock, seconds */
   fromSeconds: number;
   toSeconds: number;
+  /** tracking clock zero relative to the booking clock */
+  recordingOffsetSec: number;
 };
 
 /** Recordings with tracking that overlap a booking on its field. */
@@ -138,6 +157,7 @@ export async function recordingsForRoom(ctx: RoomContext, perField?: FieldRecord
       manifest,
       fromSeconds: Math.max(0, (start - w.startMs) / 1000),
       toSeconds: Math.min(manifest.duration, (end - w.startMs) / 1000),
+      recordingOffsetSec: (w.startMs - start) / 1000,
     });
   }
   return out.sort((a, b) => a.recordingId - b.recordingId);
@@ -188,6 +208,15 @@ function cacheFingerprints(
   links: LinkedRecording[],
 ): MatchStatsCacheFingerprint[] {
   const fingerprints: MatchStatsCacheFingerprint[] = [];
+  const sourceLinks = new Map<number, LinkedRecording>();
+  for (const link of links) {
+    const previous = sourceLinks.get(link.recordingId);
+    sourceLinks.set(link.recordingId, previous ? {
+      ...previous,
+      fromSeconds: Math.min(previous.fromSeconds, link.fromSeconds),
+      toSeconds: Math.max(previous.toSeconds, link.toSeconds),
+    } : link);
+  }
   for (const player of roster) {
     if (!player.userId) continue;
     const sources: Array<{
@@ -197,7 +226,7 @@ function cacheFingerprints(
       toSeconds: number;
       parts: ClaimedPart[];
     }> = [];
-    for (const link of links) {
+    for (const link of sourceLinks.values()) {
       const fps = link.manifest.frameRate;
       if (!Number.isFinite(fps) || fps <= 0) continue;
       const parts = clipParts(
@@ -303,13 +332,17 @@ function roomColour(room: MatchRoom, side: string): string {
  * Each side's shirt: the claimed players already on it, weighted by claimed
  * time; the captain's colour only when nobody on that side has claimed.
  */
-function sideKits(room: MatchRoom, roster: MatchPlayer[], play: RecordingPlay, recordingId: number, window: { fromSeconds: number; toSeconds: number }) {
+function sideKits(room: MatchRoom, roster: MatchPlayer[], play: RecordingPlay, recordingId: number, window: { fromSeconds: number; toSeconds: number }, sidesForPlayer?: (p: MatchPlayer, at: number) => string | null, validPlayerAt?: (p: MatchPlayer, at: number) => boolean) {
   const sides = SIDES.slice(0, room.teamCount >= 3 ? 3 : 2);
   const kits: Record<string, { lab: Lab; measured: boolean }> = {};
   for (const side of sides) {
     const parts = roster
-      .filter((p) => p.team === side && p.userId)
-      .flatMap((p) => clipParts(partsOf(play.manifest, p.userId!, recordingId), window.fromSeconds, window.toSeconds, play.fps));
+      .filter((p) => p.userId)
+      .flatMap((p) => clipParts(partsOf(play.manifest, p.userId!, recordingId), window.fromSeconds, window.toSeconds, play.fps)
+        .filter((part) => {
+          const at = (part.fromFrame + part.toFrame) / 2 / play.fps;
+          return (sidesForPlayer ? sidesForPlayer(p, at) : p.team) === side && (!validPlayerAt || validPlayerAt(p, at));
+        }));
     const measured = kitOfParts(parts, play.sidecars, play.fps);
     const fallback = hexToLab(roomColour(room, side));
     if (measured) kits[side] = { lab: measured, measured: true };
@@ -323,8 +356,12 @@ function sideKits(room: MatchRoom, roster: MatchPlayer[], play: RecordingPlay, r
  * the side whose shirt is nearest theirs. Someone already placed on a team
  * keeps it (the captain may know better); someone new or unplaced is placed.
  */
-export async function joinMatchesFromClaim(userId: number, recordingId: number, chain: ClaimedPart[]): Promise<number> {
-  const rooms = await roomsForRecording(recordingId);
+export async function joinMatchesFromClaim(userId: number, recordingId: number, chain: ClaimedPart[], matchCodes?: string[]): Promise<number> {
+  const overlappingRooms = await roomsForRecording(recordingId);
+  const selectedCodes = matchCodes?.length ? new Set(matchCodes) : null;
+  const rooms = selectedCodes
+    ? overlappingRooms.filter(({ room }) => selectedCodes.has(room.code))
+    : overlappingRooms;
   if (!rooms.length) return 0;
   const play = await loadRecordingPlay(recordingId);
   const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
@@ -387,22 +424,23 @@ export type MatchPlayerStats = {
 };
 
 export type MatchTeamStats = {
-  sides: [string, string];
-  colours: [Lab, Lab];
-  measured: [boolean, boolean];
-  touches: [number, number];
-  passesTried: [number, number];
-  passesCompleted: [number, number];
-  possessionSeconds: [number, number];
-  possessionPercent: [number, number];
+  sides: string[];
+  colours: Lab[];
+  measured: boolean[];
+  touches: number[];
+  passesTried: number[];
+  passesCompleted: number[];
+  passesReceived?: number[];
+  possessionSeconds: number[];
+  possessionPercent: number[];
   completionPercent: number;
   contested: number;
   ambiguous: number;
-  dribbles: [number, number];
-  dribblesWon: [number, number];
-  dribblesLost: [number, number];
-  shots: [number, number];
-  goals: [number, number];
+  dribbles: number[];
+  dribblesWon: number[];
+  dribblesLost: number[];
+  shots: number[];
+  goals: number[];
 };
 
 /** One recording's share of a booking: its touches, sides and detected events inside the booking's window. */
@@ -417,35 +455,79 @@ type LinkPlay = {
   shots: DetectedShot[];
 };
 
-async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: boolean): Promise<LinkPlay[]> {
+async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: boolean, game?: MatchGame, spans = new Map<number, Array<{
+  id: number; fromOffsetSec: number; toOffsetSec?: number | null; team: string | null; source: string; changedShirt?: boolean; createdAt: Date | string | number;
+}>>(), shirtEpochs = new Map<string, number[]>()) : Promise<LinkPlay[]> {
   const linked = await recordingsForRoom(ctx);
   const out: LinkPlay[] = [];
   for (const link of linked) {
+    const windowFrom = game ? Math.max(link.fromSeconds, game.startOffsetSec - link.recordingOffsetSec) : link.fromSeconds;
+    const windowTo = game ? Math.min(link.toSeconds, game.endOffsetSec - link.recordingOffsetSec) : link.toSeconds;
+    if (windowTo <= windowFrom) continue;
     const play = await loadRecordingPlay(link.recordingId, { keepSegments });
     if (!play) continue;
-    const within = (t: number) => t >= link.fromSeconds && t <= link.toSeconds;
-    const touches = play.touches.filter((t) => within(t.t));
-    let pick: TeamPick | null = null;
-    let kits: ReturnType<typeof sideKits> | null = null;
-    if (play.hasKits && ctx.room.teamCount < 3) {
-      kits = sideKits(ctx.room, roster, play, link.recordingId, link);
-      if (kits.A && kits.B) pick = { a: kits.A.lab, b: kits.B.lab };
+    const spansInBookingClock = roster.flatMap((p) => spans.get(p.id) ?? []);
+    const points = [windowFrom, windowTo];
+    for (const span of spansInBookingClock) {
+      for (const offset of [span.fromOffsetSec, span.toOffsetSec]) {
+        if (typeof offset !== "number") continue;
+        const at = offset - link.recordingOffsetSec;
+        if (at > windowFrom && at < windowTo) points.push(at);
+      }
     }
-    out.push({
-      link,
-      play,
-      touches,
-      pick,
-      kits,
-      dribbles: play.dribbles.filter((d) => within(d.t0)),
-      goals: detectedGoals(play.events.filter((e) => within(e.t)), play.touches, pitchSizeOf(play.manifest)),
-      shots: detectedShots(play.events.filter((e) => within(e.t)), play.touches, pitchSizeOf(play.manifest)),
-    });
+    for (const p of roster) {
+      if (!p.userId) continue;
+      for (const epoch of shirtEpochs.get(`${link.recordingId}:${p.userId}`) ?? []) {
+        if (epoch > windowFrom && epoch < windowTo) points.push(epoch);
+      }
+    }
+    // All claim parts and tracking touches are frame-based; align split points
+    // so adjacent windows neither double-count nor drop a frame.
+    const boundaries = [...new Set(points.map((at) => Math.round(at * play.fps) / play.fps))].sort((a, b) => a - b);
+    for (let i = 0; i < boundaries.length - 1; i++) {
+      const from = boundaries[i], to = boundaries[i + 1];
+      if (to <= from) continue;
+      const window = { fromSeconds: from, toSeconds: to };
+      const within = (t: number) => t >= from && t < to;
+      const touches = play.touches.filter((t) => within(t.t));
+      const sideAt = (p: MatchPlayer, at: number) => {
+        const playerSpans = spans.get(p.id);
+        return playerSpans?.length ? teamFor(p.team, playerSpans, at + link.recordingOffsetSec) : p.team;
+      };
+      const shirtEpochsInBookingClock = (p: MatchPlayer) => [
+        ...(spans.get(p.id) ?? []).filter((span) => span.changedShirt).map((span) => span.fromOffsetSec),
+        ...(p.userId ? shirtEpochs.get(`${link.recordingId}:${p.userId}`) ?? [] : [])
+          .map((epoch) => epoch + link.recordingOffsetSec),
+      ];
+      const shirtEpochAtWindowStart = new Map(roster.map((p) => [
+        p.id,
+        Math.max(...shirtEpochsInBookingClock(p).filter((epoch) => epoch <= from + link.recordingOffsetSec), -Infinity),
+      ]));
+      const validAt = (p: MatchPlayer, at: number) =>
+        at + link.recordingOffsetSec >= (shirtEpochAtWindowStart.get(p.id) ?? -Infinity);
+      let pick: TeamPick | null = null;
+      let kits: ReturnType<typeof sideKits> | null = null;
+      if (play.hasKits) {
+        kits = sideKits(ctx.room, roster, play, link.recordingId, window, sideAt, validAt);
+        const x = game?.teamX ?? "A", y = game?.teamY ?? "B";
+        if (kits[x] && kits[y]) pick = { a: kits[x].lab, b: kits[y].lab };
+      }
+      out.push({
+        link: { ...link, fromSeconds: from, toSeconds: to },
+        play,
+        touches,
+        pick,
+        kits,
+        dribbles: play.dribbles.filter((d) => within(d.t0)),
+        goals: detectedGoals(play.events.filter((e) => within(e.t)), play.touches.filter((t) => within(t.t)), pitchSizeOf(play.manifest)),
+        shots: detectedShots(play.events.filter((e) => within(e.t)), play.touches.filter((t) => within(t.t)), pitchSizeOf(play.manifest)),
+      });
+    }
   }
   return out;
 }
 
-export async function matchStats(ctx: RoomContext, includePlayers: boolean): Promise<{
+export async function matchStats(ctx: RoomContext, includePlayers: boolean, game?: MatchGame): Promise<{
   available: boolean;
   recordings: number[];
   hasBall: boolean;
@@ -454,7 +536,39 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
   team: MatchTeamStats | null;
 }> {
   const roster = await rosterFor(ctx.room.id);
-  const plays = await linkPlays(ctx, roster, includePlayers);
+  const spanRows = await db.select().from(playerTeamSpansTable)
+    .where(eq(playerTeamSpansTable.matchId, ctx.room.id));
+  const spans = new Map<number, Array<{
+    id: number; fromOffsetSec: number; toOffsetSec?: number | null; team: string | null; source: string; changedShirt?: boolean; createdAt: Date | string | number;
+  }>>();
+  for (const span of spanRows) {
+    const list = spans.get(span.matchPlayerId) ?? [];
+    list.push(span);
+    spans.set(span.matchPlayerId, list);
+  }
+  const linked = await recordingsForRoom(ctx);
+  const userIds = roster.flatMap((p) => p.userId ? [p.userId] : []);
+  const progressRows = linked.length && userIds.length
+    ? await db.select({ userId: claimMatchProgressTable.userId, recordingId: claimMatchProgressTable.recordingId, gameState: claimMatchProgressTable.gameState })
+      .from(claimMatchProgressTable)
+      .where(and(inArray(claimMatchProgressTable.recordingId, linked.map((x) => x.recordingId)), inArray(claimMatchProgressTable.userId, userIds)))
+    : [];
+  const shirtEpochs = new Map<string, number[]>();
+  for (const row of progressRows) {
+    const state = row.gameState as { matchChoices?: unknown; switches?: unknown } | null;
+    const choices = Array.isArray(state?.matchChoices) ? state.matchChoices.filter((x): x is string => typeof x === "string") : [];
+    if (choices.length && !choices.includes(ctx.room.code)) continue;
+    for (const entry of Array.isArray(state?.switches) ? state.switches : []) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      if (e.shirtChanged !== true || (typeof e.matchCode === "string" && e.matchCode !== ctx.room.code) || typeof e.atSeconds !== "number") continue;
+      const key = `${row.recordingId}:${row.userId}`;
+      const list = shirtEpochs.get(key) ?? [];
+      list.push(e.atSeconds);
+      shirtEpochs.set(key, list);
+    }
+  }
+  const plays = await linkPlays(ctx, roster, includePlayers, game, spans, shirtEpochs);
   if (!plays.length) {
     return { available: false, recordings: [], hasBall: false, hasPitch: false, players: null, team: null };
   }
@@ -463,7 +577,7 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
   const blank = (p: MatchPlayer): MatchPlayerStats => ({
     playerId: p.id,
     name: p.displayName,
-    team: p.team,
+    team: game ? (spans.get(p.id)?.length ? teamFor(p.team, spans.get(p.id)!, game.startOffsetSec) : p.team) : p.team,
     claimed: false,
     minutes: null,
     distanceKm: null,
@@ -483,11 +597,58 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
   let hasPitch = false;
   let team: MatchTeamStats | null = null;
   const add = (a: number | null, b: number | null) => (a === null && b === null ? null : (a ?? 0) + (b ?? 0));
-  const sum = (p: [number, number], q: [number, number]): [number, number] => [p[0] + q[0], p[1] + q[1]];
+  const sum = (p: number[], q: number[]): number[] => p.map((v, i) => v + (q[i] ?? 0));
   const perSide = <T extends { kit: Lab | null }>(rows: T[], pick: TeamPick): [number, number] => {
     const n: [number, number] = [0, 0];
     for (const r of rows) { const side = sideOfKit(r.kit, pick); if (side !== null) n[side]++; }
     return n;
+  };
+  /** Three-team classification deliberately uses claimant kits, not roster colours. */
+  const multiSideStats = (ts: Touch[], ds: Dribble[], gs: DetectedGoal[], ss: DetectedShot[], trackKits: Map<string, Lab>, sideColours: ReturnType<typeof sideKits>, sideNames: string[]) => {
+    const labs = sideNames.map((s) => sideColours[s]?.lab ?? null);
+    const classify = (kit: Lab | null) => {
+      if (!kit) return { side: null as number | null, margin: Infinity };
+      const distances = labs.flatMap((lab, side) => lab ? [{ side, distance: kitDistance(kit, lab) }] : [])
+        .sort((a, b) => a.distance - b.distance);
+      return {
+        side: distances[0]?.side ?? null,
+        margin: distances.length > 1 ? distances[1].distance - distances[0].distance : Infinity,
+      };
+    };
+    const sideOf = (kit: Lab | null) => classify(kit).side;
+    const n = sideNames.length, touchesN = Array(n).fill(0), tried = Array(n).fill(0), completed = Array(n).fill(0);
+    const possession = Array(n).fill(0), dribbleN = Array(n).fill(0), won = Array(n).fill(0), lost = Array(n).fill(0);
+    const shotsN = Array(n).fill(0), goalsN = Array(n).fill(0);
+    const raw = passEvents(ts, null, (touch) => sideOf(touch.kit));
+    let contested = 0, ambiguous = 0;
+    for (let i = 0; i < ts.length; i++) {
+      const classification = classify(ts[i].kit), a = classification.side;
+      if (a === null) continue;
+      if (classification.margin < PASS.ambiguousKit) ambiguous++;
+      touchesN[a]++;
+      const next = ts[i + 1], b = next ? sideOf(next.kit) : null;
+      possession[a] += next ? Math.min(Math.max(next.t - ts[i].t, 0), PASS.possessionCapSeconds) : 1.5;
+      const e = raw[i]; if (!e || !next) continue;
+      if (e.kind === "contest") { contested++; continue; }
+      if (e.kind === "pass") { tried[a]++; if (a === b) completed[a]++; }
+    }
+    for (const d of ds) {
+      const a = sideOf(trackKits.get(d.trackId) ?? null);
+      if (a !== null) { dribbleN[a]++; if (d.outcome === "won") won[a]++; else if (d.outcome === "lost") lost[a]++; }
+    }
+    for (const x of ss) { const a = sideOf(x.kit); if (a !== null) shotsN[a]++; }
+    for (const x of gs) { const a = sideOf(x.kit); if (a !== null) goalsN[a]++; }
+    const attempts = tried.reduce((a, b) => a + b, 0);
+    const completions = completed.reduce((a, b) => a + b, 0);
+    return {
+      touches: touchesN, passesTried: tried, passesCompleted: completed,
+      possessionSeconds: possession.map(Math.round), possessionPercent: possession,
+      completionPercent: attempts ? Math.round(completions * 1000 / attempts) / 10 : 0,
+      contested, ambiguous, total: touchesN.reduce((a, b) => a + b, 0),
+      dribbles: dribbleN, dribblesWon: won, dribblesLost: lost,
+      shots: shotsN, goals: goalsN,
+      totalDribbles: dribbleN, totalWon: won, totalLost: lost,
+    };
   };
 
   for (const { link, play, touches, pick, kits, dribbles, goals, shots } of plays) {
@@ -495,10 +656,17 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
     hasPitch ||= play.hasPitch;
     const events = passEvents(touches, pick);
     if (pick && kits && touches.length) {
-      const s = teamStats(touches, events, pick);
-      const dr = teamDribbles(dribbles, play.kits, pick);
-      const sh = perSide(shots, pick);
-      const gl = perSide(goals, pick);
+      const sideNames = ctx.room.teamCount >= 3 && !game ? ["A", "B", "C"] : [game?.teamX ?? "A", game?.teamY ?? "B"];
+      const multi = ctx.room.teamCount >= 3 && !game
+        ? multiSideStats(touches, dribbles, goals, shots, play.kits, kits, sideNames)
+        : null;
+      const metricSides = multi ? sideNames : [game?.teamX ?? "A", game?.teamY ?? "B"];
+      const metricColours = metricSides.map((side) => kits[side]?.lab ?? hexToLab(roomColour(ctx.room, side)) ?? pick.a);
+      const metricMeasured = metricSides.map((side) => kits[side]?.measured ?? false);
+      const s: any = multi ?? teamStats(touches, events, pick);
+      const dr: any = multi ?? teamDribbles(dribbles, play.kits, pick);
+      const sh = multi?.shots ?? perSide(shots, pick);
+      const gl = multi?.goals ?? perSide(goals, pick);
       const prev = team as MatchTeamStats | null;
       team = prev
         ? {
@@ -509,16 +677,16 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
           possessionSeconds: sum(prev.possessionSeconds, s.possessionSeconds),
           contested: prev.contested + s.contested,
           ambiguous: prev.ambiguous + s.ambiguous,
-          dribbles: sum(prev.dribbles, dr.total),
-          dribblesWon: sum(prev.dribblesWon, dr.won),
-          dribblesLost: sum(prev.dribblesLost, dr.lost),
+           dribbles: sum(prev.dribbles, multi ? multi.dribbles : dr.total),
+           dribblesWon: sum(prev.dribblesWon, multi ? multi.dribblesWon : dr.won),
+           dribblesLost: sum(prev.dribblesLost, multi ? multi.dribblesLost : dr.lost),
           shots: sum(prev.shots, sh),
           goals: sum(prev.goals, gl),
         }
         : {
-          sides: ["A", "B"],
-          colours: [pick.a, pick.b],
-          measured: [kits.A!.measured, kits.B!.measured],
+          sides: metricSides,
+          colours: metricColours,
+          measured: metricMeasured,
           touches: s.touches,
           passesTried: s.passesTried,
           passesCompleted: s.passesCompleted,
@@ -527,9 +695,9 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
           completionPercent: s.completionPercent,
           contested: s.contested,
           ambiguous: s.ambiguous,
-          dribbles: dr.total,
-          dribblesWon: dr.won,
-          dribblesLost: dr.lost,
+           dribbles: multi ? multi.dribbles : dr.total,
+           dribblesWon: multi ? multi.dribblesWon : dr.won,
+           dribblesLost: multi ? multi.dribblesLost : dr.lost,
           shots: sh,
           goals: gl,
         };
@@ -539,24 +707,47 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
     for (const p of roster) {
       if (!p.userId) continue;
       const parts = clipParts(partsOf(play.manifest, p.userId, link.recordingId), link.fromSeconds, link.toSeconds, play.fps);
-      if (!parts.length) continue;
+      const eligibleParts = game
+        ? parts.filter((part) => {
+          const at = (part.fromFrame + part.toFrame) / 2 / play.fps;
+          const matchOffset = at + link.recordingOffsetSec;
+          const playerSpans = spans.get(p.id) ?? [];
+          const side = playerSpans.length ? teamFor(p.team, playerSpans, matchOffset) : p.team;
+          const hasOverride = playerSpans.some((span) =>
+            span.fromOffsetSec <= matchOffset
+            && (span.toOffsetSec == null || span.toOffsetSec > matchOffset));
+          if (hasOverride && side === null) return false;
+          return side === null || side === game.teamX || side === game.teamY;
+        })
+        : parts.filter((part) => {
+          const at = (part.fromFrame + part.toFrame) / 2 / play.fps;
+          const matchOffset = at + link.recordingOffsetSec;
+          const playerSpans = spans.get(p.id) ?? [];
+          if (!playerSpans.length) return true;
+          const side = teamFor(p.team, playerSpans, matchOffset);
+          const hasOverride = playerSpans.some((span) =>
+            span.fromOffsetSec <= matchOffset
+            && (span.toOffsetSec == null || span.toOffsetSec > matchOffset));
+          return !(hasOverride && side === null);
+        });
+      if (!eligibleParts.length) continue;
       const row = perPlayer.get(p.id)!;
       row.claimed = true;
-      const seconds = parts.reduce((s, x) => s + (x.toFrame - x.fromFrame) / play.fps, 0);
+      const seconds = eligibleParts.reduce((s, x) => s + (x.toFrame - x.fromFrame) / play.fps, 0);
       row.minutes = Math.round(((row.minutes ?? 0) + seconds / 60) * 10) / 10;
       if (play.segments) {
-        const m = buildPlayerMetrics(play.manifest, play.segments, parts, seconds, 0, 0, 0, 0, 0, 0, []);
+        const m = buildPlayerMetrics(play.manifest, play.segments, eligibleParts, seconds, 0, 0, 0, 0, 0, 0, []);
         if (m.distanceMetres !== null) row.distanceKm = Math.round(((row.distanceKm ?? 0) + m.distanceMetres / 1000) * 100) / 100;
         const top = m.adminPlayerStats.topSpeedMetresPerSecond;
         if (typeof top === "number") row.topSpeedKmh = Math.max(row.topSpeedKmh ?? 0, Math.round(top * 36) / 10);
       }
       if (play.hasBall) {
-        const mine = playerPlay(touches, events, parts, Boolean(pick));
+         const mine = playerPlay(touches, events, eligibleParts, Boolean(pick));
         row.touches = add(row.touches, mine.touches.length);
         row.passesTried = add(row.passesTried, mine.passesTried);
         row.passesCompleted = pick ? add(row.passesCompleted, mine.passesCompleted) : null;
         row.passesReceived = pick ? add(row.passesReceived, mine.passesReceived) : null;
-        const own = playerMoments(parts, dribbles, goals, shots);
+         const own = playerMoments(eligibleParts, dribbles, goals, shots);
         row.dribbles = add(row.dribbles, own.dribbles.length);
         row.dribblesWon = add(row.dribblesWon, own.dribblesWon);
         row.dribblesLost = add(row.dribblesLost, own.dribblesLost);
@@ -568,12 +759,13 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
   if (team) {
     // Re-derived from the sums rather than averaged across recordings.
     const t = team as MatchTeamStats;
-    const pt = t.possessionSeconds[0] + t.possessionSeconds[1] || 1;
-    t.possessionPercent = [Math.round((1000 * t.possessionSeconds[0]) / pt) / 10, Math.round((1000 * t.possessionSeconds[1]) / pt) / 10];
-    const aT = t.passesTried[0] + t.passesTried[1];
-    t.completionPercent = aT ? Math.round((1000 * (t.passesCompleted[0] + t.passesCompleted[1])) / aT) / 10 : 0;
+    const totalPossession = t.possessionSeconds.reduce((a, b) => a + b, 0) || 1;
+    t.possessionPercent = t.possessionSeconds.map((value) => Math.round((1000 * value) / totalPossession) / 10);
+    const attempts = t.passesTried.reduce((a, b) => a + b, 0);
+    const completions = t.passesCompleted.reduce((a, b) => a + b, 0);
+    t.completionPercent = attempts ? Math.round((1000 * completions) / attempts) / 10 : 0;
   }
-  if (includePlayers) {
+  if (includePlayers && !game) {
     try {
       const byPlayerId = new Map([...perPlayer.values()].map((player) => [player.playerId, player]));
       const cacheRows: MatchStatsCacheInput[] = cacheFingerprints(ctx.room.id, roster, plays.map((item) => item.link))
@@ -588,7 +780,7 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
   }
   return {
     available: true,
-    recordings: plays.map((l) => l.link.recordingId),
+    recordings: [...new Set(plays.map((l) => l.link.recordingId))],
     hasBall,
     hasPitch,
     players: includePlayers ? [...perPlayer.values()] : null,
@@ -599,13 +791,34 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean): Pro
 export type ReplayGoal = {
   /** seconds from the booked kick-off */
   atSeconds: number;
-  side: "A" | "B" | null;
+  side: "A" | "B" | "C" | null;
   /** a claimed player on the roster whose touch it was */
   scorer: { playerId: number; name: string } | null;
   recordingId: number;
+  /** configured game index when this goal falls inside a configured game */
+  gameIndex: number | null;
   /** tracking seconds on that recording (for the footage player) */
   t: number;
 };
+
+export function replaySideForGoal(
+  teamCount: number,
+  game: Pick<MatchGame, "teamX" | "teamY"> | undefined,
+  kits: ReturnType<typeof sideKits> | null,
+  pick: TeamPick | null,
+  kit: Lab | null,
+): ReplayGoal["side"] {
+  if (teamCount < 3) {
+    const side = sideOfKit(kit, pick);
+    return side === null ? null : side === 0 ? "A" : "B";
+  }
+  if (!game) return null;
+  const x = kits?.[game.teamX]?.lab;
+  const y = kits?.[game.teamY]?.lab;
+  if (!x || !y) return null;
+  const side = sideOfKit(kit, { a: x, b: y });
+  return side === null ? null : side === 0 ? game.teamX as "A" | "B" | "C" : game.teamY as "A" | "B" | "C";
+}
 
 /**
  * What Replay saw of a booked match, for the scoreboard: the recordings that
@@ -623,27 +836,32 @@ export async function matchReplay(ctx: RoomContext): Promise<{
   suggested: { a: number; b: number } | null;
 }> {
   const roster = await rosterFor(ctx.room.id);
+  const games = await db.select().from(matchGamesTable).where(eq(matchGamesTable.matchId, ctx.room.id));
   const plays = await linkPlays(ctx, roster, false);
   const goals: ReplayGoal[] = [];
   let shots: [number, number] | null = null;
-  for (const { link, play, pick, goals: found, shots: sh } of plays) {
+  for (const { link, play, pick, kits, goals: found, shots: sh } of plays) {
     const claimed = roster
       .filter((p) => p.userId)
       .map((p) => ({ p, test: mineTest(clipParts(partsOf(play.manifest, p.userId!, link.recordingId), link.fromSeconds, link.toSeconds, play.fps)) }));
     for (const g of found) {
-      const side = sideOfKit(g.kit, pick);
+      const atSeconds = Math.max(0, g.t + link.recordingOffsetSec);
+      const game = games.find((candidate) =>
+        atSeconds >= candidate.startOffsetSec && atSeconds < candidate.endOffsetSec);
+      const side = replaySideForGoal(ctx.room.teamCount, game, kits, pick, g.kit);
       const who = g.trackId && g.touchF !== null
         ? claimed.find((c) => c.test({ trackId: g.trackId!, f: g.touchF! } as Touch))?.p ?? null
         : null;
       goals.push({
-        atSeconds: Math.max(0, g.t - link.fromSeconds),
-        side: side === null ? null : side === 0 ? "A" : "B",
+        atSeconds,
+        side,
         scorer: who ? { playerId: who.id, name: who.displayName } : null,
         recordingId: link.recordingId,
+        gameIndex: game?.idx ?? null,
         t: g.t,
       });
     }
-    if (pick) {
+    if (ctx.room.teamCount < 3 && pick) {
       const n: [number, number] = [0, 0];
       for (const x of sh) { const side = sideOfKit(x.kit, pick); if (side !== null) n[side]++; }
       shots = shots ? [shots[0] + n[0], shots[1] + n[1]] : n;
@@ -651,8 +869,13 @@ export async function matchReplay(ctx: RoomContext): Promise<{
   }
   goals.sort((a, b) => a.atSeconds - b.atSeconds);
   const sided = goals.filter((g) => g.side);
-  const suggested = goals.length && sided.length === goals.length
+  const suggested = ctx.room.teamCount < 3 && goals.length && sided.length === goals.length
     ? { a: sided.filter((g) => g.side === "A").length, b: sided.filter((g) => g.side === "B").length }
     : null;
-  return { recordings: plays.map((p) => p.link.recordingId), goals, shots, suggested };
+  return {
+    recordings: [...new Set(plays.map((p) => p.link.recordingId))],
+    goals,
+    shots: ctx.room.teamCount < 3 ? shots : null,
+    suggested,
+  };
 }

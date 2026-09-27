@@ -46,6 +46,19 @@ describe("passEvents", () => {
     expect(s.touches).toEqual([4, 2]);
   });
 
+  it("classifies completed passes across three team labels", () => {
+    const third: Lab = [100, 128, 128];
+    const T = [
+      touch(0, "a", 0, WHITE),
+      touch(1, "b", 8, BLACK),
+      touch(2, "c", 16, third),
+      touch(3, "d", 24, third),
+    ];
+    const ev = passEvents(T, null, (item) => item.kit === WHITE ? 0 : item.kit === BLACK ? 1 : 2);
+    expect(ev.every((event) => event?.kind === "pass")).toBe(true);
+    expect(ev.map((event) => event?.sameTeam)).toEqual([false, false, true]);
+  });
+
   it("gives a player the passes they played and received", () => {
     const T = [touch(0, "s0:t1", 0), touch(1, "s0:t2", 9), touch(2, "s0:t1", 20)];
     const ev = passEvents(T, { a: WHITE, b: BLACK });

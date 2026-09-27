@@ -5,6 +5,8 @@ import {
   chunkPercent,
   isSure,
   newState,
+  profile,
+  recordSwitch,
   questions,
   subtract,
   tapSpan,
@@ -80,6 +82,20 @@ function fixture(): Ctx {
   Y(ctx, 0).cid = "g1";
   return ctx;
 }
+
+describe("shirt switch profile timeline", () => {
+  it("does not use the old shirt after a shirt change", () => {
+    const ctx = fixture();
+    const oldFeat = { to: [20, 128, 128] as [number, number, number], sh: [20, 128, 128] as [number, number, number], hi: [1], hr: 1 };
+    const newFeat = { to: [220, 128, 128] as [number, number, number], sh: [220, 128, 128] as [number, number, number], hi: [1], hr: 1 };
+    ctx.CH[0].pieces.A.feat = oldFeat;
+    ctx.CH[0].pieces.B.feat = newFeat;
+    Y(ctx, 0).cid = "g1";
+    recordSwitch(ctx, { atSeconds: 21, shirtChanged: true, kitKey: "red", number: "9" });
+    expect(profile(ctx, 20)?.to[0]).toBe(20);
+    expect(profile(ctx, 40)?.to[0]).toBe(220);
+  });
+});
 
 describe("jersey sidecar loading", () => {
   const manifest: TrackingManifest = {

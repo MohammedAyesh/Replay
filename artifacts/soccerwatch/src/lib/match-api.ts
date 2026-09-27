@@ -328,9 +328,10 @@ export type MatchReplay = {
   recordings: number[];
   goals: Array<{
     atSeconds: number;
-    side: "A" | "B" | null;
+    side: "A" | "B" | "C" | null;
     scorer: { playerId: number; name: string } | null;
     recordingId: number;
+    gameIndex: number | null;
     t: number;
   }>;
   shots: [number, number] | null;

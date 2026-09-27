@@ -31,6 +31,17 @@ export type ChunkAnswers = {
   skipped: boolean;
 };
 
+export type SwitchEvent = {
+  atSeconds: number;
+  teamChanged?: boolean;
+  shirtChanged?: boolean;
+  /** Match side, separate from the physical kit key. */
+  team?: "A" | "B" | "C" | null;
+  matchCode?: string;
+  kitKey?: string | null;
+  number?: string | null;
+};
+
 export type Step = "intro" | "kit" | "shirt" | "gallery" | "review" | "joins" | "gaps" | "next" | "done" | "stats";
 
 export type ClaimState = {
@@ -55,6 +66,10 @@ export type ClaimState = {
   autoAdded: number;
   /** the two team shirt colours picked on the stats screen (OpenCV 8-bit Lab) */
   teams?: { a: [number, number, number]; b: [number, number, number] } | null;
+  /** Optional identity changes. Older saved claims simply have no switches. */
+  switches?: SwitchEvent[];
+  /** Match windows selected on the intro screen (server-provided match codes). */
+  matchChoices?: string[];
 };
 
 export function newState(game: Game): ClaimState {
@@ -74,6 +89,8 @@ export function newState(game: Game): ClaimState {
     elapsed: 0,
     mk: 0,
     autoAdded: 0,
+    switches: [],
+    matchChoices: [],
   };
 }
 
@@ -217,24 +234,50 @@ export function chunkPercent(t: Timeline): number {
 }
 
 /** The profile of everything claimed so far, the prototype's profile(). */
-export function profile(ctx: Ctx): Appearance | null {
+/** Identity changes only affect shirt appearance. Team changes are retained as
+ * events, but never erase the visual profile. `atTime` is tracking seconds. */
+export function switchTimeline(ctx: Ctx): SwitchEvent[] {
+  return (ctx.S.switches ?? []).slice().sort((a, b) => a.atSeconds - b.atSeconds);
+}
+
+export function latestShirtChange(ctx: Ctx, atTime = Number.POSITIVE_INFINITY): SwitchEvent | null {
+  let latest: SwitchEvent | null = null;
+  for (const event of switchTimeline(ctx)) {
+    if (event.atSeconds > atTime) break;
+    if (event.shirtChanged) latest = event;
+  }
+  return latest;
+}
+
+export function recordSwitch(ctx: Ctx, event: SwitchEvent): void {
+  const switches = ctx.S.switches ?? (ctx.S.switches = []);
+  switches.push({ ...event });
+  switches.sort((a, b) => a.atSeconds - b.atSeconds);
+}
+
+export function profile(ctx: Ctx, atTime = Number.POSITIVE_INFINITY): Appearance | null {
   const items: Array<{ feat: Appearance; w: number }> = [];
+  const shirtChange = latestShirtChange(ctx, atTime);
+  const cutoff = shirtChange?.atSeconds ?? Number.NEGATIVE_INFINITY;
   for (const key of Object.keys(ctx.S.you)) {
     const k = Number(key);
     if (!ctx.CH[k]) continue;
     for (const p of kept(ctx, k)) {
+      const globalStart = L2G(ctx.game, k, p.t0);
+      const globalEnd = L2G(ctx.game, k, p.t1);
+      if (globalStart < cutoff || globalStart > atTime || globalEnd <= cutoff) continue;
       if (!p.manual && p.feat) items.push({ feat: p.feat, w: Math.max(p.nr, 1) });
     }
   }
   return averageProfiles(items);
 }
 
-export function candidates(ctx: Ctx, k: number, h: Hole): Piece[] {
+export function candidates(ctx: Ctx, k: number, h: Hole, atTime = L2G(ctx.game, k, h.t0)): Piece[] {
   const d = ctx.CH[k];
   const y = Y(ctx, k);
   const K = kept(ctx, k);
   const ids = new Set(K.map((p) => p.id));
-  const q = profile(ctx);
+  const q = profile(ctx, atTime);
   const out: Array<{ c: Piece; d: number | null }> = [];
   for (const c of Object.values(d.pieces)) {
     if (ids.has(c.id) || has(y.out, c.id)) continue;
@@ -405,7 +448,7 @@ export function benchSpans(ctx: Ctx, k: number, ps?: AnyPiece[]): Array<[number,
 /** Someone who looks like you on the bench during a hole. */
 export function benchInHole(ctx: Ctx, k: number, h: Hole): { g: Group; a: number; b: number } | null {
   const d = ctx.CH[k];
-  const q = profile(ctx);
+  const q = profile(ctx, L2G(ctx.game, k, h.t0));
   if (!q || !ctx.game.pitch) return null;
   const H0 = L2G(ctx.game, k, h.t0);
   const H1 = L2G(ctx.game, k, h.t1);
@@ -419,15 +462,15 @@ export function benchInHole(ctx: Ctx, k: number, h: Hole): { g: Group; a: number
   return null;
 }
 
-export const weakColour = (ctx: Ctx) => isWeakColour(profile(ctx));
+export const weakColour = (ctx: Ctx, atTime = Number.POSITIVE_INFINITY) => isWeakColour(profile(ctx, atTime));
 
 export const TWIN_SEP = 2.5;
 
 /** Other groups that look like you and were never on screen far from you: usually you, tracked twice. */
-export function twins(ctx: Ctx, k: number): Array<{ g: Group; d: number; sep: { sec: number; med: number } | null }> {
+export function twins(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start): Array<{ g: Group; d: number; sep: { sec: number; med: number } | null }> {
   const d = ctx.CH[k];
   const y = Y(ctx, k);
-  const q = profile(ctx);
+  const q = profile(ctx, atTime);
   if (!y.cid || !q) return [];
   const mineIds = [...youIds(ctx, k)];
   const weak = isWeakColour(q);
@@ -556,9 +599,9 @@ export const SURE_MARGIN = 0.9;
 export const SURE_TOP = 0;
 
 /** "Is this you?" for the next ten minutes: look distance plus a continuity bonus. */
-export function rankNext(ctx: Ctx, k: number): Array<{ g: Group; d: number | null }> {
+export function rankNext(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start): Array<{ g: Group; d: number | null }> {
   const d = ctx.CH[k];
-  const q = profile(ctx);
+  const q = profile(ctx, atTime);
   if (!q) return d.groups.slice(0, 3).map((g) => ({ g, d: null }));
   const prevK = ctx.S.order[ctx.S.oi - 1];
   const prevKept = prevK !== undefined && ctx.CH[prevK] ? kept(ctx, prevK) : [];
@@ -604,7 +647,7 @@ export function pick(ctx: Ctx, k: number, cid: string): void {
   const y = Y(ctx, k);
   Object.assign(y, { cid, skipped: false, out: [], added: [], dropped: [], extra: [], seen: [], manual: [] });
   ctx.S.qi = 0;
-  const tw = weakColour(ctx) ? [] : twins(ctx, k);
+  const tw = weakColour(ctx, L2G(ctx.game, k, 0)) ? [] : twins(ctx, k, L2G(ctx.game, k, 0));
   for (const x of tw) y.added.push(x.g.cid);
   ctx.S.autoAdded = tw.length;
 }

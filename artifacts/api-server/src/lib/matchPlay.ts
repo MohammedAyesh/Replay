@@ -337,16 +337,20 @@ export function teamOf(touch: Touch, pick: TeamPick | null): { team: 0 | 1; marg
  * completed when the same team got it. Without team colours nothing is graded
  * (sameTeam false everywhere) and without a pitch model nothing is a pass.
  */
-export function passEvents(touches: Touch[], pick: TeamPick | null): Array<PlayEvent | null> {
+export function passEvents(
+  touches: Touch[],
+  pick: TeamPick | null,
+  classifyTeam?: (touch: Touch) => number | null,
+): Array<PlayEvent | null> {
   const events: Array<PlayEvent | null> = [];
   for (let i = 0; i < touches.length - 1; i++) {
     const u = touches[i];
     const v = touches[i + 1];
     const gap = v.t - u.t;
     if (gap <= 0 || gap > PASS.maxGapSeconds) { events.push(null); continue; }
-    const tu = teamOf(u, pick);
-    const tv = teamOf(v, pick);
-    const sameTeam = !!tu && !!tv && tu.team === tv.team;
+    const fromTeam = classifyTeam ? classifyTeam(u) : teamOf(u, pick)?.team ?? null;
+    const toTeam = classifyTeam ? classifyTeam(v) : teamOf(v, pick)?.team ?? null;
+    const sameTeam = fromTeam !== null && toTeam !== null && fromTeam === toTeam;
     const metres = u.ball && v.ball ? Math.hypot(v.ball[0] - u.ball[0], v.ball[1] - u.ball[1]) : null;
     const kind: PlayEvent["kind"] = v.trackId === u.trackId || metres === null || metres < PASS.contestMetres
       ? "carry"

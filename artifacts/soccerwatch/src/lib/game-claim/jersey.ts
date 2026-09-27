@@ -46,7 +46,7 @@ export function groupShirtIdentities(
       ([numberA, framesA], [numberB, framesB]) => framesB - framesA || numberA.localeCompare(numberB),
     );
     const number = rankedNumbers[0]?.[0] ?? null;
-    const kitKey = group.team;
+    const kitKey = group.kitKey ?? group.team;
 
     return {
       groupId: group.cid,

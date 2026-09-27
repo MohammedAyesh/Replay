@@ -92,6 +92,8 @@ export type Group = {
   dur: number;
   /** kit key from the colour split, or null when the kits did not separate */
   team: string | null;
+  /** Newer bundles may name this explicitly; team remains the legacy field. */
+  kitKey?: string | null;
   members: string[];
   junctions: Junction[];
   /** look-alikes that were never on screen with this group: [distance, cid] */

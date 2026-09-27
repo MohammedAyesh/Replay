@@ -21,7 +21,7 @@
  * matches" all see a game claim exactly as they see a chain claim.
  */
 import { Router, type IRouter } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -29,7 +29,16 @@ import {
   claimMatchOffPitchSpansTable,
   claimMatchProgressTable,
   type TrackingSegmentPayload,
+  matchTeamSpansTable,
+  matchRoomsTable,
+  matchPlayersTable,
+  matchGamesTable,
+  footageRequestsTable,
+  recordingsTable,
+  recordingTrackingBundlesTable,
+  fieldsTable,
 } from "@workspace/db";
+import * as workspaceDb from "@workspace/db";
 import { normaliseChain, type ChainPart } from "../lib/claimChain";
 import {
   detectedGoals,
@@ -61,6 +70,8 @@ import {
   type ChainContext,
 } from "./claimChain";
 import { getClaimMatchWritableBundle, requireAccountUser } from "./claimMatch";
+import { ammanLocalInstant } from "../lib/matchRooms";
+import { recordingWindow } from "../lib/matchFeed";
 
 const router: IRouter = Router();
 
@@ -106,6 +117,96 @@ const DecisionLabelBody = z.object({
 const MAX_STATE_BYTES = 2_000_000;
 
 const inPlayCache = new Map<string, Array<[number, number]>>();
+const DEAD_BOOKINGS = ["cancelled", "refunded", "failed"];
+// The db package is published separately in some deployments; retain the
+// Part 1 table while a workspace rebuild exposes the addendum export.
+const playerTeamSpansTable = (workspaceDb as typeof workspaceDb & {
+  matchPlayerTeamSpansTable?: typeof matchTeamSpansTable;
+}).matchPlayerTeamSpansTable ?? matchTeamSpansTable;
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** The deliberately small public projection used by the find page. */
+async function claimMatchChoices(ctx: ChainContext): Promise<{
+  matches: unknown[];
+  continuation: { recordingId: number; timeLabel: string; matchCode: string } | null;
+}> {
+  const [source] = await db.select({
+    recording: recordingsTable,
+    manifest: recordingTrackingBundlesTable.manifest,
+    field: fieldsTable,
+  }).from(recordingsTable)
+    .leftJoin(recordingTrackingBundlesTable, eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id))
+    .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .where(eq(recordingsTable.id, ctx.recordingId));
+  if (!source?.manifest) return { matches: [], continuation: null };
+  const rw = recordingWindow(source.recording, source.manifest);
+  if (!Number.isFinite(rw.startMs)) return { matches: [], continuation: null };
+  const rows = await db.select({ room: matchRoomsTable, request: footageRequestsTable })
+    .from(matchRoomsTable)
+    .innerJoin(footageRequestsTable, eq(footageRequestsTable.id, matchRoomsTable.footageRequestId))
+    .where(and(eq(matchRoomsTable.fieldId, source.recording.fieldId), notInArray(footageRequestsTable.status, DEAD_BOOKINGS)));
+  const matches: unknown[] = [];
+  let continuation: { recordingId: number; timeLabel: string; matchCode: string } | null = null;
+  for (const { room, request } of rows) {
+    const start = ammanLocalInstant(request.startLocal);
+    const end = ammanLocalInstant(request.endLocal);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= rw.startMs || start >= rw.endMs) continue;
+    const startSeconds = Math.max(0, (start - rw.startMs) / 1000);
+    const endSeconds = Math.min(source.manifest.duration, (end - rw.startMs) / 1000);
+    const recordingOffsetSec = (rw.startMs - start) / 1000;
+    const [players, games, spans] = await Promise.all([
+      db.select().from(matchPlayersTable).where(eq(matchPlayersTable.matchId, room.id)),
+      db.select().from(matchGamesTable).where(eq(matchGamesTable.matchId, room.id)),
+      db.select().from(playerTeamSpansTable).where(eq(playerTeamSpansTable.matchId, room.id)),
+    ]);
+    const own = players.find((p) => p.userId === ctx.userId);
+    const ownSpans = own ? spans.filter((s) => s.matchPlayerId === own.id) : [];
+    matches.push({
+      code: room.code,
+      title: room.title,
+      fieldName: source.field?.name ?? null,
+      rostered: Boolean(own),
+      teamCount: room.teamCount,
+      startSeconds,
+      endSeconds,
+      recordingOffsetSec,
+      games: games.map((g) => ({
+        idx: g.idx,
+        startSeconds: Math.max(startSeconds, g.startOffsetSec - recordingOffsetSec),
+        endSeconds: Math.min(endSeconds, g.endOffsetSec - recordingOffsetSec),
+        teamX: g.teamX,
+        teamY: g.teamY,
+      })).filter((g) => g.endSeconds > g.startSeconds),
+      playerTeamSpans: own ? ownSpans.map((s) => ({
+        id: s.id,
+        fromSeconds: Math.max(startSeconds, s.fromOffsetSec - recordingOffsetSec),
+        toSeconds: Math.min(endSeconds, s.toOffsetSec == null ? endSeconds : s.toOffsetSec - recordingOffsetSec),
+        team: s.team,
+        source: s.source,
+        createdAt: s.createdAt.toISOString(),
+        changedShirt: s.changedShirt,
+      })).filter((s) => s.toSeconds > s.fromSeconds) : [],
+      rosterTeam: own ? own.team : null,
+    });
+    if (end > rw.endMs && !continuation) {
+      const next = await db.select({ recording: recordingsTable, manifest: recordingTrackingBundlesTable.manifest, field: fieldsTable })
+        .from(recordingsTable)
+        .innerJoin(recordingTrackingBundlesTable, eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id))
+        .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+        .where(eq(recordingsTable.fieldId, source.recording.fieldId));
+      const found = next.find((candidate) => {
+        const w = recordingWindow(candidate.recording, candidate.manifest);
+        return candidate.field?.cameraId === source.field?.cameraId
+          && w.startMs >= rw.endMs - 1000 && w.startMs <= rw.endMs + 3700000;
+      });
+      if (found) continuation = { recordingId: found.recording.id, timeLabel: found.recording.timeSlot, matchCode: room.code };
+    }
+  }
+  return { matches, continuation };
+}
 
 function inPlaySpans(ctx: ChainContext): Array<[number, number]> {
   const cached = inPlayCache.get(ctx.fingerprint);
@@ -130,6 +231,7 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     .from(claimMatchProgressTable)
     .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
   const state = row?.gameState ?? null;
+  const choices = await claimMatchChoices(ctx);
   // A state saved against a different bundle names tracks that no longer exist.
   const stale = !!state && typeof state === "object" && (state as { bundle?: unknown }).bundle !== ctx.fingerprint;
   res.json({
@@ -137,6 +239,8 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     staleState: stale,
     bundleFingerprint: ctx.fingerprint,
     inPlaySpans: inPlaySpans(ctx),
+    matches: choices.matches,
+    continuation: choices.continuation,
     updatedAt: row?.updatedAt?.toISOString() ?? null,
   });
 });
@@ -246,15 +350,85 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   // A finished claim puts the claimant on the roster of every match booked
   // over this recording, on the team their shirt matches. Best effort: the
   // claim itself is saved either way.
+  const rawChoices = Array.isArray((parsed.data.state as { matchChoices?: unknown }).matchChoices)
+    ? (parsed.data.state as { matchChoices: unknown[] }).matchChoices.filter((x): x is string => typeof x === "string").slice(0, 50)
+    : [];
   if (parsed.data.done && chain.length) {
     try {
-      await joinMatchesFromClaim(ctx.userId, ctx.recordingId, chain);
+      // The fourth argument is optional in older matchFeed builds; an empty
+      // choice list intentionally preserves their all-overlap behaviour.
+      await (joinMatchesFromClaim as unknown as (...args: unknown[]) => Promise<number>)(
+        ctx.userId, ctx.recordingId, chain, rawChoices.length ? rawChoices : undefined,
+      );
     } catch (error) {
       console.error("[claim-game] match roster join failed", { recordingId: ctx.recordingId, error });
     }
   }
 
   const state = { ...parsed.data.state, bundle: ctx.fingerprint };
+  // Claim switches are imported as spans, never as training labels.  Replace
+  // this user's claim spans on each save so autosaves remain idempotent.
+  if (parsed.data.done && rawChoices.length) {
+    try {
+      const selected = new Set(rawChoices);
+      const available = await claimMatchChoices(ctx);
+      const selectedMatches = (available.matches as Array<{
+        code: string; startSeconds: number; endSeconds: number; recordingOffsetSec: number; rostered: boolean;
+      }>).filter((m) => selected.has(m.code) && m.rostered);
+      const switches = Array.isArray((parsed.data.state as { switches?: unknown }).switches)
+        ? (parsed.data.state as { switches: unknown[] }).switches : [];
+      for (const match of selectedMatches) {
+        const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.code, match.code));
+        if (!room) continue;
+        const [player] = await db.select({ id: matchPlayersTable.id })
+          .from(matchPlayersTable)
+          .where(and(eq(matchPlayersTable.matchId, room.id), eq(matchPlayersTable.userId, ctx.userId)));
+        if (!player) continue;
+        const mine = switches.filter((entry): entry is Record<string, unknown> =>
+          !!entry && typeof entry === "object"
+          && (!(typeof (entry as Record<string, unknown>).matchCode === "string")
+            || (entry as Record<string, unknown>).matchCode === match.code));
+        const events = mine
+          .filter((entry) => entry.teamChanged === true && ["A", "B", "C"].includes(String(entry.team ?? "")))
+          .map((entry) => ({
+            at: finiteNumber(entry.atSeconds),
+            team: String(entry.team),
+            shirtChanged: entry.shirtChanged === true,
+          }))
+          .filter((entry): entry is { at: number; team: string; shirtChanged: boolean } => entry.at !== null)
+          .filter((entry) => entry.at >= match.startSeconds && entry.at < match.endSeconds)
+          .sort((a, b) => a.at - b.at);
+        // Only claim rows beginning inside this recording's overlap are
+        // replaced. A span from another recording (or a manual span) survives.
+        const existing = await db.select().from(playerTeamSpansTable).where(and(
+          eq(playerTeamSpansTable.matchId, room.id),
+          eq(playerTeamSpansTable.matchPlayerId, player.id),
+          eq(playerTeamSpansTable.source, "claim"),
+        ));
+        for (const span of existing) {
+          const spanFromRecording = span.fromOffsetSec - match.recordingOffsetSec;
+          if (spanFromRecording >= match.startSeconds && spanFromRecording < match.endSeconds) {
+            await db.delete(playerTeamSpansTable).where(eq(playerTeamSpansTable.id, span.id));
+          }
+        }
+        const values = events.map((entry, index) => {
+          const next = events[index + 1];
+          const from = entry.at;
+          const to = next?.at ?? match.endSeconds;
+          return [{
+            matchId: room.id, matchPlayerId: player.id,
+            fromOffsetSec: Math.round(from - match.recordingOffsetSec),
+            toOffsetSec: Math.round(to - match.recordingOffsetSec),
+            team: entry.team, source: "claim",
+            changedShirt: entry.shirtChanged,
+          }];
+        }).flat();
+        if (values.length) await db.insert(playerTeamSpansTable).values(values);
+      }
+    } catch (error) {
+      req.log?.warn?.({ recordingId: ctx.recordingId, error }, "Could not persist claim team switches");
+    }
+  }
   await db
     .insert(claimMatchProgressTable)
     .values({ userId: ctx.userId, recordingId: ctx.recordingId, gameState: state, updatedAt: new Date() })

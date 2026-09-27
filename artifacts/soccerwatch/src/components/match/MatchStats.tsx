@@ -28,19 +28,19 @@ type PlayerStats = PlayerMetricValues & {
 };
 
 type TeamStats = {
-  sides: [string, string];
-  colours: [Lab, Lab];
-  measured: [boolean, boolean];
-  touches: [number, number];
-  passesTried: [number, number];
-  passesCompleted: [number, number];
-  possessionPercent: [number, number];
+  sides: string[];
+  colours: Lab[];
+  measured: boolean[];
+  touches: number[];
+  passesTried: number[];
+  passesCompleted: number[];
+  possessionPercent: number[];
   completionPercent: number;
-  dribbles?: [number, number];
-  dribblesWon?: [number, number];
-  dribblesLost?: [number, number];
-  shots?: [number, number];
-  goals?: [number, number];
+  dribbles?: number[];
+  dribblesWon?: number[];
+  dribblesLost?: number[];
+  shots?: number[];
+  goals?: number[];
 };
 
 type CompetitionAward = { key: AwardKey; playerIds: number[]; value: number | null; personalBest: boolean };
@@ -68,11 +68,11 @@ type Stats = {
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 const pct = (x: number, y: number) => (y > 0 ? Math.round((100 * x) / y) : 0);
 
-function useMatchStatsData(room: MatchRoom, viewerId: number | null, enabled = true) {
+function useMatchStatsData(room: MatchRoom, viewerId: number | null, gameId: number | null = null, enabled = true) {
   return useQuery<Stats>({
-    queryKey: ["match-stats", room.code, viewerId, room.stats.unlocked],
+    queryKey: ["match-stats", room.code, viewerId, room.stats.unlocked, gameId],
     queryFn: async () => {
-      const response = await fetch(`${basePath}/api/m/${room.code}/stats`, { credentials: "include" });
+      const response = await fetch(`${basePath}/api/m/${room.code}/stats${gameId == null ? "" : `?gameId=${encodeURIComponent(gameId)}`}`, { credentials: "include" });
       if (!response.ok) throw new Error(String(response.status));
       return response.json() as Promise<Stats>;
     },
@@ -521,7 +521,7 @@ export function MatchCompetitionAwardsRow({ room, copy }: { room: MatchRoom; cop
     && room.signedIn
     && Boolean(user)
     && (room.isMember || room.isOwner || room.canManage);
-  const statsQuery = useMatchStatsData(room, user?.id ?? null, enabled);
+  const statsQuery = useMatchStatsData(room, user?.id ?? null, null, enabled);
   if (!enabled || !statsQuery.data?.competition) return null;
 
   const playerById = new Map((statsQuery.data.players ?? []).map((player) => [player.playerId, player]));
@@ -561,9 +561,9 @@ export function MatchCompetitionAwardsRow({ room, copy }: { room: MatchRoom; cop
   );
 }
 
-export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+export function MatchStats({ room, copy, gameId = null }: { room: MatchRoom; copy: MatchStrings; gameId?: number | null }) {
   const { user } = useAuth();
-  const statsQuery = useMatchStatsData(room, user?.id ?? null);
+  const statsQuery = useMatchStatsData(room, user?.id ?? null, gameId);
   const stats = statsQuery.data ?? null;
   const claimed = useMemo(() => (stats?.players ?? []).filter((player) => player.claimed), [stats]);
   const [pa, setPa] = useState<number | null>(null);
@@ -616,28 +616,59 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
   const pvpA = playerColor(playerA, colors[0]);
   const pvpB = playerColor(playerB, colors[1]);
   const pvpColors: [string, string] = pvpA.toLowerCase() === pvpB.toLowerCase() ? [pvpA, "#7B5CFF"] : [pvpA, pvpB];
+  const selectedGame = gameId === null ? null : room.games.find((game) => game.id === gameId) ?? null;
+  const displaySideX = selectedGame?.teamX ?? "A";
+  const displaySideY = selectedGame?.teamY ?? "B";
+  const displayColorX = room.teams[displaySideX]?.color ?? colors[0];
+  const displayColorY = room.teams[displaySideY]?.color ?? colors[1];
+  const threeTeam = gameId === null && room.teamCount === 3 && Boolean(t && t.sides.length >= 3);
+  const threeRows = t && threeTeam ? [
+    ...(t.goals?.some((value) => value > 0) ? [{ label: copy.h2hGoals, values: t.goals, format: int }] : []),
+    ...(t.shots ? [{ label: copy.h2hShots, values: t.shots, format: int }] : []),
+    { label: copy.teamPossession, values: t.possessionPercent, format: (value: number) => `${Math.round(value)}%` },
+    { label: copy.teamPasses, values: t.passesCompleted, format: int },
+    { label: copy.teamCompletion, values: t.passesCompleted.map((value, index) => pct(value, t.passesTried[index] ?? 0)), format: (value: number) => `${value}%` },
+    ...(t.dribblesWon ? [{ label: copy.h2hDribbles, values: t.dribbles ?? t.dribblesWon, format: int }] : []),
+    ...(t.dribblesWon ? [{ label: copy.h2hDribbleRate, values: t.dribblesWon.map((value, index) => pct(value, value + (t.dribblesLost?.[index] ?? 0))), format: (value: number) => `${value}%` }] : []),
+    { label: copy.teamTouches, values: t.touches, format: int },
+  ] : [];
 
   return (
     <section className="flex flex-col gap-5 rounded-2xl border border-line bg-surface p-4">
       {stats.competition && <CompetitionPanel stats={stats} copy={copy} room={room} />}
       <div>
         <p className="text-base font-bold">{copy.h2hTitle}</p>
-        <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2" dir="ltr">
-          <span className="flex min-w-0 items-center gap-2 text-sm font-bold"><i className="h-3 w-3 shrink-0 rounded-full" style={{ background: colors[0] }} /><span className="truncate">{name("A")}</span></span>
+        {!threeTeam && <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2" dir="ltr">
+          <span className="flex min-w-0 items-center gap-2 text-sm font-bold"><i className="h-3 w-3 shrink-0 rounded-full" style={{ background: displayColorX }} /><span className="truncate">{name(displaySideX)}</span></span>
           <span className="font-mono text-xs text-muted-text">{copy.vs}</span>
-          <span className="flex min-w-0 items-center justify-end gap-2 text-sm font-bold"><span className="truncate">{name("B")}</span><i className="h-3 w-3 shrink-0 rounded-full" style={{ background: colors[1] }} /></span>
-        </div>
+          <span className="flex min-w-0 items-center justify-end gap-2 text-sm font-bold"><span className="truncate">{name(displaySideY)}</span><i className="h-3 w-3 shrink-0 rounded-full" style={{ background: displayColorY }} /></span>
+        </div>}
       </div>
       {t && (
         <div className="flex flex-col gap-3.5">
-          {t.goals && (t.goals[0] + t.goals[1] > 0) && <MirrorRow label={copy.h2hGoals} a={t.goals[0]} b={t.goals[1]} fmt={int} colors={colors} />}
-          {t.shots && <MirrorRow label={copy.h2hShots} a={t.shots[0]} b={t.shots[1]} fmt={int} colors={colors} />}
-          <MirrorRow label={copy.teamPossession} a={t.possessionPercent[0]} b={t.possessionPercent[1]} fmt={(value) => `${Math.round(value)}%`} colors={colors} />
-          <MirrorRow label={copy.teamPasses} a={t.passesCompleted[0]} b={t.passesCompleted[1]} fmt={int} colors={colors} />
-          <MirrorRow label={copy.teamCompletion} a={pct(t.passesCompleted[0], t.passesTried[0])} b={pct(t.passesCompleted[1], t.passesTried[1])} fmt={(value) => `${value}%`} colors={colors} />
-          {t.dribblesWon && <><MirrorRow label={copy.h2hDribbles} a={(t.dribbles ?? t.dribblesWon)[0]} b={(t.dribbles ?? t.dribblesWon)[1]} fmt={int} colors={colors} /><MirrorRow label={copy.h2hDribbleRate} a={pct(t.dribblesWon[0], t.dribblesWon[0] + (t.dribblesLost?.[0] ?? 0))} b={pct(t.dribblesWon[1], t.dribblesWon[1] + (t.dribblesLost?.[1] ?? 0))} fmt={(value) => `${value}%`} colors={colors} /></>}
-          <MirrorRow label={copy.teamTouches} a={t.touches[0]} b={t.touches[1]} fmt={int} colors={colors} />
+          {threeTeam ? (
+            <div className="overflow-x-auto rounded-xl border border-line" data-testid="stats-three-team-table">
+              <table className="w-full min-w-[390px] text-xs">
+                <thead><tr className="border-b border-line text-muted-text"><th className="p-2 text-start">{copy.metric}</th>{t.sides.slice(0, 3).map((side, index) => <th key={side} className="p-2 text-end"><span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full" style={{ background: String(t.colours[index]) }} />{name(side)}</span></th>)}</tr></thead>
+                <tbody>
+                  {threeRows.map((row) => (
+                    <tr key={row.label} className="border-b border-line last:border-0"><th className="p-2 text-start font-semibold text-muted-text">{row.label}</th>{row.values.slice(0, 3).map((value, index) => <td key={index} className="p-2 text-end font-mono font-bold" dir="ltr">{row.format(value)}</td>)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+          <>
+          {t.goals && (t.goals[0] + t.goals[1] > 0) && <MirrorRow label={copy.h2hGoals} a={t.goals[0]} b={t.goals[1]} fmt={int} colors={[displayColorX, displayColorY]} />}
+          {t.shots && <MirrorRow label={copy.h2hShots} a={t.shots[0]} b={t.shots[1]} fmt={int} colors={[displayColorX, displayColorY]} />}
+          <MirrorRow label={copy.teamPossession} a={t.possessionPercent[0]} b={t.possessionPercent[1]} fmt={(value) => `${Math.round(value)}%`} colors={[displayColorX, displayColorY]} />
+          <MirrorRow label={copy.teamPasses} a={t.passesCompleted[0]} b={t.passesCompleted[1]} fmt={int} colors={[displayColorX, displayColorY]} />
+          <MirrorRow label={copy.teamCompletion} a={pct(t.passesCompleted[0], t.passesTried[0])} b={pct(t.passesCompleted[1], t.passesTried[1])} fmt={(value) => `${value}%`} colors={[displayColorX, displayColorY]} />
+          {t.dribblesWon && <><MirrorRow label={copy.h2hDribbles} a={(t.dribbles ?? t.dribblesWon)[0]} b={(t.dribbles ?? t.dribblesWon)[1]} fmt={int} colors={[displayColorX, displayColorY]} /><MirrorRow label={copy.h2hDribbleRate} a={pct(t.dribblesWon[0], t.dribblesWon[0] + (t.dribblesLost?.[0] ?? 0))} b={pct(t.dribblesWon[1], t.dribblesWon[1] + (t.dribblesLost?.[1] ?? 0))} fmt={(value) => `${value}%`} colors={[displayColorX, displayColorY]} /></>}
+          <MirrorRow label={copy.teamTouches} a={t.touches[0]} b={t.touches[1]} fmt={int} colors={[displayColorX, displayColorY]} />
           {hasSideKm && <><MirrorRow label={copy.h2hDistance} a={km("A")} b={km("B")} fmt={(value) => `${value.toFixed(1)} km`} colors={colors} /><MirrorRow label={copy.h2hTopSpeed} a={top("A")} b={top("B")} fmt={(value) => (value ? value.toFixed(1) : "—")} colors={colors} /><p className="text-[11px] text-muted-text">{copy.h2hClaimedOnly}</p></>}
+          </>
+          )}
         </div>
       )}
 

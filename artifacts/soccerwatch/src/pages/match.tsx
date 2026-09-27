@@ -15,6 +15,7 @@ import {
   Play,
   Plus,
   Share2,
+  Shirt,
   Shuffle,
   Trash2,
   UserPlus,
@@ -96,6 +97,11 @@ import { cn } from "@/lib/utils";
 
 const PENDING_KEY = "replay_pending_join";
 type Tab = "overview" | "teams" | "var" | "clips" | "vote" | "stats";
+type TeamSpan = {
+  id: number; matchPlayerId: number; fromOffsetSec: number; toOffsetSec?: number;
+  team: TeamSide | null; source: "captain" | "self" | "claim"; changedShirt: boolean;
+  createdAt: string; updatedAt: string;
+};
 
 function readPending(code: string): JoinInput | null {
   try {
@@ -1127,6 +1133,8 @@ function TeamsTab({ room, copy, colors, names }: { room: MatchRoom; copy: MatchS
   const updatePlayer = useUpdatePlayer(room.code);
   const updateRoom = useUpdateRoom(room.code);
   const [selected, setSelected] = useState<number | null>(null);
+  const [spanPlayer, setSpanPlayer] = useState<number | null>(null);
+  const [spans, setSpans] = useState<TeamSpan[]>((room as MatchRoom & { teamSpans?: TeamSpan[] }).teamSpans ?? []);
   const { toast } = useToast();
   const editable = room.canManage;
   const active = room.players.filter((p) => p.rsvp === "in" || p.rsvp === "maybe");
@@ -1148,6 +1156,35 @@ function TeamsTab({ room, copy, colors, names }: { room: MatchRoom; copy: MatchS
   };
   return (
     <>
+      <Card data-testid="team-spans-card">
+        <p className="text-sm font-bold">{copy.switchedTeam}</p>
+        <p className="mt-1 text-xs text-muted-text">{copy.chooseTeam}</p>
+        <div className="mt-3 flex flex-col gap-3">
+          {active.map((p) => {
+            const allowed = room.canManage || p.isMe;
+            const playerSpans = spans.filter((span) => span.matchPlayerId === p.id);
+            return (
+              <div key={p.id} className="rounded-xl border border-line bg-raised/40 p-3" data-testid={`team-span-player-${p.id}`}>
+                <div className="flex items-center gap-2">
+                  <PlayerAvatar name={p.name} initials={p.initials} avatarUrl={p.avatarUrl} size={28} />
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">{p.name}</span>
+                  {allowed && <button type="button" onClick={() => setSpanPlayer(spanPlayer === p.id ? null : p.id)} className="rounded-full border border-violet/60 px-2.5 py-1 text-[10px] font-bold text-violet" data-testid={`button-switch-team-${p.id}`}>{copy.switchedTeam}</button>}
+                </div>
+                {playerSpans.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">
+                  {playerSpans.map((span) => (
+                    <span key={span.id} className="inline-flex items-center gap-1 rounded-full border border-turf/30 bg-turf/10 px-2 py-1 text-[10px] font-semibold text-turf" data-testid={`team-span-${span.id}`}>
+                      {span.team ? `→ ${names[span.team]} ${copy.fromMinute} ${Math.floor(span.fromOffsetSec / 60)}′` : `${copy.satOut} ${copy.fromMinute} ${Math.floor(span.fromOffsetSec / 60)}′`}
+                      {span.changedShirt && <Shirt className="h-3 w-3" aria-label={copy.changedShirt} />}
+                      {allowed && <button type="button" onClick={() => void fetch(`${apiBase}/m/${room.code}/team-spans/${span.id}`, { method: "DELETE", credentials: "include" }).then((r) => { if (!r.ok) throw new Error(copy.error); setSpans((old) => old.filter((item) => item.id !== span.id)); })} className="ms-1 text-muted-text" aria-label={copy.removeSwitch} data-testid={`button-remove-team-span-${span.id}`}>×</button>}
+                    </span>
+                  ))}
+                </div>}
+                {spanPlayer === p.id && allowed && <TeamSpanEditor player={p} room={room} copy={copy} names={names} onSaved={(span) => { setSpans((old) => [...old, span]); setSpanPlayer(null); }} />}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
       <div className="flex items-center justify-between gap-2">
         <TeamLegend side="B" name={names.B} color={colors.B} editable={editable} onColor={(c) => void updateRoom.mutateAsync({ teamBColor: c })} />
         <TeamLegend side="A" name={names.A} color={colors.A} editable={editable} onColor={(c) => void updateRoom.mutateAsync({ teamAColor: c })} />
@@ -1204,6 +1241,54 @@ function TeamsTab({ room, copy, colors, names }: { room: MatchRoom; copy: MatchS
         </Card>
       )}
     </>
+  );
+}
+
+function TeamSpanEditor({ player, room, copy, names, onSaved }: {
+  player: MatchPlayer; room: MatchRoom; copy: MatchStrings; names: Record<TeamSide, string>;
+  onSaved: (span: TeamSpan) => void;
+}) {
+  const [team, setTeam] = useState<TeamSide | "out">(player.team ?? "A");
+  const [minute, setMinute] = useState(String(Math.max(0, Math.round((room.games[0]?.startOffsetSec ?? 0) / 60))));
+  const [changedShirt, setChangedShirt] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    const minuteValue = Number(minute);
+    if (!minute.trim() || !Number.isInteger(minuteValue) || minuteValue < 0) {
+      setError(copy.error);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/m/${room.code}/team-spans`, {
+        method: "POST", credentials: "include", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ matchPlayerId: player.id, fromOffsetSec: minuteValue * 60, team: team === "out" ? null : team, changedShirt }),
+      });
+      if (!response.ok) throw new Error(copy.error);
+      onSaved(await response.json() as TeamSpan);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : copy.error); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3" data-testid={`team-span-editor-${player.id}`}>
+      <div className="flex gap-2">
+        <select value={team} onChange={(event) => setTeam(event.target.value as TeamSide | "out")} className="min-h-10 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 text-xs font-semibold" data-testid={`select-team-span-team-${player.id}`}>
+          <option value="A">{names.A}</option><option value="B">{names.B}</option>
+          {room.teamCount === 3 && <option value="C">{names.C}</option>}
+          <option value="out">{copy.satOut}</option>
+        </select>
+        <select value="" onChange={(event) => { if (event.target.value) setMinute(event.target.value); }} className="min-h-10 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 text-xs font-semibold" data-testid={`select-team-span-minute-${player.id}`}>
+          <option value="">{copy.fromMinute}</option>
+          {room.games.map((game, index) => <option key={game.id} value={Math.round(game.startOffsetSec / 60)}>{copy.gameN(index + 1)} · {Math.round(game.startOffsetSec / 60)}′</option>)}
+        </select>
+        <input type="number" min={0} step={1} value={minute} onChange={(event) => setMinute(event.target.value)} aria-label={copy.fromMinute} className="min-h-10 w-20 rounded-lg border border-line bg-surface px-2 text-xs font-semibold" data-testid={`input-team-span-minute-${player.id}`} />
+      </div>
+      <label className="flex items-center gap-2 text-xs text-muted-text"><input type="checkbox" checked={changedShirt} onChange={(event) => setChangedShirt(event.target.checked)} data-testid={`checkbox-changed-shirt-${player.id}`} />{copy.changedShirt}</label>
+      <button type="button" disabled={busy} onClick={() => void save()} className="min-h-9 rounded-full bg-floodlight text-xs font-bold text-void disabled:opacity-50" data-testid={`button-save-team-span-${player.id}`}>{copy.save}</button>
+      {error && <p className="text-xs text-red-400" role="alert" data-testid={`error-team-span-${player.id}`}>{error}</p>}
+    </div>
   );
 }
 
@@ -1670,10 +1755,23 @@ function StatsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
   const [ref, setRef] = useState<{ reference: string; amountFils: number; cliqAlias: string } | null>(
     room.stats.pending ? { reference: room.stats.pending.reference, amountFils: room.stats.pending.amountFils, cliqAlias: room.stats.cliqAlias } : null,
   );
+  const [gameId, setGameId] = useState<number | null>(null);
   if (room.stats.unlocked) {
     return (
       <>
-      <MatchStats room={room} copy={copy} />
+      {room.games.length >= 2 && (
+        <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar" dir="ltr" data-testid="stats-game-filters">
+          <button type="button" onClick={() => setGameId(null)} className={cn("shrink-0 rounded-full border px-3 py-2 text-xs font-bold", gameId === null ? "border-turf bg-turf/10 text-turf" : "border-line text-muted-text")} data-testid="button-stats-whole-session">{copy.wholeSession}</button>
+          {room.games.map((game, index) => (
+            <button key={game.id} type="button" onClick={() => setGameId(game.id)} className={cn("shrink-0 rounded-full border px-3 py-2 text-xs font-bold", gameId === game.id ? "border-turf bg-turf/10 text-turf" : "border-line text-muted-text")} data-testid={`button-stats-game-${game.id}`}>
+              {copy.gameRange(index + 1, Math.round(game.startOffsetSec / 60), Math.round(game.endOffsetSec / 60))}
+              {" · "}
+              {room.teams[game.teamX]?.name ?? game.teamX} {copy.vs} {room.teams[game.teamY]?.name ?? game.teamY}
+            </button>
+          ))}
+        </div>
+      )}
+      <MatchStats room={room} copy={copy} gameId={gameId} />
       <Card className="border-turf/30">
         <p className="flex items-center gap-2 text-base font-bold"><Check className="h-4 w-4 text-turf" />{copy.statsUnlocked}</p>
         <p className="mt-1 text-xs text-muted-text">{copy.statsLockedDesc}</p>

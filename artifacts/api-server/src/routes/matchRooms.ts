@@ -12,6 +12,7 @@ import {
   matchGamesTable,
   matchPlayersTable,
   matchRoomsTable,
+  matchTeamSpansTable,
   motmVotesTable,
   statUnlocksTable,
   usersTable,
@@ -273,6 +274,9 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
 
   const games = await db.select().from(matchGamesTable)
     .where(eq(matchGamesTable.matchId, room.id)).orderBy(asc(matchGamesTable.idx));
+  const teamSpans = await db.select().from(matchTeamSpansTable)
+    .where(eq(matchTeamSpansTable.matchId, room.id))
+    .orderBy(asc(matchTeamSpansTable.createdAt), asc(matchTeamSpansTable.id));
   const vote = await voteSummary(ctx, viewerId, roster);
   const stats = await statsAccess(viewerId, room.id, commerce);
   const standings = computeStandings(games, teamCount);
@@ -369,6 +373,18 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
       id: g.id, idx: g.idx, startOffsetSec: g.startOffsetSec, endOffsetSec: g.endOffsetSec,
       teamX: g.teamX, teamY: g.teamY, scoreA: g.scoreA, scoreB: g.scoreB,
     })),
+    teamSpans: teamSpans.map((span) => ({
+      id: span.id,
+      matchId: span.matchId,
+      matchPlayerId: span.matchPlayerId,
+      fromOffsetSec: span.fromOffsetSec,
+      toOffsetSec: span.toOffsetSec,
+      team: span.team,
+      source: span.source,
+      changedShirt: span.changedShirt,
+      createdAt: span.createdAt.toISOString(),
+      updatedAt: span.updatedAt.toISOString(),
+    })),
     vote,
     stats: {
       ...stats,
@@ -412,6 +428,104 @@ router.get("/m/:code", async (req, res): Promise<void> => {
   res.json(await roomPayload(req, ctx, viewer));
 });
 
+const teamSpanSchema = z.object({
+  matchPlayerId: z.number().int().positive(),
+  fromOffsetSec: z.number().int().min(0),
+  toOffsetSec: z.number().int().min(0).nullable().optional(),
+  team: z.enum(["A", "B", "C"]).nullable(),
+  changedShirt: z.boolean().optional().default(false),
+});
+
+router.post("/m/:code/team-spans", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  const parsed = teamSpanSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid team span" });
+    return;
+  }
+  const body = parsed.data;
+  const [player] = await db.select().from(matchPlayersTable).where(and(
+    eq(matchPlayersTable.id, body.matchPlayerId),
+    eq(matchPlayersTable.matchId, ctx.room.id),
+  ));
+  if (!player) {
+    res.status(400).json({ error: "Player is not in this match" });
+    return;
+  }
+  const manager = await canManage(user, ctx);
+  if (!manager && player.userId !== user.id) {
+    res.status(403).json({ error: "Players may only record their own team" });
+    return;
+  }
+  if (body.team === "C" && ctx.room.teamCount < 3) {
+    res.status(400).json({ error: "Team C is not enabled for this match" });
+    return;
+  }
+  const duration = ammanLocalInstant(ctx.request.endLocal) - ammanLocalInstant(ctx.request.startLocal);
+  if (body.toOffsetSec !== undefined && body.toOffsetSec !== null && body.toOffsetSec <= body.fromOffsetSec) {
+    res.status(400).json({ error: "Team span end must be after its start" });
+    return;
+  }
+  if (Number.isFinite(duration) && (body.fromOffsetSec > duration
+    || (body.toOffsetSec !== undefined && body.toOffsetSec !== null && body.toOffsetSec > duration))) {
+    res.status(400).json({ error: "Team span is outside the match" });
+    return;
+  }
+  const [span] = await db.insert(matchTeamSpansTable).values({
+    matchId: ctx.room.id,
+    matchPlayerId: body.matchPlayerId,
+    fromOffsetSec: body.fromOffsetSec,
+    toOffsetSec: body.toOffsetSec ?? null,
+    team: body.team,
+    source: manager ? "captain" : "self",
+    changedShirt: body.changedShirt,
+  }).returning();
+  res.status(201).json({
+    id: span.id,
+    matchId: span.matchId,
+    matchPlayerId: span.matchPlayerId,
+    fromOffsetSec: span.fromOffsetSec,
+    toOffsetSec: span.toOffsetSec,
+    team: span.team,
+    source: span.source,
+    changedShirt: span.changedShirt,
+    createdAt: span.createdAt.toISOString(),
+    updatedAt: span.updatedAt.toISOString(),
+  });
+});
+
+router.delete("/m/:code/team-spans/:spanId", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  const spanId = intParam(req, "spanId");
+  if (!spanId) {
+    res.status(400).json({ error: "Invalid span" });
+    return;
+  }
+  const [span] = await db.select({
+    id: matchTeamSpansTable.id,
+    playerUserId: matchPlayersTable.userId,
+  }).from(matchTeamSpansTable)
+    .innerJoin(matchPlayersTable, eq(matchPlayersTable.id, matchTeamSpansTable.matchPlayerId))
+    .where(and(eq(matchTeamSpansTable.id, spanId), eq(matchTeamSpansTable.matchId, ctx.room.id)));
+  if (!span) {
+    res.status(404).json({ error: "Team span not found" });
+    return;
+  }
+  const manager = await canManage(user, ctx);
+  if (!manager && span.playerUserId !== user.id) {
+    res.status(403).json({ error: "Players may only remove their own team spans" });
+    return;
+  }
+  await db.delete(matchTeamSpansTable).where(eq(matchTeamSpansTable.id, spanId));
+  res.status(204).send();
+});
+
 /**
  * GET /m/:code/stats -- what the claims on this match's footage add up to.
  * Team numbers (possession, passing) are open to anyone who can see the
@@ -421,6 +535,24 @@ router.get("/m/:code", async (req, res): Promise<void> => {
 router.get("/m/:code/stats", async (req, res): Promise<void> => {
   const ctx = await loadOr404(req, res);
   if (!ctx) return;
+  let selectedGame: typeof matchGamesTable.$inferSelect | undefined;
+  if (req.query.gameId !== undefined) {
+    const rawGameId = typeof req.query.gameId === "string" ? req.query.gameId : "";
+    const gameId = Number(rawGameId);
+    if (!Number.isSafeInteger(gameId) || gameId <= 0) {
+      res.status(400).json({ error: "Invalid game" });
+      return;
+    }
+    const [game] = await db.select().from(matchGamesTable).where(and(
+      eq(matchGamesTable.id, gameId),
+      eq(matchGamesTable.matchId, ctx.room.id),
+    ));
+    if (!game) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+    selectedGame = game;
+  }
   const viewer = await optionalUser(req);
   const viewerId = viewer && !viewer.isGuest ? viewer.id : null;
   const commerce = await loadCommerce({ userId: viewerId, fieldId: ctx.room.fieldId });
@@ -442,7 +574,7 @@ router.get("/m/:code/stats", async (req, res): Promise<void> => {
       roster,
     });
     const includePlayers = access.unlocked && isMember;
-    const stats = await matchStats(ctx, includePlayers);
+    const stats = await matchStats(ctx, includePlayers, selectedGame);
     if (!includePlayers || !stats.players) {
       res.json({ ...stats, players: null, competition: null, unlocked: access.unlocked });
       return;
@@ -452,6 +584,15 @@ router.get("/m/:code/stats", async (req, res): Promise<void> => {
     const visibleRoster = roster.filter((player) => player.userId === null || !blockedIds.has(player.userId));
     const visiblePlayerIds = new Set(visibleRoster.map((player) => player.id));
     const visiblePlayers = stats.players.filter((player) => visiblePlayerIds.has(player.playerId));
+    if (selectedGame) {
+      res.json({
+        ...stats,
+        players: visiblePlayers,
+        competition: null,
+        unlocked: access.unlocked,
+      });
+      return;
+    }
     const vote = await voteSummary(ctx, viewerId, visibleRoster);
     const competition = await buildMatchCompetition({
       matchId: ctx.room.id,

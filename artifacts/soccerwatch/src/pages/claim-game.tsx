@@ -41,6 +41,7 @@ import { ClaimantNameDialog } from "@/components/claim/ClaimantNameDialog";
 import { StatsScreen } from "@/components/game-claim/StatsScreen";
 import { gameFromManifest, loadChunkData, kitNameKey, type LoadedChunk } from "@/lib/game-claim/load";
 import { groupsForShirtIdentity, shirtNumbersForKit, type ShirtIdentity } from "@/lib/game-claim/jersey";
+import { matchBenchRanges, type ClaimMatchWindow } from "@/lib/game-claim/match-windows";
 import { claimCountsForGroups, claimStatusForGroup, type ClaimStatusIdentity } from "@/lib/game-claim/claim-status";
 import { pictureForPiece, type PiecePicture } from "@/lib/game-claim/images";
 import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
@@ -48,16 +49,27 @@ import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
   addTap, afterChunk, benchInHole, benchSpans, candidates, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
   newState, nextHole, nextIllustratedJoin, ovPos, pick, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
-  hkey, type ClaimState, type Ctx, type Hole, type Step,
+  hkey, recordSwitch, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts } from "@/lib/game-claim/parts";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+type ClaimMatch = ClaimMatchWindow & {
+  title: string;
+  fieldName: string | null;
+  rostered: boolean;
+  teamCount: number;
+  recordingOffsetSec: number;
+};
+
 type ServerGame = {
   state: (ClaimState & { saved?: number }) | null;
   bundleFingerprint: string;
   inPlaySpans: Array<[number, number]>;
+  /** Optional Part 2 match windows; older responses omit this field. */
+  matches?: ClaimMatch[];
+  continuation?: null | { recordingId: number; timeLabel: string; matchCode: string };
 };
 
 type GameDecisionLabel =
@@ -148,6 +160,8 @@ export default function ClaimGamePage() {
       resetByAdmin={resetByAdmin}
       coveragePercent={chain?.coveragePercent ?? 0}
       accountName={user?.name ?? ""}
+      matches={server.matches ?? []}
+      continuation={server.continuation ?? null}
     />
   );
 }
@@ -181,6 +195,8 @@ type Props = {
   resetByAdmin: boolean;
   coveragePercent: number;
   accountName: string;
+  matches: ClaimMatch[];
+  continuation: ServerGame["continuation"];
 };
 
 type PendingNamePick = {
@@ -193,8 +209,10 @@ type PendingNamePick = {
 export function GameClaim({
   game, manifest, recordingId, videoUrl, eyebrow, saved, fingerprint, copy,
   identities, identityId, identityName, resetByAdmin, coveragePercent, accountName,
+  matches, continuation,
 }: Props) {
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const [ver, setVer] = useState(0);
   const chunks = useRef<Record<number, LoadedChunk>>({});
@@ -211,6 +229,19 @@ export function GameClaim({
   const [markA, setMarkA] = useState<number | null>(null);
   const [introT, setIntroT] = useState<number | null>(null);
   const [pickSet, setPickSet] = useState<Set<string>>(new Set());
+  const [switchPrompt, setSwitchPrompt] = useState(false);
+  const [pendingSwitchKind, setPendingSwitchKind] = useState<"new-new" | "same-new" | "new-same" | null>(null);
+  const [switchSide, setSwitchSide] = useState<"A" | "B" | "C" | null>(null);
+  const [switchMatchCode, setSwitchMatchCode] = useState<string | null>(null);
+  const pendingSwitchNumber = useRef<string | null>(null);
+  const pendingAutoKit = useRef<string | null>(null);
+  const requestedMatchCode = new URLSearchParams(window.location.search).get("match");
+  const initialMatchChoices = saved?.matchChoices?.length
+    ? saved.matchChoices
+    : requestedMatchCode && matches.some((match) => match.code === requestedMatchCode)
+      ? [requestedMatchCode]
+      : matches.filter((match) => match.rostered).map((match) => match.code);
+  const [matchChoices, setMatchChoices] = useState<string[]>(initialMatchChoices);
   const [saveError, setSaveError] = useState(false);
   const [labelError, setLabelError] = useState(false);
   const t0 = useRef<number | null>(null);
@@ -404,6 +435,77 @@ export function GameClaim({
   const show = (v: MediaView) => media.current?.show(v);
   const mediaNow = useCallback(() => media.current?.now() ?? 0, []);
 
+  const beginSwitch = (atVideoTime = false) => {
+    const k = S.k;
+    if (k === null) return;
+    const atSeconds = atVideoTime ? mediaNow() : chunkMeta(ctx, k).start;
+    // Store the prompt locally; no decision label is emitted for identity changes.
+    (ctxRef.current as Ctx & { pendingSwitchTime?: number }).pendingSwitchTime = atSeconds;
+    setSwitchPrompt(true);
+  };
+
+  const switchTime = () => (ctxRef.current as Ctx & { pendingSwitchTime?: number }).pendingSwitchTime
+    ?? (S.k === null ? 0 : chunkMeta(ctx, S.k).start);
+
+  const coveredSwitchMatches = () => matches.filter((match) => matchChoices.includes(match.code) && (
+    match.games.length
+      ? match.games.some((g) => g.startSeconds <= switchTime() && g.endSeconds > switchTime())
+      : match.startSeconds <= switchTime() && match.endSeconds > switchTime()
+  ));
+
+  const chooseSwitch = (kind: "new-new" | "same-new" | "new-same") => {
+    const covered = coveredSwitchMatches();
+    if (kind !== "same-new" && covered.length) {
+      const match = covered[0];
+      const sides = (match.teamCount ?? 2) === 3 ? ["A", "B", "C"] as const : ["A", "B"] as const;
+      const roster = match.rosterTeam ?? null;
+      setSwitchMatchCode(covered.length === 1 ? match.code : null);
+      setSwitchSide(sides.find((side) => side !== roster) ?? sides[0]);
+      setPendingSwitchKind(kind);
+      return;
+    }
+    commitSwitch(kind, covered.length === 1 ? covered[0].code : null, null);
+  };
+
+  const commitSwitch = (
+    kind: "new-new" | "same-new" | "new-same",
+    matchCode: string | null,
+    side: "A" | "B" | "C" | null,
+  ) => {
+    const atSeconds = switchTime();
+    const teamChanged = kind !== "same-new";
+    const shirtChanged = kind !== "new-same";
+    act(() => {
+      recordSwitch(ctx, {
+        atSeconds,
+        teamChanged,
+        shirtChanged,
+        ...(teamChanged && side && matchCode ? { team: side, matchCode } : {}),
+        kitKey: teamChanged ? null : S.team,
+        number: shirtChanged ? null : S.shirtIdentity?.number ?? null,
+      });
+      if (shirtChanged) {
+        S.shirtIdentity = null;
+        S.shirtCandidate = null;
+      } else if (teamChanged) {
+        pendingSwitchNumber.current = S.shirtIdentity?.number ?? null;
+        S.shirtIdentity = null;
+      }
+      S.step = "kit";
+      if (pendingAutoKit.current && kind === "new-new") {
+        const kit = pendingAutoKit.current;
+        S.team = kit;
+        const options = currentChunk ? shirtNumbersForKit(currentChunk.groups, currentChunk.jersey, kit) : [];
+        S.step = options.length ? "shirt" : "gallery";
+        pendingAutoKit.current = null;
+      }
+    });
+    setSwitchPrompt(false);
+    setPendingSwitchKind(null);
+    setSwitchSide(null);
+    setSwitchMatchCode(null);
+  };
+
   const currentChunk = S.k !== null ? chunks.current[S.k] : undefined;
 
   // Kits that don't separate leave nothing to choose between: straight to everyone.
@@ -482,7 +584,7 @@ export function GameClaim({
       }
       case "next": {
         if (!d || k === null) break;
-        const r = rankNext(ctx, k);
+        const r = rankNext(ctx, k, chunkMeta(ctx, k).start);
         if (r[0]) previewGroup(d, r[0].g);
         break;
       }
@@ -547,12 +649,45 @@ export function GameClaim({
     setPendingNamePick(null);
     const off = S.off;
     ctxRef.current.S = { ...newState(game), off };
+    const continuationKit = new URLSearchParams(window.location.search).get("kit");
+    const continuationNumber = new URLSearchParams(window.location.search).get("number");
+    if (continuationKit) {
+      ctxRef.current.S.team = continuationKit;
+      if (continuationNumber) ctxRef.current.S.shirtIdentity = { kitKey: continuationKit, number: continuationNumber };
+    }
     t0.current = null;
     tap();
     startClaim(ctxRef.current);
+    applyMatchWindows(ctxRef.current, matchChoices);
+    if (continuationKit) ctxRef.current.S.step = "gallery";
     bump();
     await ensure(ctxRef.current.S.k!);
     go("kit");
+  };
+
+  const applyMatchWindows = (target: Ctx, choices: string[]) => {
+    if (!matches.length || !choices.length) return;
+    const windows = matches.filter((m) => choices.includes(m.code))
+      .flatMap((m) => m.games.length
+        ? m.games.map((g) => [g.startSeconds, g.endSeconds] as [number, number])
+        : [[m.startSeconds, m.endSeconds] as [number, number]]);
+    if (!windows.length) return;
+    const sorted = windows.sort((a, b) => a[0] - b[0]);
+    let at = 0;
+    for (const [a, b] of sorted) {
+      if (a > at) target.S.off.push([at, a, "play"]);
+      at = Math.max(at, b);
+    }
+    if (at < target.game.total) target.S.off.push([at, target.game.total, "play"]);
+    for (const match of matches.filter((m) => choices.includes(m.code))) {
+      for (const [from, to] of matchBenchRanges(match, target.S.switches ?? [])) {
+        target.S.off.push([from, to, "bench"]);
+      }
+    }
+    for (const c of target.game.chunks) {
+      if (!sorted.some(([a, b]) => b > c.start && a < c.start + c.dur)) Y(target, c.k).skipped = true;
+    }
+    target.S.off.sort((a, b) => a[0] - b[0]);
   };
 
   const resume = async (j: ClaimState) => {
@@ -607,14 +742,25 @@ export function GameClaim({
     const k = S.k;
     const d = k === null ? null : chunks.current[k];
     if (!d || k === null || !d.byCid[cid]) return;
+    const group = d.byCid[cid];
+    const kit = group.kitKey ?? group.team;
+    if (S.team && kit && kit !== S.team) {
+      pendingAutoKit.current = kit;
+      setSwitchPrompt(true);
+      return;
+    }
     const expectedCid = S.step === "next"
-      ? rankNext(ctx, k)[0]?.g.cid ?? null
+      ? rankNext(ctx, k, chunkMeta(ctx, k).start)[0]?.g.cid ?? null
       : pendingNextGuess.current;
     chooseGroup({ k, cid, expectedCid, shirtIdentity: null });
   };
 
   const chooseKit = (team: string | null) => {
-    const shirtIdentity = team && S.shirtIdentity?.kitKey === team ? S.shirtIdentity : null;
+    const shirtIdentity = team && S.shirtIdentity?.kitKey === team
+      ? S.shirtIdentity
+      : team && pendingSwitchNumber.current
+        ? { number: pendingSwitchNumber.current, kitKey: team }
+        : null;
     const hasNumbers = Boolean(currentChunk && shirtNumbersForKit(currentChunk.groups, currentChunk.jersey, team).length);
     const nextStep: Step = shirtIdentity || !hasNumbers ? "gallery" : "shirt";
     act(() => {
@@ -756,6 +902,10 @@ export function GameClaim({
       <IntroScreen
         ctx={ctx} copy={copy} eyebrow={eyebrow} mediaSlot={mediaSlot} markA={markA} saved={savedClaim}
         resetByAdmin={resetByAdmin} coveragePercent={coveragePercent}
+        matches={matches} matchChoices={matchChoices} onMatchChoices={(choices) => {
+          setMatchChoices(choices);
+          S.matchChoices = choices;
+        }}
         onMarkA={() => { const t = media.current?.now() ?? 0; setMarkA(t); setIntroT(t); }}
         onMarkB={() => {
           const a = markA;
@@ -971,11 +1121,40 @@ export function GameClaim({
       );
     }
   } else if (S.step === "gaps" && currentChunk && S.k !== null) {
-    body = <GapsScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp}
-      act={act} pickSet={pickSet} setPickSet={setPickSet} writeConfirmedTrack={writeConfirmedTrack} />;
+    body = (
+      <div className="flex flex-col gap-4">
+        {!switchPrompt ? (
+          <Row><Btn onClick={() => beginSwitch()}>{copy.next.switchTeam}</Btn></Row>
+        ) : (
+          <Section title={copy.next.switchTitle}>
+            {!pendingSwitchKind ? <Row>
+              <Btn kind="primary" onClick={() => chooseSwitch("new-new")}>{copy.next.newTeamNewShirt}</Btn>
+              <Btn onClick={() => chooseSwitch("same-new")}>{copy.next.sameTeamNewShirt}</Btn>
+              <Btn onClick={() => chooseSwitch("new-same")}>{copy.next.newTeamSameShirt}</Btn>
+            </Row> : (() => {
+              const covered = coveredSwitchMatches();
+              const selected = covered.find((m) => m.code === switchMatchCode) ?? covered[0];
+              const sides = (selected?.teamCount ?? 2) === 3 ? ["A", "B", "C"] : ["A", "B"];
+              return <Row>
+                {covered.length > 1 && <select value={switchMatchCode ?? selected?.code ?? ""} onChange={(e) => setSwitchMatchCode(e.target.value)} className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-text">
+                  {covered.map((m) => <option key={m.code} value={m.code}>{m.title}</option>)}
+                </select>}
+                <select value={switchSide ?? ""} onChange={(e) => setSwitchSide(e.target.value as "A" | "B" | "C")} className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-text">
+                  {sides.map((side) => <option key={side} value={side}>{side}</option>)}
+                </select>
+                <Btn kind="primary" onClick={() => commitSwitch(pendingSwitchKind, switchMatchCode ?? selected?.code ?? null, switchSide)}>{copy.next.confirmSwitch}</Btn>
+              </Row>;
+            })()}
+            <Row><Btn onClick={() => beginSwitch(true)}>Use current video time</Btn></Row>
+          </Section>
+        )}
+        <GapsScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp}
+          act={act} pickSet={pickSet} setPickSet={setPickSet} writeConfirmedTrack={writeConfirmedTrack} />
+      </div>
+    );
   } else if (S.step === "next" && currentChunk && S.k !== null) {
     const d = currentChunk;
-    const r = rankNext(ctx, d.k);
+    const r = rankNext(ctx, d.k, chunkMeta(ctx, d.k).start);
     const sure = isSure(r);
     const fastClaimLabel = r[0] ? claimLabelForGroup(r[0].g) : undefined;
     body = (
@@ -983,6 +1162,33 @@ export function GameClaim({
         <Eyebrow>{copy.next.eyebrow(span(d.k))}</Eyebrow>
         <Title>{copy.next.title}</Title>
         <Lede>{copy.next.lead}</Lede>
+        {!switchPrompt ? (
+          <Row>
+            <Btn onClick={() => beginSwitch()}>{copy.next.switchTeam}</Btn>
+          </Row>
+        ) : (
+          <Section title={copy.next.switchTitle}>
+            {!pendingSwitchKind ? <Row>
+              <Btn kind="primary" onClick={() => chooseSwitch("new-new")}>{copy.next.newTeamNewShirt}</Btn>
+              <Btn onClick={() => chooseSwitch("same-new")}>{copy.next.sameTeamNewShirt}</Btn>
+              <Btn onClick={() => chooseSwitch("new-same")}>{copy.next.newTeamSameShirt}</Btn>
+            </Row> : (() => {
+              const covered = coveredSwitchMatches();
+              const selected = covered.find((m) => m.code === switchMatchCode) ?? covered[0];
+              const sides = (selected?.teamCount ?? 2) === 3 ? ["A", "B", "C"] : ["A", "B"];
+              return <Row>
+                {covered.length > 1 && <select value={switchMatchCode ?? selected?.code ?? ""} onChange={(e) => setSwitchMatchCode(e.target.value)} className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-text">
+                  {covered.map((m) => <option key={m.code} value={m.code}>{m.title}</option>)}
+                </select>}
+                <select value={switchSide ?? ""} onChange={(e) => setSwitchSide(e.target.value as "A" | "B" | "C")} className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-text">
+                  {sides.map((side) => <option key={side} value={side}>{side}</option>)}
+                </select>
+                <Btn kind="primary" onClick={() => commitSwitch(pendingSwitchKind, switchMatchCode ?? selected?.code ?? null, switchSide)}>{copy.next.confirmSwitch}</Btn>
+              </Row>;
+            })()}
+            <Row><Btn onClick={() => beginSwitch(true)}>Use current video time</Btn></Row>
+          </Section>
+        )}
         {mediaSlot}
         <GameTimeline ctx={ctx} ph={chunkMeta(ctx, d.k).start} />
         {sure && r[0] && (
@@ -1012,6 +1218,8 @@ export function GameClaim({
     body = <DoneScreen ctx={ctx} copy={copy} elapsed={elapsed}
       onStats={() => go("stats")}
       onExport={() => exportClaim(S, recordingId)}
+      continuation={continuation && (!matchChoices.length || matchChoices.includes(continuation.matchCode)) ? continuation : null}
+      onContinue={() => continuation && (!matchChoices.length || matchChoices.includes(continuation.matchCode)) && setLocation(`/find/${continuation.recordingId}?match=${encodeURIComponent(continuation.matchCode)}&kit=${encodeURIComponent(S.shirtIdentity?.kitKey ?? S.team ?? "")}&number=${encodeURIComponent(S.shirtIdentity?.number ?? "")}`)}
       onAgain={async () => {
         if (!window.confirm(copy.done.againConfirm)) return;
         try { await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { method: "DELETE", credentials: "include" }); } catch { /* ignore */ }
@@ -1143,9 +1351,9 @@ function GroupCard({ d, g, copy, game, onWatch, action, claimLabel }: {
 
 /* ------------------------------------------------------------------ intro */
 
-function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, resetByAdmin, coveragePercent, onMarkA, onMarkB, onDel, onWatch, onStart, onResume }: {
+ function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, resetByAdmin, coveragePercent, matches, matchChoices, onMatchChoices, onMarkA, onMarkB, onDel, onWatch, onStart, onResume }: {
   ctx: Ctx; copy: GameStrings; eyebrow: string; mediaSlot: React.ReactNode; markA: number | null; saved: (ClaimState & { saved?: number }) | null;
-  resetByAdmin: boolean; coveragePercent: number;
+  resetByAdmin: boolean; coveragePercent: number; matches: ClaimMatch[]; matchChoices: string[]; onMatchChoices: (choices: string[]) => void;
   onMarkA: () => void; onMarkB: () => void; onDel: (i: number) => void; onWatch: (i: number) => void; onStart: () => void; onResume: () => void;
 }) {
   const off = ctx.S.off;
@@ -1155,6 +1363,24 @@ function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, resetByAdmin
       {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
       <Title big>{copy.intro.title}</Title>
       <Lede>{copy.intro.lead}</Lede>
+      {matches.length >= 2 && (
+        <Section title={copy.intro.matchesTitle}>
+          <Lede>{copy.intro.matchesLead}</Lede>
+          <div className="flex flex-col gap-2">
+            {matches.map((match) => {
+              const checked = matchChoices.includes(match.code);
+              return (
+                <label key={match.code} className="flex items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2 text-sm">
+                  <input type="checkbox" checked={checked}
+                    onChange={() => onMatchChoices(checked ? matchChoices.filter((x) => x !== match.code) : [...matchChoices, match.code])} />
+                  <span className="flex-1"><b className="text-text">{match.title}</b><br /><span className="text-xs text-muted-text">{match.fieldName}</span></span>
+                  {match.rostered && <span className="text-xs text-floodlight">{copy.intro.rostered}</span>}
+                </label>
+              );
+            })}
+          </div>
+        </Section>
+      )}
       {resetByAdmin && (
         <div role="status" className="rounded-2xl border border-line bg-surface p-3">
           <strong className="font-display text-sm text-text">{copy.intro.resetTitle}</strong>
@@ -1216,7 +1442,7 @@ function ReviewScreen({
   const ms = mine(ctx, k);
   const g = y.cid ? d.byCid[y.cid] : null;
   const bs = benchSpans(ctx, k);
-  const tw = twins(ctx, k);
+  const tw = twins(ctx, k, chunkMeta(ctx, k).start);
   const twc = new Set(tw.map((x) => x.g.cid));
   const nb = (g ? g.nb : []).filter(([, c]) => !y.added.includes(c) && d.byCid[c] && c !== y.cid && !twc.has(c));
   const G = ctx.game;
@@ -1261,7 +1487,7 @@ function ReviewScreen({
       )}
       {tw.length > 0 && (
         <Section title={copy.review.alsoYouTitle}>
-          <Lede>{weakColour(ctx) ? copy.review.alsoYouLeadDark : copy.review.alsoYouLead}</Lede>
+          <Lede>{weakColour(ctx, chunkMeta(ctx, k).start) ? copy.review.alsoYouLeadDark : copy.review.alsoYouLead}</Lede>
           <div className="flex flex-col gap-3">
             {tw.slice(0, 3).map(({ g: gg }) => (
               <GroupCard key={gg.cid} d={d} g={gg} copy={copy} game={G} onWatch={() => previewGroup(d, gg)}
@@ -1324,7 +1550,9 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
   const h = nextHole(ctx, k);
   if (!h) return null;
   const bg = benchInHole(ctx, k, h);
-  const c = candidates(ctx, k, h);
+  const c = candidates(ctx, k, h, L2G(G, k, h.t0));
+  const prefilledBench = h && ctx.S.off.find((r) => r[2] === "bench" &&
+    r[0] < L2G(G, k, h.t1) && r[1] > L2G(G, k, h.t0));
   const ref = [h.a, h.b].filter((p): p is NonNullable<Hole["a"]> => Boolean(p));
   const refPictures = ref.flatMap((piece) => {
     const at = piece === h.a ? piece.t1 : piece.t0;
@@ -1361,6 +1589,14 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
             action={<Btn kind="primary" size="sm" onClick={() => act(() => { const [, b] = toG(h); S.off.push([bg.a, Math.max(bg.b, b), "bench"]); S.off.sort((x, z) => x[0] - z[0]); })}>{copy.gaps.benchMe}</Btn>} />
         </Section>
       )}
+      {prefilledBench && (
+        <Section title={copy.gaps.benchTitle}>
+          <Lede>{copy.gaps.benchLead(disp(prefilledBench[0]), disp(prefilledBench[1]))}</Lede>
+          <Row>
+            <Btn kind="primary" onClick={() => act(() => { const i = ctx.S.off.indexOf(prefilledBench); if (i >= 0) ctx.S.off.splice(i, 1); })}>{copy.gaps.undoBench}</Btn>
+          </Row>
+        </Section>
+      )}
       {candidatePictures.length > 0 && (
         <>
           <h3 className="font-display text-lg font-bold text-text">{copy.gaps.orOne}</h3>
@@ -1395,8 +1631,9 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
 
 /* ------------------------------------------------------------------- done */
 
-function DoneScreen({ ctx, copy, elapsed, onStats, onExport, onAgain }: {
+function DoneScreen({ ctx, copy, elapsed, onStats, onExport, onAgain, continuation, onContinue }: {
   ctx: Ctx; copy: GameStrings; elapsed: number; onStats: () => void; onExport: () => void; onAgain: () => void;
+  continuation: ServerGame["continuation"]; onContinue: () => void;
 }) {
   const tt = totals(ctx);
   const mo = ctx.game.matchOffset;
@@ -1428,6 +1665,7 @@ function DoneScreen({ ctx, copy, elapsed, onStats, onExport, onAgain }: {
       <p className="border-s-2 border-violet ps-2.5 text-xs text-muted-text">{copy.done.note}</p>
       <Row>
         <Btn kind="primary" onClick={onStats}>{copy.done.toStats}</Btn>
+        {continuation && <Btn onClick={onContinue}>{copy.done.keepGoing}</Btn>}
         <Btn onClick={onExport}>{copy.done.download}</Btn>
         <Btn onClick={onAgain}>{copy.done.again}</Btn>
       </Row>

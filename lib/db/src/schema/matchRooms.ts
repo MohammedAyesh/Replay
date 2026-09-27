@@ -96,6 +96,22 @@ export const matchGamesTable = pgTable("match_games", {
   unique("match_games_match_idx_unique").on(table.matchId, table.idx),
 ]);
 
+/** A player's claimed or manager-confirmed team over a portion of a match. */
+export const matchTeamSpansTable = pgTable("match_team_spans", {
+  id: serial("id").primaryKey(),
+  matchId: integer("match_id").notNull().references(() => matchRoomsTable.id, { onDelete: "cascade" }),
+  matchPlayerId: integer("match_player_id").notNull().references(() => matchPlayersTable.id, { onDelete: "cascade" }),
+  fromOffsetSec: integer("from_offset_sec").notNull(),
+  toOffsetSec: integer("to_offset_sec"),
+  team: text("team"),
+  source: text("source").notNull(),
+  changedShirt: boolean("changed_shirt").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("match_team_spans_match_player_idx").on(table.matchId, table.matchPlayerId),
+]);
+
 /** Man-of-the-match votes: one per voter per match, open for 24 h after the whistle. */
 export const motmVotesTable = pgTable("motm_votes", {
   id: serial("id").primaryKey(),
@@ -134,5 +150,6 @@ export const statUnlocksTable = pgTable("stat_unlocks", {
 export type MatchRoom = typeof matchRoomsTable.$inferSelect;
 export type MatchPlayer = typeof matchPlayersTable.$inferSelect;
 export type MatchGame = typeof matchGamesTable.$inferSelect;
+export type MatchTeamSpan = typeof matchTeamSpansTable.$inferSelect;
 export type MotmVote = typeof motmVotesTable.$inferSelect;
 export type StatUnlock = typeof statUnlocksTable.$inferSelect;
