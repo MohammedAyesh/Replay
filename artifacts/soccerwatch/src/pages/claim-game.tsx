@@ -23,15 +23,25 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useParams } from "wouter";
-import { getClaimMatchSegment, useGetClaimMatch, getGetClaimMatchQueryKey, type TrackingManifest } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  getClaimMatchSegment,
+  getGetClaimChainQueryKey,
+  getGetClaimMatchQueryKey,
+  useGetClaimChain,
+  useGetClaimMatch,
+  type TrackingManifest,
+} from "@workspace/api-client-react";
 
 import { useAuth } from "@/lib/auth";
 import { useGameCopy, type GameStrings } from "@/i18n/game-strings";
 import { GameMedia, type MediaHandle, type MediaView, type TapHit } from "@/components/game-claim/GameMedia";
 import { Btn, ChunkTimeline, Crop, Eyebrow, GameTimeline, Lede, Row, Section, Stat, Title } from "@/components/game-claim/bits";
+import { ClaimantNameDialog } from "@/components/claim/ClaimantNameDialog";
 import { StatsScreen } from "@/components/game-claim/StatsScreen";
 import { gameFromManifest, loadChunkData, kitNameKey, type LoadedChunk } from "@/lib/game-claim/load";
-import { groupsForShirtIdentity, shirtNumbersForKit } from "@/lib/game-claim/jersey";
+import { groupsForShirtIdentity, shirtNumbersForKit, type ShirtIdentity } from "@/lib/game-claim/jersey";
+import { claimCountsForGroups, claimStatusForGroup, type ClaimStatusIdentity } from "@/lib/game-claim/claim-status";
 import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
@@ -61,7 +71,17 @@ export default function ClaimGamePage() {
   const copy = useGameCopy();
   const recordingId = Number(params.id);
   const enabled = Number.isInteger(recordingId) && recordingId > 0 && Boolean(user) && !isGuest;
-  const claimQuery = useGetClaimMatch(recordingId, { query: { enabled, queryKey: getGetClaimMatchQueryKey(recordingId) } });
+  const matchQueryKey = useMemo(() => getGetClaimMatchQueryKey(recordingId), [recordingId]);
+  const chainQueryKey = useMemo(() => getGetClaimChainQueryKey(recordingId), [recordingId]);
+  const claimQuery = useGetClaimMatch(recordingId, {
+    query: {
+      enabled,
+      queryKey: matchQueryKey,
+      refetchInterval: 60_000,
+      refetchOnWindowFocus: "always",
+    },
+  });
+  const chainQuery = useGetClaimChain(recordingId, { query: { enabled, queryKey: chainQueryKey } });
   const manifest = claimQuery.data?.manifest;
   const recording = claimQuery.data?.recording ?? null;
 
@@ -100,9 +120,16 @@ export default function ClaimGamePage() {
       </Shell>
     );
   }
-  if (!game || !manifest || !server) {
+  if (!game || !manifest || !server || chainQuery.isLoading) {
     return <Shell><p className="py-10 text-center text-sm text-muted-text">{copy.common.loading}</p></Shell>;
   }
+  const identities: ClaimStatusIdentity[] = (manifest.identities ?? []).map((identity) => ({
+    id: identity.id,
+    name: identity.name ?? null,
+    parts: (identity.parts ?? []).map((part) => ({ trackId: part.trackId })),
+  }));
+  const chain = chainQuery.data;
+  const resetByAdmin = Boolean(chain?.resetByAdmin && !chain.chain?.length);
   return (
     <GameClaim
       key={server.bundleFingerprint}
@@ -111,9 +138,15 @@ export default function ClaimGamePage() {
       recordingId={recordingId}
       videoUrl={recording?.videoUrl ?? null}
       eyebrow={recording ? `${recording.date ?? ""} · ${recording.court ?? ""}`.replace(/^ · | · $/g, "") : ""}
-      saved={server.state}
+      saved={resetByAdmin ? null : server.state}
       fingerprint={server.bundleFingerprint}
       copy={copy}
+      identities={identities}
+      identityId={chain?.identityId ?? null}
+      identityName={chain?.name ?? null}
+      resetByAdmin={resetByAdmin}
+      coveragePercent={chain?.coveragePercent ?? 0}
+      accountName={user?.name ?? ""}
     />
   );
 }
@@ -141,9 +174,26 @@ type Props = {
   saved: (ClaimState & { saved?: number }) | null;
   fingerprint: string;
   copy: ReturnType<typeof useGameCopy>;
+  identities: ClaimStatusIdentity[];
+  identityId: string | null;
+  identityName: string | null;
+  resetByAdmin: boolean;
+  coveragePercent: number;
+  accountName: string;
 };
 
-export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, saved, fingerprint, copy }: Props) {
+type PendingNamePick = {
+  k: number;
+  cid: string;
+  expectedCid: string | null;
+  shirtIdentity: ShirtIdentity | null;
+};
+
+export function GameClaim({
+  game, manifest, recordingId, videoUrl, eyebrow, saved, fingerprint, copy,
+  identities, identityId, identityName, resetByAdmin, coveragePercent, accountName,
+}: Props) {
+  const queryClient = useQueryClient();
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const [ver, setVer] = useState(0);
   const chunks = useRef<Record<number, LoadedChunk>>({});
@@ -153,6 +203,10 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
   const ctx = ctxRef.current;
   const S = ctx.S;
   const [savedClaim, setSavedClaim] = useState(saved);
+  const [claimName, setClaimName] = useState(identityName);
+  const namePromptHandled = useRef(Boolean(identityName));
+  const pendingClaimName = useRef<string | null>(null);
+  const [pendingNamePick, setPendingNamePick] = useState<PendingNamePick | null>(null);
   const [markA, setMarkA] = useState<number | null>(null);
   const [introT, setIntroT] = useState<number | null>(null);
   const [pickSet, setPickSet] = useState<Set<string>>(new Set());
@@ -161,6 +215,11 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
   const t0 = useRef<number | null>(null);
   const pendingNextGuess = useRef<string | null>(null);
   const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    setClaimName(identityName);
+    namePromptHandled.current = Boolean(identityName);
+  }, [identityName]);
 
   /* ------------------------------------------------------------ chunks */
 
@@ -211,6 +270,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
         bench: benchSpansOut(currentCtx),
         done: currentState.step === "done" || currentState.step === "stats",
         bundleFingerprint: fingerprint,
+        ...(pendingClaimName.current ? { name: pendingClaimName.current } : {}),
       };
       try {
         const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, {
@@ -219,12 +279,21 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        setSaveError(!r.ok);
+        if (!r.ok) {
+          setSaveError(true);
+          return;
+        }
+        setSaveError(false);
+        if (body.name && pendingClaimName.current === body.name) {
+          pendingClaimName.current = null;
+          void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
+          void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
+        }
       } catch {
         setSaveError(true);
       }
     }, 700);
-  }, [fingerprint, recordingId]);
+  }, [fingerprint, recordingId, queryClient]);
 
   /**
    * Labels are decision events, not snapshots of ClaimState. In particular,
@@ -465,12 +534,16 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
 
   const startNew = async () => {
     pendingNextGuess.current = null;
-    if (savedClaim) {
+    if (savedClaim || resetByAdmin) {
       try {
         await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { method: "DELETE", credentials: "include" });
       } catch { /* the next save overwrites anyway */ }
       setSavedClaim(null);
+      void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
+      void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
     }
+    pendingClaimName.current = null;
+    setPendingNamePick(null);
     const off = S.off;
     ctxRef.current.S = { ...newState(game), off };
     t0.current = null;
@@ -492,20 +565,51 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     go(st);
   };
 
+  const completeGroupPick = (pending: PendingNamePick) => {
+    const d = chunks.current[pending.k];
+    const chosen = d?.byCid[pending.cid];
+    if (!d || !chosen) {
+      setPendingNamePick(null);
+      return;
+    }
+    const expected = pending.expectedCid ? d.byCid[pending.expectedCid] : undefined;
+    writeGroupDecision(d, chosen, expected);
+    pendingNextGuess.current = null;
+    act(() => {
+      if (pending.shirtIdentity) {
+        S.shirtIdentity = { ...pending.shirtIdentity };
+        S.shirtCandidate = null;
+      }
+      pick(ctx, pending.k, pending.cid);
+      S.step = "review";
+    });
+  };
+
+  const chooseGroup = (pending: PendingNamePick) => {
+    if (!claimName && !namePromptHandled.current) {
+      setPendingNamePick(pending);
+      return;
+    }
+    completeGroupPick(pending);
+  };
+
+  const confirmClaimName = (name: string) => {
+    if (!pendingNamePick) return;
+    pendingClaimName.current = name;
+    namePromptHandled.current = true;
+    setClaimName(name);
+    setPendingNamePick(null);
+    completeGroupPick(pendingNamePick);
+  };
+
   const pickGroup = (cid: string) => {
     const k = S.k;
     const d = k === null ? null : chunks.current[k];
-    const chosen = d?.byCid[cid];
-    if (d && chosen && k !== null) {
-      const expected = S.step === "next"
-        ? rankNext(ctx, k)[0]?.g
-        : pendingNextGuess.current
-          ? d.byCid[pendingNextGuess.current]
-          : undefined;
-      writeGroupDecision(d, chosen, expected);
-    }
-    pendingNextGuess.current = null;
-    act(() => { pick(ctx, S.k!, cid); S.step = "review"; });
+    if (!d || k === null || !d.byCid[cid]) return;
+    const expectedCid = S.step === "next"
+      ? rankNext(ctx, k)[0]?.g.cid ?? null
+      : pendingNextGuess.current;
+    chooseGroup({ k, cid, expectedCid, shirtIdentity: null });
   };
 
   const chooseKit = (team: string | null) => {
@@ -545,14 +649,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     const d = k === null ? null : chunks.current[k];
     if (k === null || !candidate || !d) return;
     if (!groupsForShirtIdentity(d.groups, d.jersey, candidate).some((match) => match.groupId === cid)) return;
-    const group = d.byCid[cid];
-    if (group) writeGroupDecision(d, group);
-    act(() => {
-      S.shirtIdentity = { ...candidate };
-      S.shirtCandidate = null;
-      pick(ctx, k, cid);
-      S.step = "review";
-    });
+    chooseGroup({ k, cid, expectedCid: null, shirtIdentity: candidate });
   };
 
   const advance = async () => {
@@ -626,6 +723,12 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     return `\u2066${mmss(c.start + game.matchOffset)}–${mmss(c.start + c.dur + game.matchOffset)}\u2069`;
   };
   const disp = (t: number) => mmss(t + game.matchOffset);
+  const claimLabelForGroup = (group: Group): string | undefined => {
+    const status = claimStatusForGroup(group.members, identities, identityId, claimName);
+    if (!status.taken) return undefined;
+    const names = status.owners.map((owner) => owner.name || copy.gallery.you);
+    return copy.gallery.claimedBy(names.join(", "));
+  };
 
   const needsChunk = ["kit", "shirt", "gallery", "review", "joins", "gaps", "next"].includes(S.step);
   let body: React.ReactNode = null;
@@ -637,6 +740,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     body = (
       <IntroScreen
         ctx={ctx} copy={copy} eyebrow={eyebrow} mediaSlot={mediaSlot} markA={markA} saved={savedClaim}
+        resetByAdmin={resetByAdmin} coveragePercent={coveragePercent}
         onMarkA={() => { const t = media.current?.now() ?? 0; setMarkA(t); setIntroT(t); }}
         onMarkB={() => {
           const a = markA;
@@ -662,6 +766,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
           {d.kits.groups.map((kit) => {
             const gs = d.groups.filter((g) => g.team === kit.key);
             if (!gs.length) return null;
+            const claimCounts = claimCountsForGroups(gs, identities, identityId, claimName);
             return (
               <button key={kit.key} type="button" onClick={() => chooseKit(kit.key)}
                 className="flex flex-col gap-2.5 rounded-2xl border border-line bg-surface p-3 text-start hover:border-floodlight">
@@ -673,7 +778,9 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
                     <span className="me-2 inline-block h-3 w-3 rounded-full align-[-1px] ring-1 ring-white/25" style={{ background: kit.swatch }} />
                     {copy.kit.names[kit.key] ?? copy.kit.names[kitNameKey(kit.swatch)] ?? kit.key}
                   </strong>
-                  <div className="text-xs text-muted-text">{copy.kit.people(gs.length)}</div>
+                  <div className="text-xs text-muted-text">
+                    {copy.kit.people(gs.length)} · {copy.kit.claimCounts(claimCounts.free, claimCounts.taken)}
+                  </div>
                 </div>
               </button>
             );
@@ -756,6 +863,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
                     g={group}
                     copy={copy}
                     game={game}
+                    claimLabel={claimLabelForGroup(group)}
                     onWatch={() => previewGroup(d, group)}
                     action={
                       <Btn kind="primary" size="sm" onClick={() => confirmShirtGroup(group.cid)}>
@@ -798,7 +906,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
         <div className="flex flex-col gap-3">
           {gs.length === 0 && <p className="text-sm text-muted-text">{copy.gallery.empty}</p>}
           {gs.map((g) => (
-            <GroupCard key={g.cid} d={d} g={g} copy={copy} game={game} onWatch={() => previewGroup(d, g)}
+            <GroupCard key={g.cid} d={d} g={g} copy={copy} game={game} claimLabel={claimLabelForGroup(g)} onWatch={() => previewGroup(d, g)}
               action={<Btn kind="primary" size="sm" onClick={() => pickGroup(g.cid)}>{copy.gallery.thatsMe}</Btn>} />
           ))}
         </div>
@@ -845,6 +953,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     const d = currentChunk;
     const r = rankNext(ctx, d.k);
     const sure = isSure(r);
+    const fastClaimLabel = r[0] ? claimLabelForGroup(r[0].g) : undefined;
     body = (
       <div className="flex flex-col gap-4">
         <Eyebrow>{copy.next.eyebrow(span(d.k))}</Eyebrow>
@@ -855,12 +964,14 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
         {sure && r[0] && (
           <>
             <Row><Btn kind="primary" onClick={() => pickGroup(r[0].g.cid)}>{copy.next.fast}</Btn></Row>
-            <p className="-mt-2 text-xs text-muted-text">{copy.next.fastNote}</p>
+            <p className="-mt-2 text-xs text-muted-text">
+              {copy.next.fastNote}{fastClaimLabel ? ` · ${fastClaimLabel}` : ""}
+            </p>
           </>
         )}
         <div className="flex flex-col gap-3">
           {r.map(({ g }) => (
-            <GroupCard key={g.cid} d={d} g={g} copy={copy} game={game} onWatch={() => previewGroup(d, g)}
+            <GroupCard key={g.cid} d={d} g={g} copy={copy} game={game} claimLabel={claimLabelForGroup(g)} onWatch={() => previewGroup(d, g)}
               action={<Btn kind={sure ? "ghost" : "primary"} size="sm" onClick={() => pickGroup(g.cid)}>{copy.gallery.thatsMe}</Btn>} />
           ))}
         </div>
@@ -881,6 +992,10 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
         if (!window.confirm(copy.done.againConfirm)) return;
         try { await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { method: "DELETE", credentials: "include" }); } catch { /* ignore */ }
         setSavedClaim(null);
+        pendingClaimName.current = null;
+        setPendingNamePick(null);
+        void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
+        void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
         ctxRef.current.S = newState(game);
         t0.current = null;
         go("intro");
@@ -897,6 +1012,14 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
       {saveError && <p className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.saveFailed}</p>}
       {labelError && <p role="status" className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.labelFailed}</p>}
       {body}
+      {pendingNamePick && (
+        <ClaimantNameDialog
+          defaultName={claimName || accountName}
+          saving={false}
+          onCancel={() => setPendingNamePick(null)}
+          onConfirm={confirmClaimName}
+        />
+      )}
       {createPortal(
         <GameMedia ref={media} game={game} chunks={chunks.current} videoUrl={videoUrl} copy={copy.media} />,
         holder,
@@ -938,8 +1061,8 @@ function Tile({ d, img, label, children, onClick, out, pickOn }: {
   );
 }
 
-function GroupCard({ d, g, copy, game, onWatch, action }: {
-  d: LoadedChunk; g: Group; copy: GameStrings; game: Game; onWatch: () => void; action: React.ReactNode;
+function GroupCard({ d, g, copy, game, onWatch, action, claimLabel }: {
+  d: LoadedChunk; g: Group; copy: GameStrings; game: Game; onWatch: () => void; action: React.ReactNode; claimLabel?: string;
 }) {
   const ms = g.members.map((m) => d.pieces[m]).filter(Boolean);
   const t0 = Math.min(...ms.map((m) => m.t0));
@@ -949,6 +1072,7 @@ function GroupCard({ d, g, copy, game, onWatch, action }: {
       <div className="flex gap-1 overflow-x-auto">
         {spread(ms, 6).map((m) => <Crop key={m.id} chunk={d} keyName={m.img} h={104} />)}
       </div>
+      {claimLabel && <p role="note" className="text-xs font-medium text-muted-text">{claimLabel}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <div className="me-auto text-xs text-muted-text">
           <b dir="ltr" className="me-1.5 font-display text-lg font-semibold tabular-nums text-text">{mmss(g.dur)}</b>
@@ -963,8 +1087,9 @@ function GroupCard({ d, g, copy, game, onWatch, action }: {
 
 /* ------------------------------------------------------------------ intro */
 
-function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, onMarkA, onMarkB, onDel, onWatch, onStart, onResume }: {
+function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, resetByAdmin, coveragePercent, onMarkA, onMarkB, onDel, onWatch, onStart, onResume }: {
   ctx: Ctx; copy: GameStrings; eyebrow: string; mediaSlot: React.ReactNode; markA: number | null; saved: (ClaimState & { saved?: number }) | null;
+  resetByAdmin: boolean; coveragePercent: number;
   onMarkA: () => void; onMarkB: () => void; onDel: (i: number) => void; onWatch: (i: number) => void; onStart: () => void; onResume: () => void;
 }) {
   const off = ctx.S.off;
@@ -974,6 +1099,12 @@ function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, onMarkA, onM
       {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
       <Title big>{copy.intro.title}</Title>
       <Lede>{copy.intro.lead}</Lede>
+      {resetByAdmin && (
+        <div role="status" className="rounded-2xl border border-line bg-surface p-3">
+          <strong className="font-display text-sm text-text">{copy.intro.resetTitle}</strong>
+          <p className="mt-1 text-sm leading-6 text-muted-text">{copy.intro.resetBody}</p>
+        </div>
+      )}
       {mediaSlot}
       <GameTimeline ctx={ctx} />
       <Row>
@@ -1000,6 +1131,7 @@ function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, onMarkA, onM
             <b className="me-1.5 font-display text-base text-text">{copy.intro.savedClaim}</b>
             {copy.intro.savedMeta(Object.keys(saved.you ?? {}).length)}
             {saved.saved ? ` · ${new Date(saved.saved).toLocaleString()}` : ""}
+            <div className="mt-1">{copy.intro.resumeDesc(Math.max(0, Math.min(100, Math.round(coveragePercent))))}</div>
           </div>
           <Btn kind="primary" onClick={onResume}>{saved.step === "done" || saved.step === "stats" ? copy.intro.seeStats : copy.intro.resume}</Btn>
         </div>

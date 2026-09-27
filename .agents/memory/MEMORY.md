@@ -45,3 +45,4 @@
 - [Menus inside linked cards](linked-card-menu-closure.md) — preventDefault stops link navigation but can skip Radix auto-dismiss; explicitly close the menu before opening an overlay.
 - [API test database isolation](api-test-database-isolation.md) — API tests use ambient DATABASE_URL; require a disposable test database before running them.
 - [GitHub REST commit fallback](github-rest-commit-fallback.md) — preserve message bytes and verify the tree before fast-forwarding when shell push authentication fails.
+- [Whole-game claim boundary](whole-game-claim-boundary.md) — `/find` persists names and identity through game saves; `/claim` remains a separate, explicit fallback.

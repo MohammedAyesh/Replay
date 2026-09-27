@@ -74,6 +74,8 @@ const SaveBody = z.object({
   state: z.record(z.unknown()),
   parts: PartsBody,
   bench: z.array(z.object({ fromSeconds: z.number().min(0), toSeconds: z.number().min(0) })).max(200),
+  /** Only present after the claimant confirms the name dialog. */
+  name: z.string().trim().min(1).max(60).optional(),
   /** the claimant reached the done screen */
   done: z.boolean(),
   bundleFingerprint: z.string().min(1).nullish(),
@@ -208,7 +210,7 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   );
 
   try {
-    await persistChain(ctx, chain, { chosen: null, fallback: null }, { kind: "decision", answeredFrame: null });
+    await persistChain(ctx, chain, { chosen: parsed.data.name ?? null, fallback: null }, { kind: "decision", answeredFrame: null });
   } catch (error) {
     console.error("[claim-game] identity write failed", { recordingId: ctx.recordingId, error });
     res.status(500).json({ error: "Could not save your claim" });

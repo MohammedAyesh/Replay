@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation, useParams } from "wouter";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { ClerkProvider, SignIn, SignUp, useClerk, useUser } from "@clerk/react";
 import { publishableKeyFromHost } from "@clerk/react/internal";
@@ -29,7 +29,6 @@ import View from "@/pages/view";
 import Live from "@/pages/live";
 import ClaimDemo from "@/pages/claim-demo";
 import ClaimChain from "@/pages/claim-chain";
-import ClaimFind from "@/pages/claim-find";
 import ClaimGame from "@/pages/claim-game";
 import IdentityBoard from "@/pages/identity-board";
 import Owner from "@/pages/owner";
@@ -464,6 +463,17 @@ function AuthRedirectGuard() {
   return null;
 }
 
+function FindQuickRedirect() {
+  const { id } = useParams<{ id?: string }>();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (id) setLocation(`/find/${encodeURIComponent(id)}`, { replace: true });
+  }, [id, setLocation]);
+
+  return null;
+}
+
 function AppRouter() {
   return (
     <Layout>
@@ -489,7 +499,7 @@ function AppRouter() {
         <Route path="/live" component={Live} />
         <Route path="/claim/demo" component={ClaimDemo} />
         <Route path="/find/:id" component={ClaimGame} />
-        <Route path="/find-quick/:id" component={ClaimFind} />
+        <Route path="/find-quick/:id" component={FindQuickRedirect} />
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
         <Route path="/account/blocked" component={BlockedPlayers} />
