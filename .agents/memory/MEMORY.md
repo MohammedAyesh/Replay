@@ -12,6 +12,7 @@
 - [Bunny Stream renditions](bunny-stream-renditions.md) — manual quality choices require encoded HLS renditions; MP4 fallback must be enabled before upload or existing originals must be re-encoded.
 - [Collection preview thumbnail paths](collection-preview-thumbnail-paths.md) — collection GUIDs can differ from preview video IDs and custom thumbnail filenames; proxy the selected raw preview URL, not a fabricated collection-GUID path.
 - [Clip intro — playback vs export](clip-intro-playback-export.md) — intro is suppressed in all playback responses (hardcoded null); export path calls resolveIntroVideoUrl and prepends at correct dimensions.
+- [ClipPlayer loading controls](clip-player-loading-controls.md) — loading hides editing controls but keeps quality selection reachable so a lower encoded rendition can be chosen during a stall.
 - [Recording visibility dates](recording-visibility-dates.md) — recording visibility uses exact per-field whitelisted dates plus time windows; recurring weekday rules are no longer active.
 - [Clerk auth card surface](clerk-card-surface.md) — card and footer are separate appearance surfaces; existing development badges may need a card-scoped exact-text UI guard.
 - [FFmpeg crop w/h per-frame](ffmpeg-crop-wh-per-frame.md) — crop w/h expressions evaluate with t=NaN at init (never per-frame); if(lt(t,...)) zoom expressions never animate; sendcmd w/h changes are silently ignored (not stream-terminating) in FFmpeg 7.1.1.

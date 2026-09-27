@@ -176,7 +176,7 @@ function QualityPicker({
         : "Auto";
   return (
     <div
-      className="absolute end-3 z-30 pointer-events-auto"
+      className="absolute end-3 z-[60] pointer-events-auto"
       style={{ top: "calc(env(safe-area-inset-top) + 4rem)" }}
     >
       <div className="relative">
@@ -184,33 +184,42 @@ function QualityPicker({
           type="button"
           data-testid="button-video-quality"
           aria-label={singleLevel ? `Only resolution available: ${buttonLabel}` : "Select video quality"}
-          aria-haspopup={singleLevel ? undefined : "menu"}
-          aria-expanded={singleLevel ? undefined : open}
-          disabled={singleLevel}
-          title={singleLevel ? "Only one resolution is available in this Bunny stream" : "Select video quality"}
+          aria-haspopup={singleLevel ? "dialog" : "menu"}
+          aria-expanded={open}
+          title={singleLevel ? "Only one resolution is available; click for details" : "Select video quality"}
           onClick={onToggle}
-          className="px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-white text-xs font-bold border border-white/20 disabled:cursor-default"
+          className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-sm text-white text-xs font-bold border border-white/20"
         >
           {buttonLabel}
         </button>
-        {open && !singleLevel && (
-          <div role="menu" aria-label="Video quality" className="absolute top-full end-0 mt-1 bg-black/85 backdrop-blur-md rounded-xl overflow-hidden shadow-xl border border-white/10 min-w-[7rem]">
-            {[{ width: 0, height: 0, index: -1 }, ...levels].map((level) => (
-              <button
-                key={level.index}
-                type="button"
-                role="menuitemradio"
-                aria-checked={active === level.index}
-                data-testid={`video-quality-${level.index}`}
-                onClick={() => onSelect(level.index)}
-                className={cn(
-                  "block w-full px-4 py-2.5 text-xs font-semibold text-left transition-colors",
-                  active === level.index ? "text-primary" : "text-white hover:bg-white/10",
-                )}
-              >
-                {level.index === -1 ? "Auto" : resolutionLabel(level)}
-              </button>
-            ))}
+        {open && (
+          <div
+            role={singleLevel ? "status" : "menu"}
+            aria-label="Video quality"
+            className="absolute top-full end-0 mt-1 bg-black/95 backdrop-blur-md rounded-xl overflow-hidden shadow-xl border border-white/10 min-w-[8rem]"
+          >
+            {singleLevel ? (
+              <p className="max-w-64 px-3 py-2.5 text-xs leading-5 text-white/80">
+                Only {buttonLabel} is encoded for this video. Enable more Bunny Stream resolutions to switch quality.
+              </p>
+            ) : (
+              [{ width: 0, height: 0, index: -1 }, ...levels].map((level) => (
+                <button
+                  key={level.index}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={active === level.index}
+                  data-testid={`video-quality-${level.index}`}
+                  onClick={() => onSelect(level.index)}
+                  className={cn(
+                    "block w-full px-4 py-2.5 text-xs font-semibold text-left transition-colors",
+                    active === level.index ? "text-primary" : "text-white hover:bg-white/10",
+                  )}
+                >
+                  {level.index === -1 ? "Auto" : resolutionLabel(level)}
+                </button>
+              ))
+            )}
           </div>
         )}
       </div>
@@ -1042,8 +1051,21 @@ export function ClipPlayer({
                 exit={{ opacity: 0 }}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
-                className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/80 px-6 text-center text-white"
+                className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center text-white"
               >
+                {onClose && (
+                  <button
+                    type="button"
+                    aria-label="Close video"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onClose();
+                    }}
+                    className="absolute start-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                )}
                 <LoaderCircle className="h-9 w-9 animate-spin text-primary" aria-hidden="true" />
                 <p className="text-sm font-semibold">
                   {usingFallback ? t.player.fallbackLoading : t.player.playbackLoading}
@@ -1092,7 +1114,7 @@ export function ClipPlayer({
       />
 
       <AnimatePresence>
-        {showControls && clipMode === "idle" && (
+        {showControls && clipMode === "idle" && playbackUiState === "ready" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-20 flex flex-col pointer-events-none">
             <div className="flex items-center justify-between px-4 pt-safe pt-4 pointer-events-auto">
               {onClose ? (
