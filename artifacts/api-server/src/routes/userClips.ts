@@ -64,7 +64,7 @@ import { shareCardPath } from "../lib/shareCard";
 import { getAllSettings, getSettingValue, type SettingsContext } from "../lib/settings";
 import { ensureClipPoster, resolveOwnerShare } from "./share";
 import { introPlaybackPath } from "./clipIntro";
-import { canCreateClipFromVideo, createPublicFootageContext } from "../lib/publicFootage";
+import { canCreateClipFromVideo } from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
@@ -1088,8 +1088,6 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
 router.get("/feed", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   const blockedIds = userId ? await blockedUserIdsFor(userId) : new Set<number>();
-  const visibilityContext = await createPublicFootageContext(req);
-
   // Get the set of creator IDs the current user follows
   let followedIds: number[] = [];
   if (userId) {
@@ -1130,7 +1128,6 @@ router.get("/feed", async (req, res): Promise<void> => {
   const visible = rows.filter((row) => {
     if (blockedIds.has(row.creatorId)) return false;
     if ((row as { isHidden?: boolean }).isHidden) return false;
-    if (visibilityContext.ownerVideoIds.has(row.videoId)) return false;
     if (row.visibility === "public") return true;
     if (row.visibility === "private") return row.creatorId === userId;
     // Match clips are seen by that match's players on the match page, not in the public feed.

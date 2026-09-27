@@ -90,8 +90,6 @@ router.get("/fields/:id/videos", async (req, res): Promise<void> => {
       ))
       .filter((recording) => context.isAdmin || isPublicBunnyVideoInContext(
         field,
-        extractBunnyVideoId(recording.videoUrl) ?? "",
-        "",
         context,
         recording.date,
         recording.timeSlot,
@@ -111,7 +109,7 @@ router.get("/fields/:id/videos", async (req, res): Promise<void> => {
       const timestamp = parseRecordingTitleTimestamp(v.title as string);
       return Boolean(
         timestamp
-        && isPublicBunnyVideoInContext(field, guid, v.title as string, context, timestamp.date, timestamp.timeSlot)
+        && isPublicBunnyVideoInContext(field, context, timestamp.date, timestamp.timeSlot)
       );
     })
     .map((v) => ({

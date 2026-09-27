@@ -5,7 +5,7 @@
 - [HLS.js seek-on-load duration](hls-seek-duration.md) — video.duration is 0/NaN at Hls MANIFEST_PARSED; seek to startTime*duration must wait for loadedmetadata/durationchange or clips play from 0 / freeze.
 - [Clip export architecture](clip-export-arch.md) — background FFmpeg render → Bunny Storage upload; dedup via inFlight Set + exportStatus DB column; download proxied through /api/user-clips/:id/download to avoid CORS.
 - [Camera upload filename format](camera-filename-format.md) — `cam{N}_{title}_{NN}_{YYYYMMDDhhmmss}.mp4`; trailing 14 digits = capture timestamp; title may contain spaces.
-- [Owner footage title format](owner-footage-title-format.md) — owner requests use `cam{N}_owner-{requestId}_{YYYY-MM-DD}_{HH:MM}` with the Amman-local start date/time.
+- [Owner footage title format](owner-footage-title-format.md) — generated owner markers support operations but do not determine public access.
 - [Live clip synthetic videoId](live-clip-videoId.md) — academy live clips store `live:<cameraId>` not a Bunny GUID; server must guard URL generation and export for these.
 - [Live capture worker contract](live-capture-worker-contract.md) — POST returns `job`; poll known jobs without a 60-minute timeout, and require `available:true` for ball-follow.
 - [Bunny CDN Referer requirement](bunny-cdn-referer.md) — Bunny CDN returns 403 to direct browser requests; all client-facing playbackUrl/thumbnailUrl must go through /api/hls-proxy; raw CDN URLs are only for server-side FFmpeg.
@@ -36,7 +36,7 @@
 - [Export rendition geometry](export-rendition-geometry.md) — select Bunny variants by declared 3840×1080 pixels, never folder labels or adaptive master fallback.
 - [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.
 - [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.
-- [Public footage access](public-footage-access.md) — all public recording, clip, Bunny, and media-proxy routes share visibility, schedule, and owner-footage authorization.
+- [Public footage access](public-footage-access.md) — owner-request videos follow the same field, recording-visibility, and schedule rules as other public footage.
 - [SoccerWatch build environment](soccerwatch-build-environment.md) — direct Vite builds require both PORT and BASE_PATH; the workflow supplies them automatically.
 - [Orval input path](orval-input-path.md) — use an absolute OpenAPI target or codegen can clean generated outputs before failing from the workspace root.
 - [Claim continuity questions](claim-continuity-questions.md) — internal long gaps and optional kit changes use continuity questions without changing the tracking payload.

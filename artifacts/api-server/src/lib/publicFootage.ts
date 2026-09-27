@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   db,
   fieldsTable,
@@ -15,7 +15,6 @@ export type PublicFootageViewer = NonNullable<Awaited<ReturnType<typeof getLocal
 export type PublicFootageContext = {
   viewer: PublicFootageViewer;
   isAdmin: boolean;
-  ownerVideoIds: Set<string>;
   schedulesByField: Map<number, RecordingVisibilitySchedule[]>;
 };
 
@@ -30,10 +29,6 @@ export function extractBunnyVideoId(value: string | null | undefined): string | 
   }
 }
 
-export function isOwnerFootageTitle(title: string | null | undefined): boolean {
-  return typeof title === "string" && (/\(owner request #\d+\)/i.test(title) || /^cam\d+_owner-\d+_\d{4}-\d{2}-\d{2}_\d{1,2}:\d{2}$/i.test(title.replace(/\.\w+$/, "")));
-}
-
 export function parseRecordingTitleTimestamp(title: string): { date: string; timeSlot: string } | null {
   const isoMatch = title.match(/(\d{4}-\d{2}-\d{2})_(\d{1,2}:\d{2})/);
   if (isoMatch) {
@@ -41,6 +36,19 @@ export function parseRecordingTitleTimestamp(title: string): { date: string; tim
     const hour = Number(hourText);
     if (hour >= 0 && hour <= 23) {
       return { date: isoMatch[1], timeSlot: `${String(hour).padStart(2, "0")}:${minute}` };
+    }
+  }
+
+  const underscoreDateMatch = title.match(/(\d{4})_(\d{2})_(\d{2})_(\d{1,2}:\d{2})/);
+  if (underscoreDateMatch) {
+    const [, year, month, day, time] = underscoreDateMatch;
+    const [hourText, minute] = time.split(":");
+    const hour = Number(hourText);
+    if (hour >= 0 && hour <= 23 && Number(minute) <= 59) {
+      return {
+        date: `${year}-${month}-${day}`,
+        timeSlot: `${String(hour).padStart(2, "0")}:${minute}`,
+      };
     }
   }
 
@@ -65,11 +73,6 @@ export async function createPublicFootageContext(
   fieldIds: number[] = [],
 ): Promise<PublicFootageContext> {
   const viewer = await getLocalUserRecord(req);
-  const ownerRows = await db
-    .select({ videoId: footageRequestsTable.videoId })
-    .from(footageRequestsTable)
-    .where(isNotNull(footageRequestsTable.videoId));
-
   const schedules = await db
     .select({
       fieldId: recordingSchedulesTable.fieldId,
@@ -94,7 +97,6 @@ export async function createPublicFootageContext(
   return {
     viewer,
     isAdmin: viewer?.isAdmin === true,
-    ownerVideoIds: new Set(ownerRows.flatMap(({ videoId }) => videoId ? [videoId] : [])),
     schedulesByField,
   };
 }
@@ -107,23 +109,18 @@ export function isPublicRecordingInContext(
   if (context.isAdmin) return true;
   if (field.isHidden || !recording.isVisible) return false;
 
-  const videoId = extractBunnyVideoId(recording.videoUrl);
-  if (videoId && context.ownerVideoIds.has(videoId)) return false;
-
   const schedules = context.schedulesByField.get(field.id) ?? [];
   return matchesRecordingSchedule(recording.date, recording.timeSlot, schedules);
 }
 
 export function isPublicBunnyVideoInContext(
   field: typeof fieldsTable.$inferSelect,
-  videoId: string,
-  title: string,
   context: PublicFootageContext,
   date: string | null,
   timeSlot: string | null,
 ): boolean {
   if (context.isAdmin) return true;
-  if (field.isHidden || context.ownerVideoIds.has(videoId) || isOwnerFootageTitle(title)) return false;
+  if (field.isHidden) return false;
   if (!date || !timeSlot) return false;
   return matchesRecordingSchedule(date, timeSlot, context.schedulesByField.get(field.id) ?? []);
 }
@@ -158,8 +155,6 @@ export function isPublicBunnyCollectionVideo(
     timestamp
     && isPublicBunnyVideoInContext(
       field,
-      videoId,
-      title,
       context,
       timestamp.date,
       timestamp.timeSlot,
@@ -207,7 +202,6 @@ export async function canCreateClipFromVideo(req: Request, videoId: string): Pro
 export async function canViewBunnyVideo(req: Request, videoId: string): Promise<boolean> {
   const context = await createPublicFootageContext(req);
   if (context.isAdmin) return true;
-  if (context.ownerVideoIds.has(videoId)) return false;
 
   const recordings = await db
     .select({ recording: recordingsTable, field: fieldsTable })

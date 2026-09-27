@@ -123,9 +123,10 @@ afterAll(async () => {
 });
 
 describe("public footage access", () => {
-  it("hides owner footage from ordinary visitors but lets admins inspect it", async () => {
-    const denied = await request(app).get(`/api/fields/${fieldId}/recordings`).expect(200);
-    expect(denied.body).toEqual([]);
+  it("allows scheduled owner footage for ordinary visitors and admins", async () => {
+    const publicResponse = await request(app).get(`/api/fields/${fieldId}/recordings`).expect(200);
+    expect(publicResponse.body).toHaveLength(1);
+    expect(publicResponse.body[0].id).toBe(recordingId);
 
     mockedGetLocalUserRecord.mockResolvedValue({
       id: adminId,

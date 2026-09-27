@@ -1,32 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  isOwnerFootageTitle,
   isPublicBunnyCollectionVideo,
   type PublicFootageContext,
 } from "./publicFootage";
 
-describe("owner footage title filtering", () => {
-  it("recognizes the new machine-readable owner title", () => {
-    expect(isOwnerFootageTitle("cam1_owner-42_2026-09-22_23:00")).toBe(true);
-    expect(isOwnerFootageTitle("cam1_owner-42_2026-09-22_23:00.mp4")).toBe(true);
-  });
-
-  it("keeps ordinary camera titles public-filterable", () => {
-    expect(isOwnerFootageTitle("cam1_2026092219")).toBe(false);
-    expect(isOwnerFootageTitle("cam1_Field_01_22092026_230000")).toBe(false);
-  });
-});
-
 describe("public Bunny collection visibility", () => {
   const videoId = "8dcf10ce-86fe-45ed-9216-e7ea352d6d20";
-  const title = "cam1_2026-09-26_00:00";
+  const title = "cam1_2026_09_26_00:00";
   const field = { id: 10, isHidden: false } as Parameters<typeof isPublicBunnyCollectionVideo>[0];
 
-  function context(ownerVideoIds = new Set<string>()): PublicFootageContext {
+  function context(): PublicFootageContext {
     return {
       viewer: null,
       isAdmin: false,
-      ownerVideoIds,
       schedulesByField: new Map([[10, [{
         allowedDate: "2026-09-26",
         startTime: "00:00",
@@ -45,14 +31,14 @@ describe("public Bunny collection visibility", () => {
     } as unknown as Parameters<typeof isPublicBunnyCollectionVideo>[4][number];
   }
 
-  it("does not list owner-request footage even when its schedule is public", () => {
+  it("lists a scheduled imported owner-request recording", () => {
     expect(isPublicBunnyCollectionVideo(
       field,
       videoId,
       title,
-      context(new Set([videoId])),
+      context(),
       [importedRecording()],
-    )).toBe(false);
+    )).toBe(true);
   });
 
   it("keeps a visible scheduled imported recording available to guests", () => {
@@ -77,5 +63,40 @@ describe("public Bunny collection visibility", () => {
 
   it("still shows an unimported Bunny video when its title matches a public schedule", () => {
     expect(isPublicBunnyCollectionVideo(field, videoId, title, context(), [])).toBe(true);
+  });
+
+  it("does not treat an owner marker in the title as a privacy restriction", () => {
+    expect(isPublicBunnyCollectionVideo(
+      field,
+      videoId,
+      "cam1_owner-9_2026-09-26_00:00",
+      context(),
+      [],
+    )).toBe(true);
+  });
+
+  it("continues to hide recordings outside the schedule", () => {
+    const outsideSchedule = {
+      ...importedRecording(),
+      timeSlot: "03:00",
+    };
+    expect(isPublicBunnyCollectionVideo(
+      field,
+      videoId,
+      title,
+      context(),
+      [outsideSchedule],
+    )).toBe(false);
+  });
+
+  it("continues to hide footage from hidden fields", () => {
+    const hiddenField = { ...field, isHidden: true };
+    expect(isPublicBunnyCollectionVideo(
+      hiddenField,
+      videoId,
+      title,
+      context(),
+      [importedRecording()],
+    )).toBe(false);
   });
 });
