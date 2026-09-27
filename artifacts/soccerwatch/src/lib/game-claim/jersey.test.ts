@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { JerseySidecar } from "@workspace/api-client-react";
 import type { Group } from "./model";
-import { groupShirtIdentities, groupsForShirtIdentity, shirtNumbersForKit } from "./jersey";
+import { groupShirtIdentities, groupsForShirtIdentity, shirtNumberCandidateForKit, shirtNumbersForKit } from "./jersey";
 
 function group(cid: string, team: string | null, members: string[], dur = 60): Group {
   return { cid, dur, team, members, junctions: [], nb: [] };
@@ -126,5 +126,16 @@ describe("group shirt identities", () => {
     expect(groupsForShirtIdentity(laterGroups, jersey, { number: "10", kitKey: "dark" }).map(({ groupId }) => groupId))
       .toEqual(["same-identity-ten"]);
     expect(groupsForShirtIdentity(laterGroups, jersey, { number: "10", kitKey: "bib" })).toEqual([]);
+  });
+
+  it("re-binds a carried number to the current recording's kit label", () => {
+    const groups = [group("current-kit-ten", "new-recording-kit", ["track-ten"])];
+    const jersey = sidecar({
+      "track-ten": { number: "10", seenFrames: 12, confidence: 0.9 },
+    });
+
+    expect(shirtNumberCandidateForKit(groups, jersey, "10", "new-recording-kit"))
+      .toEqual({ number: "10", kitKey: "new-recording-kit" });
+    expect(shirtNumberCandidateForKit(groups, jersey, "10", "old-recording-kit")).toBeNull();
   });
 });

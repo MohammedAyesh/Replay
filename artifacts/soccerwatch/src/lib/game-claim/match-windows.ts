@@ -37,20 +37,25 @@ function covers(span: ClaimMatchWindow["playerTeamSpans"][number], at: number): 
   return span.fromSeconds <= at && span.toSeconds > at;
 }
 
-function teamAt(
+export function teamAt(
   match: ClaimMatchWindow,
   switches: ClaimTeamSwitch[],
   at: number,
 ): { team: MatchSide; known: boolean } {
   const manual = match.playerTeamSpans
     .filter((span) => span.source !== "claim" && covers(span, at))
-    .sort((a, b) => timeValue(b.createdAt) - timeValue(a.createdAt) || b.id - a.id)[0];
+    .sort((a, b) =>
+      b.fromSeconds - a.fromSeconds
+      || timeValue(b.createdAt) - timeValue(a.createdAt)
+      || b.id - a.id)[0];
   if (manual) return { team: manual.team, known: true };
 
   const claimSpan = match.playerTeamSpans
     .filter((span) => span.source === "claim" && covers(span, at))
-    .sort((a, b) => a.fromSeconds - b.fromSeconds || timeValue(a.createdAt) - timeValue(b.createdAt) || a.id - b.id)
-    .at(-1);
+    .sort((a, b) =>
+      b.fromSeconds - a.fromSeconds
+      || timeValue(b.createdAt) - timeValue(a.createdAt)
+      || b.id - a.id)[0];
   const claimSwitch = switches
     .filter((event) =>
       event.teamChanged === true

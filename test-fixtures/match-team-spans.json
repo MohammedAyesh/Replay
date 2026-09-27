@@ -1,0 +1,146 @@
+[
+  {
+    "name": "latest start wins over a later-created older captain span",
+    "baseTeam": "C",
+    "atSeconds": 55,
+    "spans": [
+      {
+        "id": 20,
+        "fromSeconds": 0,
+        "toSeconds": 100,
+        "team": "A",
+        "source": "captain",
+        "createdAt": "2026-09-02T00:00:00.000Z"
+      },
+      {
+        "id": 10,
+        "fromSeconds": 40,
+        "toSeconds": 100,
+        "team": "B",
+        "source": "captain",
+        "createdAt": "2026-09-01T00:00:00.000Z"
+      }
+    ],
+    "expectedTeam": "B"
+  },
+  {
+    "name": "latest start wins over a later-created older claim span",
+    "baseTeam": "C",
+    "atSeconds": 55,
+    "spans": [
+      {
+        "id": 20,
+        "fromSeconds": 0,
+        "toSeconds": 100,
+        "team": "A",
+        "source": "claim",
+        "createdAt": "2026-09-02T00:00:00.000Z"
+      },
+      {
+        "id": 10,
+        "fromSeconds": 40,
+        "toSeconds": 100,
+        "team": "B",
+        "source": "claim",
+        "createdAt": "2026-09-01T00:00:00.000Z"
+      }
+    ],
+    "expectedTeam": "B"
+  },
+  {
+    "name": "createdAt breaks equal-start ties",
+    "baseTeam": "C",
+    "atSeconds": 55,
+    "spans": [
+      {
+        "id": 30,
+        "fromSeconds": 20,
+        "toSeconds": 100,
+        "team": "A",
+        "source": "captain",
+        "createdAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+        "id": 10,
+        "fromSeconds": 20,
+        "toSeconds": 100,
+        "team": "B",
+        "source": "self",
+        "createdAt": "2026-09-02T00:00:00.000Z"
+      }
+    ],
+    "expectedTeam": "B"
+  },
+  {
+    "name": "id breaks equal-start and equal-createdAt ties",
+    "baseTeam": "C",
+    "atSeconds": 55,
+    "spans": [
+      {
+        "id": 10,
+        "fromSeconds": 20,
+        "toSeconds": 100,
+        "team": "A",
+        "source": "claim",
+        "createdAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+        "id": 11,
+        "fromSeconds": 20,
+        "toSeconds": 100,
+        "team": "B",
+        "source": "claim",
+        "createdAt": "2026-09-01T00:00:00.000Z"
+      }
+    ],
+    "expectedTeam": "B"
+  },
+  {
+    "name": "manual spans outrank newer claim spans",
+    "baseTeam": "C",
+    "atSeconds": 55,
+    "spans": [
+      {
+        "id": 30,
+        "fromSeconds": 10,
+        "toSeconds": 100,
+        "team": "A",
+        "source": "captain",
+        "createdAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+        "id": 10,
+        "fromSeconds": 40,
+        "toSeconds": 100,
+        "team": "C",
+        "source": "claim",
+        "createdAt": "2026-09-03T00:00:00.000Z"
+      }
+    ],
+    "expectedTeam": "A"
+  },
+  {
+    "name": "captain and self share the manual tier",
+    "baseTeam": "C",
+    "atSeconds": 55,
+    "spans": [
+      {
+        "id": 10,
+        "fromSeconds": 10,
+        "toSeconds": 100,
+        "team": "A",
+        "source": "captain",
+        "createdAt": "2026-09-03T00:00:00.000Z"
+      },
+      {
+        "id": 30,
+        "fromSeconds": 40,
+        "toSeconds": 100,
+        "team": "B",
+        "source": "self",
+        "createdAt": "2026-09-01T00:00:00.000Z"
+      }
+    ],
+    "expectedTeam": "B"
+  }
+]

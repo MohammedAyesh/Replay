@@ -22,6 +22,7 @@ export function teamAtTime(baseTeam: TeamSpanTeam, spans: readonly TeamSpanAtTim
   covering.sort((a, b) => {
     const priority = (source: string) => source === "claim" ? 0 : 1;
     return priority(b.source) - priority(a.source)
+      || b.fromOffsetSec - a.fromOffsetSec
       || timeValue(b.createdAt) - timeValue(a.createdAt)
       || b.id - a.id;
   });

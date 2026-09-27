@@ -40,6 +40,8 @@ export type SwitchEvent = {
   matchCode?: string;
   kitKey?: string | null;
   number?: string | null;
+  /** Present until a changed shirt identity has been confirmed. */
+  pendingIdentity?: boolean;
 };
 
 export type Step = "intro" | "kit" | "shirt" | "gallery" | "review" | "joins" | "gaps" | "next" | "done" | "stats";
@@ -249,10 +251,40 @@ export function latestShirtChange(ctx: Ctx, atTime = Number.POSITIVE_INFINITY): 
   return latest;
 }
 
+/** Use the latest shirt change inside this chunk when evaluating appearance. */
+export function profileTimeForChunk(
+  ctx: Ctx,
+  k: number,
+  atTime = chunkMeta(ctx, k).start,
+): number {
+  const { start, dur } = chunkMeta(ctx, k);
+  let latestChange = start;
+  for (const event of switchTimeline(ctx)) {
+    if (event.atSeconds >= start + dur) break;
+    if (event.shirtChanged && event.atSeconds >= start) {
+      latestChange = Math.max(latestChange, event.atSeconds);
+    }
+  }
+  return Math.max(start, atTime, latestChange);
+}
+
 export function recordSwitch(ctx: Ctx, event: SwitchEvent): void {
   const switches = ctx.S.switches ?? (ctx.S.switches = []);
   switches.push({ ...event });
   switches.sort((a, b) => a.atSeconds - b.atSeconds);
+}
+
+/** Complete the identity fields on the latest switch awaiting confirmation. */
+export function updatePendingSwitchIdentity(
+  ctx: Ctx,
+  patch: { kitKey?: string | null; number?: string | null; complete?: boolean },
+): boolean {
+  const event = switchTimeline(ctx).slice().reverse().find((candidate) => candidate.pendingIdentity);
+  if (!event) return false;
+  if ("kitKey" in patch) event.kitKey = patch.kitKey;
+  if ("number" in patch) event.number = patch.number;
+  if (patch.complete) delete event.pendingIdentity;
+  return true;
 }
 
 export function profile(ctx: Ctx, atTime = Number.POSITIVE_INFINITY): Appearance | null {
@@ -601,7 +633,7 @@ export const SURE_TOP = 0;
 /** "Is this you?" for the next ten minutes: look distance plus a continuity bonus. */
 export function rankNext(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start): Array<{ g: Group; d: number | null }> {
   const d = ctx.CH[k];
-  const q = profile(ctx, atTime);
+  const q = profile(ctx, profileTimeForChunk(ctx, k, atTime));
   if (!q) return d.groups.slice(0, 3).map((g) => ({ g, d: null }));
   const prevK = ctx.S.order[ctx.S.oi - 1];
   const prevKept = prevK !== undefined && ctx.CH[prevK] ? kept(ctx, prevK) : [];
@@ -643,11 +675,12 @@ export function isSure(r: Array<{ d: number | null }>): boolean {
 }
 
 /** Pick a group as you in chunk k: resets the chunk and auto-adds your twins. */
-export function pick(ctx: Ctx, k: number, cid: string): void {
+export function pick(ctx: Ctx, k: number, cid: string, atTime = chunkMeta(ctx, k).start): void {
   const y = Y(ctx, k);
   Object.assign(y, { cid, skipped: false, out: [], added: [], dropped: [], extra: [], seen: [], manual: [] });
   ctx.S.qi = 0;
-  const tw = weakColour(ctx, L2G(ctx.game, k, 0)) ? [] : twins(ctx, k, L2G(ctx.game, k, 0));
+  const profileAt = profileTimeForChunk(ctx, k, atTime);
+  const tw = weakColour(ctx, profileAt) ? [] : twins(ctx, k, profileAt);
   for (const x of tw) y.added.push(x.g.cid);
   ctx.S.autoAdded = tw.length;
 }

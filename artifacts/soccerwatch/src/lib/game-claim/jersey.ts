@@ -112,3 +112,15 @@ export function groupsForShirtIdentity(
         || a.groupId.localeCompare(b.groupId),
     );
 }
+
+/** Re-bind a carried number to a kit label from the current recording. */
+export function shirtNumberCandidateForKit(
+  groups: readonly Group[],
+  jersey: JerseySidecar | null,
+  number: string,
+  kitKey: string | null,
+): ShirtIdentity | null {
+  if (!number || !kitKey) return null;
+  const candidate = { number, kitKey };
+  return groupsForShirtIdentity(groups, jersey, candidate).length ? candidate : null;
+}

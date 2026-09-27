@@ -5,12 +5,17 @@ import {
   chunkPercent,
   isSure,
   newState,
+  pick,
   profile,
+  profileTimeForChunk,
+  rankNext,
   recordSwitch,
   questions,
   subtract,
   tapSpan,
   timeline,
+  twins,
+  updatePendingSwitchIdentity,
   Y,
   type Ctx,
 } from "./game-claim/claim";
@@ -94,6 +99,56 @@ describe("shirt switch profile timeline", () => {
     recordSwitch(ctx, { atSeconds: 21, shirtChanged: true, kitKey: "red", number: "9" });
     expect(profile(ctx, 20)?.to[0]).toBe(20);
     expect(profile(ctx, 40)?.to[0]).toBe(220);
+  });
+
+  it("does not auto-add an old-shirt lookalike after a mid-chunk shirt change", () => {
+    const ctx = fixture();
+    const oldFeat = { to: [80, 128, 128] as [number, number, number], sh: [80, 128, 128] as [number, number, number], hi: [1], hr: 1 };
+    const newFeat = { to: [200, 128, 128] as [number, number, number], sh: [200, 128, 128] as [number, number, number], hi: [1], hr: 1 };
+    ctx.CH[0].pieces.A.feat = oldFeat;
+    ctx.CH[0].pieces.B.feat = newFeat;
+    ctx.CH[0].pieces.C.feat = oldFeat;
+    recordSwitch(ctx, { atSeconds: 21, shirtChanged: true, kitKey: "red", number: "9" });
+
+    expect(profileTimeForChunk(ctx, 0)).toBe(21);
+    expect(twins(ctx, 0, 20).map(({ g }) => g.cid)).toContain("g2");
+    expect(rankNext(ctx, 0, 0).every(({ d }) => d === null)).toBe(true);
+    pick(ctx, 0, "g1");
+    expect(Y(ctx, 0).added).not.toContain("g2");
+  });
+});
+
+describe("switch identity updates", () => {
+  it("updates the pending switch after kit and number confirmation", () => {
+    const ctx = fixture();
+    recordSwitch(ctx, {
+      atSeconds: 21,
+      teamChanged: true,
+      shirtChanged: true,
+      kitKey: null,
+      number: null,
+      pendingIdentity: true,
+    });
+
+    expect(updatePendingSwitchIdentity(ctx, { kitKey: "blue" })).toBe(true);
+    expect(ctx.S.switches?.[0]).toMatchObject({ kitKey: "blue", number: null, pendingIdentity: true });
+    expect(updatePendingSwitchIdentity(ctx, { number: "12", complete: true })).toBe(true);
+    expect(ctx.S.switches?.[0]).toMatchObject({ kitKey: "blue", number: "12" });
+    expect(ctx.S.switches?.[0]).not.toHaveProperty("pendingIdentity");
+  });
+
+  it("leaves a same-shirt switch's current kit and number untouched", () => {
+    const ctx = fixture();
+    recordSwitch(ctx, {
+      atSeconds: 21,
+      teamChanged: true,
+      shirtChanged: false,
+      kitKey: "red",
+      number: "9",
+    });
+
+    expect(updatePendingSwitchIdentity(ctx, { kitKey: "blue", number: "12", complete: true })).toBe(false);
+    expect(ctx.S.switches?.[0]).toMatchObject({ kitKey: "red", number: "9" });
   });
 });
 

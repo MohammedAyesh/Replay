@@ -1,5 +1,25 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { matchBenchRanges, type ClaimMatchWindow, type ClaimTeamSwitch } from "./match-windows";
+import { matchBenchRanges, teamAt, type ClaimMatchWindow, type ClaimTeamSwitch } from "./match-windows";
+
+type SharedSpanCase = {
+  name: string;
+  baseTeam: "A" | "B" | "C" | null;
+  atSeconds: number;
+  spans: Array<{
+    id: number;
+    fromSeconds: number;
+    toSeconds: number;
+    team: "A" | "B" | "C" | null;
+    source: string;
+    createdAt: string;
+  }>;
+  expectedTeam: "A" | "B" | "C" | null;
+};
+
+const sharedSpanCases = JSON.parse(
+  readFileSync(new URL("../../../../../test-fixtures/match-team-spans.json", import.meta.url), "utf8"),
+) as SharedSpanCase[];
 
 const match = (overrides: Partial<ClaimMatchWindow> = {}): ClaimMatchWindow => ({
   code: "match-a",
@@ -22,6 +42,14 @@ const span = (overrides: Partial<ClaimMatchWindow["playerTeamSpans"][number]> = 
 });
 
 describe("matchBenchRanges", () => {
+  it.each(sharedSpanCases)("$name", ({ baseTeam, atSeconds, spans, expectedTeam }) => {
+    const resolved = teamAt(match({
+      rosterTeam: baseTeam,
+      playerTeamSpans: spans,
+    }), [], atSeconds);
+    expect(resolved.team).toBe(expectedTeam);
+  });
+
   it("keeps a player benched only until a later span puts them on a playing side", () => {
     expect(matchBenchRanges(match({
       rosterTeam: "C",

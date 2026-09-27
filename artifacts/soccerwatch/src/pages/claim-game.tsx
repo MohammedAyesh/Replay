@@ -40,7 +40,7 @@ import { Btn, ChunkTimeline, Crop, Eyebrow, GameTimeline, Lede, Row, Section, St
 import { ClaimantNameDialog } from "@/components/claim/ClaimantNameDialog";
 import { StatsScreen } from "@/components/game-claim/StatsScreen";
 import { gameFromManifest, loadChunkData, kitNameKey, type LoadedChunk } from "@/lib/game-claim/load";
-import { groupsForShirtIdentity, shirtNumbersForKit, type ShirtIdentity } from "@/lib/game-claim/jersey";
+import { groupsForShirtIdentity, shirtNumberCandidateForKit, shirtNumbersForKit, type ShirtIdentity } from "@/lib/game-claim/jersey";
 import { matchBenchRanges, type ClaimMatchWindow } from "@/lib/game-claim/match-windows";
 import { claimCountsForGroups, claimStatusForGroup, type ClaimStatusIdentity } from "@/lib/game-claim/claim-status";
 import { pictureForPiece, type PiecePicture } from "@/lib/game-claim/images";
@@ -48,8 +48,8 @@ import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
   addTap, afterChunk, benchInHole, benchSpans, candidates, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
-  newState, nextHole, nextIllustratedJoin, ovPos, pick, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
-  hkey, recordSwitch, type ClaimState, type Ctx, type Hole, type Step,
+  newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
+  hkey, recordSwitch, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts } from "@/lib/game-claim/parts";
 
@@ -237,7 +237,7 @@ export function GameClaim({
   const [pendingSwitchKind, setPendingSwitchKind] = useState<"new-new" | "same-new" | "new-same" | null>(null);
   const [switchSide, setSwitchSide] = useState<"A" | "B" | "C" | null>(null);
   const [switchMatchCode, setSwitchMatchCode] = useState<string | null>(null);
-  const pendingSwitchNumber = useRef<string | null>(null);
+  const pendingContinuationNumber = useRef<string | null>(null);
   const pendingAutoKit = useRef<string | null>(null);
   const requestedMatchCode = new URLSearchParams(window.location.search).get("match");
   const initialMatchChoices = saved?.matchChoices?.length
@@ -522,22 +522,25 @@ export function GameClaim({
         teamChanged,
         shirtChanged,
         ...(teamChanged && side && matchCode ? { team: side, matchCode } : {}),
-        kitKey: teamChanged ? null : S.team,
+        kitKey: teamChanged && kind !== "new-same" ? null : S.team,
         number: shirtChanged ? null : S.shirtIdentity?.number ?? null,
+        ...(shirtChanged ? { pendingIdentity: true } : {}),
       });
       if (shirtChanged) {
         S.shirtIdentity = null;
         S.shirtCandidate = null;
-      } else if (teamChanged) {
-        pendingSwitchNumber.current = S.shirtIdentity?.number ?? null;
-        S.shirtIdentity = null;
       }
-      S.step = "kit";
+      S.step = kind === "new-same" ? "gallery" : "kit";
       if (pendingAutoKit.current && kind === "new-new") {
         const kit = pendingAutoKit.current;
         S.team = kit;
         const options = currentChunk ? shirtNumbersForKit(currentChunk.groups, currentChunk.jersey, kit) : [];
         S.step = options.length ? "shirt" : "gallery";
+        updatePendingSwitchIdentity(ctx, {
+          kitKey: kit,
+          number: null,
+          complete: options.length === 0,
+        });
         pendingAutoKit.current = null;
       }
     });
@@ -671,7 +674,7 @@ export function GameClaim({
     const state = ctxRef.current.S;
     const match = groupsForShirtIdentity(d.groups, d.jersey, state.shirtIdentity)[0];
     if (!match) return false;
-    pick(ctxRef.current, k, match.groupId);
+    pick(ctxRef.current, k, match.groupId, profileTimeForChunk(ctxRef.current, k));
     state.step = "review";
     return true;
   };
@@ -690,17 +693,11 @@ export function GameClaim({
     setPendingNamePick(null);
     const off = S.off;
     ctxRef.current.S = { ...newState(game), off };
-    const continuationKit = new URLSearchParams(window.location.search).get("kit");
-    const continuationNumber = new URLSearchParams(window.location.search).get("number");
-    if (continuationKit) {
-      ctxRef.current.S.team = continuationKit;
-      if (continuationNumber) ctxRef.current.S.shirtIdentity = { kitKey: continuationKit, number: continuationNumber };
-    }
+    pendingContinuationNumber.current = new URLSearchParams(window.location.search).get("number");
     t0.current = null;
     tap();
     startClaim(ctxRef.current);
     applyMatchWindows(ctxRef.current, matchChoices);
-    if (continuationKit) ctxRef.current.S.step = "gallery";
     bump();
     await ensure(ctxRef.current.S.k!);
     go("kit");
@@ -756,6 +753,11 @@ export function GameClaim({
       if (pending.shirtIdentity) {
         S.shirtIdentity = { ...pending.shirtIdentity };
         S.shirtCandidate = null;
+        updatePendingSwitchIdentity(ctx, {
+          kitKey: pending.shirtIdentity.kitKey,
+          number: pending.shirtIdentity.number,
+          complete: true,
+        });
       }
       pick(ctx, pending.k, pending.cid);
       S.step = "review";
@@ -799,32 +801,48 @@ export function GameClaim({
   const chooseKit = (team: string | null) => {
     const shirtIdentity = team && S.shirtIdentity?.kitKey === team
       ? S.shirtIdentity
-      : team && pendingSwitchNumber.current
-        ? { number: pendingSwitchNumber.current, kitKey: team }
         : null;
+    const continuationCandidate = team && currentChunk && pendingContinuationNumber.current
+      ? shirtNumberCandidateForKit(currentChunk.groups, currentChunk.jersey, pendingContinuationNumber.current, team)
+      : null;
     const hasNumbers = Boolean(currentChunk && shirtNumbersForKit(currentChunk.groups, currentChunk.jersey, team).length);
-    const nextStep: Step = shirtIdentity || !hasNumbers ? "gallery" : "shirt";
+    const nextStep: Step = continuationCandidate ? "shirt" : shirtIdentity || !hasNumbers ? "gallery" : "shirt";
     act(() => {
       S.team = team;
       S.shirtIdentity = shirtIdentity;
-      S.shirtCandidate = null;
+      S.shirtCandidate = continuationCandidate;
       S.step = nextStep;
+      updatePendingSwitchIdentity(ctx, {
+        kitKey: team,
+        number: shirtIdentity?.number ?? null,
+        complete: nextStep !== "shirt",
+      });
     });
+    if (continuationCandidate || nextStep !== "shirt") pendingContinuationNumber.current = null;
   };
 
   const chooseShirtNumber = (number: string) => {
     const kitKey = S.team;
     if (!kitKey) return;
+    pendingContinuationNumber.current = null;
     act(() => { S.shirtCandidate = { number, kitKey }; });
   };
 
   const chooseAnotherShirtNumber = () => act(() => { S.shirtCandidate = null; });
 
-  const continueWithoutShirtNumber = () => act(() => {
-    S.shirtIdentity = null;
-    S.shirtCandidate = null;
-    S.step = "gallery";
-  });
+  const continueWithoutShirtNumber = () => {
+    pendingContinuationNumber.current = null;
+    act(() => {
+      S.shirtIdentity = null;
+      S.shirtCandidate = null;
+      S.step = "gallery";
+      updatePendingSwitchIdentity(ctx, {
+        kitKey: S.team,
+        number: null,
+        complete: true,
+      });
+    });
+  };
 
   const backToKitFromShirt = () => act(() => {
     S.shirtCandidate = null;
@@ -1490,7 +1508,7 @@ function ReviewScreen({
   const ms = mine(ctx, k);
   const g = y.cid ? d.byCid[y.cid] : null;
   const bs = benchSpans(ctx, k);
-  const tw = twins(ctx, k, chunkMeta(ctx, k).start);
+   const tw = twins(ctx, k, profileTimeForChunk(ctx, k));
   const twc = new Set(tw.map((x) => x.g.cid));
   const nb = (g ? g.nb : []).filter(([, c]) => !y.added.includes(c) && d.byCid[c] && c !== y.cid && !twc.has(c));
   const G = ctx.game;
