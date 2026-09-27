@@ -128,6 +128,45 @@ export function isPublicBunnyVideoInContext(
   return matchesRecordingSchedule(date, timeSlot, context.schedulesByField.get(field.id) ?? []);
 }
 
+/**
+ * Apply the same visibility rule to a video returned from a Bunny collection
+ * that the media proxy applies when the browser requests its manifest.
+ *
+ * Imported rows are authoritative: a hidden imported recording must not become
+ * public again just because its Bunny title contains a scheduled timestamp.
+ * Unimported videos may still be shown when their title identifies a scheduled
+ * public recording.
+ */
+export function isPublicBunnyCollectionVideo(
+  field: typeof fieldsTable.$inferSelect,
+  videoId: string,
+  title: string,
+  context: PublicFootageContext,
+  importedRecordings: Array<typeof recordingsTable.$inferSelect>,
+): boolean {
+  if (context.isAdmin) return true;
+
+  const matchingRecordings = importedRecordings.filter(
+    (recording) => extractBunnyVideoId(recording.videoUrl) === videoId,
+  );
+  if (matchingRecordings.length > 0) {
+    return matchingRecordings.some((recording) => isPublicRecordingInContext(recording, field, context));
+  }
+
+  const timestamp = parseRecordingTitleTimestamp(title);
+  return Boolean(
+    timestamp
+    && isPublicBunnyVideoInContext(
+      field,
+      videoId,
+      title,
+      context,
+      timestamp.date,
+      timestamp.timeSlot,
+    ),
+  );
+}
+
 export async function isActiveOwnerVideo(videoId: string): Promise<boolean> {
   const [request] = await db
     .select({ id: footageRequestsTable.id })
