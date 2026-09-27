@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TrackingManifest } from "@workspace/api-client-react";
+import type { JerseySidecar, TrackingManifest } from "@workspace/api-client-react";
 import { buildChunk, splitAtColourJumps, type BundleTrack } from "./game-claim/build";
 import {
   chunkPercent,
@@ -103,7 +103,7 @@ describe("jersey sidecar loading", () => {
     }],
   };
 
-  function load(fetchJersey: () => Promise<{ tracks: Record<string, { number: string; seenFrames: number; confidence: number }>; numbers: Record<string, string[]> } | null>) {
+  function load(fetchJersey: () => Promise<JerseySidecar | null>) {
     return loadChunkData({
       manifest,
       k: 0,
@@ -116,6 +116,7 @@ describe("jersey sidecar loading", () => {
 
   it("attaches sidecar readings to the loaded chunk", async () => {
     const jersey = {
+      v: 1 as const,
       tracks: { "s0:t1": { number: "8", seenFrames: 3, confidence: 0.9 } },
       numbers: { "8": ["s0:t1"] },
     };

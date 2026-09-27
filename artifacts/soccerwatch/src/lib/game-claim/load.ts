@@ -1,8 +1,7 @@
-import type { TrackingManifest } from "@workspace/api-client-react";
+import type { JerseySidecar, TrackingManifest } from "@workspace/api-client-react";
 import { MAX_KITS, MIN_KIT_MEMBERS, rgbToHsl, splitKits, kitColourKey, type KitSplit } from "@/lib/claim-kit";
 import { featureFromJpeg, lab8ToRgb } from "./appearance";
 import { applyPeople, buildChunk, groupChunk, groupProfileOf, measureChunk, type BundleChunkInput, type PeopleSidecar } from "./build";
-import type { JerseySidecar } from "../claim-gallery";
 import type { Chunk, Game } from "./model";
 import { complement, union } from "./model";
 import { pitchFromManifest } from "./pitch";
