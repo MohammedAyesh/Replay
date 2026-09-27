@@ -7,6 +7,7 @@ import { arSA } from "@clerk/localizations";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/layout";
+import { AuthIdentityPanel } from "@/components/auth-identity-panel";
 import { clerkAppearance } from "@/lib/clerkAppearance";
 import { LocaleProvider, useLocale, useTranslation } from "@/i18n";
 import { FullscreenVideoProvider } from "@/lib/fullscreen-video";
@@ -436,9 +437,8 @@ function AuthRedirectGuard() {
     const pathname = location.split("?")[0];
     const isAuthPage = pathname === "/" || pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up");
 
-    // If Clerk says the user IS signed in but our local user record isn't
-    // ready yet (common right after sign-in), don't do anything — let the
-    // page stay so we don't bounce back to login while the server catches up.
+    // AppRouter renders the identity-confirmation screen before protected
+    // routes whenever Clerk is signed in but the local user is unavailable.
     if (isSignedIn && !user && !isGuest) return;
 
     if (!user || isGuest) return;
@@ -476,6 +476,49 @@ function FindQuickRedirect() {
 }
 
 function AppRouter() {
+  const { user, isLoading, isGuest, isSignedIn, refetchLocalUser } = useAuth();
+  const { signOut } = useClerk();
+  const { locale } = useLocale();
+  const [retryingIdentity, setRetryingIdentity] = useState(false);
+  const [signOutPending, setSignOutPending] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
+
+  if (isSignedIn && !user && !isGuest) {
+    const retryIdentity = async () => {
+      setRetryingIdentity(true);
+      try {
+        await refetchLocalUser();
+      } finally {
+        setRetryingIdentity(false);
+      }
+    };
+
+    const signInAgain = async () => {
+      setSignOutPending(true);
+      setSignOutFailed(false);
+      try {
+        await signOut({ redirectUrl: `${basePath}/sign-in` });
+      } catch {
+        setSignOutPending(false);
+        setSignOutFailed(true);
+      }
+    };
+
+    return (
+      <AuthHeroLayout showBackButton={false}>
+        <AuthIdentityPanel
+          locale={locale}
+          isLoading={isLoading}
+          retrying={retryingIdentity}
+          signOutPending={signOutPending}
+          signOutFailed={signOutFailed}
+          onRetry={() => void retryIdentity()}
+          onSignInAgain={() => void signInAgain()}
+        />
+      </AuthHeroLayout>
+    );
+  }
+
   return (
     <Layout>
       <AuthRedirectGuard />

@@ -6,7 +6,7 @@ export type { User };
 export function useAuth() {
   const { isSignedIn, isLoaded } = useUser();
 
-  const { data: localUser, isLoading: isMeLoading } = useGetMe({
+  const { data: localUser, isLoading: isMeLoading, refetch: refetchLocalUser } = useGetMe({
     query: {
       enabled: isLoaded,
       // Retry when Clerk says the user IS signed in but the server returns an
@@ -28,7 +28,15 @@ export function useAuth() {
 
   const setUser = (_u: User | null) => {};
 
-  return { user, isLoading, isGuest, isAdmin, isSignedIn: isSignedIn === true, setUser };
+  return {
+    user,
+    isLoading,
+    isGuest,
+    isAdmin,
+    isSignedIn: isSignedIn === true,
+    refetchLocalUser,
+    setUser,
+  };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
