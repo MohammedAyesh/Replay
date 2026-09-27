@@ -25,7 +25,7 @@ import { StreamingPanel } from "@/components/StreamingPanel";
 import { SafetyMenu } from "@/components/safety/SafetyMenu";
 import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
-import { MatchStats } from "@/components/match/MatchStats";
+import { MatchCompetitionAwardsRow, MatchStats } from "@/components/match/MatchStats";
 import { FindYourselfCard, Scoreboard } from "@/components/match/Scoreboard";
 import {
   PhaseChip,
@@ -519,6 +519,7 @@ function Overview({ room, copy, colors, names, now, inviteText, onShare, findRec
       {post && <FootageCard room={room} copy={copy} />}
       {post && room.canManage && <ScoreEditor room={room} copy={copy} colors={colors} names={names} />}
       {post && room.vote.winners.length > 0 && <MotmBanner room={room} copy={copy} />}
+      {post && <MatchCompetitionAwardsRow room={room} copy={copy} />}
       {post && room.vote.open && room.isMember && room.vote.myVote === null && (
         <Card className="border-violet/40 bg-violet/10">
           <p className="text-sm font-bold">{copy.vote}</p>

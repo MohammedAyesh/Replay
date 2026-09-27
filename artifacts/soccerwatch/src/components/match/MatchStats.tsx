@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowUpRight, Crown, Medal, RefreshCw, Trophy } from "lucide-react";
 import { Link } from "wouter";
+import { PlayerAvatar } from "@/components/match/bits";
 import type { MatchStrings } from "@/i18n/match-strings";
 import type { MatchRoom, PlayerForm, PlayerMetricValues, TeamSide } from "@/lib/match-api";
+import { useAuth } from "@/lib/auth";
 import type { Lab } from "@/lib/game-claim/play";
 import { cn } from "@/lib/utils";
+import {
+  metricDeltaDirection,
+  podiumPlaces,
+  rankCompetitionPlayers,
+  visibleLeaderboardRows,
+} from "./competition-leaderboard";
 
 type MetricKey = "distanceKm" | "topSpeedKmh" | "touches" | "passesCompleted" | "dribblesWon" | "goals";
 type AwardKey = "motm" | "distance" | "speed" | "touches" | "passes" | "dribbles" | "goals";
@@ -58,6 +67,21 @@ type Stats = {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 const pct = (x: number, y: number) => (y > 0 ? Math.round((100 * x) / y) : 0);
+
+function useMatchStatsData(room: MatchRoom, viewerId: number | null, enabled = true) {
+  return useQuery<Stats>({
+    queryKey: ["match-stats", room.code, viewerId, room.stats.unlocked],
+    queryFn: async () => {
+      const response = await fetch(`${basePath}/api/m/${room.code}/stats`, { credentials: "include" });
+      if (!response.ok) throw new Error(String(response.status));
+      return response.json() as Promise<Stats>;
+    },
+    enabled,
+    staleTime: 15_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}
 
 function MirrorRow({ label, a, b, fmt, colors, lowerIsBetter = false }: {
   label: string;
@@ -185,6 +209,65 @@ export function FormPanel({ form, copy, compact = false }: { form: PlayerForm | 
   );
 }
 
+export function RecentFormPanel({ form, copy }: { form: PlayerForm | null; copy: MatchStrings }) {
+  if (!form) return <p className="text-xs text-muted-text">{copy.competitionNoForm}</p>;
+  const latest = form.lastFive[0];
+  if (!latest) return <p className="text-xs text-muted-text">{copy.competitionNoForm}</p>;
+
+  const metrics: MetricKey[] = ["distanceKm", "topSpeedKmh", "touches", "passesCompleted", "dribblesWon", "goals"];
+  const labels: Record<MetricKey, string> = {
+    distanceKm: copy.competitionDistance,
+    topSpeedKmh: copy.competitionSpeed,
+    touches: copy.competitionTouches,
+    passesCompleted: copy.competitionPasses,
+    dribblesWon: copy.competitionDribbles,
+    goals: copy.competitionGoals,
+  };
+  const hasLatestMetric = (key: MetricKey) => latest.stats[key] !== null;
+  const hasBestMetric = (key: MetricKey) => form.bests[key] !== null;
+  const displayedMetrics = metrics.filter((key) => hasLatestMetric(key) || hasBestMetric(key));
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="your-form-last-match">
+      <Link href={`/m/${latest.code}`} className="flex min-h-10 items-center justify-between gap-2 rounded-xl border border-line bg-raised/50 px-3 text-xs font-semibold">
+        <span className="text-muted-text">{copy.competitionLastMatch}</span>
+        <span className="font-mono text-text">{latest.code}</span>
+      </Link>
+      <div className="grid grid-cols-2 gap-2">
+        {displayedMetrics.map((key) => {
+          const value = latest.stats[key];
+          const average = form.previousAverages?.[key] ?? null;
+          const direction = metricDeltaDirection(value, average);
+          const delta = value !== null && average !== null ? formatFormMetric(copy, key, Math.abs(value - average)) : null;
+          return (
+            <div key={key} className="rounded-xl border border-line bg-raised/70 p-2.5" data-testid={`last-match-metric-${key}`}>
+              <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-text">{labels[key]}</p>
+              <p className="mt-1 font-display text-2xl font-bold leading-none text-text">{formatFormMetric(copy, key, value)}</p>
+              {direction && delta && (
+                <p className={cn("mt-1 text-[9px] font-bold", direction === "up" ? "text-turf" : "text-violet")}>
+                  {direction === "up" ? copy.competitionDeltaAbove(delta) : copy.competitionDeltaBelow(delta)}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {displayedMetrics.some(hasBestMetric) && (
+        <div className="border-t border-line pt-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-text">{copy.competitionPersonalBests}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {displayedMetrics.filter(hasBestMetric).map((key) => (
+              <span key={key} className="rounded-full border border-floodlight/30 bg-floodlight/10 px-2.5 py-1 text-[10px] font-semibold text-floodlight">
+                {labels[key]} · {formatFormMetric(copy, key, form.bests[key])}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStrings; room: MatchRoom }) {
   const competition = stats.competition;
   const claimed = (stats.players ?? []).filter((player) => player.claimed);
@@ -195,20 +278,11 @@ function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStri
   const availableMetricKeys = metricKeys.filter((key) =>
     (key !== "goals" || hasGoals) && claimed.some((player) => metricValue(player, key) !== null),
   );
-  const ranked = useMemo(() => {
-    const eligible = claimed.filter((player) => metricValue(player, metric) !== null);
-    const sorted = [...eligible].sort((a, b) => (metricValue(b, metric) ?? 0) - (metricValue(a, metric) ?? 0));
-    const ranks = new Map<number, number>();
-    sorted.forEach((player, index) => {
-      const previous = index > 0 ? metricValue(sorted[index - 1], metric) : null;
-      ranks.set(player.playerId, previous !== null && previous === metricValue(player, metric) ? (ranks.get(sorted[index - 1].playerId) ?? index + 1) : index + 1);
-    });
-    const viewerIndex = sorted.findIndex((player) => player.playerId === viewerId);
-    const above = viewerIndex > 0 ? sorted[viewerIndex - 1] : null;
-    const viewer = viewerIndex >= 0 ? sorted[viewerIndex] : null;
-    const displayRows = viewer ? [viewer, ...sorted.filter((player) => player.playerId !== viewer.playerId)] : sorted;
-    return { sorted, displayRows, ranks, above, viewer };
-  }, [claimed, metric, viewerId]);
+  const ranked = useMemo(
+    () => rankCompetitionPlayers(claimed, metric, viewerId),
+    [claimed, metric, viewerId],
+  );
+  const visibleRows = visibleLeaderboardRows(ranked.sorted, viewerId, 8);
 
   useEffect(() => {
     if (!availableMetricKeys.includes(metric)) setMetric(availableMetricKeys[0] ?? "distanceKm");
@@ -216,12 +290,62 @@ function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStri
 
   if (!competition) return null;
   const playerById = new Map(claimed.map((player) => [player.playerId, player]));
+  const unclaimedPlayers = (stats.players ?? []).filter((player) => !player.claimed);
+  const podiumColors = { 1: "#D4FF4F", 2: "#E8EAF0", 3: "#2FD8C4" } as const;
+  const podiumHeights = { 1: "h-40", 2: "h-32", 3: "h-28" } as const;
   const visibleAwards = competition.awards
     .filter((award) => award.key !== "motm" || room.vote.closed)
     .filter((award) => award.playerIds.some((id) => playerById.has(id)));
   const callouts = competition.callouts.filter((callout) =>
     callout.kind !== "speed-beaten" || playerById.has(callout.otherPlayerId),
   );
+  const renderRankRow = (player: PlayerStats) => {
+    const value = metricValue(player, metric);
+    const viewer = player.playerId === viewerId;
+    const rank = ranked.ranks.get(player.playerId);
+    const average = viewer ? competition.personalForm?.averages[metric] ?? null : null;
+    const direction = viewer ? metricDeltaDirection(value, average) : null;
+    const delta = value !== null && average !== null ? Math.abs(value - average) : null;
+    const rosterPlayer = room.players.find((candidate) => candidate.id === player.playerId);
+    return (
+      <motion.div
+        key={player.playerId}
+        layout
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className={cn("flex items-center gap-2 rounded-xl border px-2.5 py-2", viewer ? "border-violet/70 bg-violet/10" : "border-line bg-raised/45")}
+        data-testid={`row-rank-${player.playerId}`}
+      >
+        <span className={cn("w-8 shrink-0 text-center font-mono text-xs font-bold", viewer ? "text-violet" : "text-muted-text")}>#{rank}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <i className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: player.team ? room.teams[player.team as TeamSide]?.color : "var(--replay-turf)" }} />
+          <PlayerAvatar
+            name={player.name}
+            initials={rosterPlayer?.initials ?? undefined}
+            avatarUrl={rosterPlayer?.avatarUrl}
+            size={28}
+            ring={viewer ? "#7B5CFF" : undefined}
+          />
+          <span className="truncate text-sm font-semibold">{player.name}</span>
+          {viewer && <span className="rounded-full bg-violet px-1.5 py-0.5 text-[9px] font-black text-white">{copy.competitionYou}</span>}
+          {player.personalBestMetrics?.includes(metric) && <span title={copy.competitionPersonalBest} className="text-floodlight"><ArrowUpRight className="h-3 w-3" /></span>}
+        </span>
+        <span className="shrink-0 text-end font-mono text-sm font-bold">{value === null ? copy.competitionMetricUnavailable : `${metricFormat(metric, value)} ${metricUnit(metric)}`}</span>
+        {viewer && direction && delta !== null && (
+          <span className={cn("hidden shrink-0 text-[9px] font-bold min-[370px]:inline", direction === "up" ? "text-turf" : "text-violet")}>
+            {direction === "up"
+              ? copy.competitionDeltaAbove(`${metricFormat(metric, delta)} ${metricUnit(metric)}`.trim())
+              : copy.competitionDeltaBelow(`${metricFormat(metric, delta)} ${metricUnit(metric)}`.trim())}
+          </span>
+        )}
+        {rank === 1 && <Crown className="h-3.5 w-3.5 shrink-0 text-floodlight" />}
+      </motion.div>
+    );
+  };
+  const findHref = stats.recordings[0] ? `/find/${stats.recordings[0]}` : null;
+  const viewerGap = ranked.viewer && ranked.above
+    ? (metricValue(ranked.above, metric) ?? 0) - (metricValue(ranked.viewer, metric) ?? 0)
+    : null;
 
   return (
     <motion.section
@@ -291,31 +415,86 @@ function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStri
               ))}
             </div>
           </div>
-          <div className="mt-3 flex flex-col gap-1.5">
-            {ranked.displayRows.map((player) => {
-              const value = metricValue(player, metric);
-              const viewer = player.playerId === viewerId;
-              const above = viewer && ranked.above ? metricValue(ranked.above, metric) : null;
-              const numericGap = viewer && above !== null && value !== null ? above - value : null;
-              return (
-                <motion.div key={player.playerId} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={cn("flex items-center gap-2 rounded-xl border px-2.5 py-2", viewer ? "border-floodlight/70 bg-floodlight/10" : "border-line bg-raised/45")} data-testid={`row-rank-${player.playerId}`}>
-                  <span className="w-5 text-center font-mono text-xs font-bold text-muted-text">{ranked.ranks.get(player.playerId)}</span>
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                    <i className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: player.team ? room.teams[player.team as TeamSide]?.color : "var(--replay-turf)" }} />
-                    <span className="truncate text-sm font-semibold">{player.name}</span>
-                    {viewer && <span className="rounded-full bg-floodlight px-1.5 py-0.5 text-[9px] font-black text-void">{copy.competitionYou}</span>}
-                    {player.personalBestMetrics?.includes(metric) && <span title={copy.competitionPersonalBest} className="text-floodlight"><ArrowUpRight className="h-3 w-3" /></span>}
-                  </span>
-                  <span className="shrink-0 text-end font-mono text-sm font-bold">{value === null ? copy.competitionMetricUnavailable : `${metricFormat(metric, value)} ${metricUnit(metric)}`}</span>
-                  {viewer && numericGap !== null && numericGap > 0 && <span className="hidden shrink-0 text-[9px] font-semibold text-muted-text min-[370px]:inline">{copy.competitionGap(`${metricFormat(metric, numericGap)} ${metricUnit(metric)}`)}</span>}
-                  {ranked.ranks.get(player.playerId) === 1 && <Crown className="h-3.5 w-3.5 shrink-0 text-floodlight" />}
+          <div className="mt-3 grid grid-cols-3 items-end gap-2" data-testid="competition-podium">
+            {podiumPlaces(ranked.sorted).map(({ place, player }) => {
+              const podiumColor = podiumColors[place];
+              const rosterPlayer = player ? room.players.find((candidate) => candidate.id === player.playerId) : null;
+              const value = player ? metricValue(player, metric) : null;
+              return player ? (
+                <motion.div
+                  key={place}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.22, delay: place === 1 ? 0 : place === 2 ? 0.05 : 0.1 }}
+                  className="flex min-w-0 flex-col items-center justify-end text-center"
+                  data-testid={`podium-place-${place}`}
+                >
+                  <div
+                    className={cn("flex w-full flex-col items-center justify-end gap-1.5 overflow-hidden rounded-t-2xl border border-b-0 px-1 pb-3 pt-2", podiumHeights[place])}
+                    style={{ borderColor: podiumColor, background: `${podiumColor}16` }}
+                  >
+                    <span className="font-display text-3xl font-bold leading-none" style={{ color: podiumColor }}>
+                      #{ranked.ranks.get(player.playerId)}
+                    </span>
+                    <PlayerAvatar
+                      name={player.name}
+                      initials={rosterPlayer?.initials ?? undefined}
+                      avatarUrl={rosterPlayer?.avatarUrl}
+                      size={place === 1 ? 48 : 40}
+                      ring={podiumColor}
+                    />
+                    <span className="max-w-full truncate text-[10px] font-bold">{player.name}</span>
+                    <span className="font-mono text-[10px] font-semibold text-muted-text">
+                      {value === null ? "—" : `${metricFormat(metric, value)} ${metricUnit(metric)}`}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-b-full" style={{ backgroundColor: podiumColor }} />
                 </motion.div>
+              ) : (
+                <div key={place} className={cn("flex items-end", podiumHeights[place])} aria-hidden="true">
+                  <div className="h-1.5 w-full rounded-b-full bg-raised" />
+                </div>
               );
             })}
           </div>
+          <div className="mt-3 flex flex-col gap-1.5">
+            {visibleRows.topRows.map(renderRankRow)}
+            {visibleRows.pinnedViewer && (
+              <>
+                <div className="flex items-center gap-2 px-3 py-1.5" data-testid="competition-leaderboard-ellipsis" aria-label="More players above">
+                  <span className="h-px flex-1 border-t border-dashed border-muted-text/50" />
+                  <span className="font-mono text-xs tracking-[0.3em] text-muted-text">···</span>
+                  <span className="h-px flex-1 border-t border-dashed border-muted-text/50" />
+                </div>
+                {renderRankRow(visibleRows.pinnedViewer)}
+              </>
+            )}
+          </div>
+          {ranked.viewer && ranked.viewerRank === 1 && (
+            <p className="mt-2 rounded-lg bg-floodlight/10 px-3 py-2 text-center text-xs font-bold text-floodlight" data-testid="competition-viewer-top">
+              {copy.competitionTopPitch}
+            </p>
+          )}
+          {ranked.viewer && ranked.viewerRank !== null && ranked.viewerRank > 1 && ranked.above && viewerGap !== null && (
+            <p className="mt-2 rounded-lg bg-raised/60 px-3 py-2 text-center text-xs font-semibold text-muted-text" data-testid="competition-viewer-gap">
+              {copy.competitionGapTo(`${metricFormat(metric, viewerGap)} ${metricUnit(metric)}`.trim(), ranked.above.name)}
+            </p>
+          )}
         </div>
       )}
       {ranked.sorted.length === 0 && <p className="rounded-xl border border-line bg-raised/40 p-3 text-xs text-muted-text">{copy.competitionNoData}</p>}
+
+      {unclaimedPlayers.length > 0 && (
+        <div className="rounded-xl border border-line bg-raised/45 p-3" data-testid="competition-unclaimed">
+          <p className="text-xs font-bold text-text">{copy.competitionPlayersNotOnBoard(unclaimedPlayers.length)}</p>
+          <p className="mt-1 text-xs text-muted-text">{unclaimedPlayers.map((player) => player.name).join(", ")}</p>
+          {findHref && (
+            <Link href={findHref} className="mt-3 flex min-h-10 items-center justify-center rounded-full border border-floodlight/60 text-xs font-bold text-floodlight" data-testid="link-find-unclaimed">
+              {copy.matchStatsClaim}
+            </Link>
+          )}
+        </div>
+      )}
 
       {competition.personalForm && (
         <div className="border-t border-line pt-4">
@@ -333,21 +512,59 @@ function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStri
   );
 }
 
-export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [retryKey, setRetryKey] = useState(0);
-  useEffect(() => {
-    let live = true;
-    setFailed(false);
-    setStats(null);
-    fetch(`${basePath}/api/m/${room.code}/stats`, { credentials: "include" })
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))))
-      .then((data: Stats) => { if (live) setStats(data); })
-      .catch(() => { if (live) setFailed(true); });
-    return () => { live = false; };
-  }, [room.code, room.stats.unlocked, retryKey]);
+export function MatchCompetitionAwardsRow({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const { user } = useAuth();
+  const hasStatsAccess = room.phase === "processing" || room.phase === "ready" || room.phase === "expired";
+  const enabled = hasStatsAccess
+    && room.stats.enabled
+    && room.stats.unlocked
+    && room.signedIn
+    && Boolean(user)
+    && (room.isMember || room.isOwner || room.canManage);
+  const statsQuery = useMatchStatsData(room, user?.id ?? null, enabled);
+  if (!enabled || !statsQuery.data?.competition) return null;
 
+  const playerById = new Map((statsQuery.data.players ?? []).map((player) => [player.playerId, player]));
+  const awards = statsQuery.data.competition.awards
+    .filter((award) => award.key !== "motm")
+    .map((award) => ({
+      award,
+      names: award.playerIds.map((id) => playerById.get(id)?.name).filter((name): name is string => Boolean(name)),
+    }))
+    .filter(({ names }) => names.length > 0);
+  if (!awards.length) return null;
+
+  return (
+    <section className="rounded-2xl border border-floodlight/25 bg-surface p-3" data-testid="overview-competition-awards">
+      <p className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-muted-text">
+        <Medal className="h-3.5 w-3.5 text-floodlight" />{copy.competitionAwards}
+      </p>
+      <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+        {awards.map(({ award, names }) => {
+          const metric: MetricKey = award.key === "distance" ? "distanceKm"
+            : award.key === "speed" ? "topSpeedKmh"
+              : award.key === "dribbles" ? "dribblesWon"
+                : award.key === "passes" ? "passesCompleted"
+                  : award.key === "goals" ? "goals"
+                    : "touches";
+          return (
+            <div key={award.key} className="min-w-[148px] rounded-xl border border-floodlight/25 bg-floodlight/5 px-3 py-2" data-testid={`overview-award-${award.key}`}>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-floodlight">{awardLabel(copy, award.key)}</p>
+              <p className="mt-0.5 truncate text-xs font-semibold">{names.join(" · ")}</p>
+              {award.value !== null && <p className="mt-0.5 font-mono text-[10px] text-muted-text">{metricFormat(metric, award.value)} {metricUnit(metric)}</p>}
+              {award.personalBest && <span className="mt-1 inline-block rounded border border-floodlight/40 px-1 py-0.5 font-mono text-[8px] leading-none text-floodlight">{copy.competitionPbTag}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const { user } = useAuth();
+  const statsQuery = useMatchStatsData(room, user?.id ?? null);
+  const stats = statsQuery.data ?? null;
   const claimed = useMemo(() => (stats?.players ?? []).filter((player) => player.claimed), [stats]);
   const [pa, setPa] = useState<number | null>(null);
   const [pb, setPb] = useState<number | null>(null);
@@ -360,11 +577,11 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
     setPb((value) => value ?? second?.playerId ?? null);
   }, [claimed]);
 
-  if (failed) {
+  if (statsQuery.isError && !stats) {
     return (
       <section className="rounded-2xl border border-line bg-surface p-4 text-center" data-testid="stats-error">
         <p className="text-sm font-semibold text-muted-text">{copy.error}</p>
-        <button type="button" onClick={() => setRetryKey((key) => key + 1)} className="mx-auto mt-3 inline-flex min-h-10 items-center gap-2 rounded-full border border-line px-4 text-xs font-bold" data-testid="button-retry-match-stats"><RefreshCw className="h-3.5 w-3.5" />{copy.back}</button>
+        <button type="button" onClick={() => void statsQuery.refetch()} className="mx-auto mt-3 inline-flex min-h-10 items-center gap-2 rounded-full border border-line px-4 text-xs font-bold" data-testid="button-retry-match-stats"><RefreshCw className="h-3.5 w-3.5" />{copy.back}</button>
       </section>
     );
   }
@@ -402,6 +619,7 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
 
   return (
     <section className="flex flex-col gap-5 rounded-2xl border border-line bg-surface p-4">
+      {stats.competition && <CompetitionPanel stats={stats} copy={copy} room={room} />}
       <div>
         <p className="text-base font-bold">{copy.h2hTitle}</p>
         <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2" dir="ltr">
@@ -423,8 +641,6 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
         </div>
       )}
 
-      {stats.competition && <CompetitionPanel stats={stats} copy={copy} room={room} />}
-
       {stats.players && claimed.length >= 2 && (
         <div className="flex flex-col gap-3 border-t border-line pt-4">
           <div><p className="text-base font-bold">{copy.pvpTitle}</p><p className="mt-0.5 text-xs text-muted-text">{copy.pvpHint}</p></div>
@@ -440,7 +656,7 @@ export function MatchStats({ room, copy }: { room: MatchRoom; copy: MatchStrings
       )}
       {stats.players && claimed.length === 0 && <p className="text-sm text-muted-text">{copy.matchStatsNone}</p>}
       {stats.players && claimed.length > 0 && stats.players.length > claimed.length && <p className="text-xs text-muted-text">{stats.players.filter((player) => !player.claimed).map((player) => player.name).join(", ")} · {copy.notClaimed}</p>}
-      {findHref && <Link href={findHref} className="flex min-h-11 items-center justify-center rounded-full border border-floodlight/60 text-sm font-bold text-floodlight" data-testid="link-find-yourself">{copy.matchStatsClaim}</Link>}
+      {findHref && !(stats.competition && stats.players?.some((player) => !player.claimed)) && <Link href={findHref} className="flex min-h-11 items-center justify-center rounded-full border border-floodlight/60 text-sm font-bold text-floodlight" data-testid="link-find-yourself">{copy.matchStatsClaim}</Link>}
       <p className="text-xs text-muted-text">{copy.statsFloor}</p>
     </section>
   );

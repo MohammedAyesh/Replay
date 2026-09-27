@@ -175,9 +175,30 @@ export type MyMatchItem = {
   score?: { a: number; b: number } | null;
   voteOpen?: boolean;
   inviteToken?: string;
+  competitionSummary?: {
+    awardKeys: Array<Exclude<MatchCompetitionAwardKey, "motm">>;
+    bestRank: { metric: MatchCompetitionMetricKey; rank: number } | null;
+  };
   /** after the whistle: the recording to find yourself in, when it has tracking */
   findRecordingId?: number | null;
 };
+
+export type MatchCompetitionMetricKey =
+  | "distanceKm"
+  | "topSpeedKmh"
+  | "touches"
+  | "passesCompleted"
+  | "dribblesWon"
+  | "goals";
+
+export type MatchCompetitionAwardKey =
+  | "motm"
+  | "distance"
+  | "speed"
+  | "touches"
+  | "passes"
+  | "dribbles"
+  | "goals";
 
 export type PlayerMetricValues = {
   minutes: number | null;
@@ -198,6 +219,8 @@ export type PlayerForm = {
   matchesUsed: number;
   averages: PlayerMetricValues;
   bests: PlayerMetricValues;
+  previousAverages?: PlayerMetricValues | null;
+  previousMatchesUsed?: number;
   lastFive: Array<{
     matchId: number;
     code: string;

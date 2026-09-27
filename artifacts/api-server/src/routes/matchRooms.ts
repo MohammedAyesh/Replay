@@ -58,7 +58,7 @@ import {
 } from "../lib/bunny";
 import { logger } from "../lib/logger";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
-import { buildMatchCompetition, playerMatchForm } from "../lib/matchStatsCache";
+import { buildMatchCompetition, cachedCompetitionSummariesForUser, playerMatchForm } from "../lib/matchStatsCache";
 import { canViewMatchPlayerRows } from "../lib/matchStatsRules";
 
 const router: IRouter = Router();
@@ -618,7 +618,41 @@ router.get("/me/matches", async (req, res): Promise<void> => {
   const recentContexts = recentItems
     .map((item) => contextsByCode.get(item.code))
     .filter((ctx): ctx is RoomContext => Boolean(ctx));
-  const [personalForm, queuedFills] = await Promise.all([
+  const blockedIds = await blockedUserIdsFor(user.id).catch((error) => {
+    logger.warn({ userId: user.id, err: error }, "Could not load blocked players for cached match summaries");
+    return null;
+  });
+  const visibleRowsByMatch = await Promise.all(recentContexts.map(async (ctx) => {
+    if (!blockedIds) return null;
+    try {
+      const commerce = await loadCommerce({ userId: user.id, fieldId: ctx.room.fieldId });
+      if (!commerce.statsEnabled) return null;
+      const [access, roster] = await Promise.all([
+        statsAccess(user.id, ctx.room.id, commerce),
+        rosterFor(ctx.room.id),
+      ]);
+      const canViewRows = canViewMatchPlayerRows({
+        viewer: { id: user.id, isAdmin: user.isAdmin, isGuest: user.isGuest },
+        captainUserId: ctx.room.captainUserId,
+        isFieldOwner: ownedSet.has(ctx.room.fieldId),
+        roster,
+      });
+      if (!access.unlocked || !canViewRows) return null;
+      return {
+        matchId: ctx.room.id,
+        playerIds: roster
+          .filter((player) => player.userId === null || !blockedIds.has(player.userId))
+          .map((player) => player.id),
+      };
+    } catch (error) {
+      logger.warn({ userId: user.id, matchId: ctx.room.id, err: error }, "Could not check cached match summary access");
+      return null;
+    }
+  }));
+  const visiblePlayerIdsByMatch = new Map(visibleRowsByMatch
+    .filter((entry): entry is { matchId: number; playerIds: number[] } => entry !== null)
+    .map(({ matchId, playerIds }) => [matchId, playerIds]));
+  const [personalForm, queuedFills, competitionSummaries] = await Promise.all([
     playerMatchForm(user.id).catch((error) => {
       logger.warn({ userId: user.id, err: error }, "Could not load player match form");
       return null;
@@ -627,11 +661,21 @@ router.get("/me/matches", async (req, res): Promise<void> => {
       logger.warn({ userId: user.id, err: error }, "Could not queue recent match stats cache fills");
       return 0;
     }),
+    cachedCompetitionSummariesForUser(user.id, visiblePlayerIdsByMatch).catch((error) => {
+      logger.warn({ userId: user.id, err: error }, "Could not load cached match competition summaries");
+      return new Map();
+    }),
   ]);
   res.json({
     live: active.filter((i) => i.phase === "live").sort(byStart),
     upcoming: active.filter((i) => i.phase === "pre" && i.startMs > now - 60 * 60 * 1000).sort(byStart),
-    recent: recentItems,
+    recent: recentItems.map((item) => {
+      const matchId = contextsByCode.get(item.code)?.room.id;
+      const summary = matchId === undefined ? undefined : competitionSummaries.get(matchId);
+      return summary && (summary.awardKeys.length > 0 || summary.bestRank)
+        ? { ...item, competitionSummary: summary }
+        : item;
+    }),
     invites: [...accountInvites, ...inviteRooms.filter(Boolean)],
     personalForm,
     personalFormPending: queuedFills > 0,

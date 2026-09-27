@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { CalendarDays, Crown, Loader2, Sparkles, Trophy, Users } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { MatchCard } from "@/components/match/MatchCard";
-import { FormPanel } from "@/components/match/MatchStats";
+import { RecentFormPanel } from "@/components/match/MatchStats";
 import { PlayerAvatar } from "@/components/match/bits";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -149,7 +149,7 @@ export default function Matches() {
               <p className="font-display text-lg font-bold">{copy.competitionForm}</p>
               <p className="mt-1 text-xs leading-5 text-muted-text">
                 {data.personalForm
-                  ? copy.competitionFormHint(data.personalForm.matchesUsed)
+                  ? copy.competitionRecentFormHint(data.personalForm.previousMatchesUsed ?? Math.max(0, data.personalForm.matchesUsed - 1))
                   : copy.competitionFormPending}
               </p>
             </div>
@@ -160,7 +160,7 @@ export default function Matches() {
             )}
           </div>
           {data.personalForm
-            ? <FormPanel form={data.personalForm} copy={copy} />
+            ? <RecentFormPanel form={data.personalForm} copy={copy} />
             : <div className="h-20 animate-pulse rounded-xl bg-raised/60" aria-hidden="true" />}
         </section>
       )}

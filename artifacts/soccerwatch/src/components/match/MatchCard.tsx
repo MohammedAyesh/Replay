@@ -2,8 +2,32 @@ import { Link } from "wouter";
 import { ChevronRight, Crown } from "lucide-react";
 import { Countdown, PhaseChip, formatClock, formatDay } from "@/components/match/bits";
 import type { MatchStrings } from "@/i18n/match-strings";
-import type { MyMatchItem } from "@/lib/match-api";
+import type { MatchCompetitionAwardKey, MatchCompetitionMetricKey, MyMatchItem } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
+
+function awardChipLabel(copy: MatchStrings, key: Exclude<MatchCompetitionAwardKey, "motm">): string {
+  const labels: Record<Exclude<MatchCompetitionAwardKey, "motm">, string> = {
+    distance: copy.competitionAwardDistance,
+    speed: copy.competitionAwardSpeed,
+    touches: copy.competitionAwardTouches,
+    passes: copy.competitionAwardPasses,
+    dribbles: copy.competitionAwardDribbles,
+    goals: copy.competitionAwardGoals,
+  };
+  return labels[key];
+}
+
+function rankMetricLabel(copy: MatchStrings, metric: MatchCompetitionMetricKey): string {
+  const labels: Record<MatchCompetitionMetricKey, string> = {
+    distanceKm: copy.competitionDistance,
+    topSpeedKmh: copy.competitionSpeed,
+    touches: copy.competitionTouches,
+    passesCompleted: copy.competitionPasses,
+    dribblesWon: copy.competitionDribbles,
+    goals: copy.competitionGoals,
+  };
+  return labels[metric];
+}
 
 /** One match in a list: Home's "next match", My matches, invites. */
 export function MatchCard({ item, copy, now, variant = "row" }: {
@@ -79,6 +103,20 @@ export function MatchCard({ item, copy, now, variant = "row" }: {
           {item.myRsvp === "invited" && item.invitedBy?.name ? `${copy.invitedYou(item.invitedBy.name)} · ` : ""}
           {day}{item.title ? ` · ${item.field.name}` : ""}{item.isOwner && !item.myRsvp ? ` · ${copy.ownerTag}` : ""}
         </p>
+        {["processing", "ready", "expired"].includes(item.phase) && item.competitionSummary && (
+          <div className="mt-1.5 flex gap-1.5 overflow-x-auto no-scrollbar" data-testid={`match-competition-summary-${item.code}`}>
+            {item.competitionSummary.awardKeys.map((key) => (
+              <span key={key} className="shrink-0 rounded-full border border-floodlight/35 bg-floodlight/10 px-2 py-0.5 text-[9px] font-bold text-floodlight">
+                {awardChipLabel(copy, key)}
+              </span>
+            ))}
+            {item.competitionSummary.bestRank && (
+              <span className="shrink-0 rounded-full border border-violet/35 bg-violet/10 px-2 py-0.5 text-[9px] font-bold text-violet">
+                #{item.competitionSummary.bestRank.rank} {rankMetricLabel(copy, item.competitionSummary.bestRank.metric)}
+              </span>
+            )}
+          </div>
+        )}
       </div>
       {item.score ? (
         <span className="flex flex-col items-end">

@@ -20,6 +20,7 @@ import {
   type PlayerForm,
   type PlayerFormHistoryRow,
   type PlayerMetricKey,
+  type PlayerMetricValues,
 } from "./matchStatsRules";
 
 export type MatchStatsCacheFingerprint = {
@@ -154,9 +155,96 @@ function asFormHistory(rows: CachedHistoryRow[]): PlayerFormHistoryRow[] {
   }));
 }
 
-export async function playerMatchForm(userId: number): Promise<PlayerForm | null> {
+export async function playerMatchForm(
+  userId: number,
+): Promise<(PlayerForm & { previousAverages: PlayerMetricValues | null; previousMatchesUsed: number }) | null> {
   const history = await historyForUsers([userId]);
-  return playerForm(asFormHistory(history.get(userId) ?? []));
+  const rows = asFormHistory(history.get(userId) ?? []);
+  const form = playerForm(rows);
+  if (!form) return null;
+  const priorForm = playerForm(rows.slice(1, 6));
+  return {
+    ...form,
+    previousAverages: priorForm?.averages ?? null,
+    previousMatchesUsed: priorForm?.matchesUsed ?? 0,
+  };
+}
+
+export type CachedMatchCompetitionSummary = {
+  awardKeys: Array<Exclude<ReturnType<typeof competitionAwards>[number]["key"], "motm">>;
+  bestRank: { metric: PlayerMetricKey; rank: number } | null;
+};
+
+const CACHED_RANK_METRICS: PlayerMetricKey[] = [
+  "distanceKm",
+  "topSpeedKmh",
+  "touches",
+  "passesCompleted",
+  "dribblesWon",
+  "goals",
+];
+
+/** Derive a viewer's match badges strictly from already-computed cache rows. */
+export async function cachedCompetitionSummariesForUser(
+  userId: number,
+  visiblePlayerIdsByMatch: ReadonlyMap<number, number[]>,
+): Promise<Map<number, CachedMatchCompetitionSummary>> {
+  const uniqueMatchIds = sortedUnique(Array.from(visiblePlayerIdsByMatch.keys()));
+  const summaries = new Map<number, CachedMatchCompetitionSummary>();
+  if (!uniqueMatchIds.length) return summaries;
+
+  const rows = await db.select({
+    matchId: matchPlayerStatsCacheTable.matchId,
+    matchPlayerId: matchPlayerStatsCacheTable.matchPlayerId,
+    userId: matchPlayerStatsCacheTable.userId,
+    team: matchPlayersTable.team,
+    stats: matchPlayerStatsCacheTable.stats,
+  }).from(matchPlayerStatsCacheTable)
+    .innerJoin(matchPlayersTable, and(
+      eq(matchPlayersTable.id, matchPlayerStatsCacheTable.matchPlayerId),
+      eq(matchPlayersTable.userId, matchPlayerStatsCacheTable.userId),
+    ))
+    .where(inArray(matchPlayerStatsCacheTable.matchId, uniqueMatchIds));
+
+  const rowsByMatch = new Map<number, typeof rows>();
+  for (const row of rows) {
+    const matchRows = rowsByMatch.get(row.matchId) ?? [];
+    matchRows.push(row);
+    rowsByMatch.set(row.matchId, matchRows);
+  }
+
+  for (const [matchId, matchRows] of rowsByMatch) {
+    const visibleIds = new Set(visiblePlayerIdsByMatch.get(matchId) ?? []);
+    const visibleRows = matchRows.filter((row) => visibleIds.has(row.matchPlayerId));
+    const players: CompetitionPlayer[] = visibleRows.map((row) => ({
+      ...row.stats,
+      playerId: row.matchPlayerId,
+      name: "",
+      team: row.team,
+      claimed: true,
+    }));
+    const viewer = visibleRows.find((row) => row.userId === userId);
+    if (!viewer) continue;
+
+    const awardKeys = competitionAwards(players)
+      .filter((award) => award.key !== "motm" && award.playerIds.includes(viewer.matchPlayerId))
+      .map((award) => award.key as CachedMatchCompetitionSummary["awardKeys"][number]);
+    const viewerStats = players.find((player) => player.playerId === viewer.matchPlayerId)!;
+    const rankCandidates = CACHED_RANK_METRICS.flatMap((metric) => {
+      const value = viewerStats[metric];
+      if (value === null) return [];
+      const rank = 1 + players.filter((player) => player[metric] !== null && player[metric]! > value).length;
+      return [{ metric, rank }];
+    }).sort((a, b) =>
+      a.rank - b.rank || CACHED_RANK_METRICS.indexOf(a.metric) - CACHED_RANK_METRICS.indexOf(b.metric),
+    );
+
+    summaries.set(matchId, {
+      awardKeys,
+      bestRank: rankCandidates[0] ?? null,
+    });
+  }
+  return summaries;
 }
 
 export type MatchCompetition = {
