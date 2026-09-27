@@ -1,0 +1,42 @@
+Use free mode.
+
+PROBLEM (screenshot attached)
+On /portfolio/:id, opening a shared clip shows the "Video vault / 15525" player: black video area, the progress bar already at the far right, a play button that does nothing. The clip cannot be played. The player also gives no loading state and no error message.
+
+This is a READ-ONLY DIAGNOSIS. Do not edit any file, do not restart workflows unless one is stopped, no pushes, no SQL writes. Reading code, logs, read-only SELECTs and browser/network inspection of the dev preview are allowed.
+
+Test clips: 15525, 12191, 2437 (user 435). Test as an anonymous visitor on /portfolio/435, in English and Arabic.
+
+1. REPRODUCE AND CAPTURE (for each test clip)
+   Open the clip on /portfolio/435 and record:
+   a) Every network request fired from opening the card until 10 s after pressing play: method, full path, status code, and the response body for any non-2xx (first 300 chars).
+   b) Browser console output verbatim (hls.js errors, media errors, React warnings).
+   c) From the <video> element after 10 s: readyState, networkState, error?.code, error?.message, duration, currentTime, paused, src/currentSrc, and whether hls.js is attached and which URL it loaded.
+   d) Screenshot of the player at that moment.
+
+2. SERVER: WHY THE MEDIA IS (OR ISN'T) SERVED
+   a) Quote the full code of the HLS proxy routes the portfolio uses (/api/hls-proxy/manifest and /api/hls-proxy/segment), including the authorization function that decides which videoIds may be served, and every helper it calls (e.g. publicFootage.ts, recordingVisibility.ts). Give file paths and line numbers.
+   b) For each test clip, state which rule allows or refuses its videoId, and why: owner footage, footage_request, recording visibility, date, anything else. Read-only SELECTs to support it: the recording row(s) matching each clip's video_id (id, field_id, is_visible, date, any owner/footage_request link) and the clip row (visibility, show_in_portfolio, is_hidden, footage_request_id, video_id).
+   c) Does a signed-in owner get a different answer from the same proxy for the same clip? Answer from the code.
+   d) How does My Clips play the SAME clip for its owner? Quote the URL it uses and the authorization path that lets it through. Is it the same proxy with a different auth decision, or a different route?
+   e) Quote how the existing share-link features serve footage publicly without exposing more than intended: GET /user-clips/{id}/share-link, the /w/:token owner share, and any clip poster/share-card route. For each, say what it exposes (whole recording, time window, or rendered file) and how it is authorized.
+
+3. CLIENT: WHAT THE PORTFOLIO PLAYER DOES
+   a) Quote the portfolio player component(s) in artifacts/soccerwatch/src/features/portfolio/page.tsx (and anything it imports for playback): how it chooses the URL, attaches hls.js, handles loadedmetadata / error / hls ERROR events, computes the progress bar, applies startTime/endTime and cropPath, and what the play button does.
+   b) Explain the screenshot: why is the progress bar at the far right before playing, and why does the play button do nothing? (e.g. duration NaN/0, a window computed past the end, an unhandled error.)
+   c) List every state the player cannot currently show: loading, media refused/404, source expired (older than 14 days), live clip with null URL, playback error.
+
+4. HISTORY AND DIFF
+   a) git log --oneline -15 and git status.
+   b) git diff main --stat, and the full diff of artifacts/soccerwatch/src/features/portfolio/page.tsx, artifacts/api-server/src/routes/portfolios.ts and any hls-proxy/media authorization file versus main.
+   c) Say whether any earlier "play only the clip window + crop" change was actually implemented in this task, and which lines.
+
+5. EXPIRY CHECK
+   For each test clip: is its source video still in Bunny Stream (read-only GET of the video metadata, status and length), and how old is it versus the 14-day retention?
+
+REPORT
+- Root cause(s), ordered by how they block playback, each backed by a request/response, log line or quoted code from above.
+- A table per test clip: videoId, recording found?, proxy decision + rule, Bunny status, age in days, what the player showed.
+- Separately: the UX gaps in the player (loading, error, expired, progress bar), each tied to the code responsible.
+- Your proposed fix options (no code): at minimum evaluate (A) a clip-scoped playback endpoint that serves ONLY the shared clip's time window of the source to anonymous visitors, authorized by the clip being public + shown in a portfolio + not hidden; (B) serving a rendered MP4 of the clip when one exists; (C) reusing an existing share-link mechanism if one already exposes only the clip. For each: files touched, what an anonymous visitor could and could not reach, and effort.
+Then stop. Change nothing.

@@ -441,9 +441,10 @@ describe("the queue as the console sees it", () => {
     await asWorker("/api/worker/analysis/ping").expect(200);
 
     const res = await request(app).get("/api/admin/analysis-jobs").expect(200);
-    const jobs = res.body.jobs as Array<{ id: number; status: string; queuePosition: number | null }>;
-    const firstJob = jobs.find((job) => job.id === first.body.id);
-    const secondJob = jobs.find((job) => job.id === second.body.id);
+    const jobs = res.body.jobs as Array<{ id: number; recordingId: number; status: string; queuePosition: number | null }>;
+    const targetJobs = jobs.filter((job) => job.recordingId === recA || job.recordingId === recB);
+    const firstJob = targetJobs.find((job) => job.id === first.body.id);
+    const secondJob = targetJobs.find((job) => job.id === second.body.id);
 
     // The endpoint also returns recent job history. Only queued jobs have a
     // queue position; claimed, running, and terminal jobs intentionally have null.

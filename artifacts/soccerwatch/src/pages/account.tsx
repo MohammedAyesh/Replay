@@ -4,7 +4,7 @@ import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdatePro
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users } from "lucide-react";
+import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,7 +27,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { isDeleteConfirmation, deletionErrorMessage } from "@/lib/account-deletion";
-
+import { ReplayMark } from "@/components/ReplayMark";
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const POSITIONS = [
@@ -254,19 +254,34 @@ export default function Account() {
         {/* Settings List */}
         <div className="mx-4 mt-1 overflow-hidden rounded-[22px] border border-border bg-card divide-y divide-border">
           {!isGuest && user && (
-            <button
-              onClick={() => setIsEditOpen(true)}
-              className="flex w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
-                  <Pencil className="h-4 w-4 text-muted-foreground" />
-                </span>
-                <span className="font-medium text-foreground">{t.account.editProfile}</span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-            </button>
+            <>
+              <Link
+                href={`/portfolio/${user.id}`}
+                className="flex w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                  </span>
+                  <span className="font-medium text-foreground">{t.account.myPortfolio}</span>
+                </div>
+                <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+                <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
+              </Link>
+              <button
+                onClick={() => setIsEditOpen(true)}
+                className="flex w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
+                    <Pencil className="h-4 w-4 text-muted-foreground" />
+                  </span>
+                  <span className="font-medium text-foreground">{t.account.editProfile}</span>
+                </div>
+                <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+                <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
+              </button>
+            </>
           )}
           {!isGuest && user && (
             <Link
@@ -490,63 +505,7 @@ function ReplaySignOutOverlay() {
       role="status"
       aria-label="Signing out"
     >
-      <style>{`
-        .replay-sign-out-loader {
-          width: 48px;
-          height: 43px;
-          overflow: visible;
-        }
-
-        .replay-sign-out-facet {
-          opacity: 0.25;
-          transform-box: fill-box;
-          transform-origin: center;
-          animation: replay-sign-out-facet-breathe 1.8s ease-in-out infinite;
-        }
-
-        .replay-sign-out-facet:nth-child(1) { animation-delay: -1.35s; }
-        .replay-sign-out-facet:nth-child(2) { animation-delay: -1.08s; }
-        .replay-sign-out-facet:nth-child(3) { animation-delay: -0.81s; }
-        .replay-sign-out-facet:nth-child(4) { animation-delay: -0.54s; }
-        .replay-sign-out-facet:nth-child(5) { animation-delay: -0.27s; }
-        .replay-sign-out-facet:nth-child(6) { animation-delay: 0s; }
-        .replay-sign-out-facet:nth-child(7) { animation-delay: -1.62s; }
-
-        @keyframes replay-sign-out-facet-breathe {
-          0%, 100% {
-            opacity: 0.25;
-            transform: translateY(1px) scale(0.96);
-          }
-          35% {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-          70% {
-            opacity: 0.4;
-            transform: translateY(-1px) scale(0.98);
-          }
-        }
-      `}</style>
-      <svg className="replay-sign-out-loader" viewBox="-5 0 225 200" aria-hidden="true">
-        <defs>
-          <clipPath id="replaySignOutClip">
-            <circle cx="95" cy="96" r="88" />
-          </clipPath>
-        </defs>
-        <g clipPath="url(#replaySignOutClip)">
-          <polygon className="replay-sign-out-facet" points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="var(--replay-turf)" />
-          <polygon className="replay-sign-out-facet" points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="var(--replay-floodlight)" />
-          <polygon className="replay-sign-out-facet" points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="var(--replay-turf)" />
-          <polygon className="replay-sign-out-facet" points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="color-mix(in srgb, var(--replay-turf) 72%, var(--replay-void))" />
-          <polygon className="replay-sign-out-facet" points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="color-mix(in srgb, var(--replay-turf) 42%, var(--replay-void))" />
-          <polygon className="replay-sign-out-facet" points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="color-mix(in srgb, var(--replay-turf) 62%, var(--replay-violet))" />
-          <polygon className="replay-sign-out-facet" points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="var(--replay-violet)" />
-        </g>
-        <polygon points="170,62 170,134 210,98" fill="var(--replay-void)" />
-        <polygon points="172,68 172,128 206,98" fill="var(--replay-floodlight)" />
-        <circle cx="178" cy="46" r="7.5" fill="var(--replay-void)" />
-        <circle cx="178" cy="46" r="5.5" fill="var(--replay-violet)" />
-      </svg>
+      <ReplayMark className="replay-sign-out-loader" />
     </div>
   );
 }

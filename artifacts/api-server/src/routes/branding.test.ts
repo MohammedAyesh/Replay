@@ -38,6 +38,14 @@ let adminId: number;
 let plainId: number;
 let fieldId: number;
 let academyId: number;
+const assetIds = new Set<number>();
+
+async function cleanupAssets() {
+  if (assetIds.size) {
+    await db.delete(brandingAssetsTable).where(inArray(brandingAssetsTable.id, [...assetIds]));
+    assetIds.clear();
+  }
+}
 
 /** A real PNG of the given size, so the IHDR probe has something to read. */
 function png(width: number, height: number): Buffer {
@@ -66,6 +74,8 @@ function png(width: number, height: number): Buffer {
 }
 
 beforeAll(async () => {
+  const existing = await db.select({ id: brandingAssetsTable.id }).from(brandingAssetsTable);
+  if (existing.length) throw new Error("Branding tests require an empty branding_assets table; refusing to replace existing assets");
   const { default: brandingRouter } = await import("./branding");
   app = express();
   app.use(express.json());
@@ -90,39 +100,45 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await db.delete(brandingAssetsTable);
+  await cleanupAssets();
   await db.delete(academiesTable).where(eq(academiesTable.id, academyId));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
   await db.delete(usersTable).where(inArray(usersTable.id, [adminId, plainId]));
 });
 
 beforeEach(async () => {
-  await db.delete(brandingAssetsTable);
+  await cleanupAssets();
   mockedGetLocalUserId.mockResolvedValue(adminId);
 });
 
-const putOverlay = (scope: string, buffer: Buffer, name = "overlay.png") =>
-  request(app).put("/api/admin/branding/overlay").field("scope", scope).attach("asset", buffer, name);
+const putOverlay = async (scope: string, buffer: Buffer, name = "overlay.png") => {
+  const response = await request(app).put("/api/admin/branding/overlay").field("scope", scope).attach("asset", buffer, name);
+  if (response.status === 200) assetIds.add(response.body.id);
+  return response;
+};
 
 describe("uploading branding", () => {
   it("stores an overlay for a scope and reports its size", async () => {
-    const res = await putOverlay("global", png(1920, 1080)).expect(200);
+    const res = await putOverlay("global", png(1920, 1080));
+    expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ scopeType: "global", scopeId: 0, kind: "overlay", width: 1920, height: 1080 });
     expect(res.body.assetUrl).toContain("branding/global/overlay-");
   });
 
   it("replaces rather than accumulating, so an old overlay cannot win by being found first", async () => {
-    await putOverlay("global", png(1920, 1080)).expect(200);
-    await putOverlay("global", png(1280, 720)).expect(200);
+    expect((await putOverlay("global", png(1920, 1080))).status).toBe(200);
+    expect((await putOverlay("global", png(1280, 720))).status).toBe(200);
     const rows = await db.select().from(brandingAssetsTable);
     expect(rows).toHaveLength(1);
     expect(rows[0].width).toBe(1280);
   });
 
   it("gives each upload a fresh path so the CDN cannot serve the previous one", async () => {
-    const first = await putOverlay("global", png(1920, 1080)).expect(200);
+    const first = await putOverlay("global", png(1920, 1080));
+    expect(first.status).toBe(200);
     await new Promise((r) => setTimeout(r, 5));
-    const second = await putOverlay("global", png(1920, 1080)).expect(200);
+    const second = await putOverlay("global", png(1920, 1080));
+    expect(second.status).toBe(200);
     expect(second.body.assetUrl).not.toBe(first.body.assetUrl);
   });
 
@@ -137,7 +153,8 @@ describe("uploading branding", () => {
   it("records a size that does not match the output, rather than silently scaling it", async () => {
     // Scaling to fit would change the mark's proportions and move it. The
     // console shows the mismatch instead; the render leaves it alone.
-    const res = await putOverlay("global", png(800, 600)).expect(200);
+    const res = await putOverlay("global", png(800, 600));
+    expect(res.status).toBe(200);
     expect(res.body.fitsLandscape).toBe(false);
     const list = await request(app).get("/api/admin/branding").expect(200);
     expect(list.body.assets[0].fitsLandscape).toBe(false);
@@ -145,8 +162,8 @@ describe("uploading branding", () => {
   });
 
   it("scopes to an academy or a field, and refuses one that does not exist", async () => {
-    await putOverlay(`academy:${academyId}`, png(1920, 1080)).expect(200);
-    await putOverlay(`field:${fieldId}`, png(1920, 1080)).expect(200);
+    expect((await putOverlay(`academy:${academyId}`, png(1920, 1080))).status).toBe(200);
+    expect((await putOverlay(`field:${fieldId}`, png(1920, 1080))).status).toBe(200);
     const missing = await putOverlay("academy:999999", png(1920, 1080));
     expect(missing.status).toBe(404);
     const malformed = await putOverlay("academy", png(1920, 1080));
@@ -159,7 +176,7 @@ describe("uploading branding", () => {
   it("keeps the stored object when a row is removed", async () => {
     // Deleting the bytes to tidy a row is how a clip exported an hour ago loses
     // its picture.
-    await putOverlay("global", png(1920, 1080)).expect(200);
+    expect((await putOverlay("global", png(1920, 1080))).status).toBe(200);
     await request(app).delete("/api/admin/branding/overlay?scope=global").expect(200);
     expect(await db.select().from(brandingAssetsTable)).toHaveLength(0);
   });
@@ -167,7 +184,7 @@ describe("uploading branding", () => {
   it("refuses a plain user", async () => {
     mockedGetLocalUserId.mockResolvedValue(plainId);
     await request(app).get("/api/admin/branding").expect(401);
-    await putOverlay("global", png(1920, 1080)).expect(401);
+    expect((await putOverlay("global", png(1920, 1080))).status).toBe(401);
     await request(app).delete("/api/admin/branding/overlay?scope=global").expect(401);
   });
 

@@ -2100,6 +2100,96 @@ paths:
         "404":
           description: Not found
 
+  /users/{id}/portfolio:
+    get:
+      operationId: getUserPortfolio
+      tags: [users]
+      summary: Get a player's public portfolio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Public portfolio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioView"
+        "404":
+          description: Player not found
+    patch:
+      operationId: updateUserPortfolio
+      tags: [users]
+      summary: Update the signed-in player's portfolio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePortfolioInput"
+      responses:
+        "200":
+          description: Portfolio updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioView"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Only the portfolio owner can update it
+        "404":
+          description: Player not found
+        "413":
+          description: Profile photo is too large
+
+  /portfolio-clips/{id}/{token}/clip.mp4:
+    get:
+      operationId: getPortfolioClipMedia
+      tags: [users]
+      summary: Stream a rendered clip shared to a player portfolio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rendered portfolio clip
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Byte range from the rendered portfolio clip
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Clip is not public, not shared, hidden, or the token is invalid
+        "410":
+          description: Clip source has expired
+        "503":
+          description: Source availability could not be checked
+
   /users/{id}/stats:
     get:
       operationId: getPublicPlayerStats
@@ -2575,6 +2665,10 @@ components:
         age:
           type: ["integer", "null"]
         gender:
+          type: ["string", "null"]
+        nation:
+          type: ["string", "null"]
+        profilePhoto:
           type: ["string", "null"]
         profileComplete:
           type: boolean
@@ -3341,7 +3435,7 @@ components:
 
     UserClip:
       type: object
-      required: [id, userId, videoId, title, startTime, endTime, cropPath, visibility, isHidden, hiddenReason, likeCount, createdAt, aspectRatio, liveClipPartial]
+      required: [id, userId, videoId, title, startTime, endTime, cropPath, visibility, showInPortfolio, isHidden, hiddenReason, likeCount, createdAt, aspectRatio, liveClipPartial]
       properties:
         id:
           type: integer
@@ -3362,6 +3456,8 @@ components:
         visibility:
           type: string
           enum: ["public", "followers", "private", "match"]
+        showInPortfolio:
+          type: boolean
         isHidden:
           type: boolean
         hiddenReason:
@@ -3575,8 +3671,140 @@ components:
         visibility:
           type: string
           enum: ["public", "followers", "private", "match"]
+        showInPortfolio:
+          type: boolean
         thumbnailTime:
           type: ["number", "null"]
+
+    PortfolioHistoryItem:
+      type: object
+      required: [id, teamName, roleLabel, startYear, endYear, isCurrent, displayOrder]
+      properties:
+        id:
+          type: integer
+        teamName:
+          type: string
+        roleLabel:
+          type: string
+        startYear:
+          type: integer
+        endYear:
+          type: ["integer", "null"]
+        isCurrent:
+          type: boolean
+        displayOrder:
+          type: integer
+
+    PortfolioClip:
+      type: object
+      required: [id, userId, title, startTime, endTime, cropPath, visibility, likeCount, aspectRatio, playbackStatus, createdAt]
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        title:
+          type: string
+        startTime:
+          type: number
+        endTime:
+          type: number
+        cropPath:
+          type: array
+          items:
+            $ref: "#/components/schemas/CropKeyframe"
+        visibility:
+          type: string
+          enum: ["public"]
+        likeCount:
+          type: integer
+        aspectRatio:
+          type: string
+        thumbnailTime:
+          type: ["number", "null"]
+        thumbnailUrl:
+          type: ["string", "null"]
+        playbackUrl:
+          type: ["string", "null"]
+        playbackStatus:
+          type: string
+          enum: ["ready", "processing", "expired", "unavailable"]
+        createdAt:
+          type: string
+        academyId:
+          type: ["integer", "null"]
+        introVideoUrl:
+          type: ["string", "null"]
+
+    PortfolioView:
+      type: object
+      required: [id, name, age, position, nation, profilePhoto, followerCount, followingCount, clipCount, history, clips, canEdit]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        age:
+          type: ["integer", "null"]
+        position:
+          type: ["string", "null"]
+        nation:
+          type: ["string", "null"]
+        profilePhoto:
+          type: ["string", "null"]
+        followerCount:
+          type: integer
+        followingCount:
+          type: integer
+        clipCount:
+          type: integer
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortfolioHistoryItem"
+        clips:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortfolioClip"
+        canEdit:
+          type: boolean
+
+    UpdatePortfolioHistoryItem:
+      type: object
+      required: [teamName, roleLabel, startYear, endYear, isCurrent, displayOrder]
+      properties:
+        teamName:
+          type: string
+        roleLabel:
+          type: string
+        startYear:
+          type: integer
+        endYear:
+          type: ["integer", "null"]
+        isCurrent:
+          type: boolean
+        displayOrder:
+          type: integer
+
+    UpdatePortfolioInput:
+      type: object
+      required: [name, age, position, nation, profilePhoto, history]
+      properties:
+        name:
+          type: string
+        age:
+          type: ["integer", "null"]
+        position:
+          type: ["string", "null"]
+        nation:
+          type: ["string", "null"]
+        profilePhoto:
+          type: ["string", "null"]
+        history:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/UpdatePortfolioHistoryItem"
 
     LikeResult:
       type: object

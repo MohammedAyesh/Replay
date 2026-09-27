@@ -47,6 +47,7 @@ import {
   BUNNY_STORAGE_API_KEY,
   BUNNY_CDN_HOSTNAME,
 } from "../lib/bunny";
+import { classifyPortfolioSourceError } from "../lib/portfolioPlayback";
 import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
 import { selectExportSource as resolveExportSource } from "../lib/exportSource";
@@ -62,6 +63,10 @@ import {
 } from "../lib/downloadQuota";
 import { shareCardPath } from "../lib/shareCard";
 import { getAllSettings, getSettingValue, type SettingsContext } from "../lib/settings";
+import {
+  clearPortfolioExportQueueAttempt,
+  markPortfolioExportQueued,
+} from "../lib/portfolioPlayback";
 import { ensureClipPoster, resolveOwnerShare } from "./share";
 import { introPlaybackPath } from "./clipIntro";
 import { canCreateClipFromVideo } from "../lib/publicFootage";
@@ -557,7 +562,9 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
       logger.error({ err, clipId }, "Background clip export failed");
       await db
         .update(userClipsTable)
-        .set({ exportStatus: "error" })
+        .set({
+          exportStatus: classifyPortfolioSourceError(err) === "expired" ? "expired" : "error",
+        })
         .where(eq(userClipsTable.id, clipId));
     } finally {
       inFlight.delete(clipId);
@@ -596,6 +603,11 @@ export async function queueUserClipExport(clip: typeof userClipsTable.$inferSele
     inFlight.delete(clip.id);
     throw error;
   }
+}
+
+/** Whether this API process is actively rendering a clip export right now. */
+export function isUserClipExportInFlight(clipId: number): boolean {
+  return inFlight.has(clipId);
 }
 
 /**
@@ -732,6 +744,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       endTime: parseFloat(row.endTime),
       cropPath: row.cropPath,
       visibility: row.visibility,
+      showInPortfolio: row.showInPortfolio,
       isHidden: row.isHidden,
       hiddenReason: row.hiddenReason ?? null,
       aspectRatio: row.aspectRatio,
@@ -783,6 +796,7 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       endTime: parseFloat(row.endTime),
       cropPath: row.cropPath,
       visibility: row.visibility,
+      showInPortfolio: row.showInPortfolio,
       isHidden: row.isHidden,
       hiddenReason: row.hiddenReason ?? null,
       aspectRatio: row.aspectRatio,
@@ -801,7 +815,6 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       liveClipStatus: row.liveClipStatus ?? null,
       liveClipError: row.liveClipError ?? null,
       liveClipPartial: row.liveClipPartial,
-      // Intro suppressed in playback — appears only in downloaded exports.
       introVideoUrl: null,
     };
   });
@@ -884,17 +897,48 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const updates: Partial<{ title: string; visibility: string; thumbnailTime: string | null }> = {};
+  const updates: Partial<{ title: string; visibility: string; thumbnailTime: string | null; showInPortfolio: boolean }> = {};
   if (body.data.title !== undefined) updates.title = body.data.title;
   if (body.data.visibility !== undefined) updates.visibility = body.data.visibility;
   if (body.data.thumbnailTime !== undefined)
     updates.thumbnailTime = body.data.thumbnailTime != null ? String(body.data.thumbnailTime) : null;
+  // A public portfolio can only contain public clips. Sharing promotes a clip
+  // to public in the same mutation, while a later privacy change automatically
+  // removes it from the portfolio instead of leaving an inconsistent flag.
+  if (body.data.showInPortfolio === true) {
+    updates.showInPortfolio = true;
+    updates.visibility = "public";
+  } else if (body.data.showInPortfolio === false) {
+    updates.showInPortfolio = false;
+  } else if (body.data.visibility !== undefined && body.data.visibility !== "public") {
+    updates.showInPortfolio = false;
+  }
 
   const [row] = await db
     .update(userClipsTable)
     .set(updates)
     .where(eq(userClipsTable.id, params.data.id))
     .returning();
+
+  let responseExportStatus = row.exportStatus ?? null;
+  if (body.data.showInPortfolio === true
+    && row.showInPortfolio
+    && row.visibility === "public"
+    && !row.isHidden
+    && !isLiveVideoId(row.videoId)
+    && isBunnyConfigured()
+    && isBunnyStorageConfigured()) {
+    clearPortfolioExportQueueAttempt(row.id);
+    try {
+      responseExportStatus = await queueUserClipExport(row);
+      if (responseExportStatus === "pending") {
+        markPortfolioExportQueued(row.id);
+      }
+    } catch (error) {
+      clearPortfolioExportQueueAttempt(row.id);
+      logger.warn({ err: error, clipId: row.id }, "Could not queue portfolio clip export after sharing");
+    }
+  }
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
   const isLiveUpdate = isLiveVideoId(row.videoId);
@@ -915,6 +959,9 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
       endTime: parseFloat(row.endTime),
       cropPath: row.cropPath,
       visibility: row.visibility,
+      showInPortfolio: row.showInPortfolio,
+      isHidden: row.isHidden,
+      hiddenReason: row.hiddenReason ?? null,
       aspectRatio: row.aspectRatio,
       likeCount: row.likeCount,
       viewCount: row.viewCount,
@@ -923,11 +970,12 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
       thumbnailTime,
       thumbnailUrl,
       playbackUrl,
-      exportStatus: row.exportStatus ?? null,
+      exportStatus: responseExportStatus,
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
       introVideoUrl,
+      liveClipPartial: row.liveClipPartial,
     })
   );
 });
@@ -947,7 +995,10 @@ router.post("/user-clips/:id/like", async (req, res): Promise<void> => {
   }
 
   const userClipId = params.data.id;
-  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, userClipId));
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(eq(userClipsTable.id, userClipId));
   if (!clip) {
     res.status(404).json({ error: "Clip not found" });
     return;
@@ -997,7 +1048,10 @@ router.post("/user-clips/:id/view", async (req, res): Promise<void> => {
   }
 
   const userClipId = params.data.id;
-  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, userClipId));
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(eq(userClipsTable.id, userClipId));
   if (!clip) {
     res.status(404).json({ error: "Clip not found" });
     return;
@@ -1053,7 +1107,10 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
   }
 
   const userClipId = params.data.id;
-  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, userClipId));
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(eq(userClipsTable.id, userClipId));
   if (!clip) {
     res.status(404).json({ error: "Clip not found" });
     return;
@@ -1088,6 +1145,7 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
 router.get("/feed", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   const blockedIds = userId ? await blockedUserIdsFor(userId) : new Set<number>();
+
   // Get the set of creator IDs the current user follows
   let followedIds: number[] = [];
   if (userId) {
@@ -1289,7 +1347,7 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
   // says "3rd in line" is the difference between waiting and giving up.
   const queue = queueStateFor(clip.id);
   res.json({
-    status: clip.exportStatus ?? "idle",
+    status: clip.exportStatus === "expired" ? "error" : clip.exportStatus ?? "idle",
     url: clip.exportedUrl ?? null,
     progress,
     queuePosition: queue.position,
@@ -1467,7 +1525,10 @@ router.get("/user-clips/:id/share-link", async (req, res): Promise<void> => {
   const clipId = parseInt(rawId, 10);
   if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
 
-  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(eq(userClipsTable.id, clipId));
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
   if (await isBlockedEitherWay(userId, clip.userId)
     || (clip.isHidden && clip.userId !== userId)) {

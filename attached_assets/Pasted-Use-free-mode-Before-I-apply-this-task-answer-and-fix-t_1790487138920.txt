@@ -1,0 +1,19 @@
+Use free mode.
+
+Before I apply this task, answer and fix the following. Keep all hard constraints from before (no whole recordings public, no loosening /api/hls-proxy, no pushes, no SQL writes, new tests must not write to the database).
+
+1. safety.test.ts REGRESSION
+   a) Quote the failing test and the route it calls (the existing clip share-link path). Show exactly why it now returns 404 instead of 200: which change in this task caused it (git diff main for that route and anything it calls).
+   b) Fix it so the existing share-link behaves exactly as it does on main. The portfolio's new signed MP4 playback must not change share-link behaviour.
+   c) Run ONLY safety.test.ts and any test file covering the share-link and the new portfolio playback (they must not require new DB writes beyond what they already did on main). Paste results.
+
+2. CLIPS WITHOUT A RENDERED MP4
+   a) What happens today when a clip that has never been exported (export_status null/pending/error) is shared to the portfolio? What does the visitor see?
+   b) The vision is that every shared clip plays. If a shared clip has no rendered MP4, sharing should start the existing export/render job automatically (the same job My Clips uses), and the portfolio should show a "preparing this clip" state until it is ready, then play. Reuse the existing export pipeline and its queue; do not build a new renderer. If the export needs the source recording and the source is already gone, show the expired state.
+   c) Tell me how long a typical export takes, and whether the rendered MP4 is kept permanently (not deleted by the 14-day source retention).
+
+3. REPORT
+   - Short description of the final playback design: what an anonymous visitor can reach, how requests are signed/rechecked, what happens on unshare.
+   - git diff --stat versus main, full diff of every server-side file changed in this task, and a summary of client changes.
+   - pnpm run typecheck result.
+   - Screenshots: a clip playing on /portfolio/435 (mobile), the "preparing" state (if implemented), the expired state.

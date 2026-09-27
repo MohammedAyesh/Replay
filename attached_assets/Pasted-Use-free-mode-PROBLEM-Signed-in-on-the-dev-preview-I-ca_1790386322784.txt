@@ -1,0 +1,26 @@
+Use free mode.
+
+PROBLEM
+Signed in on the dev preview, I cannot share a clip from My Clips to my portfolio. The portfolio page itself works. Find out exactly why "Share to portfolio" fails. This is a DIAGNOSIS pass: do not change any source file, do not run any drizzle push or SQL write, do not restart anything unless a workflow is stopped.
+
+1. LOGS FIRST — read the API server workflow's recent console logs (the last 30–60 minutes, covering my signed-in session) and the browser console logs from the preview. Paste verbatim every line mentioning user-clips, portfolio, PATCH, 400, 401, 403, 404, 422, 500, ZodError or "Invalid". Tell me whether a PATCH /api/user-clips/:id request from my session appears at all, and if it does, its status code and error body.
+
+2. TRACE THE UI PATH in artifacts/soccerwatch/src/pages/my-clips.tsx:
+   a) Which component renders the clip cards I see on the My Clips page (the "Created" tab)? Is it UserClipCard — the component the port patched — or a different component? Quote the JSX that renders the list.
+   b) Is the eye button actually rendered and clickable? Check whether another element (card link/overlay, play button, delete button at the same corner, overflow-hidden parent) covers it or swallows the click. Quote the relevant JSX and classes.
+   c) Follow handlePortfolioToggle → dialog → confirmPortfolioChange → updateUserClip.mutateAsync. Quote the exact request body it sends.
+
+3. TRACE THE SERVER PATH:
+   a) In artifacts/api-server/src/routes/userClips.ts PATCH /user-clips/:id: which generated Zod schema validates the body (quote the line)? Open that generated schema in lib/api-zod and paste it. Does it include showInPortfolio, or does it strip or reject it? Does its visibility enum accept "public"?
+   b) Does the handler actually write showInPortfolio to the DB (quote the update call)?
+   c) In artifacts/api-server/src/routes/portfolios.ts: quote the exact WHERE clause that selects clips for the portfolio (showInPortfolio, visibility, isHidden, live-video exclusions, anything else) — i.e. what a clip must satisfy to appear.
+
+4. REPRODUCE WITHOUT MY LOGIN — using the existing test pattern (supertest + mocked getLocalAccountUserId/getLocalUserId, as in userClips.test.ts), write a THROWAWAY script or test outside the committed tree (or delete it afterwards) that: creates a user and a private clip, PATCHes it with {"showInPortfolio": true, "visibility": "public"}, then reads it back via GET /api/user-clips and GET /api/users/:id/portfolio. Report each status code and response body. Clean up every row you created. Confirm git status is clean afterwards.
+
+5. READ-ONLY DB CHECK — SELECT id, user_id, visibility, show_in_portfolio, is_hidden, video_id FROM user_clips ORDER BY created_at DESC LIMIT 10; paste the result, so I can see whether any of my attempts changed a row.
+
+REPORT
+- The root cause in one or two sentences, with the evidence (log line, quoted code, or reproduction result) that proves it.
+- If there is more than one cause, list them in the order they block the flow.
+- The minimal fix you propose (files and lines), without applying it.
+Then stop.

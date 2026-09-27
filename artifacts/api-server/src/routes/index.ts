@@ -35,6 +35,7 @@ import matchLiveRouter from "./matchLive";
 import streamingRouter from "./streaming";
 import safetyRouter from "./safety";
 import friendsRouter from "./friends";
+import portfoliosRouter from "./portfolios";
 
 const router: IRouter = Router();
 
@@ -54,6 +55,7 @@ router.use(adminRouter);
 router.use(adminSettingsRouter);
 router.use(clientSettingsRouter);
 router.use(usersRouter);
+router.use(portfoliosRouter);
 router.use(academiesRouter);
 router.use(contaboRouter);
 router.use(liveRouter);

@@ -20,6 +20,10 @@ export interface User {
   age?: number | null;
   /** @nullable */
   gender?: string | null;
+  /** @nullable */
+  nation?: string | null;
+  /** @nullable */
+  profilePhoto?: string | null;
   profileComplete: boolean;
   /** @nullable */
   preferredLocale?: string | null;

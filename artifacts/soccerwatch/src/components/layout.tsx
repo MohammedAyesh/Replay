@@ -21,7 +21,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 
   const isLogin = location === "/";
-  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find/");
+  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find/") || location.startsWith("/find-quick/");
+  const isPortfolio = location.startsWith("/portfolio/");
   const isWholeGameClaim = location.startsWith("/find/");
   const isWatchFeed = location === "/home";
   const isLegalDocument = location === "/privacy" || location === "/terms" || location === "/delete-account";
@@ -31,7 +32,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
-  const hideHeader = isLogin || isImmersivePlayer || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom;
+  const hideHeader = isLogin || isImmersivePlayer || isPortfolio || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom;
   const hideTabBar = hideHeader || location.startsWith("/f/") || isPublicStandalonePath(location);
   const useTranslucentBar = isWatchFeed;
 

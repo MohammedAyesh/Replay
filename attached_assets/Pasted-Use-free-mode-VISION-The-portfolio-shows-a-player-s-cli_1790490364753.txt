@@ -1,0 +1,30 @@
+Use free mode.
+
+VISION
+The portfolio shows a player's clips exactly the way My Clips shows them: same video, same quality, same smoothness, same player, including fullscreen on mobile. A stranger opens the portfolio link and it loads instantly; they tap a clip and it plays smoothly and can go fullscreen. The only difference from My Clips is who is allowed to watch: on the portfolio, anyone, but only clips that are public + shared to the portfolio + not hidden, and only the clip itself, never the whole recording.
+
+CURRENT PROBLEMS (seen by me on the dev preview; my screenshot of the portfolio player is attached)
+1. /portfolio/:id takes up to ~20 seconds to load.
+2. Clips lag/stutter on the portfolio, while the same clip plays smoothly in My Clips.
+3. The portfolio player is not built for mobile and cannot go fullscreen. My Clips' player can.
+
+WHAT I SUSPECT (suggestions only: you can see the code, I can't. Verify, then choose the best fix)
+- Load time: the public GET for the portfolio appears to call Bunny per clip (source availability check) and may queue exports inside the request, and the page polls every 3 s while anything is "processing". Suggestion: make the portfolio GET a pure, fast database read. Decide each clip's state from what is already stored (export status / exported file present). Move source checks and export queueing out of the page request: queue the export when the clip is shared (you already added that to the PATCH), and detect "expired" when the export job fails because the source is gone, or in a background/cached check, never on the visitor's request path. Poll only while a clip is actually preparing, with backoff, and ideally a tiny status endpoint rather than refetching the whole portfolio.
+- Lag: the portfolio MP4 appears to be streamed through the API server with "no-store" caching, so every byte goes Replit → Bunny Storage → Replit → viewer with no CDN. Find exactly how My Clips gets its video (URL, host, format: exported MP4 via CDN, or HLS via proxy) and make the portfolio use the same delivery path and quality. Suggestion: serve the portfolio clip from the Bunny CDN the way My Clips does, using a short-lived signed URL (e.g. Bunny token authentication on the pull zone) or an equivalent the codebase already supports, so the bytes come from the CDN, not the API server. If a proxy must stay, it needs proper range support and CDN-cacheable headers, but prefer the CDN.
+- Mobile/fullscreen: suggestion — reuse the My Clips player component itself for the portfolio (same controls, fullscreen, playsInline, iOS fullscreen via webkitEnterFullscreen, orientation behaviour, touch-sized controls), fed with the portfolio's authorized URL, instead of maintaining a second player. Keep the portfolio's page styling around it, but the video player should be the same one.
+
+REQUIRED OUTCOME (make the edits directly)
+- The portfolio page's first render with clip cards appears in under ~2 seconds on the dev preview (no network calls to Bunny on the page request).
+- A shared clip plays as smoothly as the same clip in My Clips, from the same kind of source and quality.
+- Fullscreen works on mobile (iOS Safari and Android Chrome) and desktop, in English and Arabic (RTL).
+- States still work: preparing (auto-starts playing when ready, without hammering the server), expired, unavailable.
+- Unsharing, making a clip private, or hiding it stops it playing on the portfolio immediately (URLs must be short-lived or re-checked). Nothing outside the clip is reachable, and whole recordings stay private.
+
+KEEP
+- Do not change /api/hls-proxy authorization, recording visibility, schedules or recording rows. No open proxy that fetches arbitrary URLs.
+- No drizzle push, no SQL writes, no new tables/columns. If you need a Bunny setting changed (e.g. enabling token authentication on a pull zone), don't change it yourself — tell me exactly what to switch on, and make the code work once it is on.
+- OpenAPI spec stays the source of truth for any endpoint/field change; rerun codegen; no query params in the spec.
+- Don't change My Clips' behaviour except to extract its player for reuse.
+- New tests must not write to the database.
+
+When finished, check it yourself on the dev preview in a fresh anonymous browser (mobile size and desktop): page load time, smooth playback of clips 15525 and 12191, fullscreen, Arabic. Then reply with a short summary of what you changed, the measured load time, and anything I must switch on in Bunny. Typecheck must pass.

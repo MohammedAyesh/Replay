@@ -110,6 +110,8 @@ export const LoginResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
+  "nation": zod.string().nullish(),
+  "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
@@ -136,6 +138,8 @@ export const LoginAsGuestResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
+  "nation": zod.string().nullish(),
+  "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
@@ -167,6 +171,8 @@ export const GetMeResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
+  "nation": zod.string().nullish(),
+  "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
@@ -650,6 +656,8 @@ export const UpdateConsentsResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
+  "nation": zod.string().nullish(),
+  "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
@@ -1858,6 +1866,7 @@ export const CreateUserClipResponse = zod.object({
   "h": zod.number()
 })),
   "visibility": zod.enum(['public', 'followers', 'private', 'match']),
+  "showInPortfolio": zod.boolean(),
   "isHidden": zod.boolean(),
   "hiddenReason": zod.string().nullable(),
   "likeCount": zod.number(),
@@ -1896,6 +1905,7 @@ export const ListUserClipsResponseItem = zod.object({
   "h": zod.number()
 })),
   "visibility": zod.enum(['public', 'followers', 'private', 'match']),
+  "showInPortfolio": zod.boolean(),
   "isHidden": zod.boolean(),
   "hiddenReason": zod.string().nullable(),
   "likeCount": zod.number(),
@@ -1937,6 +1947,7 @@ export const UpdateUserClipParams = zod.object({
 export const UpdateUserClipBody = zod.object({
   "title": zod.string().optional(),
   "visibility": zod.enum(['public', 'followers', 'private', 'match']).optional(),
+  "showInPortfolio": zod.boolean().optional(),
   "thumbnailTime": zod.number().nullish()
 })
 
@@ -1955,6 +1966,7 @@ export const UpdateUserClipResponse = zod.object({
   "h": zod.number()
 })),
   "visibility": zod.enum(['public', 'followers', 'private', 'match']),
+  "showInPortfolio": zod.boolean(),
   "isHidden": zod.boolean(),
   "hiddenReason": zod.string().nullable(),
   "likeCount": zod.number(),
@@ -2267,6 +2279,8 @@ export const UpdateLocaleResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
+  "nation": zod.string().nullish(),
+  "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
@@ -2304,6 +2318,8 @@ export const UpdateProfileResponse = zod.object({
   "position": zod.string().nullish(),
   "age": zod.number().nullish(),
   "gender": zod.string().nullish(),
+  "nation": zod.string().nullish(),
+  "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
@@ -2371,6 +2387,145 @@ export const GetUserProfileResponse = zod.object({
   "clipCount": zod.number(),
   "isFollowing": zod.boolean()
 })
+
+
+/**
+ * @summary Get a player's public portfolio
+ */
+export const GetUserPortfolioParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetUserPortfolioResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "age": zod.number().nullable(),
+  "position": zod.string().nullable(),
+  "nation": zod.string().nullable(),
+  "profilePhoto": zod.string().nullable(),
+  "followerCount": zod.number(),
+  "followingCount": zod.number(),
+  "clipCount": zod.number(),
+  "history": zod.array(zod.object({
+  "id": zod.number(),
+  "teamName": zod.string(),
+  "roleLabel": zod.string(),
+  "startYear": zod.number(),
+  "endYear": zod.number().nullable(),
+  "isCurrent": zod.boolean(),
+  "displayOrder": zod.number()
+})),
+  "clips": zod.array(zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "title": zod.string(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
+  "visibility": zod.enum(['public']),
+  "likeCount": zod.number(),
+  "aspectRatio": zod.string(),
+  "thumbnailTime": zod.number().nullish(),
+  "thumbnailUrl": zod.string().nullish(),
+  "playbackUrl": zod.string().nullish(),
+  "playbackStatus": zod.enum(['ready', 'processing', 'expired', 'unavailable']),
+  "createdAt": zod.string(),
+  "academyId": zod.number().nullish(),
+  "introVideoUrl": zod.string().nullish()
+})),
+  "canEdit": zod.boolean()
+})
+
+
+/**
+ * @summary Update the signed-in player's portfolio
+ */
+export const UpdateUserPortfolioParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const updateUserPortfolioBodyHistoryMax = 20;
+
+
+
+export const UpdateUserPortfolioBody = zod.object({
+  "name": zod.string(),
+  "age": zod.number().nullable(),
+  "position": zod.string().nullable(),
+  "nation": zod.string().nullable(),
+  "profilePhoto": zod.string().nullable(),
+  "history": zod.array(zod.object({
+  "teamName": zod.string(),
+  "roleLabel": zod.string(),
+  "startYear": zod.number(),
+  "endYear": zod.number().nullable(),
+  "isCurrent": zod.boolean(),
+  "displayOrder": zod.number()
+})).max(updateUserPortfolioBodyHistoryMax)
+})
+
+export const UpdateUserPortfolioResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "age": zod.number().nullable(),
+  "position": zod.string().nullable(),
+  "nation": zod.string().nullable(),
+  "profilePhoto": zod.string().nullable(),
+  "followerCount": zod.number(),
+  "followingCount": zod.number(),
+  "clipCount": zod.number(),
+  "history": zod.array(zod.object({
+  "id": zod.number(),
+  "teamName": zod.string(),
+  "roleLabel": zod.string(),
+  "startYear": zod.number(),
+  "endYear": zod.number().nullable(),
+  "isCurrent": zod.boolean(),
+  "displayOrder": zod.number()
+})),
+  "clips": zod.array(zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "title": zod.string(),
+  "startTime": zod.number(),
+  "endTime": zod.number(),
+  "cropPath": zod.array(zod.object({
+  "t": zod.number().describe('Time position as fraction (0-1) of clip duration'),
+  "x": zod.number().describe('Crop left edge as fraction of total video width'),
+  "y": zod.number(),
+  "w": zod.number().describe('Crop width as fraction of total video width'),
+  "h": zod.number()
+})),
+  "visibility": zod.enum(['public']),
+  "likeCount": zod.number(),
+  "aspectRatio": zod.string(),
+  "thumbnailTime": zod.number().nullish(),
+  "thumbnailUrl": zod.string().nullish(),
+  "playbackUrl": zod.string().nullish(),
+  "playbackStatus": zod.enum(['ready', 'processing', 'expired', 'unavailable']),
+  "createdAt": zod.string(),
+  "academyId": zod.number().nullish(),
+  "introVideoUrl": zod.string().nullish()
+})),
+  "canEdit": zod.boolean()
+})
+
+
+/**
+ * @summary Stream a rendered clip shared to a player portfolio
+ */
+export const GetPortfolioClipMediaParams = zod.object({
+  "id": zod.coerce.number(),
+  "token": zod.coerce.string()
+})
+
+export const GetPortfolioClipMediaResponse = zod.unknown()
 
 
 /**

@@ -39,6 +39,7 @@ export const userClipsTable = pgTable("user_clips", {
   liveClipError: text("live_clip_error"),
   liveClipPartial: boolean("live_clip_partial").notNull().default(false),
   visibility: text("visibility").notNull().default("private"),
+  showInPortfolio: boolean("show_in_portfolio").notNull().default(false),
   thumbnailTime: numeric("thumbnail_time", { precision: 10, scale: 3 }),
   likeCount: integer("like_count").notNull().default(0),
   viewCount: integer("view_count").notNull().default(0),

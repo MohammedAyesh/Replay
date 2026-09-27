@@ -3,7 +3,8 @@ import { describe, it, expect } from "vitest";
 process.env.CLIP_SHARE_URL_SECRET = "test-share-secret";
 
 const {
-  shareToken, verifyShareToken, shareCardPath, escapeHtml,
+  shareToken, verifyShareToken, shareCardPath, portfolioPlaybackToken,
+  verifyPortfolioPlaybackToken, portfolioPlaybackPath, escapeHtml,
   buildShareTitle, buildShareDescription, buildShareCardHtml,
 } = await import("./shareCard");
 
@@ -41,6 +42,28 @@ describe("share tokens", () => {
 
   it("builds the path the card is served at", () => {
     expect(shareCardPath(4821)).toBe(`/s/4821/${shareToken(4821)}`);
+  });
+});
+
+describe("portfolio playback tokens", () => {
+  it("uses a separate deterministic signature from ordinary clip sharing", () => {
+    expect(portfolioPlaybackToken(4821)).toBe(portfolioPlaybackToken(4821));
+    expect(portfolioPlaybackToken(4821)).not.toBe(shareToken(4821));
+    expect(portfolioPlaybackToken(4821)).not.toBe(portfolioPlaybackToken(4822));
+  });
+
+  it("verifies only the matching clip token", () => {
+    const token = portfolioPlaybackToken(4821);
+    expect(verifyPortfolioPlaybackToken(4821, token)).toBe(true);
+    expect(verifyPortfolioPlaybackToken(4822, token)).toBe(false);
+    expect(verifyPortfolioPlaybackToken(4821, token.slice(0, -1) + "0")).toBe(false);
+    expect(verifyPortfolioPlaybackToken(4821, "short")).toBe(false);
+  });
+
+  it("builds an API path with no source URL or query parameters", () => {
+    const path = portfolioPlaybackPath(4821);
+    expect(path).toBe(`/api/portfolio-clips/4821/${portfolioPlaybackToken(4821)}/clip.mp4`);
+    expect(path).not.toContain("?");
   });
 });
 

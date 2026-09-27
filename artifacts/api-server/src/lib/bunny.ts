@@ -102,6 +102,12 @@ export function isBunnyStorageConfigured(): boolean {
   return !!BUNNY_STORAGE_ZONE && !!BUNNY_STORAGE_API_KEY && !!BUNNY_STORAGE_CDN_URL;
 }
 
+export class BunnyVideoNotFoundError extends Error {
+  constructor(videoId: string) {
+    super(`Bunny video not found: ${videoId}`);
+    this.name = "BunnyVideoNotFoundError";
+  }
+}
 /**
  * Fetch video metadata from the Bunny Stream Management API.
  * Returns duration in seconds (from the `length` field).
@@ -116,6 +122,9 @@ export async function getBunnyVideoInfo(videoId: string): Promise<{
   const response = await fetch(url, {
     headers: { AccessKey: BUNNY_API_KEY },
   });
+  if (response.status === 404) {
+    throw new BunnyVideoNotFoundError(videoId);
+  }
   if (!response.ok) {
     throw new Error(`Bunny API error ${response.status} fetching video info for ${videoId}`);
   }
@@ -183,6 +192,25 @@ export function getBunnyExportUrl(clipId: number): string {
   return `${base}/${getBunnyExportPath(clipId)}`;
 }
 
+/** Extracts and validates the storage-zone-relative path for one clip export. */
+export function getPortfolioClipStoragePath(clipId: number, exportedUrl: string): string | null {
+  if (!isBunnyStorageUrl(exportedUrl)) return null;
+
+  let storagePath: string;
+  try {
+    storagePath = new URL(exportedUrl).pathname.replace(/^\/+/, "");
+  } catch {
+    return null;
+  }
+
+  const zonePrefix = `${BUNNY_STORAGE_ZONE.replace(/^\/+|\/+$/g, "")}/`;
+  if (zonePrefix !== "/" && storagePath.startsWith(zonePrefix)) {
+    storagePath = storagePath.slice(zonePrefix.length);
+  }
+
+  const expectedPath = new RegExp(`^clips/${clipId}(?:-[A-Za-z0-9_-]+)?\\.mp4$`);
+  return expectedPath.test(storagePath) ? storagePath : null;
+}
 /**
  * Upload a rendered MP4 to Bunny Storage and return its public CDN URL.
  * Requires BUNNY_STORAGE_ZONE, BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_CDN_URL.
@@ -337,4 +365,56 @@ export async function uploadClipIntroToBunnyStorage(
     throw new Error(`Bunny Storage upload failed: ${response.status}`);
   }
   return `${BUNNY_STORAGE_CDN_URL.replace(/\/$/, "")}/${remotePath}`;
+}
+
+/** Sign a single validated rendered-export URL with Bunny Advanced Token Authentication. */
+export function signBunnyPortfolioUrl(
+  baseUrl: string,
+  objectPath: string,
+  securityKey: string,
+  expiresAt: number,
+): string {
+  if (!/^clips\/\d+(?:-[A-Za-z0-9_-]+)?\.mp4$/.test(objectPath)) {
+    throw new Error("Invalid portfolio export path");
+  }
+  if (!securityKey || !Number.isSafeInteger(expiresAt)) {
+    throw new Error("Invalid portfolio signing configuration");
+  }
+
+  const base = new URL(baseUrl);
+  if (base.protocol !== "https:" || base.username || base.password || base.search || base.hash) {
+    throw new Error("Portfolio CDN URL must be a plain HTTPS origin/path");
+  }
+
+  const basePath = base.pathname.replace(/\/+$/, "");
+  const url = new URL(base.origin);
+  url.pathname = `${basePath}/${objectPath}`;
+  const signature = crypto
+    .createHmac("sha256", securityKey)
+    .update(`${url.pathname}${expiresAt}`)
+    .digest("base64url");
+  url.searchParams.set("token", `HS256-${signature}`);
+  url.searchParams.set("expires", String(expiresAt));
+  return url.toString();
+}
+
+/**
+ * Returns a short-lived direct CDN URL for a rendered clip, when an isolated
+ * portfolio Pull Zone and its Advanced Token Authentication key are configured.
+ */
+export function getBunnyPortfolioPlaybackUrl(
+  clipId: number,
+  exportedUrl: string,
+): string | null {
+  const cdnUrl = process.env.BUNNY_PORTFOLIO_CDN_URL?.trim();
+  const securityKey = process.env.BUNNY_PORTFOLIO_CDN_TOKEN_KEY;
+  const objectPath = getPortfolioClipStoragePath(clipId, exportedUrl);
+  if (!cdnUrl || !securityKey || !objectPath) return null;
+
+  return signBunnyPortfolioUrl(
+    cdnUrl,
+    objectPath,
+    securityKey,
+    Math.floor(Date.now() / 1000) + 300,
+  );
 }

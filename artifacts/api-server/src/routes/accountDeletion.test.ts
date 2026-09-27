@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
-import { and, eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   db,
   clipsTable,
@@ -91,66 +91,7 @@ async function createFootageRequest(userId: number, status: string, label: strin
   return row.id;
 }
 
-async function cleanupPreviousTestRuns(): Promise<void> {
-  const priorAdmins = await db
-    .select({ email: usersTable.email })
-    .from(usersTable)
-    .where(like(usersTable.email, "account-deletion-admin-%@test.local"));
-
-  for (const { email } of priorAdmins) {
-    const tag = email.slice("account-deletion-admin-".length, -"@test.local".length);
-    if (!tag) continue;
-
-    const priorUsers = await db
-      .select({ id: usersTable.id })
-      .from(usersTable)
-      .where(like(usersTable.email, `%${tag}%@test.local`));
-    const priorUserIds = priorUsers.map(({ id }) => id);
-    const priorClips = await db
-      .select({ id: userClipsTable.id })
-      .from(userClipsTable)
-      .where(like(userClipsTable.title, `%${tag}%`));
-    const priorClipIds = priorClips.map(({ id }) => id);
-    const priorRequests = await db
-      .select({ id: footageRequestsTable.id })
-      .from(footageRequestsTable)
-      .where(like(footageRequestsTable.videoId, `${tag}-%`));
-    const priorRequestIds = priorRequests.map(({ id }) => id);
-    const priorFields = await db
-      .select({ id: fieldsTable.id })
-      .from(fieldsTable)
-      .where(eq(fieldsTable.name, `Account deletion field ${tag}`));
-
-    if (priorUserIds.length > 0) {
-      await db.delete(likesTable).where(inArray(likesTable.userId, priorUserIds));
-    }
-    if (priorClipIds.length > 0) {
-      await db.delete(likesTable).where(inArray(likesTable.userClipId, priorClipIds));
-      await db.delete(userClipsTable).where(inArray(userClipsTable.id, priorClipIds));
-    }
-    if (priorRequestIds.length > 0) {
-      await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, priorRequestIds));
-    }
-    if (priorFields.length > 0) {
-      await db.delete(footagePaymentsTable).where(eq(footagePaymentsTable.fieldId, priorFields[0]!.id));
-    }
-    await db.delete(statUnlocksTable).where(like(statUnlocksTable.reference, `${tag}-unlock-%`));
-    if (priorUserIds.length > 0) {
-      await db.delete(settingsRulesTable).where(and(
-        eq(settingsRulesTable.scopeType, "user"),
-        inArray(settingsRulesTable.scopeId, priorUserIds),
-      ));
-      await db.delete(usersTable).where(inArray(usersTable.id, priorUserIds));
-    }
-    if (priorFields.length > 0) {
-      await db.delete(fieldsTable).where(eq(fieldsTable.id, priorFields[0]!.id));
-    }
-  }
-}
-
 beforeAll(async () => {
-  await cleanupPreviousTestRuns();
-
   const [existingPlaceholder] = await db
     .select({ id: usersTable.id })
     .from(usersTable)

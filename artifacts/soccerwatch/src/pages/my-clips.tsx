@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   useListUserClips,
   useDeleteUserClip,
+  useUpdateUserClip,
   useListClaimMatchClips,
   getListClaimMatchClipsQueryKey,
   getListUserClipsQueryKey,
@@ -10,13 +11,17 @@ import {
 } from "@workspace/api-client-react";
 import type { ClaimMatchClipGroup } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Pause, Download, Maximize, Minimize, Lock, Target, Trophy, Zap, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
-import { useFullscreenVideo } from "@/lib/fullscreen-video";
+import {
+  SharedClipPlayerButtons,
+  SharedClipTimeline,
+  SharedClipVideo,
+  useClipPlayerFullscreen,
+} from "@/components/clip-player/SharedPlaybackControls";
 import Hls from "hls.js";
 import { capPlaybackQuality } from "../lib/hlsQuality";
 import { exportClip, canExportVideo, triggerDownload } from "@/lib/exportClip";
@@ -36,6 +41,7 @@ import {
   type ExportStatusResponse,
   type DownloadQuota,
 } from "@/lib/downloadQuota";
+import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Lock, Target, Trophy, Zap, Send, Eye } from "lucide-react";
 
 /** How long to wait for the branding intro to actually start before skipping it. */
 const INTRO_START_TIMEOUT_MS = 4000;
@@ -73,12 +79,12 @@ function isLandscape() {
 
 function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClose: () => void; onDownloaded?: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const { isFullscreen, tryEnterFullscreen, toggleFullscreen } = useClipPlayerFullscreen(videoRef);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const rafRef = useRef<number>(0);
   const localUrlRef = useRef<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [landscape, setLandscape] = useState(() => isLandscape());
   const [exportState, setExportState] = useState<ExportState>(
     clip.exportStatus === "done" ? "ready" : "idle"
@@ -132,15 +138,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const quotaLabel = useMemo(() => formatQuotaLabel(quota, locale), [quota, locale]);
   const { toast } = useToast();
   const { user } = useAuth();
-  const { setFullscreenVideo } = useFullscreenVideo();
   const keyframes = clip.cropPath ?? [];
-
-
-  // Notify layout that a fullscreen video is active — suppresses orientation lock
-  useEffect(() => {
-    setFullscreenVideo(true);
-    return () => setFullscreenVideo(false);
-  }, [setFullscreenVideo]);
 
   // Effective timing: use override for local blobs, raw clip fractions for HLS
   const lStart = isLocal ? (localTimingOverride?.start ?? 0) : clip.startTime;
@@ -385,41 +383,6 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     [lStart, lEnd]
   );
 
-  /**
-   * Enter fullscreen.
-   * iOS Safari / Chrome iOS only support webkitEnterFullscreen on the
-   * <video> element, and it MUST come from a user gesture (tap).
-   * The standard Fullscreen API works on Android / Desktop.
-   */
-  const tryEnterFullscreen = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    if (isIOS) {
-      const iosFull = (video as HTMLVideoElement & { webkitEnterFullscreen?: () => void }).webkitEnterFullscreen;
-      if (iosFull) {
-        try { iosFull.call(video); } catch { /* iOS requires user gesture */ }
-      }
-      return;
-    }
-    if (!document.fullscreenElement && typeof document.documentElement.requestFullscreen === "function") {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }
-  }, []);
-
-  const tryExitFullscreen = useCallback(() => {
-    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    if (isIOS) {
-      const video = videoRef.current;
-      const iosExit = video && (video as HTMLVideoElement & { webkitExitFullscreen?: () => void }).webkitExitFullscreen;
-      if (iosExit) { try { iosExit.call(video); } catch {} }
-      return;
-    }
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
-  }, []);
-
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -441,21 +404,6 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 
   /* Stop polling when the player closes */
   useEffect(() => () => { pollingRef.current = false; }, []);
-
-  /* Fullscreen toggle */
-  const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      tryEnterFullscreen();
-    } else {
-      tryExitFullscreen();
-    }
-  }, [tryEnterFullscreen, tryExitFullscreen]);
-
-  useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", handler);
-    return () => document.removeEventListener("fullscreenchange", handler);
-  }, []);
 
   /* Track orientation so controls can reflow */
   useEffect(() => {
@@ -742,7 +690,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
               clip.aspectRatio === "9:16" ? "h-full aspect-[9/16]" : "h-full w-full max-h-full aspect-video"
             )}
           >
-            <video
+            <SharedClipVideo
               ref={videoRef}
               className="pointer-events-none"
               style={isLocal
@@ -780,42 +728,15 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
           style={landscape ? undefined : { background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)", paddingTop: "3rem", paddingBottom: "max(1.25rem, env(safe-area-inset-bottom))" }}
         >
           {/* Timeline — scoped to the clip's own duration, not the source recording's */}
-          <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
-            <span className="text-[11px] text-white/70 tabular-nums min-w-[30px] drop-shadow">
-              {formatTime(progressSec)}
-            </span>
-            <div className="flex-1 relative h-6 flex items-center">
-              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1.5 bg-white/25 rounded-full" />
-              <div
-                className="absolute left-0 top-1/2 -translate-y-1/2 h-1.5 bg-primary rounded-full pointer-events-none"
-                style={{ width: `${clipDurationSec > 0 ? (progressSec / clipDurationSec) * 100 : 0}%` }}
-              />
-              <div
-                className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow pointer-events-none"
-                style={{
-                  left: `${clipDurationSec > 0 ? (progressSec / clipDurationSec) * 100 : 0}%`,
-                  transform: "translate(-50%, -50%)",
-                }}
-              />
-              <input
-                type="range"
-                min={0}
-                max={clipDurationSec || 1}
-                step={0.05}
-                value={progressSec}
-                onMouseDown={handleScrubStart}
-                onTouchStart={handleScrubStart}
-                onChange={handleScrubChange}
-                onMouseUp={handleScrubEnd}
-                onTouchEnd={handleScrubEnd}
-                className="w-full h-full appearance-none cursor-pointer relative z-10 opacity-0"
-                aria-label="Clip position"
-              />
-            </div>
-            <span className="text-[11px] text-white/70 tabular-nums min-w-[30px] text-right drop-shadow">
-              {formatTime(clipDurationSec)}
-            </span>
-          </div>
+          <SharedClipTimeline
+            progressSec={progressSec}
+            durationSec={clipDurationSec}
+            onChange={handleScrubChange}
+            onScrubStart={handleScrubStart}
+            onScrubEnd={handleScrubEnd}
+            labels={{ timeline: "Clip position" }}
+            direction="inherit"
+          />
 
           <div className={`flex items-end gap-3 ${landscape ? "flex-col w-full" : ""}`}>
           <div className={`${landscape ? "mb-auto" : "flex-1 min-w-0 pb-1"}`}>
@@ -867,22 +788,23 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 
             {exportState === "ready" && <StoryButton clipId={clip.id} />}
 
-            {/* Fullscreen toggle */}
-            <button
-              onClick={toggleFullscreen}
-              className={`w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all shrink-0 pointer-events-auto ${landscape ? "" : ""}`}
-              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            >
-              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-            </button>
-
-            {/* Play/Pause */}
-            <button
-              onClick={togglePlay}
-              className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-black active:scale-95 transition-transform shrink-0 pointer-events-auto"
-            >
-              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-            </button>
+            <SharedClipPlayerButtons
+              isPlaying={isPlaying}
+              isFullscreen={isFullscreen}
+              onTogglePlayback={togglePlay}
+              onToggleFullscreen={toggleFullscreen}
+              labels={{
+                play: "Play",
+                pause: "Pause",
+                enterFullscreen: "Enter fullscreen",
+                exitFullscreen: "Exit fullscreen",
+                timeline: "Clip position",
+                mute: "Mute",
+                unmute: "Unmute",
+              }}
+              className="pointer-events-auto"
+              direction="inherit"
+            />
           </div>
           </div>
 
@@ -1547,7 +1469,10 @@ function UserClipCard({
   const safetyCopy = useSafetyCopy();
   const queryClient = useQueryClient();
   const deleteUserClip = useDeleteUserClip();
+  const updateUserClip = useUpdateUserClip();
   const [showDelete, setShowDelete] = useState(false);
+  const [portfolioVisible, setPortfolioVisible] = useState(clip.showInPortfolio);
+  const [portfolioDialog, setPortfolioDialog] = useState<"share" | "unshare" | null>(null);
   const [liveProgress, setLiveProgress] = useState({
     liveClipStatus: clip.liveClipStatus ?? null,
     liveClipError: clip.liveClipError ?? null,
@@ -1560,12 +1485,17 @@ function UserClipCard({
   const endPct = (clip.endTime * 100).toFixed(0);
   const durationHint = `${startPct}%–${endPct}%`;
   const isPrivate = clip.visibility === "private";
+  const needsPublicConsent = clip.visibility !== "public";
   const isLiveClip = Boolean(clip.matchCode);
   const canPlay = !isLiveClip || Boolean(clip.playbackUrl);
   const shouldPollLiveStatus = isLiveClip && (
     (liveProgress.liveClipStatus !== "ready" && liveProgress.liveClipStatus !== "failed")
     || (liveProgress.liveClipStatus === "ready" && liveProgress.exportStatus !== "done" && liveProgress.exportStatus !== "error")
   );
+
+  useEffect(() => {
+    setPortfolioVisible(clip.showInPortfolio);
+  }, [clip.showInPortfolio]);
 
   useEffect(() => {
     setLiveProgress({
@@ -1645,6 +1575,30 @@ function UserClipCard({
       queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
     } catch {
       toast({ title: "Failed to delete clip", variant: "destructive" });
+    }
+  };
+
+  const handlePortfolioToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const next = !portfolioVisible;
+    setPortfolioDialog(next ? "share" : "unshare");
+  };
+
+  const confirmPortfolioChange = async () => {
+    const next = portfolioDialog === "share";
+    if (portfolioDialog === null) return;
+    setPortfolioVisible(next);
+    try {
+      await updateUserClip.mutateAsync({
+        id: clip.id,
+        data: next ? { showInPortfolio: true, visibility: "public" } : { showInPortfolio: false },
+      });
+      queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+      setPortfolioDialog(null);
+    } catch {
+      setPortfolioVisible(!next);
+      toast({ title: t.myClips.portfolioToggleFailed, variant: "destructive" });
     }
   };
 
@@ -1736,7 +1690,29 @@ function UserClipCard({
             {durationHint}
           </span>
         )}
+        {portfolioVisible && (
+          <span className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/35 bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold text-primary">
+            <Eye className="h-2.5 w-2.5" />
+            {t.myClips.sharedToPortfolio}
+          </span>
+        )}
       </div>
+
+      <button
+        type="button"
+        onClick={handlePortfolioToggle}
+        disabled={updateUserClip.isPending}
+        aria-pressed={portfolioVisible}
+        aria-label={t.myClips.showInPortfolio}
+        title={t.myClips.showInPortfolioDesc}
+        className={cn(
+          "absolute end-10 top-2 z-10 flex h-7 items-center gap-1 rounded-lg px-2 text-[10px] font-semibold transition-colors",
+          portfolioVisible ? "bg-primary/20 text-primary" : "bg-muted/80 text-muted-foreground",
+        )}
+      >
+        <Eye className="h-3 w-3" />
+        <span className="sr-only">{t.myClips.showInPortfolio}</span>
+      </button>
 
       {/* Delete button */}
       <button
@@ -1767,6 +1743,58 @@ function UserClipCard({
                 className="px-3 py-1.5 rounded-lg bg-violet text-text text-xs font-semibold"
               >Delete</button>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {portfolioDialog !== null && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 p-4"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={`portfolio-dialog-title-${clip.id}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 8 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 8 }}
+              className="w-full max-w-sm rounded-2xl border border-border bg-background p-5 shadow-2xl"
+            >
+              <h2 id={`portfolio-dialog-title-${clip.id}`} className="text-sm font-bold text-foreground">
+                {portfolioDialog === "share" ? t.myClips.shareToPortfolioTitle : t.myClips.removeFromPortfolioTitle}
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                {portfolioDialog === "share"
+                  ? (needsPublicConsent ? t.myClips.sharePrivateToPortfolioDesc : t.myClips.shareToPortfolioDesc)
+                  : t.myClips.removeFromPortfolioDesc}
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={updateUserClip.isPending}
+                  onClick={() => setPortfolioDialog(null)}
+                  className="rounded-lg bg-muted px-3 py-2 text-xs font-medium text-foreground disabled:opacity-50"
+                >
+                  {portfolioDialog === "unshare" ? t.myClips.keepShared : t.myClips.cancel}
+                </button>
+                <button
+                  type="button"
+                  disabled={updateUserClip.isPending}
+                  onClick={() => void confirmPortfolioChange()}
+                  className={cn(
+                    "rounded-lg px-3 py-2 text-xs font-semibold text-white disabled:opacity-50",
+                    portfolioDialog === "unshare" ? "bg-destructive" : "bg-primary",
+                  )}
+                >
+                  {portfolioDialog === "share" ? t.myClips.shareToPortfolio : t.myClips.removeFromPortfolio}
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

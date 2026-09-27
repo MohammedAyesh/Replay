@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest
 import request from "supertest";
 import express, { type Express } from "express";
 import { db, usersTable, settingsRulesTable, settingsDefaultsTable } from "@workspace/db";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { invalidateSettingsCache, isMissingRelationError } from "../lib/settings";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -30,8 +30,25 @@ const TAG = `set_${Date.now()}`;
 let app: Express;
 let adminId: number;
 let plainId: number;
+const ruleIds: number[] = [];
+const defaultKeys = new Set<string>();
+
+async function cleanupSettingsFixtures() {
+  if (defaultKeys.size) {
+    await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, [...defaultKeys]));
+    defaultKeys.clear();
+  }
+  if (ruleIds.length) {
+    await db.delete(settingsRulesTable).where(inArray(settingsRulesTable.id, ruleIds));
+    ruleIds.length = 0;
+  }
+  invalidateSettingsCache();
+}
 
 beforeAll(async () => {
+  const existingDefault = await db.select({ key: settingsDefaultsTable.key })
+    .from(settingsDefaultsTable).where(eq(settingsDefaultsTable.key, "downloads.limit"));
+  if (existingDefault.length) throw new Error("This suite requires a database without an existing downloads.limit override");
   const { default: adminSettingsRouter } = await import("./adminSettings");
   app = express();
   app.use(express.json());
@@ -48,20 +65,25 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await db.delete(settingsDefaultsTable);
-  await db.delete(settingsRulesTable);
+  await cleanupSettingsFixtures();
   await db.delete(usersTable).where(inArray(usersTable.id, [adminId, plainId]));
-  invalidateSettingsCache();
 });
 
 afterEach(async () => {
-  await db.delete(settingsDefaultsTable);
-  await db.delete(settingsRulesTable);
-  invalidateSettingsCache();
+  await cleanupSettingsFixtures();
 });
 
 const asAdmin = () => mockedGetLocalUserId.mockResolvedValue(adminId);
-const post = (body: unknown) => request(app).post("/api/admin/settings/rules").send(body as object);
+const post = async (body: unknown) => {
+  const response = await request(app).post("/api/admin/settings/rules").send(body as object);
+  if (response.status === 201) ruleIds.push(response.body.rule.id);
+  return response;
+};
+const putDefault = async (key: string, body: object) => {
+  const response = await request(app).put(`/api/admin/settings/defaults/${key}`).send(body);
+  if (response.status === 200) defaultKeys.add(key);
+  return response;
+};
 
 describe("who can touch it", () => {
   it("refuses an anonymous caller", async () => {
@@ -336,8 +358,7 @@ describe("the shipped defaults, made editable", () => {
 
   it("changes the value everyone gets, without writing a rule", async () => {
     mockedGetLocalUserId.mockResolvedValue(adminId);
-    await request(app).put("/api/admin/settings/defaults/downloads.limit")
-      .send({ value: 12, note: "bumped for the season" }).expect(200);
+    expect((await putDefault("downloads.limit", { value: 12, note: "bumped for the season" })).status).toBe(200);
 
     const preview = await request(app).get("/api/admin/settings/preview").expect(200);
     const entry = preview.body.settings.find((e: { definition: { key: string } }) => e.definition.key === "downloads.limit");
@@ -354,11 +375,11 @@ describe("the shipped defaults, made editable", () => {
     mockedGetLocalUserId.mockResolvedValue(adminId);
     // "12" is the dangerous one: stored, it makes the resolver hand a string to
     // a caller expecting a number, and the failure surfaces somewhere unrelated.
-    const asString = await request(app).put("/api/admin/settings/defaults/downloads.limit").send({ value: "12" });
+    const asString = await putDefault("downloads.limit", { value: "12" });
     expect(asString.status).toBe(400);
-    const outOfRange = await request(app).put("/api/admin/settings/defaults/downloads.limit").send({ value: -1 });
+    const outOfRange = await putDefault("downloads.limit", { value: -1 });
     expect(outOfRange.status).toBe(400);
-    const unknown = await request(app).put("/api/admin/settings/defaults/nope.nope").send({ value: 1 });
+    const unknown = await putDefault("nope.nope", { value: 1 });
     expect(unknown.status).toBe(400);
   });
 
@@ -366,7 +387,7 @@ describe("the shipped defaults, made editable", () => {
     // Copying today's shipped value into the row would pin it: a later change to
     // the default in code would be silently ignored for this key forever.
     mockedGetLocalUserId.mockResolvedValue(adminId);
-    await request(app).put("/api/admin/settings/defaults/downloads.limit").send({ value: 12 }).expect(200);
+    expect((await putDefault("downloads.limit", { value: 12 })).status).toBe(200);
     await request(app).delete("/api/admin/settings/defaults/downloads.limit").expect(200);
 
     const rows = await db.select().from(settingsDefaultsTable);
@@ -378,9 +399,8 @@ describe("the shipped defaults, made editable", () => {
 
   it("still lets a rule beat the base value", async () => {
     mockedGetLocalUserId.mockResolvedValue(adminId);
-    await request(app).put("/api/admin/settings/defaults/downloads.limit").send({ value: 12 }).expect(200);
-    await request(app).post("/api/admin/settings/rules")
-      .send({ key: "downloads.limit", value: 50, scopeType: "global", priority: 0 }).expect(201);
+    expect((await putDefault("downloads.limit", { value: 12 })).status).toBe(200);
+    expect((await post({ key: "downloads.limit", value: 50, scopeType: "global", priority: 0 })).status).toBe(201);
 
     const preview = await request(app).get("/api/admin/settings/preview").expect(200);
     const entry = preview.body.settings.find((e: { definition: { key: string } }) => e.definition.key === "downloads.limit");

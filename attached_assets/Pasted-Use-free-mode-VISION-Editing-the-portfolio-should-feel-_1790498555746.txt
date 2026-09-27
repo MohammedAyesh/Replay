@@ -1,0 +1,28 @@
+Use free mode.
+
+VISION
+Editing the portfolio should feel effortless, like filling a form in any good app: tap a field once and type the whole word without interruption; add past teams and academies freely; mark one as "current" only if it's true. Saving should just work, and if something really is wrong, tell the player exactly which field to fix.
+
+TWO FIXES NEEDED IN THE EDIT STORY DRAWER (make the edits directly)
+
+1. TYPING LOSES FOCUS AFTER EVERY LETTER (screenshot 1, field outlined in red)
+   In the "Team or academy" name field of a history row, typing one letter makes the field lose focus, so every next letter needs another tap. The same may affect "Role / label" and the year fields. Check all of them.
+   Required: the player taps a field once and can type, delete and edit continuously, on mobile (iOS/Android keyboard) and desktop, in English and Arabic.
+   Suggestion (verify in the code; I can't see it): this usually means the row or input is re-mounted on every keystroke. Common causes: the list is keyed by a value that changes while typing (e.g. key={item.teamName} or a key built from the row's content or index plus content), a row or input component defined inside the parent's render function, or state being rebuilt from props on every change. Give each history row a stable id created when the row is added (existing rows keep their DB id), use it as the key, and keep row components defined outside the render.
+
+2. A CURRENT TEAM MUST BE OPTIONAL (screenshot 2 shows the save error "تعذّر حفظ قصتك. حاول مجددًا.")
+   Right now the editor requires exactly one current team ("Choose exactly one current team"), and saving fails otherwise.
+   Required rules:
+   - Zero or one current team is valid. More than one is not.
+   - A player can save only past teams/academies, with no current one.
+   - Marking a row as current automatically un-marks any other current row. Tapping "Current team" again on the current row un-marks it.
+   - A past team may have an end year; if it's left empty, it still saves and shows only the start year. A current team has no end year.
+   - Existing validation that still makes sense stays: team name and role required per row, years between 1900–2100, start year not after end year.
+   Apply the rule everywhere it is enforced: the client validation, the server validation in the PATCH /users/{id}/portfolio route, and the OpenAPI schema / generated Zod (check for anything like minItems/minimum or a "one current" check there). Rerun codegen if the spec changes.
+   Also: when a save is rejected for a validation reason, show the specific message next to the relevant row/field (EN and AR), not only the generic "Couldn't save your story". Keep the generic message for real network/server failures.
+
+KEEP
+- No drizzle push, no SQL writes, no schema changes. Existing saved history must load and display unchanged.
+- Don't change the portfolio playback, sharing, or any other page.
+
+When done, check it yourself on the dev preview (mobile emulation and desktop, EN and AR): type a full team name without re-tapping; save with no current team; save with one current; switching current between rows; save a past team without end year; reload and confirm everything persisted. Typecheck must pass. Reply with a short summary of what you changed.

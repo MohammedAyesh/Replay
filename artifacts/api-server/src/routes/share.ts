@@ -6,6 +6,7 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import { db, fieldsTable, footageRequestsTable, userClipsTable, usersTable, varMarksTable } from "@workspace/db";
+import { GetPortfolioClipMediaParams } from "@workspace/api-zod";
 import {
   BUNNY_STORAGE_API_KEY,
   BUNNY_STORAGE_HOSTNAME,
@@ -15,7 +16,12 @@ import {
   uploadBufferToBunnyStorage,
   isBunnyStorageConfigured,
   getBunnyPlaybackUrl,
+  getPortfolioClipStoragePath,
 } from "../lib/bunny";
+import {
+  hasCompletedPortfolioExport,
+  isPortfolioClipShared,
+} from "../lib/portfolioPlayback";
 import { selectExportSource } from "../lib/exportSource";
 import {
   generatePosterFrame,
@@ -25,7 +31,13 @@ import {
   POSTER_WIDTH,
   POSTER_HEIGHT,
 } from "../lib/posterFrame";
-import { buildShareCardHtml, shareCardPath, shareToken, verifyShareToken } from "../lib/shareCard";
+import {
+  buildShareCardHtml,
+  shareCardPath,
+  shareToken,
+  verifyPortfolioPlaybackToken,
+  verifyShareToken,
+} from "../lib/shareCard";
 import { logger } from "../lib/logger";
 import { loadRoomByCode, matchWindow, rosterFor } from "../lib/matchRooms";
 
@@ -817,6 +829,7 @@ async function proxyStorageObject(
   storagePath: string,
   contentType: string,
   cacheSeconds: number,
+  cacheControl?: string,
 ): Promise<void> {
   const upstreamUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${storagePath}`;
   const abort = new AbortController();
@@ -843,7 +856,7 @@ async function proxyStorageObject(
   res.setHeader("Accept-Ranges", "bytes");
   // Share assets are immutable per token and are fetched by crawlers that will
   // not come back. The /api no-store default above is wrong for them.
-  res.setHeader("Cache-Control", `public, max-age=${cacheSeconds}, immutable`);
+  res.setHeader("Cache-Control", cacheControl ?? `public, max-age=${cacheSeconds}, immutable`);
   res.removeHeader("Vary");
   for (const h of ["content-length", "content-range", "etag", "last-modified"]) {
     const v = upstream.headers.get(h);
@@ -858,6 +871,58 @@ async function proxyStorageObject(
     if (!res.headersSent) res.status(500).end();
   }
 }
+
+/**
+ * Portfolio playback serves only the clip's rendered export. Every request
+ * re-reads the share flags, so an unshare, privacy change, or admin hide takes
+ * effect before any new byte-range is proxied.
+ */
+router.get(
+  ["/portfolio-clips/:id/:token/clip.mp4", "/api/portfolio-clips/:id/:token/clip.mp4"],
+  async (req, res): Promise<void> => {
+    const params = GetPortfolioClipMediaParams.safeParse(req.params);
+    if (!params.success || params.data.id <= 0
+      || !verifyPortfolioPlaybackToken(params.data.id, params.data.token)) {
+      res.status(404).end();
+      return;
+    }
+
+    const [clip] = await db
+      .select({
+        id: userClipsTable.id,
+        videoId: userClipsTable.videoId,
+        visibility: userClipsTable.visibility,
+        showInPortfolio: userClipsTable.showInPortfolio,
+        isHidden: userClipsTable.isHidden,
+        exportStatus: userClipsTable.exportStatus,
+        exportedUrl: userClipsTable.exportedUrl,
+      })
+      .from(userClipsTable)
+      .where(eq(userClipsTable.id, params.data.id));
+
+    if (!clip || !isPortfolioClipShared(clip) || !hasCompletedPortfolioExport(clip)) {
+      res.status(404).end();
+      return;
+    }
+    if (clip.videoId.startsWith("live:")) {
+      res.status(404).end();
+      return;
+    }
+
+    const storagePath = getPortfolioClipStoragePath(clip.id, clip.exportedUrl);
+    if (!storagePath) {
+      res.status(404).end();
+      return;
+    }
+
+    if (!isBunnyStorageConfigured()) {
+      res.status(503).type("text/plain").send("Clip storage is unavailable");
+      return;
+    }
+
+    await proxyStorageObject(req, res, storagePath, "video/mp4", 0, "private, no-store");
+  },
+);
 
 /** The share card itself. No auth, no interstitial, no JavaScript required. */
 router.get(["/s/:id/:token", "/api/s/:id/:token"], async (req, res): Promise<void> => {

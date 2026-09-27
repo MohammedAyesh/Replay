@@ -1,0 +1,28 @@
+Use free mode.
+
+Your diagnosis is accepted: the portfolio plays the full source recording because it feeds the source HLS to a player that does not honour the clip's start/end window or its crop path. Fix it now. Scope is limited to the items below.
+
+FIX 1 — PORTFOLIO PLAYS THE CLIP, NOT THE MATCH (the main fix)
+Goal: a clip on /portfolio/:id plays exactly as the same clip plays in My Clips — same start, same end, same crop/pan, same aspect ratio — for anonymous visitors too.
+- REUSE, do not reinvent: take the playback logic My Clips already uses for a created clip (UserClipPlayer in pages/my-clips.tsx and/or components/clip-player/, plus @/lib/cropFrame: interpolateFrame / applyFrameToVideo / frameToVideoStyle). Extract a small shared component or hook only if needed to reuse it from features/portfolio/page.tsx; do not change how My Clips behaves.
+- Units: start_time/end_time are fractions of the source duration (e.g. 0.000696 → 0.023953). Convert to seconds exactly the way My Clips does (using the loaded video duration), and treat cropPath keyframe `t` exactly the way My Clips does. Do not guess — copy the existing conversion.
+- Behaviour: seek to the clip start before showing video; stop (or loop back to start, whichever My Clips does) at the clip end; never let the viewer scrub outside the clip window; apply the crop/pan every frame; card preview/thumbnail should show a frame from inside the clip, not the match's first frame.
+- If an exported MP4 exists (export_status = 'done') AND an existing route already serves it to anonymous visitors, you may prefer it; if no such anonymous-safe route exists, do NOT add one — use the source-HLS + window + crop path above. Report which path each test clip used.
+- Server: the portfolio mapper may need to send whatever My Clips' player needs (e.g. duration hints). Keep the OpenAPI spec as the source of truth: if you add a field, add it to the PortfolioClip schema and rerun codegen. No query params.
+
+FIX 2 — PATCH /user-clips/:id REPLY
+In artifacts/api-server/src/routes/userClips.ts, add `liveClipPartial: row.liveClipPartial,` to the object passed to UpdateUserClipResponse.parse() (unless already present). Then check every other *Response.parse in that file whose schema requires liveClipPartial and add it where missing. Sharing must now return 200 and the My Clips toggle must stay on after confirming.
+
+FIX 3 — THE PRE-EXISTING TEST (so the task can validate)
+In artifacts/api-server/src/routes/analysisJobs.test.ts, test "numbers the waiting jobs and reports whether the workstation is online": filter res.body.jobs to jobs whose recordingId is recA or recB before mapping queuePosition. Change nothing else in that file.
+
+RULES
+- No drizzle push, no SQL writes, no new tables/columns. No changes to archive, live, match rooms, claim/find pages, or unrelated routes.
+- Do not implement render-on-share or any new rendering pipeline.
+
+VERIFY (served dev preview, anonymous, screenshots + numbers)
+1. pnpm run typecheck clean; pnpm --filter @workspace/api-server run test → 698 passed, 0 failed.
+2. For shared clips 2437, 12191 and 15525 on /portfolio/435, open each clip and report, measured from the <video> element via the browser: the currentTime when playback starts, the currentTime when it stops/loops, and the expected start/end in seconds (fraction × duration). They must match within 0.5 s. Screenshot each mid-play showing the crop applied.
+3. Open the same three clips in My Clips (describe what you compared if you cannot sign in) and confirm the portfolio shows the same window and framing.
+4. /portfolio/435 in Arabic at 390 px still renders.
+5. Report: git diff --stat, the full diff of userClips.ts and analysisJobs.test.ts, and a short description of the portfolio player change. Also list: which clips (if any) have a source older than 14 days, and whether any live clips with null playbackUrl appear on the portfolio. Report these, don't fix them.

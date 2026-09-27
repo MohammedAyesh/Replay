@@ -9,7 +9,7 @@ import {
   userClipsTable,
   usersTable,
 } from "@workspace/db";
-import { and, eq, inArray, like } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserRecord: vi.fn(async (req: { headers: Record<string, string | undefined> }) => {
@@ -134,34 +134,6 @@ afterAll(async () => {
   if (fieldId) await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
   if (userId) await db.delete(usersTable).where(eq(usersTable.id, userId));
 
-  // Also remove any fixtures left behind if a previous run stopped during setup.
-  const staleFields = await db.select({ id: fieldsTable.id }).from(fieldsTable)
-    .where(like(fieldsTable.name, "Live clip field live_%"));
-  const staleFieldIds = staleFields.map((field) => field.id);
-  if (staleFieldIds.length) {
-    const staleRequests = await db.select({ id: footageRequestsTable.id })
-      .from(footageRequestsTable)
-      .where(inArray(footageRequestsTable.fieldId, staleFieldIds));
-    const staleRequestIds = staleRequests.map((row) => row.id);
-    if (staleRequestIds.length) {
-      const staleRooms = await db.select({ code: matchRoomsTable.code })
-        .from(matchRoomsTable)
-        .where(inArray(matchRoomsTable.footageRequestId, staleRequestIds));
-      const staleCodes = staleRooms.map((room) => room.code);
-      if (staleCodes.length) {
-        await db.delete(userClipsTable).where(inArray(userClipsTable.matchCode, staleCodes));
-      }
-      await db.delete(matchRoomsTable).where(inArray(matchRoomsTable.footageRequestId, staleRequestIds));
-      await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, staleRequestIds));
-    }
-    await db.delete(fieldsTable).where(inArray(fieldsTable.id, staleFieldIds));
-  }
-  const staleUsers = await db.select({ id: usersTable.id }).from(usersTable)
-    .where(like(usersTable.email, "live_%@test.local"));
-  const staleUserIds = staleUsers.map((user) => user.id);
-  if (staleUserIds.length) {
-    await db.delete(usersTable).where(inArray(usersTable.id, staleUserIds));
-  }
   if (previousControlUrl === undefined) delete process.env.CONTABO_CONTROL_URL;
   else process.env.CONTABO_CONTROL_URL = previousControlUrl;
   if (previousControlKey === undefined) delete process.env.CONTABO_CONTROL_KEY;

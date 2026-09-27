@@ -1,0 +1,45 @@
+Use free mode.
+
+PROBLEM
+Sharing a clip to the portfolio now makes it appear on /portfolio/:id, but the portfolio plays the ENTIRE source recording (1–2 hours) instead of the clip I cut in My Clips (its start/end window and crop/pan). A portfolio must only ever show the clip exactly as the player sees it in My Clips.
+
+This is a READ-ONLY DIAGNOSIS. Do not edit any file, do not run drizzle push or any SQL write, do not create test rows. Reading code, logs, read-only SELECTs, and GET requests against the dev preview are allowed.
+
+Use the three shared clips of user 435 as the test cases: 15525, 12191, 2437.
+
+1. WHAT THE PORTFOLIO API SENDS
+   a) In artifacts/api-server/src/routes/portfolios.ts, quote the full mapper that turns a user_clips row into a PortfolioClip. For each field (playbackUrl, thumbnailUrl, startTime, endTime, cropPath, aspectRatio, exportedUrl/exportStatus if present, introVideoUrl), say where its value comes from.
+   b) GET /api/users/435/portfolio on the dev preview and paste the clips array verbatim.
+   c) Is playbackUrl the whole source recording's HLS (getBunnyProxiedPlaybackUrl(videoId)) rather than anything clip-specific? Say yes or no with the quoted line.
+
+2. WHAT THE PORTFOLIO PAGE DOES WITH IT
+   In artifacts/soccerwatch/src/features/portfolio/page.tsx, find every place a portfolio clip is played or previewed (Vault cards, any modal/fullscreen player). Quote the JSX and any hooks. Answer precisely:
+   - Which URL is fed to the <video>/HLS player?
+   - Does it seek to startTime before playing? Does it stop or loop at endTime?
+   - Does it apply cropPath / aspectRatio at all?
+   - Does it use exportedUrl when one exists?
+   - Which thumbnail does the card show, and at what time?
+
+3. HOW MY CLIPS PLAYS THE SAME CLIP (the correct behaviour)
+   a) In artifacts/soccerwatch/src/pages/my-clips.tsx, quote how UserClipPlayer (or whatever plays a created clip) handles: the source URL, seeking to the start, stopping/looping at the end, crop/pan (applyFrameToVideo / interpolateFrame / frameToVideoStyle from @/lib/cropFrame), and exportedUrl vs live HLS.
+   b) UNITS: are user_clips.start_time / end_time stored in seconds or as fractions (0–1) of the recording? my-clips.tsx computes `(clip.startTime * 100).toFixed(0)` + "%" as a duration hint, which suggests fractions for at least some clips. Check the create path (POST /user-clips and the frontend that creates clips), then state the unit and whether it differs between old and new clips. For the three test clips, run a read-only SELECT of id, video_id, start_time, end_time, aspect_ratio, jsonb_array_length(crop_path), export_status, exported_url IS NOT NULL, poster_path, live_clip_status (if that column exists), created_at, and paste the result.
+   c) List the reusable components that already play a clip correctly: everything in artifacts/soccerwatch/src/components/clip-player/ (quote each file's exported component and its props), plus any public/anonymous clip view (e.g. the page behind GET /user-clips/{id}/share-link or routes/share.ts). Say for each one whether it works for an anonymous visitor and what URLs it needs.
+
+4. RENDERED FILES
+   For the three test clips: does a rendered MP4 exist (export_status = 'done', exported_url set)? If yes, can an anonymous visitor fetch it? Bunny Storage is an authenticated origin, so check which API route proxies it (e.g. /user-clips/:id/download or a share/poster proxy), and whether that route allows anonymous access to a public clip. Quote the route's auth check.
+
+5. HOW #123 DID IT
+   Using portfolio-port/new/artifacts/soccerwatch/src/features/portfolio/page.tsx (re-extract the zip if needed) versus the committed page.tsx: confirm they are identical in the playback code, so we know whether this is how the feature was built in #123 or something the port changed.
+
+6. SOURCE EXPIRY (report only)
+   For each of the three test clips, is the source video in Bunny Stream older than 14 days? That is when the archive deletes it. Use the recording date or created_at. Just report it; don't act on it.
+
+7. ALSO CONFIRM
+   Was the earlier one-line fix (adding liveClipPartial: row.liveClipPartial to the UpdateUserClipResponse object in PATCH /user-clips/:id) applied? Quote the current lines. If not applied, just say so.
+
+REPORT
+- Root cause(s) of "portfolio plays the full match", each with the quoted line or pasted response that proves it, ordered by importance.
+- A comparison table: My Clips player vs portfolio player, rows = source URL, start seek, end stop/loop, crop/pan, exported MP4 use, thumbnail.
+- Fix options ranked, each with the files it touches and whether it works for anonymous visitors. At minimum evaluate: (A) reuse the existing My Clips / clip-player component inside the portfolio Vault, fed with startTime/endTime/cropPath; (B) prefer the rendered MP4 via an anonymous-safe proxy when export_status = 'done', falling back to (A); (C) anything simpler you find. Recommend one.
+- Any other issue you find on the way (e.g. live clips appearing with null URLs, units mismatch), marked as secondary.
+Then stop. Do not change anything.

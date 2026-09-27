@@ -85,6 +85,7 @@ import type {
   OwnerRequest,
   OwnerRequestInput,
   PatchAdInput,
+  PortfolioView,
   ProfileInput,
   PublicPlayerStats,
   PublicProfile,
@@ -98,6 +99,7 @@ import type {
   TrackingBundleSummary,
   TrackingSegment,
   UpdateAcademyInput,
+  UpdatePortfolioInput,
   UpdateUserClipInput,
   User,
   UserClip,
@@ -6498,6 +6500,236 @@ export function useGetUserProfile<TData = Awaited<ReturnType<typeof getUserProfi
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetUserProfileQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetUserPortfolioUrl = (id: number,) => {
+
+
+
+
+  return `/api/users/${id}/portfolio`
+}
+
+/**
+ * @summary Get a player's public portfolio
+ */
+export const getUserPortfolio = async (id: number, options?: RequestInit): Promise<PortfolioView> => {
+
+  return customFetch<PortfolioView>(getGetUserPortfolioUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUserPortfolioQueryKey = (id: number,) => {
+    return [
+    `/api/users/${id}/portfolio`
+    ] as const;
+    }
+
+
+export const getGetUserPortfolioQueryOptions = <TData = Awaited<ReturnType<typeof getUserPortfolio>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserPortfolio>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUserPortfolioQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUserPortfolio>>> = ({ signal }) => getUserPortfolio(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUserPortfolio>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetUserPortfolioQueryResult = NonNullable<Awaited<ReturnType<typeof getUserPortfolio>>>
+export type GetUserPortfolioQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a player's public portfolio
+ */
+
+export function useGetUserPortfolio<TData = Awaited<ReturnType<typeof getUserPortfolio>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserPortfolio>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetUserPortfolioQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateUserPortfolioUrl = (id: number,) => {
+
+
+
+
+  return `/api/users/${id}/portfolio`
+}
+
+/**
+ * @summary Update the signed-in player's portfolio
+ */
+export const updateUserPortfolio = async (id: number,
+    updatePortfolioInput: UpdatePortfolioInput, options?: RequestInit): Promise<PortfolioView> => {
+
+  return customFetch<PortfolioView>(getUpdateUserPortfolioUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updatePortfolioInput)
+  }
+);}
+
+
+
+
+export const getUpdateUserPortfolioMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUserPortfolio>>, TError,{id: number;data: BodyType<UpdatePortfolioInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateUserPortfolio>>, TError,{id: number;data: BodyType<UpdatePortfolioInput>}, TContext> => {
+
+const mutationKey = ['updateUserPortfolio'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateUserPortfolio>>, {id: number;data: BodyType<UpdatePortfolioInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateUserPortfolio(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateUserPortfolioMutationResult = NonNullable<Awaited<ReturnType<typeof updateUserPortfolio>>>
+    export type UpdateUserPortfolioMutationBody = BodyType<UpdatePortfolioInput>
+    export type UpdateUserPortfolioMutationError = ErrorType<void>
+
+    /**
+ * @summary Update the signed-in player's portfolio
+ */
+export const useUpdateUserPortfolio = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUserPortfolio>>, TError,{id: number;data: BodyType<UpdatePortfolioInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateUserPortfolio>>,
+        TError,
+        {id: number;data: BodyType<UpdatePortfolioInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateUserPortfolioMutationOptions(options));
+    }
+
+export const getGetPortfolioClipMediaUrl = (id: number,
+    token: string,) => {
+
+
+
+
+  return `/api/portfolio-clips/${id}/${token}/clip.mp4`
+}
+
+/**
+ * @summary Stream a rendered clip shared to a player portfolio
+ */
+export const getPortfolioClipMedia = async (id: number,
+    token: string, options?: RequestInit): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetPortfolioClipMediaUrl(id,token),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPortfolioClipMediaQueryKey = (id: number,
+    token: string,) => {
+    return [
+    `/api/portfolio-clips/${id}/${token}/clip.mp4`
+    ] as const;
+    }
+
+
+export const getGetPortfolioClipMediaQueryOptions = <TData = Awaited<ReturnType<typeof getPortfolioClipMedia>>, TError = ErrorType<void>>(id: number,
+    token: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPortfolioClipMedia>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPortfolioClipMediaQueryKey(id,token);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPortfolioClipMedia>>> = ({ signal }) => getPortfolioClipMedia(id,token, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined && token !== null && token !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPortfolioClipMedia>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPortfolioClipMediaQueryResult = NonNullable<Awaited<ReturnType<typeof getPortfolioClipMedia>>>
+export type GetPortfolioClipMediaQueryError = ErrorType<void>
+
+
+/**
+ * @summary Stream a rendered clip shared to a player portfolio
+ */
+
+export function useGetPortfolioClipMedia<TData = Awaited<ReturnType<typeof getPortfolioClipMedia>>, TError = ErrorType<void>>(
+ id: number,
+    token: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPortfolioClipMedia>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPortfolioClipMediaQueryOptions(id,token,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

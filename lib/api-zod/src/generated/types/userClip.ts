@@ -17,6 +17,7 @@ export interface UserClip {
   endTime: number;
   cropPath: CropKeyframe[];
   visibility: UserClipVisibility;
+  showInPortfolio: boolean;
   isHidden: boolean;
   /** @nullable */
   hiddenReason: string | null;

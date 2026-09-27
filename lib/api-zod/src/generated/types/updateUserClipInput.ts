@@ -10,6 +10,7 @@ import type { UpdateUserClipInputVisibility } from './updateUserClipInputVisibil
 export interface UpdateUserClipInput {
   title?: string;
   visibility?: UpdateUserClipInputVisibility;
+  showInPortfolio?: boolean;
   /** @nullable */
   thumbnailTime?: number | null;
 }

@@ -1,0 +1,26 @@
+Use free mode.
+
+The previous change (stable row ids in the history editor, optional current team, field-level messages) works well. Now three small visual changes on the portfolio page.
+
+STRICT SCOPE: UI/STYLING ONLY. Do not change any behaviour, data, API, validation, routes, sharing, playback logic, or anything outside the portfolio page. If a change would require touching logic, stop and tell me instead.
+
+1. REMOVE THE "REPLAY STORY" BUTTON
+   In the owner's bottom action bar (screenshot 1: "Replay story" bottom-left, next to "Edit story"), remove the "Replay story" button. "Edit story" should then take the full width of that row, so the bar stays balanced. "Share this story" above it stays exactly as it is. Remove only now-unused code/imports tied to that button; do not change what "Edit story" or "Share" do.
+
+2. PLAYER HISTORY SECTION: BIGGER ICONS AND TEXT (this section ONLY)
+   In the "Player history / Built on the pitch." chapter (screenshot 1), make the history list easier to read:
+   - the numbered colour badges (01 / 02 / 03) noticeably larger;
+   - the team/academy name larger and bolder;
+   - the role/label line and the years slightly larger.
+   Suggested sizes (adjust to look right with the brand): badge ~40 px (from ~28), name ~20 px, role ~13–14 px, years ~12 px, with spacing between rows scaled to match.
+   Must still fit cleanly at 360 px and 390 px wide in English and Arabic (RTL). Long names wrap or truncate neatly, never overflow. Do not change the heading, intro text, or any other chapter's sizes, and do not change shared styles that other sections use. Scope the changes to this section's own classes.
+
+3. VIDEO VAULT ON DESKTOP/TABLET: SMALLER CLIPS
+   On desktop (screenshot 2), a single clip card stretches across the whole screen and looks oversized. Keep mobile exactly as it is now; only change layouts from ~768 px wide and up:
+   - constrain the vault to a centred column (roughly 960–1100 px max width);
+   - one clip: a centred 16:9 card around 720 px wide at most;
+   - two or more clips: a tidy grid (2 columns on tablet, 2–3 on desktop), keeping the existing count-aware layout and the "+N more clips" behaviour;
+   - scale the play button and card text proportionally so they don't look tiny on the card.
+   Do not change how clips open, play, go fullscreen, or load.
+
+When done, check it yourself on the dev preview at 360 px, 390 px, 768 px and 1440 px, in English and Arabic: the Replay Story button is gone, the history section is larger and nothing else changed size, and the video cards are sensibly sized on tablet and desktop. Run the typecheck (it must pass; the last session ran out of usage right before its typecheck). Reply with a short summary of what you changed.

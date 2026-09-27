@@ -108,6 +108,10 @@ export interface User {
   age?: number | null;
   /** @nullable */
   gender?: string | null;
+  /** @nullable */
+  nation?: string | null;
+  /** @nullable */
+  profilePhoto?: string | null;
   profileComplete: boolean;
   /** @nullable */
   preferredLocale?: string | null;
@@ -710,6 +714,7 @@ export interface UserClip {
   endTime: number;
   cropPath: CropKeyframe[];
   visibility: UserClipVisibility;
+  showInPortfolio: boolean;
   isHidden: boolean;
   /** @nullable */
   hiddenReason: string | null;
@@ -894,8 +899,104 @@ export const UpdateUserClipInputVisibility = {
 export interface UpdateUserClipInput {
   title?: string;
   visibility?: UpdateUserClipInputVisibility;
+  showInPortfolio?: boolean;
   /** @nullable */
   thumbnailTime?: number | null;
+}
+
+export interface PortfolioHistoryItem {
+  id: number;
+  teamName: string;
+  roleLabel: string;
+  startYear: number;
+  /** @nullable */
+  endYear: number | null;
+  isCurrent: boolean;
+  displayOrder: number;
+}
+
+export type PortfolioClipVisibility = typeof PortfolioClipVisibility[keyof typeof PortfolioClipVisibility];
+
+
+export const PortfolioClipVisibility = {
+  public: 'public',
+} as const;
+
+export type PortfolioClipPlaybackStatus = typeof PortfolioClipPlaybackStatus[keyof typeof PortfolioClipPlaybackStatus];
+
+
+export const PortfolioClipPlaybackStatus = {
+  ready: 'ready',
+  processing: 'processing',
+  expired: 'expired',
+  unavailable: 'unavailable',
+} as const;
+
+export interface PortfolioClip {
+  id: number;
+  userId: number;
+  title: string;
+  startTime: number;
+  endTime: number;
+  cropPath: CropKeyframe[];
+  visibility: PortfolioClipVisibility;
+  likeCount: number;
+  aspectRatio: string;
+  /** @nullable */
+  thumbnailTime?: number | null;
+  /** @nullable */
+  thumbnailUrl?: string | null;
+  /** @nullable */
+  playbackUrl?: string | null;
+  playbackStatus: PortfolioClipPlaybackStatus;
+  createdAt: string;
+  /** @nullable */
+  academyId?: number | null;
+  /** @nullable */
+  introVideoUrl?: string | null;
+}
+
+export interface PortfolioView {
+  id: number;
+  name: string;
+  /** @nullable */
+  age: number | null;
+  /** @nullable */
+  position: string | null;
+  /** @nullable */
+  nation: string | null;
+  /** @nullable */
+  profilePhoto: string | null;
+  followerCount: number;
+  followingCount: number;
+  clipCount: number;
+  history: PortfolioHistoryItem[];
+  clips: PortfolioClip[];
+  canEdit: boolean;
+}
+
+export interface UpdatePortfolioHistoryItem {
+  teamName: string;
+  roleLabel: string;
+  startYear: number;
+  /** @nullable */
+  endYear: number | null;
+  isCurrent: boolean;
+  displayOrder: number;
+}
+
+export interface UpdatePortfolioInput {
+  name: string;
+  /** @nullable */
+  age: number | null;
+  /** @nullable */
+  position: string | null;
+  /** @nullable */
+  nation: string | null;
+  /** @nullable */
+  profilePhoto: string | null;
+  /** @maxItems 20 */
+  history: UpdatePortfolioHistoryItem[];
 }
 
 export interface LikeResult {

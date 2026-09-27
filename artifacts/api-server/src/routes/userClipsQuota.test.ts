@@ -208,16 +208,19 @@ describe("paid accounts", () => {
  * — rather than the resolver in isolation.
  */
 describe("admin overrides", () => {
+  const ruleIds: number[] = [];
   const addRule = async (over: Record<string, unknown>) => {
     const [row] = await db.insert(settingsRulesTable).values({
       key: "downloads.limit", value: 5, scopeType: "global", ...over,
     } as never).returning({ id: settingsRulesTable.id });
+    ruleIds.push(row.id);
     invalidateSettingsCache();
     return row.id;
   };
 
   afterEach(async () => {
-    await db.delete(settingsRulesTable);
+    if (ruleIds.length) await db.delete(settingsRulesTable).where(inArray(settingsRulesTable.id, ruleIds));
+    ruleIds.length = 0;
     invalidateSettingsCache();
   });
 

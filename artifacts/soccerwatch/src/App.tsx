@@ -47,6 +47,7 @@ import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
+import PortfolioPage from "@/features/portfolio/page";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -495,6 +496,7 @@ function AppRouter() {
         <Route path="/academies"><Academies /></Route>
         <Route path="/player/:id" component={Player} />
         <Route path="/players/:id" component={Profile} />
+        <Route path="/portfolio/:id" component={PortfolioPage} />
         <Route path="/my-clips" component={MyClips} />
         <Route path="/live" component={Live} />
         <Route path="/claim/demo" component={ClaimDemo} />
@@ -524,7 +526,7 @@ function AppRouter() {
 }
 
 function ClerkProviderWithRoutes() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { locale } = useLocale();
 
   const localization = locale === "ar"
@@ -552,7 +554,7 @@ function ClerkProviderWithRoutes() {
       <ClerkQueryClientCacheInvalidator />
       <TooltipProvider>
         <AppRouter />
-        <Toaster />
+        {!location.startsWith("/portfolio/") && <Toaster />}
       </TooltipProvider>
     </ClerkProvider>
   );

@@ -1,0 +1,45 @@
+Use free mode.
+
+THE VISION
+The Player Portfolio is a player's public highlight page. Anyone with the link, signed in or not, opens it and watches the player's best moments. When a clip is shared to the portfolio, it must play there exactly as the player cut it in My Clips: the same few seconds, the same crop and pan, the same framing. It plays instantly and cleanly, like a highlight reel, with no black screens, dead buttons or confusing states. That is the bar: a stranger taps a clip and it simply plays.
+
+WHERE WE ARE (from your diagnosis, accepted)
+- The portfolio API returns the shared clips correctly.
+- Playback fails because the page goes through the existing HLS proxy, and that proxy only authorizes videos from public/scheduled recordings. It knows nothing about portfolio sharing, so all three test clips are refused (15525: no public recording; 12191: recording hidden).
+- Clip 2437's source was deleted by the 14-day archive retention; it can never play again.
+- Earlier, even when media did load, the page played the whole 1–2 hour recording instead of the clip window.
+
+WHAT "DONE" MEANS (acceptance criteria)
+1. On /portfolio/435, in a fresh anonymous browser, clips 15525 and 12191 play without errors.
+2. Each plays only its own window: 15525 ≈ 9.8 s, 12191 ≈ 6.5 s (within 0.5 s), starting at the clip's start, with the crop/pan applied the way My Clips shows it.
+3. A visitor cannot see or scrub to anything outside the clip, and cannot use the portfolio to reach the rest of the recording by any request, including by hand-crafting URLs.
+4. Only clips that are public AND shared to the portfolio AND not hidden are playable this way. Un-sharing or making a clip private stops it playing immediately.
+5. Clip 2437 (source gone) shows a clear, friendly "this clip is no longer available" state, not a black player.
+6. The player has sensible states: loading, ready, playing, ended/replay, and an error state. The progress bar represents the clip only. Everything works in English and Arabic (RTL), on mobile (390 px) and desktop.
+7. Nothing else in the app changes behaviour: My Clips, match rooms, owner console, live, archive, claim/find pages, and the existing HLS proxy's rules for other footage.
+
+HARD CONSTRAINTS
+- Do not make whole recordings public. Do not loosen the existing /api/hls-proxy authorization, recording visibility or schedules, and do not edit recording rows.
+- No open proxy: no route may fetch an arbitrary URL supplied by the client.
+- No drizzle push, no SQL writes, no new tables or columns.
+- The OpenAPI spec stays the source of truth for any new or changed endpoint/field; rerun codegen; no query params in the spec.
+- New tests must not write to the database (the shared-DB cleanup issue is still open).
+
+SUGGESTED DIRECTION (a suggestion, not a mandate: you can see the code and I can't, so choose what fits it best and tell me why)
+- A clip-scoped playback path that is authorized by the clip itself (public + shared + not hidden), separate from the existing proxy. For example, an endpoint that returns what the player needs for one clip, plus a playlist containing only the source segments that cover that clip's window, with each segment request tied to that clip (e.g. signed) so it can't be reused for other parts of the recording.
+- Reuse My Clips' existing logic for converting start/end (stored as fractions of the source duration) into seconds and for applying cropPath (the @/lib/cropFrame helpers), rather than writing new math.
+- Detect a deleted source and return an explicit "expired" signal the page can show.
+- If there is already a mechanism in the codebase that safely serves just a clip (a share link, poster/share-card route, rendered export) that fits better, prefer it and explain.
+
+HOW TO WORK
+1. Before coding, reply briefly with the approach you chose, the files you'll touch, and why it meets criteria 3–4. Then proceed without waiting for me unless you hit a real blocker or a decision that changes the security model.
+2. Implement it.
+3. Verify on the dev preview in a fresh anonymous browser and report:
+   - measured playback start/end/length for 15525 and 12191 vs expected, and a mid-play screenshot of each showing the crop;
+   - the list of media requests made while playing (all should be 2xx and inside the clip window);
+   - the 2437 "no longer available" screenshot;
+   - security checks with status codes: a private or unshared clip, a tampered or reused media URL, and the old /api/hls-proxy URLs for these videos (should still be refused);
+   - Arabic at 390 px screenshot of the player;
+   - pnpm run typecheck result and the new unit tests' output.
+4. Report git diff --stat versus main and the full diff of every server-side file changed, plus a short description of the client changes.
+If an owner session would help, don't ask for one; everything above can be verified anonymously.

@@ -1,0 +1,27 @@
+Use free mode.
+
+VISION
+Watching a clip on the portfolio should feel like a polished sports app: tap a clip, a branded loading animation plays for a moment, the clip starts, and pressing fullscreen makes the video fill the entire screen edge to edge, exactly like fullscreen on YouTube or Instagram. Nothing of the page, the modal frame, the title bar or the buttons should remain visible in fullscreen.
+
+WHAT I SEE NOW (2 screenshots attached)
+1. Screenshot 1 — fullscreen: after pressing fullscreen, the browser enters fullscreen (the "press Esc" banner appears), but the video stays the same size inside the modal frame, with the page, title, "Share this story", "Edit story" and "Replay story" buttons still showing around it. Only the clip's frame is "fullscreen", not the video.
+2. Screenshot 2 — loading: while a clip loads, the player shows a black box with plain text "جارٍ تحميل المقطع…" and a 0:00 / 0:00 bar. It looks broken and boring.
+
+WHAT TO FIX (make the edits directly)
+A. Real fullscreen
+   - Pressing fullscreen must make the video fill the whole screen: black background, video centered with object-fit: contain (no cropping, no stretching), controls overlaid at the bottom, nothing else from the page visible. Exiting (button, Esc, back gesture) returns to the modal exactly as before.
+   - Works on desktop Chrome/Safari/Edge, Android Chrome, and iPhone Safari, in English and Arabic (RTL).
+   - Suggestion (verify against the code; you can see it, I can't): the fullscreen call is probably made on the modal/page container, or the element that goes fullscreen keeps its modal size because of its CSS. Consider requesting fullscreen on the element that wraps only the <video> and its controls, and giving that element a :fullscreen / :-webkit-full-screen style of 100vw × 100vh, black background, with the video at width/height 100% and object-fit: contain. iPhone Safari does not support fullscreen on arbitrary elements: use the video element's webkitEnterFullscreen() there (native iOS player), keeping playsInline for the non-fullscreen view. If the My Clips player already handles fullscreen correctly, reuse its approach exactly so both behave the same.
+   - Optional polish: in fullscreen on mobile, allow landscape (Screen Orientation lock to landscape where supported, released on exit).
+
+B. Branded loading animation
+   - Replace the plain loading text with a Replay-branded animation. Suggestion: the app already has an animated Replay mark (the hexagon-facet "breathing" loader used for the sign-out overlay in the Account page). Reuse that mark/animation, centered over the clip's poster/thumbnail (blurred or dimmed) instead of a black box, with a subtle progress shimmer. Keep a short bilingual accessible label (aria-live) but no big text.
+   - Hide or disable the 0:00 / 0:00 progress bar and time labels until the video's metadata has loaded; then fade the controls in.
+   - The "preparing this clip" (export processing) state should use the same animation with a short line under it ("Preparing your clip…" / "جارٍ تجهيز المقطع…"), so preparing and loading feel like one family.
+   - Respect prefers-reduced-motion (static mark instead of animation).
+
+C. Keep everything else as it is now
+   - Same playback source and privacy rules as your last change (public + shared + not hidden only, clip-only, whole recordings private). No changes to /api/hls-proxy, recording visibility, schedules or rows. No drizzle push, no SQL writes. My Clips behaviour unchanged.
+   - Page load must stay ~2 s or better.
+
+When finished, check it yourself on the dev preview (desktop and mobile emulation, English and Arabic): fullscreen fills the screen with nothing else visible, exiting fullscreen returns to the modal, and the loading animation appears then fades into playback. Typecheck must pass. Reply with a short summary of what you changed.

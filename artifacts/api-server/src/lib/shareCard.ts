@@ -35,7 +35,7 @@ import { POSTER_WIDTH, POSTER_HEIGHT } from "./posterFrame";
  * the storage key like the export path does, so it is deterministic and needs no
  * column of its own.
  */
-export function shareToken(clipId: number): string {
+function clipToken(scope: string, clipId: number): string {
   const secret =
     process.env.CLIP_SHARE_URL_SECRET ||
     process.env.CLIP_EXPORT_URL_SECRET ||
@@ -43,18 +43,38 @@ export function shareToken(clipId: number): string {
     "replay-dev-share-secret";
   return crypto
     .createHmac("sha256", secret)
-    .update(`clip-share:${clipId}`)
+    .update(`${scope}:${clipId}`)
     .digest("hex")
     .slice(0, 20);
 }
 
-/** Constant-time comparison, so the token cannot be recovered a byte at a time. */
-export function verifyShareToken(clipId: number, presented: string): boolean {
-  const expected = shareToken(clipId);
+export function shareToken(clipId: number): string {
+  return clipToken("clip-share", clipId);
+}
+
+/** A separate token scope prevents an ordinary share URL authorizing portfolio playback. */
+export function portfolioPlaybackToken(clipId: number): string {
+  return clipToken("portfolio-clip-playback", clipId);
+}
+
+function verifyToken(expected: string, presented: string): boolean {
   const a = Buffer.from(expected);
   const b = Buffer.from(String(presented ?? ""));
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
+}
+
+/** Constant-time comparison, so the token cannot be recovered a byte at a time. */
+export function verifyShareToken(clipId: number, presented: string): boolean {
+  return verifyToken(shareToken(clipId), presented);
+}
+
+export function verifyPortfolioPlaybackToken(clipId: number, presented: string): boolean {
+  return verifyToken(portfolioPlaybackToken(clipId), presented);
+}
+
+export function portfolioPlaybackPath(clipId: number): string {
+  return `/api/portfolio-clips/${clipId}/${portfolioPlaybackToken(clipId)}/clip.mp4`;
 }
 
 /**
