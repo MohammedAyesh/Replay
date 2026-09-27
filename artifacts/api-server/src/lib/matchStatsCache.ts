@@ -13,6 +13,7 @@ import { logger } from "./logger";
 import {
   competitionAwards,
   competitionCallouts,
+  historyBeforeMatch,
   personalBestMetrics,
   playerForm,
   type CompetitionPlayer,
@@ -167,12 +168,13 @@ export type MatchCompetition = {
 
 export async function buildMatchCompetition(input: {
   matchId: number;
+  matchStartLocal: string;
   players: MatchPlayerStats[];
   roster: MatchPlayer[];
   viewerId: number;
   motmPlayerIds: number[];
 }): Promise<{ players: Array<MatchPlayerStats & { personalBestMetrics: PlayerMetricKey[] }>; competition: MatchCompetition }> {
-  const { matchId, players, roster, viewerId, motmPlayerIds } = input;
+  const { matchId, matchStartLocal, players, roster, viewerId, motmPlayerIds } = input;
   const userByPlayerId = new Map(roster.map((player) => [player.id, player.userId]));
   const userIds = sortedUnique([
     viewerId,
@@ -190,7 +192,10 @@ export async function buildMatchCompetition(input: {
 
   const enriched = players.map((player) => {
     const userId = userByPlayerId.get(player.playerId);
-    const previous = userId ? (history.get(userId) ?? []).map((row) => row.stats) : [];
+    const previousRows = userId
+      ? historyBeforeMatch(asFormHistory(history.get(userId) ?? []), matchStartLocal)
+      : [];
+    const previous = previousRows.map((row) => row.stats);
     const snapshot: CompetitionPlayer = player;
     return {
       ...player,
@@ -201,13 +206,14 @@ export async function buildMatchCompetition(input: {
   });
   const visibleCompetitionPlayers: CompetitionPlayer[] = enriched;
   const viewerRosterPlayer = roster.find((player) => player.userId === viewerId);
+  const viewerHistory = historyBeforeMatch(asFormHistory(history.get(viewerId) ?? []), matchStartLocal);
   return {
     players: enriched,
     competition: {
       viewerPlayerId: viewerRosterPlayer?.id ?? null,
       awards: competitionAwards(visibleCompetitionPlayers, motmPlayerIds),
-      callouts: competitionCallouts(visibleCompetitionPlayers),
-      personalForm: playerForm(asFormHistory(history.get(viewerId) ?? [])),
+      callouts: competitionCallouts(visibleCompetitionPlayers, viewerRosterPlayer?.id ?? null),
+      personalForm: playerForm(viewerHistory),
     },
   };
 }

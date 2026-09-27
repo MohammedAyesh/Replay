@@ -3,6 +3,7 @@ import {
   canViewMatchPlayerRows,
   competitionAwards,
   competitionCallouts,
+  historyBeforeMatch,
   personalBestMetrics,
   playerForm,
   type CompetitionPlayer,
@@ -65,36 +66,71 @@ describe("match stats competition rules", () => {
     expect(awards.some((award) => award.key === "goals" && award.playerIds.includes(1))).toBe(false);
   });
 
+  it("requires at least three successful dribbles for the Magician award", () => {
+    const belowThreshold = competitionAwards([
+      player(1, { dribblesWon: 2 }),
+      player(2, { dribblesWon: 1 }),
+    ]);
+    expect(belowThreshold.some((award) => award.key === "dribbles")).toBe(false);
+
+    const atThreshold = competitionAwards([
+      player(1, { dribblesWon: 3 }),
+      player(2, { dribblesWon: 2 }),
+    ]);
+    expect(atThreshold.find((award) => award.key === "dribbles")?.playerIds).toEqual([1]);
+  });
+
   it("shares tied awards and puts eligible closed-vote MOTM first", () => {
     const awards = competitionAwards([
       player(1, { minutes: 12, distanceKm: 8, goals: 2 }),
       player(2, { minutes: 18, distanceKm: 8, goals: 2 }),
       player(3, { minutes: 25, distanceKm: 7, goals: 1 }),
     ], [1, 2, 3]);
-    expect(awards[0]).toEqual({ key: "motm", playerIds: [1, 2, 3], value: null });
+    expect(awards[0]).toEqual({ key: "motm", playerIds: [1, 2, 3], value: null, personalBest: false });
     expect(awards.find((award) => award.key === "distance")?.playerIds).toEqual([1, 2]);
     expect(awards.find((award) => award.key === "goals")?.playerIds).toEqual([1, 2]);
   });
 
-  it("uses only claimed players for factual callouts and returns at most three", () => {
+  it("builds viewer-focused callouts from claimed player rows, ordered by relative margin", () => {
     const callouts = competitionCallouts([
-      player(1, { distanceKm: 9, topSpeedKmh: 32, touches: 90, goals: 4 }),
-      player(2, { distanceKm: 6, topSpeedKmh: 25, touches: 70, goals: 2 }),
-      player(3, { distanceKm: 4, topSpeedKmh: 22, touches: 40, goals: 1 }),
-      player(4, { claimed: false, distanceKm: 40, topSpeedKmh: 50, touches: 300, goals: 20 }),
-      player(5, { distanceKm: null, topSpeedKmh: null, touches: null, goals: null }),
-    ]);
+      player(1, { team: "A", distanceKm: 8, topSpeedKmh: 29, dribblesWon: 4 }),
+      player(2, { team: "A", distanceKm: 7, topSpeedKmh: 30.2, dribblesWon: 3 }),
+      player(3, { team: "B", distanceKm: 5, topSpeedKmh: 28, dribblesWon: 8 }),
+      player(4, { team: "A", distanceKm: 4, topSpeedKmh: 25, dribblesWon: 1 }),
+      player(5, { claimed: false, distanceKm: 40, topSpeedKmh: 50, dribblesWon: 20 }),
+    ], 1);
     expect(callouts).toHaveLength(3);
-    expect(callouts.every((callout) => callout.leaderId !== 4 && callout.runnerUpId !== 4)).toBe(true);
-    expect(callouts.some((callout) => callout.metric === "distanceKm" && callout.gap === 3)).toBe(true);
+    expect(callouts[0]).toEqual({ kind: "team-dribbles-lead" });
+    expect(callouts[1]).toEqual({ kind: "outran", outran: 3, total: 3 });
+    expect(callouts[2]).toEqual({ kind: "speed-beaten", otherPlayerId: 2, gap: 1.2 });
+    expect(competitionCallouts([player(1, { claimed: false })], 1)).toEqual([]);
+    expect(competitionCallouts([player(1)], null)).toEqual([]);
+    expect(competitionCallouts([
+      player(1, { team: "A", dribblesWon: 4 }),
+      player(2, { team: "A", dribblesWon: null }),
+    ], 1).some((callout) => callout.kind === "team-dribbles-lead")).toBe(false);
   });
 
-  it("marks tied personal records and ignores unavailable metrics", () => {
+  it("compares personal bests only with earlier cached matches and gives first matches no PB", () => {
     const current = player(1, { distanceKm: 7, topSpeedKmh: null, goals: 1 });
-    const previous = [player(2, { distanceKm: 7, topSpeedKmh: 33, goals: 2 })];
-    expect(personalBestMetrics(current, previous)).toContain("distanceKm");
-    expect(personalBestMetrics(current, previous)).not.toContain("topSpeedKmh");
-    expect(personalBestMetrics(current, previous)).not.toContain("goals");
+    const earlier = historyRow(3, player(2, { distanceKm: 7, topSpeedKmh: 33, goals: 2 }));
+    const later = historyRow(20, player(3, { distanceKm: 40, topSpeedKmh: 50, goals: 20 }));
+    const priorRows = historyBeforeMatch([later, earlier], "2026-09-15 20:00");
+    expect(priorRows.map((row) => row.matchId)).toEqual([3]);
+    expect(personalBestMetrics(current, priorRows.map((row) => row.stats))).toContain("distanceKm");
+    expect(personalBestMetrics(current, [])).toEqual([]);
+    expect(personalBestMetrics(current, [player(2, { distanceKm: null })])).not.toContain("distanceKm");
+    expect(personalBestMetrics(current, [player(2, { distanceKm: 7, topSpeedKmh: 33, goals: 2 })])).not.toContain("topSpeedKmh");
+    expect(personalBestMetrics(current, [player(2, { distanceKm: 7, topSpeedKmh: 33, goals: 2 })])).not.toContain("goals");
+  });
+
+  it("marks an award as a personal best when its winning value sets the player's PB", () => {
+    const awards = competitionAwards([
+      player(1, { distanceKm: 8, personalBestMetrics: ["distanceKm"] }),
+      player(2, { distanceKm: 6 }),
+    ]);
+    expect(awards.find((award) => award.key === "distance")?.personalBest).toBe(true);
+    expect(awards.find((award) => award.key === "speed")?.personalBest).toBe(false);
   });
 
   it("averages the latest five matches and keeps bests across all history", () => {

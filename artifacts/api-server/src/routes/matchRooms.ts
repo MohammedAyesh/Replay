@@ -455,6 +455,7 @@ router.get("/m/:code/stats", async (req, res): Promise<void> => {
     const vote = await voteSummary(ctx, viewerId, visibleRoster);
     const competition = await buildMatchCompetition({
       matchId: ctx.room.id,
+      matchStartLocal: ctx.request.startLocal,
       players: visiblePlayers,
       roster: visibleRoster,
       viewerId: viewerId!,

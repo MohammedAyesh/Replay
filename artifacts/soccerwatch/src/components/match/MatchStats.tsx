@@ -34,15 +34,11 @@ type TeamStats = {
   goals?: [number, number];
 };
 
-type CompetitionAward = { key: AwardKey; playerIds: number[]; value: number | null };
-type CompetitionCallout = {
-  metric: MetricKey;
-  leaderId: number;
-  runnerUpId: number;
-  leaderValue: number;
-  runnerUpValue: number;
-  gap: number;
-};
+type CompetitionAward = { key: AwardKey; playerIds: number[]; value: number | null; personalBest: boolean };
+type CompetitionCallout =
+  | { kind: "outran"; outran: number; total: number }
+  | { kind: "speed-beaten"; otherPlayerId: number; gap: number }
+  | { kind: "team-dribbles-lead" };
 
 type Stats = {
   available: boolean;
@@ -223,7 +219,9 @@ function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStri
   const visibleAwards = competition.awards
     .filter((award) => award.key !== "motm" || room.vote.closed)
     .filter((award) => award.playerIds.some((id) => playerById.has(id)));
-  const callouts = competition.callouts.filter((callout) => playerById.has(callout.leaderId) && playerById.has(callout.runnerUpId));
+  const callouts = competition.callouts.filter((callout) =>
+    callout.kind !== "speed-beaten" || playerById.has(callout.otherPlayerId),
+  );
 
   return (
     <motion.section
@@ -249,7 +247,10 @@ function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStri
               const winner = award.playerIds.map((id) => playerById.get(id)).filter((player): player is PlayerStats => Boolean(player));
               return (
                 <div key={award.key} className="rounded-xl border border-line bg-raised/75 p-3" data-testid={`award-${award.key}`}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-floodlight">{awardLabel(copy, award.key)}</p>
+                  <p className="flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-floodlight">
+                    <span>{awardLabel(copy, award.key)}</span>
+                    {award.personalBest && <span title={copy.competitionPersonalBest} className="rounded border border-floodlight/40 px-1 py-0.5 font-mono text-[9px] leading-none">{copy.competitionPbTag}</span>}
+                  </p>
                   <p className="mt-1 truncate text-sm font-bold">{winner.map((player) => player.name).join(" · ")}</p>
                   {award.value !== null && <p className="mt-1 font-mono text-xs text-muted-text">{metricFormat(award.key === "distance" ? "distanceKm" : award.key === "speed" ? "topSpeedKmh" : award.key === "dribbles" ? "dribblesWon" : award.key === "passes" ? "passesCompleted" : award.key === "goals" ? "goals" : "touches", award.value)}</p>}
                 </div>
@@ -264,11 +265,14 @@ function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStri
           <p className="mb-2 text-xs font-bold uppercase tracking-[0.12em] text-muted-text">{copy.competitionCallouts}</p>
           <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
             {callouts.map((callout) => (
-              <div key={`${callout.metric}-${callout.leaderId}`} className="min-w-[176px] rounded-xl border border-line bg-raised/60 p-3" data-testid={`callout-${callout.metric}`}>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-text">{metricLabel(copy, callout.metric)}</p>
-                <p className="mt-1 truncate text-sm font-bold">{playerById.get(callout.leaderId)?.name}</p>
-                <p className="mt-0.5 font-mono text-base font-bold text-floodlight">{metricFormat(callout.metric, callout.leaderValue)} {metricUnit(callout.metric)}</p>
-                <p className="mt-1 text-[10px] text-muted-text">{playerById.get(callout.runnerUpId)?.name} · {metricFormat(callout.metric, callout.runnerUpValue)} {metricUnit(callout.metric)}</p>
+              <div key={callout.kind} className="min-w-[176px] rounded-xl border border-line bg-raised/60 p-3" data-testid={`callout-${callout.kind}`}>
+                <p className="text-xs font-semibold leading-5 text-text">
+                  {callout.kind === "outran"
+                    ? copy.competitionOutran(callout.outran, callout.total)
+                    : callout.kind === "speed-beaten"
+                      ? copy.competitionSpeedBeaten(playerById.get(callout.otherPlayerId)!.name, callout.gap.toFixed(1))
+                      : copy.competitionTeamDribblesLead}
+                </p>
               </div>
             ))}
           </div>
