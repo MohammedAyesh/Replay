@@ -2,6 +2,7 @@ import type { TrackingManifest } from "@workspace/api-client-react";
 import { MAX_KITS, MIN_KIT_MEMBERS, rgbToHsl, splitKits, kitColourKey, type KitSplit } from "@/lib/claim-kit";
 import { featureFromJpeg, lab8ToRgb } from "./appearance";
 import { applyPeople, buildChunk, groupChunk, groupProfileOf, measureChunk, type BundleChunkInput, type PeopleSidecar } from "./build";
+import type { JerseySidecar } from "../claim-gallery";
 import type { Chunk, Game } from "./model";
 import { complement, union } from "./model";
 import { pitchFromManifest } from "./pitch";
@@ -62,6 +63,8 @@ export function stoppages(out: Array<[number, number]>, total: number): Array<[n
 export type ChunkExtras = {
   /** kit split over this chunk's groups; group.team holds the kit key */
   kits: KitSplit;
+  /** Shirt-number readings for this segment, or null when none are available. */
+  jersey: JerseySidecar | null;
 };
 
 export type LoadedChunk = Chunk & ChunkExtras & { grouping: "pipeline" | "browser" };
@@ -88,15 +91,18 @@ export async function loadChunkData(opts: {
   fetchSprites: (index: number) => Promise<BundleChunkInput["sprites"]>;
   /** the pipeline's grouping, when the bundle carries it (null otherwise) */
   fetchPeople?: (index: number) => Promise<PeopleSidecar | null>;
+  fetchJersey: (index: number) => Promise<JerseySidecar | null>;
 }): Promise<LoadedChunk> {
   const { manifest, k } = opts;
   const meta = manifest.segments.find((s) => s.index === k);
   if (!meta) throw new Error(`No segment ${k}`);
-  const [segment, sprites, people] = await Promise.all([
+  const [segment, sprites, people, jersey] = await Promise.all([
     opts.fetchSegment(k),
     opts.fetchSprites(k).catch(() => ({})),
     opts.fetchPeople ? opts.fetchPeople(k).catch(() => null) : Promise.resolve(null),
+    opts.fetchJersey(k).catch(() => null),
   ]);
+  const availableJersey = hasJerseyReadings(jersey) ? jersey : null;
   const chunk = buildChunk({
     k,
     start: meta.startSeconds,
@@ -116,7 +122,7 @@ export async function loadChunkData(opts: {
     groupChunk(chunk, seedFromIdentities(manifest, new Set(Object.keys(chunk.pieces))));
   }
   const pipelineKits = people?.groups?.length ? kitsFromPeople(chunk, people) : null;
-  if (pipelineKits) return Object.assign(chunk, { kits: pipelineKits, grouping: "pipeline" as const });
+  if (pipelineKits) return Object.assign(chunk, { kits: pipelineKits, jersey: availableJersey, grouping: "pipeline" as const });
   const kits = splitKits(
     chunk.groups.map((g) => {
       const p = groupProfileOf(chunk, g.members);
@@ -128,7 +134,18 @@ export async function loadChunkData(opts: {
   if (kits.separated) {
     for (const kit of kits.groups) for (const cid of kit.memberIds) if (chunk.byCid[cid]) chunk.byCid[cid].team = kit.key;
   }
-  return Object.assign(chunk, { kits, grouping: people?.groups?.length ? "pipeline" as const : "browser" as const });
+  return Object.assign(chunk, { kits, jersey: availableJersey, grouping: people?.groups?.length ? "pipeline" as const : "browser" as const });
+}
+
+function hasJerseyReadings(value: JerseySidecar | null): value is JerseySidecar {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && value.tracks
+    && typeof value.tracks === "object"
+    && !Array.isArray(value.tracks)
+    && Object.keys(value.tracks).length > 0,
+  );
 }
 
 /**

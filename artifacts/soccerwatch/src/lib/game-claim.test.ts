@@ -12,7 +12,7 @@ import {
   Y,
   type Ctx,
 } from "./game-claim/claim";
-import { gameFromManifest, kitsFromPeople } from "./game-claim/load";
+import { gameFromManifest, kitsFromPeople, loadChunkData } from "./game-claim/load";
 import type { Chunk, Game, Group } from "./game-claim/model";
 import { complement, union } from "./game-claim/model";
 import { benchSpansOut, chainParts } from "./game-claim/parts";
@@ -80,6 +80,55 @@ function fixture(): Ctx {
   Y(ctx, 0).cid = "g1";
   return ctx;
 }
+
+describe("jersey sidecar loading", () => {
+  const manifest: TrackingManifest = {
+    version: 1,
+    label: "test",
+    width: 4096,
+    height: 1152,
+    frameRate: FPS,
+    frameCount: 200,
+    duration: 10,
+    matchOffset: 0,
+    segmentCount: 1,
+    segments: [{
+      index: 0,
+      name: "segment-01",
+      startFrame: 0,
+      endFrame: 200,
+      startSeconds: 0,
+      endSeconds: 10,
+      objectPath: "segment.json",
+    }],
+  };
+
+  function load(fetchJersey: () => Promise<{ tracks: Record<string, { number: string; seenFrames: number; confidence: number }>; numbers: Record<string, string[]> } | null>) {
+    return loadChunkData({
+      manifest,
+      k: 0,
+      fetchSegment: async () => ({ startSeconds: 0, endSeconds: 10, tracks: [], crossings: [] }),
+      fetchSprites: async () => ({}),
+      fetchPeople: async () => null,
+      fetchJersey,
+    });
+  }
+
+  it("attaches sidecar readings to the loaded chunk", async () => {
+    const jersey = {
+      tracks: { "s0:t1": { number: "8", seenFrames: 3, confidence: 0.9 } },
+      numbers: { "8": ["s0:t1"] },
+    };
+
+    await expect(load(async () => jersey)).resolves.toMatchObject({ jersey });
+  });
+
+  it("treats missing, failed, and empty sidecars as no numbers", async () => {
+    await expect(load(async () => null)).resolves.toMatchObject({ jersey: null });
+    await expect(load(async () => { throw new Error("not available"); })).resolves.toMatchObject({ jersey: null });
+    await expect(load(async () => ({ tracks: {}, numbers: {} }))).resolves.toMatchObject({ jersey: null });
+  });
+});
 
 describe("spans", () => {
   it("unions and complements", () => {

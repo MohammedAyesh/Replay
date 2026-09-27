@@ -170,6 +170,10 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
           const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/people/${index}`, { credentials: "include" });
           return r.ok ? r.json() : null;
         },
+        fetchJersey: async (index) => {
+          const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/jersey/${index}`, { credentials: "include" });
+          return r.ok ? r.json() : null;
+        },
       }).then((c) => {
         chunks.current[k] = c;
         setChunkVer((v) => v + 1);
