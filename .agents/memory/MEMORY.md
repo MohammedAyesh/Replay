@@ -29,6 +29,7 @@
 - [Calibrated player metrics](calibrated-player-metrics.md) — distance requires pitch calibration, bottom-centre positions, and smoothing; never estimate metres from pixels.
 - [Calibration metadata and guarded speed metrics](calibration-metadata-and-speed.md) — bundle-owned metadata and conservative admin-only top-speed rules prevent misleading numbers.
 - [Claim identity ownership](identity-binding-ownership.md) — confirmed bindings own exact vouched fragments; unvouched regrouping is allowed, disjoint claims split, and overlaps remain disputes.
+- [Shirt-number identity](shirt-number-identity.md) — group tracks by frame-weighted readings, but identify players only by shirt number and kit key.
 - [Export rendition geometry](export-rendition-geometry.md) — select Bunny variants by declared 3840×1080 pixels, never folder labels or adaptive master fallback.
 - [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.
 - [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.
