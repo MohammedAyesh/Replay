@@ -58,6 +58,11 @@ import {
   uploadBufferToBunnyStorage,
 } from "../lib/bunny";
 import { logger } from "../lib/logger";
+import {
+  isMissingMatchTeamSpansTable,
+  readOptionalMatchTeamSpans,
+  warnOptionalMatchTeamSpansFailureOnce,
+} from "../lib/optionalMatchTeamSpans";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, playerMatchForm } from "../lib/matchStatsCache";
 import { canViewMatchPlayerRows } from "../lib/matchStatsRules";
@@ -274,9 +279,9 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
 
   const games = await db.select().from(matchGamesTable)
     .where(eq(matchGamesTable.matchId, room.id)).orderBy(asc(matchGamesTable.idx));
-  const teamSpans = await db.select().from(matchTeamSpansTable)
+  const teamSpans = await readOptionalMatchTeamSpans("roomPayload", () => db.select().from(matchTeamSpansTable)
     .where(eq(matchTeamSpansTable.matchId, room.id))
-    .orderBy(asc(matchTeamSpansTable.createdAt), asc(matchTeamSpansTable.id));
+    .orderBy(asc(matchTeamSpansTable.createdAt), asc(matchTeamSpansTable.id)));
   const vote = await voteSummary(ctx, viewerId, roster);
   const stats = await statsAccess(viewerId, room.id, commerce);
   const standings = computeStandings(games, teamCount);
@@ -474,15 +479,30 @@ router.post("/m/:code/team-spans", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Team span is outside the match" });
     return;
   }
-  const [span] = await db.insert(matchTeamSpansTable).values({
-    matchId: ctx.room.id,
-    matchPlayerId: body.matchPlayerId,
-    fromOffsetSec: body.fromOffsetSec,
-    toOffsetSec: body.toOffsetSec ?? null,
-    team: body.team,
-    source: manager ? "captain" : "self",
-    changedShirt: body.changedShirt,
-  }).returning();
+  let span: typeof matchTeamSpansTable.$inferSelect | undefined;
+  try {
+    [span] = await db.insert(matchTeamSpansTable).values({
+      matchId: ctx.room.id,
+      matchPlayerId: body.matchPlayerId,
+      fromOffsetSec: body.fromOffsetSec,
+      toOffsetSec: body.toOffsetSec ?? null,
+      team: body.team,
+      source: manager ? "captain" : "self",
+      changedShirt: body.changedShirt,
+    }).returning();
+  } catch (error) {
+    if (!isMissingMatchTeamSpansTable(error)) throw error;
+    warnOptionalMatchTeamSpansFailureOnce("teamSpanWrite", error);
+    res.status(503).json({
+      error: "Team switches are temporarily unavailable until the database is updated.",
+      code: "team_spans_unavailable",
+    });
+    return;
+  }
+  if (!span) {
+    res.status(500).json({ error: "Team span was not saved" });
+    return;
+  }
   res.status(201).json({
     id: span.id,
     matchId: span.matchId,
@@ -507,12 +527,23 @@ router.delete("/m/:code/team-spans/:spanId", async (req, res): Promise<void> => 
     res.status(400).json({ error: "Invalid span" });
     return;
   }
-  const [span] = await db.select({
-    id: matchTeamSpansTable.id,
-    playerUserId: matchPlayersTable.userId,
-  }).from(matchTeamSpansTable)
-    .innerJoin(matchPlayersTable, eq(matchPlayersTable.id, matchTeamSpansTable.matchPlayerId))
-    .where(and(eq(matchTeamSpansTable.id, spanId), eq(matchTeamSpansTable.matchId, ctx.room.id)));
+  let span: { id: number; playerUserId: number | null } | undefined;
+  try {
+    [span] = await db.select({
+      id: matchTeamSpansTable.id,
+      playerUserId: matchPlayersTable.userId,
+    }).from(matchTeamSpansTable)
+      .innerJoin(matchPlayersTable, eq(matchPlayersTable.id, matchTeamSpansTable.matchPlayerId))
+      .where(and(eq(matchTeamSpansTable.id, spanId), eq(matchTeamSpansTable.matchId, ctx.room.id)));
+  } catch (error) {
+    if (!isMissingMatchTeamSpansTable(error)) throw error;
+    warnOptionalMatchTeamSpansFailureOnce("teamSpanDelete", error);
+    res.status(503).json({
+      error: "Team switches are temporarily unavailable until the database is updated.",
+      code: "team_spans_unavailable",
+    });
+    return;
+  }
   if (!span) {
     res.status(404).json({ error: "Team span not found" });
     return;
@@ -522,7 +553,17 @@ router.delete("/m/:code/team-spans/:spanId", async (req, res): Promise<void> => 
     res.status(403).json({ error: "Players may only remove their own team spans" });
     return;
   }
-  await db.delete(matchTeamSpansTable).where(eq(matchTeamSpansTable.id, spanId));
+  try {
+    await db.delete(matchTeamSpansTable).where(eq(matchTeamSpansTable.id, spanId));
+  } catch (error) {
+    if (!isMissingMatchTeamSpansTable(error)) throw error;
+    warnOptionalMatchTeamSpansFailureOnce("teamSpanDelete", error);
+    res.status(503).json({
+      error: "Team switches are temporarily unavailable until the database is updated.",
+      code: "team_spans_unavailable",
+    });
+    return;
+  }
   res.status(204).send();
 });
 

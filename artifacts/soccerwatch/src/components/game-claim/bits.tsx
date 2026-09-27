@@ -15,6 +15,7 @@ export function Btn({
   disabled,
   className,
   title,
+  testId,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -23,11 +24,13 @@ export function Btn({
   disabled?: boolean;
   className?: string;
   title?: string;
+  testId?: string;
 }) {
   return (
     <button
       type="button"
       title={title}
+      data-testid={testId}
       disabled={disabled}
       onClick={onClick}
       className={cn(

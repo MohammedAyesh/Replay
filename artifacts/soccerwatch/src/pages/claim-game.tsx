@@ -101,15 +101,33 @@ export default function ClaimGamePage() {
 
   const [server, setServer] = useState<ServerGame | null>(null);
   const [serverError, setServerError] = useState(false);
+  const gameRequestRef = useRef(0);
+  const fetchGame = useCallback(async () => {
+    const requestId = ++gameRequestRef.current;
+    setServerError(false);
+    try {
+      const response = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { credentials: "include" });
+      if (!response.ok) throw new Error(String(response.status));
+      const next = await response.json() as ServerGame;
+      if (requestId === gameRequestRef.current) setServer(next);
+    } catch {
+      if (requestId === gameRequestRef.current) setServerError(true);
+    }
+  }, [recordingId]);
   useEffect(() => {
     if (!enabled) return;
-    let cancelled = false;
-    fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((j: ServerGame) => { if (!cancelled) setServer(j); })
-      .catch(() => { if (!cancelled) setServerError(true); });
-    return () => { cancelled = true; };
-  }, [enabled, recordingId]);
+    void fetchGame();
+  }, [enabled, fetchGame]);
+
+  const retryGame = useCallback(() => {
+    setServerError(false);
+    setServer(null);
+    void Promise.all([
+      claimQuery.refetch(),
+      fetchGame(),
+      chainQuery.refetch(),
+    ]);
+  }, [chainQuery, claimQuery, fetchGame]);
 
   const game: Game | null = useMemo(
     () => (manifest && server ? gameFromManifest(manifest, server.inPlaySpans) : null),
@@ -125,12 +143,23 @@ export default function ClaimGamePage() {
       </Shell>
     );
   }
-  if (claimQuery.isError || serverError || (manifest && manifest.segments.length === 0)) {
+  const claimErrorStatus = (claimQuery.error as { status?: number } | null)?.status;
+  const claimNotReady = claimQuery.isError && claimErrorStatus === 404;
+  const manifestNotReady = claimQuery.isSuccess && Boolean(manifest && manifest.segments.length === 0);
+  if (claimNotReady || manifestNotReady) {
     return (
       <Shell>
         <Title>{copy.common.notReady}</Title>
         <Lede>{copy.common.notReadyDesc}</Lede>
         <Row><Btn onClick={() => setLocation(recording?.fieldId ? `/fields/${recording.fieldId}` : "/fields")}>{copy.common.back}</Btn></Row>
+      </Shell>
+    );
+  }
+  if ((claimQuery.isError && !claimNotReady) || chainQuery.isError || serverError) {
+    return (
+      <Shell>
+        <Lede>{copy.common.gameLoadError}</Lede>
+        <Row><Btn kind="primary" testId="button-retry-find-game" onClick={retryGame}>{copy.common.retry}</Btn></Row>
       </Shell>
     );
   }

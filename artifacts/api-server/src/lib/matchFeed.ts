@@ -41,6 +41,7 @@ import { ammanLocalInstant, loadRoomById, randomToken, rosterFor, type RoomConte
 import { matchStatsCacheIsCurrent, persistMatchStatsCache, type MatchStatsCacheFingerprint, type MatchStatsCacheInput } from "./matchStatsCache";
 import { queueMatchStatsCacheForMatch } from "./matchStatsCacheJobs";
 import { logger } from "./logger";
+import { readOptionalMatchTeamSpans } from "./optionalMatchTeamSpans";
 import {
   detectedGoals,
   detectedShots,
@@ -67,13 +68,6 @@ import {
 import { loadRecordingPlay, type RecordingPlay } from "./matchPlayLoad";
 import { buildPlayerMetrics } from "./playerMetrics";
 import { teamAtTime, type TeamSpanAtTime, type TeamSpanTeam } from "./matchTeamSpans";
-import * as workspaceDb from "@workspace/db";
-
-// The addendum's renamed export is preferred; retain compatibility while the
-// schema migration is rolled out to all workspaces.
-const playerTeamSpansTable = (workspaceDb as typeof workspaceDb & {
-  matchPlayerTeamSpansTable?: typeof matchTeamSpansTable;
-}).matchPlayerTeamSpansTable ?? matchTeamSpansTable;
 
 function teamFor(base: string | null, spans: readonly unknown[], offsetSec: number): string | null {
   return teamAtTime(base as TeamSpanTeam, spans as readonly TeamSpanAtTime[], offsetSec);
@@ -536,8 +530,8 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
   team: MatchTeamStats | null;
 }> {
   const roster = await rosterFor(ctx.room.id);
-  const spanRows = await db.select().from(playerTeamSpansTable)
-    .where(eq(playerTeamSpansTable.matchId, ctx.room.id));
+  const spanRows = await readOptionalMatchTeamSpans("matchStats", () => db.select().from(matchTeamSpansTable)
+    .where(eq(matchTeamSpansTable.matchId, ctx.room.id)));
   const spans = new Map<number, Array<{
     id: number; fromOffsetSec: number; toOffsetSec?: number | null; team: string | null; source: string; changedShirt?: boolean; createdAt: Date | string | number;
   }>>();

@@ -38,7 +38,6 @@ import {
   recordingTrackingBundlesTable,
   fieldsTable,
 } from "@workspace/db";
-import * as workspaceDb from "@workspace/db";
 import { normaliseChain, type ChainPart } from "../lib/claimChain";
 import {
   detectedGoals,
@@ -61,6 +60,11 @@ import {
 } from "../lib/matchPlay";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { joinMatchesFromClaim } from "../lib/matchFeed";
+import {
+  isMissingMatchTeamSpansTable,
+  readOptionalMatchTeamSpans,
+  warnOptionalMatchTeamSpansFailureOnce,
+} from "../lib/optionalMatchTeamSpans";
 import {
   begin,
   claimIdentityId,
@@ -118,11 +122,6 @@ const MAX_STATE_BYTES = 2_000_000;
 
 const inPlayCache = new Map<string, Array<[number, number]>>();
 const DEAD_BOOKINGS = ["cancelled", "refunded", "failed"];
-// The db package is published separately in some deployments; retain the
-// Part 1 table while a workspace rebuild exposes the addendum export.
-const playerTeamSpansTable = (workspaceDb as typeof workspaceDb & {
-  matchPlayerTeamSpansTable?: typeof matchTeamSpansTable;
-}).matchPlayerTeamSpansTable ?? matchTeamSpansTable;
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -160,7 +159,8 @@ async function claimMatchChoices(ctx: ChainContext): Promise<{
     const [players, games, spans] = await Promise.all([
       db.select().from(matchPlayersTable).where(eq(matchPlayersTable.matchId, room.id)),
       db.select().from(matchGamesTable).where(eq(matchGamesTable.matchId, room.id)),
-      db.select().from(playerTeamSpansTable).where(eq(playerTeamSpansTable.matchId, room.id)),
+      readOptionalMatchTeamSpans("claimMatchChoices", () => db.select().from(matchTeamSpansTable)
+        .where(eq(matchTeamSpansTable.matchId, room.id))),
     ]);
     const own = players.find((p) => p.userId === ctx.userId);
     const ownSpans = own ? spans.filter((s) => s.matchPlayerId === own.id) : [];
@@ -231,7 +231,13 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     .from(claimMatchProgressTable)
     .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
   const state = row?.gameState ?? null;
-  const choices = await claimMatchChoices(ctx);
+  let choices: Awaited<ReturnType<typeof claimMatchChoices>>;
+  try {
+    choices = await claimMatchChoices(ctx);
+  } catch (error) {
+    warnOptionalMatchTeamSpansFailureOnce("claimMatchChoices", error);
+    choices = { matches: [], continuation: null };
+  }
   // A state saved against a different bundle names tracks that no longer exist.
   const stale = !!state && typeof state === "object" && (state as { bundle?: unknown }).bundle !== ctx.fingerprint;
   res.json({
@@ -400,15 +406,15 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
           .sort((a, b) => a.at - b.at);
         // Only claim rows beginning inside this recording's overlap are
         // replaced. A span from another recording (or a manual span) survives.
-        const existing = await db.select().from(playerTeamSpansTable).where(and(
-          eq(playerTeamSpansTable.matchId, room.id),
-          eq(playerTeamSpansTable.matchPlayerId, player.id),
-          eq(playerTeamSpansTable.source, "claim"),
+        const existing = await db.select().from(matchTeamSpansTable).where(and(
+          eq(matchTeamSpansTable.matchId, room.id),
+          eq(matchTeamSpansTable.matchPlayerId, player.id),
+          eq(matchTeamSpansTable.source, "claim"),
         ));
         for (const span of existing) {
           const spanFromRecording = span.fromOffsetSec - match.recordingOffsetSec;
           if (spanFromRecording >= match.startSeconds && spanFromRecording < match.endSeconds) {
-            await db.delete(playerTeamSpansTable).where(eq(playerTeamSpansTable.id, span.id));
+            await db.delete(matchTeamSpansTable).where(eq(matchTeamSpansTable.id, span.id));
           }
         }
         const values = events.map((entry, index) => {
@@ -423,9 +429,17 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
             changedShirt: entry.shirtChanged,
           }];
         }).flat();
-        if (values.length) await db.insert(playerTeamSpansTable).values(values);
+        if (values.length) await db.insert(matchTeamSpansTable).values(values);
       }
     } catch (error) {
+      if (isMissingMatchTeamSpansTable(error)) {
+        warnOptionalMatchTeamSpansFailureOnce("claimGameTeamSpanWrite", error);
+        res.status(503).json({
+          error: "Team switches are temporarily unavailable until the database is updated.",
+          code: "team_spans_unavailable",
+        });
+        return;
+      }
       req.log?.warn?.({ recordingId: ctx.recordingId, error }, "Could not persist claim team switches");
     }
   }
