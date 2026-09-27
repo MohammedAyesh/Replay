@@ -269,7 +269,7 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
     setVideoError(false);
     const isHls = url.includes(".m3u8") || url.includes("/hls-proxy/");
     if (isHls && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: false, maxBufferLength: 20, backBufferLength: 30 });
+      hls = new Hls({ enableWorker: true, maxBufferLength: 20, backBufferLength: 30 });
       capPlaybackQuality(hls);
       hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(url));
       hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) setVideoError(true); });
