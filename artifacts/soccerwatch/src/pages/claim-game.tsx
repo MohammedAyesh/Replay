@@ -49,6 +49,11 @@ type ServerGame = {
   inPlaySpans: Array<[number, number]>;
 };
 
+type GameDecisionLabel =
+  | { kind: "switch"; frame: number; wrongTrackId: string; rightTrackId: string }
+  | { kind: "lost"; frame: number; wrongTrackId: string }
+  | { kind: "confirm"; frame: number; rightTrackId: string };
+
 export default function ClaimGamePage() {
   const params = useParams<{ id?: string }>();
   const [, setLocation] = useLocation();
@@ -152,7 +157,9 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
   const [introT, setIntroT] = useState<number | null>(null);
   const [pickSet, setPickSet] = useState<Set<string>>(new Set());
   const [saveError, setSaveError] = useState(false);
+  const [labelError, setLabelError] = useState(false);
   const t0 = useRef<number | null>(null);
+  const pendingNextGuess = useRef<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
   /* ------------------------------------------------------------ chunks */
@@ -218,6 +225,73 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
       }
     }, 700);
   }, [fingerprint, recordingId]);
+
+  /**
+   * Labels are decision events, not snapshots of ClaimState. In particular,
+   * this is never called by save(), which runs after ordinary page steps.
+   */
+  const writeDecisionLabel = useCallback((decision: GameDecisionLabel) => {
+    void fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game/decision`, {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...decision, bundleFingerprint: fingerprint }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          setLabelError(true);
+          return;
+        }
+        const result = await r.json() as { labelRecorded?: boolean };
+        if (result.labelRecorded === false) setLabelError(true);
+      })
+      .catch(() => setLabelError(true));
+  }, [fingerprint, recordingId]);
+
+  const decisionFrame = (k: number, localSeconds: number) => Math.max(
+    0,
+    Math.round(L2G(game, k, localSeconds) * (manifest.frameRate > 0 ? manifest.frameRate : 20)),
+  );
+
+  const representativePiece = (d: LoadedChunk, group: Group) => group.members
+    .map((id) => d.pieces[id])
+    .filter((piece) => piece != null)
+    .sort((a, b) => (b.t1 - b.t0) - (a.t1 - a.t0))[0] ?? null;
+
+  const writeGroupDecision = (d: LoadedChunk, group: Group, rejected?: Group) => {
+    const chosen = representativePiece(d, group);
+    if (!chosen) return;
+    const wrong = rejected && rejected.cid !== group.cid
+      ? representativePiece(d, rejected)
+      : null;
+    const frame = decisionFrame(d.k, (chosen.t0 + chosen.t1) / 2);
+    if (wrong) {
+      writeDecisionLabel({ kind: "switch", frame, wrongTrackId: wrong.id, rightTrackId: chosen.id });
+    } else {
+      writeDecisionLabel({ kind: "confirm", frame, rightTrackId: chosen.id });
+    }
+  };
+
+  const writeRejectedGroup = (d: LoadedChunk, group: Group) => {
+    const rejected = representativePiece(d, group);
+    if (!rejected) return;
+    writeDecisionLabel({
+      kind: "lost",
+      frame: decisionFrame(d.k, (rejected.t0 + rejected.t1) / 2),
+      wrongTrackId: rejected.id,
+    });
+  };
+
+  const writeRejectedTrack = (k: number, trackId: string | null | undefined, localSeconds: number) => {
+    if (!trackId) return;
+    writeDecisionLabel({ kind: "lost", frame: decisionFrame(k, localSeconds), wrongTrackId: trackId });
+  };
+
+  const writeConfirmedTrack = (k: number, trackId: string | null | undefined, localSeconds: number) => {
+    if (!trackId) return;
+    writeDecisionLabel({ kind: "confirm", frame: decisionFrame(k, localSeconds), rightTrackId: trackId });
+  };
 
   const tap = () => {
     const state = ctxRef.current.S;
@@ -324,6 +398,13 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
           loop: true,
           onTap: (hit: TapHit) => {
             if (hit.k !== k) return;
+            if (hit.box) {
+              writeDecisionLabel({
+                kind: "confirm",
+                frame: decisionFrame(k, hit.lt),
+                rightTrackId: hit.box.id,
+              });
+            }
             act(() => addTap(ctx, k, h, hit.lt, hit.box, hit.pt));
           },
         });
@@ -383,6 +464,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
   };
 
   const startNew = async () => {
+    pendingNextGuess.current = null;
     if (savedClaim) {
       try {
         await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { method: "DELETE", credentials: "include" });
@@ -410,7 +492,21 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     go(st);
   };
 
-  const pickGroup = (cid: string) => act(() => { pick(ctx, S.k!, cid); S.step = "review"; });
+  const pickGroup = (cid: string) => {
+    const k = S.k;
+    const d = k === null ? null : chunks.current[k];
+    const chosen = d?.byCid[cid];
+    if (d && chosen && k !== null) {
+      const expected = S.step === "next"
+        ? rankNext(ctx, k)[0]?.g
+        : pendingNextGuess.current
+          ? d.byCid[pendingNextGuess.current]
+          : undefined;
+      writeGroupDecision(d, chosen, expected);
+    }
+    pendingNextGuess.current = null;
+    act(() => { pick(ctx, S.k!, cid); S.step = "review"; });
+  };
 
   const chooseKit = (team: string | null) => {
     const shirtIdentity = team && S.shirtIdentity?.kitKey === team ? S.shirtIdentity : null;
@@ -443,19 +539,24 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     S.step = "kit";
   });
 
-  const confirmShirtGroup = (cid: string) => act(() => {
+  const confirmShirtGroup = (cid: string) => {
     const k = S.k;
     const candidate = S.shirtCandidate;
     const d = k === null ? null : chunks.current[k];
     if (k === null || !candidate || !d) return;
     if (!groupsForShirtIdentity(d.groups, d.jersey, candidate).some((match) => match.groupId === cid)) return;
-    S.shirtIdentity = { ...candidate };
-    S.shirtCandidate = null;
-    pick(ctx, k, cid);
-    S.step = "review";
-  });
+    const group = d.byCid[cid];
+    if (group) writeGroupDecision(d, group);
+    act(() => {
+      S.shirtIdentity = { ...candidate };
+      S.shirtCandidate = null;
+      pick(ctx, k, cid);
+      S.step = "review";
+    });
+  };
 
   const advance = async () => {
+    pendingNextGuess.current = null;
     const where = afterChunk(ctx);
     setVer((v) => v + 1);
     save();
@@ -491,13 +592,25 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const answerJoin = (v: "yes" | "no" | "skip") => act(() => {
-    const qs = questions(ctx, S.k!);
-    const j = qs[S.qi];
-    if (!j) return;
-    if (v === "no") Y(ctx, S.k!).out.push(j.b);
-    else S.qi++;
-  });
+  const answerJoin = (v: "yes" | "no" | "skip") => {
+    const k = S.k;
+    const d = k === null ? null : chunks.current[k];
+    const j = k === null ? null : questions(ctx, k)[S.qi];
+    const laterPiece = d && j ? d.pieces[j.b] : null;
+    if (k !== null && laterPiece && v !== "skip") {
+      const frame = decisionFrame(k, laterPiece.t0);
+      if (v === "yes") {
+        writeDecisionLabel({ kind: "confirm", frame, rightTrackId: laterPiece.id });
+      } else {
+        writeDecisionLabel({ kind: "lost", frame, wrongTrackId: laterPiece.id });
+      }
+    }
+    act(() => {
+      if (!j || k === null) return;
+      if (v === "no") Y(ctx, k).out.push(j.b);
+      else S.qi++;
+    });
+  };
 
   /* -------------------------------------------------------------- render */
 
@@ -694,7 +807,9 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     );
   } else if (S.step === "review" && currentChunk && S.k !== null) {
     body = <ReviewScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp}
-      act={act} go={go} show={show} media={media} previewGroup={previewGroup} />;
+      act={act} go={go} show={show} media={media} previewGroup={previewGroup}
+      writeGroupDecision={writeGroupDecision} writeRejectedGroup={writeRejectedGroup}
+      writeRejectedTrack={writeRejectedTrack} />;
   } else if (S.step === "joins" && currentChunk && S.k !== null) {
     const qs = questions(ctx, S.k);
     const j = qs[S.qi];
@@ -725,7 +840,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
     }
   } else if (S.step === "gaps" && currentChunk && S.k !== null) {
     body = <GapsScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp}
-      act={act} pickSet={pickSet} setPickSet={setPickSet} />;
+      act={act} pickSet={pickSet} setPickSet={setPickSet} writeConfirmedTrack={writeConfirmedTrack} />;
   } else if (S.step === "next" && currentChunk && S.k !== null) {
     const d = currentChunk;
     const r = rankNext(ctx, d.k);
@@ -750,7 +865,10 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
           ))}
         </div>
         <Row>
-          <Btn onClick={() => act(() => { S.step = "gallery"; })}>{copy.next.showAll}</Btn>
+          <Btn onClick={() => {
+            pendingNextGuess.current = r[0]?.g.cid ?? null;
+            act(() => { S.step = "gallery"; });
+          }}>{copy.next.showAll}</Btn>
           <Btn onClick={() => act(() => { Y(ctx, d.k).skipped = true; void advance(); })}>{copy.next.notPlay}</Btn>
         </Row>
       </div>
@@ -777,6 +895,7 @@ export function GameClaim({ game, manifest, recordingId, videoUrl, eyebrow, save
   return (
     <Shell meter={meter}>
       {saveError && <p className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.saveFailed}</p>}
+      {labelError && <p role="status" className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.labelFailed}</p>}
       {body}
       {createPortal(
         <GameMedia ref={media} game={game} chunks={chunks.current} videoUrl={videoUrl} copy={copy.media} />,
@@ -892,10 +1011,16 @@ function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, onMarkA, onM
 
 /* ----------------------------------------------------------------- review */
 
-function ReviewScreen({ ctx, d, copy, mediaSlot, span, disp, act, go, show, media, previewGroup }: {
+function ReviewScreen({
+  ctx, d, copy, mediaSlot, span, disp, act, go, show, media, previewGroup,
+  writeGroupDecision, writeRejectedGroup, writeRejectedTrack,
+}: {
   ctx: Ctx; d: LoadedChunk; copy: GameStrings; mediaSlot: React.ReactNode; span: string; disp: (t: number) => string;
   act: (fn: () => void, counts?: boolean) => void; go: (s: Step) => void; show: (v: MediaView) => void;
   media: React.RefObject<MediaHandle | null>; previewGroup: (d: LoadedChunk, g: Group) => void;
+  writeGroupDecision: (d: LoadedChunk, g: Group, rejected?: Group) => void;
+  writeRejectedGroup: (d: LoadedChunk, g: Group) => void;
+  writeRejectedTrack: (k: number, trackId: string | null | undefined, localSeconds: number) => void;
 }) {
   const S = ctx.S;
   const k = d.k;
@@ -926,7 +1051,11 @@ function ReviewScreen({ ctx, d, copy, mediaSlot, span, disp, act, go, show, medi
         {ms.map((m) => (
           <Tile key={m.id} d={d} img={m.img} out={y.out.includes(m.id)}
             label={`${disp(L2G(G, k, m.t0))}–${disp(L2G(G, k, m.t1))}`}
-            onClick={() => act(() => { const i = y.out.indexOf(m.id); if (i >= 0) y.out.splice(i, 1); else y.out.push(m.id); })}>
+            onClick={() => {
+              const i = y.out.indexOf(m.id);
+              if (i < 0) writeRejectedTrack(k, m.manual ? m.src : m.id, (m.t0 + m.t1) / 2);
+              act(() => { if (i >= 0) y.out.splice(i, 1); else y.out.push(m.id); });
+            }}>
             <button type="button" aria-label={copy.media.play} onClick={(e) => { e.stopPropagation(); watchPiece(m.id); }}
               className="absolute bottom-7 end-2 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-[10px] text-white">▶</button>
           </Tile>
@@ -944,10 +1073,16 @@ function ReviewScreen({ ctx, d, copy, mediaSlot, span, disp, act, go, show, medi
           <div className="flex flex-col gap-3">
             {tw.slice(0, 3).map(({ g: gg }) => (
               <GroupCard key={gg.cid} d={d} g={gg} copy={copy} game={G} onWatch={() => previewGroup(d, gg)}
-                action={<Btn kind="primary" size="sm" onClick={() => act(() => { y.added.push(gg.cid); })}>{copy.review.alsoMe}</Btn>} />
+                action={<Btn kind="primary" size="sm" onClick={() => {
+                  writeGroupDecision(d, gg);
+                  act(() => { y.added.push(gg.cid); });
+                }}>{copy.review.alsoMe}</Btn>} />
             ))}
           </div>
-          {tw.length > 1 && <Row><Btn size="sm" onClick={() => act(() => { tw.forEach((x) => { if (!y.added.includes(x.g.cid)) y.added.push(x.g.cid); }); })}>{copy.review.allOfThese}</Btn></Row>}
+          {tw.length > 1 && <Row><Btn size="sm" onClick={() => {
+            for (const candidate of tw) writeGroupDecision(d, candidate.g);
+            act(() => { tw.forEach((x) => { if (!y.added.includes(x.g.cid)) y.added.push(x.g.cid); }); });
+          }}>{copy.review.allOfThese}</Btn></Row>}
         </Section>
       )}
       {nb.length > 0 && (
@@ -961,8 +1096,14 @@ function ReviewScreen({ ctx, d, copy, mediaSlot, span, disp, act, go, show, medi
         </Section>
       )}
       <Row>
-        <Btn kind="primary" onClick={() => act(() => { S.qi = 0; S.step = "joins"; })}>{copy.review.looksRight}</Btn>
-        <Btn onClick={() => go(S.oi ? "next" : "gallery")}>{copy.review.notMe}</Btn>
+        <Btn kind="primary" onClick={() => {
+          if (g) writeGroupDecision(d, g);
+          act(() => { S.qi = 0; S.step = "joins"; });
+        }}>{copy.review.looksRight}</Btn>
+        <Btn onClick={() => {
+          if (g) writeRejectedGroup(d, g);
+          go(S.oi ? "next" : "gallery");
+        }}>{copy.review.notMe}</Btn>
         <Btn title={copy.review.cameOff} onClick={() => act(() => {
           const t = media.current?.now() ?? 0;
           const end = S.off.find((r) => r[2] === "bench" && r[0] > t);
@@ -976,9 +1117,10 @@ function ReviewScreen({ ctx, d, copy, mediaSlot, span, disp, act, go, show, medi
 
 /* ------------------------------------------------------------------- gaps */
 
-function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPickSet }: {
+function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPickSet, writeConfirmedTrack }: {
   ctx: Ctx; d: LoadedChunk; copy: GameStrings; mediaSlot: React.ReactNode; span: string; disp: (t: number) => string;
   act: (fn: () => void, counts?: boolean) => void; pickSet: Set<string>; setPickSet: (s: Set<string>) => void;
+  writeConfirmedTrack: (k: number, trackId: string | null | undefined, localSeconds: number) => void;
 }) {
   const S = ctx.S;
   const k = d.k;
@@ -1022,7 +1164,15 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
                 onClick={() => { const n = new Set(pickSet); if (n.has(x.id)) n.delete(x.id); else n.add(x.id); setPickSet(n); }} />
             ))}
           </div>
-          <Row><Btn kind="primary" disabled={!pickSet.size} onClick={() => act(() => { pickSet.forEach((id) => { if (!y.extra.includes(id)) y.extra.push(id); }); setPickSet(new Set()); })}>{copy.gaps.addPicked}</Btn></Row>
+          <Row><Btn kind="primary" disabled={!pickSet.size} onClick={() => {
+            for (const candidate of c) {
+              if (!pickSet.has(candidate.id)) continue;
+              const from = Math.max(h.t0, candidate.t0);
+              const to = Math.min(h.t1, candidate.t1);
+              if (to > from) writeConfirmedTrack(k, candidate.id, (from + to) / 2);
+            }
+            act(() => { pickSet.forEach((id) => { if (!y.extra.includes(id)) y.extra.push(id); }); setPickSet(new Set()); });
+          }}>{copy.gaps.addPicked}</Btn></Row>
         </>
       )}
       <Row>

@@ -22,6 +22,7 @@ const en = {
     noCrops: "This recording has no player pictures",
     noCropsDesc: "The tracking was made without crops, so there is nothing to pick yourself from yet.",
     saveFailed: "Not saved yet — we'll try again with your next tap.",
+    labelFailed: "Your claim is saved, but this decision's training label could not be stored.",
     saved: "Saved",
   },
   media: {
@@ -273,6 +274,7 @@ const ar: GameStrings = {
     noCrops: "لا توجد صور للاعبين في هذا التسجيل",
     noCropsDesc: "صُنع التتبّع دون صور، فلا يوجد بعد ما تختار نفسك منه.",
     saveFailed: "لم يُحفظ بعد — سنحاول مجددًا مع نقرتك التالية.",
+    labelFailed: "حُفظت مطالبتك، لكن تعذّر حفظ تصنيف هذا القرار.",
     saved: "محفوظ",
   },
   media: {

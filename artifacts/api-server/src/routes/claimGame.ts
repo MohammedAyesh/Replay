@@ -52,7 +52,14 @@ import {
 } from "../lib/matchPlay";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { joinMatchesFromClaim } from "../lib/matchFeed";
-import { begin, claimIdentityId, persistChain, syncChainClaim, type ChainContext } from "./claimChain";
+import {
+  begin,
+  claimIdentityId,
+  persistChain,
+  recordFindDecisionLabel,
+  syncChainClaim,
+  type ChainContext,
+} from "./claimChain";
 import { getClaimMatchWritableBundle, requireAccountUser } from "./claimMatch";
 
 const router: IRouter = Router();
@@ -70,6 +77,27 @@ const SaveBody = z.object({
   /** the claimant reached the done screen */
   done: z.boolean(),
   bundleFingerprint: z.string().min(1).nullish(),
+});
+
+const DecisionLabelBody = z.object({
+  kind: z.enum(["switch", "lost", "confirm"]),
+  frame: z.number().int().min(0),
+  wrongTrackId: z.string().min(1).nullish(),
+  rightTrackId: z.string().min(1).nullish(),
+  decisionMs: z.number().int().min(0).max(600_000).nullish(),
+  bundleFingerprint: z.string().min(1),
+}).superRefine((decision, issue) => {
+  const valid = decision.kind === "switch"
+    ? Boolean(decision.wrongTrackId && decision.rightTrackId)
+    : decision.kind === "lost"
+      ? Boolean(decision.wrongTrackId) && !decision.rightTrackId
+      : Boolean(decision.rightTrackId) && !decision.wrongTrackId;
+  if (!valid) {
+    issue.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "The selected label kind does not match its track ids",
+    });
+  }
 });
 
 /** State is the page's own document; keep it bounded rather than trusting its size. */
@@ -109,6 +137,47 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     inPlaySpans: inPlaySpans(ctx),
     updatedAt: row?.updatedAt?.toISOString() ?? null,
   });
+});
+
+/**
+ * Record one explicit decision from /find. This is intentionally separate
+ * from PUT /game: that endpoint autosaves the whole page state after every
+ * step, while this endpoint is called only for an identity decision.
+ */
+router.post("/recordings/:id/claim-match/game/decision", async (req, res): Promise<void> => {
+  const parsed = DecisionLabelBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid decision label", issues: parsed.error.issues.slice(0, 5) });
+    return;
+  }
+  const ctx = await begin(req, res);
+  if (!ctx) return;
+  if (parsed.data.bundleFingerprint !== ctx.fingerprint) {
+    res.status(409).json({
+      error: "This recording's tracking has been replaced. Reload before continuing your claim.",
+      currentBundleFingerprint: ctx.fingerprint,
+    });
+    return;
+  }
+
+  const frameLimit = Math.max(0, Math.ceil(ctx.manifest.duration * ctx.manifest.frameRate) - 1);
+  if (parsed.data.frame > frameLimit) {
+    res.status(400).json({ error: "Decision frame is outside this recording" });
+    return;
+  }
+  for (const trackId of [parsed.data.wrongTrackId, parsed.data.rightTrackId]) {
+    if (trackId && !ctx.tracksById.has(trackId)) {
+      res.status(400).json({ error: "Decision references a track outside this recording" });
+      return;
+    }
+  }
+
+  const labelRecorded = await recordFindDecisionLabel(ctx, parsed.data.kind, parsed.data.frame, {
+    wrongTrackId: parsed.data.wrongTrackId,
+    rightTrackId: parsed.data.rightTrackId,
+    decisionMs: parsed.data.decisionMs,
+  });
+  res.json({ ok: true, labelRecorded });
 });
 
 router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> => {

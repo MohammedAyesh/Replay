@@ -26,7 +26,7 @@ import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { mergeMoments, personalMoments, type FollowPoint } from "../lib/personalMoments";
 import type { ClaimEarnedClip } from "@workspace/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { createHash } from "crypto";
 import { z } from "zod";
 
@@ -775,6 +775,86 @@ async function recordLabel(
     // person is mid-flow and losing their tap to a logging failure is worse
     // than losing the training row.
     console.error("[claim-chain] label write failed", { recordingId: ctx.recordingId, kind, error });
+    return false;
+  }
+}
+
+/**
+ * The whole-game flow sends an explicit request for each decision rather than
+ * attaching labels to its autosave. Use the existing row fields as the
+ * idempotency key: there is no separate decision id in this label shape.
+ *
+ * The transaction lock makes concurrent retries of the same decision safe
+ * across server processes, while allowing distinct decisions at the same frame
+ * to remain distinct rows.
+ */
+export async function recordFindDecisionLabel(
+  ctx: ChainContext,
+  kind: "switch" | "lost" | "confirm",
+  frame: number,
+  opts: { wrongTrackId?: string | null; rightTrackId?: string | null; decisionMs?: number | null },
+): Promise<boolean> {
+  const geom = captureDecisionGeometry(ctx.tracksById, frame, {
+    frameRate: ctx.manifest.frameRate,
+    chosenTrackId: opts.rightTrackId ?? null,
+    rejectedTrackId: opts.wrongTrackId ?? null,
+    crossings: crossingsFromSegments(ctx.segments),
+    decisions: ctx.manifest.identityDecisions,
+  });
+  const row = {
+    userId: ctx.userId,
+    recordingId: ctx.recordingId,
+    bundleFingerprint: ctx.fingerprint,
+    kind,
+    atFrame: frame,
+    wrongTrackId: opts.wrongTrackId ?? null,
+    rightTrackId: opts.rightTrackId ?? null,
+    decisionMs: opts.decisionMs ?? null,
+    geom: geom as unknown as Record<string, unknown>,
+    detectorSwapEvidence: geom.detector.swapEvidence,
+  };
+  const decisionKey = JSON.stringify([
+    row.userId,
+    row.recordingId,
+    row.bundleFingerprint,
+    row.kind,
+    row.atFrame,
+    row.wrongTrackId,
+    row.rightTrackId,
+  ]);
+
+  try {
+    return await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        select pg_advisory_xact_lock(
+          hashtext(${decisionKey}),
+          hashtext('claim_chain_labels')
+        )
+      `);
+      const [existing] = await tx
+        .select({ id: claimChainLabelsTable.id })
+        .from(claimChainLabelsTable)
+        .where(and(
+          eq(claimChainLabelsTable.userId, row.userId),
+          eq(claimChainLabelsTable.recordingId, row.recordingId),
+          eq(claimChainLabelsTable.bundleFingerprint, row.bundleFingerprint),
+          eq(claimChainLabelsTable.kind, row.kind),
+          eq(claimChainLabelsTable.atFrame, row.atFrame),
+          row.wrongTrackId === null
+            ? isNull(claimChainLabelsTable.wrongTrackId)
+            : eq(claimChainLabelsTable.wrongTrackId, row.wrongTrackId),
+          row.rightTrackId === null
+            ? isNull(claimChainLabelsTable.rightTrackId)
+            : eq(claimChainLabelsTable.rightTrackId, row.rightTrackId),
+        ))
+        .limit(1);
+      if (existing) return true;
+
+      await tx.insert(claimChainLabelsTable).values(row);
+      return true;
+    });
+  } catch (error) {
+    console.error("[claim-game] label write failed", { recordingId: ctx.recordingId, kind, error });
     return false;
   }
 }

@@ -35,7 +35,9 @@ vi.mock("../lib/clerkUserBridge", () => ({
 import {
   db,
   claimChainLabelsTable,
+  claimMatchOffPitchSpansTable,
   claimMatchIdentityBindingsTable,
+  claimMatchProgressTable,
   fieldsTable,
   recordingSchedulesTable,
   recordingTrackingBundlesTable,
@@ -174,13 +176,16 @@ async function labels() {
 }
 
 const url = (suffix = "") => `/api/recordings/${recordingId}/claim-match/chain${suffix}`;
+const gameUrl = (suffix = "") => `/api/recordings/${recordingId}/claim-match/game${suffix}`;
 
 beforeAll(async () => {
   const { default: claimChainRouter, claimIdentityId: identityIdFor } = await import("./claimChain");
+  const { default: claimGameRouter } = await import("./claimGame");
   claimIdentityId = identityIdFor;
   app = express();
   app.use(express.json());
   app.use("/api", claimChainRouter);
+  app.use("/api", claimGameRouter);
 
   const [field] = await db.insert(fieldsTable).values({ name: `${TAG} field`, location: "Test" })
     .returning({ id: fieldsTable.id });
@@ -238,6 +243,8 @@ beforeEach(async () => {
   await db.delete(claimChainLabelsTable).where(eq(claimChainLabelsTable.recordingId, recordingId));
   await db.delete(claimMatchIdentityBindingsTable)
     .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+  await db.delete(claimMatchOffPitchSpansTable).where(eq(claimMatchOffPitchSpansTable.recordingId, recordingId));
+  await db.delete(claimMatchProgressTable).where(eq(claimMatchProgressTable.recordingId, recordingId));
   vi.clearAllMocks();
   mockedReadClaimSegment.mockResolvedValue(Buffer.from(JSON.stringify(segment), "utf8") as never);
   await resetManifest();
@@ -675,6 +682,61 @@ describe("the endpoint says whether the label landed", () => {
     } finally {
       insert.mockRestore();
     }
+  });
+
+  it("writes one /find decision, ignores repeated saves, and adds only the next decision", async () => {
+    const fingerprint = (await request(app).get(gameUrl())).body.bundleFingerprint as string;
+    const firstDecision = {
+      kind: "lost",
+      frame: 50,
+      wrongTrackId: "t1",
+      bundleFingerprint: fingerprint,
+    };
+
+    const first = await request(app).post(gameUrl("/decision")).send(firstDecision);
+    expect(first.status).toBe(200);
+    expect(first.body.labelRecorded).toBe(true);
+    expect(await labels()).toHaveLength(1);
+    expect(await labels()).toMatchObject([
+      expect.objectContaining({ kind: "lost", atFrame: 50, wrongTrackId: "t1", bundleFingerprint: fingerprint }),
+    ]);
+
+    // A retry of the same event resolves to its existing row rather than
+    // inserting another copy.
+    const retry = await request(app).post(gameUrl("/decision")).send(firstDecision);
+    expect(retry.status).toBe(200);
+    expect(retry.body.labelRecorded).toBe(true);
+
+    const save = {
+      state: { step: "review" },
+      parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }],
+      bench: [],
+      done: false,
+      bundleFingerprint: fingerprint,
+    };
+    expect((await request(app).put(gameUrl()).send(save)).status).toBe(200);
+    expect((await request(app).put(gameUrl()).send(save)).status).toBe(200);
+    expect(await labels()).toHaveLength(1);
+
+    const later = await request(app).post(gameUrl("/decision")).send({
+      kind: "confirm",
+      frame: 120,
+      rightTrackId: "t2",
+      bundleFingerprint: fingerprint,
+    });
+    expect(later.status).toBe(200);
+    expect(later.body.labelRecorded).toBe(true);
+    const rows = (await labels()).sort((a, b) => a.atFrame - b.atFrame);
+    expect(rows.map((row) => ({
+      kind: row.kind,
+      atFrame: row.atFrame,
+      wrongTrackId: row.wrongTrackId,
+      rightTrackId: row.rightTrackId,
+      bundleFingerprint: row.bundleFingerprint,
+    }))).toEqual([
+      { kind: "lost", atFrame: 50, wrongTrackId: "t1", rightTrackId: null, bundleFingerprint: fingerprint },
+      { kind: "confirm", atFrame: 120, wrongTrackId: null, rightTrackId: "t2", bundleFingerprint: fingerprint },
+    ]);
   });
 
   it("is null on a read, which records nothing", async () => {

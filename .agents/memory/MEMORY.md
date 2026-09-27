@@ -23,6 +23,7 @@
 - [HLS cache generations](hls-cache-generation.md) — bump the service-worker cache namespace when proxy/media response behavior changes; stale successful error bodies can black-screen playback.
 - [VAR HLS wall clock](var-hls-wall-clock.md) — playhead timestamps use the covering fragment’s own PDT; missing metadata is unknown, not a stale fallback.
 - [Claim completion and results](claim-completion-results.md) — ordinary progress saves cannot clear completion; expose only server-supported tracking results and keep unsupported metrics unavailable.
+- [Whole-game decision labels](whole-game-decision-labels.md) — record explicit `/find` choices separately from autosaves, with server-owned bundle identity and idempotent existing rows.
 - [Signup media consent](signup-media-consent.md) — collect recording consent inline during Clerk signup; social-media consent is separate and optional, with no post-signup gate.
 - [Claim Match bundle summaries](claim-match-bundle-summary.md) — derive state from compact ranges/events; reserve full segment reads for legacy manifests.
 - [Claim Match queue rejections](claim-match-queue-rejections.md) — discard permanent invalid offline actions but stop and retain transient failures.
