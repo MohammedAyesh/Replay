@@ -49,6 +49,7 @@ import { isPublicStandalonePath } from "@/lib/public-paths";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
 import PortfolioPage from "@/features/portfolio/page";
+import DemoPage from "@/pages/demo-route";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -556,6 +557,7 @@ function AppRouter() {
         <Route path="/f/:code" component={FriendLinkPage} />
         <Route path="/matches" component={Matches} />
         <Route path="/book" component={BookPage} />
+        <Route path="/demo" component={DemoPage} />
         <Route path="/privacy"><LegalPage doc="privacy" /></Route>
         <Route path="/terms"><LegalPage doc="terms" /></Route>
         <Route path="/delete-account" component={DeleteAccountPage} />

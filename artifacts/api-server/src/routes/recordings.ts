@@ -1,9 +1,28 @@
 import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
-import { db, recordingsTable, fieldsTable, usersTable, recordingTrackingBundlesTable } from "@workspace/db";
+import { count, desc, eq, inArray } from "drizzle-orm";
+import {
+  db,
+  clipsTable,
+  fieldsTable,
+  footageRequestsTable,
+  recordingsTable,
+  recordingTrackingBundlesTable,
+  recordingTrackingSegmentsTable,
+  usersTable,
+} from "@workspace/db";
 import { GetRecordingParams, GetRecordingResponse } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { createPublicFootageContext, isPublicRecordingInContext } from "../lib/publicFootage";
+import {
+  createPublicFootageContext,
+  extractBunnyVideoId,
+  isPublicRecordingInContext,
+} from "../lib/publicFootage";
+import {
+  BUNNY_CDN_HOSTNAME,
+  getBunnyPlaybackUrl,
+  getBunnyProxiedPlaybackUrl,
+  getBunnyProxiedThumbnailUrl,
+} from "../lib/bunny";
 
 const router: IRouter = Router();
 
@@ -159,6 +178,161 @@ router.get("/recordings/:id", async (req, res): Promise<void> => {
       fieldName: field?.name ?? null,
     })
   );
+});
+
+/**
+ * A deliberately small, anonymous media feed for the guided product demo.
+ *
+ * Unlike the general public archive, this only selects recordings with actual
+ * tracking segments and removes every match associated with an owner/VAR
+ * footage request before returning playback URLs. No player, creator, roster,
+ * or identity data is selected or returned.
+ */
+router.get("/demo/media", async (req, res): Promise<void> => {
+  const rows = await db
+    .select({
+      recording: recordingsTable,
+      field: fieldsTable,
+      bundleId: recordingTrackingBundlesTable.id,
+    })
+    .from(recordingsTable)
+    .innerJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .innerJoin(
+      recordingTrackingBundlesTable,
+      eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id),
+    )
+    .where(eq(fieldsTable.isHidden, false))
+    .orderBy(desc(recordingsTable.createdAt))
+    .limit(120);
+
+  if (rows.length === 0) {
+    res.json({ panorama: null, clips: [] });
+    return;
+  }
+
+  const bundleIds = [...new Set(rows.map((row) => row.bundleId))];
+  const fieldIds = [...new Set(rows.map((row) => row.field.id))];
+  const [segmentCounts, requests] = await Promise.all([
+    db
+      .select({
+        bundleId: recordingTrackingSegmentsTable.bundleId,
+        segments: count(),
+      })
+      .from(recordingTrackingSegmentsTable)
+      .where(inArray(recordingTrackingSegmentsTable.bundleId, bundleIds))
+      .groupBy(recordingTrackingSegmentsTable.bundleId),
+    db
+      .select({
+        fieldId: footageRequestsTable.fieldId,
+        startLocal: footageRequestsTable.startLocal,
+        videoId: footageRequestsTable.videoId,
+      })
+      .from(footageRequestsTable)
+      .where(inArray(footageRequestsTable.fieldId, fieldIds)),
+  ]);
+
+  const segmentCountByBundle = new Map(segmentCounts.map((row) => [row.bundleId, row.segments]));
+  const context = await createPublicFootageContext(req, fieldIds);
+  const bookingVideoIds = new Set(
+    requests.map((request) => request.videoId).filter((id): id is string => Boolean(id)),
+  );
+  const safeRows = rows.filter(({ recording, field, bundleId }) => {
+    if (!isPublicRecordingInContext(recording, field, context)) return false;
+    if ((segmentCountByBundle.get(bundleId) ?? 0) < 1) return false;
+
+    const recordingVideoId = extractBunnyVideoId(recording.videoUrl);
+    if (recordingVideoId && bookingVideoIds.has(recordingVideoId)) return false;
+
+    // Recordings do not carry a request FK. When a request has no stored video
+    // id, conservatively exclude every recording on that field/date. This may
+    // omit unrelated footage but cannot accidentally expose a booked session.
+    return !requests.some((request) =>
+      request.fieldId === recording.fieldId
+      && request.startLocal.slice(0, 10) === recording.date,
+    );
+  });
+
+  if (safeRows.length === 0) {
+    res.json({ panorama: null, clips: [] });
+    return;
+  }
+
+  const safeRecordingIds = safeRows.map((row) => row.recording.id);
+  const safeRecordingById = new Map(safeRows.map((row) => [row.recording.id, row]));
+  const clipRows = await db
+    .select({
+      id: clipsTable.id,
+      recordingId: clipsTable.recordingId,
+      bunnyVideoId: clipsTable.bunnyVideoId,
+      bunnyPlaybackUrl: clipsTable.bunnyPlaybackUrl,
+      startTime: clipsTable.startTime,
+      endTime: clipsTable.endTime,
+    })
+    .from(clipsTable)
+    .where(inArray(clipsTable.recordingId, safeRecordingIds))
+    .orderBy(desc(clipsTable.id))
+    .limit(8);
+
+  const toDemoMedia = (source: string, preferredVideoId?: string | null) => {
+    let videoId = preferredVideoId ?? null;
+    if (!videoId) {
+      try {
+        const parsed = new URL(source);
+        if (parsed.hostname.toLowerCase() === BUNNY_CDN_HOSTNAME.toLowerCase()) {
+          videoId = extractBunnyVideoId(source);
+        }
+      } catch {
+        // A relative or malformed URL can still be a directly playable video.
+      }
+    }
+    if (videoId?.startsWith("live:")) videoId = null;
+    if (videoId) {
+      return {
+        src: getBunnyProxiedPlaybackUrl(videoId),
+        rawSrc: getBunnyPlaybackUrl(videoId),
+        poster: getBunnyProxiedThumbnailUrl(videoId),
+      };
+    }
+    return { src: source, rawSrc: source, poster: null };
+  };
+
+  const first = safeRows[0];
+  const panorama = {
+    id: first.recording.id,
+    ...toDemoMedia(first.recording.videoUrl),
+    date: first.recording.date,
+    timeSlot: first.recording.timeSlot,
+  };
+
+  const clips = clipRows.flatMap((clip) => {
+    const sourceRecording = safeRecordingById.get(clip.recordingId);
+    if (!sourceRecording) return [];
+    const media = toDemoMedia(
+      clip.bunnyPlaybackUrl ?? sourceRecording.recording.videoUrl,
+      clip.bunnyVideoId,
+    );
+    return [{
+      id: clip.id,
+      ...media,
+      date: sourceRecording.recording.date,
+      timeSlot: sourceRecording.recording.timeSlot,
+      startTime: Number(clip.startTime),
+      endTime: Number(clip.endTime),
+    }];
+  });
+
+  // If a safe tracked recording exists but no editorial clip has been made,
+  // use that real recording as the reel source instead of showing an empty
+  // player. The UI still labels it as a demo sample.
+  if (clips.length === 0) {
+    clips.push({
+      ...panorama,
+      startTime: 0,
+      endTime: 1,
+    });
+  }
+
+  res.json({ panorama, clips });
 });
 
 export default router;

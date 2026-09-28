@@ -29,10 +29,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");
   const isMatchRoom = location.startsWith("/m/");
+  const isGuidedDemo = location === "/demo";
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
-  const hideHeader = isLogin || isImmersivePlayer || isPortfolio || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom;
+  const hideHeader = isLogin || isImmersivePlayer || isPortfolio || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom || isGuidedDemo;
   const hideTabBar = hideHeader || location.startsWith("/f/") || isPublicStandalonePath(location);
   const useTranslucentBar = isWatchFeed;
 
@@ -40,8 +41,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <div
       className={cn(
         "app-shell mx-auto w-full bg-background relative flex flex-col rp-glow",
-        isLegalDocument ? "max-w-[680px]" : "max-w-[440px]",
-        (isLogin || isAuthPage || isWholeGameClaim) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
+        isGuidedDemo ? "max-w-none" : isLegalDocument ? "max-w-[680px]" : "max-w-[440px]",
+        (isLogin || isAuthPage || isWholeGameClaim || isGuidedDemo) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
       )}
     >
       {!hideHeader && (
@@ -70,7 +71,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <main
         className={cn(
           "w-full flex flex-col relative",
-          (isLogin || isAuthPage || isWholeGameClaim) ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden",
+          isGuidedDemo ? "min-h-0 flex-1 overflow-visible" : (isLogin || isAuthPage || isWholeGameClaim) ? "overflow-visible" : "flex-1 min-h-0 overflow-hidden",
         )}
       >
         {children}
