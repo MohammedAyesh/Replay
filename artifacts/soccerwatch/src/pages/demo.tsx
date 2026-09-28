@@ -33,7 +33,6 @@ import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslation } from "@/i18n/context";
 import { demoStrings } from "@/i18n/demo-strings";
 import { HlsPlayer } from "@/components/HlsPlayer";
-import { VarPlayer } from "@/components/var-player/VarPlayer";
 
 export interface DemoClip {
   id: string | number;
@@ -138,7 +137,9 @@ function DemoMediaStage({
   playLabel,
   pauseLabel,
   sampleLabel,
+  loadingLabel,
   unavailableLabel,
+  playbackErrorLabel,
   autoStart = false,
   panoramaMode = "full",
   panoramaAngle = 50,
@@ -148,13 +149,16 @@ function DemoMediaStage({
   playLabel: string;
   pauseLabel: string;
   sampleLabel: string;
+  loadingLabel: string;
   unavailableLabel: string;
+  playbackErrorLabel: string;
   autoStart?: boolean;
   panoramaMode?: "full" | "follow";
   panoramaAngle?: number;
 }) {
   const [started, setStarted] = useState(Boolean(autoStart && (clip?.src || clip?.rawSrc)));
   const [playing, setPlaying] = useState(false);
+  const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const src = clip?.src ?? clip?.rawSrc;
@@ -171,20 +175,27 @@ function DemoMediaStage({
     if (!started || !video) return;
     video.muted = true;
     video.loop = true;
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      setPlaying(true);
+      setFailed(false);
+    };
     const onPause = () => setPlaying(false);
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
-    void video.play().catch(() => {
-      // Keep the large play prompt available if muted autoplay is blocked.
-      setStarted(false);
-      setPlaying(false);
-    });
+    // HlsPlayer attaches Hls.js and starts playback after its manifest loads.
+    // Calling play() on its empty video element here rejects and used to
+    // unmount the player before that could happen.
+    if (!isHls) {
+      void video.play().catch(() => {
+        setFailed(true);
+        setPlaying(false);
+      });
+    }
     return () => {
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
     };
-  }, [started, src]);
+  }, [started, src, isHls]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -214,11 +225,12 @@ function DemoMediaStage({
   useEffect(() => {
     setStarted(Boolean(autoStart && (clip?.src || clip?.rawSrc)));
     setPlaying(false);
+    setReady(false);
     setFailed(false);
   }, [autoStart, clip?.id, clip?.src, clip?.rawSrc]);
 
   return (
-    <div className="relative aspect-video min-h-[220px] overflow-hidden rounded-2xl border border-line bg-[#10231f]" data-testid="stage-demo-media">
+    <div className="relative aspect-video overflow-hidden rounded-2xl border border-line bg-[#10231f]" data-testid="stage-demo-media">
       {!src ? (
         <div className="absolute inset-0 grid place-items-center bg-[var(--replay-raised)] px-6 text-center" data-testid="state-demo-media-unavailable">
           <div>
@@ -238,7 +250,9 @@ function DemoMediaStage({
             videoClassName={`h-full w-full ${framingClass}`}
             videoStyle={framingStyle}
             onPlaybackState={(state) => {
+              setReady(state.ready);
               if (state.error) setFailed(true);
+              else if (state.ready || state.hasFirstSegment) setFailed(false);
             }}
           />
         ) : (
@@ -277,7 +291,12 @@ function DemoMediaStage({
           </button>
         </div>
       )}
-      {started && src && (
+      {started && isHls && !ready && !failed && (
+        <div role="status" className="pointer-events-none absolute inset-0 grid place-items-center bg-black/35 px-4 text-center">
+          <span className="rounded-full bg-black/65 px-3 py-2 text-xs font-semibold text-white">{loadingLabel}</span>
+        </div>
+      )}
+      {started && src && (!isHls || ready) && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <button
             type="button"
@@ -292,7 +311,7 @@ function DemoMediaStage({
                 video.pause();
               }
             }}
-            className="pointer-events-auto grid size-14 place-items-center rounded-full bg-black/55 text-white opacity-0 transition-opacity hover:opacity-100 focus:opacity-100"
+            className={`pointer-events-auto grid size-14 place-items-center rounded-full bg-black/55 text-white transition-opacity ${playing ? "opacity-0 hover:opacity-100 focus:opacity-100" : "opacity-100"}`}
           >
             {playing ? <Pause className="size-5 fill-current" aria-hidden="true" /> : <Play className="ms-0.5 size-5 fill-current" aria-hidden="true" />}
           </button>
@@ -302,7 +321,7 @@ function DemoMediaStage({
         <span className="rounded-full bg-black/50 px-2.5 py-1.5 font-mono text-[9px] text-white/85">{label}</span>
         {clip?.isSample && <span className="rounded-full bg-[var(--replay-floodlight)] px-2.5 py-1.5 font-mono text-[9px] font-bold text-black">{sampleLabel}</span>}
       </div>
-      {failed && <p role="status" className="absolute inset-x-3 bottom-3 rounded-lg bg-black/70 px-3 py-2 text-center text-xs text-white">{unavailableLabel}</p>}
+      {failed && <p role="status" className="absolute inset-x-3 bottom-3 rounded-lg bg-black/70 px-3 py-2 text-center text-xs text-white">{playbackErrorLabel}</p>}
     </div>
   );
 }
@@ -354,6 +373,10 @@ export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsL
   const touchStart = useRef<number | null>(null);
   const panoramaClip = panorama;
   const youtubeEmbedUrl = getYouTubeEmbedUrl(youtubeInput);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [activeStop]);
 
   useEffect(() => {
     setActiveClip(clips[0]);
@@ -431,9 +454,6 @@ export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsL
     { label: copy.roi.matches, value: roiMatches, setter: setRoiMatches, min: 1, max: 30, step: 1 },
     { label: copy.roi.price, value: roiPrice, setter: setRoiPrice, min: 1, max: 10, step: 0.5, suffix: copy.jod },
   ];
-  const panoramaHlsSrc = panoramaClip?.rawSrc?.includes(".m3u8") || panoramaClip?.src?.includes(".m3u8")
-    ? panoramaClip?.src ?? panoramaClip?.rawSrc
-    : undefined;
   const liveTime = `${String(Math.floor(liveSeconds / 60)).padStart(2, "0")}:${String(liveSeconds % 60).padStart(2, "0")}`;
 
   return (
@@ -541,7 +561,9 @@ export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsL
                     playLabel={copy.playVideo}
                     pauseLabel={copy.pause}
                     sampleLabel={copy.sampleFootage}
+                    loadingLabel={copy.videoLoading}
                     unavailableLabel={copy.videoUnavailable}
+                    playbackErrorLabel={copy.videoPlaybackError}
                     autoStart
                     panoramaMode={panoramaMode}
                     panoramaAngle={panoramaAngle}
@@ -643,7 +665,9 @@ export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsL
                       playLabel={copy.playVideo}
                       pauseLabel={copy.pause}
                       sampleLabel={copy.sampleFootage}
+                      loadingLabel={copy.videoLoading}
                       unavailableLabel={copy.videoUnavailable}
+                      playbackErrorLabel={copy.videoPlaybackError}
                       autoStart
                     />
                   </div>
@@ -661,10 +685,10 @@ export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsL
            {activeStop === 3 && (
             <div className="grid gap-6 p-5 sm:p-8">
               <SectionHeading kicker={stepCopy.kicker} title={stepCopy.title} body={stepCopy.body} />
-              <div className="relative overflow-hidden rounded-2xl border border-line bg-[#0b211d] p-4 sm:p-6">
+              <div className="relative overflow-hidden rounded-2xl border border-line bg-raised p-4 sm:p-6" data-testid="card-demo-live">
                 <div className="mb-5 flex items-center justify-between gap-3">
-                   <div className="flex items-center gap-2"><span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--replay-live)] px-2.5 py-1 font-mono text-[9px] font-bold text-white"><span className="size-1.5 rounded-full bg-white" /> {copy.live.badge}</span><span className="font-mono text-[10px] text-white/55">{copy.galaxy} · {copy.panorama.cameraStatus}</span></div>
-                   <div className="flex items-center gap-3 font-mono text-[10px] text-white/65"><span data-testid="text-live-timer">{liveTime}</span><span className="flex items-center gap-1.5"><Eye className="size-3.5" aria-hidden="true" /><span data-testid="text-live-viewers">{viewerCount}</span> {copy.live.viewers}</span></div>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2"><span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--replay-floodlight)]/15 px-2.5 py-1 font-mono text-[9px] font-bold text-[var(--replay-floodlight)]"><Sparkles className="size-3" aria-hidden="true" /> {copy.live.badge}</span><span className="font-mono text-[10px] text-muted-text">{copy.galaxy} · {copy.panorama.cameraStatus}</span></div>
+                    <div className="flex shrink-0 items-center gap-3 font-mono text-[10px] text-muted-text"><span data-testid="text-live-timer">{liveTime}</span><span className="flex items-center gap-1.5"><Eye className="size-3.5" aria-hidden="true" /><span data-testid="text-live-viewers">{viewerCount}</span> {copy.live.viewers}</span></div>
                 </div>
                 <DemoMediaStage
                    clip={panoramaClip}
@@ -672,26 +696,28 @@ export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsL
                   playLabel={copy.playVideo}
                   pauseLabel={copy.pause}
                   sampleLabel={copy.sampleFootage}
+                  loadingLabel={copy.videoLoading}
                   unavailableLabel={copy.videoUnavailable}
+                  playbackErrorLabel={copy.videoPlaybackError}
                   autoStart
                    panoramaMode={panoramaMode}
                    panoramaAngle={panoramaAngle}
                  />
-                 <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-3">
-                   <label htmlFor="demo-youtube-url" className="mb-2 block text-[10px] font-semibold text-white/75">{copy.live.youtubeLabel}</label>
-                   <input id="demo-youtube-url" data-testid="input-youtube-url" value={youtubeInput} onChange={(event) => setYoutubeInput(event.target.value)} placeholder={copy.live.youtubePlaceholder} className="min-h-10 w-full rounded-lg border border-white/10 bg-black/25 px-3 text-xs text-white outline-none placeholder:text-white/35 focus:border-[var(--replay-floodlight)]" inputMode="url" />
+                  <div className="mt-4 rounded-xl border border-line bg-surface p-3">
+                    <label htmlFor="demo-youtube-url" className="mb-2 block text-[10px] font-semibold text-text">{copy.live.youtubeLabel}</label>
+                    <input id="demo-youtube-url" data-testid="input-youtube-url" value={youtubeInput} onChange={(event) => setYoutubeInput(event.target.value)} placeholder={copy.live.youtubePlaceholder} className="min-h-10 w-full rounded-lg border border-line bg-raised px-3 text-xs text-text outline-none placeholder:text-muted-text focus:border-[var(--replay-floodlight)]" inputMode="url" />
                    {youtubeInput && !youtubeEmbedUrl && <p role="status" data-testid="status-youtube-invalid" className="mt-2 text-[10px] text-[var(--replay-live)]">{copy.live.youtubeInvalid}</p>}
                    {youtubeEmbedUrl ? (
-                     <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-black">
+                      <div className="mt-3 overflow-hidden rounded-lg border border-line bg-black">
                        <iframe title={copy.live.youtubePreview} data-testid="iframe-youtube-preview" src={youtubeEmbedUrl} className="aspect-video w-full" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
                      </div>
                    ) : (
-                     <p className="mt-2 text-[10px] leading-4 text-white/45">{copy.live.youtubeSetup}</p>
+                      <p className="mt-2 text-[10px] leading-4 text-muted-text">{copy.live.youtubeSetup}</p>
                    )}
                  </div>
                  <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
-                   <div className="rounded-xl border border-white/10 bg-black/15 p-3"><div className="flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-xs font-semibold text-white"><Radio className="size-4 text-[var(--replay-floodlight)]" /> {copy.live.recorded}</span><span className="font-mono text-[9px] text-[var(--replay-floodlight)]">{copy.simulated}</span></div><p className="mt-2 text-[10px] text-white/50">{panoramaClip?.src || panoramaClip?.rawSrc ? copy.live.demoNote : copy.live.noSourceNote}</p></div>
-                  <div className="rounded-xl border border-white/10 bg-black/15 p-3 sm:min-w-44"><p className="mb-2 font-mono text-[9px] uppercase tracking-[0.12em] text-white/45">{copy.live.ownerControl}</p><button type="button" data-testid="button-toggle-recording" onClick={() => setIsRecording((value) => !value)} className={`flex min-h-10 w-full items-center justify-center gap-2 rounded-lg px-3 text-xs font-bold ${isRecording ? "bg-[var(--replay-live)] text-white" : "bg-[var(--replay-floodlight)] text-black"}`}>{isRecording ? <><Pause className="size-3.5" /> {copy.live.stop}</> : <><Play className="size-3.5 fill-current" /> {copy.live.start}</>}</button><p className="mt-2 text-center font-mono text-[9px] text-white/55">{isRecording ? copy.live.recording : copy.live.stopped}</p></div>
+                    <div className="rounded-xl border border-line bg-surface p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="flex items-center gap-2 text-xs font-semibold text-text"><Radio className="size-4 text-[var(--replay-turf)]" /> {copy.live.recorded}</span><span className="font-mono text-[9px] text-[var(--replay-floodlight)]">{copy.simulated}</span></div><p className="mt-2 text-[10px] text-muted-text">{panoramaClip?.src || panoramaClip?.rawSrc ? copy.live.demoNote : copy.live.noSourceNote}</p></div>
+                   <div className="rounded-xl border border-line bg-surface p-3 sm:min-w-44"><p className="mb-2 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-text">{copy.live.ownerControl}</p><button type="button" data-testid="button-toggle-recording" onClick={() => setIsRecording((value) => !value)} className={`flex min-h-10 w-full items-center justify-center gap-2 rounded-lg px-3 text-xs font-bold ${isRecording ? "bg-[var(--replay-floodlight)] text-[var(--replay-void)]" : "bg-[var(--replay-turf)] text-[var(--replay-void)]"}`}>{isRecording ? <><Pause className="size-3.5" /> {copy.live.stop}</> : <><Play className="size-3.5 fill-current" /> {copy.live.start}</>}</button><p className="mt-2 text-center font-mono text-[9px] text-muted-text">{isRecording ? copy.live.recording : copy.live.stopped}</p></div>
                 </div>
               </div>
               <DemoButton variant="primary" testId="button-next-live" onClick={next} icon={<ArrowRight className="size-4 rtl:rotate-180" />}>{stepCopy.cta}</DemoButton>
@@ -701,27 +727,26 @@ export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsL
           {activeStop === 4 && (
             <div className="grid gap-6 p-5 sm:p-8">
               <SectionHeading kicker={stepCopy.kicker} title={stepCopy.title} body={stepCopy.body} />
-              <div className="relative overflow-hidden rounded-2xl border border-line bg-[#0d1718]">
-                 {panoramaHlsSrc ? (
-                  <VarPlayer
-                     src={panoramaHlsSrc}
-                    title={`${copy.var.title} · ${copy.galaxy}`}
+              <div className="overflow-hidden rounded-2xl border border-line bg-raised p-3 sm:p-4" data-testid="card-demo-var">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-text"><ScanLine className="size-4 text-[var(--replay-turf)]" aria-hidden="true" />{copy.var.title}</div>
+                  <span className="rounded-full bg-[var(--replay-floodlight)]/15 px-2.5 py-1 font-mono text-[9px] font-bold text-[var(--replay-floodlight)]">{copy.simulated}</span>
+                </div>
+                {panoramaClip?.src || panoramaClip?.rawSrc ? (
+                  <DemoMediaStage
+                    clip={panoramaClip}
+                    label={copy.var.title}
+                    playLabel={copy.playVideo}
+                    pauseLabel={copy.pause}
+                    sampleLabel={copy.sampleFootage}
+                    loadingLabel={copy.videoLoading}
+                    unavailableLabel={copy.videoUnavailable}
+                    playbackErrorLabel={copy.videoPlaybackError}
+                    autoStart
+                    panoramaMode={panoramaMode}
+                    panoramaAngle={panoramaAngle}
                   />
-                  ) : panoramaClip?.src || panoramaClip?.rawSrc ? (
-                  <div className="p-3">
-                    <DemoMediaStage
-                       clip={panoramaClip}
-                      label={copy.var.title}
-                      playLabel={copy.playVideo}
-                      pauseLabel={copy.pause}
-                      sampleLabel={copy.sampleFootage}
-                      unavailableLabel={copy.videoUnavailable}
-                      autoStart
-                       panoramaMode={panoramaMode}
-                       panoramaAngle={panoramaAngle}
-                    />
-                  </div>
-                 ) : (
+                ) : (
                    <div className="grid min-h-56 place-items-center p-6 text-center" data-testid="state-var-unavailable">
                      <div>
                        <ScanLine className="mx-auto mb-3 size-7 text-muted-text" aria-hidden="true" />
@@ -730,19 +755,22 @@ export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsL
                      </div>
                    </div>
                 )}
-                <div className="pointer-events-none absolute end-3 top-3 flex flex-wrap justify-end gap-2">
-                   <span className="rounded-full bg-black/65 px-2.5 py-1.5 font-mono text-[9px] text-white/85">{copy.var.decision}: {varDecision === "goal" ? copy.var.goal : varDecision === "noGoal" ? copy.var.noGoal : copy.var.pending}</span>
-                  {varMarked && <span className="animate-pulse rounded-full bg-[var(--replay-turf)] px-2.5 py-1.5 font-mono text-[9px] font-bold text-black">{copy.var.marked}</span>}
-                </div>
-              </div>
-               <div className="grid gap-3">
-                 <div className="flex flex-wrap gap-2">
+                <div className="mt-3 grid gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface p-3">
+                    <div>
+                      <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-text">{copy.var.decision}</p>
+                      <p className="mt-1 text-xs font-semibold text-text">{varDecision === "goal" ? copy.var.goal : varDecision === "noGoal" ? copy.var.noGoal : copy.var.pending}</p>
+                    </div>
+                    {varMarked && <span className="rounded-full bg-[var(--replay-turf)]/15 px-2.5 py-1 font-mono text-[9px] font-bold text-[var(--replay-turf)]">{copy.var.marked}</span>}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
                     <DemoButton testId="button-var-goal" onClick={() => { setVarDecision("goal"); setVarMarked(false); }} disabled={!panoramaClip?.src && !panoramaClip?.rawSrc} variant={varDecision === "goal" ? "primary" : "ghost"}>{copy.var.goal}</DemoButton>
                     <DemoButton testId="button-var-no-goal" onClick={() => { setVarDecision("noGoal"); setVarMarked(false); }} disabled={!panoramaClip?.src && !panoramaClip?.rawSrc} variant={varDecision === "noGoal" ? "primary" : "ghost"}>{copy.var.noGoal}</DemoButton>
-                   <DemoButton testId="button-mark-var" onClick={() => setVarMarked(true)} disabled={varDecision === "pending"} icon={varMarked ? <Check className="size-4" /> : <ScanLine className="size-4" />}>{varMarked ? copy.var.complete : copy.var.mark}</DemoButton>
-                 </div>
-                 <p className="max-w-[390px] text-[10px] leading-4 text-muted-text"><LockKeyhole className="me-1 inline size-3 text-[var(--replay-turf)]" />{copy.var.privateBody}</p>
-               </div>
+                    <DemoButton testId="button-mark-var" onClick={() => setVarMarked(true)} disabled={varDecision === "pending"} icon={varMarked ? <Check className="size-4" /> : <ScanLine className="size-4" />}>{varMarked ? copy.var.complete : copy.var.mark}</DemoButton>
+                  </div>
+                  <p className="max-w-[390px] text-[10px] leading-4 text-muted-text"><LockKeyhole className="me-1 inline size-3 text-[var(--replay-turf)]" />{copy.var.privateBody}</p>
+                </div>
+              </div>
               <DemoButton variant="primary" testId="button-next-var" onClick={next} icon={<ArrowRight className="size-4 rtl:rotate-180" />}>{stepCopy.cta}</DemoButton>
             </div>
           )}
