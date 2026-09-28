@@ -1,0 +1,79 @@
+Use free mode.
+
+Goal: after signing in with Clerk, the user must land in their own account every time. They must never land in the placeholder account or on the "تعذّر تأكيد حسابك" panel. Your last change added that recovery panel, which is fine to keep, but the root cause is still there and I still cannot sign in. This time I need diagnosis from real sign-in attempts while you watch the logs, then a root-cause fix.
+
+Rules
+
+Do not run schema pushes yourself. If a push is needed, give me the command and I will run it in the Shell.
+Additions only: never drop, rename or truncate anything, and never edit, merge or delete user rows. That includes the split admin rows 314 and 196.
+No auth bypass, impersonation, login-as or test-only shortcuts.
+Never print secrets, keys or token values in chat or logs. Key prefixes (pk_test_/pk_live_ plus the decoded instance domain) and cookie/claim metadata are fine.
+UI stays as it is. Only change what the fix requires.
+
+Part 1: Clear the preview blocker first
+
+Earlier you saw /api/auth/me return 500 in dev because users.nation is missing. Compare every column the Drizzle schema declares on users (and any table /auth/me touches) against the actual dev database.
+Tell me which database the dev app is connected to (host name only), and list every missing column.
+If columns are missing, give me the exact push command and stop so I can run it. After I run it, confirm /api/auth/me no longer returns 500 before moving on.
+
+Part 2: Add temporary diagnostic logging (secret-safe, easy to remove later)
+
+On every /api/auth/me request, and on every request the local-user resolution rejects, log one structured line with:
+
+Host, the leftmost x-forwarded-host, Origin and Referer, and the host that getClerkProxyHost() returned.
+The publishable-key instance the server derived for this request, shown as prefix plus decoded frontend-API domain (for example pk_live_ → clerk.replayjo.com). Also say whether CLERK_SECRET_KEY is test or live, and whether that pairing matches.
+The names of the Clerk cookies received (__session, __session_*, __client_uat, __client_uat_*, __clerk_db_jwt). Never log their values.
+The __session JWT claims, decoded without verification: iss, azp, sid (prefix only), iat, exp, the seconds until expiry relative to server time, and the server's current UTC time.
+Clerk's verdict for the request: getAuth(req) userId present or absent, x-clerk-auth-status, x-clerk-auth-reason and x-clerk-auth-message (or turn on clerkMiddleware debug: true temporarily).
+Whether an Authorization header was sent.
+The final outcome: local user id, 401 with reason, or 500 with error.
+
+Also log every request through the /api/__clerk proxy in production: method, path, upstream status, and duration. Session refresh failures (/v1/client/sessions/*/tokens, touch) show up there.
+
+Also note which environment each log line comes from: the dev preview, or the published app on replayjo.replit.app or replayjo.com.
+
+Part 3: Watch the logs live while I sign in
+
+Tell me when logging is live. I will then:
+
+(a) sign in from a fresh private window in the dev preview;
+(b) stay on the page for 2+ minutes and navigate;
+(c) reload;
+(d) sign out and back in;
+(e) repeat on the published app if you need it.
+
+For each attempt, report: host, derived key instance, cookies present, token exp/iat versus server time, azp, Clerk auth status and reason, and the /me outcome.
+
+Earlier you logged 27 production events and 6 dev events with the pattern "cookie present, no Authorization header, no Clerk user id". I want to know exactly why Clerk rejects that cookie. Is it:
+
+an expired token that was never refreshed;
+a token issued by a different Clerk instance than the key the server derived (for example the browser uses clerk.replayjo.com while the server derives clerk.replayjo.replit.app, or a dev/live mix);
+an azp or authorized-parties mismatch;
+iat in the future (clock skew);
+a handshake the fetch request cannot complete;
+a cookie blocked or partitioned because the preview runs inside an iframe;
+something else?
+
+Part 4: Check the config
+
+Compare the browser-side key (publishableKeyFromHost(window.location.hostname, …)) with the server-side key (publishableKeyFromHost(forwarded host, …)) for each host we serve: the dev preview domain, replayjo.replit.app and replayjo.com. Confirm they always resolve to the same Clerk instance, and that CLERK_SECRET_KEY belongs to that same instance.
+Confirm VITE_CLERK_PROXY_URL and the proxy's Clerk-Proxy-Url header match what the Clerk dashboard has configured for each domain.
+Check whether the published app is reachable on more than one host, each deriving a different Clerk instance. If so, say which host should be canonical.
+
+Part 5: Fix the root cause, then verify
+
+Once the logs show the cause, implement the fix directly. Options to review, not orders:
+
+Have the web API client send Authorization: Bearer <await getToken()> on every request, using Clerk's getToken() (which refreshes expired tokens) through the existing setAuthTokenGetter hook. Cover every client the app uses, not just Orval's. Keep cookies as a fallback. This removes the dependence on a 60-second cookie being fresh.
+Make the key and instance derivation identical on client and server for each host, or pin one canonical host and redirect the others.
+Refetch /me when Clerk's session or token changes, instead of giving up after 3 retries.
+Set authorizedParties correctly for every legitimate origin.
+
+Then ask me to repeat the sign-in steps from Part 3, and show me the log lines proving each attempt resolved to my real user id. Remove or gate the verbose diagnostics behind an env flag once it's fixed.
+
+Report back in under 200 words:
+
+the root cause, with the log evidence;
+what you changed (files);
+the per-attempt results;
+anything I must do, such as a push command or a Clerk dashboard setting.
