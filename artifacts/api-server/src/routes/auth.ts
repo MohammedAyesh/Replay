@@ -3,54 +3,74 @@ import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { db, usersTable, academiesTable, fieldOwnersTable } from "@workspace/db";
 import { GetMeResponse, LoginAsGuestResponse } from "@workspace/api-zod";
-import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { getLocalUserRecord, getUserResolution, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { GUEST_COOKIE_OPTIONS } from "../lib/cookies";
+import { recordAuthMeError, recordClerkAuthOutcome } from "../lib/clerkAuthDiagnostics";
 
 const router: IRouter = Router();
 
 router.get("/auth/me", async (req, res): Promise<void> => {
-  const user = await getLocalUserRecord(req);
-  if (!user) {
-    unauthenticatedResponse(res, req);
-    return;
+  try {
+    const user = await getLocalUserRecord(req);
+    if (!user) {
+      unauthenticatedResponse(res, req);
+      return;
+    }
+
+    let liveAccess = false;
+    if (user.academyId) {
+      const [academy] = await db
+        .select({ liveAccess: academiesTable.liveAccess })
+        .from(academiesTable)
+        .where(eq(academiesTable.id, user.academyId));
+      liveAccess = academy?.liveAccess ?? false;
+    }
+
+    const ownedFields = await db
+      .select({ fieldId: fieldOwnersTable.fieldId })
+      .from(fieldOwnersTable)
+      .where(eq(fieldOwnersTable.userId, user.id));
+
+    const resolution = getUserResolution(req);
+    recordClerkAuthOutcome(req, {
+      type: "local_user_resolved",
+      localUserId: user.id,
+      ...(resolution
+        ? {
+            localUserResolution: {
+              reason: resolution.reason,
+              diagnostics: { ...resolution.diagnostics },
+            },
+          }
+        : {}),
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json(GetMeResponse.parse({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      isGuest: user.isGuest,
+      isAdmin: user.isAdmin,
+      phone: user.phone ?? null,
+      position: user.position ?? null,
+      age: user.age ?? null,
+      gender: user.gender ?? null,
+      profileComplete: user.profileComplete,
+      preferredLocale: user.preferredLocale ?? null,
+      recordingConsent: user.recordingConsent,
+      recordingConsentAt: user.recordingConsentAt?.toISOString() ?? null,
+      socialMediaConsent: user.socialMediaConsent,
+      socialMediaConsentAt: user.socialMediaConsentAt?.toISOString() ?? null,
+      consentRequired: user.consentRequired,
+      academyId: user.academyId ?? null,
+      liveAccess,
+      ownedFieldIds: ownedFields.map(({ fieldId }) => fieldId),
+    }));
+  } catch (error) {
+    recordAuthMeError(req, error);
+    throw error;
   }
-
-  let liveAccess = false;
-  if (user.academyId) {
-    const [academy] = await db
-      .select({ liveAccess: academiesTable.liveAccess })
-      .from(academiesTable)
-      .where(eq(academiesTable.id, user.academyId));
-    liveAccess = academy?.liveAccess ?? false;
-  }
-
-  const ownedFields = await db
-    .select({ fieldId: fieldOwnersTable.fieldId })
-    .from(fieldOwnersTable)
-    .where(eq(fieldOwnersTable.userId, user.id));
-
-  res.setHeader("Cache-Control", "no-store");
-  res.json(GetMeResponse.parse({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    isGuest: user.isGuest,
-    isAdmin: user.isAdmin,
-    phone: user.phone ?? null,
-    position: user.position ?? null,
-    age: user.age ?? null,
-    gender: user.gender ?? null,
-    profileComplete: user.profileComplete,
-    preferredLocale: user.preferredLocale ?? null,
-    recordingConsent: user.recordingConsent,
-    recordingConsentAt: user.recordingConsentAt?.toISOString() ?? null,
-    socialMediaConsent: user.socialMediaConsent,
-    socialMediaConsentAt: user.socialMediaConsentAt?.toISOString() ?? null,
-    consentRequired: user.consentRequired,
-    academyId: user.academyId ?? null,
-    liveAccess,
-    ownedFieldIds: ownedFields.map(({ fieldId }) => fieldId),
-  }));
 });
 
 router.post("/auth/guest", async (req, res): Promise<void> => {

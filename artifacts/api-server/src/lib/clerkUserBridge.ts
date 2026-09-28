@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import type { Request } from "express";
 import { logger } from "./logger";
+import { logRejectedLocalUserResolution, recordClerkAuthOutcome } from "./clerkAuthDiagnostics";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -418,15 +419,7 @@ async function getGuestUserRecord(req: Request) {
 }
 
 function logResolutionFailure(req: Request, resolution: UserResolution): void {
-  logger.warn(
-    {
-      path: req.originalUrl?.split("?")[0] ?? req.url?.split("?")[0],
-      method: req.method,
-      reason: resolution.reason,
-      diagnostics: resolution.diagnostics,
-    },
-    "Local user resolution rejected",
-  );
+  logRejectedLocalUserResolution(req, resolution.reason, { ...resolution.diagnostics });
 }
 
 function saveResolution(req: Request, resolution: UserResolution): UserResolution {
@@ -440,14 +433,27 @@ export function getUserResolution(req: Request): UserResolution | null {
 }
 
 export function unauthenticatedResponse(
-  res: { status: (code: number) => { json: (body: unknown) => unknown } },
+  res: import("express").Response,
   req: Request,
   error = "Unauthenticated",
 ): void {
   const resolution = getUserResolution(req);
+  const reason = resolution?.reason ?? "no_credentials";
   res.status(401).json({
     error,
-    reason: resolution?.reason ?? "no_credentials",
+    reason,
+  });
+  recordClerkAuthOutcome(req, {
+    type: "unauthenticated",
+    reason,
+    ...(resolution
+      ? {
+          localUserResolution: {
+            reason: resolution.reason,
+            diagnostics: { ...resolution.diagnostics },
+          },
+        }
+      : {}),
   });
 }
 

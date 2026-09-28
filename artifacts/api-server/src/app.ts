@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
@@ -13,6 +13,12 @@ import router from "./routes";
 import shareRouter from "./routes/share";
 import { logger } from "./lib/logger";
 import { COOKIE_SECRET } from "./lib/cookies";
+import {
+  isAuthMeRequest,
+  logClerkProxyRequest,
+  observeClerkAuthMeRequest,
+  recordAuthMeError,
+} from "./lib/clerkAuthDiagnostics";
 
 const app: Express = express();
 
@@ -36,6 +42,8 @@ app.use(
   }),
 );
 
+app.use(observeClerkAuthMeRequest);
+app.use(CLERK_PROXY_PATH, logClerkProxyRequest);
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
 /**
@@ -109,5 +117,13 @@ app.use("/api", (_req, res, next) => {
 });
 
 app.use("/api", router);
+
+// Preserve Express's default error handling while retaining a sanitized error
+// summary when Clerk or another middleware fails before /api/auth/me reaches
+// its route handler.
+app.use((error: unknown, req: Request, _res: Response, next: NextFunction) => {
+  if (isAuthMeRequest(req)) recordAuthMeError(req, error);
+  next(error);
+});
 
 export default app;
