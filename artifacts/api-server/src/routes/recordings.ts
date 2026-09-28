@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { count, desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import {
   db,
   clipsTable,
@@ -7,7 +7,6 @@ import {
   footageRequestsTable,
   recordingsTable,
   recordingTrackingBundlesTable,
-  recordingTrackingSegmentsTable,
   usersTable,
 } from "@workspace/db";
 import { GetRecordingParams, GetRecordingResponse } from "@workspace/api-zod";
@@ -183,25 +182,19 @@ router.get("/recordings/:id", async (req, res): Promise<void> => {
 /**
  * A deliberately small, anonymous media feed for the guided product demo.
  *
- * Unlike the general public archive, this only selects recordings with actual
- * tracking segments and removes every match associated with an owner/VAR
- * footage request before returning playback URLs. No player, creator, roster,
- * or identity data is selected or returned.
+ * Only the explicitly named venue's publicly visible recordings are eligible.
+ * Exclude all owner/VAR footage-request dates before returning playback URLs.
+ * No player, creator, roster, or identity data is selected or returned.
  */
 router.get("/demo/media", async (req, res): Promise<void> => {
   const rows = await db
     .select({
       recording: recordingsTable,
       field: fieldsTable,
-      bundleId: recordingTrackingBundlesTable.id,
     })
     .from(recordingsTable)
     .innerJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
-    .innerJoin(
-      recordingTrackingBundlesTable,
-      eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id),
-    )
-    .where(eq(fieldsTable.isHidden, false))
+    .where(eq(fieldsTable.name, "Jordan Galaxy"))
     .orderBy(desc(recordingsTable.createdAt))
     .limit(120);
 
@@ -210,42 +203,33 @@ router.get("/demo/media", async (req, res): Promise<void> => {
     return;
   }
 
-  const bundleIds = [...new Set(rows.map((row) => row.bundleId))];
   const fieldIds = [...new Set(rows.map((row) => row.field.id))];
-  const [segmentCounts, requests] = await Promise.all([
-    db
-      .select({
-        bundleId: recordingTrackingSegmentsTable.bundleId,
-        segments: count(),
-      })
-      .from(recordingTrackingSegmentsTable)
-      .where(inArray(recordingTrackingSegmentsTable.bundleId, bundleIds))
-      .groupBy(recordingTrackingSegmentsTable.bundleId),
-    db
-      .select({
-        fieldId: footageRequestsTable.fieldId,
-        startLocal: footageRequestsTable.startLocal,
-        videoId: footageRequestsTable.videoId,
-      })
-      .from(footageRequestsTable)
-      .where(inArray(footageRequestsTable.fieldId, fieldIds)),
-  ]);
+  const requests = await db
+    .select({
+      fieldId: footageRequestsTable.fieldId,
+      startLocal: footageRequestsTable.startLocal,
+      videoId: footageRequestsTable.videoId,
+    })
+    .from(footageRequestsTable)
+    .where(inArray(footageRequestsTable.fieldId, fieldIds));
 
-  const segmentCountByBundle = new Map(segmentCounts.map((row) => [row.bundleId, row.segments]));
   const context = await createPublicFootageContext(req, fieldIds);
+  // This is a public showcase, even when the viewer happens to be an admin.
+  // Do not let an admin session bypass the field/date visibility schedule.
+  const publicContext = { ...context, isAdmin: false };
   const bookingVideoIds = new Set(
     requests.map((request) => request.videoId).filter((id): id is string => Boolean(id)),
   );
-  const safeRows = rows.filter(({ recording, field, bundleId }) => {
-    if (!isPublicRecordingInContext(recording, field, context)) return false;
-    if ((segmentCountByBundle.get(bundleId) ?? 0) < 1) return false;
+  const safeRows = rows.filter(({ recording, field }) => {
+    if (!isPublicRecordingInContext(recording, field, publicContext)) return false;
+    if (!recording.videoUrl) return false;
 
     const recordingVideoId = extractBunnyVideoId(recording.videoUrl);
     if (recordingVideoId && bookingVideoIds.has(recordingVideoId)) return false;
 
     // Recordings do not carry a request FK. When a request has no stored video
-    // id, conservatively exclude every recording on that field/date. This may
-    // omit unrelated footage but cannot accidentally expose a booked session.
+    // id, we cannot reliably distinguish its footage. Exclude every recording
+    // on a booked field/date, even if another request has a different video id.
     return !requests.some((request) =>
       request.fieldId === recording.fieldId
       && request.startLocal.slice(0, 10) === recording.date,
@@ -265,6 +249,7 @@ router.get("/demo/media", async (req, res): Promise<void> => {
       recordingId: clipsTable.recordingId,
       bunnyVideoId: clipsTable.bunnyVideoId,
       bunnyPlaybackUrl: clipsTable.bunnyPlaybackUrl,
+      momentLabel: clipsTable.momentLabel,
       startTime: clipsTable.startTime,
       endTime: clipsTable.endTime,
     })
@@ -307,30 +292,23 @@ router.get("/demo/media", async (req, res): Promise<void> => {
   const clips = clipRows.flatMap((clip) => {
     const sourceRecording = safeRecordingById.get(clip.recordingId);
     if (!sourceRecording) return [];
+    const hasDedicatedPlayback = Boolean(clip.bunnyPlaybackUrl || clip.bunnyVideoId);
     const media = toDemoMedia(
       clip.bunnyPlaybackUrl ?? sourceRecording.recording.videoUrl,
       clip.bunnyVideoId,
     );
     return [{
       id: clip.id,
+      title: clip.momentLabel,
       ...media,
       date: sourceRecording.recording.date,
       timeSlot: sourceRecording.recording.timeSlot,
       startTime: Number(clip.startTime),
       endTime: Number(clip.endTime),
+      playbackStartTime: hasDedicatedPlayback ? undefined : Number(clip.startTime),
+      playbackEndTime: hasDedicatedPlayback ? undefined : Number(clip.endTime),
     }];
   });
-
-  // If a safe tracked recording exists but no editorial clip has been made,
-  // use that real recording as the reel source instead of showing an empty
-  // player. The UI still labels it as a demo sample.
-  if (clips.length === 0) {
-    clips.push({
-      ...panorama,
-      startTime: 0,
-      endTime: 1,
-    });
-  }
 
   res.json({ panorama, clips });
 });

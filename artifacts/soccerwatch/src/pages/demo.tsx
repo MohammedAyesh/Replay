@@ -1,26 +1,19 @@
 import {
-  Activity,
-  ArrowLeft,
   ArrowRight,
   Banknote,
   Check,
   ChevronLeft,
   ChevronRight,
-  CircleHelp,
   Clock3,
   Copy,
   Eye,
   Film,
-  Gauge,
   Globe2,
   Heart,
   Link2,
   LockKeyhole,
-  Maximize2,
-  Minus,
   Pause,
   Play,
-  Plus,
   QrCode,
   Radio,
   RotateCcw,
@@ -28,17 +21,13 @@ import {
   Send,
   Share2,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   Star,
   Target,
-  Timer,
   TrendingUp,
   Users,
   Video,
-  Wifi,
   X,
-  Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslation } from "@/i18n/context";
@@ -59,26 +48,18 @@ export interface DemoClip {
   isSample?: boolean;
   startTime?: number;
   endTime?: number;
+  playbackStartTime?: number;
+  playbackEndTime?: number;
 }
 
 export interface SoccerWatchDemoProps {
   clips: DemoClip[];
+  panorama?: DemoClip;
   onOpenClaim: (clip?: DemoClip) => void;
   isClipsLoading?: boolean;
 }
 
-const STOP_COUNT = 11;
-
-const pitchLines = (
-  <div className="pointer-events-none absolute inset-0 opacity-70" aria-hidden="true">
-    <div className="absolute inset-[7%] rounded-[8%] border border-white/40" />
-    <div className="absolute inset-y-[7%] start-1/2 w-px -translate-x-1/2 bg-white/35" />
-    <div className="absolute start-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/45" />
-    <div className="absolute start-[7%] top-1/2 h-20 w-[13%] -translate-y-1/2 rounded-e-[50%] border border-sky-100/40 border-s" />
-    <div className="absolute end-[7%] top-1/2 h-20 w-[13%] -translate-y-1/2 rounded-s-[50%] border border-sky-100/40 border-e" />
-    <div className="absolute start-[14%] top-[47%] h-2 w-2 rounded-full bg-white/70" />
-  </div>
-);
+const STOP_COUNT = 9;
 
 function DemoLogo() {
   return (
@@ -159,6 +140,8 @@ function DemoMediaStage({
   sampleLabel,
   unavailableLabel,
   autoStart = false,
+  panoramaMode = "full",
+  panoramaAngle = 50,
 }: {
   clip?: DemoClip;
   label: string;
@@ -167,13 +150,21 @@ function DemoMediaStage({
   sampleLabel: string;
   unavailableLabel: string;
   autoStart?: boolean;
+  panoramaMode?: "full" | "follow";
+  panoramaAngle?: number;
 }) {
-  const [started, setStarted] = useState(Boolean(autoStart && clip?.src));
+  const [started, setStarted] = useState(Boolean(autoStart && (clip?.src || clip?.rawSrc)));
   const [playing, setPlaying] = useState(false);
   const [failed, setFailed] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const src = clip?.src;
+  const src = clip?.src ?? clip?.rawSrc;
   const isHls = Boolean(src && (src.includes(".m3u8") || clip?.rawSrc?.includes(".m3u8")));
+  const framingStyle = {
+    objectPosition: `${panoramaMode === "follow" ? panoramaAngle : 50}% center`,
+    transform: panoramaMode === "follow" ? "scale(1.65)" : "scale(1)",
+    transformOrigin: `${panoramaAngle}% center`,
+  };
+  const framingClass = panoramaMode === "follow" ? "object-cover" : "object-contain";
 
   useEffect(() => {
     const video = videoRef.current;
@@ -196,14 +187,46 @@ function DemoMediaStage({
   }, [started, src]);
 
   useEffect(() => {
-    setStarted(Boolean(autoStart && clip?.src));
+    const video = videoRef.current;
+    const start = clip?.playbackStartTime;
+    const end = clip?.playbackEndTime;
+    if (!started || !video || start === undefined || end === undefined || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+    let didSeek = false;
+    const seekToStart = () => {
+      if (didSeek || !Number.isFinite(video.duration) || video.duration <= start) return;
+      didSeek = true;
+      video.currentTime = start;
+    };
+    const loopClip = () => {
+      if (video.currentTime >= end) video.currentTime = start;
+    };
+    video.addEventListener("loadedmetadata", seekToStart);
+    video.addEventListener("durationchange", seekToStart);
+    video.addEventListener("timeupdate", loopClip);
+    seekToStart();
+    return () => {
+      video.removeEventListener("loadedmetadata", seekToStart);
+      video.removeEventListener("durationchange", seekToStart);
+      video.removeEventListener("timeupdate", loopClip);
+    };
+  }, [started, src, clip?.playbackStartTime, clip?.playbackEndTime]);
+
+  useEffect(() => {
+    setStarted(Boolean(autoStart && (clip?.src || clip?.rawSrc)));
     setPlaying(false);
     setFailed(false);
-  }, [autoStart, clip?.id, clip?.src]);
+  }, [autoStart, clip?.id, clip?.src, clip?.rawSrc]);
 
   return (
     <div className="relative aspect-video min-h-[220px] overflow-hidden rounded-2xl border border-line bg-[#10231f]" data-testid="stage-demo-media">
-      {started && src ? (
+      {!src ? (
+        <div className="absolute inset-0 grid place-items-center bg-[var(--replay-raised)] px-6 text-center" data-testid="state-demo-media-unavailable">
+          <div>
+            <Film className="mx-auto mb-3 size-7 text-[var(--replay-turf)]" aria-hidden="true" />
+            <p className="max-w-[310px] text-xs leading-5 text-muted-text">{unavailableLabel}</p>
+          </div>
+        </div>
+      ) : started ? (
         isHls ? (
           <HlsPlayer
             ref={videoRef}
@@ -212,7 +235,8 @@ function DemoMediaStage({
             controls
             showDvrControls={false}
             showStatusOverlays={false}
-            videoClassName="h-full w-full object-contain"
+            videoClassName={`h-full w-full ${framingClass}`}
+            videoStyle={framingStyle}
             onPlaybackState={(state) => {
               if (state.error) setFailed(true);
             }}
@@ -228,25 +252,20 @@ function DemoMediaStage({
             playsInline
             controls
             onError={() => setFailed(true)}
-            className="h-full w-full object-contain"
+            style={framingStyle}
+            className={`h-full w-full ${framingClass}`}
           />
         )
       ) : (
         <div className="absolute inset-0 bg-[linear-gradient(125deg,#183a31,#2e7555_50%,#13231f)]">
           {clip?.poster ? (
             <img src={clip.poster} alt="" className="h-full w-full object-cover opacity-65" />
-          ) : (
-            pitchLines
-          )}
+          ) : <div className="absolute inset-0 grid place-items-center bg-[var(--replay-raised)]"><Film className="size-8 text-muted-text" aria-hidden="true" /></div>}
           <button
             type="button"
             aria-label={playLabel}
             data-testid="button-play-demo-video"
             onClick={() => {
-              if (!src) {
-                setFailed(true);
-                return;
-              }
               setStarted(true);
             }}
             className="absolute inset-0 grid place-items-center bg-black/20 text-white transition-colors hover:bg-black/35"
@@ -288,7 +307,27 @@ function DemoMediaStage({
   );
 }
 
-export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = false }: SoccerWatchDemoProps) {
+function getYouTubeEmbedUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed.match(/^https?:\/\//i) ? trimmed : `https://${trimmed}`);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    if (host === "youtu.be") {
+      const id = parsed.pathname.match(/^\/([A-Za-z0-9_-]{11})\/?$/)?.[1];
+      return id ? `https://www.youtube-nocookie.com/embed/${id}?rel=0` : null;
+    }
+    if (host !== "youtube.com" && host !== "m.youtube.com") return null;
+    const watchId = parsed.pathname === "/watch" ? parsed.searchParams.get("v") : null;
+    const liveMatch = parsed.pathname.match(/^\/live\/([A-Za-z0-9_-]{11})\/?$/);
+    const id = watchId ?? liveMatch?.[1];
+    return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? `https://www.youtube-nocookie.com/embed/${id}?rel=0` : null;
+  } catch {
+    return null;
+  }
+}
+
+export default function SoccerWatchDemo({ clips, panorama, onOpenClaim, isClipsLoading = false }: SoccerWatchDemoProps) {
   const { locale } = useTranslation();
   const { setLocale } = useLocale();
   const copy = demoStrings[locale === "ar" ? "ar" : "en"];
@@ -301,18 +340,20 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
   const [panoramaMode, setPanoramaMode] = useState<"full" | "follow">("full");
   const [panoramaAngle, setPanoramaAngle] = useState(50);
   const [viewerCount, setViewerCount] = useState(47);
+  const [liveSeconds, setLiveSeconds] = useState(0);
   const [isRecording, setIsRecording] = useState(true);
+  const [varDecision, setVarDecision] = useState<"pending" | "goal" | "noGoal">("pending");
   const [varMarked, setVarMarked] = useState(false);
+  const [youtubeInput, setYoutubeInput] = useState("");
   const [requestSent, setRequestSent] = useState(false);
   const [showQr, setShowQr] = useState(false);
   const [billingPaid, setBillingPaid] = useState(false);
   const [roiMatches, setRoiMatches] = useState(12);
-  const [roiBuyerPercent, setRoiBuyerPercent] = useState(35);
-  const [roiPrice, setRoiPrice] = useState(2.5);
-  const [clearedQueue, setClearedQueue] = useState<number[]>([]);
+  const [roiPrice, setRoiPrice] = useState(2);
   const [roomCopied, setRoomCopied] = useState(false);
-  const [pilotStarted, setPilotStarted] = useState(false);
   const touchStart = useRef<number | null>(null);
+  const panoramaClip = panorama;
+  const youtubeEmbedUrl = getYouTubeEmbedUrl(youtubeInput);
 
   useEffect(() => {
     setActiveClip(clips[0]);
@@ -324,6 +365,12 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
     }, 3200);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const timer = window.setInterval(() => setLiveSeconds((seconds) => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [isRecording]);
 
   useEffect(() => {
     if (panoramaMode !== "follow") return;
@@ -343,19 +390,19 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
     setPanoramaMode("full");
     setPanoramaAngle(50);
     setIsRecording(true);
+    setLiveSeconds(0);
+    setVarDecision("pending");
     setVarMarked(false);
+    setYoutubeInput("");
     setRequestSent(false);
     setShowQr(false);
     setBillingPaid(false);
-    setClearedQueue([]);
     setLikedClips({});
     setSavedClips({});
     setRoomCopied(false);
-    setPilotStarted(false);
     setViewerCount(47);
     setRoiMatches(12);
-    setRoiBuyerPercent(35);
-    setRoiPrice(2.5);
+    setRoiPrice(2);
     setActiveClip(clips[0]);
   };
 
@@ -378,14 +425,16 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
   };
 
   const toggleLocale = () => setLocale(locale === "ar" ? "en" : "ar");
-  const averagePlayersPerMatch = 18;
-  const totalLift = Math.round(roiMatches * 4 * averagePlayersPerMatch * (roiBuyerPercent / 100) * roiPrice);
+  const totalLift = Math.round(roiMatches * 4 * roiPrice);
   const stepCopy = copy.steps[activeStop];
   const roiControls: Array<{ label: string; value: number; setter: (value: number) => void; min: number; max: number; step: number; suffix?: string }> = [
     { label: copy.roi.matches, value: roiMatches, setter: setRoiMatches, min: 1, max: 30, step: 1 },
-    { label: copy.roi.buying, value: roiBuyerPercent, setter: setRoiBuyerPercent, min: 5, max: 80, step: 5, suffix: "%" },
-    { label: copy.roi.price, value: roiPrice, setter: setRoiPrice, min: 0.5, max: 5, step: 0.5, suffix: copy.jod },
+    { label: copy.roi.price, value: roiPrice, setter: setRoiPrice, min: 1, max: 10, step: 0.5, suffix: copy.jod },
   ];
+  const panoramaHlsSrc = panoramaClip?.rawSrc?.includes(".m3u8") || panoramaClip?.src?.includes(".m3u8")
+    ? panoramaClip?.src ?? panoramaClip?.rawSrc
+    : undefined;
+  const liveTime = `${String(Math.floor(liveSeconds / 60)).padStart(2, "0")}:${String(liveSeconds % 60).padStart(2, "0")}`;
 
   return (
     <div
@@ -424,7 +473,6 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
             >
               <Globe2 className="size-4" aria-hidden="true" />
               <span>{locale === "ar" ? "AR" : "EN"}</span>
-              <span className="text-[10px] text-text/50">↔</span>
             </button>
             <button
               type="button"
@@ -443,7 +491,7 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
         <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-[var(--replay-floodlight)]/15 bg-[var(--replay-floodlight)]/5 px-3 py-2.5 text-[10px] text-[var(--replay-floodlight)]" data-testid="banner-sample-data">
           <div className="flex items-center gap-2">
             <Sparkles className="size-3.5 shrink-0" aria-hidden="true" />
-            <span>{copy.sampleBanner}</span>
+            <span>{panoramaClip?.src || panoramaClip?.rawSrc || clips.some((clip) => clip.src || clip.rawSrc) ? copy.sampleBanner : copy.noMediaBanner}</span>
           </div>
           <span className="hidden shrink-0 font-mono tracking-[0.12em] sm:inline">{copy.brand}</span>
         </div>
@@ -488,19 +536,20 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
               <div className="grid gap-3">
                 <div className="relative">
                   <DemoMediaStage
-                    clip={clips[0]}
+                    clip={panoramaClip}
                     label={copy.panorama.cameraStatus}
                     playLabel={copy.playVideo}
                     pauseLabel={copy.pause}
                     sampleLabel={copy.sampleFootage}
                     unavailableLabel={copy.videoUnavailable}
                     autoStart
+                    panoramaMode={panoramaMode}
+                    panoramaAngle={panoramaAngle}
                   />
-                  <span className="pointer-events-none absolute end-3 top-3 rounded-full border border-[var(--replay-floodlight)]/30 bg-black/55 px-3 py-1.5 font-mono text-[9px] text-[var(--replay-floodlight)] backdrop-blur-md">{copy.panorama.overview} · {copy.simulated}</span>
-                  <span
-                    className="pointer-events-none absolute top-[43%] size-4 rounded-full bg-[var(--replay-floodlight)] shadow-[0_0_0_7px_rgba(212,255,79,.14)] transition-transform duration-500"
-                    style={{ insetInlineStart: `${panoramaMode === "follow" ? panoramaAngle : 50}%`, transform: "translate(-50%, -50%)" }}
-                  />
+                  {(panoramaClip?.src || panoramaClip?.rawSrc) && <>
+                    <span className="pointer-events-none absolute end-3 top-3 rounded-full border border-[var(--replay-floodlight)]/30 bg-black/55 px-3 py-1.5 font-mono text-[9px] text-[var(--replay-floodlight)] backdrop-blur-md">{copy.panorama.overview} · {copy.simulated}</span>
+                    <span className="pointer-events-none absolute top-[43%] size-4 rounded-full bg-[var(--replay-floodlight)] shadow-[0_0_0_7px_rgba(212,255,79,.14)] transition-transform duration-500" style={{ insetInlineStart: `${panoramaMode === "follow" ? panoramaAngle : 50}%`, transform: "translate(-50%, -50%)" }} />
+                  </>}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="max-w-[300px] text-[10px] leading-4 text-muted-text">{copy.panorama.dragHint}</p>
@@ -536,6 +585,7 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
                 <div>
                   <p className="font-display text-2xl font-bold text-text" data-testid="text-clips-title">{copy.clips.title}</p>
                   <p className="mt-1 text-xs text-muted-text">{copy.clips.subtitle}</p>
+                   <p className="mt-3 max-w-[420px] text-[10px] leading-4 text-muted-text">{copy.clips.detection}</p>
                 </div>
                 <Film className="size-6 text-[var(--replay-turf)]" aria-hidden="true" />
               </div>
@@ -564,7 +614,7 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
                     return (
                       <article key={id} className={`overflow-hidden rounded-2xl border bg-raised transition-colors ${active ? "border-[var(--replay-turf)]/65" : "border-line"}`} data-testid={`card-demo-clip-${id}`}>
                         <button type="button" data-testid={`button-select-clip-${id}`} onClick={() => setActiveClip(clip)} className="group relative block aspect-[16/8] w-full overflow-hidden bg-[#10231f] text-start">
-                          {clip.poster ? <img className="h-full w-full object-cover opacity-80" src={clip.poster} alt="" loading="lazy" /> : <div className="h-full w-full bg-[linear-gradient(125deg,#183a31,#2e7555_50%,#13231f)]">{pitchLines}<span className="absolute start-[38%] top-[35%] size-3 rounded-full bg-[var(--replay-floodlight)]" /></div>}
+            {clip.poster ? <img className="h-full w-full object-cover opacity-80" src={clip.poster} alt="" loading="lazy" /> : <div className="absolute inset-0 grid place-items-center bg-[var(--replay-raised)]"><Film className="size-7 text-muted-text" aria-hidden="true" /></div>}
                           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
                           <span className="absolute start-3 top-3 rounded-full bg-black/45 px-2 py-1 font-mono text-[9px] text-white/80">{cameraLabel}</span>
                           <span className="absolute bottom-3 start-3 text-xs font-semibold text-white">{clip.title ?? cameraLabel}</span>
@@ -600,29 +650,47 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
                 )}
                 </div>
               )}
+               <div className="flex items-center gap-3 rounded-xl border border-[var(--replay-violet)]/25 bg-[var(--replay-violet)]/5 p-3" data-testid="preview-social-export">
+                 <div className="rounded-lg bg-[var(--replay-violet)] px-2 py-2 font-mono text-[8px] font-bold tracking-[-0.04em] text-white">ArabiGaming</div>
+                 <p className="text-[10px] leading-4 text-muted-text">{copy.clips.socialExport}</p>
+               </div>
               <DemoButton variant="primary" testId="button-next-clips" onClick={next} icon={<ArrowRight className="size-4 rtl:rotate-180" />}>{stepCopy.cta}</DemoButton>
             </div>
           )}
 
-          {activeStop === 3 && (
+           {activeStop === 3 && (
             <div className="grid gap-6 p-5 sm:p-8">
               <SectionHeading kicker={stepCopy.kicker} title={stepCopy.title} body={stepCopy.body} />
               <div className="relative overflow-hidden rounded-2xl border border-line bg-[#0b211d] p-4 sm:p-6">
                 <div className="mb-5 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2"><span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--replay-floodlight)] px-2.5 py-1 font-mono text-[9px] font-bold text-black"><span className="size-1.5 rounded-full bg-black/65" /> {copy.live.badge}</span><span className="font-mono text-[10px] text-white/55">{copy.galaxy} · {copy.panorama.cameraStatus}</span></div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-white/65"><Eye className="size-3.5" aria-hidden="true" /><span data-testid="text-live-viewers">{viewerCount}</span> {copy.live.viewers}</div>
+                   <div className="flex items-center gap-2"><span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--replay-live)] px-2.5 py-1 font-mono text-[9px] font-bold text-white"><span className="size-1.5 rounded-full bg-white" /> {copy.live.badge}</span><span className="font-mono text-[10px] text-white/55">{copy.galaxy} · {copy.panorama.cameraStatus}</span></div>
+                   <div className="flex items-center gap-3 font-mono text-[10px] text-white/65"><span data-testid="text-live-timer">{liveTime}</span><span className="flex items-center gap-1.5"><Eye className="size-3.5" aria-hidden="true" /><span data-testid="text-live-viewers">{viewerCount}</span> {copy.live.viewers}</span></div>
                 </div>
                 <DemoMediaStage
-                  clip={clips[0]}
+                   clip={panoramaClip}
                   label={copy.live.recorded}
                   playLabel={copy.playVideo}
                   pauseLabel={copy.pause}
                   sampleLabel={copy.sampleFootage}
                   unavailableLabel={copy.videoUnavailable}
                   autoStart
-                />
-                <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
-                  <div className="rounded-xl border border-white/10 bg-black/15 p-3"><div className="flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-xs font-semibold text-white"><Radio className="size-4 text-[var(--replay-floodlight)]" /> {copy.live.recorded}</span><span className="font-mono text-[9px] text-[var(--replay-floodlight)]">{copy.simulated}</span></div><p className="mt-2 text-[10px] text-white/50">{copy.live.demoNote} · {copy.live.signal}</p></div>
+                   panoramaMode={panoramaMode}
+                   panoramaAngle={panoramaAngle}
+                 />
+                 <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-3">
+                   <label htmlFor="demo-youtube-url" className="mb-2 block text-[10px] font-semibold text-white/75">{copy.live.youtubeLabel}</label>
+                   <input id="demo-youtube-url" data-testid="input-youtube-url" value={youtubeInput} onChange={(event) => setYoutubeInput(event.target.value)} placeholder={copy.live.youtubePlaceholder} className="min-h-10 w-full rounded-lg border border-white/10 bg-black/25 px-3 text-xs text-white outline-none placeholder:text-white/35 focus:border-[var(--replay-floodlight)]" inputMode="url" />
+                   {youtubeInput && !youtubeEmbedUrl && <p role="status" data-testid="status-youtube-invalid" className="mt-2 text-[10px] text-[var(--replay-live)]">{copy.live.youtubeInvalid}</p>}
+                   {youtubeEmbedUrl ? (
+                     <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-black">
+                       <iframe title={copy.live.youtubePreview} data-testid="iframe-youtube-preview" src={youtubeEmbedUrl} className="aspect-video w-full" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
+                     </div>
+                   ) : (
+                     <p className="mt-2 text-[10px] leading-4 text-white/45">{copy.live.youtubeSetup}</p>
+                   )}
+                 </div>
+                 <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+                   <div className="rounded-xl border border-white/10 bg-black/15 p-3"><div className="flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-xs font-semibold text-white"><Radio className="size-4 text-[var(--replay-floodlight)]" /> {copy.live.recorded}</span><span className="font-mono text-[9px] text-[var(--replay-floodlight)]">{copy.simulated}</span></div><p className="mt-2 text-[10px] text-white/50">{panoramaClip?.src || panoramaClip?.rawSrc ? copy.live.demoNote : copy.live.noSourceNote}</p></div>
                   <div className="rounded-xl border border-white/10 bg-black/15 p-3 sm:min-w-44"><p className="mb-2 font-mono text-[9px] uppercase tracking-[0.12em] text-white/45">{copy.live.ownerControl}</p><button type="button" data-testid="button-toggle-recording" onClick={() => setIsRecording((value) => !value)} className={`flex min-h-10 w-full items-center justify-center gap-2 rounded-lg px-3 text-xs font-bold ${isRecording ? "bg-[var(--replay-live)] text-white" : "bg-[var(--replay-floodlight)] text-black"}`}>{isRecording ? <><Pause className="size-3.5" /> {copy.live.stop}</> : <><Play className="size-3.5 fill-current" /> {copy.live.start}</>}</button><p className="mt-2 text-center font-mono text-[9px] text-white/55">{isRecording ? copy.live.recording : copy.live.stopped}</p></div>
                 </div>
               </div>
@@ -634,31 +702,47 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
             <div className="grid gap-6 p-5 sm:p-8">
               <SectionHeading kicker={stepCopy.kicker} title={stepCopy.title} body={stepCopy.body} />
               <div className="relative overflow-hidden rounded-2xl border border-line bg-[#0d1718]">
-                {clips[0]?.rawSrc?.includes(".m3u8") && clips[0]?.src ? (
+                 {panoramaHlsSrc ? (
                   <VarPlayer
-                    src={clips[0].rawSrc}
-                    fallbackSrc={clips[0].src}
+                     src={panoramaHlsSrc}
                     title={`${copy.var.title} · ${copy.galaxy}`}
                   />
-                ) : (
+                  ) : panoramaClip?.src || panoramaClip?.rawSrc ? (
                   <div className="p-3">
                     <DemoMediaStage
-                      clip={clips[0]}
+                       clip={panoramaClip}
                       label={copy.var.title}
                       playLabel={copy.playVideo}
                       pauseLabel={copy.pause}
                       sampleLabel={copy.sampleFootage}
                       unavailableLabel={copy.videoUnavailable}
                       autoStart
+                       panoramaMode={panoramaMode}
+                       panoramaAngle={panoramaAngle}
                     />
                   </div>
+                 ) : (
+                   <div className="grid min-h-56 place-items-center p-6 text-center" data-testid="state-var-unavailable">
+                     <div>
+                       <ScanLine className="mx-auto mb-3 size-7 text-muted-text" aria-hidden="true" />
+                       <p className="text-sm font-semibold text-text">{copy.var.noFootage}</p>
+                       <p className="mt-2 max-w-[300px] text-xs leading-5 text-muted-text">{copy.var.noFootageBody}</p>
+                     </div>
+                   </div>
                 )}
                 <div className="pointer-events-none absolute end-3 top-3 flex flex-wrap justify-end gap-2">
-                  <span className="rounded-full bg-black/65 px-2.5 py-1.5 font-mono text-[9px] text-white/85">{copy.var.decision}: {copy.var.overturned}</span>
+                   <span className="rounded-full bg-black/65 px-2.5 py-1.5 font-mono text-[9px] text-white/85">{copy.var.decision}: {varDecision === "goal" ? copy.var.goal : varDecision === "noGoal" ? copy.var.noGoal : copy.var.pending}</span>
                   {varMarked && <span className="animate-pulse rounded-full bg-[var(--replay-turf)] px-2.5 py-1.5 font-mono text-[9px] font-bold text-black">{copy.var.marked}</span>}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-3"><DemoButton testId="button-mark-var" onClick={() => setVarMarked(true)} icon={varMarked ? <Check className="size-4" /> : <ScanLine className="size-4" />}>{varMarked ? copy.var.marked : copy.var.mark}</DemoButton><p className="max-w-[290px] text-[10px] leading-4 text-muted-text"><LockKeyhole className="me-1 inline size-3 text-[var(--replay-turf)]" />{copy.var.privateBody}</p></div>
+               <div className="grid gap-3">
+                 <div className="flex flex-wrap gap-2">
+                    <DemoButton testId="button-var-goal" onClick={() => { setVarDecision("goal"); setVarMarked(false); }} disabled={!panoramaClip?.src && !panoramaClip?.rawSrc} variant={varDecision === "goal" ? "primary" : "ghost"}>{copy.var.goal}</DemoButton>
+                    <DemoButton testId="button-var-no-goal" onClick={() => { setVarDecision("noGoal"); setVarMarked(false); }} disabled={!panoramaClip?.src && !panoramaClip?.rawSrc} variant={varDecision === "noGoal" ? "primary" : "ghost"}>{copy.var.noGoal}</DemoButton>
+                   <DemoButton testId="button-mark-var" onClick={() => setVarMarked(true)} disabled={varDecision === "pending"} icon={varMarked ? <Check className="size-4" /> : <ScanLine className="size-4" />}>{varMarked ? copy.var.complete : copy.var.mark}</DemoButton>
+                 </div>
+                 <p className="max-w-[390px] text-[10px] leading-4 text-muted-text"><LockKeyhole className="me-1 inline size-3 text-[var(--replay-turf)]" />{copy.var.privateBody}</p>
+               </div>
               <DemoButton variant="primary" testId="button-next-var" onClick={next} icon={<ArrowRight className="size-4 rtl:rotate-180" />}>{stepCopy.cta}</DemoButton>
             </div>
           )}
@@ -680,7 +764,20 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
               <div className="rounded-2xl border border-line bg-raised p-5">
                 <p className="mb-4 text-[10px] text-muted-text">{copy.player.sampleLabel}</p>
                 <div className="flex items-center gap-3 border-b border-line pb-4"><div className="grid size-11 place-items-center rounded-full bg-[var(--replay-violet)] text-sm font-bold text-white">09</div><div><p className="text-sm font-bold">{copy.player.demoPlayer}</p><p className="mt-0.5 flex items-center gap-1 text-[10px] text-[var(--replay-turf)]"><ShieldCheck className="size-3" /> {copy.player.verified}</p></div><span className="ms-auto rounded-full border border-line px-2 py-1 font-mono text-[9px] text-muted-text">#09</span></div>
-                <div className="grid grid-cols-3 gap-2 pt-5">{[[copy.player.minutes, "68"], [copy.player.moments, "7"], [copy.player.rating, "8.4"]].map(([label, value]) => <div key={label} className="rounded-xl bg-surface p-3"><p className="text-[10px] text-muted-text">{label}</p><p className="mt-2 font-display text-2xl font-bold text-text" data-testid={`text-player-stat-${label}`}>{value}</p></div>)}</div>
+                  <div className="grid grid-cols-3 gap-2 pt-5">{[[copy.player.distance, "6.8 km"], [copy.player.calories, "642 kcal"], [copy.player.passes, "31"]].map(([label, value]) => <div key={label} className="rounded-xl bg-surface p-3"><p className="text-[10px] text-muted-text">{label}</p><p className="mt-2 font-display text-2xl font-bold text-text" data-testid={`text-player-stat-${label}`}>{value}</p></div>)}</div>
+                 <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                   <div className="rounded-xl border border-line bg-surface p-3">
+                     <p className="mb-3 text-[10px] font-semibold text-muted-text">{copy.player.teamStats}</p>
+                     <div className="grid grid-cols-3 gap-2 border-b border-line pb-2 font-mono text-[9px] text-muted-text"><span /> <span className="text-end">{copy.player.homeTeam}</span><span className="text-end">{copy.player.awayTeam}</span></div>
+                     <div className="mt-2 grid gap-2 text-[10px]">
+                        {[[copy.player.distance, "26.8 km", "24.1 km"], [copy.player.calories, "2,642", "2,588"], [copy.player.passes, "71", "67"], [copy.player.possession, "54%", "46%"]].map(([label, home, away]) => <div key={label} className="grid grid-cols-3 gap-2"><span className="text-muted-text">{label}</span><span className="text-end font-mono text-text">{home}</span><span className="text-end font-mono text-text">{away}</span></div>)}
+                     </div>
+                   </div>
+                   <div className="rounded-xl border border-line bg-surface p-3">
+                     <p className="mb-3 text-[10px] font-semibold text-muted-text">{copy.player.rosterTitle}</p>
+                     <div className="grid grid-cols-2 gap-x-3 gap-y-2">{copy.player.roster.map((name, index) => <span key={name} className="font-mono text-[10px] text-text"><span className="me-1 text-muted-text">{String(index + 4).padStart(2, "0")}</span>{name}</span>)}</div>
+                   </div>
+                 </div>
                 <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-[var(--replay-turf)]/20 bg-[var(--replay-turf)]/5 p-3"><div className="flex items-center gap-2"><Users className="size-4 text-[var(--replay-turf)]" /><span className="text-xs font-semibold">{copy.player.room}</span></div><span className="font-mono text-[10px] text-muted-text">8 {copy.player.players}</span></div>
               </div>
               <div className="flex flex-wrap gap-3"><DemoButton testId="button-share-room" onClick={() => copyText("replay.jo/room/friday-7", "room")} icon={roomCopied ? <Check className="size-4" /> : <Share2 className="size-4" />}>{roomCopied ? copy.player.copied : copy.player.share}</DemoButton><DemoButton testId="button-invite-friends" onClick={() => copyText("replay.jo/room/friday-7/invite", "room")} icon={<Send className="size-4" />}>{copy.player.friend}</DemoButton><DemoButton variant="primary" testId="button-next-player" onClick={next} icon={<ArrowRight className="size-4 rtl:rotate-180" />}>{stepCopy.cta}</DemoButton></div>
@@ -692,10 +789,10 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
               <SectionHeading kicker={stepCopy.kicker} title={stepCopy.title} body={stepCopy.body} />
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-line bg-raised p-4 sm:col-span-2"><div className="mb-3 flex items-center justify-between gap-2"><p className="text-xs font-bold">{copy.owner.bookings}</p><span className="rounded-full bg-[var(--replay-turf)]/10 px-2 py-1 text-[9px] font-semibold text-[var(--replay-turf)]">{copy.owner.bookingStatus}</span></div><div className="flex items-center justify-between gap-3 text-xs"><span>{copy.owner.bookingTime}</span><span className="font-mono text-muted-text">{copy.owner.pitch}</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface"><div className="h-full w-[72%] rounded-full bg-[var(--replay-floodlight)]" /></div></div>
-                <div className="rounded-2xl border border-line bg-raised p-4"><div className="mb-5 flex items-center justify-between"><Video className="size-5 text-[var(--replay-floodlight)]" /><span className="font-mono text-xs text-muted-text">{copy.jod}</span></div><p className="text-[10px] text-muted-text">{copy.owner.recording}</p><p className="mt-1 font-display text-3xl font-bold">18 <span className="font-mono text-xs font-normal text-muted-text">{copy.jod}</span></p><p className="mt-2 text-[9px] text-muted-text">{copy.owner.priceHint}</p></div>
-                <div className="rounded-2xl border border-line bg-raised p-4"><div className="mb-5 flex items-center justify-between"><ScanLine className="size-5 text-[var(--replay-violet)]" /><span className="font-mono text-xs text-muted-text">{copy.jod}</span></div><p className="text-[10px] text-muted-text">{copy.owner.varPrice}</p><p className="mt-1 font-display text-3xl font-bold">6 <span className="font-mono text-xs font-normal text-muted-text">{copy.jod}</span></p><p className="mt-2 text-[9px] text-muted-text">{copy.owner.priceHint}</p></div>
+                  <div className="rounded-2xl border border-line bg-raised p-4"><div className="mb-5 flex items-center justify-between"><Video className="size-5 text-[var(--replay-floodlight)]" /><span className="font-mono text-xs text-muted-text">{copy.jod}</span></div><label htmlFor="demo-owner-match-price" className="text-[10px] text-muted-text">{copy.owner.recording}</label><p className="mt-1 font-display text-3xl font-bold">{roiPrice} <span className="font-mono text-xs font-normal text-muted-text">{copy.jod}</span></p><input id="demo-owner-match-price" data-testid="input-owner-match-price" type="range" min="1" max="10" step="0.5" value={roiPrice} onChange={(event) => setRoiPrice(Number(event.target.value))} className="mt-3 w-full accent-[var(--replay-floodlight)]" /><p className="mt-2 text-[9px] text-muted-text">{copy.owner.priceHint}</p></div>
+                 <div className="rounded-2xl border border-line bg-raised p-4"><div className="mb-5 flex items-center justify-between"><ScanLine className="size-5 text-[var(--replay-violet)]" /><span className="font-mono text-xs text-muted-text">{copy.simulated}</span></div><p className="text-[10px] text-muted-text">{copy.owner.varPrice}</p><p className="mt-3 text-xs leading-5 text-text">{copy.owner.varDemo}</p></div>
                 <div className="rounded-2xl border border-line bg-raised p-4 sm:col-span-2"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold">{copy.owner.share}</p><p className="mt-1 font-mono text-[10px] text-muted-text">{copy.owner.sampleLink}</p><p className="mt-2 flex items-center gap-1 text-[9px] text-[var(--replay-floodlight)]"><Clock3 className="size-3" /> {copy.owner.expires} 6 {copy.owner.days}</p></div><div className="flex items-center gap-2"><button type="button" data-testid="button-copy-owner-link" aria-label={copy.owner.copy} onClick={() => copyText(copy.owner.sampleLink, "owner")} className="grid size-10 place-items-center rounded-lg border border-line bg-surface text-muted-text hover:text-text">{copied ? <Check className="size-4" /> : <Copy className="size-4" />}</button><button type="button" data-testid="button-toggle-owner-qr" aria-label={showQr ? copy.owner.qrHidden : copy.owner.qr} onClick={() => setShowQr((value) => !value)} className="grid size-10 place-items-center rounded-lg border border-line bg-surface text-muted-text hover:text-text"><QrCode className="size-4" /></button></div></div>{showQr && <div className="mt-4 flex items-center gap-3 rounded-xl bg-text p-3 text-[var(--replay-void)]"><div className="grid size-20 grid-cols-5 gap-1 bg-text p-1">{Array.from({ length: 25 }).map((_, index) => <span key={index} className={(index * 7 + index) % 3 === 0 ? "bg-[var(--replay-void)]" : "bg-transparent"} />)}</div><span className="text-[10px] font-semibold">{copy.owner.qr} · {copy.owner.expires} 6 {copy.owner.days}</span></div>}</div>
-                <div className="rounded-2xl border border-line bg-raised p-4 sm:col-span-2"><div className="mb-3 flex items-center justify-between"><div><p className="text-xs font-bold">{copy.owner.billing}</p><p className="mt-1 text-[10px] text-muted-text">{copy.owner.bookingLabel} · 18 {copy.jod}</p></div><button type="button" data-testid="button-toggle-billing" onClick={() => setBillingPaid((value) => !value)} className={`min-h-9 rounded-lg px-3 text-[10px] font-bold ${billingPaid ? "bg-[var(--replay-turf)] text-black" : "bg-surface text-muted-text"}`}>{billingPaid ? copy.owner.billed : copy.owner.pending}</button></div><div className="flex gap-2"><DemoButton testId="button-request-footage" onClick={() => setRequestSent(true)} icon={requestSent ? <Check className="size-4" /> : <Send className="size-4" />}>{requestSent ? copy.owner.requested : copy.owner.request}</DemoButton><p className="self-center text-[10px] text-muted-text">{copy.owner.requestBody}</p></div></div>
+                 <div className="rounded-2xl border border-line bg-raised p-4 sm:col-span-2"><div className="mb-3 flex items-center justify-between"><div><p className="text-xs font-bold">{copy.owner.billing}</p><p className="mt-1 text-[10px] text-muted-text">{copy.owner.bookingLabel} · {roiPrice} {copy.jod}</p></div><button type="button" data-testid="button-toggle-billing" onClick={() => setBillingPaid((value) => !value)} className={`min-h-9 rounded-lg px-3 text-[10px] font-bold ${billingPaid ? "bg-[var(--replay-turf)] text-black" : "bg-surface text-muted-text"}`}>{billingPaid ? copy.owner.billed : copy.owner.pending}</button></div><div className="flex gap-2"><DemoButton testId="button-request-footage" onClick={() => setRequestSent(true)} icon={requestSent ? <Check className="size-4" /> : <Send className="size-4" />}>{requestSent ? copy.owner.requested : copy.owner.request}</DemoButton><p className="self-center text-[10px] text-muted-text">{copy.owner.requestBody}</p></div></div>
               </div>
               <DemoButton variant="primary" testId="button-next-owner" onClick={next} icon={<ArrowRight className="size-4 rtl:rotate-180" />}>{stepCopy.cta}</DemoButton>
             </div>
@@ -710,28 +807,10 @@ export default function SoccerWatchDemo({ clips, onOpenClaim, isClipsLoading = f
                 <p className="mt-5 text-[10px] text-muted-text">{copy.roi.attendanceAssumption}</p>
                 <div className="mt-7 flex items-end justify-between gap-3 border-t border-line pt-5"><div><p className="text-[10px] text-muted-text">{copy.roi.monthly}</p><p className="mt-1 font-display text-4xl font-bold text-[var(--replay-floodlight)]" data-testid="text-roi-total">{totalLift.toLocaleString(locale === "ar" ? "ar-JO" : "en-US")} <span className="font-mono text-xs font-normal text-muted-text">{copy.roi.currency}</span></p></div><Banknote className="size-7 text-[var(--replay-turf)]" /></div>
               </div>
-              <DemoButton variant="primary" testId="button-next-roi" onClick={next} icon={<ArrowRight className="size-4 rtl:rotate-180" />}>{stepCopy.cta}</DemoButton>
+               <DemoButton variant="primary" testId="button-replay-tour" onClick={reset} icon={<RotateCcw className="size-4" />}>{stepCopy.cta}</DemoButton>
             </div>
           )}
 
-          {activeStop === 9 && (
-            <div className="grid gap-6 p-5 sm:p-8">
-              <SectionHeading kicker={stepCopy.kicker} title={stepCopy.title} body={stepCopy.body} />
-              <div className="grid gap-3 sm:grid-cols-3">
-                {copy.ops.cameraNames.map((name, index) => <div key={name} className="rounded-2xl border border-line bg-raised p-4" data-testid={`card-camera-${index}`}><div className="mb-6 flex items-center justify-between"><Wifi className="size-5 text-[var(--replay-turf)]" /><span className="size-2 rounded-full bg-[var(--replay-turf)] shadow-[0_0_0_4px_rgba(47,216,196,.11)]" /></div><p className="text-xs font-semibold">{name}</p><p className="mt-1 text-[10px] text-[var(--replay-turf)]">{copy.ops.online} · 98%</p></div>)}
-              </div>
-              <div className="rounded-2xl border border-line bg-raised p-4"><div className="mb-4 flex items-center justify-between"><div><p className="text-xs font-bold">{copy.ops.queue}</p><p className="mt-1 text-[10px] text-muted-text">{copy.ops.waiting}</p></div><Timer className="size-5 text-[var(--replay-floodlight)]" /></div><div className="grid gap-2">{copy.ops.queueItems.map((item, index) => <div key={item} className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${clearedQueue.includes(index) ? "border-[var(--replay-turf)]/25 bg-[var(--replay-turf)]/5 opacity-60" : "border-line bg-surface"}`}><span className="flex items-center gap-2 text-[10px]"><span className={`size-1.5 rounded-full ${clearedQueue.includes(index) ? "bg-[var(--replay-turf)]" : "bg-[var(--replay-floodlight)]"}`} />{item}</span><button type="button" data-testid={`button-clear-queue-${index}`} onClick={() => setClearedQueue((queue) => queue.includes(index) ? queue : [...queue, index])} className="min-h-8 rounded-lg px-2.5 text-[9px] font-semibold text-muted-text hover:bg-raised hover:text-text">{clearedQueue.includes(index) ? <Check className="size-3" /> : copy.ops.clear}</button></div>)}</div></div>
-              <DemoButton variant="primary" testId="button-next-ops" onClick={next} icon={<ArrowRight className="size-4 rtl:rotate-180" />}>{stepCopy.cta}</DemoButton>
-            </div>
-          )}
-
-          {activeStop === 10 && (
-            <div className="relative grid min-h-[590px] content-between overflow-hidden bg-[linear-gradient(145deg,#182b28,#111921_58%,#201c34)] p-5 sm:p-8">
-              <div className="pointer-events-none absolute -end-12 -top-12 size-64 rounded-full border border-[var(--replay-floodlight)]/15" /><div className="pointer-events-none absolute -end-4 -top-4 size-48 rounded-full border border-[var(--replay-floodlight)]/10" />
-              <div><p className="mb-5 inline-flex items-center gap-2 rounded-full border border-[var(--replay-floodlight)]/25 bg-[var(--replay-floodlight)]/10 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--replay-floodlight)]"><Zap className="size-3" /> {copy.pilot.badge}</p><SectionHeading kicker={stepCopy.kicker} title={stepCopy.title} body={stepCopy.body} /></div>
-              <div><div className="mb-6 grid gap-3 sm:grid-cols-3">{copy.pilot.steps.map((item, index) => <div key={item} className="rounded-xl border border-white/10 bg-black/15 p-3"><p className="font-mono text-[9px] text-white/45">0{index + 1}</p><p className="mt-5 text-xs font-semibold text-white/85">{item}</p></div>)}</div><div className="flex flex-wrap items-center gap-3"><DemoButton variant="primary" testId="button-start-pilot" onClick={() => setPilotStarted(true)} icon={pilotStarted ? <Check className="size-4" /> : <ArrowRight className="size-4 rtl:rotate-180" />}>{pilotStarted ? copy.pilot.started : copy.pilot.action}</DemoButton><span className="font-mono text-[10px] text-white/50">{copy.pilot.secondary}</span></div></div>
-            </div>
-          )}
         </section>
       </main>
 

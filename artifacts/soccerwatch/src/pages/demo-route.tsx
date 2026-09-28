@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
 import SoccerWatchDemo, { type DemoClip } from "@/pages/demo";
-import { fetchLiveSource, type LiveSource } from "@/lib/liveSource";
 
-const SAMPLE_VIDEO_URL = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4";
 const basePath = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
 interface PublicDemoFeed {
   panorama: DemoClip | null;
-  clips: DemoClip[];
+  clips: Array<DemoClip & { date?: string; timeSlot?: string }>;
 }
 
 async function fetchPublicDemoFeed(): Promise<PublicDemoFeed> {
@@ -25,56 +23,40 @@ function formatDuration(seconds: number): string {
 }
 
 export default function DemoRoute() {
+  const [panorama, setPanorama] = useState<DemoClip>();
   const [clips, setClips] = useState<DemoClip[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.allSettled([
-      fetchPublicDemoFeed(),
-      fetchLiveSource("camera1", "hls"),
-      fetchLiveSource("camera2", "hls"),
-    ]).then((results) => {
-      if (cancelled) return;
-
-      const mediaFeed = results[0].status === "fulfilled" ? results[0].value : null;
-      const recordedClips: DemoClip[] = (mediaFeed?.clips ?? []).map((clip) => ({
-        ...clip,
-        title: undefined,
-        label: undefined,
-        isSample: false,
-      }));
-      const liveClips: DemoClip[] = results.slice(1).flatMap((result, index) => {
-        if (result.status !== "fulfilled") return [];
-        const source = result.value as LiveSource;
-        if (!source.proxyUrl) return [];
-        return [{
-          id: source.camera,
-          duration: formatDuration(source.status.dvrSeconds),
-          src: source.proxyUrl,
-          rawSrc: source.url,
-          isSample: false,
-        }];
+    void fetchPublicDemoFeed()
+      .then((feed) => {
+        if (cancelled) return;
+        setPanorama(feed.panorama ?? undefined);
+        setClips((feed.clips ?? [])
+          .filter((clip) => clip.src || clip.rawSrc)
+          .map((clip) => ({
+            ...clip,
+            duration: clip.duration ?? (
+              Number.isFinite(clip.startTime) && Number.isFinite(clip.endTime)
+                ? formatDuration((clip.endTime ?? 0) - (clip.startTime ?? 0))
+                : undefined
+            ),
+            timestamp: clip.timestamp ?? [
+              clip.date,
+              Number.isFinite(clip.startTime) ? formatDuration(clip.startTime ?? 0) : null,
+            ].filter(Boolean).join(" · "),
+          })));
+        setMediaError(null);
+      })
+      .catch((error: Error) => {
+        if (!cancelled) setMediaError(error.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
-      const uniqueClips = new Map<string, DemoClip>();
-      for (const clip of [...recordedClips, ...liveClips]) {
-        if (!uniqueClips.has(String(clip.id))) uniqueClips.set(String(clip.id), clip);
-      }
-      const realClips = [...uniqueClips.values()];
-
-      if (realClips.length > 0) {
-        setClips(realClips);
-      } else {
-        setClips([{
-          id: "public-sample",
-          src: SAMPLE_VIDEO_URL,
-          duration: "00:18",
-          isSample: true,
-        }]);
-      }
-      setLoading(false);
-    });
 
     return () => {
       cancelled = true;
@@ -82,12 +64,20 @@ export default function DemoRoute() {
   }, []);
 
   return (
-    <SoccerWatchDemo
-      clips={clips}
-      isClipsLoading={loading}
-      onOpenClaim={() => {
-        window.open("/claim/demo", "_blank", "noopener,noreferrer");
-      }}
-    />
+    <>
+      {mediaError && (
+        <p role="alert" data-testid="alert-demo-media" className="mx-auto max-w-[920px] bg-red-950 px-4 py-3 text-sm text-white">
+          Could not load Jordan Galaxy footage: {mediaError}
+        </p>
+      )}
+      <SoccerWatchDemo
+        panorama={panorama}
+        clips={clips}
+        isClipsLoading={loading}
+        onOpenClaim={() => {
+          window.open("/claim/demo", "_blank", "noopener,noreferrer");
+        }}
+      />
+    </>
   );
 }
