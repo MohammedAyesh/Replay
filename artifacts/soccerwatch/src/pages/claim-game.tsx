@@ -41,6 +41,16 @@ import { ClaimantNameDialog } from "@/components/claim/ClaimantNameDialog";
 import { StatsScreen } from "@/components/game-claim/StatsScreen";
 import { gameFromManifest, loadChunkData, kitNameKey, type LoadedChunk } from "@/lib/game-claim/load";
 import { groupsForShirtIdentity, shirtNumberCandidateForKit, shirtNumbersForKit, type ShirtIdentity } from "@/lib/game-claim/jersey";
+import {
+  applyShirtConfirmationParts,
+  emptyShirtConfirmationState,
+  prepareShirtConfirmation,
+  selectAllShirtGroups,
+  toggleShirtGroupSelection,
+  toggleShirtPictureRemoval,
+  type ShirtConfirmationPayload,
+  type ShirtConfirmationUiState,
+} from "@/lib/game-claim/shirt-confirmation";
 import { matchBenchRanges, type ClaimMatchWindow } from "@/lib/game-claim/match-windows";
 import { claimCountsForGroups, claimStatusForGroup, type ClaimStatusIdentity } from "@/lib/game-claim/claim-status";
 import { pictureForPiece, type PiecePicture } from "@/lib/game-claim/images";
@@ -232,10 +242,12 @@ type Props = {
 };
 
 type PendingNamePick = {
+  pickId: number;
   k: number;
   cid: string;
   expectedCid: string | null;
   shirtIdentity: ShirtIdentity | null;
+  shirtConfirmation?: ShirtConfirmationPayload;
 };
 
 export function GameClaim({
@@ -259,6 +271,9 @@ export function GameClaim({
   const namePromptHandled = useRef(Boolean(identityName));
   const pendingClaimName = useRef<string | null>(null);
   const [pendingNamePick, setPendingNamePick] = useState<PendingNamePick | null>(null);
+  const nextPickId = useRef(0);
+  const completedPickIds = useRef(new Set<number>());
+  const [shirtConfirmation, setShirtConfirmation] = useState<ShirtConfirmationUiState>(emptyShirtConfirmationState);
   const [markA, setMarkA] = useState<number | null>(null);
   const [introT, setIntroT] = useState<number | null>(null);
   const [pickSet, setPickSet] = useState<Set<string>>(new Set());
@@ -425,13 +440,13 @@ export function GameClaim({
     Math.round(L2G(game, k, localSeconds) * (manifest.frameRate > 0 ? manifest.frameRate : 20)),
   );
 
-  const representativePiece = (d: LoadedChunk, group: Group) => group.members
+  const representativePiece = (d: LoadedChunk, group: Group, excludedTrackIds?: ReadonlySet<string>) => group.members
     .map((id) => d.pieces[id])
-    .filter((piece) => piece != null)
+    .filter((piece) => piece != null && !excludedTrackIds?.has(piece.id))
     .sort((a, b) => (b.t1 - b.t0) - (a.t1 - a.t0))[0] ?? null;
 
-  const writeGroupDecision = (d: LoadedChunk, group: Group, rejected?: Group) => {
-    const chosen = representativePiece(d, group);
+  const writeGroupDecision = (d: LoadedChunk, group: Group, rejected?: Group, excludedTrackIds?: ReadonlySet<string>) => {
+    const chosen = representativePiece(d, group, excludedTrackIds);
     if (!chosen) return;
     const wrong = rejected && rejected.cid !== group.cid
       ? representativePiece(d, rejected)
@@ -775,8 +790,19 @@ export function GameClaim({
       setPendingNamePick(null);
       return;
     }
+    if (completedPickIds.current.has(pending.pickId)) return;
+    completedPickIds.current.add(pending.pickId);
     const expected = pending.expectedCid ? d.byCid[pending.expectedCid] : undefined;
-    writeGroupDecision(d, chosen, expected);
+    const removedPieceIds = new Set(pending.shirtConfirmation?.removedPieceIds ?? []);
+    writeGroupDecision(d, chosen, expected, removedPieceIds);
+    for (const cid of pending.shirtConfirmation?.addedCids ?? []) {
+      const group = d.byCid[cid];
+      if (group) writeGroupDecision(d, group, undefined, removedPieceIds);
+    }
+    for (const pieceId of pending.shirtConfirmation?.removedPieceIds ?? []) {
+      const piece = d.pieces[pieceId];
+      if (piece) writeRejectedTrack(pending.k, piece.id, (piece.t0 + piece.t1) / 2);
+    }
     pendingNextGuess.current = null;
     act(() => {
       if (pending.shirtIdentity) {
@@ -789,16 +815,20 @@ export function GameClaim({
         });
       }
       pick(ctx, pending.k, pending.cid);
+      if (pending.shirtConfirmation) {
+        applyShirtConfirmationParts(Y(ctx, pending.k), pending.shirtConfirmation);
+      }
       S.step = "review";
     });
   };
 
-  const chooseGroup = (pending: PendingNamePick) => {
+  const chooseGroup = (pending: Omit<PendingNamePick, "pickId">) => {
+    const pickWithId = { ...pending, pickId: nextPickId.current++ };
     if (!claimName && !namePromptHandled.current) {
-      setPendingNamePick(pending);
+      setPendingNamePick(pickWithId);
       return;
     }
-    completeGroupPick(pending);
+    completeGroupPick(pickWithId);
   };
 
   const confirmClaimName = (name: string) => {
@@ -854,13 +884,18 @@ export function GameClaim({
     const kitKey = S.team;
     if (!kitKey) return;
     pendingContinuationNumber.current = null;
+    setShirtConfirmation(emptyShirtConfirmationState());
     act(() => { S.shirtCandidate = { number, kitKey }; });
   };
 
-  const chooseAnotherShirtNumber = () => act(() => { S.shirtCandidate = null; });
+  const chooseAnotherShirtNumber = () => {
+    setShirtConfirmation(emptyShirtConfirmationState());
+    act(() => { S.shirtCandidate = null; });
+  };
 
   const continueWithoutShirtNumber = () => {
     pendingContinuationNumber.current = null;
+    setShirtConfirmation(emptyShirtConfirmationState());
     act(() => {
       S.shirtIdentity = null;
       S.shirtCandidate = null;
@@ -878,13 +913,20 @@ export function GameClaim({
     S.step = "kit";
   });
 
-  const confirmShirtGroup = (cid: string) => {
+  const confirmShirtGroup = (selection: ShirtConfirmationPayload) => {
     const k = S.k;
     const candidate = S.shirtCandidate;
     const d = k === null ? null : chunks.current[k];
     if (k === null || !candidate || !d) return;
-    if (!groupsForShirtIdentity(d.groups, d.jersey, candidate).some((match) => match.groupId === cid)) return;
-    chooseGroup({ k, cid, expectedCid: null, shirtIdentity: candidate });
+    const matchingCids = new Set(groupsForShirtIdentity(d.groups, d.jersey, candidate).map((match) => match.groupId));
+    if (!matchingCids.has(selection.primaryCid) || selection.addedCids.some((cid) => !matchingCids.has(cid))) return;
+    chooseGroup({
+      k,
+      cid: selection.primaryCid,
+      expectedCid: null,
+      shirtIdentity: candidate,
+      shirtConfirmation: selection,
+    });
   };
 
   const advance = async () => {
@@ -1078,6 +1120,27 @@ export function GameClaim({
     const matches = candidate?.kitKey === S.team
       ? groupsForShirtIdentity(d.groups, d.jersey, candidate)
       : [];
+    const shirtCards = matches.flatMap((match) => {
+      const group = d.byCid[match.groupId];
+      if (!group) return [];
+      return [{ match, group, photos: picturesForGroup(d, group, game.frameRate, 6) }];
+    });
+    const photoIdsByCid = new Map(shirtCards.map(({ group, photos }) => [
+      group.cid,
+      photos.map(({ id }) => id),
+    ] as const));
+    const cardPictures = shirtCards.map(({ group, photos }) => ({
+      cid: group.cid,
+      photoIds: photos.map(({ id }) => id),
+    }));
+    const removedPictureIds = new Set(shirtConfirmation.removedPieceIds);
+    const selectedCids = new Set(shirtConfirmation.selectedCids);
+    const selectedShirtGroups = prepareShirtConfirmation(
+      shirtCards.map(({ group }) => group),
+      shirtConfirmation,
+      photoIdsByCid,
+    );
+    const selectedCount = selectedShirtGroups ? selectedShirtGroups.addedCids.length + 1 : 0;
     body = (
       <div className="flex flex-col gap-4">
         <Eyebrow>{span(d.k)}</Eyebrow>
@@ -1110,32 +1173,59 @@ export function GameClaim({
         )}
         {candidate && matches.length > 0 && (
           <div className="flex flex-col gap-3">
-            {matches.map((match) => {
-              const group = d.byCid[match.groupId];
-              if (!group) return null;
-              return (
-                <div key={match.groupId} className="flex flex-col gap-2">
-                  {match.uncertain && (
-                    <p role="note" className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-text">
-                      {copy.shirtNumber.hardToRead}
-                    </p>
-                  )}
-                  <GroupCard
-                    d={d}
-                    g={group}
-                    copy={copy}
-                    game={game}
-                    claimLabel={claimLabelForGroup(group)}
-                    onWatch={() => previewGroup(d, group)}
-                    action={
-                      <Btn kind="primary" size="sm" onClick={() => confirmShirtGroup(group.cid)}>
-                        {copy.shirtNumber.confirmAction}
-                      </Btn>
-                    }
-                  />
-                </div>
-              );
-            })}
+            <p className="text-xs leading-5 text-muted-text">{copy.shirtNumber.removalHint}</p>
+            {matches.length >= 2 && (
+              <Row>
+                <Btn size="sm" onClick={() => setShirtConfirmation((state) => selectAllShirtGroups(state, cardPictures))}>
+                  {copy.shirtNumber.selectAll}
+                </Btn>
+              </Row>
+            )}
+            <div className="flex flex-col gap-3">
+              {shirtCards.map(({ match, group, photos }) => {
+                const photoIds = photoIdsByCid.get(group.cid) ?? [];
+                const selectable = photoIds.some((id) => !removedPictureIds.has(id));
+                return (
+                  <div key={match.groupId} className="flex flex-col gap-2">
+                    {match.uncertain && (
+                      <p role="note" className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-text">
+                        {copy.shirtNumber.hardToRead}
+                      </p>
+                    )}
+                    <GroupCard
+                      d={d}
+                      g={group}
+                      copy={copy}
+                      game={game}
+                      claimLabel={claimLabelForGroup(group)}
+                      onWatch={() => previewGroup(d, group)}
+                      photos={photos}
+                      selected={selectedCids.has(group.cid)}
+                      selectable={{
+                        selected: selectedCids.has(group.cid),
+                        disabled: !selectable,
+                        label: copy.shirtNumber.selectCard,
+                        onChange: () => setShirtConfirmation((state) => toggleShirtGroupSelection(state, group.cid, photoIds)),
+                      }}
+                      photoRemoval={{
+                        removedPieceIds: removedPictureIds,
+                        removeLabel: copy.shirtNumber.removePicture,
+                        restoreLabel: copy.shirtNumber.removedPicture,
+                        onToggle: (pieceId) => setShirtConfirmation((state) =>
+                          toggleShirtPictureRemoval(state, group.cid, pieceId, photoIds)),
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div>
+              <Btn kind="primary" disabled={!selectedShirtGroups} onClick={() => {
+                if (selectedShirtGroups) confirmShirtGroup(selectedShirtGroups);
+              }}>
+                {selectedCount === 1 ? copy.shirtNumber.confirmAction : copy.shirtNumber.confirmMultiple(selectedCount)}
+              </Btn>
+            </div>
           </div>
         )}
         {candidate && matches.length === 0 && (
@@ -1415,20 +1505,59 @@ function Tile({ d, photo, nearbyLabel, label, children, onClick, out, pickOn }: 
   );
 }
 
-function GroupCard({ d, g, copy, game, onWatch, action, claimLabel }: {
-  d: LoadedChunk; g: Group; copy: GameStrings; game: Game; onWatch: () => void; action: React.ReactNode; claimLabel?: string;
+function GroupCard({
+  d, g, copy, game, onWatch, action, claimLabel, photos: suppliedPhotos, selected, selectable, photoRemoval,
+}: {
+  d: LoadedChunk;
+  g: Group;
+  copy: GameStrings;
+  game: Game;
+  onWatch: () => void;
+  action?: React.ReactNode;
+  claimLabel?: string;
+  photos?: Array<{ id: string; picture: PiecePicture }>;
+  selected?: boolean;
+  selectable?: { selected: boolean; disabled: boolean; label: string; onChange: () => void };
+  photoRemoval?: {
+    removedPieceIds: ReadonlySet<string>;
+    removeLabel: string;
+    restoreLabel: string;
+    onToggle: (pieceId: string) => void;
+  };
 }) {
   const ms = g.members.map((m) => d.pieces[m]).filter(Boolean);
-  const photos = picturesForGroup(d, g, game.frameRate, 6);
+  const photos = suppliedPhotos ?? picturesForGroup(d, g, game.frameRate, 6);
   const t0 = Math.min(...ms.map((m) => m.t0));
   const t1 = Math.max(...ms.map((m) => m.t1));
   return (
-    <div className="flex flex-col gap-2.5 rounded-2xl border border-line bg-surface p-3">
+    <div className={`flex flex-col gap-2.5 rounded-2xl border bg-surface p-3 ${selected ? "border-floodlight ring-2 ring-floodlight/30" : "border-line"}`}>
       {photos.length > 0 && (
         <div className="flex gap-1 overflow-x-auto">
-          {photos.map(({ id, picture }) => (
-            <CropWithNote key={id} d={d} picture={picture} h={104} nearbyLabel={copy.media.nearbyPicture} />
-          ))}
+          {photos.map(({ id, picture }) => {
+            const removed = photoRemoval?.removedPieceIds.has(id) ?? false;
+            if (!photoRemoval) {
+              return <CropWithNote key={id} d={d} picture={picture} h={104} nearbyLabel={copy.media.nearbyPicture} />;
+            }
+            return (
+              <button
+                key={id}
+                type="button"
+                aria-label={removed ? photoRemoval.restoreLabel : photoRemoval.removeLabel}
+                aria-pressed={removed}
+                onClick={() => photoRemoval.onToggle(id)}
+                className={`relative inline-flex w-fit shrink-0 overflow-hidden rounded-xl border p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-floodlight ${removed ? "border-[#FF5A3C]" : "border-line hover:border-floodlight"}`}
+              >
+                <span className={removed ? "opacity-25" : ""}>
+                  <CropWithNote d={d} picture={picture} h={104} nearbyLabel={copy.media.nearbyPicture} />
+                </span>
+                {removed && (
+                  <span aria-hidden="true" className="absolute inset-0 grid place-items-center bg-black/20 text-3xl font-bold leading-none text-[#FF5A3C]">
+                    ×
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
       {claimLabel && <p role="note" className="text-xs font-medium text-muted-text">{claimLabel}</p>}
@@ -1439,6 +1568,21 @@ function GroupCard({ d, g, copy, game, onWatch, action, claimLabel }: {
         </div>
         <Btn size="sm" onClick={onWatch}>{copy.gallery.watch}</Btn>
         {action}
+        {selectable && (
+          <label className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-2 py-1 text-sm font-semibold text-text ${selectable.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+            <input
+              className="peer sr-only"
+              type="checkbox"
+              checked={selectable.selected}
+              disabled={selectable.disabled}
+              onChange={selectable.onChange}
+            />
+            <span aria-hidden="true" className="grid h-5 w-5 place-items-center rounded border border-line bg-void text-transparent peer-checked:border-floodlight peer-checked:bg-floodlight peer-checked:text-void peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-floodlight">
+              ✓
+            </span>
+            <span>{selectable.label}</span>
+          </label>
+        )}
       </div>
     </div>
   );

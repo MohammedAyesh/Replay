@@ -23,6 +23,13 @@ import { gameFromManifest, kitsFromPeople, loadChunkData } from "./game-claim/lo
 import type { Chunk, Game, Group } from "./game-claim/model";
 import { complement, union } from "./game-claim/model";
 import { benchSpansOut, chainParts } from "./game-claim/parts";
+import {
+  applyShirtConfirmationParts,
+  emptyShirtConfirmationState,
+  prepareShirtConfirmation,
+  toggleShirtGroupSelection,
+  toggleShirtPictureRemoval,
+} from "./game-claim/shirt-confirmation";
 
 const FPS = 20;
 
@@ -115,6 +122,81 @@ describe("shirt switch profile timeline", () => {
     expect(rankNext(ctx, 0, 0).every(({ d }) => d === null)).toBe(true);
     pick(ctx, 0, "g1");
     expect(Y(ctx, 0).added).not.toContain("g2");
+  });
+});
+
+describe("shirt-number confirmation selections", () => {
+  it("confirms the longest selected group as primary and adds the other selected group", () => {
+    const ctx = fixture();
+    const groups = ctx.CH[0].groups;
+    const pictures = new Map([
+      ["g1", ["A", "B"]],
+      ["g2", ["C"]],
+    ]);
+    const state = { selectedCids: ["g2", "g1"], removedPieceIds: [] };
+    const selection = prepareShirtConfirmation(groups, state, pictures);
+
+    expect(selection).toEqual({
+      primaryCid: "g1",
+      addedCids: ["g2"],
+      removedPieceIds: [],
+    });
+    if (!selection) throw new Error("expected selected groups");
+    pick(ctx, 0, selection.primaryCid);
+    applyShirtConfirmationParts(Y(ctx, 0), selection);
+    expect(Y(ctx, 0).cid).toBe("g1");
+    expect(Y(ctx, 0).added.filter((cid) => cid === "g2")).toHaveLength(1);
+  });
+
+  it("puts removed pieces from selected groups out, but ignores unselected groups", () => {
+    const ctx = fixture();
+    const groups = ctx.CH[0].groups;
+    const selection = prepareShirtConfirmation(
+      groups,
+      { selectedCids: ["g1"], removedPieceIds: ["A", "C"] },
+      new Map([["g1", ["A", "B"]], ["g2", ["C"]]]),
+    );
+    expect(selection?.removedPieceIds).toEqual(["A"]);
+    if (!selection) throw new Error("expected selected group");
+
+    pick(ctx, 0, selection.primaryCid);
+    applyShirtConfirmationParts(Y(ctx, 0), selection);
+    expect(Y(ctx, 0).out).toEqual(["A"]);
+    expect(Y(ctx, 0).out).not.toContain("C");
+  });
+
+  it("unselects a card when all its pictures are removed and allows selection after restoring one", () => {
+    const photos = ["A", "B"];
+    let state = toggleShirtGroupSelection(emptyShirtConfirmationState(), "g1", photos);
+    state = toggleShirtPictureRemoval(state, "g1", "A", photos);
+    expect(state.selectedCids).toContain("g1");
+    state = toggleShirtPictureRemoval(state, "g1", "B", photos);
+    expect(state.selectedCids).not.toContain("g1");
+    state = toggleShirtGroupSelection(state, "g1", photos);
+    expect(state.selectedCids).not.toContain("g1");
+    state = toggleShirtPictureRemoval(state, "g1", "A", photos);
+    state = toggleShirtGroupSelection(state, "g1", photos);
+    expect(state.selectedCids).toContain("g1");
+  });
+
+  it("keeps extra selections and removals in a deferred name-prompt pick", () => {
+    const ctx = fixture();
+    const selection = prepareShirtConfirmation(
+      ctx.CH[0].groups,
+      { selectedCids: ["g1", "g2"], removedPieceIds: ["A"] },
+      new Map([["g1", ["A", "B"]], ["g2", ["C"]]]),
+    );
+    if (!selection) throw new Error("expected selected groups");
+    const pendingPick = { k: 0, cid: selection.primaryCid, shirtConfirmation: selection };
+
+    expect(Y(ctx, 0).added).toEqual([]);
+    expect(Y(ctx, 0).out).toEqual([]);
+    pick(ctx, pendingPick.k, pendingPick.cid);
+    applyShirtConfirmationParts(Y(ctx, 0), pendingPick.shirtConfirmation);
+    // A repeated completion must not duplicate the deferred review state.
+    applyShirtConfirmationParts(Y(ctx, 0), pendingPick.shirtConfirmation);
+    expect(Y(ctx, 0).added.filter((cid) => cid === "g2")).toHaveLength(1);
+    expect(Y(ctx, 0).out).toEqual(["A"]);
   });
 });
 
