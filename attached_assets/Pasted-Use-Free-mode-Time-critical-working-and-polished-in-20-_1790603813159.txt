@@ -1,0 +1,13 @@
+Use Free mode. Time-critical: working and polished in ~20 min beats complete. Add a public, no-sign-in guided demo at /demo (treat as public standalone path; no onboarding redirect, no schema changes, don't alter existing pages). Mobile-first app frame, banner "Demo mode - sample data", prominent EN/AR toggle using the existing locale system with full RTL and all strings in the translation files, Reset button, pitch called "Your Pitch" / "ملعبك", prices in JOD. Bottom step bar with swipe/next/back. Stops, each with a headline and a live interactive element:
+1 Welcome: "Every match on your pitch, recorded automatically" + 3 value chips.
+2 Camera: real panorama with toggle Full panorama / Follow the ball (simulated pan window labelled "preview" if no auto-pan render exists).
+3 Clips reel: real playable clips, like/save/share sheet.
+4 Live: LIVE badge, ticking viewer count, looping recorded HLS labelled "Demo simulation", owner Start/Stop live control.
+5 VAR: existing VAR player on a real clip (slow-mo, frame step, zoom) + animated decision overlay + note that VAR footage is private to the booking.
+6 Claim your moments: reuse /claim/demo with Back to demo.
+7 Player stats + match room/friend share (sample numbers labelled).
+8 Owner console: seeded sample bookings calendar, request past footage, book recording+VAR with JOD price, share link with QR + expiry, billing summary (invented names).
+9 ROI screen with sliders (matches/week, price, % buying) -> extra monthly JOD.
+10 Ops view: 3 cameras green, analysis queue (sample).
+11 CTA: "Start a 2-week pilot on Your Pitch".
+Footage: use real recordings/clips via existing API+proxies, prefer recent ones with tracking bundles. NEVER use recordings tied to an owner booking or VAR booking; no real player names or profile data. Fallback to a public sample video labelled "Sample footage". Every stop must degrade gracefully, never blank or crash. Works on phone and laptop, muted autoplay with a big Play tap. No lorem ipsum. When done, list which stops use real footage vs sample/simulated.
