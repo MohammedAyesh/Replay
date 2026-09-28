@@ -122,14 +122,23 @@ export function capBelowFailedLevel(hls: Pick<Hls, "autoLevelCapping">, failedLe
  * not need to await this function; the manifest event is the synchronization
  * point.  ABR remains enabled and starts in automatic mode throughout.
  */
-export function capPlaybackQuality(hls: Hls, maxWidth = PLAYBACK_MAX_WIDTH): void {
+export function capPlaybackQuality(hls: Hls, maxWidth = PLAYBACK_MAX_WIDTH): () => void {
+  let disposed = false;
   hls.startLevel = -1;
 
   const apply = () => {
-    void getAllowedHlsLevelIndexes(hls.levels, {
-      maxWidth,
-    }).then((allowed) => {
-      if (allowed.length === 0 || allowed.length === hls.levels.length) {
+    if (disposed) return;
+    const levels = hls.levels;
+    if (!levels.length) return;
+    void getAllowedHlsLevelIndexes(levels, { maxWidth }).then((allowed) => {
+      // Capability checks are async. A player can be removed while one is in
+      // flight; never touch hls.js controllers after its DESTROYING event.
+      if (disposed) return;
+      if (levels !== hls.levels) {
+        apply();
+        return;
+      }
+      if (allowed.length === 0 || allowed.length === levels.length) {
         if (hls.autoLevelCapping < 0) hls.autoLevelCapping = -1;
         hls.startLevel = -1;
         return;
@@ -142,6 +151,15 @@ export function capPlaybackQuality(hls: Hls, maxWidth = PLAYBACK_MAX_WIDTH): voi
     });
   };
 
+  const cancel = () => {
+    disposed = true;
+  };
   hls.on(Hls.Events.MANIFEST_PARSED, apply);
+  hls.on(Hls.Events.DESTROYING, cancel);
   apply();
+  return () => {
+    cancel();
+    hls.off(Hls.Events.MANIFEST_PARSED, apply);
+    hls.off(Hls.Events.DESTROYING, cancel);
+  };
 }

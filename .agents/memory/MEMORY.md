@@ -48,3 +48,4 @@
 - [API test database isolation](api-test-database-isolation.md) — API tests use ambient DATABASE_URL; require a disposable test database before running them.
 - [GitHub REST commit fallback](github-rest-commit-fallback.md) — recreate local history from immutable blobs; use full-block chunks and verify every Git object before moving refs.
 - [Whole-game claim boundary](whole-game-claim-boundary.md) — `/find` persists names and identity through game saves; `/claim` remains a separate, explicit fallback.
+- [HLS player callback lifecycle](hls-player-callback-lifecycle.md) — keep HLS setup callbacks stable and suppress async quality updates after player teardown.

@@ -154,4 +154,21 @@ describe("hls quality selection", () => {
 
     expect(hls.autoLevelCapping).toBe(0);
   });
+
+  it("does not apply an async quality cap after the player is disposed", async () => {
+    const hls = {
+      levels,
+      autoLevelCapping: -1,
+      startLevel: -1,
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+
+    const dispose = capPlaybackQuality(hls as never, 1000);
+    dispose();
+    await Promise.resolve();
+
+    expect(hls.autoLevelCapping).toBe(-1);
+    expect(hls.off).toHaveBeenCalledTimes(2);
+  });
 });

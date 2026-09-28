@@ -29,10 +29,10 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslation } from "@/i18n/context";
 import { demoStrings } from "@/i18n/demo-strings";
-import { HlsPlayer } from "@/components/HlsPlayer";
+import { HlsPlayer, type HlsPlayerProps } from "@/components/HlsPlayer";
 
 export interface DemoClip {
   id: string | number;
@@ -163,6 +163,11 @@ function DemoMediaStage({
   const videoRef = useRef<HTMLVideoElement>(null);
   const src = clip?.src ?? clip?.rawSrc;
   const isHls = Boolean(src && (src.includes(".m3u8") || clip?.rawSrc?.includes(".m3u8")));
+  const handlePlaybackState = useCallback<NonNullable<HlsPlayerProps["onPlaybackState"]>>((state) => {
+    setReady(state.ready);
+    if (state.error) setFailed(true);
+    else if (state.ready || state.hasFirstSegment) setFailed(false);
+  }, []);
   const framingStyle = {
     objectPosition: `${panoramaMode === "follow" ? panoramaAngle : 50}% center`,
     transform: panoramaMode === "follow" ? "scale(1.65)" : "scale(1)",
@@ -249,11 +254,7 @@ function DemoMediaStage({
             showStatusOverlays={false}
             videoClassName={`h-full w-full ${framingClass}`}
             videoStyle={framingStyle}
-            onPlaybackState={(state) => {
-              setReady(state.ready);
-              if (state.error) setFailed(true);
-              else if (state.ready || state.hasFirstSegment) setFailed(false);
-            }}
+            onPlaybackState={handlePlaybackState}
           />
         ) : (
           <video

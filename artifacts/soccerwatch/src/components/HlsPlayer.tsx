@@ -198,7 +198,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         });
         hlsRef.current = hls;
         // Live is ordinary playback: same ceiling as VOD.
-        capPlaybackQuality(hls);
+        const cancelQualityCap = capPlaybackQuality(hls);
         hls.loadSource(url);
         hls.attachMedia(el);
 
@@ -318,6 +318,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(
         return () => {
           el.removeEventListener("playing", clearTransientError);
           if (retryTimer) clearTimeout(retryTimer);
+          cancelQualityCap();
           hls.destroy();
           hlsRef.current = null;
         };
