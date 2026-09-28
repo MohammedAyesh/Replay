@@ -7,12 +7,14 @@ export function FrameSizeSlider({
   frame,
   maxZoom,
   compact,
+  inline,
 }: {
   zoom: number;
   onChange: (zoom: number) => void;
   frame: Frame;
   maxZoom: number;
   compact?: boolean;
+  inline?: boolean;
 }) {
   const coveredW = Math.max(
     0,
@@ -27,7 +29,7 @@ export function FrameSizeSlider({
     <div
       className={cn(
         "pointer-events-auto rounded-2xl bg-black/60 backdrop-blur-sm px-3 py-2",
-        compact ? "w-56" : "w-full max-w-sm",
+        inline ? "w-36 shrink-0" : compact ? "w-56" : "w-full max-w-sm",
       )}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}

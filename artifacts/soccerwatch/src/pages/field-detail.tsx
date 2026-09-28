@@ -670,6 +670,7 @@ export default function FieldDetail() {
             source={{ kind: "bunny", videoId: activeVideo.guid }}
             academyId={academyId}
             layout="overlay"
+            toolbarLayout="single-row"
             canSave={Boolean(user) && !isGuest}
             onClose={() => setActiveVideo(null)}
             onRequireAuth={(_draft) => setLocation("/sign-in")}
