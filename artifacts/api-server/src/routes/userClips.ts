@@ -68,6 +68,21 @@ import {
   markPortfolioExportQueued,
 } from "../lib/portfolioPlayback";
 import { ensureClipPoster, resolveOwnerShare } from "./share";
+import {
+  fetchExportObject,
+  isBackupExportConfigured,
+  isBackupExportRef,
+  isExportReachable,
+} from "../lib/backupExport";
+import {
+  BACKUP_UNREACHABLE_GIVE_UP_MS,
+  notePrimaryFinished,
+  notePrimaryStarted,
+  reconcileBackup,
+  startExportFailoverSweep,
+  type BackupOutcome,
+} from "../lib/exportFailover";
+import { fetchBrandingAsset } from "../lib/brandingFetch";
 import { introPlaybackPath } from "./clipIntro";
 import { canCreateClipFromVideo } from "../lib/publicFootage";
 
@@ -441,6 +456,9 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
   void withRenderSlot(clipId, async () => {
     let tmpPath: string | null = null;
     let bufferTmpFile: string | null = null;
+    const assetTmpFiles: string[] = [];
+    let overlayUrlForBackup: string | null = null;
+    notePrimaryStarted(clipId);
     try {
       logger.info({ clipId, startTime, endTime }, "Starting background clip export");
 
@@ -528,15 +546,29 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
         await fieldIdForClip(clipId),
         { academyId: clip.academyId, fieldId: await fieldIdForClip(clipId) },
       );
-      if (branding.overlayUrl || branding.endCardUrl) {
+      overlayUrlForBackup = branding.overlayUrl ?? null;
+
+      // Every branding asset is fetched here, with its own timeout and its own
+      // HTTP status in the log, before FFmpeg starts. FFmpeg then only reads
+      // local files for branding, and an asset that cannot be fetched is left
+      // out rather than failing the clip. See lib/brandingFetch.ts.
+      const [introPath, overlayPath, endCardPath] = await Promise.all([
+        fetchBrandingAsset(introUrl, "intro", { referer: introReferer }),
+        fetchBrandingAsset(branding.overlayUrl, "overlay", { referer: branding.brandingReferer }),
+        fetchBrandingAsset(branding.endCardUrl, "end card", { referer: branding.brandingReferer }),
+      ]);
+      for (const [remote, local] of [[introUrl, introPath], [branding.overlayUrl, overlayPath], [branding.endCardUrl, endCardPath]] as const) {
+        if (local && local !== remote) assetTmpFiles.push(local);
+      }
+      if (overlayPath || endCardPath || introPath) {
         logger.info(
-          { clipId, overlay: !!branding.overlayUrl, endCard: !!branding.endCardUrl },
+          { clipId, intro: !!introPath, overlay: !!overlayPath, endCard: !!endCardPath },
           "Branding this export",
         );
       }
 
       exportProgress.set(clipId, "encoding");
-      tmpPath = await renderClip({
+      const renderOptions = {
         // Encode from the local buffer — no remote URL, no referer needed
         videoUrl: bufferPath,
         totalDuration: bufferedDuration,
@@ -545,11 +577,22 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
         cropPath,
         aspectRatio: clip.aspectRatio,
         title: clip.title,
-        // referer omitted — local file
-        introUrl,
-        introReferer,
-        ...branding,
-      });
+      };
+      const branded = !!(introPath || overlayPath || endCardPath);
+      try {
+        tmpPath = await renderClip({
+          ...renderOptions,
+          introUrl: introPath ?? undefined,
+          overlayUrl: overlayPath ?? undefined,
+          endCardUrl: endCardPath ?? undefined,
+        });
+      } catch (renderErr) {
+        if (!branded) throw renderErr;
+        // A branded encode that fails gets one more try with no branding at
+        // all: the clip is what the user asked for, the logo is ours.
+        logger.error({ err: renderErr, clipId }, "Branded render failed — retrying the clip unbranded");
+        tmpPath = await renderClip(renderOptions);
+      }
 
       exportProgress.set(clipId, "uploading");
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
@@ -557,23 +600,76 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
         .update(userClipsTable)
         .set({ exportStatus: "done", exportedUrl })
         .where(eq(userClipsTable.id, clipId));
-      logger.info({ clipId, exportedUrl }, "Clip export complete");
+      logger.info({ clipId, exportedUrl, method: "primary" }, "Clip export complete");
     } catch (err) {
       logger.error({ err, clipId }, "Background clip export failed");
-      await db
-        .update(userClipsTable)
-        .set({
-          exportStatus: classifyPortfolioSourceError(err) === "expired" ? "expired" : "error",
-        })
-        .where(eq(userClipsTable.id, clipId));
+      if (classifyPortfolioSourceError(err) === "expired") {
+        // The recording itself is gone from Bunny Stream. Method B reads the
+        // same recording, so there is nothing to fail over to.
+        await db
+          .update(userClipsTable)
+          .set({ exportStatus: "expired" })
+          .where(eq(userClipsTable.id, clipId));
+      } else {
+        await failOverToBackup(clip, overlayUrlForBackup, err);
+      }
     } finally {
       inFlight.delete(clipId);
       exportProgress.delete(clipId);
+      notePrimaryFinished(clipId);
       if (bufferTmpFile) cleanupTempFile(bufferTmpFile);
       if (tmpPath) cleanupTempFile(tmpPath);
+      for (const f of assetTmpFiles) cleanupTempFile(f);
     }
   });
 }
+
+/**
+ * Method A has failed for this clip: hand it to Method B (vps1) instead of
+ * reporting a failure. The row stays `pending` while Method B works; the
+ * export-status poll and the failover sweep move it to `done` when it lands.
+ * Only when Method B is not configured does a Method A failure end the export.
+ */
+async function failOverToBackup(
+  clip: typeof userClipsTable.$inferSelect,
+  overlayUrl: string | null,
+  cause: unknown,
+): Promise<void> {
+  if (!isBackupExportConfigured()) {
+    await db.update(userClipsTable).set({ exportStatus: "error" }).where(eq(userClipsTable.id, clip.id));
+    return;
+  }
+  try {
+    const outcome = await reconcileBackup(clip, { overlayUrl, primaryActive: false, cacheMs: 0 });
+    logger.warn(
+      { clipId: clip.id, backup: outcome.state, cause: String((cause as Error)?.message ?? cause).slice(0, 300) },
+      "Primary export failed — handed to the backup renderer (vps1)",
+    );
+    // "failed" has already written the row; "done"/"running" keep it pending
+    // or done; "unavailable" leaves it pending for the poll and the sweep to
+    // retry, and they give up only after vps1 has stayed unreachable.
+  } catch (err) {
+    logger.error({ err, clipId: clip.id }, "Could not hand the export to the backup renderer");
+  }
+}
+
+/** The overlay a clip's export would carry — what Method B is asked to burn in too. */
+async function overlayUrlForClip(clip: typeof userClipsTable.$inferSelect): Promise<string | null> {
+  try {
+    const fieldId = await fieldIdForClip(clip.id);
+    const branding = await resolveBrandingForClip(clip.academyId, fieldId, { academyId: clip.academyId, fieldId });
+    return branding.overlayUrl ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Rows orphaned by a restart, by another autoscale instance, or by a hung
+// render are picked up here even when nobody is polling.
+startExportFailoverSweep({
+  isPrimaryInFlight: (clipId) => inFlight.has(clipId),
+  resolveOverlayUrl: overlayUrlForClip,
+});
 
 /**
  * Queue the existing MP4 export pipeline for a live capture after its Bunny
@@ -1290,12 +1386,30 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Live stream clips cannot be exported. The recording must be uploaded to Bunny Stream first." });
     return;
   }
-  if (!isBunnyConfigured()) { res.status(400).json({ error: "Video playback not configured" }); return; }
-  if (!isBunnyStorageConfigured()) { res.status(400).json({ error: "Export storage not configured" }); return; }
-
   // Already exported — return the cached URL immediately (no re-render)
   if (clip.exportStatus === "done" && clip.exportedUrl) {
     res.json({ status: "done", url: clip.exportedUrl });
+    return;
+  }
+
+  // Method A needs Bunny Stream's API and Bunny Storage configured on this
+  // server. If either is missing, go straight to Method B rather than refusing:
+  // Method B needs neither.
+  if (!isBunnyConfigured() || !isBunnyStorageConfigured()) {
+    if (!isBackupExportConfigured()) {
+      res.status(400).json({ error: "Export is not configured on this server" });
+      return;
+    }
+    logger.warn({ clipId, bunny: isBunnyConfigured(), storage: isBunnyStorageConfigured() }, "Primary export not configured — using the backup renderer");
+    await db
+      .update(userClipsTable)
+      .set({ exportStatus: "pending", exportedUrl: null })
+      .where(eq(userClipsTable.id, clipId));
+    const outcome = await reconcileBackup({ ...clip, exportStatus: "pending", exportedUrl: null }, {
+      overlayUrl: await overlayUrlForClip(clip),
+      cacheMs: 0,
+    });
+    res.json(outcome.state === "done" ? { status: "done", url: outcome.url } : { status: "pending" });
     return;
   }
 
@@ -1317,10 +1431,17 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
 
   // Mark pending and respond immediately so the client can start polling
   inFlight.add(clipId);
-  await db
-    .update(userClipsTable)
-    .set({ exportStatus: "pending", exportedUrl: null })
-    .where(eq(userClipsTable.id, clipId));
+  try {
+    await db
+      .update(userClipsTable)
+      .set({ exportStatus: "pending", exportedUrl: null })
+      .where(eq(userClipsTable.id, clipId));
+  } catch (err) {
+    // Without this the id stayed in inFlight for the life of the process and
+    // every later /export for the clip answered "pending" forever.
+    inFlight.delete(clipId);
+    throw err;
+  }
   res.json({ status: "pending" });
 
   startBackgroundExport(clip);
@@ -1342,18 +1463,112 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
 
-  const progress = exportProgress.get(clip.id) ?? null;
-  // Queue position is additive and only meaningful while pending. A spinner that
-  // says "3rd in line" is the difference between waiting and giving up.
   const queue = queueStateFor(clip.id);
+  const decided = await exportStatusFor(clip, { verify: req.query.verify === "1" });
   res.json({
-    status: clip.exportStatus === "expired" ? "error" : clip.exportStatus ?? "idle",
-    url: clip.exportedUrl ?? null,
-    progress,
-    queuePosition: queue.position,
+    ...decided,
+    // Queue position is additive and only meaningful while Method A is
+    // pending. A spinner that says "3rd in line" is the difference between
+    // waiting and giving up.
+    queuePosition: decided.method === "primary" ? queue.position : null,
     queueWaiting: queue.waiting,
   });
 });
+
+/**
+ * What the client should be told about a clip's export, and — because the
+ * client polls this every two seconds — the place where a failed or lost
+ * Method A is handed to Method B while someone is waiting for it.
+ *
+ * "error" is only returned when both methods have failed (or Method B is not
+ * configured). `verify` additionally checks, right before the client downloads,
+ * that a finished export can still be fetched; one that cannot is re-rendered
+ * instead of handed over as a broken download.
+ */
+async function exportStatusFor(
+  clip: typeof userClipsTable.$inferSelect,
+  opts: { verify?: boolean } = {},
+): Promise<{
+  status: "idle" | "pending" | "done" | "error" | "expired";
+  url: string | null;
+  progress: string | null;
+  method: "primary" | "backup" | null;
+  backupProgress: number | null;
+  reason?: string;
+}> {
+  const primaryActive = inFlight.has(clip.id);
+  const base = { url: null, progress: null, method: null, backupProgress: null } as const;
+
+  if (clip.exportStatus === "done" && clip.exportedUrl) {
+    if (!opts.verify || await isExportReachable(clip.exportedUrl)) {
+      return { ...base, status: "done", url: clip.exportedUrl };
+    }
+    // The file is gone (deleted from storage, vps1 retention) or its host is
+    // down. Re-render it rather than hand the user a failed download.
+    const wasBackup = isBackupExportRef(clip.exportedUrl);
+    logger.warn({ clipId: clip.id, backup: wasBackup }, "Finished export is not reachable — re-rendering");
+    await db
+      .update(userClipsTable)
+      .set({ exportStatus: "pending", exportedUrl: null })
+      .where(eq(userClipsTable.id, clip.id));
+    clip = { ...clip, exportStatus: "pending", exportedUrl: null };
+    // A lost Method A file is re-rendered by Method A (Method B takes over if
+    // that fails); a lost Method B file goes straight back to Method B.
+    if (!wasBackup && !primaryActive && isBunnyConfigured() && isBunnyStorageConfigured()) {
+      inFlight.add(clip.id);
+      startBackgroundExport(clip);
+      return { ...base, status: "pending", progress: "fetching", method: "primary" };
+    }
+  }
+
+  if (clip.exportStatus === "expired") {
+    return { ...base, status: "error", reason: "expired" };
+  }
+
+  // Method A is working on it here and has not been going implausibly long:
+  // report its progress.
+  if (clip.exportStatus === "pending" && primaryActive) {
+    return { ...base, status: "pending", progress: exportProgress.get(clip.id) ?? null, method: "primary" };
+  }
+
+  // Everything else that is not idle — Method A failed ("error"), or the row is
+  // pending with no local render (restart, another instance) — goes to Method B.
+  if (clip.exportStatus !== "pending" && clip.exportStatus !== "error") {
+    return { ...base, status: "idle" };
+  }
+  if (!isBackupExportConfigured()) {
+    return { ...base, status: clip.exportStatus === "error" ? "error" : "pending" };
+  }
+
+  const outcome: BackupOutcome = await reconcileBackup(clip, { overlayUrl: await overlayUrlForClip(clip) });
+  switch (outcome.state) {
+    case "done":
+      return { ...base, status: "done", url: outcome.url, method: "backup", backupProgress: 100 };
+    case "running":
+      if (clip.exportStatus === "error") {
+        // Method A had already given up; the row is live again while B works.
+        await db
+          .update(userClipsTable)
+          .set({ exportStatus: "pending" })
+          .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.exportStatus, "error")));
+      }
+      return { ...base, status: "pending", progress: "backup", method: "backup", backupProgress: outcome.progress };
+    case "failed":
+      return { ...base, status: "error", reason: outcome.exportStatus };
+    case "unavailable": {
+      const stuckFor = Date.now() - outcome.since;
+      if (stuckFor > BACKUP_UNREACHABLE_GIVE_UP_MS) {
+        // Method A is not rendering this clip and Method B cannot be reached.
+        await db
+          .update(userClipsTable)
+          .set({ exportStatus: "error" })
+          .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.exportStatus, "pending")));
+        return { ...base, status: "error", reason: "both_unavailable" };
+      }
+      return { ...base, status: "pending", progress: "backup", method: "backup", backupProgress: 0 };
+    }
+  }
+}
 
 
 /**
@@ -1613,17 +1828,25 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   const abort = new AbortController();
   res.on("close", () => abort.abort());
 
-  let upstream: Response;
+  let upstream: Response | null = null;
   try {
-    upstream = await fetch(clip.exportedUrl, {
-      headers: { AccessKey: BUNNY_STORAGE_API_KEY },
-      signal: abort.signal,
-    });
+    // Either method's file: Bunny Storage for Method A, vps1 for Method B.
+    upstream = await fetchExportObject(clip.exportedUrl, { signal: abort.signal });
   } catch (err) {
-    if (!res.headersSent) res.status(502).json({ error: "Could not fetch from storage" });
+    logger.error({ err, clipId, backup: isBackupExportRef(clip.exportedUrl) }, "Could not reach the finished export");
+  }
+  if (!upstream || !upstream.ok || !upstream.body) {
+    await upstream?.body?.cancel().catch(() => {});
+    // The finished file cannot be served. Put the clip back into the export
+    // pipeline (Method A, with Method B behind it) instead of leaving a "done"
+    // row that fails every download; the client sees "pending" and waits.
+    if (!abort.signal.aborted) {
+      logger.error({ clipId, status: upstream?.status ?? null }, "Finished export unavailable — re-rendering");
+      await exportStatusFor(clip, { verify: true }).catch(() => {});
+      if (!res.headersSent) res.status(503).json({ error: "Your clip is being prepared again. Try in a minute.", retry: true });
+    }
     return;
   }
-  if (!upstream.ok || !upstream.body) { res.status(502).json({ error: "Could not fetch from storage" }); return; }
 
   res.setHeader("Content-Type", "video/mp4");
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);

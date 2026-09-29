@@ -35,7 +35,7 @@ import { useSafetyCopy, hiddenClipNoticeText } from "@/i18n/safety-strings";
 import {
   fetchDownloadQuota,
   formatQuotaLabel,
-  formatQueueLabel,
+  exportStepLabel as describeExportStep,
   isQuotaExhausted,
   reconcileExportState,
   type ExportStatusResponse,
@@ -512,38 +512,57 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
    * five downloads without them touching anything.
    */
   const pollUntilSettled = useCallback(async (deliverWhenDone: boolean) => {
-    // The server renders at most MAX_CONCURRENT_RENDERS clips at a time and
-    // queues the rest, and a single -preset slow -crf 16 pass on the shared VPS
-    // can take several minutes on its own. The old 3-minute budget reported
-    // "Export failed" while the render was still waiting its turn.
-    const maxAttempts = 600; // 20 minutes at 2 s
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise<void>((r) => setTimeout(r, 2000));
+    // The server has two independent export methods: its own render, and the
+    // backup renderer on vps1 that takes over when the first fails. It only
+    // answers "error" once BOTH have failed, so this loop must not give up
+    // before the server does:
+    //   - a single failed poll (mobile network blip, an instance restarting,
+    //     a 502 from the platform edge) is retried, not reported — this used
+    //     to show "Export failed" while the render was still running;
+    //   - the ceiling covers a primary render, the hand-over, and a backup
+    //     render (45 minutes).
+    const MAX_WAIT_MS = 45 * 60_000;
+    const MAX_CONSECUTIVE_POLL_FAILURES = 60; // several minutes of no answer at all
+    const startedAt = Date.now();
+    let pollFailures = 0;
+    while (Date.now() - startedAt < MAX_WAIT_MS) {
+      await new Promise<void>((r) => setTimeout(r, 2000 + Math.min(pollFailures, 8) * 1000));
       if (!pollingRef.current) return; // player closed
 
-      const statusRes = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
-      if (!statusRes.ok) throw new Error("Status check failed");
-      const status = await statusRes.json() as {
-        status: string; url?: string; progress?: string | null;
-        queuePosition?: number | null;
-      };
+      let status: ExportStatusResponse;
+      try {
+        const statusRes = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
+        if (!statusRes.ok) throw new Error(`Status check failed: HTTP ${statusRes.status}`);
+        status = await statusRes.json() as ExportStatusResponse;
+        pollFailures = 0;
+      } catch (err) {
+        pollFailures++;
+        if (pollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) throw err;
+        setExportStepLabel("Reconnecting…");
+        continue;
+      }
 
-      const stepLabels: Record<string, string> = {
-        fetching: "Step 1/3",
-        encoding: "Step 2/3",
-        uploading: "Step 3/3",
-      };
-      const step = status.progress ? stepLabels[status.progress] ?? "Step 1/3" : null;
-      setExportStepLabel(formatQueueLabel(status.queuePosition, step));
+      setExportStepLabel(describeExportStep(status));
 
       if (status.status === "done" && status.url) {
+        if (deliverWhenDone) {
+          // Confirm the file can actually be fetched before handing it over.
+          // If it cannot, the server re-renders it and this loop keeps going.
+          const verified = await fetch(`/api/user-clips/${clip.id}/export-status?verify=1`, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() as Promise<ExportStatusResponse> : null))
+            .catch(() => null);
+          if (verified && verified.status !== "done") {
+            setExportStepLabel(describeExportStep(verified));
+            continue;
+          }
+        }
         setExportedUrl(status.url);
         pollingRef.current = false;
         setExportState("ready");
         if (deliverWhenDone) await deliverViaProxy();
         return;
       }
-      if (status.status === "error") throw new Error("Server render failed");
+      if (status.status === "error") throw new Error("Both export methods failed");
       // still pending — keep polling
     }
     throw new Error("Export timed out");
@@ -601,9 +620,24 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     // spinner, nothing at all happened.
     if (exportState === "ready" && exportedUrl) {
       try {
+        // A "ready" button can be days old. Check the file is still there; if
+        // it is not, the server has started re-rendering it and we wait.
+        const verified = await fetch(`/api/user-clips/${clip.id}/export-status?verify=1`, { credentials: "include" })
+          .then((r) => (r.ok ? r.json() as Promise<ExportStatusResponse> : null))
+          .catch(() => null);
+        if (verified && verified.status === "pending") {
+          setExportState("polling");
+          setExportStepLabel(describeExportStep(verified));
+          pollingRef.current = true;
+          await pollUntilSettled(true);
+          return;
+        }
         await deliverViaProxy();
       } catch {
+        pollingRef.current = false;
+        setExportState("error");
         toast({ title: t.export.error, description: t.export.errorDesc, variant: "destructive" });
+        setTimeout(() => setExportState("idle"), 4000);
       }
       return;
     }
@@ -665,7 +699,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       toast({ title: t.export.error, description: t.export.errorDesc, variant: "destructive" });
       setTimeout(() => setExportState("idle"), 4000);
     }
-  }, [clip, exportState, exportedUrl, t, toast, deliverBlob, deliverViaProxy]);
+  }, [clip, exportState, exportedUrl, t, toast, deliverBlob, deliverViaProxy, pollUntilSettled]);
 
   return (
     <motion.div

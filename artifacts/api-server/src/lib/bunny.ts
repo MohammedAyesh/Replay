@@ -119,8 +119,11 @@ export async function getBunnyVideoInfo(videoId: string): Promise<{
   availableResolutions: string;
 }> {
   const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`;
+  // Bounded: an API that accepts the connection and never answers used to hold
+  // a render slot (and the clip) indefinitely.
   const response = await fetch(url, {
     headers: { AccessKey: BUNNY_API_KEY },
+    signal: AbortSignal.timeout(20_000),
   });
   if (response.status === 404) {
     throw new BunnyVideoNotFoundError(videoId);
@@ -234,6 +237,9 @@ export async function uploadToBunnyStorage(filePath: string, clipId: number): Pr
     body: fileStream,
     // Required by undici whenever the request body is a stream.
     duplex: "half",
+    // Generous (a long 1080p clip is hundreds of MB) but finite: a stalled
+    // upload must end in the backup renderer, not in a clip stuck at Step 3/3.
+    signal: AbortSignal.timeout(Math.max(10 * 60_000, Number(process.env.EXPORT_UPLOAD_TIMEOUT_MS) || 0)),
   } as RequestInit & { duplex: "half" });
 
   if (!response.ok) {

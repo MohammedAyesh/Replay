@@ -197,13 +197,19 @@ describe("GET /user-clips/:id/download", () => {
     expect(res.status).toBe(404);
   });
 
-  it("502s when the export is gone from storage, without hanging", async () => {
+  it("puts a clip whose file is gone back into the export pipeline instead of failing forever", async () => {
     mockedGetLocalUserId.mockResolvedValue(ownerId);
     const clipId = await insertClip(ownerId, `${originUrl}/missing.mp4`);
 
     const res = await request(app).get(`/api/user-clips/${clipId}/download`);
 
-    expect(res.status).toBe(502);
+    // Before 2026-09-29 this was a 502 on every attempt, with the row left
+    // "done". Now the row is re-rendered and the client is told to wait.
+    expect(res.status).toBe(503);
+    expect(res.body.retry).toBe(true);
+    const [row] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
+    expect(row.exportStatus).toBe("pending");
+    expect(row.exportedUrl).toBeNull();
   });
 
   it("aborts the upstream fetch when the client goes away mid-download", async () => {

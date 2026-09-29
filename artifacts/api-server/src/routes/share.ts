@@ -18,6 +18,7 @@ import {
   getBunnyPlaybackUrl,
   getPortfolioClipStoragePath,
 } from "../lib/bunny";
+import { fetchExportObject, isBackupExportRef } from "../lib/backupExport";
 import {
   hasCompletedPortfolioExport,
   isPortfolioClipShared,
@@ -769,7 +770,9 @@ export async function ensureClipPoster(clip: ClipRow): Promise<string | null> {
 
   try {
     let result;
-    if (clip.exportedUrl) {
+    // A backup (vps1) export is not a URL FFmpeg can open; take the poster
+    // from the panorama for those, exactly as for a clip not yet exported.
+    if (clip.exportedUrl && !isBackupExportRef(clip.exportedUrl)) {
       const duration = await probeDuration(clip.exportedUrl);
       result = await generatePosterFrame({
         sourceUrl: clip.exportedUrl,
@@ -807,7 +810,7 @@ export async function ensureClipPoster(clip: ClipRow): Promise<string | null> {
 
     logger.info(
       { clipId: clip.id, path, atSec: result.atSec, degraded: result.degraded,
-        from: clip.exportedUrl ? "export" : "source" },
+        from: clip.exportedUrl && !isBackupExportRef(clip.exportedUrl) ? "export" : "source" },
       "Generated clip poster",
     );
     return path;
@@ -873,6 +876,48 @@ async function proxyStorageObject(
 }
 
 /**
+ * Stream a clip exported by the backup renderer (vps1), with Range passed
+ * through so players can seek. The control key never leaves this server.
+ */
+async function proxyBackupExport(
+  req: Request,
+  res: import("express").Response,
+  exportedUrl: string,
+  cacheControl: string,
+): Promise<void> {
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  let upstream: Response;
+  try {
+    upstream = await fetchExportObject(exportedUrl, {
+      range: typeof req.headers.range === "string" ? req.headers.range : undefined,
+      signal: abort.signal,
+    });
+  } catch {
+    if (!res.headersSent) res.status(502).end();
+    return;
+  }
+  if (!upstream.ok || !upstream.body) {
+    res.status(upstream.status === 404 ? 404 : 502).end();
+    return;
+  }
+  res.status(upstream.status);
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Cache-Control", cacheControl);
+  res.removeHeader("Vary");
+  for (const h of ["content-length", "content-range", "etag", "last-modified"]) {
+    const v = upstream.headers.get(h);
+    if (v) res.setHeader(h, v);
+  }
+  try {
+    await pipeline(Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>), res);
+  } catch (err) {
+    if (!abort.signal.aborted) logger.error({ err }, "Error proxying backup export");
+  }
+}
+
+/**
  * Portfolio playback serves only the clip's rendered export. Every request
  * re-reads the share flags, so an unshare, privacy change, or admin hide takes
  * effect before any new byte-range is proxied.
@@ -906,6 +951,11 @@ router.get(
     }
     if (clip.videoId.startsWith("live:")) {
       res.status(404).end();
+      return;
+    }
+
+    if (isBackupExportRef(clip.exportedUrl)) {
+      await proxyBackupExport(req, res, clip.exportedUrl, "private, no-store");
       return;
     }
 
@@ -965,6 +1015,10 @@ router.get(["/s/:id/:token/poster.jpg", "/api/s/:id/:token/poster.jpg"], async (
 router.get(["/s/:id/:token/clip.mp4", "/api/s/:id/:token/clip.mp4"], async (req, res): Promise<void> => {
   const clip = await resolveSharedClip(req);
   if (!clip || !clip.exportedUrl) { res.status(404).end(); return; }
+  if (isBackupExportRef(clip.exportedUrl)) {
+    await proxyBackupExport(req, res, clip.exportedUrl, "public, max-age=86400");
+    return;
+  }
   // exportedUrl is a CDN URL over the same storage zone; the storage path is
   // everything after the zone root.
   const storagePath = clip.exportedUrl.replace(/^https?:\/\/[^/]+\//, "");

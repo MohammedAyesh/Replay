@@ -195,7 +195,7 @@ export async function selectExportSource(options: {
 
   let masterBody: string;
   try {
-    const response = await fetch(masterUrl, { headers: { Referer: referer } });
+    const response = await fetch(masterUrl, { headers: { Referer: referer }, signal: AbortSignal.timeout(20_000) });
     masterBody = await response.text();
     if (!response.ok || !looksLikePlaylist(masterBody)) {
       throw new ExportSourceUnavailableError(
@@ -244,6 +244,7 @@ export async function selectExportSource(options: {
         const response = await fetch(directUrl, {
           method: "HEAD",
           headers: { Referer: referer },
+          signal: AbortSignal.timeout(20_000),
         });
         if (response.status === 200 || response.status === 206) {
           logger.info(
@@ -273,7 +274,7 @@ export async function selectExportSource(options: {
 
   const variantUrl = new URL(match.uri, masterUrl).toString();
   try {
-    const response = await fetch(variantUrl, { headers: { Referer: referer } });
+    const response = await fetch(variantUrl, { headers: { Referer: referer }, signal: AbortSignal.timeout(20_000) });
     const body = await response.text();
     if (!response.ok || !looksLikePlaylist(body)) {
       throw new ExportSourceUnavailableError(
