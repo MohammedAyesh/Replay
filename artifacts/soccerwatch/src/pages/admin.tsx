@@ -51,6 +51,7 @@ interface AdminClip {
   title: string;
   visibility: string;
   isHidden: boolean;
+  hiddenReason: string | null;
   likeCount: number;
   viewCount: number;
   shareCount: number;
@@ -666,20 +667,25 @@ function ClipsTab() {
   }, [queryClient]);
 
   const toggleHidden = async (clip: AdminClip) => {
+    const isHidden = !clip.isHidden;
     await apiFetch(`/admin/clips/${clip.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ isHidden: !clip.isHidden }),
+      body: JSON.stringify({ isHidden }),
     });
-    setClips((prev) => prev.map((c) => c.id === clip.id ? { ...c, isHidden: !c.isHidden } : c));
+    setClips((prev) => prev.map((c) => c.id === clip.id
+      ? { ...c, isHidden, hiddenReason: isHidden ? (c.hiddenReason === "deleted" ? "deleted" : "admin") : null }
+      : c));
     invalidateFeeds();
   };
 
   const deleteClip = async (clip: AdminClip) => {
-    if (!confirm(`Delete "${clip.title}"? This cannot be undone.`)) return;
+    if (!confirm(`Hide "${clip.title}"? The clip and its MP4 will remain stored, and an admin can restore it.`)) return;
     setDeleting(clip.id);
     try {
       await apiFetch(`/admin/clips/${clip.id}`, { method: "DELETE" });
-      setClips((prev) => prev.filter((c) => c.id !== clip.id));
+      setClips((prev) => prev.map((c) => c.id === clip.id
+        ? { ...c, isHidden: true, hiddenReason: "deleted" }
+        : c));
       invalidateFeeds();
     } catch { /* silent */ }
     setDeleting(null);
@@ -969,7 +975,7 @@ function ClipsTab() {
                 </button>
                 {clip.isHidden && (
                   <span className="text-[10px] bg-red-900/40 text-red-400 px-2 py-0.5 rounded-full border border-red-800/50">
-                    Hidden
+                    {clip.hiddenReason === "deleted" ? "Deleted · restorable" : "Hidden"}
                   </span>
                 )}
                 <button
@@ -987,7 +993,9 @@ function ClipsTab() {
                       ? "bg-primary/20 text-primary hover:bg-primary/30"
                       : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
                   )}
-                  title={clip.isHidden ? "Show clip" : "Hide clip"}
+                  title={clip.isHidden
+                    ? (clip.hiddenReason === "deleted" ? "Restore deleted clip" : "Show clip")
+                    : "Hide clip"}
                 >
                   {clip.isHidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                 </button>
@@ -995,7 +1003,7 @@ function ClipsTab() {
                   onClick={() => deleteClip(clip)}
                   disabled={deleting === clip.id}
                   className="p-2 rounded-lg bg-zinc-800 text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-50"
-                  title="Delete clip"
+                  title="Hide clip; the MP4 is retained"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>

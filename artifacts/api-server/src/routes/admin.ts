@@ -260,6 +260,7 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       title: userClipsTable.title,
       visibility: userClipsTable.visibility,
       isHidden: userClipsTable.isHidden,
+      hiddenReason: userClipsTable.hiddenReason,
       likeCount: userClipsTable.likeCount,
       viewCount: userClipsTable.viewCount,
       shareCount: userClipsTable.shareCount,
@@ -287,6 +288,7 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       title: row.title,
       visibility: row.visibility,
       isHidden: row.isHidden,
+      hiddenReason: row.hiddenReason ?? null,
       likeCount: row.likeCount,
       viewCount: row.viewCount,
       shareCount: row.shareCount,
@@ -624,14 +626,27 @@ router.patch("/admin/clips/:id", async (req, res): Promise<void> => {
   const updates: Partial<typeof userClipsTable.$inferInsert> = {};
   if (isHidden !== undefined) {
     updates.isHidden = isHidden;
-    updates.hiddenReason = isHidden ? "admin" : null;
+    if (!isHidden) {
+      updates.hiddenReason = null;
+    } else {
+      const [current] = await db
+        .select({ hiddenReason: userClipsTable.hiddenReason })
+        .from(userClipsTable)
+        .where(eq(userClipsTable.id, id));
+      updates.hiddenReason = current?.hiddenReason === "deleted" ? "deleted" : "admin";
+    }
   }
   if (visibility !== undefined) updates.visibility = visibility;
 
   const [clip] = await db.update(userClipsTable).set(updates).where(eq(userClipsTable.id, id)).returning();
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
 
-  res.json({ id: clip.id, isHidden: clip.isHidden, visibility: clip.visibility });
+  res.json({
+    id: clip.id,
+    isHidden: clip.isHidden,
+    hiddenReason: clip.hiddenReason ?? null,
+    visibility: clip.visibility,
+  });
 });
 
 router.delete("/admin/clips/:id", async (req, res): Promise<void> => {
@@ -641,9 +656,12 @@ router.delete("/admin/clips/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  await db.delete(likesTable).where(eq(likesTable.userClipId, id));
-  await db.delete(userClipsTable).where(eq(userClipsTable.id, id));
-  // savedClipsTable references clipsTable (legacy), not userClipsTable — skip
+  const [clip] = await db
+    .update(userClipsTable)
+    .set({ isHidden: true, hiddenReason: "deleted" })
+    .where(eq(userClipsTable.id, id))
+    .returning({ id: userClipsTable.id });
+  if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
 
   res.json({ ok: true });
 });

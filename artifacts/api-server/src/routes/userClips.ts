@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { followCrop, type FollowPoint } from "../lib/personalMoments";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, and, desc, inArray, count, sql, like } from "drizzle-orm";
+import { eq, and, asc, desc, gt, inArray, count, isNull, ne, or, sql, like } from "drizzle-orm";
 import {
   db,
   userClipsTable,
@@ -44,7 +44,6 @@ import {
   isBunnyConfigured,
   isBunnyStorageConfigured,
   uploadToBunnyStorage,
-  deleteBunnyExport,
   BUNNY_STORAGE_API_KEY,
   BUNNY_CDN_HOSTNAME,
 } from "../lib/bunny";
@@ -82,6 +81,7 @@ import {
   notePrimaryStarted,
   reconcileBackup,
   startExportFailoverSweep,
+  startBackupStorageUrlUpgradeSweep,
   type BackupOutcome,
 } from "../lib/exportFailover";
 import {
@@ -216,7 +216,7 @@ async function getExportAccessibleClip(req: Parameters<typeof getLocalUserId>[0]
     .from(userClipsTable)
     .where(eq(userClipsTable.id, clipId));
   if (!clip) return null;
-  if (clip.userId === userId) return clip;
+  if (clip.userId === userId) return isSoftDeletedClip(clip) ? null : clip;
 
   const [user] = await db
     .select({ isAdmin: usersTable.isAdmin })
@@ -232,6 +232,10 @@ async function getExportAccessibleClip(req: Parameters<typeof getLocalUserId>[0]
  */
 export function isLiveVideoId(videoId: string): boolean {
   return videoId.startsWith("live:");
+}
+
+function isSoftDeletedClip(clip: { hiddenReason?: string | null }): boolean {
+  return clip.hiddenReason === "deleted";
 }
 
 /**
@@ -372,19 +376,9 @@ export async function ensureClaimMomentUserClip(options: {
 
   let exportStatus = publicExportStatus(clip.exportStatus);
   if (
-    isBunnyConfigured() &&
-    isBunnyStorageConfigured() &&
     canAutoQueueClaimMomentExport(clip.exportStatus, inFlight.has(clip.id))
   ) {
-    if (clip.exportStatus !== "done" || !clip.exportedUrl) {
-      inFlight.add(clip.id);
-      await db
-        .update(userClipsTable)
-        .set({ exportStatus: "pending", exportedUrl: null })
-        .where(eq(userClipsTable.id, clip.id));
-      exportStatus = "pending";
-      startBackgroundExport(clip);
-    }
+    exportStatus = publicExportStatus(await queueUserClipExport(clip));
   }
 
   return { userClipId: clip.id, exportStatus: publicExportStatus(exportStatus) };
@@ -506,9 +500,15 @@ function startBackgroundExport(
   options: { exportRevision?: string; trackAdminFailure?: boolean } = {},
 ) {
   const clipId = clip.id;
+  // Any replacement gets a distinct immutable object key. Admin re-clips pass
+  // their own revision; automatic recovery generates one when an older export
+  // is still published.
+  const exportOptions = options.exportRevision || !clip.exportedUrl
+    ? options
+    : { ...options, exportRevision: randomUUID().replace(/-/g, "") };
   void (async () => {
     const admission = await renderQueue.tryRunImmediately(String(clipId), () =>
-      runBackgroundExport(clip, options),
+      runBackgroundExport(clip, exportOptions),
     );
     if (admission.started) {
       void admission.completion.catch((err) => {
@@ -518,7 +518,7 @@ function startBackgroundExport(
     }
 
     if (isBackupExportConfigured()) {
-      const handoff = await tryOverflowHandoff(clip, admission.snapshot);
+      const handoff = await tryOverflowHandoff(clip, admission.snapshot, exportOptions);
       if (handoff !== "local") {
         if (!localFallbackOwned.has(clipId)) inFlight.delete(clipId);
         return;
@@ -526,16 +526,17 @@ function startBackgroundExport(
       localFallbackOwned.add(clipId);
     }
 
-    queueLocalBackgroundExport(clip, options);
+    queueLocalBackgroundExport(clip, exportOptions);
   })().catch((err) => {
     logger.error({ err, clipId }, "Could not choose a clip export renderer — queuing locally");
-    queueLocalBackgroundExport(clip, options);
+    queueLocalBackgroundExport(clip, exportOptions);
   });
 }
 
 async function tryOverflowHandoff(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
   localQueue: ReturnType<typeof renderQueue.snapshot>,
+  options: { exportRevision?: string; trackAdminFailure?: boolean },
 ): Promise<"handed-off" | "owned-elsewhere" | "local"> {
   const [claimed] = await db
     .update(userClipsTable)
@@ -563,6 +564,7 @@ async function tryOverflowHandoff(
         overlayUrl: await overlayUrlForClip(clip),
         primaryActive: true,
         cacheMs: 0,
+        exportRevision: options.exportRevision,
       },
     );
     if (outcome.state === "running" || outcome.state === "done") {
@@ -838,7 +840,7 @@ async function runBackgroundExport(
             inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
           ));
       } else {
-        await failOverToBackup(clip, overlayUrlForBackup, err);
+        await failOverToBackup(clip, overlayUrlForBackup, err, options.exportRevision);
       }
     } finally {
       inFlight.delete(clipId);
@@ -894,6 +896,7 @@ async function failOverToBackup(
   clip: typeof userClipsTable.$inferSelect,
   overlayUrl: string | null,
   cause: unknown,
+  exportRevision?: string,
 ): Promise<void> {
   if (!isBackupExportConfigured()) {
     await db
@@ -918,7 +921,7 @@ async function failOverToBackup(
 
     const outcome = await reconcileBackup(
       { ...clip, exportStatus: PENDING_VPS1_AFTER_PRIMARY },
-      { overlayUrl, primaryActive: false, cacheMs: 0 },
+      { overlayUrl, primaryActive: false, cacheMs: 0, exportRevision },
     );
     logger.warn(
       { clipId: clip.id, backup: outcome.state, cause: String((cause as Error)?.message ?? cause).slice(0, 300) },
@@ -951,6 +954,7 @@ startExportFailoverSweep({
   fallbackOverflowToLocal,
   resumeLocalFallback,
 });
+startBackupStorageUrlUpgradeSweep();
 
 /**
  * Queue the existing MP4 export pipeline for a live capture after its Bunny
@@ -963,7 +967,8 @@ export async function queueUserClipExport(clip: typeof userClipsTable.$inferSele
   if (isInternalPendingStatus(clip.exportStatus)) return "pending";
   if (inFlight.has(clip.id)) return "pending";
 
-  if (!isBunnyConfigured() || !isBunnyStorageConfigured()) {
+  const primaryAvailable = isBunnyConfigured() && isBunnyStorageConfigured();
+  if (!primaryAvailable && !isBackupExportConfigured()) {
     await db.update(userClipsTable)
       .set({ exportStatus: "error" })
       .where(eq(userClipsTable.id, clip.id));
@@ -973,15 +978,105 @@ export async function queueUserClipExport(clip: typeof userClipsTable.$inferSele
   inFlight.add(clip.id);
   try {
     await db.update(userClipsTable)
-      .set({ exportStatus: "pending", exportedUrl: null })
+      .set({ exportStatus: "pending" })
       .where(eq(userClipsTable.id, clip.id));
-    startBackgroundExport({ ...clip, exportStatus: "pending", exportedUrl: null });
+    startBackgroundExport({ ...clip, exportStatus: "pending" });
     return "pending";
   } catch (error) {
     inFlight.delete(clip.id);
     throw error;
   }
 }
+
+/**
+ * Gently recover clips whose export never started or failed while the source
+ * footage is still available. The cursor uses the existing primary-key index;
+ * work is claimed with a conditional update before the normal renderer starts.
+ */
+function startMissingExportBackfill(intervalMs = 10 * 60_000): () => void {
+  if (process.env.NODE_ENV === "test") return () => {};
+
+  let cursor = 0;
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const candidates = await db
+        .select()
+        .from(userClipsTable)
+        .where(and(
+          gt(userClipsTable.id, cursor),
+          or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
+        ))
+        .orderBy(asc(userClipsTable.id))
+        .limit(3);
+
+      if (candidates.length === 0) {
+        cursor = 0;
+        return;
+      }
+      cursor = candidates[candidates.length - 1].id;
+      if (candidates.length < 3) cursor = 0;
+
+      await Promise.all(candidates.map(async (clip) => {
+        if (
+          isLiveVideoId(clip.videoId)
+          || !/^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i.test(clip.videoId)
+          || inFlight.has(clip.id)
+          || (!isBunnyConfigured() && !isBackupExportConfigured())
+        ) return;
+
+        if (isBunnyConfigured()) {
+          try {
+            await getBunnyVideoInfo(clip.videoId);
+          } catch (err) {
+            if (classifyPortfolioSourceError(err) === "expired") {
+              await db.update(userClipsTable)
+                .set({ exportStatus: "expired" })
+                .where(and(
+                  eq(userClipsTable.id, clip.id),
+                  or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
+                ));
+            } else {
+              logger.warn({ err, clipId: clip.id }, "Skipping export backfill because the source could not be checked");
+            }
+            return;
+          }
+        }
+
+        const [claimed] = await db
+          .update(userClipsTable)
+          .set({ exportStatus: "pending" })
+          .where(and(
+            eq(userClipsTable.id, clip.id),
+            or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
+          ))
+          .returning({ id: userClipsTable.id });
+        if (!claimed) return;
+
+        inFlight.add(clip.id);
+        startBackgroundExport({ ...clip, exportStatus: "pending" });
+        logger.info({ clipId: clip.id }, "Queued an export from the missing-export backfill");
+      }));
+    } catch (err) {
+      logger.error({ err }, "Missing clip-export backfill failed");
+    } finally {
+      running = false;
+    }
+  };
+
+  const interval = setInterval(() => { void tick(); }, intervalMs);
+  interval.unref?.();
+  const first = setTimeout(() => { void tick(); }, 45_000);
+  first.unref?.();
+  return () => {
+    clearInterval(interval);
+    clearTimeout(first);
+  };
+}
+
+startMissingExportBackfill();
 
 /** Whether this API process is actively rendering a clip export right now. */
 export function isUserClipExportInFlight(clipId: number): boolean {
@@ -1101,15 +1196,11 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   // Pre-render the clip immediately so it's ready (or nearly ready) by the
   // time the user navigates to My Clips and taps Download.
   let initialExportStatus: string | null = row.exportStatus ?? null;
-  if (!isLive && isBunnyStorageConfigured() && !inFlight.has(row.id)) {
-    inFlight.add(row.id);
-    await db
-      .update(userClipsTable)
-      .set({ exportStatus: "pending", exportedUrl: null })
-      .where(eq(userClipsTable.id, row.id));
-    initialExportStatus = "pending";
-    startBackgroundExport(row);
-    logger.info({ clipId: row.id }, "Auto-triggered clip export on creation");
+  if (!isLive && !inFlight.has(row.id)) {
+    initialExportStatus = await queueUserClipExport(row);
+    if (initialExportStatus === "pending") {
+      logger.info({ clipId: row.id }, "Auto-triggered clip export on creation");
+    }
   }
 
   res.status(201).json(
@@ -1157,7 +1248,14 @@ router.get("/user-clips", async (req, res): Promise<void> => {
   const rows = await db
     .select()
     .from(userClipsTable)
-    .where(eq(userClipsTable.userId, userId))
+    .where(and(
+      eq(userClipsTable.userId, userId),
+      or(
+        eq(userClipsTable.isHidden, false),
+        ne(userClipsTable.hiddenReason, "deleted"),
+        isNull(userClipsTable.hiddenReason),
+      ),
+    ))
     .orderBy(desc(userClipsTable.createdAt));
 
   // Intro is intentionally suppressed in all playback responses — it appears
@@ -1230,12 +1328,9 @@ router.delete("/user-clips/:id", async (req, res): Promise<void> => {
   }
 
   await db
-    .delete(userClipsTable)
+    .update(userClipsTable)
+    .set({ isHidden: true, hiddenReason: "deleted" })
     .where(and(eq(userClipsTable.id, params.data.id), eq(userClipsTable.userId, userId)));
-
-  // Drop the rendered export too, otherwise it stays readable on the CDN (and
-  // billable) forever after the row is gone.
-  if (existing.exportedUrl) void deleteBunnyExport(params.data.id);
 
   res.json({ ok: true });
 });
@@ -1274,6 +1369,10 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
+  if (isSoftDeletedClip(existing)) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
 
   const updates: Partial<{ title: string; visibility: string; thumbnailTime: string | null; showInPortfolio: boolean }> = {};
   if (body.data.title !== undefined) updates.title = body.data.title;
@@ -1304,8 +1403,7 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     && row.visibility === "public"
     && !row.isHidden
     && !isLiveVideoId(row.videoId)
-    && isBunnyConfigured()
-    && isBunnyStorageConfigured()) {
+  ) {
     clearPortfolioExportQueueAttempt(row.id);
     try {
       responseExportStatus = await queueUserClipExport(row);
@@ -1381,6 +1479,10 @@ router.post("/user-clips/:id/like", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Clip not found" });
     return;
   }
+  if (isSoftDeletedClip(clip)) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
   if (await isBlockedEitherWay(userId, clip.userId)
     || (clip.isHidden && clip.userId !== userId)) {
     res.status(404).json({ error: "Clip not found" });
@@ -1431,6 +1533,10 @@ router.post("/user-clips/:id/view", async (req, res): Promise<void> => {
     .from(userClipsTable)
     .where(eq(userClipsTable.id, userClipId));
   if (!clip) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
+  if (isSoftDeletedClip(clip)) {
     res.status(404).json({ error: "Clip not found" });
     return;
   }
@@ -1490,6 +1596,10 @@ router.post("/user-clips/:id/share", async (req, res): Promise<void> => {
     .from(userClipsTable)
     .where(eq(userClipsTable.id, userClipId));
   if (!clip) {
+    res.status(404).json({ error: "Clip not found" });
+    return;
+  }
+  if (isSoftDeletedClip(clip)) {
     res.status(404).json({ error: "Clip not found" });
     return;
   }
@@ -1689,11 +1799,13 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     logger.warn({ clipId, bunny: isBunnyConfigured(), storage: isBunnyStorageConfigured() }, "Primary export not configured — using the backup renderer");
     await db
       .update(userClipsTable)
-      .set({ exportStatus: "pending", exportedUrl: null })
+      .set({ exportStatus: "pending" })
       .where(eq(userClipsTable.id, clipId));
-    const outcome = await reconcileBackup({ ...clip, exportStatus: "pending", exportedUrl: null }, {
+    const exportRevision = clip.exportedUrl ? randomUUID().replace(/-/g, "") : undefined;
+    const outcome = await reconcileBackup({ ...clip, exportStatus: "pending" }, {
       overlayUrl: await overlayUrlForClip(clip),
       cacheMs: 0,
+      exportRevision,
     });
     res.json(outcome.state === "done" ? { status: "done", url: outcome.url } : { status: "pending" });
     return;
@@ -1720,7 +1832,7 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
   try {
     await db
       .update(userClipsTable)
-      .set({ exportStatus: "pending", exportedUrl: null })
+      .set({ exportStatus: "pending" })
       .where(eq(userClipsTable.id, clipId));
   } catch (err) {
     // Without this the id stayed in inFlight for the life of the process and
@@ -1802,9 +1914,9 @@ async function exportStatusFor(
     logger.warn({ clipId: clip.id, backup: wasBackup }, "Finished export is not reachable — re-rendering");
     await db
       .update(userClipsTable)
-      .set({ exportStatus: "pending", exportedUrl: null })
+      .set({ exportStatus: "pending" })
       .where(eq(userClipsTable.id, clip.id));
-    clip = { ...clip, exportStatus: "pending", exportedUrl: null };
+    clip = { ...clip, exportStatus: "pending" };
     // A lost Method A file is re-rendered by Method A (Method B takes over if
     // that fails); a lost Method B file goes straight back to Method B.
     if (!wasBackup && !primaryActive && isBunnyConfigured() && isBunnyStorageConfigured()) {
@@ -2110,6 +2222,7 @@ router.get("/user-clips/:id/share-link", async (req, res): Promise<void> => {
     .from(userClipsTable)
     .where(eq(userClipsTable.id, clipId));
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  if (isSoftDeletedClip(clip)) { res.status(404).json({ error: "Clip not found" }); return; }
   if (await isBlockedEitherWay(userId, clip.userId)
     || (clip.isHidden && clip.userId !== userId)) {
     res.status(404).json({ error: "Clip not found" });
@@ -2152,7 +2265,10 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
     .from(userClipsTable)
     .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
 
-  if (!clip || !clip.exportedUrl) { res.status(404).json({ error: "Export not ready" }); return; }
+  if (!clip || isSoftDeletedClip(clip) || !clip.exportedUrl) {
+    res.status(404).json({ error: "Export not ready" });
+    return;
+  }
 
   // ── the free tier's rolling allowance ───────────────────────────────────
   const now = new Date();
