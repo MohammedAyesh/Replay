@@ -88,6 +88,7 @@ def _public(st):
         "progress": st.get("progress", 0),
         "error": st.get("error"),
         "errorKind": st.get("errorKind"),
+        "storageUrl": st.get("storageUrl") if isinstance(st.get("storageUrl"), str) else None,
         "attempt": st.get("attempt"),
         "createdAt": st.get("createdAt"),
         "updatedAt": st.get("updatedAt"),
@@ -114,9 +115,13 @@ def _launch(job):
 def job_id(spec):
     # Branding is deliberately not part of the identity: it is best effort, and
     # two callers that resolved it differently must still land on the same job.
-    canon = json.dumps({k: spec.get(k) for k in
-                        ("videoId", "startTime", "endTime", "cropPath", "aspectRatio")},
-                       sort_keys=True, separators=(",", ":"))
+    # An explicit revision is used only for replacement renders, so they never
+    # reuse or overwrite an older permanent export.
+    identity = {k: spec.get(k) for k in
+                ("videoId", "startTime", "endTime", "cropPath", "aspectRatio")}
+    if spec.get("exportRevision"):
+        identity["exportRevision"] = spec["exportRevision"]
+    canon = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     return "c%d-%s" % (int(spec["clipId"]), hashlib.sha256(canon.encode()).hexdigest()[:16])
 
 
@@ -134,6 +139,11 @@ def submit(body: dict = Body(...), x_api_key: str = Header(None)):
             "title": str(body.get("title") or "")[:120],
             "overlayUrl": body.get("overlayUrl") or None,
         }
+        export_revision = body.get("exportRevision")
+        if export_revision is not None:
+            if not isinstance(export_revision, str) or not re.fullmatch(r"[0-9a-fA-F]{16,64}", export_revision):
+                raise ValueError("exportRevision must be 16-64 hexadecimal characters")
+            spec["exportRevision"] = export_revision
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(400, "bad request: %s" % e)
     if not re.fullmatch(r"[0-9a-fA-F-]{16,64}", spec["videoId"]):
