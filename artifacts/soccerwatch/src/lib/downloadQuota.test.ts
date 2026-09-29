@@ -124,3 +124,20 @@ describe("reconciling with the server on reopen", () => {
     expect(reconcileExportState(null)).toEqual({ state: "idle", url: null, label: null, resume: false });
   });
 });
+
+import { exportStepLabel } from "./downloadQuota";
+
+describe("exportStepLabel — primary steps and the backup hand-over", () => {
+  it("shows the three primary steps and the queue", () => {
+    expect(exportStepLabel({ status: "pending", progress: "fetching", queuePosition: 0 })).toBe("Step 1/3");
+    expect(exportStepLabel({ status: "pending", progress: "encoding", queuePosition: 0 })).toBe("Step 2/3");
+    expect(exportStepLabel({ status: "pending", progress: "uploading", queuePosition: 0 })).toBe("Step 3/3");
+    expect(exportStepLabel({ status: "pending", progress: null, queuePosition: 1 })).toBe("Next in the render queue");
+  });
+
+  it("stays calm when the backup renderer takes over", () => {
+    expect(exportStepLabel({ status: "pending", method: "backup", backupProgress: 0 })).toBe("Preparing");
+    expect(exportStepLabel({ status: "pending", method: "backup", backupProgress: 42.4 })).toBe("Preparing 42%");
+    expect(exportStepLabel({ status: "pending", progress: "backup", backupProgress: 100 })).toBe("Preparing 99%");
+  });
+});

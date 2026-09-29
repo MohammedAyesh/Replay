@@ -114,6 +114,34 @@ export interface ExportStatusResponse {
   url?: string | null;
   progress?: string | null;
   queuePosition?: number | null;
+  /** Which export method is working on it: this server, or the vps1 backup. */
+  method?: "primary" | "backup" | null;
+  /** 0–100 while the backup renderer is working. */
+  backupProgress?: number | null;
+}
+
+const PRIMARY_STEP_LABELS: Record<string, string> = {
+  fetching: "Step 1/3",
+  encoding: "Step 2/3",
+  uploading: "Step 3/3",
+};
+
+/**
+ * The button label for an export in progress, whichever method is doing it.
+ *
+ * When the primary render fails the server hands the clip to the backup
+ * renderer and keeps answering "pending"; this is the only visible sign of the
+ * switch, and it is deliberately calm — the user is still going to get a clip.
+ */
+export function exportStepLabel(status: ExportStatusResponse): string {
+  if (status.method === "backup" || status.progress === "backup") {
+    const pct = typeof status.backupProgress === "number" && status.backupProgress > 0
+      ? ` ${Math.min(99, Math.round(status.backupProgress))}%`
+      : "";
+    return `Preparing${pct}`;
+  }
+  const step = status.progress ? PRIMARY_STEP_LABELS[status.progress] ?? "Step 1/3" : null;
+  return formatQueueLabel(status.queuePosition, step);
 }
 
 export interface ExportReconciliation {
@@ -149,7 +177,7 @@ export function reconcileExportState(status: ExportStatusResponse | null): Expor
     return {
       state: "polling",
       url: null,
-      label: formatQueueLabel(status.queuePosition, null),
+      label: exportStepLabel(status),
       resume: true,
     };
   }

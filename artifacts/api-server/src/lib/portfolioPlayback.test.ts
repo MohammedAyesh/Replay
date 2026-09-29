@@ -38,8 +38,15 @@ describe("portfolio playback access rules", () => {
     const missingExport = { exportStatus: null, exportedUrl: null };
     expect(planPortfolioPlayback(missingExport, true))
       .toEqual({ status: "unavailable" });
+    // Pending with no local render is the backup renderer (or another
+    // instance) working on it; the failover sweep keeps it moving.
     expect(planPortfolioPlayback({ exportStatus: "pending", exportedUrl: null }, true))
+      .toEqual({ status: "processing" });
+    expect(planPortfolioPlayback({ exportStatus: "pending", exportedUrl: null }, false))
       .toEqual({ status: "unavailable" });
+    // A backup-renderer export does not need Bunny Storage to be configured.
+    expect(planPortfolioPlayback({ exportStatus: "done", exportedUrl: "vps1-export:c12-0123456789abcdef" }, false))
+      .toEqual({ status: "ready" });
     expect(planPortfolioPlayback({ exportStatus: "pending", exportedUrl: null }, true, true))
       .toEqual({ status: "processing" });
     expect(planPortfolioPlayback({ exportStatus: "expired", exportedUrl: null }, true))

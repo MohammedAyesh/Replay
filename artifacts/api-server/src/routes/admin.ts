@@ -26,6 +26,7 @@ import {
   isExcludedBunnyVideoTitle,
   uploadClipIntroToBunnyStorage,
 } from "../lib/bunny";
+import { fetchExportObject } from "../lib/backupExport";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import { isLiveVideoId } from "./userClips";
@@ -308,15 +309,12 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     .where(eq(userClipsTable.id, clipId));
   if (!clip?.exportedUrl) { res.status(404).json({ error: "Rendered clip not ready" }); return; }
 
-  const headers: Record<string, string> = {
-    AccessKey: BUNNY_STORAGE_API_KEY,
-  };
-  const range = req.headers.range;
-  if (range) headers.Range = range;
+  const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
 
   let upstream: Response;
   try {
-    upstream = await fetch(clip.exportedUrl, { headers });
+    // Either export method's file (Bunny Storage or the vps1 backup renderer).
+    upstream = await fetchExportObject(clip.exportedUrl, { range });
   } catch {
     res.status(502).json({ error: "Could not fetch rendered clip" });
     return;

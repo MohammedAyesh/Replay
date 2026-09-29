@@ -1,4 +1,5 @@
 import { BunnyVideoNotFoundError, isBunnyStorageUrl } from "./bunny";
+import { isBackupExportRef } from "./backupExport";
 
 export type PortfolioClipVisibility = {
   visibility: unknown;
@@ -38,12 +39,19 @@ export function planPortfolioPlayback(
   exportInFlight = false,
 ): PortfolioPlaybackPlan {
   if (clip.exportStatus === "expired") return { status: "expired" };
+  // A backup-renderer (vps1) export is served by this server's own proxy and
+  // does not depend on Bunny Storage being configured.
+  if (hasCompletedPortfolioExport(clip) && isBackupExportRef(clip.exportedUrl)) {
+    return { status: "ready" };
+  }
+  // Pending means one of the two export methods is working on it: either this
+  // process (exportInFlight) or the backup renderer / another instance, which
+  // the failover sweep keeps moving. Either way it is on its way.
+  if (clip.exportStatus === "pending") {
+    return { status: exportInFlight || storageReady ? "processing" : "unavailable" };
+  }
   if (!storageReady) {
     return { status: "unavailable" };
-  }
-
-  if (clip.exportStatus === "pending") {
-    return { status: exportInFlight ? "processing" : "unavailable" };
   }
   if (hasCompletedPortfolioExport(clip)) {
     return isBunnyStorageUrl(clip.exportedUrl)

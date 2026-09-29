@@ -25,6 +25,7 @@ import {
 } from "../lib/bunny";
 import { portfolioPlaybackPath } from "../lib/shareCard";
 import { planPortfolioPlayback } from "../lib/portfolioPlayback";
+import { isBackupExportRef } from "../lib/backupExport";
 import { logger } from "../lib/logger";
 import { isLiveVideoId, isUserClipExportInFlight } from "./userClips";
 
@@ -145,7 +146,9 @@ async function buildPortfolio(targetId: number, canEdit: boolean) {
         : planPortfolioPlayback(clip, storageReady, isUserClipExportInFlight(clip.id)).status;
     let playbackUrl: string | null = null;
 
-    if (playbackStatus === "ready" && clip.exportedUrl) {
+    if (playbackStatus === "ready" && clip.exportedUrl && isBackupExportRef(clip.exportedUrl)) {
+      playbackUrl = portfolioPlaybackPath(clip.id);
+    } else if (playbackStatus === "ready" && clip.exportedUrl) {
       if (!getPortfolioClipStoragePath(clip.id, clip.exportedUrl)) {
         playbackStatus = "unavailable";
       } else {
