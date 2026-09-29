@@ -31,7 +31,8 @@ EOF
   /opt/replay/venv/bin/python -m py_compile /opt/replay/control.py
 fi
 
-# Cron: nightly retention, daily canary (08:10 Amman = 05:10 UTC; the box is Berlin time, so use CRON_TZ).
+# Cron: nightly temporary-file cleanup, daily canary (08:10 Amman = 05:10 UTC;
+# the box is Berlin time, so use CRON_TZ).
 CRON=/etc/cron.d/replay-clipexport
 cat > "$CRON" <<'EOF'
 CRON_TZ=UTC

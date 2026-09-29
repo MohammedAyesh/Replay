@@ -4,7 +4,7 @@ Method B clip export -- control API routes (x-api-key), included by control.py.
   POST   /export/clip                 submit (idempotent per clip + parameters)
   GET    /export/clip/{job}           status
   GET    /export/clip/{job}/file      the MP4 (Range supported)
-  DELETE /export/clip/{job}           remove output + state
+  DELETE /export/clip/{job}           refused; exports and job state are retained
   GET    /export/health               can this method take work right now?
 
 Each render runs in its own transient systemd unit (clipexport-<job>), so a
@@ -208,13 +208,9 @@ def file(job: str, x_api_key: str = Header(None)):
 def delete(job: str, x_api_key: str = Header(None)):
     _auth(x_api_key)
     _valid_job(job)
-    subprocess.run(["systemctl", "stop", _unit(job)], capture_output=True)
-    for p in (os.path.join(OUT_DIR, job + ".mp4"), os.path.join(JOBS_DIR, job + ".json")):
-        try:
-            os.unlink(p)
-        except OSError:
-            pass
-    return {"deleted": job}
+    # vps1-export URLs are durable references.  In particular, do not stop a
+    # render or remove either its finished MP4 or the state needed to serve it.
+    raise HTTPException(405, "finished clip exports and job records are retained permanently")
 
 
 @router.get("/export/health")

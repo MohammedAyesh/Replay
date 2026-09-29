@@ -28,9 +28,8 @@ BODY=$(printf '{"clipId":0,"videoId":"%s","startTime":0.5,"endTime":0.5,"cropPat
 LEN=$(curl -s -m 30 -H "AccessKey: $SKEY" "https://video.bunnycdn.com/library/$LIB/videos/$GUID" | /opt/replay/venv/bin/python -c 'import json,sys; print(json.load(sys.stdin).get("length",0))')
 END=$(/opt/replay/venv/bin/python -c "print(round(0.5 + 6.0/max(1,$LEN), 8))")
 BODY=${BODY/\"endTime\":0.5/\"endTime\":$END}
-# Fresh job every day: drop yesterday's canary output first.
-OLD=$(ls /opt/replay/jobs/clipexport/c0-*.json 2>/dev/null)
-for f in $OLD; do j=$(basename "$f" .json); curl -s -m 20 -X DELETE -H "X-Api-Key: $KEY" "http://127.0.0.1:8080/export/clip/$j" >/dev/null; done
+# The canary uses the idempotent c0 job for this source/spec.  Its output and
+# state are retained permanently, and retry=true below rerenders it as needed.
 
 JOB=$(curl -s -m 30 -X POST -H "X-Api-Key: $KEY" -H "Content-Type: application/json" -d "$BODY" http://127.0.0.1:8080/export/clip \
   | /opt/replay/venv/bin/python -c 'import json,sys; print(json.load(sys.stdin).get("job",""))')

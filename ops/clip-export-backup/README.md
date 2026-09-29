@@ -24,12 +24,17 @@ adds two lines to `control.py` (backup taken), a cron file, and restarts `replay
 
 ## Endpoints (control API, `X-Api-Key`)
 `POST /export/clip` · `GET /export/clip/{job}` · `GET /export/clip/{job}/file` (Range) ·
-`DELETE /export/clip/{job}` · `GET /export/health`
+`GET /export/health`
+
+`DELETE /export/clip/{job}` is retained only as a compatibility response and always
+returns `405`; it cannot stop a render or delete output/state.
 
 ## Operations
 - Log: `/var/log/replay-clipexport.log`. State: `/opt/replay/jobs/clipexport/<job>.json`.
-- Files: `/opt/replay/exports/<job>.mp4`, kept 60 days (`cleanup.sh`). A download after
-  that re-renders automatically.
+- Files: `/opt/replay/exports/<job>.mp4` and
+  `/opt/replay/jobs/clipexport/<job>.json` are retained permanently because
+  `vps1-export:<job>` references must remain usable. `cleanup.sh` only removes
+  abandoned temporary render files and interrupted `.tmp` state writes.
 - Daily canary 05:10 UTC (`canary.sh`): renders a 6 s window of the newest recording via the
   real API path, and reports how many user clips fell back to vps1 in the last 24 h (any
   number > 0 means Method A is failing). Alerts go to the ntfy topic in `/etc/replay/alert.env`.
