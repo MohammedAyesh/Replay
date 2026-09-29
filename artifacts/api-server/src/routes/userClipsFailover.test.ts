@@ -29,6 +29,14 @@ vi.mock("../lib/clerkUserBridge", () => ({
     res.status(401).json({ error, reason: "no_credentials" });
   }),
 }));
+vi.mock("../lib/bunny", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/bunny")>();
+  return {
+    ...actual,
+    isBunnyConfigured: () => false,
+    isBunnyStorageConfigured: () => false,
+  };
+});
 import { getLocalUserId } from "../lib/clerkUserBridge";
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
