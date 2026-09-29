@@ -23,7 +23,12 @@ vi.mock("../lib/clerkUserBridge", () => ({
 
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBufferedWindow } from "../lib/ffmpegExport";
-import { normalizeExportWindow, selectExportSource, ExportSourceUnavailableError } from "./userClips";
+import {
+  canAutoQueueClaimMomentExport,
+  normalizeExportWindow,
+  selectExportSource,
+  ExportSourceUnavailableError,
+} from "./userClips";
 
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
@@ -163,6 +168,22 @@ const SAMPLE_CLIP_BODY = {
   endTime: 45.678901,
   cropPath: [{ t: 0, x: 0.1, y: 0.1, w: 0.8, h: 0.8 }],
 };
+
+describe("claim-moment export auto-queue ownership", () => {
+  it("does not re-queue a clip carrying any internal renderer ownership state", () => {
+    for (const exportStatus of [
+      "pending_vps1_overflow",
+      "pending_local_fallback",
+      "pending_vps1_after_primary",
+    ]) {
+      expect(canAutoQueueClaimMomentExport(exportStatus, false)).toBe(false);
+    }
+    // A plain pending row may be an orphan from an older process and is still
+    // eligible for the existing recovery path.
+    expect(canAutoQueueClaimMomentExport("pending", false)).toBe(true);
+    expect(canAutoQueueClaimMomentExport(null, true)).toBe(false);
+  });
+});
 
 describe("POST /api/user-clips", () => {
   it("returns 401 when not authenticated", async () => {

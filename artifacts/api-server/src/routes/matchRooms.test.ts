@@ -328,7 +328,7 @@ describe("a match from invite to vote", () => {
     await request(app).patch(`/api/m/${room.code}/players/${aliPlayer.id}`).set(as("ali")).send({ shirtNumber: 9 });
     const [clip] = await db.insert(userClipsTable).values({
       userId: users.ali, videoId: `vid-${TAG}`, title: "Top bins", startTime: "10", endTime: "20",
-      footageRequestId: req.id, visibility: "match",
+      footageRequestId: req.id, visibility: "match", exportStatus: "pending_local_fallback",
     }).returning();
     const story = await request(app).get(`/api/user-clips/${clip.id}/story-context`).set(as("ali"));
     expect(story.status).toBe(200);
@@ -338,6 +338,8 @@ describe("a match from invite to vote", () => {
     expect((await request(app).get(`/api/user-clips/${clip.id}/story-context`).set(as("omar"))).status).toBe(404);
     const matchClips = await request(app).get(`/api/m/${room.code}/clips`).set(as("sami"));
     expect(matchClips.body.map((c: { id: number }) => c.id)).toContain(clip.id);
+    expect(matchClips.body.find((c: { id: number }) => c.id === clip.id).exportStatus).toBe("pending");
+    expect(JSON.stringify(matchClips.body)).not.toContain("pending_local_fallback");
     expect((await request(app).get(`/api/m/${room.code}/clips`)).body).toHaveLength(0);
     await db.delete(userClipsTable).where(eq(userClipsTable.id, clip.id));
 

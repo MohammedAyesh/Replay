@@ -24,6 +24,7 @@ import {
   GetAdStatsResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { publicExportStatus } from "../lib/userClipExportState";
 import {
   getBunnyProxiedPlaybackUrl,
   getBunnyProxiedThumbnailUrl,
@@ -294,7 +295,7 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
        startTime: parseFloat(row.startTime),
        endTime: parseFloat(row.endTime),
         aspectRatio: row.aspectRatio,
-       exportStatus: row.exportStatus ?? null,
+        exportStatus: publicExportStatus(row.exportStatus),
        exportedUrl: row.exportedUrl ?? null,
       ...adminClipExportSnapshot(row.id),
       // Live-sourced clips carry a synthetic videoId ("live:camera2"), not a
@@ -544,7 +545,7 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
   if (!clip || clip.exportStatus !== "done" || !clip.exportedUrl) {
     const body = {
       error: "Export not ready",
-      exportStatus: clip?.exportStatus ?? "missing",
+      exportStatus: publicExportStatus(clip?.exportStatus) ?? "missing",
     } satisfies AdminClipPlaybackNotReady;
     res.status(404).json(body);
     return;
@@ -579,7 +580,7 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     if (upstream.status === 404) {
       const body = {
         error: "Export not ready",
-        exportStatus: clip.exportStatus,
+        exportStatus: publicExportStatus(clip.exportStatus) ?? "pending",
       } satisfies AdminClipPlaybackNotReady;
       res.status(404).json(body);
       return;

@@ -27,6 +27,21 @@ describe("portfolio playback access rules", () => {
     expect(hasCompletedPortfolioExport({ exportStatus: "done", exportedUrl: null })).toBe(false);
   });
 
+  it("treats every internal export state exactly like pending for portfolio playback", () => {
+    for (const exportStatus of [
+      "pending_vps1_overflow",
+      "pending_local_fallback",
+      "pending_vps1_after_primary",
+    ]) {
+      const clip = { exportStatus, exportedUrl: null };
+      expect(planPortfolioPlayback(clip, true))
+        .toEqual(planPortfolioPlayback({ exportStatus: "pending", exportedUrl: null }, true));
+      expect(planPortfolioPlayback(clip, false))
+        .toEqual(planPortfolioPlayback({ exportStatus: "pending", exportedUrl: null }, false));
+      expect(hasCompletedPortfolioExport({ ...clip, exportedUrl: "https://cdn.test/old.mp4" })).toBe(false);
+    }
+  });
+
   it("uses the rendered MP4 without depending on the source recording", () => {
     expect(planPortfolioPlayback(
       { exportStatus: "done", exportedUrl: "https://storage.bunnycdn.com/zone/clips/1.mp4" },

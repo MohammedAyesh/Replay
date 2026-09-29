@@ -18,6 +18,7 @@ import { loadRoomByCode, matchPhase, matchWindow, normalizeCode } from "../lib/m
 import { logger } from "../lib/logger";
 import { controlFetch, controlResponse } from "./contabo";
 import { queueUserClipExport } from "./userClips";
+import { publicExportStatus } from "../lib/userClipExportState";
 
 const router: IRouter = Router();
 const RATE_WINDOW_MS = 60_000;
@@ -515,7 +516,7 @@ router.post("/matches/:code/live-clips", async (req, res): Promise<void> => {
     liveClipStatus: updated.liveClipStatus,
     liveClipError: updated.liveClipError,
     liveClipPartial: updated.liveClipPartial,
-    exportStatus: updated.exportStatus,
+    exportStatus: publicExportStatus(updated.exportStatus),
   }));
 });
 
@@ -670,7 +671,7 @@ router.get(
       liveClipStatus: clip.liveClipStatus,
       liveClipError: clip.liveClipError,
       liveClipPartial: clip.liveClipPartial,
-      exportStatus: clip.exportStatus,
+      exportStatus: publicExportStatus(clip.exportStatus),
     }));
   },
 );

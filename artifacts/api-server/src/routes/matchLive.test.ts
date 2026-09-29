@@ -198,12 +198,14 @@ describe("match live clip control contract", () => {
         partial: true,
       },
     });
+    vi.mocked(queueUserClipExport).mockResolvedValueOnce("pending_vps1_overflow");
     const ready = await request(app)
       .get(`/api/matches/${matchCode}/live-clips/${stored.id}/status`)
       .set("x-test-user", String(userId))
       .expect(200);
     expect(ready.body.liveClipStatus).toBe("ready");
     expect(ready.body.exportStatus).toBe("pending");
+    expect(JSON.stringify(ready.body)).not.toContain("pending_vps1_overflow");
     expect(ready.body.liveClipError).toBeNull();
     expect(ready.body.liveClipPartial).toBe(true);
     expect(queueUserClipExport).toHaveBeenCalledOnce();

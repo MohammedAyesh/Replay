@@ -7,4 +7,4 @@ When a release must remain schema-neutral, represent the short-lived export owne
 
 **Why:** Render requests can reach different API instances, while adding a schema migration can block an otherwise ordinary publish. Process-local sets alone cannot coordinate those instances.
 
-**How to apply:** For render handoff/fallback work with a no-schema constraint, use a database compare-and-set on the existing status and make the winner responsible for scheduling the next renderer. Keep user-facing response states unchanged.
+**How to apply:** For render handoff/fallback work with a no-schema constraint, use a database compare-and-set on the existing status and make the winner responsible for scheduling the next renderer. Audit every server-side consumer, normalize response fields to `pending`, and do not re-queue a marker that already identifies renderer ownership.

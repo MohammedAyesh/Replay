@@ -326,4 +326,26 @@ describe("admin clip re-clipping", () => {
     });
     expect(exportFetcher).not.toHaveBeenCalled();
   });
+
+  it("exposes internal render ownership states as pending in admin clip responses", async () => {
+    const clip = await createClip();
+    for (const internalStatus of [
+      "pending_vps1_overflow",
+      "pending_local_fallback",
+      "pending_vps1_after_primary",
+    ]) {
+      await db.update(userClipsTable)
+        .set({ exportStatus: internalStatus })
+        .where(eq(userClipsTable.id, clip.id));
+
+      const list = await request(app).get("/api/admin/clips").expect(200);
+      const listedClip = list.body.find((row: { id: number }) => row.id === clip.id);
+      expect(listedClip.exportStatus).toBe("pending");
+      expect(JSON.stringify(listedClip)).not.toContain(internalStatus);
+
+      const playback = await request(app).get(`/api/admin/clips/${clip.id}/playback`).expect(404);
+      expect(playback.body.exportStatus).toBe("pending");
+      expect(JSON.stringify(playback.body)).not.toContain(internalStatus);
+    }
+  });
 });

@@ -23,6 +23,7 @@ import {
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { blockedUserIdsFor, isBlockedEitherWay } from "../lib/safety";
 import { DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
+import { publicExportStatus } from "../lib/userClipExportState";
 import { acceptedFriendshipBetween } from "../lib/friends";
 import { activatePaidBooking, cancelUnpaidBooking } from "./owner";
 import { loadCommerce, type Commerce } from "../lib/commerce";
@@ -1553,7 +1554,7 @@ router.get("/m/:code/clips", async (req, res): Promise<void> => {
     aspectRatio: clip.aspectRatio,
     visibility: clip.visibility,
     createdAt: clip.createdAt.toISOString(),
-    exportStatus: clip.exportStatus,
+    exportStatus: publicExportStatus(clip.exportStatus),
     likeCount: clip.likeCount,
     mine: viewer ? clip.userId === viewer.id : false,
     by: { userId: clip.userId, name: userName, avatarUrl: avatarUrlFor(clip.userId, avatarPath) },

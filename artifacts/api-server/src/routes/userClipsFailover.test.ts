@@ -226,6 +226,14 @@ async function waitForExportStatus(id: number, expected: string): Promise<void> 
   throw new Error(`Clip ${id} did not reach export status ${expected}`);
 }
 
+async function waitForBackupJob(id: number): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    if (jobs.has(jobFor(id))) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Backup job for clip ${id} was not accepted`);
+}
+
 describe("export failover to the backup renderer", () => {
   it("finishes a clip whose primary render failed (the 2026-09-29 incident) on vps1", async () => {
     const id = await clip("error", "ready");
@@ -410,6 +418,7 @@ describe("Method A overflow to vps1", () => {
       const res = await request(app).post(`/api/user-clips/${id}/export`);
       expect(res.body.status).toBe("pending");
       await waitForExportStatus(id, "pending_vps1_overflow");
+      await waitForBackupJob(id);
       jobs.get(jobFor(id))!.status = "failed";
       jobs.get(jobFor(id))!.errorKind = "permanent";
 

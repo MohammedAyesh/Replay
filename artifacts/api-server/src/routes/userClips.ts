@@ -234,6 +234,17 @@ export function isLiveVideoId(videoId: string): boolean {
 }
 
 /**
+ * Claim-moment materialization may auto-start a local export for a new or
+ * orphaned clip, but must not take work already assigned to another renderer.
+ */
+export function canAutoQueueClaimMomentExport(
+  exportStatus: string | null | undefined,
+  alreadyInFlight: boolean,
+): boolean {
+  return !alreadyInFlight && !isInternalPendingStatus(exportStatus);
+}
+
+/**
  * Recording rows store the original Bunny playlist URL, while user_clips
  * stores only the Bunny Stream GUID. Keep this conversion server-side so a
  * claim moment can become a normal user clip without trusting a client-supplied
@@ -358,8 +369,12 @@ export async function ensureClaimMomentUserClip(options: {
     clip = created;
   }
 
-  let exportStatus = clip.exportStatus ?? null;
-  if (isBunnyConfigured() && isBunnyStorageConfigured() && !inFlight.has(clip.id)) {
+  let exportStatus = publicExportStatus(clip.exportStatus);
+  if (
+    isBunnyConfigured() &&
+    isBunnyStorageConfigured() &&
+    canAutoQueueClaimMomentExport(clip.exportStatus, inFlight.has(clip.id))
+  ) {
     if (clip.exportStatus !== "done" || !clip.exportedUrl) {
       inFlight.add(clip.id);
       await db
@@ -371,7 +386,7 @@ export async function ensureClaimMomentUserClip(options: {
     }
   }
 
-  return { userClipId: clip.id, exportStatus };
+  return { userClipId: clip.id, exportStatus: publicExportStatus(exportStatus) };
 }
 
 /**
