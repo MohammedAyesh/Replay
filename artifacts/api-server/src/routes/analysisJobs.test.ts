@@ -211,10 +211,18 @@ it("returns clip and active-analysis source videos that must stay on retention h
   holdClipIds.push(pendingClip[0].id, legacyClip[0].id, permanentClip[0].id);
 
   await queueJob().expect(201);
+  await db.update(recordingsTable)
+    .set({ videoUrl: `https://api.example.test/api/media-proxy?url=${encodeURIComponent(
+      `https://vz-x.b-cdn.net/${guid(2)}/playlist.m3u8`,
+    )}` })
+    .where(eq(recordingsTable.id, recB));
   const response = await request(app)
     .get("/api/worker/analysis/retention-holds")
     .set("x-worker-key", KEY)
     .expect(200);
+  await db.update(recordingsTable)
+    .set({ videoUrl: `https://vz-x.b-cdn.net/${guid(2)}/playlist.m3u8` })
+    .where(eq(recordingsTable.id, recB));
 
   expect(response.body.holdVideoIds).toEqual(expect.arrayContaining([
     guid(1),

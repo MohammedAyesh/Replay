@@ -2,6 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // The decision logic is pure; the database is never touched in these tests.
 vi.mock("@workspace/db", () => ({ db: {}, userClipsTable: {} }));
+vi.mock("./bunny", () => ({
+  BUNNY_STORAGE_API_KEY: "test-storage-key",
+  BUNNY_STORAGE_ZONE: "galaxyfield",
+  isBunnyStorageUrl: (candidate: string) => {
+    try {
+      return new URL(candidate).hostname === "storage.test";
+    } catch {
+      return false;
+    }
+  },
+}));
 
 import { decideBackupAction, BACKUP_MAX_RELAUNCHES, backupSpecFor } from "./exportFailover";
 import {
@@ -10,6 +21,7 @@ import {
   fetchExportObject,
   isBackupExportRef,
   isBackupExportConfigured,
+  validatedBackupStorageUrl,
 } from "./backupExport";
 
 const st = (status: string, errorKind: string | null = null) => ({
@@ -61,6 +73,34 @@ describe("backup export references", () => {
     } as never, "https://storage.bunnycdn.com/galaxyfield/branding/global/overlay.png");
     expect(spec).toMatchObject({ clipId: 658, startTime: 0.763406, endTime: 0.765336, aspectRatio: "16:9" });
     expect(spec.overlayUrl).toContain("overlay.png");
+  });
+
+  it("accepts only the validated Bunny Storage object for that clip and vps1 job", () => {
+    const job = "c658-0123456789abcdef";
+    const expected = `https://storage.test/galaxyfield/clips/${job}.mp4`;
+    const status = {
+      job,
+      clipId: 658,
+      storageUrl: expected,
+    } as Parameters<typeof validatedBackupStorageUrl>[0];
+
+    expect(validatedBackupStorageUrl(status)).toBe(expected);
+    expect(validatedBackupStorageUrl({
+      ...status,
+      storageUrl: `https://storage.test/other-zone/clips/${job}.mp4`,
+    })).toBeNull();
+    expect(validatedBackupStorageUrl({
+      ...status,
+      storageUrl: "https://storage.test/galaxyfield/clips/c659-0123456789abcdef.mp4",
+    })).toBeNull();
+    expect(validatedBackupStorageUrl({
+      ...status,
+      storageUrl: `${expected}?download=1`,
+    })).toBeNull();
+    expect(validatedBackupStorageUrl({
+      ...status,
+      storageUrl: expected.replace("https:", "http:"),
+    })).toBeNull();
   });
 });
 

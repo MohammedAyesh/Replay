@@ -252,7 +252,7 @@ describe("GET /user-clips/:id/download", () => {
     expect(res.body.retry).toBe(true);
     const [row] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
     expect(row.exportStatus).toBe("pending");
-    expect(row.exportedUrl).toBeNull();
+    expect(row.exportedUrl).toBe(`${originUrl}/missing.mp4`);
   });
 
   it("aborts the upstream fetch when the client goes away mid-download", async () => {

@@ -234,6 +234,20 @@ export function isLiveVideoId(videoId: string): boolean {
   return videoId.startsWith("live:");
 }
 
+const BUNNY_VIDEO_GUID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i;
+
+export function shouldRetryMissingClipExport(
+  clip: { videoId: string; exportStatus: string | null },
+  sourceExists: boolean,
+  alreadyInFlight: boolean,
+): boolean {
+  return sourceExists
+    && !alreadyInFlight
+    && !isLiveVideoId(clip.videoId)
+    && BUNNY_VIDEO_GUID_RE.test(clip.videoId)
+    && (clip.exportStatus == null || clip.exportStatus === "error");
+}
+
 function isSoftDeletedClip(clip: { hiddenReason?: string | null }): boolean {
   return clip.hiddenReason === "deleted";
 }
@@ -1021,30 +1035,34 @@ function startMissingExportBackfill(intervalMs = 10 * 60_000): () => void {
       if (candidates.length < 3) cursor = 0;
 
       await Promise.all(candidates.map(async (clip) => {
+        const primaryAvailable = isBunnyConfigured() && isBunnyStorageConfigured();
+        const backupAvailable = isBackupExportConfigured();
         if (
           isLiveVideoId(clip.videoId)
-          || !/^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i.test(clip.videoId)
+          || !BUNNY_VIDEO_GUID_RE.test(clip.videoId)
           || inFlight.has(clip.id)
-          || (!isBunnyConfigured() && !isBackupExportConfigured())
+          || (!primaryAvailable && !backupAvailable)
+          // Without the Bunny metadata API, this process cannot prove that a
+          // source still exists. Do not launch a speculative retry on vps1.
+          || !isBunnyConfigured()
         ) return;
 
-        if (isBunnyConfigured()) {
-          try {
-            await getBunnyVideoInfo(clip.videoId);
-          } catch (err) {
-            if (classifyPortfolioSourceError(err) === "expired") {
-              await db.update(userClipsTable)
-                .set({ exportStatus: "expired" })
-                .where(and(
-                  eq(userClipsTable.id, clip.id),
-                  or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
-                ));
-            } else {
-              logger.warn({ err, clipId: clip.id }, "Skipping export backfill because the source could not be checked");
-            }
-            return;
+        try {
+          await getBunnyVideoInfo(clip.videoId);
+        } catch (err) {
+          if (classifyPortfolioSourceError(err) === "expired") {
+            await db.update(userClipsTable)
+              .set({ exportStatus: "expired" })
+              .where(and(
+                eq(userClipsTable.id, clip.id),
+                or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
+              ));
+          } else {
+            logger.warn({ err, clipId: clip.id }, "Skipping export backfill because the source could not be checked");
           }
+          return;
         }
+        if (!shouldRetryMissingClipExport(clip, true, inFlight.has(clip.id))) return;
 
         const [claimed] = await db
           .update(userClipsTable)

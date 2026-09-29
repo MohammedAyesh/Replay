@@ -110,14 +110,27 @@ const BUNNY_VIDEO_ID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a
 
 function bunnyVideoIdFromSource(value: string | null | undefined): string | null {
   if (!value) return null;
-  const raw = value.trim();
-  if (BUNNY_VIDEO_ID_RE.test(raw)) return raw;
-  try {
-    const pathname = new URL(raw).pathname;
-    return pathname.split("/").find((part) => BUNNY_VIDEO_ID_RE.test(part)) ?? null;
-  } catch {
-    return null;
-  }
+  const seen = new Set<string>();
+  const find = (candidate: string): string | null => {
+    const raw = candidate.trim();
+    if (!raw || seen.has(raw)) return null;
+    seen.add(raw);
+    if (BUNNY_VIDEO_ID_RE.test(raw)) return raw;
+    try {
+      const parsed = new URL(raw);
+      const nested = parsed.searchParams.get("url");
+      if (nested) {
+        const nestedId = find(nested);
+        if (nestedId) return nestedId;
+      }
+      return parsed.pathname
+        .split("/")
+        .find((part) => BUNNY_VIDEO_ID_RE.test(part)) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  return find(value);
 }
 
 /**

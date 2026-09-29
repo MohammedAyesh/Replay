@@ -45,7 +45,7 @@
 - [Replay visual tokens](replay-visual-tokens.md) — Floodlight is the single primary action, Turf marks ready/active states, and live red is reserved for live recording signals.
 - [Account deletion retention](account-deletion.md) — delete Clerk first, anonymize retained records under a disabled placeholder, and disable the local account if its transaction fails.
 - [Menus inside linked cards](linked-card-menu-closure.md) — preventDefault stops link navigation but can skip Radix auto-dismiss; explicitly close the menu before opening an overlay.
-- [API test database isolation](api-test-database-isolation.md) — API tests use ambient DATABASE_URL; require a disposable test database before running them.
+- [API test database isolation](api-test-database-isolation.md) — use a disposable DATABASE_URL; Vitest 4 supports `--maxWorkers`, not `--minWorkers`.
 - [Disposable PostgreSQL lifecycle](disposable-postgres-test-lifecycle.md) — keep temporary DB setup, schema push, tests, and teardown within one shell invocation.
 - [Render queue ownership without migrations](render-queue-ownership.md) — when schema changes are out of scope, coordinate cross-replica export ownership through conditional status transitions.
 - [GitHub REST commit fallback](github-rest-commit-fallback.md) — recreate local history from immutable blobs; use full-block chunks and verify every Git object before moving refs.

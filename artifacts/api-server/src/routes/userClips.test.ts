@@ -28,6 +28,7 @@ import {
   normalizeExportWindow,
   selectExportSource,
   ExportSourceUnavailableError,
+  shouldRetryMissingClipExport,
 } from "./userClips";
 
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
@@ -182,6 +183,24 @@ describe("claim-moment export auto-queue ownership", () => {
     // eligible for the existing recovery path.
     expect(canAutoQueueClaimMomentExport("pending", false)).toBe(true);
     expect(canAutoQueueClaimMomentExport(null, true)).toBe(false);
+  });
+});
+
+describe("missing clip-export backfill eligibility", () => {
+  const clip = {
+    videoId: "12345678-1234-4234-8234-123456789abc",
+    exportStatus: null as string | null,
+  };
+
+  it("retries only when a valid source is known to exist and the clip is not expired or busy", () => {
+    expect(shouldRetryMissingClipExport(clip, true, false)).toBe(true);
+    expect(shouldRetryMissingClipExport({ ...clip, exportStatus: "error" }, true, false)).toBe(true);
+    expect(shouldRetryMissingClipExport({ ...clip, exportStatus: "expired" }, true, false)).toBe(false);
+    expect(shouldRetryMissingClipExport({ ...clip, exportStatus: "done" }, true, false)).toBe(false);
+    expect(shouldRetryMissingClipExport(clip, false, false)).toBe(false);
+    expect(shouldRetryMissingClipExport(clip, true, true)).toBe(false);
+    expect(shouldRetryMissingClipExport({ ...clip, videoId: "live:camera1" }, true, false)).toBe(false);
+    expect(shouldRetryMissingClipExport({ ...clip, videoId: "not-a-bunny-guid" }, true, false)).toBe(false);
   });
 });
 

@@ -14,3 +14,9 @@ The suite also inherits workspace Bunny settings. Some tests require Storage cre
 **Why:** The API suite initially changed which tests passed depending on whether the workspace Bunny environment was present, and one download test captures its Storage key when the test module loads.
 
 **How to apply:** Keep real environment configuration out of mutation targets by using a disposable database, but make test-specific service availability explicit with mocks rather than changing the process-wide environment.
+
+Vitest 4.1.9 rejects `--minWorkers`; `--maxWorkers=1` is the working serial-run option.
+
+**Why:** The API suite needs predictable serial execution when it is run against a temporary PostgreSQL instance, and the old flag fails before tests start.
+
+**How to apply:** Use `--maxWorkers=1` for serial API-suite runs, and keep temporary database setup, schema push, tests, and teardown in one shell invocation.
