@@ -60,6 +60,7 @@ interface AdminClip {
   playbackUrl: string | null;
   startTime: number;
   endTime: number;
+  aspectRatio: string;
   exportStatus: string | null;
   exportedUrl: string | null;
   renderProgress: string | null;
@@ -320,47 +321,29 @@ interface FieldVideo {
 function AdminClipPlayer({
   clip,
   onClose,
+  onReclip,
+  isReclipping,
 }: {
   clip: AdminClip;
   onClose: () => void;
+  onReclip: (clip: AdminClip) => void | Promise<void>;
+  isReclipping: boolean;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const didSeekRef = useRef(false);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    didSeekRef.current = false;
-
-    const start = () => {
-      if (didSeekRef.current) return;
-      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
-      const startTime = Math.min(video.duration, Math.max(0, clip.startTime * video.duration));
-      video.currentTime = startTime;
-      didSeekRef.current = true;
-    };
-
-    const stopAtEnd = () => {
-      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
-      const endTime = Math.min(video.duration, Math.max(0, clip.endTime * video.duration));
-      if (endTime > 0 && video.currentTime >= endTime) {
-        video.pause();
-        video.currentTime = Math.min(video.duration, Math.max(0, clip.startTime * video.duration));
-      }
-    };
-
-    video.addEventListener("loadedmetadata", start);
-    video.addEventListener("durationchange", start);
-    video.addEventListener("timeupdate", stopAtEnd);
-    return () => {
-      video.removeEventListener("loadedmetadata", start);
-      video.removeEventListener("durationchange", start);
-      video.removeEventListener("timeupdate", stopAtEnd);
-    };
-  }, [clip.startTime, clip.endTime]);
+  const exportReady = clip.exportStatus === "done" && !!clip.exportedUrl;
+  const displayStatus = clip.exportedUrl
+    ? clip.exportStatus ?? "unknown"
+    : "missing";
+  const isPortrait = clip.aspectRatio === "9:16" || clip.aspectRatio === "9/16";
+  const playbackUrl = `${basePath}/api/admin/clips/${clip.id}/playback`;
+  const [playbackError, setPlaybackError] = useState(false);
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Clip preview: ${clip.title}`}
+    >
       <div className="w-full max-w-3xl rounded-2xl overflow-hidden border border-zinc-700 bg-zinc-950 shadow-2xl">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-800">
           <div className="min-w-0">
@@ -370,27 +353,69 @@ function AdminClipPlayer({
           <button
             onClick={onClose}
             className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
-            aria-label="Close recording"
+            aria-label="Close preview"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="aspect-video bg-black flex items-center justify-center">
-          {clip.playbackUrl ? (
-            <SharedHlsPlayer
-              ref={videoRef}
-              url={clip.playbackUrl}
-              label="Clip preview"
-              controls
-              showDvrControls={false}
-              showStatusOverlays={false}
-              videoClassName="!aspect-auto h-full"
-            />
+        <div className="bg-black flex min-h-[240px] max-h-[78vh] items-center justify-center overflow-y-auto p-3">
+          {exportReady ? (
+            <div className="flex w-full flex-col items-center gap-2">
+              <p className="text-xs font-medium text-zinc-300">Exported clip</p>
+              {playbackError ? (
+                <p className="px-6 text-center text-sm text-red-400">
+                  Could not load the exported clip. Try again or re-clip it.
+                </p>
+              ) : (
+                <video
+                  key={`${clip.id}:${clip.exportedUrl}`}
+                  src={playbackUrl}
+                  crossOrigin="use-credentials"
+                  controls
+                  playsInline
+                  preload="metadata"
+                  onError={() => setPlaybackError(true)}
+                  className="max-h-[72vh] max-w-full rounded-lg bg-black object-contain"
+                  style={{
+                    aspectRatio: isPortrait ? "9 / 16" : "16 / 9",
+                    width: isPortrait ? "auto" : "100%",
+                    height: isPortrait ? "min(72vh, 720px)" : "auto",
+                    maxWidth: "100%",
+                    maxHeight: "72vh",
+                  }}
+                  aria-label="Exported clip"
+                />
+              )}
+            </div>
           ) : (
-            <div className="px-6 text-center">
-              <p className="text-red-400 text-sm">
-                Live-source clips cannot be previewed until their recording is uploaded.
+            <div className="max-w-md px-6 py-8 text-center">
+              <p className="text-white text-sm font-semibold">Export not ready</p>
+              <p className="mt-2 text-zinc-300 text-sm">
+                Export status: <span className="font-medium text-amber-300">{displayStatus}</span>
               </p>
+              {clip.exportStatus === "pending" && (
+                <p className="mt-1 text-zinc-400 text-xs">
+                  {clip.renderProgress
+                    ? `Re-clip ${clip.renderProgress}`
+                    : clip.queuePosition != null && clip.queuePosition > 0
+                      ? `Queued · ${clip.queuePosition} ahead`
+                      : "Waiting for render"}
+                  {clip.queueWaiting > 0 ? ` · ${clip.queueWaiting} waiting` : ""}
+                </p>
+              )}
+              {clip.failureReason && (
+                <p className="mt-2 break-words text-left text-xs text-red-400">
+                  Last re-clip failure: {clip.failureReason}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => void onReclip(clip)}
+                disabled={isReclipping}
+                className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:cursor-wait disabled:opacity-50"
+              >
+                {isReclipping ? "Queueing…" : "Re-clip"}
+              </button>
             </div>
           )}
         </div>
@@ -796,6 +821,9 @@ function ClipsTab() {
   const selectedPlayerClips = selectedPlayer !== null ? clips.filter((c) => c.userId === selectedPlayer) : [];
   const allHidden = selectedPlayerClips.length > 0 && selectedPlayerClips.every((c) => c.isHidden);
   const noneHidden = selectedPlayerClips.every((c) => !c.isHidden);
+  const currentPlayingClip = playingClip
+    ? clips.find((clip) => clip.id === playingClip.id) ?? playingClip
+    : null;
 
   return (
     <div className="space-y-4">
@@ -946,9 +974,8 @@ function ClipsTab() {
                 )}
                 <button
                   onClick={() => setPlayingClip(clip)}
-                  disabled={!clip.playbackUrl}
                   className="p-2 rounded-lg bg-primary/15 text-primary hover:bg-primary/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  title={clip.playbackUrl ? "Watch clip" : "Playback unavailable"}
+                  title={clip.exportStatus === "done" && clip.exportedUrl ? "Watch exported clip" : "View export status"}
                 >
                   <Play className="w-4 h-4 fill-current" />
                 </button>
@@ -977,10 +1004,13 @@ function ClipsTab() {
           ))}
         </div>
       )}
-      {playingClip && (
+      {currentPlayingClip && (
         <AdminClipPlayer
-          clip={playingClip}
+          key={`${currentPlayingClip.id}:${currentPlayingClip.exportedUrl ?? "missing"}:${currentPlayingClip.exportStatus ?? ""}`}
+          clip={currentPlayingClip}
           onClose={() => setPlayingClip(null)}
+          onReclip={reclipOne}
+          isReclipping={bulkWorking || clipWorkingId === currentPlayingClip.id}
         />
       )}
     </div>

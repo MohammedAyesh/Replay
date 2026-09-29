@@ -29,6 +29,7 @@ import type {
   AddAcademyRecordingInput,
   AdminAdEntry,
   AdminClipIdsInput,
+  AdminClipPlaybackNotReady,
   AdminClipReclipResult,
   AdminClipSourceCheckResult,
   AdminFootageBilling,
@@ -7473,6 +7474,83 @@ export const useCheckAdminClipsSources = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCheckAdminClipsSourcesMutationOptions(options));
     }
+
+export const getGetAdminClipPlaybackUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/clips/${id}/playback`
+}
+
+/**
+ * @summary Stream a clip's completed export to an admin with byte-range support
+ */
+export const getAdminClipPlayback = async (id: number, options?: RequestInit): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetAdminClipPlaybackUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminClipPlaybackQueryKey = (id: number,) => {
+    return [
+    `/api/admin/clips/${id}/playback`
+    ] as const;
+    }
+
+
+export const getGetAdminClipPlaybackQueryOptions = <TData = Awaited<ReturnType<typeof getAdminClipPlayback>>, TError = ErrorType<void | AdminClipPlaybackNotReady>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminClipPlayback>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminClipPlaybackQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminClipPlayback>>> = ({ signal }) => getAdminClipPlayback(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminClipPlayback>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminClipPlaybackQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminClipPlayback>>>
+export type GetAdminClipPlaybackQueryError = ErrorType<void | AdminClipPlaybackNotReady>
+
+
+/**
+ * @summary Stream a clip's completed export to an admin with byte-range support
+ */
+
+export function useGetAdminClipPlayback<TData = Awaited<ReturnType<typeof getAdminClipPlayback>>, TError = ErrorType<void | AdminClipPlaybackNotReady>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminClipPlayback>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminClipPlaybackQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getReclipAdminClipsUrl = () => {
 

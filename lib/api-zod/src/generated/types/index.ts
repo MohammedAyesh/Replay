@@ -15,6 +15,7 @@ export * from './ad';
 export * from './addAcademyRecordingInput';
 export * from './adminAdEntry';
 export * from './adminClipIdsInput';
+export * from './adminClipPlaybackNotReady';
 export * from './adminClipReclipResult';
 export * from './adminClipReclipResultSourceStatus';
 export * from './adminClipReclipResultState';

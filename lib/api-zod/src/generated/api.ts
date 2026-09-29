@@ -2790,6 +2790,16 @@ export const CheckAdminClipsSourcesResponse = zod.array(CheckAdminClipsSourcesRe
 
 
 /**
+ * @summary Stream a clip's completed export to an admin with byte-range support
+ */
+export const GetAdminClipPlaybackParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetAdminClipPlaybackResponse = zod.unknown()
+
+
+/**
  * @summary Check and re-render selected clips using the existing clip rows
  */
 export const reclipAdminClipsBodyClipIdsMax = 200;

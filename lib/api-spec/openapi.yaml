@@ -2424,6 +2424,45 @@ paths:
                 items:
                   $ref: "#/components/schemas/AdminClipSourceCheckResult"
 
+  /admin/clips/{id}/playback:
+    get:
+      operationId: getAdminClipPlayback
+      tags: [admin]
+      summary: Stream a clip's completed export to an admin with byte-range support
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Completed MP4 export
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial MP4 export for a byte-range request
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid clip id
+        "403":
+          description: Admin access required
+        "404":
+          description: Export is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminClipPlaybackNotReady"
+
   /admin/clips/reclip:
     post:
       operationId: reclipAdminClips
@@ -4117,6 +4156,17 @@ components:
           maxItems: 200
           items:
             type: integer
+
+    AdminClipPlaybackNotReady:
+      type: object
+      required: [error, exportStatus]
+      properties:
+        error:
+          type: string
+          const: Export not ready
+        exportStatus:
+          type: string
+          description: The current export status, or missing when the clip does not exist.
 
     AdminClipSourceCheckResult:
       type: object

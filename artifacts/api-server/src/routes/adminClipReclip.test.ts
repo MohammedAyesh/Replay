@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import request from "supertest";
 import express, { type Express } from "express";
 import { and, eq, inArray } from "drizzle-orm";
-import { db, userClipsTable, usersTable } from "@workspace/db";
+import { clipDownloadsTable, db, userClipsTable, usersTable } from "@workspace/db";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(),
@@ -40,6 +40,14 @@ vi.mock("../lib/ffmpegExport", () => ({
   })),
 }));
 
+vi.mock("../lib/backupExport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/backupExport")>();
+  return {
+    ...actual,
+    fetchExportObject: vi.fn(),
+  };
+});
+
 vi.mock("../lib/exportSource", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/exportSource")>();
   return {
@@ -73,12 +81,14 @@ import {
   getBunnyVideoReadiness,
   uploadToBunnyStorage,
 } from "../lib/bunny";
+import { fetchExportObject } from "../lib/backupExport";
 import adminRouter from "./admin";
 
 const TAG = `admin_reclip_${Date.now()}`;
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 const readiness = vi.mocked(getBunnyVideoReadiness);
 const upload = vi.mocked(uploadToBunnyStorage);
+const exportFetcher = vi.mocked(fetchExportObject);
 let app: Express;
 let adminId: number;
 let playerId: number;
@@ -115,6 +125,7 @@ beforeEach(() => {
   readiness.mockReset();
   readiness.mockResolvedValue({ ready: true, status: 4 });
   upload.mockClear();
+  exportFetcher.mockReset();
 });
 
 async function createClip(videoId?: string) {
@@ -226,5 +237,93 @@ describe("admin clip re-clipping", () => {
     const rows = await db.select().from(userClipsTable)
       .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.userId, playerId)));
     expect(rows).toHaveLength(1);
+  });
+
+  it("requires an admin to access exported clip playback", async () => {
+    const clip = await createClip();
+    mockedGetLocalUserId.mockResolvedValue(playerId);
+
+    const response = await request(app).get(`/api/admin/clips/${clip.id}/playback`);
+
+    expect(response.status).toBe(403);
+    expect(exportFetcher).not.toHaveBeenCalled();
+  });
+
+  it("streams the export without writing a download-quota record", async () => {
+    const clip = await createClip();
+    exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("exported"), {
+      status: 200,
+      headers: { "content-length": "8", "accept-ranges": "bytes" },
+    }));
+
+    const before = await db.select().from(clipDownloadsTable)
+      .where(eq(clipDownloadsTable.clipId, clip.id));
+    const response = await request(app)
+      .get(`/api/admin/clips/${clip.id}/playback?url=${encodeURIComponent("https://attacker.invalid/video.mp4")}`);
+    const after = await db.select().from(clipDownloadsTable)
+      .where(eq(clipDownloadsTable.clipId, clip.id));
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("video/mp4");
+    expect(response.headers["content-disposition"]).toBe(`inline; filename="clip-${clip.id}.mp4"`);
+    expect(exportFetcher).toHaveBeenCalledWith(
+      clip.exportedUrl,
+      expect.objectContaining({ range: undefined }),
+    );
+    expect(after).toHaveLength(before.length);
+    expect(after).toHaveLength(0);
+  });
+
+  it("forwards Range and streams the matching 206 partial response", async () => {
+    const clip = await createClip();
+    exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("2345"), {
+      status: 206,
+      headers: {
+        "content-length": "4",
+        "content-range": "bytes 2-5/10",
+        "accept-ranges": "bytes",
+      },
+    }));
+
+    const response = await request(app)
+      .get(`/api/admin/clips/${clip.id}/playback`)
+      .set("Range", "bytes=2-5");
+
+    expect(response.status).toBe(206);
+    expect(response.headers["content-type"]).toBe("video/mp4");
+    expect(response.headers["accept-ranges"]).toBe("bytes");
+    expect(response.headers["content-range"]).toBe("bytes 2-5/10");
+    expect(response.headers["content-length"]).toBe("4");
+    expect(exportFetcher).toHaveBeenCalledWith(
+      clip.exportedUrl,
+      expect.objectContaining({ range: "bytes=2-5" }),
+    );
+  });
+
+  it("returns a status-bearing 404 instead of serving an old or missing export", async () => {
+    const pending = await createClip();
+    await db.update(userClipsTable)
+      .set({ exportStatus: "pending" })
+      .where(eq(userClipsTable.id, pending.id));
+
+    const pendingResponse = await request(app).get(`/api/admin/clips/${pending.id}/playback`);
+    expect(pendingResponse.status).toBe(404);
+    expect(pendingResponse.body).toMatchObject({
+      error: "Export not ready",
+      exportStatus: "pending",
+    });
+
+    const missing = await createClip();
+    await db.update(userClipsTable)
+      .set({ exportStatus: "expired", exportedUrl: null })
+      .where(eq(userClipsTable.id, missing.id));
+
+    const missingResponse = await request(app).get(`/api/admin/clips/${missing.id}/playback`);
+    expect(missingResponse.status).toBe(404);
+    expect(missingResponse.body).toMatchObject({
+      error: "Export not ready",
+      exportStatus: "expired",
+    });
+    expect(exportFetcher).not.toHaveBeenCalled();
   });
 });

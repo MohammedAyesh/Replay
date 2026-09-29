@@ -12,6 +12,8 @@ import {
   ReclipAdminClipResponse,
   ReclipAdminClipsBody,
   ReclipAdminClipsResponse,
+  GetAdminClipPlaybackParams,
+  type AdminClipPlaybackNotReady,
   UpdateAdParams,
   UpdateAdBody,
   CreateAdBody,
@@ -265,6 +267,7 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       thumbnailTime: userClipsTable.thumbnailTime,
        startTime: userClipsTable.startTime,
        endTime: userClipsTable.endTime,
+       aspectRatio: userClipsTable.aspectRatio,
        exportStatus: userClipsTable.exportStatus,
        exportedUrl: userClipsTable.exportedUrl,
       userName: usersTable.name,
@@ -290,6 +293,7 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       createdAt: row.createdAt.toISOString(),
        startTime: parseFloat(row.startTime),
        endTime: parseFloat(row.endTime),
+        aspectRatio: row.aspectRatio,
        exportStatus: row.exportStatus ?? null,
        exportedUrl: row.exportedUrl ?? null,
       ...adminClipExportSnapshot(row.id),
@@ -526,34 +530,70 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
 
-  const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const clipId = parseInt(rawId, 10);
-  if (!Number.isFinite(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
+  const params = GetAdminClipPlaybackParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: "Invalid clip id" }); return; }
+  const clipId = params.data.id;
 
   const [clip] = await db
-    .select({ exportedUrl: userClipsTable.exportedUrl })
+    .select({
+      exportedUrl: userClipsTable.exportedUrl,
+      exportStatus: userClipsTable.exportStatus,
+    })
     .from(userClipsTable)
     .where(eq(userClipsTable.id, clipId));
-  if (!clip?.exportedUrl) { res.status(404).json({ error: "Rendered clip not ready" }); return; }
+  if (!clip || clip.exportStatus !== "done" || !clip.exportedUrl) {
+    const body = {
+      error: "Export not ready",
+      exportStatus: clip?.exportStatus ?? "missing",
+    } satisfies AdminClipPlaybackNotReady;
+    res.status(404).json(body);
+    return;
+  }
 
   const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
+  const abort = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) abort.abort();
+  });
 
   let upstream: Response;
   try {
-    // Either export method's file (Bunny Storage or the vps1 backup renderer).
-    upstream = await fetchExportObject(clip.exportedUrl, { range });
+    // The exported URL comes only from this clip's database row. Storage and
+    // backup-renderer credentials stay in fetchExportObject on the server.
+    upstream = await fetchExportObject(clip.exportedUrl, { range, signal: abort.signal });
   } catch {
-    res.status(502).json({ error: "Could not fetch rendered clip" });
+    if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
+    return;
+  }
+
+  if (upstream.status === 416) {
+    const contentRange = upstream.headers.get("content-range");
+    if (contentRange) res.setHeader("Content-Range", contentRange);
+    res.setHeader("Accept-Ranges", "bytes");
+    res.status(416).end();
+    await upstream.body?.cancel().catch(() => {});
     return;
   }
   if (!upstream.ok || !upstream.body) {
-    res.status(upstream.status === 404 ? 404 : 502).json({ error: "Could not fetch rendered clip" });
+    await upstream.body?.cancel().catch(() => {});
+    if (upstream.status === 404) {
+      const body = {
+        error: "Export not ready",
+        exportStatus: clip.exportStatus,
+      } satisfies AdminClipPlaybackNotReady;
+      res.status(404).json(body);
+      return;
+    }
+    if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
     return;
   }
 
   res.status(upstream.status);
-  res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "video/mp4");
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Content-Disposition", `inline; filename="clip-${clipId}.mp4"`);
   res.setHeader("Accept-Ranges", upstream.headers.get("accept-ranges") ?? "bytes");
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
   for (const name of ["content-length", "content-range"]) {
     const value = upstream.headers.get(name);
     if (value) res.setHeader(name, value);
@@ -564,9 +604,10 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
       Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>),
       res,
     );
-  } catch {
+  } catch (err) {
     // The browser closing or seeking a video can abort an in-flight range
     // request; there is nothing useful to report in that case.
+    if (!abort.signal.aborted) req.log.warn({ err, clipId }, "Admin export preview stream ended early");
   }
 });
 

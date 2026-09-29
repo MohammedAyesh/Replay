@@ -1157,6 +1157,12 @@ export interface AdminClipIdsInput {
   clipIds: number[];
 }
 
+export interface AdminClipPlaybackNotReady {
+  error: 'Export not ready';
+  /** The current export status, or missing when the clip does not exist. */
+  exportStatus: string;
+}
+
 export type AdminClipSourceCheckResultSourceStatus = typeof AdminClipSourceCheckResultSourceStatus[keyof typeof AdminClipSourceCheckResultSourceStatus];
 
 
