@@ -21,6 +21,7 @@ import {
   matchRoomsTable,
   matchPlayersTable,
   analysisJobsTable,
+  userClipsTable,
   analysisWorkersTable,
   recordingTrackingBundlesTable,
   recordingTrackingSegmentsTable,
@@ -36,6 +37,11 @@ vi.mock("../lib/claimMatchStorage", () => ({
     objectPath: `/objects/claim-match/${relativePath}`,
     compressedBytes: 128,
   })),
+}));
+
+vi.mock("../lib/bunny", () => ({
+  getPortfolioClipStoragePath: vi.fn((clipId: number, exportedUrl: string) =>
+    exportedUrl === `storage:${clipId}` ? `clips/${clipId}.mp4` : null),
 }));
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -97,6 +103,7 @@ let recA: number;
 let recB: number;
 let recNoVideo: number;
 let roomRequestIds: number[] = [];
+const holdClipIds: number[] = [];
 let roomSequence = 0;
 
 const guid = (n: number) => `0000000${n}-0000-4000-8000-00000000000${n}`;
@@ -143,6 +150,9 @@ afterAll(async () => {
   await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.recordingId, [recA, recB, recNoVideo]));
   await db.delete(analysisWorkersTable)
     .where(inArray(analysisWorkersTable.id, ["w1", "w2", "w0", "w3", "w4", "w5", "w6", "w7"]));
+  if (holdClipIds.length) {
+    await db.delete(userClipsTable).where(inArray(userClipsTable.id, holdClipIds));
+  }
   await db.delete(recordingsTable).where(inArray(recordingsTable.id, [recA, recB, recNoVideo]));
   await db.delete(usersTable).where(inArray(usersTable.id, [adminId, plainId]));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
@@ -165,6 +175,60 @@ beforeEach(async () => {
 
 const asWorker = (path: string, worker = "w1") =>
   request(app).post(path).set("x-worker-key", KEY).send({ workerId: worker });
+
+it("returns clip and active-analysis source videos that must stay on retention hold", async () => {
+  const pendingClip = await db.insert(userClipsTable).values({
+    userId: plainId,
+    videoId: guid(3),
+    title: `Pending export ${TAG}`,
+    startTime: "0",
+    endTime: "1",
+    cropPath: [],
+    exportStatus: "pending",
+  }).returning({ id: userClipsTable.id });
+  const legacyClip = await db.insert(userClipsTable).values({
+    userId: plainId,
+    videoId: guid(4),
+    title: `Legacy export ${TAG}`,
+    startTime: "0",
+    endTime: "1",
+    cropPath: [],
+    exportStatus: "done",
+    exportedUrl: "vps1-export:c123-0123456789abcdef",
+  }).returning({ id: userClipsTable.id });
+  const permanentClip = await db.insert(userClipsTable).values({
+    userId: plainId,
+    videoId: guid(5),
+    title: `Permanent export ${TAG}`,
+    startTime: "0",
+    endTime: "1",
+    cropPath: [],
+    exportStatus: "done",
+  }).returning({ id: userClipsTable.id });
+  await db.update(userClipsTable)
+    .set({ exportedUrl: `storage:${permanentClip[0].id}` })
+    .where(eq(userClipsTable.id, permanentClip[0].id));
+  holdClipIds.push(pendingClip[0].id, legacyClip[0].id, permanentClip[0].id);
+
+  await queueJob().expect(201);
+  const response = await request(app)
+    .get("/api/worker/analysis/retention-holds")
+    .set("x-worker-key", KEY)
+    .expect(200);
+
+  expect(response.body.holdVideoIds).toEqual(expect.arrayContaining([
+    guid(1),
+    guid(2),
+    guid(3),
+    guid(4),
+  ]));
+  expect(response.body.holdVideoIds).not.toContain(guid(5));
+  expect(response.headers["cache-control"]).toBe("no-store");
+
+  await request(app).get("/api/worker/analysis/retention-holds")
+    .set("x-worker-key", "wrong")
+    .expect(401);
+});
 
 function queueJob(body: Record<string, unknown> = {}) {
   return request(app).post("/api/admin/analysis-jobs").send({
