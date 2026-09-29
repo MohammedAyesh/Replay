@@ -4,8 +4,10 @@ import { buildChunk, splitAtColourJumps, type BundleTrack } from "./game-claim/b
 import {
   chunkPercent,
   afterChunk,
+  candidates,
   claimVisitOrder,
   firstChunk,
+  inPlaySec,
   isSure,
   newState,
   pick,
@@ -16,6 +18,7 @@ import {
   questions,
   restoreClaimVisitOrder,
   startClaim,
+  startClaimWithWindows,
   subtract,
   tapSpan,
   totals,
@@ -101,6 +104,90 @@ function fixture(): Ctx {
   return ctx;
 }
 
+function wrappedFixture(): Ctx {
+  const current = fixture().CH[0];
+  const previous = buildChunk({
+    k: 1,
+    start: 60,
+    dur: 60,
+    frameRate: FPS,
+    tracks: [walk("W", 60, 120, 700, 0)],
+    crossings: [],
+    sprites: {},
+  });
+  group("wrapped", ["W"], previous);
+  const g: Game = {
+    ...game(120),
+    chunks: [{ k: 0, start: 0, dur: 60 }, { k: 1, start: 60, dur: 60 }],
+    total: 120,
+    inplay: [[0, 120]],
+  };
+  const ctx: Ctx = { game: g, CH: { 0: current, 1: previous }, S: newState(g) };
+  ctx.S.order = [1, 0];
+  ctx.S.oi = 1;
+  ctx.S.k = 0;
+  ctx.S.step = "review";
+  Y(ctx, 1).cid = "wrapped";
+  return ctx;
+}
+
+function continuityFixture(adjacent: boolean): Ctx {
+  const previousK = adjacent ? 0 : 1;
+  const currentK = adjacent ? 1 : 0;
+  const previousStart = adjacent ? 0 : 120;
+  const currentStart = adjacent ? 60 : 0;
+  const previous = buildChunk({
+    k: previousK,
+    start: previousStart,
+    dur: 60,
+    frameRate: FPS,
+    tracks: [walk("P", previousStart, previousStart + 60, 100, 0)],
+    crossings: [],
+    sprites: {},
+  });
+  const current = buildChunk({
+    k: currentK,
+    start: currentStart,
+    dur: 60,
+    frameRate: FPS,
+    tracks: [walk("C", currentStart, currentStart + 60, 100, 0)],
+    crossings: [],
+    sprites: {},
+  });
+  group("previous", ["P"], previous);
+  group("current", ["C"], current);
+  const g: Game = {
+    ...game(adjacent ? 120 : 180),
+    chunks: [
+      { k: 0, start: 0, dur: 60 },
+      { k: 1, start: adjacent ? 60 : 120, dur: 60 },
+    ],
+    total: adjacent ? 120 : 180,
+    inplay: [[0, adjacent ? 120 : 180]],
+  };
+  const ctx: Ctx = {
+    game: g,
+    CH: { [previousK]: previous, [currentK]: current },
+    S: newState(g),
+  };
+  ctx.S.order = adjacent ? [0, 1] : [1, 0];
+  ctx.S.oi = 1;
+  ctx.S.k = currentK;
+  ctx.S.step = "review";
+  Y(ctx, previousK).cid = "previous";
+  const feature = {
+    to: [120, 128, 128] as [number, number, number],
+    sh: [120, 128, 128] as [number, number, number],
+    hi: [1],
+    hr: 1,
+  };
+  previous.pieces.P.feat = feature;
+  previous.pieces.P.nr = 1;
+  current.pieces.C.feat = feature;
+  current.pieces.C.nr = 1;
+  return ctx;
+}
+
 function orderFixture(play: number[]): Ctx {
   const g: Game = {
     chunks: play.map((seconds, k) => ({ k, start: k * 600, dur: 600 })),
@@ -163,12 +250,80 @@ describe("claim visit order", () => {
     expect(totals(ctx).ip).toBe(540);
   });
 
+  it("applies selected match windows before deriving the visit order", () => {
+    const ctx = orderFixture([600, 600, 600]);
+    expect(startClaimWithWindows(ctx, [[600, 1200]])).toBe("kit");
+    expect(ctx.S.order).toEqual([1]);
+    expect(ctx.S.k).toBe(1);
+    expect(ctx.S.you["0"].skipped).toBe(true);
+    expect(afterChunk(ctx)).toBe("done");
+  });
+
+  it("starts from the next playable block when the chosen block has no play", () => {
+    const ctx = orderFixture([29, 240, 240]);
+    expect(startClaim(ctx, 0)).toBe("kit");
+    expect(ctx.S.order).toEqual([1, 2]);
+    expect(ctx.S.k).toBe(1);
+  });
+
+  it("skips a block that falls below thirty playable seconds after the order is built", () => {
+    const ctx = orderFixture([240, 240, 240]);
+    ctx.S.order = [0, 1, 2];
+    ctx.S.k = 0;
+    ctx.S.oi = 0;
+    ctx.S.off.push([600, 1171, "bench"]);
+
+    expect(inPlaySec(ctx, 1)).toBe(29);
+    expect(afterChunk(ctx)).toBe("next");
+    expect(ctx.S.oi).toBe(2);
+    expect(ctx.S.k).toBe(2);
+  });
+
+  it("skips later blocks after a came-off range lasts through the end of the game", () => {
+    const ctx = orderFixture([600, 600, 600]);
+    ctx.S.order = [0, 1, 2];
+    ctx.S.k = 0;
+    ctx.S.oi = 0;
+    ctx.S.off.push([300, 1800, "bench"]);
+
+    expect(afterChunk(ctx)).toBe("done");
+    expect(ctx.S.step).toBe("done");
+  });
+
+  it("skips a block the player marked skipped while advancing", () => {
+    const ctx = orderFixture([240, 240, 240]);
+    ctx.S.order = [0, 1, 2];
+    ctx.S.k = 0;
+    ctx.S.oi = 0;
+    Y(ctx, 1).skipped = true;
+
+    expect(afterChunk(ctx)).toBe("next");
+    expect(ctx.S.oi).toBe(2);
+    expect(ctx.S.k).toBe(2);
+  });
+
   it("does not include unplayable chunks in a claim order", () => {
     const ctx = orderFixture([29, 10]);
     expect(claimVisitOrder(ctx)).toEqual([]);
-    startClaim(ctx);
+    expect(startClaim(ctx)).toBe("done");
     expect(ctx.S.order).toEqual([]);
     expect(ctx.S.step).toBe("done");
+  });
+
+  it("includes answered blocks in new done totals but preserves old saved totals", () => {
+    const current = orderFixture([240, 240, 240]);
+    current.S.v = 2;
+    current.S.order = [2];
+    Y(current, 0).cid = "answered-before-wrap";
+    Y(current, 1).out.push("rejected-track");
+    expect(totals(current).ip).toBe(720);
+
+    const oldSaved = orderFixture([240, 240, 240]);
+    oldSaved.S.v = 1;
+    oldSaved.S.step = "done";
+    oldSaved.S.order = [2];
+    Y(oldSaved, 0).cid = "legacy-answer-outside-order";
+    expect(totals(oldSaved).ip).toBe(240);
   });
 });
 
@@ -177,12 +332,72 @@ describe("shirt switch profile timeline", () => {
     const ctx = fixture();
     const oldFeat = { to: [20, 128, 128] as [number, number, number], sh: [20, 128, 128] as [number, number, number], hi: [1], hr: 1 };
     const newFeat = { to: [220, 128, 128] as [number, number, number], sh: [220, 128, 128] as [number, number, number], hi: [1], hr: 1 };
+    const laterFeat = { to: [40, 128, 128] as [number, number, number], sh: [40, 128, 128] as [number, number, number], hi: [1], hr: 1 };
     ctx.CH[0].pieces.A.feat = oldFeat;
     ctx.CH[0].pieces.B.feat = newFeat;
+    ctx.CH[0].pieces.C.feat = laterFeat;
+    Y(ctx, 0).added.push("g2");
     Y(ctx, 0).cid = "g1";
     recordSwitch(ctx, { atSeconds: 21, shirtChanged: true, kitKey: "red", number: "9" });
+    recordSwitch(ctx, { atSeconds: 41, shirtChanged: true, kitKey: "blue", number: "10" });
     expect(profile(ctx, 20)?.to[0]).toBe(20);
     expect(profile(ctx, 40)?.to[0]).toBe(220);
+    expect(profile(ctx, 50)?.to[0]).toBe(40);
+  });
+
+  it("includes claimed appearance evidence on both sides of an earlier time after wrap", () => {
+    const feature = (value: number) => ({
+      to: [value, 128, 128] as [number, number, number],
+      sh: [value, 128, 128] as [number, number, number],
+      hi: [1],
+      hr: 1,
+    });
+    const ctx = wrappedFixture();
+    ctx.CH[1].pieces.W.feat = feature(180);
+    ctx.CH[1].pieces.W.nr = 1;
+
+    expect(profile(ctx, 10)).toBeNull();
+    expect(profile(ctx, 10, 0)?.to[0]).toBe(180);
+    expect(rankNext(ctx, 0, 10).every(({ d }) => d !== null)).toBe(true);
+  });
+
+  it("uses wrapped appearance evidence for one-tap selection, twins, and hole candidates", () => {
+    const ctx = wrappedFixture();
+    const feature = (value: number) => ({
+      to: [value, 128, 128] as [number, number, number],
+      sh: [value, 128, 128] as [number, number, number],
+      hi: [1],
+      hr: 1,
+    });
+    const d = ctx.CH[0];
+    const matching = feature(127);
+    ctx.CH[1].pieces.W.feat = matching;
+    ctx.CH[1].pieces.W.nr = 1;
+    d.pieces.A.feat = feature(0);
+    d.pieces.B.feat = matching;
+    d.pieces.C.feat = feature(127);
+    d.pieces.A.feat = matching;
+    d.pieces.A.nr = d.pieces.B.nr = d.pieces.C.nr = 1;
+    d.byCid.g1.dur = 60;
+    d.pieces.C.a = [...d.pieces.A.b];
+    d.pieces.C.b = [...d.pieces.A.b];
+    d.pieces.D = {
+      ...d.pieces.C,
+      id: "D",
+      feat: feature(0),
+      a: [...d.pieces.C.a],
+      b: [...d.pieces.C.b],
+    };
+    group("g3", ["D"], d);
+
+    const ranked = rankNext(ctx, 0, 10);
+    expect(ranked[0].g.cid).toBe("g1");
+    expect(isSure(ranked)).toBe(true);
+    const hole = { t0: 45, t1: 60, a: null, b: null };
+    expect(candidates(ctx, 0, hole, 10).map((piece) => piece.id)).toEqual(["C"]);
+
+    pick(ctx, 0, "g1", 10);
+    expect(Y(ctx, 0).added).toContain("g2");
   });
 
   it("does not auto-add an old-shirt lookalike after a mid-chunk shirt change", () => {
@@ -199,6 +414,16 @@ describe("shirt switch profile timeline", () => {
     expect(rankNext(ctx, 0, 0).every(({ d }) => d === null)).toBe(true);
     pick(ctx, 0, "g1");
     expect(Y(ctx, 0).added).not.toContain("g2");
+  });
+});
+
+describe("rankNext continuity bonus", () => {
+  it("applies the bonus only when the previous and current chunks are chronologically adjacent", () => {
+    const adjacent = continuityFixture(true);
+    const wrappedNonAdjacent = continuityFixture(false);
+
+    expect(rankNext(adjacent, 1)[0].d).toBeCloseTo(-1.2);
+    expect(rankNext(wrappedNonAdjacent, 0)[0].d).toBeCloseTo(0);
   });
 });
 

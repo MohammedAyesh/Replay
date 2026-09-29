@@ -49,7 +49,7 @@ export type SwitchEvent = {
 export type Step = "intro" | "roster" | "kit" | "shirt" | "gallery" | "review" | "joins" | "gaps" | "next" | "done" | "stats";
 
 export type ClaimState = {
-  v: 1;
+  v: 1 | 2;
   step: Step;
   team: string | null;
   /** Confirmed shirt identity, carried between lazily loaded chunks. */
@@ -289,17 +289,42 @@ export function updatePendingSwitchIdentity(
   return true;
 }
 
-export function profile(ctx: Ctx, atTime = Number.POSITIVE_INFINITY): Appearance | null {
+/** The shirt period containing a time extends to the next shirt change. */
+function shirtPeriodAt(ctx: Ctx, atTime: number): [number, number] {
+  let start = Number.NEGATIVE_INFINITY;
+  let end = Number.POSITIVE_INFINITY;
+  for (const event of switchTimeline(ctx)) {
+    if (!event.shirtChanged) continue;
+    if (event.atSeconds <= atTime) start = event.atSeconds;
+    else {
+      end = event.atSeconds;
+      break;
+    }
+  }
+  return [start, end];
+}
+
+export function profile(
+  ctx: Ctx,
+  atTime = Number.POSITIVE_INFINITY,
+  currentK?: number,
+): Appearance | null {
   const items: Array<{ feat: Appearance; w: number }> = [];
-  const shirtChange = latestShirtChange(ctx, atTime);
-  const cutoff = shirtChange?.atSeconds ?? Number.NEGATIVE_INFINITY;
+  const [periodStart, periodEnd] = shirtPeriodAt(ctx, atTime);
+  const currentIndex = currentK === undefined
+    ? -1
+    : ctx.S.order[ctx.S.oi] === currentK ? ctx.S.oi : ctx.S.order.indexOf(currentK);
+  const previouslyVisited = new Set(currentIndex > 0 ? ctx.S.order.slice(0, currentIndex) : []);
   for (const key of Object.keys(ctx.S.you)) {
     const k = Number(key);
     if (!ctx.CH[k]) continue;
     for (const p of kept(ctx, k)) {
       const globalStart = L2G(ctx.game, k, p.t0);
       const globalEnd = L2G(ctx.game, k, p.t1);
-      if (globalStart < cutoff || globalStart > atTime || globalEnd <= cutoff) continue;
+      if (globalStart < periodStart || globalStart >= periodEnd || globalEnd <= periodStart) continue;
+      // Keep ordinary forward flow time-bounded. Only already-visited blocks
+      // can contribute evidence from the far side of the current block's time.
+      if (!previouslyVisited.has(k) && globalStart > atTime) continue;
       if (p.manual) {
         const source = p.src ? ctx.CH[k].pieces[p.src] : undefined;
         if (source?.feat) items.push({ feat: source.feat, w: Math.max(source.nr, 1) });
@@ -316,7 +341,7 @@ export function candidates(ctx: Ctx, k: number, h: Hole, atTime = L2G(ctx.game, 
   const y = Y(ctx, k);
   const K = kept(ctx, k);
   const ids = new Set(K.map((p) => p.id));
-  const q = profile(ctx, atTime);
+  const q = profile(ctx, atTime, k);
   const out: Array<{ c: Piece; d: number | null }> = [];
   for (const c of Object.values(d.pieces)) {
     if (ids.has(c.id) || has(y.out, c.id)) continue;
@@ -487,7 +512,7 @@ export function benchSpans(ctx: Ctx, k: number, ps?: AnyPiece[]): Array<[number,
 /** Someone who looks like you on the bench during a hole. */
 export function benchInHole(ctx: Ctx, k: number, h: Hole): { g: Group; a: number; b: number } | null {
   const d = ctx.CH[k];
-  const q = profile(ctx, L2G(ctx.game, k, h.t0));
+  const q = profile(ctx, L2G(ctx.game, k, h.t0), k);
   if (!q || !ctx.game.pitch) return null;
   const H0 = L2G(ctx.game, k, h.t0);
   const H1 = L2G(ctx.game, k, h.t1);
@@ -501,7 +526,11 @@ export function benchInHole(ctx: Ctx, k: number, h: Hole): { g: Group; a: number
   return null;
 }
 
-export const weakColour = (ctx: Ctx, atTime = Number.POSITIVE_INFINITY) => isWeakColour(profile(ctx, atTime));
+export const weakColour = (
+  ctx: Ctx,
+  atTime = Number.POSITIVE_INFINITY,
+  currentK?: number,
+) => isWeakColour(profile(ctx, atTime, currentK));
 
 export const TWIN_SEP = 2.5;
 
@@ -509,7 +538,7 @@ export const TWIN_SEP = 2.5;
 export function twins(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start): Array<{ g: Group; d: number; sep: { sec: number; med: number } | null }> {
   const d = ctx.CH[k];
   const y = Y(ctx, k);
-  const q = profile(ctx, atTime);
+  const q = profile(ctx, atTime, k);
   if ((!y.cid && !y.manual.length) || !q) return [];
   const mineIds = [...youIds(ctx, k)];
   const weak = isWeakColour(q);
@@ -642,7 +671,7 @@ export function firstChunk(ctx: Ctx): number {
 export function claimVisitOrder(ctx: Ctx, from = firstChunk(ctx)): number[] {
   const playable = ctx.game.chunks
     .map((c) => c.k)
-    .filter((k) => inPlaySec(ctx, k) >= MIN_PLAYABLE_SECONDS);
+    .filter((k) => !ctx.S.you[String(k)]?.skipped && inPlaySec(ctx, k) >= MIN_PLAYABLE_SECONDS);
   if (!playable.length) return [];
   let start = playable.indexOf(from);
   if (start < 0) {
@@ -685,12 +714,16 @@ export const SURE_TOP = 0;
 /** "Is this you?" for the next ten minutes: look distance plus a continuity bonus. */
 export function rankNext(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start): Array<{ g: Group; d: number | null }> {
   const d = ctx.CH[k];
-  const q = profile(ctx, profileTimeForChunk(ctx, k, atTime));
+  const q = profile(ctx, profileTimeForChunk(ctx, k, atTime), k);
   if (!q) return d.groups.slice(0, 3).map((g) => ({ g, d: null }));
   const prevK = ctx.S.order[ctx.S.oi - 1];
   const prevKept = prevK !== undefined && ctx.CH[prevK] ? kept(ctx, prevK) : [];
   const prevEnd = prevKept[prevKept.length - 1] ?? null;
-  const prevDur = prevK !== undefined ? chunkMeta(ctx, prevK).dur : 0;
+  const prevMeta = prevK !== undefined ? chunkMeta(ctx, prevK) : null;
+  const prevDur = prevMeta?.dur ?? 0;
+  const currentStart = chunkMeta(ctx, k).start;
+  const adjacent = prevMeta !== null
+    && Math.abs(prevMeta.start + prevMeta.dur - currentStart) <= 1e-6;
   return d.groups
     .map((g) => {
       const gp = groupProfileOf(d, g.members);
@@ -699,7 +732,7 @@ export function rankNext(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start):
       // offline pipeline, and a 20-second fragment that happens to match
       // colour is rarely the answer. Long groups get a head start.
       let dd = gp ? dist(gp, q) - RANK_DW * Math.log(Math.max(g.dur, 5) / 60) : 9;
-      if (prevEnd && prevEnd.t1 > prevDur - 15) {
+      if (adjacent && prevEnd && prevEnd.t1 > prevDur - 15) {
         const first = g.members.map((m) => d.pieces[m]).sort((a, b) => a.t0 - b.t0)[0];
         if (first && first.t0 < 15) {
           const mpp = 1.75 / Math.max((prevEnd.h1 + first.h0) / 2, 1);
@@ -732,14 +765,23 @@ export function pick(ctx: Ctx, k: number, cid: string, atTime = chunkMeta(ctx, k
   Object.assign(y, { cid, skipped: false, out: [], added: [], dropped: [], extra: [], seen: [], manual: [], rosterParts: [] });
   ctx.S.qi = 0;
   const profileAt = profileTimeForChunk(ctx, k, atTime);
-  const tw = weakColour(ctx, profileAt) ? [] : twins(ctx, k, profileAt);
+  const tw = weakColour(ctx, profileAt, k) ? [] : twins(ctx, k, profileAt);
   for (const x of tw) y.added.push(x.g.cid);
   ctx.S.autoAdded = tw.length;
 }
 
 /** Advance to the next chunk in the rotated playable order; 'done' at its end. */
 export function afterChunk(ctx: Ctx): "next" | "done" {
-  ctx.S.oi++;
+  let nextIndex = ctx.S.oi + 1;
+  while (nextIndex < ctx.S.order.length) {
+    const nextK = ctx.S.order[nextIndex];
+    if (
+      !ctx.S.you[String(nextK)]?.skipped
+      && inPlaySec(ctx, nextK) >= MIN_PLAYABLE_SECONDS
+    ) break;
+    nextIndex++;
+  }
+  ctx.S.oi = nextIndex;
   if (ctx.S.oi >= ctx.S.order.length) {
     ctx.S.step = "done";
     return "done";
@@ -749,13 +791,54 @@ export function afterChunk(ctx: Ctx): "next" | "done" {
   return "next";
 }
 
-export function startClaim(ctx: Ctx, from?: number): void {
+export function startClaim(ctx: Ctx, from?: number): "kit" | "done" {
+  ctx.S.v = 2;
   const requested = from ?? firstChunk(ctx);
   const order = claimVisitOrder(ctx, requested);
   ctx.S.k = order[0] ?? null;
   ctx.S.order = order;
   ctx.S.oi = 0;
   ctx.S.step = order.length ? "kit" : "done";
+  return order.length ? "kit" : "done";
+}
+
+/**
+ * Apply the chosen match windows before deriving the order, so blocks outside
+ * the selected match can never become the starting chunk or a later visit.
+ */
+export function startClaimWithWindows(
+  ctx: Ctx,
+  windows: Array<[number, number]>,
+  benchRanges: Array<[number, number]> = [],
+): "kit" | "done" {
+  const selected = windows
+    .filter(([start, end]) => Number.isFinite(start) && Number.isFinite(end) && end > start)
+    .slice()
+    .sort((a, b) => a[0] - b[0]);
+
+  if (selected.length) {
+    let at = 0;
+    for (const [start, end] of selected) {
+      if (start > at) ctx.S.off.push([at, start, "play"]);
+      at = Math.max(at, end);
+    }
+    if (at < ctx.game.total) ctx.S.off.push([at, ctx.game.total, "play"]);
+
+    for (const [start, end] of benchRanges) {
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        ctx.S.off.push([start, end, "bench"]);
+      }
+    }
+    for (const chunk of ctx.game.chunks) {
+      const overlaps = selected.some(([start, end]) => (
+        end > chunk.start && start < chunk.start + chunk.dur
+      ));
+      Y(ctx, chunk.k).skipped = !overlaps;
+    }
+    ctx.S.off.sort((a, b) => a[0] - b[0]);
+  }
+
+  return startClaim(ctx);
 }
 
 /** Every chunk's timeline summed, for the done screen. */
@@ -765,6 +848,19 @@ export function totals(ctx: Ctx): { fs: number; ip: number; os: number; miss: nu
   let os = 0;
   let miss = 0;
   const includedChunks = new Set(ctx.S.order);
+  // Version 1 saved states retain their historical done-screen totals. New
+  // claims also include any answered blocks that are outside a legacy order.
+  if (ctx.S.v >= 2) {
+    for (const c of ctx.game.chunks) {
+      const y = ctx.S.you[String(c.k)];
+      if (y && (
+        y.cid || y.manual.length || y.rosterParts?.length || y.added.length
+        || y.dropped.length || y.extra.length || y.out.length || y.seen.length || y.skipped
+      )) {
+        includedChunks.add(c.k);
+      }
+    }
+  }
   for (const c of ctx.game.chunks) {
     if (!includedChunks.has(c.k)) continue;
     const y = ctx.S.you[String(c.k)];

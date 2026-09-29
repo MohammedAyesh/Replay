@@ -286,6 +286,7 @@ export async function loadContext(
     ? await loadClaimBundleSegments(
       `${bundle.id}:${bundle.updatedAt.toISOString()}:${summaryFingerprint ?? "legacy"}`,
       () => readBundleSegments(bundle.id),
+      bundle.id,
     )
     : null;
   const fingerprint = summaryFingerprint

@@ -62,7 +62,7 @@ import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
   addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
   newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
-  hkey, recordSwitch, restoreClaimVisitOrder, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
+  hkey, recordSwitch, restoreClaimVisitOrder, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts, materializeRosterParts } from "@/lib/game-claim/parts";
 
@@ -766,9 +766,12 @@ export function GameClaim({
     pendingContinuationNumber.current = new URLSearchParams(window.location.search).get("number");
     t0.current = null;
     tap();
-    startClaim(ctxRef.current);
-    applyMatchWindows(ctxRef.current, matchChoices);
+    const destination = applyMatchWindows(ctxRef.current, matchChoices);
     bump();
+    if (destination === "done") {
+      go("done");
+      return;
+    }
     const availableRoster = await loadRoster();
     if (availableRoster.length) {
       go("roster");
@@ -817,29 +820,16 @@ export function GameClaim({
     go("review");
   };
 
-  const applyMatchWindows = (target: Ctx, choices: string[]) => {
-    if (!matches.length || !choices.length) return;
-    const windows = matches.filter((m) => choices.includes(m.code))
+  const applyMatchWindows = (target: Ctx, choices: string[]): "kit" | "done" => {
+    const selected = matches.filter((m) => choices.includes(m.code));
+    const windows = selected
       .flatMap((m) => m.games.length
         ? m.games.map((g) => [g.startSeconds, g.endSeconds] as [number, number])
         : [[m.startSeconds, m.endSeconds] as [number, number]]);
-    if (!windows.length) return;
-    const sorted = windows.sort((a, b) => a[0] - b[0]);
-    let at = 0;
-    for (const [a, b] of sorted) {
-      if (a > at) target.S.off.push([at, a, "play"]);
-      at = Math.max(at, b);
-    }
-    if (at < target.game.total) target.S.off.push([at, target.game.total, "play"]);
-    for (const match of matches.filter((m) => choices.includes(m.code))) {
-      for (const [from, to] of matchBenchRanges(match, target.S.switches ?? [])) {
-        target.S.off.push([from, to, "bench"]);
-      }
-    }
-    for (const c of target.game.chunks) {
-      if (!sorted.some(([a, b]) => b > c.start && a < c.start + c.dur)) Y(target, c.k).skipped = true;
-    }
-    target.S.off.sort((a, b) => a[0] - b[0]);
+    const benchRanges = selected.flatMap((match) => (
+      matchBenchRanges(match, target.S.switches ?? [])
+    ));
+    return startClaimWithWindows(target, windows, benchRanges);
   };
 
   const resume = async (j: ClaimState) => {
@@ -852,6 +842,7 @@ export function GameClaim({
       s.order = restored.order;
       s.oi = restored.index;
       s.k = restored.chunk;
+      s.v = 2;
       if (s.k === null) s.step = "done";
     }
     t0.current = Date.now() - (s.elapsed || 0);
@@ -1229,16 +1220,19 @@ export function GameClaim({
             value={d.k}
             onChange={async (e) => {
               const k = Number(e.target.value);
-              S.k = k;
-              S.order = claimVisitOrder(ctx, k);
-              S.oi = 0;
-              await ensure(k);
+              const destination = startClaim(ctx, k);
+              setVer((v) => v + 1);
+              if (destination === "done" || S.k === null) {
+                go("done");
+                return;
+              }
+              await ensure(S.k);
               setVer((v) => v + 1);
             }}
             className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-text"
           >
-            {game.chunks.filter((c) => inPlaySec(ctx, c.k) >= 30).map((c) => (
-              <option key={c.k} value={c.k}>{span(c.k)}{inPlaySec(ctx, c.k) < 60 ? ` ${copy.kit.noPlay}` : ""}</option>
+            {game.chunks.map((c) => (
+              <option key={c.k} value={c.k}>{span(c.k)}{inPlaySec(ctx, c.k) < 30 ? ` ${copy.kit.noPlay}` : ""}</option>
             ))}
           </select>
         </Row>
@@ -1858,7 +1852,7 @@ function ReviewScreen({
       )}
       {tw.length > 0 && (
         <Section title={copy.review.alsoYouTitle}>
-          <Lede>{weakColour(ctx, chunkMeta(ctx, k).start) ? copy.review.alsoYouLeadDark : copy.review.alsoYouLead}</Lede>
+          <Lede>{weakColour(ctx, chunkMeta(ctx, k).start, k) ? copy.review.alsoYouLeadDark : copy.review.alsoYouLead}</Lede>
           <div className="flex flex-col gap-3">
             {tw.slice(0, 3).map(({ g: gg }) => (
               <GroupCard key={gg.cid} d={d} g={gg} copy={copy} game={G} onWatch={() => previewGroup(d, gg)}

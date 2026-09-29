@@ -3,6 +3,7 @@ import type { TrackingSegmentPayload } from "@workspace/db";
 
 import { captureDecisionGeometry, normaliseChain } from "./claimChain";
 import { loadClaimBundleSegments } from "./claimBundleSegments";
+import { logger } from "./logger";
 
 let testKey = 0;
 const uniqueKey = (name: string) => `${name}-${testKey++}`;
@@ -88,6 +89,106 @@ describe("claim bundle segment cache", () => {
     expect(loadA).toHaveBeenCalledTimes(1);
     expect(loadB).toHaveBeenCalledTimes(2);
     expect(loadC).toHaveBeenCalledTimes(1);
+  });
+
+  it("evicts before starting a new read, even while that read is still pending", async () => {
+    const a = uniqueKey("preload-a");
+    const b = uniqueKey("preload-b");
+    const c = uniqueKey("preload-c");
+    let markReloadAStarted!: () => void;
+    const reloadAStarted = new Promise<void>((resolve) => { markReloadAStarted = resolve; });
+    const loadA = vi.fn(async () => {
+      if (loadA.mock.calls.length === 2) markReloadAStarted();
+      return fixture("track-a");
+    });
+    const loadB = vi.fn(async () => fixture("track-b"));
+    await loadClaimBundleSegments(a, loadA);
+    await loadClaimBundleSegments(b, loadB);
+
+    let resolveC!: (segments: TrackingSegmentPayload[]) => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const pendingC = new Promise<TrackingSegmentPayload[]>((resolve) => { resolveC = resolve; });
+    const loadC = vi.fn(() => {
+      markStarted();
+      return pendingC;
+    });
+    const requestC = loadClaimBundleSegments(c, loadC);
+    await started;
+
+    const requestA = loadClaimBundleSegments(a, loadA);
+    const reloadedBeforeCFinished = await Promise.race([
+      reloadAStarted.then(() => true),
+      new Promise<boolean>((resolve) => { setTimeout(() => resolve(false), 50); }),
+    ]);
+
+    resolveC(fixture("track-c"));
+    await Promise.all([requestA, requestC]);
+    expect(reloadedBeforeCFinished).toBe(true);
+  });
+
+  it("keeps concurrent cached and in-flight bundles within the two-entry limit", async () => {
+    const a = uniqueKey("bounded-a");
+    const b = uniqueKey("bounded-b");
+    const c = uniqueKey("bounded-c");
+    let resolveA!: (segments: TrackingSegmentPayload[]) => void;
+    let resolveB!: (segments: TrackingSegmentPayload[]) => void;
+    let resolveC!: (segments: TrackingSegmentPayload[]) => void;
+    let markAStarted!: () => void;
+    let markBStarted!: () => void;
+    let markCStarted!: () => void;
+    const startedA = new Promise<void>((resolve) => { markAStarted = resolve; });
+    const startedB = new Promise<void>((resolve) => { markBStarted = resolve; });
+    const startedC = new Promise<void>((resolve) => { markCStarted = resolve; });
+    const loadA = vi.fn(() => new Promise<TrackingSegmentPayload[]>((resolve) => {
+      resolveA = resolve;
+      markAStarted();
+    }));
+    const loadB = vi.fn(() => new Promise<TrackingSegmentPayload[]>((resolve) => {
+      resolveB = resolve;
+      markBStarted();
+    }));
+    const loadC = vi.fn(() => new Promise<TrackingSegmentPayload[]>((resolve) => {
+      resolveC = resolve;
+      markCStarted();
+    }));
+
+    const requestA = loadClaimBundleSegments(a, loadA);
+    await startedA;
+    const requestB = loadClaimBundleSegments(b, loadB);
+    await startedB;
+    const requestC = loadClaimBundleSegments(c, loadC);
+    await Promise.resolve();
+    expect(loadC).not.toHaveBeenCalled();
+
+    resolveA(fixture("track-a"));
+    await startedC;
+    expect(loadC).toHaveBeenCalledTimes(1);
+    resolveB(fixture("track-b"));
+    resolveC(fixture("track-c"));
+    await Promise.all([requestA, requestB, requestC]);
+  });
+
+  it("logs the bundle ID, load duration, and heap usage for each read", async () => {
+    const log = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+    try {
+      await loadClaimBundleSegments(
+        uniqueKey("logged"),
+        async () => fixture("logged-track"),
+        "bundle-123",
+      );
+
+      expect(log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bundleId: "bundle-123",
+          loadDurationMs: expect.any(Number),
+          heapUsedMB: expect.any(Number),
+        }),
+        "Claim bundle segments loaded",
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("does not mutate shared segments or tracks during claim calculations", async () => {
