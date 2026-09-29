@@ -22,8 +22,37 @@
  */
 import { logger } from "./logger";
 import { BUNNY_STORAGE_API_KEY } from "./bunny";
+import type { Response as ExpressResponse } from "express";
 
 export const BACKUP_EXPORT_PREFIX = "vps1-export:";
+export const CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES = 30 * 1024 * 1024;
+
+/**
+ * Forward an upstream length unless a full, non-range export is large enough
+ * to exceed the platform's fixed-length HTTP response limit. Leaving the
+ * outgoing length unset lets Node stream the body with chunked encoding.
+ */
+export function forwardExportContentLength(
+  res: Pick<ExpressResponse, "setHeader" | "removeHeader">,
+  upstream: Response,
+  rangeRequested: boolean,
+): void {
+  const contentLength = upstream.headers.get("content-length");
+  if (!contentLength) return;
+
+  const bytes = Number(contentLength);
+  if (
+    !rangeRequested
+    && upstream.status === 200
+    && Number.isFinite(bytes)
+    && bytes > CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES
+  ) {
+    res.removeHeader("Content-Length");
+    return;
+  }
+
+  res.setHeader("Content-Length", contentLength);
+}
 
 const JOB_RE = /^c\d{1,12}-[0-9a-f]{16}$/;
 

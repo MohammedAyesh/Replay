@@ -18,7 +18,11 @@ import {
   getBunnyPlaybackUrl,
   getPortfolioClipStoragePath,
 } from "../lib/bunny";
-import { fetchExportObject, isBackupExportRef } from "../lib/backupExport";
+import {
+  fetchExportObject,
+  forwardExportContentLength,
+  isBackupExportRef,
+} from "../lib/backupExport";
 import {
   hasCompletedPortfolioExport,
   isPortfolioClipShared,
@@ -861,7 +865,8 @@ async function proxyStorageObject(
   // not come back. The /api no-store default above is wrong for them.
   res.setHeader("Cache-Control", cacheControl ?? `public, max-age=${cacheSeconds}, immutable`);
   res.removeHeader("Vary");
-  for (const h of ["content-length", "content-range", "etag", "last-modified"]) {
+  forwardExportContentLength(res, upstream, typeof range === "string");
+  for (const h of ["content-range", "etag", "last-modified"]) {
     const v = upstream.headers.get(h);
     if (v) res.setHeader(h, v);
   }
@@ -887,10 +892,11 @@ async function proxyBackupExport(
 ): Promise<void> {
   const abort = new AbortController();
   res.on("close", () => abort.abort());
+  const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
   let upstream: Response;
   try {
     upstream = await fetchExportObject(exportedUrl, {
-      range: typeof req.headers.range === "string" ? req.headers.range : undefined,
+      range,
       signal: abort.signal,
     });
   } catch {
@@ -906,7 +912,8 @@ async function proxyBackupExport(
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Cache-Control", cacheControl);
   res.removeHeader("Vary");
-  for (const h of ["content-length", "content-range", "etag", "last-modified"]) {
+  forwardExportContentLength(res, upstream, range !== undefined);
+  for (const h of ["content-range", "etag", "last-modified"]) {
     const v = upstream.headers.get(h);
     if (v) res.setHeader(h, v);
   }

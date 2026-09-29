@@ -35,3 +35,11 @@ Current workspace secret-presence checks may not describe the environment that p
 **Why:** A development inspection reported only the CDN URL present even though retained workflow logs showed successful Bunny uploads; the observations came from different runtime contexts.
 
 **How to apply:** When investigating export reliability, compare the active workflow/deployment process environment with the log timestamps instead of using the current workspace view as a retroactive explanation.
+
+## Large MP4 proxy framing
+
+For a full, non-range HTTP 200 export larger than 30 MiB, omit the outgoing `Content-Length` and keep piping the upstream body as a stream. Preserve length and range headers for Range requests and 206 responses.
+
+**Why:** The hosting proxy rejects large HTTP/1 responses with a fixed `Content-Length` above its 32 MiB limit, while byte-range playback succeeds.
+
+**How to apply:** Use the same framing rule for both `fetchExportObject` consumers and direct Bunny Storage proxies; do not buffer the whole MP4 to determine or rewrite its size.

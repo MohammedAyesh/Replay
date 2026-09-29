@@ -27,7 +27,8 @@ process.env.PUBLIC_SHARE_BASE_URL = "https://replayjo.test";
 
 const { db, usersTable, userClipsTable, fieldsTable, footageRequestsTable, varMarksTable } = await import("@workspace/db");
 const { inArray, eq } = await import("drizzle-orm");
-const { shareToken } = await import("../lib/shareCard");
+const { shareToken, portfolioPlaybackToken } = await import("../lib/shareCard");
+const { backupExportRef, CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES } = await import("../lib/backupExport");
 
 const TAG = `sh_${Date.now()}`;
 let app: Express;
@@ -37,6 +38,8 @@ let userId: number;
 let readyClipId: number;
 let pendingClipId: number;
 let hiddenClipId: number;
+let largeExportClipId: number;
+let backupExportClipId: number;
 let ownerFieldId: number;
 let ownerRequestIds: number[] = [];
 let dir: string;
@@ -92,6 +95,30 @@ beforeAll(async () => {
         headers: { "content-type": "video/mp2t", "content-length": "13" },
       });
     }
+    if (url.startsWith("http://vps1-test.local/export/clip/") && url.endsWith("/file")) {
+      const range = init?.headers?.Range as string | undefined;
+      if (range) {
+        const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+        if (!match) return new Response("invalid range", { status: 416 });
+        const start = Number(match[1]);
+        const end = Number(match[2]);
+        return new Response(Buffer.alloc(end - start + 1, 0x76), {
+          status: 206,
+          headers: {
+            "content-length": String(end - start + 1),
+            "content-range": `bytes ${start}-${end}/100`,
+            "accept-ranges": "bytes",
+          },
+        });
+      }
+      return new Response("vps1 large export", {
+        status: 200,
+        headers: {
+          "content-length": String(CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES + 1),
+          "accept-ranges": "bytes",
+        },
+      });
+    }
     if (!url.startsWith("https://fake-storage.local/")) return realFetch(input, init);
     if (init?.headers?.AccessKey !== "storage-key") return new Response("no key", { status: 401 });
 
@@ -99,6 +126,15 @@ beforeAll(async () => {
     if (init?.method === "PUT") {
       stored.set(key, Buffer.from(await new Response(init.body).arrayBuffer()));
       return new Response("", { status: 201 });
+    }
+    if (key === `clips/${largeExportClipId}.mp4`) {
+      return new Response("large export", {
+        status: 200,
+        headers: {
+          "content-length": String(CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES + 1),
+          "accept-ranges": "bytes",
+        },
+      });
     }
     const body = key === "clip.mp4" ? mp4 : stored.get(key);
     if (!body) return new Response("missing", { status: 404 });
@@ -139,6 +175,25 @@ beforeAll(async () => {
   readyClipId = await mk({ exportStatus: "done", exportedUrl: `${originUrl}/clip.mp4` });
   pendingClipId = await mk({ title: "Still rendering" });
   hiddenClipId = await mk({ exportStatus: "done", exportedUrl: `${originUrl}/clip.mp4`, isHidden: true });
+  largeExportClipId = await mk({
+    title: "Large export",
+    exportStatus: "done",
+    exportedUrl: `https://fake-cdn.local/clips/0.mp4`,
+    visibility: "public",
+    showInPortfolio: true,
+    isHidden: false,
+  });
+  backupExportClipId = await mk({
+    title: "Large vps1 export",
+    exportStatus: "done",
+    exportedUrl: backupExportRef("c999-0123456789abcdef"),
+    visibility: "public",
+    showInPortfolio: true,
+    isHidden: false,
+  });
+  await db.update(userClipsTable)
+    .set({ exportedUrl: `https://fake-cdn.local/clips/${largeExportClipId}.mp4` })
+    .where(eq(userClipsTable.id, largeExportClipId));
 
   const [ownerField] = await db.insert(fieldsTable).values({
     name: `Owner Share Field ${TAG}`,
@@ -358,6 +413,55 @@ describe("the assets", () => {
     expect(res.status).toBe(206);
     expect(res.headers["content-range"]).toBe(`bytes 0-99/${mp4.length}`);
     expect(res.headers["accept-ranges"]).toBe("bytes");
+  }, 60_000);
+
+  it("chunk-streams large full exports from both share and portfolio playback routes", async () => {
+    const urls: [string, string][] = [
+      [`${cardUrl(largeExportClipId)}/clip.mp4`, "large export"],
+      [
+        `/portfolio-clips/${largeExportClipId}/${portfolioPlaybackToken(largeExportClipId)}/clip.mp4`,
+        "large export",
+      ],
+      [`${cardUrl(backupExportClipId)}/clip.mp4`, "vps1 large export"],
+      [
+        `/portfolio-clips/${backupExportClipId}/${portfolioPlaybackToken(backupExportClipId)}/clip.mp4`,
+        "vps1 large export",
+      ],
+    ];
+    const originalControlUrl = process.env.CONTABO_CONTROL_URL;
+    const originalControlKey = process.env.CONTABO_CONTROL_KEY;
+    process.env.CONTABO_CONTROL_URL = "http://vps1-test.local";
+    process.env.CONTABO_CONTROL_KEY = "test-control-key";
+    try {
+      for (const [url, expectedBody] of urls) {
+        const res = await request(app).get(url).buffer(true).parse((incoming, callback) => {
+          const chunks: Buffer[] = [];
+          incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+          incoming.on("end", () => callback(null, Buffer.concat(chunks)));
+        });
+
+        expect(res.status).toBe(200);
+        expect(res.headers["content-type"]).toBe("video/mp4");
+        expect(res.headers["accept-ranges"]).toBe("bytes");
+        expect(res.headers["content-length"]).toBeUndefined();
+        expect(res.headers["transfer-encoding"]).toBe("chunked");
+        expect((res.body as Buffer).toString()).toBe(expectedBody);
+      }
+
+      const ranged = await request(app)
+        .get(`${cardUrl(backupExportClipId)}/clip.mp4`)
+        .set("Range", "bytes=0-9");
+      expect(ranged.status).toBe(206);
+      expect(ranged.headers["accept-ranges"]).toBe("bytes");
+      expect(ranged.headers["content-range"]).toBe("bytes 0-9/100");
+      expect(ranged.headers["content-length"]).toBe("10");
+      expect(ranged.headers["transfer-encoding"]).toBeUndefined();
+    } finally {
+      if (originalControlUrl === undefined) delete process.env.CONTABO_CONTROL_URL;
+      else process.env.CONTABO_CONTROL_URL = originalControlUrl;
+      if (originalControlKey === undefined) delete process.env.CONTABO_CONTROL_KEY;
+      else process.env.CONTABO_CONTROL_KEY = originalControlKey;
+    }
   }, 60_000);
 
   it("never exposes the storage key to the client", async () => {

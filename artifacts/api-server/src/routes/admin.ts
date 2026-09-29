@@ -39,7 +39,7 @@ import {
   getBunnyVideoReadiness,
   BunnyVideoNotFoundError,
 } from "../lib/bunny";
-import { fetchExportObject } from "../lib/backupExport";
+import { fetchExportObject, forwardExportContentLength } from "../lib/backupExport";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import {
@@ -595,7 +595,8 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
   res.setHeader("Accept-Ranges", upstream.headers.get("accept-ranges") ?? "bytes");
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
-  for (const name of ["content-length", "content-range"]) {
+  forwardExportContentLength(res, upstream, Boolean(range));
+  for (const name of ["content-range"]) {
     const value = upstream.headers.get(name);
     if (value) res.setHeader(name, value);
   }

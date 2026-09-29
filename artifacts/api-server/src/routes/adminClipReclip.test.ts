@@ -274,6 +274,34 @@ describe("admin clip re-clipping", () => {
     expect(after).toHaveLength(0);
   });
 
+  it("chunk-streams a large full export without changing playback headers", async () => {
+    const clip = await createClip();
+    exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("large export"), {
+      status: 200,
+      headers: {
+        "content-length": String(32 * 1024 * 1024 + 1),
+        "accept-ranges": "bytes",
+      },
+    }));
+
+    const response = await request(app)
+      .get(`/api/admin/clips/${clip.id}/playback`)
+      .buffer(true)
+      .parse((incoming, callback) => {
+        const chunks: Buffer[] = [];
+        incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+        incoming.on("end", () => callback(null, Buffer.concat(chunks)));
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("video/mp4");
+    expect(response.headers["content-disposition"]).toBe(`inline; filename="clip-${clip.id}.mp4"`);
+    expect(response.headers["accept-ranges"]).toBe("bytes");
+    expect(response.headers["content-length"]).toBeUndefined();
+    expect(response.headers["transfer-encoding"]).toBe("chunked");
+    expect((response.body as Buffer).toString()).toBe("large export");
+  });
+
   it("forwards Range and streams the matching 206 partial response", async () => {
     const clip = await createClip();
     exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("2345"), {

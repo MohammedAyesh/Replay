@@ -71,6 +71,7 @@ import {
 import { ensureClipPoster, resolveOwnerShare } from "./share";
 import {
   fetchExportObject,
+  forwardExportContentLength,
   isBackupExportConfigured,
   isBackupExportRef,
   isExportReachable,
@@ -2214,8 +2215,7 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
 
   res.setHeader("Content-Type", "video/mp4");
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);
-  const contentLength = upstream.headers.get("content-length");
-  if (contentLength) res.setHeader("Content-Length", contentLength);
+  forwardExportContentLength(res, upstream, false);
 
   const nodeStream = Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>);
   try {

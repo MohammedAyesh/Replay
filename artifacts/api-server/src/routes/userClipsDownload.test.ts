@@ -145,6 +145,49 @@ describe("GET /user-clips/:id/download", () => {
     expect(Buffer.compare(res.body as Buffer, CLIP_BYTES)).toBe(0);
   });
 
+  it("streams a full export over 32 MiB without a fixed Content-Length", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, `${originUrl}/large.mp4`);
+    const totalBytes = 32 * 1024 * 1024 + 1;
+    const chunk = new Uint8Array(64 * 1024).fill(0x5a);
+    let remaining = totalBytes;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (remaining === 0) {
+          controller.close();
+          return;
+        }
+        const size = Math.min(remaining, chunk.byteLength);
+        controller.enqueue(chunk.subarray(0, size));
+        remaining -= size;
+      },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(body, {
+      status: 200,
+      headers: { "content-length": String(totalBytes), "accept-ranges": "bytes" },
+    }));
+
+    try {
+      const res = await request(app)
+        .get(`/api/user-clips/${clipId}/download`)
+        .buffer(true)
+        .parse((incoming, callback) => {
+          let byteCount = 0;
+          incoming.on("data", (part: Buffer) => { byteCount += part.length; });
+          incoming.on("end", () => callback(null, { byteCount }));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("video/mp4");
+      expect(res.headers["content-disposition"]).toMatch(/^attachment; filename="My_Clip\.mp4"$/);
+      expect(res.headers["content-length"]).toBeUndefined();
+      expect(res.headers["transfer-encoding"]).toBe("chunked");
+      expect(res.body.byteCount).toBe(totalBytes);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("sends the Bunny Storage AccessKey upstream", async () => {
     mockedGetLocalUserId.mockResolvedValue(ownerId);
     const clipId = await insertClip(ownerId, `${originUrl}/private.mp4`);
