@@ -34,6 +34,11 @@ import {
   type BackupExportSpec,
   type BackupExportStatus,
 } from "./backupExport";
+import {
+  PENDING_LOCAL_FALLBACK,
+  PENDING_VPS1_AFTER_PRIMARY,
+  PENDING_VPS1_OVERFLOW,
+} from "./userClipExportState";
 
 type ClipRow = typeof userClipsTable.$inferSelect;
 
@@ -151,7 +156,13 @@ async function reconcileUncached(
         .set({ exportStatus: "done", exportedUrl: url })
         .where(and(
           eq(userClipsTable.id, clip.id),
-          inArray(userClipsTable.exportStatus, ["pending", "error"]),
+          inArray(userClipsTable.exportStatus, [
+            "pending",
+            "error",
+            PENDING_VPS1_OVERFLOW,
+            PENDING_LOCAL_FALLBACK,
+            PENDING_VPS1_AFTER_PRIMARY,
+          ]),
         ))
         .returning({ id: userClipsTable.id });
       if (updated.length) {
@@ -181,7 +192,10 @@ async function reconcileUncached(
         await db
           .update(userClipsTable)
           .set({ exportStatus })
-          .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.exportStatus, "pending")));
+          .where(and(
+            eq(userClipsTable.id, clip.id),
+            inArray(userClipsTable.exportStatus, ["pending", PENDING_VPS1_AFTER_PRIMARY]),
+          ));
       }
       logger.error({ clipId: clip.id, job: status.job, error: status.error, kind: status.errorKind }, "Backup export failed");
       return { state: "failed", exportStatus, reason: status.error ?? status.errorKind ?? "failed" };
@@ -200,6 +214,8 @@ async function reconcileUncached(
 export function startExportFailoverSweep(deps: {
   isPrimaryInFlight: (clipId: number) => boolean;
   resolveOverlayUrl: (clip: ClipRow) => Promise<string | null>;
+  fallbackOverflowToLocal: (clip: ClipRow) => Promise<void>;
+  resumeLocalFallback: (clip: ClipRow) => Promise<void>;
   intervalMs?: number;
 }): () => void {
   if (process.env.NODE_ENV === "test") return () => {};
@@ -208,7 +224,12 @@ export function startExportFailoverSweep(deps: {
       const rows = await db
         .select()
         .from(userClipsTable)
-        .where(eq(userClipsTable.exportStatus, "pending"))
+        .where(inArray(userClipsTable.exportStatus, [
+          "pending",
+          PENDING_VPS1_OVERFLOW,
+          PENDING_LOCAL_FALLBACK,
+          PENDING_VPS1_AFTER_PRIMARY,
+        ]))
         .limit(100);
       const now = Date.now();
       const seen = new Set<number>();
@@ -217,6 +238,65 @@ export function startExportFailoverSweep(deps: {
         if (clip.videoId.startsWith("live:")) continue;
         const primary = deps.isPrimaryInFlight(clip.id);
         const runningFor = primaryRunningForMs(clip.id);
+
+        if (clip.exportStatus === PENDING_VPS1_OVERFLOW) {
+          const overlayUrl = await deps.resolveOverlayUrl(clip).catch(() => null);
+          const outcome = await reconcileBackup(clip, {
+            overlayUrl,
+            primaryActive: true,
+            cacheMs: 0,
+          });
+          if (
+            outcome.state === "failed" ||
+            (outcome.state === "unavailable" &&
+              (!isBackupExportConfigured() || now - outcome.since > BACKUP_UNREACHABLE_GIVE_UP_MS))
+          ) {
+            await deps.fallbackOverflowToLocal(clip);
+          }
+          orphanSeenAt.delete(clip.id);
+          continue;
+        }
+
+        if (clip.exportStatus === PENDING_LOCAL_FALLBACK) {
+          if (primary && (runningFor == null || runningFor < PRIMARY_HEDGE_AFTER_MS)) {
+            orphanSeenAt.delete(clip.id);
+            continue;
+          }
+          const first = orphanSeenAt.get(clip.id) ?? now;
+          orphanSeenAt.set(clip.id, first);
+          if (!primary && now - first >= ORPHAN_PENDING_GRACE_MS) {
+            await deps.resumeLocalFallback(clip);
+          }
+          continue;
+        }
+
+        if (clip.exportStatus === PENDING_VPS1_AFTER_PRIMARY) {
+          const overlayUrl = await deps.resolveOverlayUrl(clip).catch(() => null);
+          const outcome = await reconcileBackup(clip, {
+            overlayUrl,
+            primaryActive: false,
+            cacheMs: 0,
+          });
+          if (
+            outcome.state === "unavailable" &&
+            (!isBackupExportConfigured() || now - outcome.since > BACKUP_UNREACHABLE_GIVE_UP_MS)
+          ) {
+            await db
+              .update(userClipsTable)
+              .set({ exportStatus: "error" })
+              .where(and(
+                eq(userClipsTable.id, clip.id),
+                eq(userClipsTable.exportStatus, PENDING_VPS1_AFTER_PRIMARY),
+              ));
+            logger.error(
+              { clipId: clip.id, reason: outcome.reason },
+              "Export failed: primary failed and backup unreachable",
+            );
+          }
+          orphanSeenAt.delete(clip.id);
+          continue;
+        }
+
         if (primary && (runningFor == null || runningFor < PRIMARY_HEDGE_AFTER_MS)) {
           orphanSeenAt.delete(clip.id);
           continue;

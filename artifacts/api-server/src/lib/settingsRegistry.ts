@@ -338,8 +338,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     group: "Render queue",
     label: "Concurrent renders",
     description:
-      "How many exports encode at once. Each saturates several cores on a box " +
-      "shared with the hourly archive encoder.",
+      "How many CPU-intensive exports this server encodes at once.",
     type: "number",
     defaultValue: 2,
     min: 1,
@@ -351,32 +350,17 @@ export const SETTINGS: readonly SettingDefinition[] = [
     group: "Render queue",
     label: "Yield to the archive",
     description:
-      "Hold renders while the hourly archive is assembling. A late render is an " +
-      "annoyed user; a late archive is a match hour that cannot be re-recorded.",
+      "Hold renders while a fresh configured heartbeat shows the archive is assembling.",
     type: "boolean",
     defaultValue: true,
-  },
-  {
-    key: "render.yieldLoadRatio",
-    group: "Render queue",
-    label: "Yield above load-per-core",
-    description:
-      "One-minute load average divided by CPU count, above which the box counts as " +
-      "busy. Lower yields more readily.",
-    type: "number",
-    defaultValue: 0.85,
-    min: 0.1,
-    max: 8,
   },
   {
     key: "render.yieldCeilingSeconds",
     group: "Render queue",
     label: "Maximum yield",
     description:
-      "After this long a render proceeds regardless. Not optional: the archive runs " +
-      "every ten minutes and an hour of 4K takes a large fraction of that, so " +
-      "'busy' is a steady state and without a ceiling nobody gets a download on a " +
-      "busy evening.",
+      "Maximum time to wait for archive activity to stop; renders proceed afterward " +
+      "even if the heartbeat remains fresh.",
     type: "number",
     defaultValue: 600,
     min: 0,

@@ -234,8 +234,6 @@ describe("makeArchiveBusyProbe", () => {
       let clock = 1_000_000;
       const probe = makeArchiveBusyProbe({
         mtimeMs: () => 1_000_000 - 60_000,     // touched a minute ago
-        loadavg: () => [0, 0, 0],
-        cpuCount: () => 8,
         now: () => clock,
       });
       expect(await probe()).toBe(true);
@@ -244,13 +242,13 @@ describe("makeArchiveBusyProbe", () => {
     });
   });
 
-  it("falls back to load average when there is no heartbeat file", async () => {
-    await withEnv({ ARCHIVE_BUSY_FILE: undefined, RENDER_YIELD_LOAD_RATIO: "0.85" }, async () => {
-      const at = (load: number) =>
-        makeArchiveBusyProbe({ mtimeMs: () => null, loadavg: () => [load, 0, 0], cpuCount: () => 8 })();
-      expect(await at(3.2)).toBe(false);   // 0.40 of 8 cores
-      expect(await at(6.8)).toBe(true);    // 0.85 exactly — the threshold is inclusive
-      expect(await at(7.5)).toBe(true);
+  it("does not treat this server's local load as an archive heartbeat", async () => {
+    await withEnv({
+      ARCHIVE_BUSY_FILE: undefined,
+      RENDER_YIELD_LOAD_RATIO: "0.85",
+    }, async () => {
+      const probe = makeArchiveBusyProbe({ mtimeMs: () => null });
+      expect(await probe()).toBe(false);
     });
   });
 
@@ -258,8 +256,6 @@ describe("makeArchiveBusyProbe", () => {
     await withEnv({ ARCHIVE_BUSY_FILE: "/opt/reocam/state/assembling" }, async () => {
       const probe = makeArchiveBusyProbe({
         mtimeMs: () => null,               // ENOENT
-        loadavg: () => [0.1, 0, 0],
-        cpuCount: () => 4,
       });
       expect(await probe()).toBe(false);
     });
@@ -330,5 +326,97 @@ describe("live, admin-configurable limits", () => {
       liveConfig: async () => { throw new Error("db down"); },
     });
     await expect(q.run("clip-1", async () => "rendered")).resolves.toBe("rendered");
+  });
+});
+
+describe("immediate render admission", () => {
+  it("starts locally when a slot is available", async () => {
+    const q = new RenderQueue({ concurrency: 1, liveConfig: async () => ({ yieldToArchive: false }) });
+    const gate = deferred();
+    const started = await q.tryRunImmediately("first", () => gate.promise);
+    expect(started.started).toBe(true);
+    if (!started.started) throw new Error("expected an immediate slot");
+    expect(started.snapshot).toMatchObject({ active: 1, waiting: 0, concurrency: 1 });
+    gate.resolve();
+    await started.completion;
+    expect(q.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+  });
+
+  it("declines local admission while another render occupies the slot", async () => {
+    const q = new RenderQueue({ concurrency: 1, liveConfig: async () => ({ yieldToArchive: false }) });
+    const gate = deferred();
+    const active = q.run("active", () => gate.promise);
+    await tick();
+
+    const result = await q.tryRunImmediately("overflow", async () => {});
+    expect(result.started).toBe(false);
+    expect(result.snapshot).toMatchObject({ active: 1, waiting: 0, concurrency: 1 });
+
+    gate.resolve();
+    await active;
+  });
+
+  it("declines immediate local admission while archive yielding would block the render", async () => {
+    const q = new RenderQueue({
+      concurrency: 1,
+      isArchiveBusy: async () => true,
+      liveConfig: async () => ({ yieldToArchive: true }),
+    });
+    const result = await q.tryRunImmediately("overflow", async () => {});
+    expect(result.started).toBe(false);
+    expect(result.snapshot).toMatchObject({ active: 0, waiting: 0, concurrency: 1 });
+  });
+
+  it("reserves a free slot before awaiting the archive probe", async () => {
+    const probe = deferred<boolean>();
+    const q = new RenderQueue({
+      concurrency: 1,
+      isArchiveBusy: () => probe.promise,
+      liveConfig: async () => ({ yieldToArchive: true }),
+    });
+
+    const firstAttempt = q.tryRunImmediately("first", async () => {});
+    await tick();
+    const secondAttempt = await q.tryRunImmediately("second", async () => {});
+    expect(secondAttempt).toMatchObject({ started: false, snapshot: { active: 1 } });
+
+    probe.resolve(false);
+    const first = await firstAttempt;
+    expect(first.started).toBe(true);
+    if (first.started) await first.completion;
+    expect(q.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+  });
+
+  it("declines local admission when jobs are already waiting or yielding", async () => {
+    const gate = deferred();
+    const q = new RenderQueue({
+      concurrency: 1,
+      liveConfig: async () => ({ yieldToArchive: false }),
+    });
+    const active = q.run("active", () => gate.promise);
+    await tick();
+    const waiting = q.run("waiting", async () => {});
+    await tick();
+    const waitingResult = await q.tryRunImmediately("overflow-waiting", async () => {});
+    expect(waitingResult).toMatchObject({ started: false, snapshot: { waiting: 1 } });
+    gate.resolve();
+    await Promise.all([active, waiting]);
+
+    let releaseYield!: () => void;
+    let archiveBusy = true;
+    const yieldGate = new Promise<void>((resolve) => { releaseYield = resolve; });
+    const yieldingQueue = new RenderQueue({
+      concurrency: 1,
+      isArchiveBusy: async () => archiveBusy,
+      liveConfig: async () => ({ yieldToArchive: true }),
+      sleep: async () => yieldGate,
+    });
+    const yielding = yieldingQueue.run("yielding", async () => {});
+    await tick();
+    const yieldingResult = await yieldingQueue.tryRunImmediately("overflow-yielding", async () => {});
+    expect(yieldingResult).toMatchObject({ started: false, snapshot: { yielding: 1 } });
+    archiveBusy = false;
+    releaseYield();
+    await yielding;
   });
 });

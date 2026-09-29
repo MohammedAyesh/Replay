@@ -1,21 +1,17 @@
-import os from "os";
 import { statSync } from "fs";
 import { logger } from "./logger";
 
 /**
  * The render queue.
  *
- * Renders are the heaviest thing this process does: a CRF-16 pass over a
- * three-minute clip costs roughly five CPU-minutes, about 0.6x realtime. Demand
- * is not spread out — it arrives in a spike in the two hours after full time,
- * which is exactly the window in which `process-all.sh` is assembling the hour
- * that just finished. Both workloads want every core on a 6-vCPU box.
+ * Renders are CPU-intensive, and demand arrives in a spike in the two hours
+ * after full time. The archive may run on another host, so its activity is only
+ * considered when a fresh heartbeat is available.
  *
  * Two rules follow, and this module exists to hold them:
  *
  *   1. Never more than MAX_CONCURRENT_RENDERS renders at once.
- *   2. Renders yield to the archive. A late render is an annoyed user; a late
- *      archive is a match hour that cannot be re-recorded.
+ *   2. Renders can yield while a configured archive heartbeat is fresh.
  *
  * WHY THIS REPLACED THE INLINE VERSION IN routes/userClips.ts
  *
@@ -94,6 +90,10 @@ export interface RenderQueueSnapshot {
   order: string[];
   yielding: number;
 }
+
+export type ImmediateRenderResult<T> =
+  | { started: true; snapshot: RenderQueueSnapshot; completion: Promise<T> }
+  | { started: false; snapshot: RenderQueueSnapshot };
 
 interface Waiter {
   key: string;
@@ -191,6 +191,51 @@ export class RenderQueue {
     }
   }
 
+  /**
+   * Reserve a local slot only when this job would not have to wait.
+   *
+   * Yielding jobs count as waiting even though they have not reached the FIFO
+   * yet. Callers can hand overflow to another renderer instead of adding it
+   * behind local work.
+   */
+  async tryRunImmediately<T>(
+    key: string,
+    job: () => Promise<T>,
+  ): Promise<ImmediateRenderResult<T>> {
+    const config = await this.currentConfig();
+    const snapshot = { ...this.snapshot(), concurrency: config.concurrency };
+    if (
+      snapshot.active >= config.concurrency ||
+      snapshot.waiting > 0 ||
+      snapshot.yielding > 0
+    ) {
+      return { started: false, snapshot };
+    }
+    // Claim the slot before probing the archive. The probe is async; leaving
+    // the slot unclaimed until it resolves lets concurrent admissions all see
+    // the same free capacity and exceed the concurrency limit.
+    this.active.add(key);
+    if (config.yieldToArchive) {
+      try {
+        if (await this.isArchiveBusy()) {
+          this.release(key);
+          return { started: false, snapshot };
+        }
+      } catch (err) {
+        logger.warn({ err, key }, "Archive-busy probe failed during immediate admission; not yielding");
+      }
+    }
+
+    const completion = (async () => {
+      try {
+        return await job();
+      } finally {
+        this.release(key);
+      }
+    })();
+    return { started: true, snapshot: this.snapshot(), completion };
+  }
+
   private async acquire(key: string): Promise<void> {
     const config = await this.currentConfig();
 
@@ -264,25 +309,13 @@ export class RenderQueue {
 /**
  * Is the hourly archive working right now?
  *
- * Two signals, checked in order, because neither is sufficient alone:
- *
- *  1. A heartbeat file. `process.sh` can `touch $ARCHIVE_BUSY_FILE` at the top of
- *     each assembly pass; a file touched within ARCHIVE_BUSY_FILE_TTL_S means an
- *     hour is being built right now. This is exact, and it is the signal to
- *     prefer — but it only exists if the API server shares a filesystem with the
- *     archive, and it will not exist at all when the two run on different hosts.
- *  2. Load average. Host-agnostic, needs no cooperation from the archive, and
- *     catches every other reason the box is saturated. It is a proxy, not a
- *     diagnosis, which is why it is second.
- *
- * With neither configured nor tripped the probe says "not busy", so this is
- * inert on a host that has no archive — which is the correct behaviour for the
- * Replit preview environment.
+ * A heartbeat file touched by the archive host. A file touched within
+ * ARCHIVE_BUSY_FILE_TTL_S means an hour is being built. Local load average is
+ * not a valid substitute when this API and the archive run on different hosts.
+ * Without a fresh heartbeat the probe says "not busy".
  */
 export function makeArchiveBusyProbe(deps?: {
   mtimeMs?: (path: string) => number | null;
-  loadavg?: () => number[];
-  cpuCount?: () => number;
   now?: () => number;
 }): () => Promise<boolean> {
   const mtimeMs =
@@ -294,22 +327,15 @@ export function makeArchiveBusyProbe(deps?: {
         return null;
       }
     });
-  const loadavg = deps?.loadavg ?? (() => os.loadavg());
-  const cpuCount = deps?.cpuCount ?? (() => os.cpus().length || 1);
   const now = deps?.now ?? Date.now;
 
   const busyFile = process.env.ARCHIVE_BUSY_FILE ?? "";
   const busyTtlMs = (parseInt(process.env.ARCHIVE_BUSY_FILE_TTL_S ?? "300", 10) || 300) * 1000;
-  const loadRatio = Number.parseFloat(process.env.RENDER_YIELD_LOAD_RATIO ?? "0.85") || 0.85;
 
   return async () => {
-    if (busyFile) {
-      const m = mtimeMs(busyFile);
-      if (m !== null && now() - m < busyTtlMs) return true;
-    }
-    const cores = Math.max(1, cpuCount());
-    const oneMinute = loadavg()[0] ?? 0;
-    return oneMinute / cores >= loadRatio;
+    if (!busyFile) return false;
+    const m = mtimeMs(busyFile);
+    return m !== null && now() - m < busyTtlMs;
   };
 }
 

@@ -83,6 +83,15 @@ import {
   startExportFailoverSweep,
   type BackupOutcome,
 } from "../lib/exportFailover";
+import {
+  PENDING_LOCAL_FALLBACK,
+  PENDING_VPS1_AFTER_PRIMARY,
+  PENDING_VPS1_OVERFLOW,
+  isInternalPendingStatus,
+  isLocalFallbackPendingStatus,
+  isVps1PendingStatus,
+  publicExportStatus,
+} from "../lib/userClipExportState";
 import { fetchBrandingAsset } from "../lib/brandingFetch";
 import { introPlaybackPath } from "./clipIntro";
 import { canCreateClipFromVideo } from "../lib/publicFootage";
@@ -91,6 +100,8 @@ const router: IRouter = Router();
 
 /** Clip IDs currently being rendered — prevents duplicate concurrent jobs. */
 const inFlight = new Set<number>();
+/** Fallback work claimed by this process while a vps1 handoff is settling. */
+const localFallbackOwned = new Set<number>();
 
 /**
  * In-memory progress stage for each clip currently being exported.
@@ -479,12 +490,168 @@ function startBackgroundExport(
   options: { exportRevision?: string; trackAdminFailure?: boolean } = {},
 ) {
   const clipId = clip.id;
+  void (async () => {
+    const admission = await renderQueue.tryRunImmediately(String(clipId), () =>
+      runBackgroundExport(clip, options),
+    );
+    if (admission.started) {
+      void admission.completion.catch((err) => {
+        logger.error({ err, clipId }, "Background clip export escaped its error handler");
+      });
+      return;
+    }
+
+    if (isBackupExportConfigured()) {
+      const handoff = await tryOverflowHandoff(clip, admission.snapshot);
+      if (handoff !== "local") {
+        if (!localFallbackOwned.has(clipId)) inFlight.delete(clipId);
+        return;
+      }
+      localFallbackOwned.add(clipId);
+    }
+
+    queueLocalBackgroundExport(clip, options);
+  })().catch((err) => {
+    logger.error({ err, clipId }, "Could not choose a clip export renderer — queuing locally");
+    queueLocalBackgroundExport(clip, options);
+  });
+}
+
+async function tryOverflowHandoff(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+  localQueue: ReturnType<typeof renderQueue.snapshot>,
+): Promise<"handed-off" | "owned-elsewhere" | "local"> {
+  const [claimed] = await db
+    .update(userClipsTable)
+    .set({ exportStatus: PENDING_VPS1_OVERFLOW })
+    .where(and(
+      eq(userClipsTable.id, clip.id),
+      eq(userClipsTable.exportStatus, "pending"),
+    ))
+    .returning({ id: userClipsTable.id });
+
+  if (!claimed) {
+    const [current] = await db
+      .select({ exportStatus: userClipsTable.exportStatus })
+      .from(userClipsTable)
+      .where(eq(userClipsTable.id, clip.id));
+    return current?.exportStatus === "done" || isInternalPendingStatus(current?.exportStatus)
+      ? "owned-elsewhere"
+      : "local";
+  }
+
+  try {
+    const outcome = await reconcileBackup(
+      { ...clip, exportStatus: PENDING_VPS1_OVERFLOW },
+      {
+        overlayUrl: await overlayUrlForClip(clip),
+        primaryActive: true,
+        cacheMs: 0,
+      },
+    );
+    if (outcome.state === "running" || outcome.state === "done") {
+      logger.info(
+        {
+          clipId: clip.id,
+          localQueue: {
+            active: localQueue.active,
+            waiting: localQueue.waiting,
+            concurrency: localQueue.concurrency,
+            yielding: localQueue.yielding,
+          },
+          backup: outcome.state,
+        },
+        "Overflowed local clip export to vps1",
+      );
+      return "handed-off";
+    }
+    const markedForLocal = await markOverflowForLocalFallback(clip.id);
+    if (!markedForLocal) return "owned-elsewhere";
+    localFallbackOwned.add(clip.id);
+    logger.warn(
+      { clipId: clip.id, backup: outcome.state },
+      "vps1 did not accept the overflow export — returning it to the local queue",
+    );
+    return "local";
+  } catch (err) {
+    const markedForLocal = await markOverflowForLocalFallback(clip.id).catch((markErr) => {
+      logger.error({ err: markErr, clipId: clip.id }, "Could not restore local fallback status");
+      return false;
+    });
+    if (!markedForLocal) return "owned-elsewhere";
+    localFallbackOwned.add(clip.id);
+    logger.warn({ err, clipId: clip.id }, "vps1 overflow handoff failed — returning to the local queue");
+    return "local";
+  }
+}
+
+async function markOverflowForLocalFallback(clipId: number): Promise<boolean> {
+  const updated = await db
+    .update(userClipsTable)
+    .set({ exportStatus: PENDING_LOCAL_FALLBACK })
+    .where(and(
+      eq(userClipsTable.id, clipId),
+      eq(userClipsTable.exportStatus, PENDING_VPS1_OVERFLOW),
+    ))
+    .returning({ id: userClipsTable.id });
+  return updated.length > 0;
+}
+
+function queueLocalBackgroundExport(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+  options: { exportRevision?: string; trackAdminFailure?: boolean } = {},
+): void {
+  void withRenderSlot(clip.id, () => runBackgroundExport(clip, options)).catch((err) => {
+    logger.error({ err, clipId: clip.id }, "Queued background clip export escaped its error handler");
+  });
+}
+
+async function fallbackOverflowToLocal(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+): Promise<void> {
+  if (!(await markOverflowForLocalFallback(clip.id))) return;
+  localFallbackOwned.add(clip.id);
+  inFlight.add(clip.id);
+  queueLocalBackgroundExport(
+    { ...clip, exportStatus: PENDING_LOCAL_FALLBACK },
+    localFallbackOptions(clip),
+  );
+  logger.warn({ clipId: clip.id }, "vps1 overflow export failed — queued a local render");
+}
+
+async function resumeLocalFallback(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+): Promise<void> {
+  if (inFlight.has(clip.id) || localFallbackOwned.has(clip.id)) return;
+  localFallbackOwned.add(clip.id);
+  inFlight.add(clip.id);
+  queueLocalBackgroundExport(
+    { ...clip, exportStatus: PENDING_LOCAL_FALLBACK },
+    localFallbackOptions(clip),
+  );
+  logger.warn({ clipId: clip.id }, "Resuming a local fallback export after process loss");
+}
+
+function localFallbackOptions(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+): { exportRevision?: string } {
+  // If this was a re-render of an existing export, keep its object untouched
+  // until the fallback render uploads successfully.
+  return clip.exportedUrl
+    ? { exportRevision: randomUUID().replace(/-/g, "") }
+    : {};
+}
+
+async function runBackgroundExport(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+  options: { exportRevision?: string; trackAdminFailure?: boolean } = {},
+): Promise<void> {
+  const clipId = clip.id;
   const startTime = parseFloat(clip.startTime);
   const endTime = parseFloat(clip.endTime);
   const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
   const videoId = clip.videoId;
 
-  void withRenderSlot(clipId, async () => {
     let tmpPath: string | null = null;
     let bufferTmpFile: string | null = null;
     const assetTmpFiles: string[] = [];
@@ -630,7 +797,10 @@ function startBackgroundExport(
       await db
         .update(userClipsTable)
         .set({ exportStatus: "done", exportedUrl })
-        .where(eq(userClipsTable.id, clipId));
+        .where(and(
+          eq(userClipsTable.id, clipId),
+          inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
+        ));
       if (options.trackAdminFailure) adminClipFailureReasons.delete(clipId);
       logger.info({ clipId, exportedUrl, method: "primary" }, "Clip export complete");
     } catch (err) {
@@ -647,19 +817,22 @@ function startBackgroundExport(
         await db
           .update(userClipsTable)
           .set({ exportStatus: "expired" })
-          .where(eq(userClipsTable.id, clipId));
+          .where(and(
+            eq(userClipsTable.id, clipId),
+            inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
+          ));
       } else {
         await failOverToBackup(clip, overlayUrlForBackup, err);
       }
     } finally {
       inFlight.delete(clipId);
+      localFallbackOwned.delete(clipId);
       exportProgress.delete(clipId);
       notePrimaryFinished(clipId);
       if (bufferTmpFile) cleanupTempFile(bufferTmpFile);
       if (tmpPath) cleanupTempFile(tmpPath);
       for (const f of assetTmpFiles) cleanupTempFile(f);
     }
-  });
 }
 
 /**
@@ -670,7 +843,7 @@ function startBackgroundExport(
 export async function queueAdminClipReclip(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
 ): Promise<{ accepted: boolean; queuePosition: number | null }> {
-  if (inFlight.has(clip.id)) {
+  if (inFlight.has(clip.id) || isInternalPendingStatus(clip.exportStatus)) {
     return { accepted: false, queuePosition: queueStateFor(clip.id).position };
   }
 
@@ -707,11 +880,30 @@ async function failOverToBackup(
   cause: unknown,
 ): Promise<void> {
   if (!isBackupExportConfigured()) {
-    await db.update(userClipsTable).set({ exportStatus: "error" }).where(eq(userClipsTable.id, clip.id));
+    await db
+      .update(userClipsTable)
+      .set({ exportStatus: "error" })
+      .where(and(
+        eq(userClipsTable.id, clip.id),
+        inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
+      ));
     return;
   }
   try {
-    const outcome = await reconcileBackup(clip, { overlayUrl, primaryActive: false, cacheMs: 0 });
+    const [claimed] = await db
+      .update(userClipsTable)
+      .set({ exportStatus: PENDING_VPS1_AFTER_PRIMARY })
+      .where(and(
+        eq(userClipsTable.id, clip.id),
+        inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
+      ))
+      .returning({ id: userClipsTable.id });
+    if (!claimed) return;
+
+    const outcome = await reconcileBackup(
+      { ...clip, exportStatus: PENDING_VPS1_AFTER_PRIMARY },
+      { overlayUrl, primaryActive: false, cacheMs: 0 },
+    );
     logger.warn(
       { clipId: clip.id, backup: outcome.state, cause: String((cause as Error)?.message ?? cause).slice(0, 300) },
       "Primary export failed — handed to the backup renderer (vps1)",
@@ -740,6 +932,8 @@ async function overlayUrlForClip(clip: typeof userClipsTable.$inferSelect): Prom
 startExportFailoverSweep({
   isPrimaryInFlight: (clipId) => inFlight.has(clipId),
   resolveOverlayUrl: overlayUrlForClip,
+  fallbackOverflowToLocal,
+  resumeLocalFallback,
 });
 
 /**
@@ -750,6 +944,7 @@ startExportFailoverSweep({
 export async function queueUserClipExport(clip: typeof userClipsTable.$inferSelect): Promise<string | null> {
   if (isLiveVideoId(clip.videoId)) return null;
   if (clip.exportStatus === "done" && clip.exportedUrl) return "done";
+  if (isInternalPendingStatus(clip.exportStatus)) return "pending";
   if (inFlight.has(clip.id)) return "pending";
 
   if (!isBunnyConfigured() || !isBunnyStorageConfigured()) {
@@ -974,7 +1169,7 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       thumbnailTime,
       thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime) : null,
       playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null,
-      exportStatus: row.exportStatus ?? null,
+      exportStatus: publicExportStatus(row.exportStatus),
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
@@ -1087,7 +1282,7 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     .where(eq(userClipsTable.id, params.data.id))
     .returning();
 
-  let responseExportStatus = row.exportStatus ?? null;
+  let responseExportStatus = publicExportStatus(row.exportStatus);
   if (body.data.showInPortfolio === true
     && row.showInPortfolio
     && row.visibility === "public"
@@ -1462,6 +1657,10 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     res.json({ status: "done", url: clip.exportedUrl });
     return;
   }
+  if (isInternalPendingStatus(clip.exportStatus)) {
+    res.json({ status: "pending" });
+    return;
+  }
 
   // Method A needs Bunny Stream's API and Bunny Storage configured on this
   // server. If either is missing, go straight to Method B rather than refusing:
@@ -1542,7 +1741,7 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
     // pending. A spinner that says "3rd in line" is the difference between
     // waiting and giving up.
     queuePosition: decided.method === "primary" ? queue.position : null,
-    queueWaiting: queue.waiting,
+    queueWaiting: decided.method === "primary" ? queue.waiting : 0,
   });
 });
 
@@ -1565,10 +1764,17 @@ async function exportStatusFor(
   progress: string | null;
   method: "primary" | "backup" | null;
   backupProgress: number | null;
+  backupStage: string | null;
   reason?: string;
 }> {
   const primaryActive = inFlight.has(clip.id);
-  const base = { url: null, progress: null, method: null, backupProgress: null } as const;
+  const base = {
+    url: null,
+    progress: null,
+    method: null,
+    backupProgress: null,
+    backupStage: null,
+  } as const;
 
   if (clip.exportStatus === "done" && clip.exportedUrl) {
     if (!opts.verify || await isExportReachable(clip.exportedUrl)) {
@@ -1596,14 +1802,79 @@ async function exportStatusFor(
     return { ...base, status: "error", reason: "expired" };
   }
 
+  if (isLocalFallbackPendingStatus(clip.exportStatus)) {
+    return {
+      ...base,
+      status: "pending",
+      progress: primaryActive ? exportProgress.get(clip.id) ?? null : null,
+      method: "primary",
+    };
+  }
+
+  if (isVps1PendingStatus(clip.exportStatus)) {
+    const isOverflow = clip.exportStatus === PENDING_VPS1_OVERFLOW;
+    const outcome = await reconcileBackup(clip, {
+      overlayUrl: await overlayUrlForClip(clip),
+      primaryActive: isOverflow,
+      cacheMs: 0,
+    });
+    switch (outcome.state) {
+      case "done":
+        return { ...base, status: "done", url: outcome.url, method: "backup", backupProgress: 100 };
+      case "running":
+        return {
+          ...base,
+          status: "pending",
+          progress: "backup",
+          method: "backup",
+          backupProgress: outcome.progress,
+          backupStage: outcome.stage,
+        };
+      case "failed":
+        if (isOverflow) {
+          await fallbackOverflowToLocal(clip);
+          return { ...base, status: "pending", method: "primary" };
+        }
+        return { ...base, status: "error", reason: outcome.exportStatus };
+      case "unavailable":
+        if (isOverflow && (
+          !isBackupExportConfigured() ||
+          Date.now() - outcome.since > BACKUP_UNREACHABLE_GIVE_UP_MS
+        )) {
+          await fallbackOverflowToLocal(clip);
+          return { ...base, status: "pending", method: "primary" };
+        }
+        if (!isOverflow && (
+          !isBackupExportConfigured() ||
+          Date.now() - outcome.since > BACKUP_UNREACHABLE_GIVE_UP_MS
+        )) {
+          await db
+            .update(userClipsTable)
+            .set({ exportStatus: "error" })
+            .where(and(
+              eq(userClipsTable.id, clip.id),
+              eq(userClipsTable.exportStatus, PENDING_VPS1_AFTER_PRIMARY),
+            ));
+          return { ...base, status: "error", reason: "both_unavailable" };
+        }
+        return {
+          ...base,
+          status: "pending",
+          progress: "backup",
+          method: "backup",
+          backupProgress: 0,
+        };
+    }
+  }
+
   // Method A is working on it here and has not been going implausibly long:
   // report its progress.
   if (clip.exportStatus === "pending" && primaryActive) {
     return { ...base, status: "pending", progress: exportProgress.get(clip.id) ?? null, method: "primary" };
   }
 
-  // Everything else that is not idle — Method A failed ("error"), or the row is
-  // pending with no local render (restart, another instance) — goes to Method B.
+  // A plain pending row with no local renderer may be stale (restart or another
+  // instance). Keep the existing status-poll handoff for those legacy states.
   if (clip.exportStatus !== "pending" && clip.exportStatus !== "error") {
     return { ...base, status: "idle" };
   }
@@ -1623,7 +1894,14 @@ async function exportStatusFor(
           .set({ exportStatus: "pending" })
           .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.exportStatus, "error")));
       }
-      return { ...base, status: "pending", progress: "backup", method: "backup", backupProgress: outcome.progress };
+      return {
+        ...base,
+        status: "pending",
+        progress: "backup",
+        method: "backup",
+        backupProgress: outcome.progress,
+        backupStage: outcome.stage,
+      };
     case "failed":
       return { ...base, status: "error", reason: outcome.exportStatus };
     case "unavailable": {

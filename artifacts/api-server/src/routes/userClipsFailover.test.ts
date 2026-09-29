@@ -22,6 +22,32 @@ import crypto from "crypto";
 import { db, usersTable, userClipsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
+const exportMocks = vi.hoisted(() => ({
+  primaryEnabled: false,
+  backupEnabled: true,
+  renderClip: vi.fn(async () => "/tmp/test-primary-export.mp4"),
+  bufferRemoteClip: vi.fn(async () => ({
+    bufferPath: "/tmp/test-primary-buffer.mp4",
+    bufferedDuration: 60,
+    adjustedOffsetSec: 0,
+  })),
+  getBunnyVideoInfo: vi.fn(async () => ({
+    duration: 60,
+    hasMP4Fallback: true,
+    availableResolutions: "1080p",
+  })),
+  resolveExportSource: vi.fn(async () => ({
+    url: "https://cdn.test/source.m3u8",
+    path: "resolution-matched HLS variant" as const,
+    width: 3840,
+    height: 1080,
+    renditionLabel: "2160p",
+  })),
+  uploadToBunnyStorage: vi.fn(async (_path: string, clipId: number) =>
+    `https://storage.test/clips/${clipId}.mp4`,
+  ),
+}));
+
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(),
   getLocalUserRecord: vi.fn(),
@@ -33,12 +59,32 @@ vi.mock("../lib/bunny", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/bunny")>();
   return {
     ...actual,
-    isBunnyConfigured: () => false,
-    isBunnyStorageConfigured: () => false,
+    isBunnyConfigured: () => exportMocks.primaryEnabled,
+    isBunnyStorageConfigured: () => exportMocks.primaryEnabled,
+    getBunnyVideoInfo: exportMocks.getBunnyVideoInfo,
+    uploadToBunnyStorage: exportMocks.uploadToBunnyStorage,
   };
+});
+vi.mock("../lib/ffmpegExport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/ffmpegExport")>();
+  return {
+    ...actual,
+    renderClip: exportMocks.renderClip,
+    bufferRemoteClip: exportMocks.bufferRemoteClip,
+    cleanupTempFile: vi.fn(),
+  };
+});
+vi.mock("../lib/exportSource", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/exportSource")>();
+  return { ...actual, selectExportSource: exportMocks.resolveExportSource };
+});
+vi.mock("../lib/backupExport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/backupExport")>();
+  return { ...actual, isBackupExportConfigured: () => exportMocks.backupEnabled };
 });
 import { getLocalUserId } from "../lib/clerkUserBridge";
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
+import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
 
 const FILE = crypto.randomBytes(300 * 1024);
 const VIDEO = "1e69d9ea-e5ef-4c20-990d-a4fd678f7ace";
@@ -49,10 +95,17 @@ const jobs = new Map<string, Job>();
 const seen: { method: string; url: string; key: string | undefined; range: string | undefined }[] = [];
 /** What the fake vps1 should do with the NEXT new job for a given clip id. */
 const script = new Map<number, "ready" | "running" | "permanent" | "transient-then-ready">();
+const unreachableSubmit = new Set<number>();
 
 let vps1: http.Server;
 let app: Express;
 let ownerId: number;
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 function jobFor(clipId: number) {
   return `c${clipId}-${"0123456789abcdef"}`;
@@ -68,6 +121,7 @@ beforeAll(async () => {
       req.on("data", (c) => { raw += c; });
       req.on("end", () => {
         const body = JSON.parse(raw);
+        if (unreachableSubmit.has(body.clipId)) { send(503, { error: "offline" }); return; }
         const job = jobFor(body.clipId);
         let j = jobs.get(job);
         if (!j) {
@@ -132,6 +186,19 @@ afterAll(async () => {
 beforeEach(() => {
   mockedGetLocalUserId.mockResolvedValue(ownerId);
   seen.length = 0;
+  unreachableSubmit.clear();
+  exportMocks.primaryEnabled = false;
+  exportMocks.backupEnabled = true;
+  exportMocks.renderClip.mockClear();
+  exportMocks.bufferRemoteClip.mockClear();
+  exportMocks.getBunnyVideoInfo.mockClear();
+  exportMocks.resolveExportSource.mockClear();
+  exportMocks.uploadToBunnyStorage.mockClear();
+  useLiveRenderSettings(async () => ({
+    concurrency: 1,
+    yieldToArchive: false,
+    yieldCeilingMs: 0,
+  }));
 });
 
 async function clip(exportStatus: string | null, plan?: "ready" | "running" | "permanent" | "transient-then-ready") {
@@ -149,6 +216,15 @@ async function clip(exportStatus: string | null, plan?: "ready" | "running" | "p
 
 const status = (id: number, q = "") => request(app).get(`/api/user-clips/${id}/export-status${q}`);
 const rowOf = async (id: number) => (await db.select().from(userClipsTable).where(eq(userClipsTable.id, id)))[0];
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function waitForExportStatus(id: number, expected: string): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    if ((await rowOf(id))?.exportStatus === expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Clip ${id} did not reach export status ${expected}`);
+}
 
 describe("export failover to the backup renderer", () => {
   it("finishes a clip whose primary render failed (the 2026-09-29 incident) on vps1", async () => {
@@ -224,5 +300,132 @@ describe("export failover to the backup renderer", () => {
     const res = await status(id, "?verify=1");
     expect(["pending", "done"]).toContain(res.body.status);
     expect(res.body.status).not.toBe("error");
+  });
+});
+
+describe("Method A overflow to vps1", () => {
+  it("uses a free local slot instead of sending work to vps1", async () => {
+    exportMocks.primaryEnabled = true;
+    const id = await clip(null);
+
+    const res = await request(app).post(`/api/user-clips/${id}/export`);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("pending");
+    await waitForExportStatus(id, "done");
+
+    expect(exportMocks.renderClip).toHaveBeenCalledTimes(1);
+    expect(seen.some((entry) => entry.url === "/export/clip")).toBe(false);
+    expect((await rowOf(id)).exportedUrl).toBe(`https://storage.test/clips/${id}.mp4`);
+  });
+
+  it("hands overflow to vps1 and keeps duplicate requests from starting locally", async () => {
+    exportMocks.primaryEnabled = true;
+    const gate = deferred<void>();
+    const localBlocker = renderQueue.run("overflow-test-blocker", () => gate.promise);
+    await tick();
+
+    try {
+      const id = await clip(null, "running");
+      const res = await request(app).post(`/api/user-clips/${id}/export`);
+      expect(res.status).toBe(200);
+      await waitForExportStatus(id, "pending_vps1_overflow");
+
+      const polled = await status(id);
+      expect(polled.body).toMatchObject({
+        status: "pending",
+        method: "backup",
+        progress: "backup",
+        backupProgress: 40,
+      });
+      const duplicate = await request(app).post(`/api/user-clips/${id}/export`);
+      expect(duplicate.body.status).toBe("pending");
+      expect(exportMocks.renderClip).not.toHaveBeenCalled();
+      expect((await rowOf(id)).exportStatus).toBe("pending_vps1_overflow");
+      expect(seen.some((entry) => entry.url === "/export/clip")).toBe(true);
+    } finally {
+      gate.resolve();
+      await localBlocker;
+    }
+  });
+
+  it("queues locally when vps1 is disabled and resumes after local capacity opens", async () => {
+    exportMocks.primaryEnabled = true;
+    exportMocks.backupEnabled = false;
+    const gate = deferred<void>();
+    const localBlocker = renderQueue.run("disabled-backup-blocker", () => gate.promise);
+    await tick();
+
+    try {
+      const id = await clip(null);
+      const res = await request(app).post(`/api/user-clips/${id}/export`);
+      expect(res.body.status).toBe("pending");
+      await tick();
+      expect((await rowOf(id)).exportStatus).toBe("pending");
+      expect(exportMocks.renderClip).not.toHaveBeenCalled();
+      expect(seen.some((entry) => entry.url === "/export/clip")).toBe(false);
+
+      gate.resolve();
+      await localBlocker;
+      await waitForExportStatus(id, "done");
+      expect(exportMocks.renderClip).toHaveBeenCalledTimes(1);
+    } finally {
+      gate.resolve();
+      await localBlocker;
+    }
+  });
+
+  it("falls back to the local queue immediately when vps1 is unreachable", async () => {
+    exportMocks.primaryEnabled = true;
+    const gate = deferred<void>();
+    const localBlocker = renderQueue.run("unreachable-backup-blocker", () => gate.promise);
+    await tick();
+
+    try {
+      const id = await clip(null);
+      unreachableSubmit.add(id);
+      const res = await request(app).post(`/api/user-clips/${id}/export`);
+      expect(res.body.status).toBe("pending");
+      await waitForExportStatus(id, "pending_local_fallback");
+      expect(exportMocks.renderClip).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await localBlocker;
+      await waitForExportStatus(id, "done");
+      expect(exportMocks.renderClip).toHaveBeenCalledTimes(1);
+      expect((await rowOf(id)).exportedUrl).toBe(`https://storage.test/clips/${id}.mp4`);
+    } finally {
+      gate.resolve();
+      await localBlocker;
+    }
+  });
+
+  it("falls back locally when an accepted vps1 overflow job fails", async () => {
+    exportMocks.primaryEnabled = true;
+    const gate = deferred<void>();
+    const localBlocker = renderQueue.run("failed-backup-blocker", () => gate.promise);
+    await tick();
+
+    try {
+      const id = await clip(null, "running");
+      const res = await request(app).post(`/api/user-clips/${id}/export`);
+      expect(res.body.status).toBe("pending");
+      await waitForExportStatus(id, "pending_vps1_overflow");
+      jobs.get(jobFor(id))!.status = "failed";
+      jobs.get(jobFor(id))!.errorKind = "permanent";
+
+      const polled = await status(id);
+      expect(polled.body).toMatchObject({ status: "pending", method: "primary" });
+      expect((await rowOf(id)).exportStatus).toBe("pending_local_fallback");
+      expect(exportMocks.renderClip).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await localBlocker;
+      await waitForExportStatus(id, "done");
+      expect(exportMocks.renderClip).toHaveBeenCalledTimes(1);
+      expect((await rowOf(id)).exportedUrl).toBe(`https://storage.test/clips/${id}.mp4`);
+    } finally {
+      gate.resolve();
+      await localBlocker;
+    }
   });
 });
