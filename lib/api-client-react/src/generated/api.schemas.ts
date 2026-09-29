@@ -1149,6 +1149,62 @@ export interface AdminAdEntry {
   createdAt: string;
 }
 
+export interface AdminClipIdsInput {
+  /**
+     * @minItems 1
+     * @maxItems 200
+     */
+  clipIds: number[];
+}
+
+export type AdminClipSourceCheckResultSourceStatus = typeof AdminClipSourceCheckResultSourceStatus[keyof typeof AdminClipSourceCheckResultSourceStatus];
+
+
+export const AdminClipSourceCheckResultSourceStatus = {
+  ready: 'ready',
+  expired: 'expired',
+  live: 'live',
+  unavailable: 'unavailable',
+} as const;
+
+export interface AdminClipSourceCheckResult {
+  clipId: number;
+  sourceStatus: AdminClipSourceCheckResultSourceStatus;
+  /** @nullable */
+  sourceStatusCode: number | null;
+  /** @nullable */
+  reason: string | null;
+}
+
+export type AdminClipReclipResultSourceStatus = typeof AdminClipReclipResultSourceStatus[keyof typeof AdminClipReclipResultSourceStatus];
+
+
+export const AdminClipReclipResultSourceStatus = {
+  ready: 'ready',
+  expired: 'expired',
+  live: 'live',
+  unavailable: 'unavailable',
+} as const;
+
+export type AdminClipReclipResultState = typeof AdminClipReclipResultState[keyof typeof AdminClipReclipResultState];
+
+
+export const AdminClipReclipResultState = {
+  queued: 'queued',
+  already_running: 'already_running',
+  skipped: 'skipped',
+} as const;
+
+export interface AdminClipReclipResult {
+  clipId: number;
+  sourceStatus: AdminClipReclipResultSourceStatus;
+  state: AdminClipReclipResultState;
+  /** @nullable */
+  queuePosition: number | null;
+  /** @nullable */
+  reason: string | null;
+}
+
 export interface CreateAdInput {
   title: string;
   creativeUrl: string;

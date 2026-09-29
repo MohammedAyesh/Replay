@@ -28,6 +28,9 @@ import type {
   AdStats,
   AddAcademyRecordingInput,
   AdminAdEntry,
+  AdminClipIdsInput,
+  AdminClipReclipResult,
+  AdminClipSourceCheckResult,
   AdminFootageBilling,
   AdminFootageCancellationRequest,
   AdminFootageCancellationReview,
@@ -7400,6 +7403,286 @@ export function useGetAdStats<TData = Awaited<ReturnType<typeof getAdStats>>, TE
 
 
 
+
+export const getCheckAdminClipsSourcesUrl = () => {
+
+
+
+
+  return `/api/admin/clips/source-check`
+}
+
+/**
+ * @summary Check whether selected clip sources are playable in Bunny Stream
+ */
+export const checkAdminClipsSources = async (adminClipIdsInput: AdminClipIdsInput, options?: RequestInit): Promise<AdminClipSourceCheckResult[]> => {
+
+  return customFetch<AdminClipSourceCheckResult[]>(getCheckAdminClipsSourcesUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminClipIdsInput)
+  }
+);}
+
+
+
+
+export const getCheckAdminClipsSourcesMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkAdminClipsSources>>, TError,{data: BodyType<AdminClipIdsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof checkAdminClipsSources>>, TError,{data: BodyType<AdminClipIdsInput>}, TContext> => {
+
+const mutationKey = ['checkAdminClipsSources'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkAdminClipsSources>>, {data: BodyType<AdminClipIdsInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  checkAdminClipsSources(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckAdminClipsSourcesMutationResult = NonNullable<Awaited<ReturnType<typeof checkAdminClipsSources>>>
+    export type CheckAdminClipsSourcesMutationBody = BodyType<AdminClipIdsInput>
+    export type CheckAdminClipsSourcesMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Check whether selected clip sources are playable in Bunny Stream
+ */
+export const useCheckAdminClipsSources = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkAdminClipsSources>>, TError,{data: BodyType<AdminClipIdsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof checkAdminClipsSources>>,
+        TError,
+        {data: BodyType<AdminClipIdsInput>},
+        TContext
+      > => {
+      return useMutation(getCheckAdminClipsSourcesMutationOptions(options));
+    }
+
+export const getReclipAdminClipsUrl = () => {
+
+
+
+
+  return `/api/admin/clips/reclip`
+}
+
+/**
+ * @summary Check and re-render selected clips using the existing clip rows
+ */
+export const reclipAdminClips = async (adminClipIdsInput: AdminClipIdsInput, options?: RequestInit): Promise<AdminClipReclipResult[]> => {
+
+  return customFetch<AdminClipReclipResult[]>(getReclipAdminClipsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminClipIdsInput)
+  }
+);}
+
+
+
+
+export const getReclipAdminClipsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reclipAdminClips>>, TError,{data: BodyType<AdminClipIdsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reclipAdminClips>>, TError,{data: BodyType<AdminClipIdsInput>}, TContext> => {
+
+const mutationKey = ['reclipAdminClips'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reclipAdminClips>>, {data: BodyType<AdminClipIdsInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  reclipAdminClips(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReclipAdminClipsMutationResult = NonNullable<Awaited<ReturnType<typeof reclipAdminClips>>>
+    export type ReclipAdminClipsMutationBody = BodyType<AdminClipIdsInput>
+    export type ReclipAdminClipsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Check and re-render selected clips using the existing clip rows
+ */
+export const useReclipAdminClips = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reclipAdminClips>>, TError,{data: BodyType<AdminClipIdsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reclipAdminClips>>,
+        TError,
+        {data: BodyType<AdminClipIdsInput>},
+        TContext
+      > => {
+      return useMutation(getReclipAdminClipsMutationOptions(options));
+    }
+
+export const getCheckAdminClipSourceUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/clips/${id}/source-check`
+}
+
+/**
+ * @summary Check whether one clip source is playable in Bunny Stream
+ */
+export const checkAdminClipSource = async (id: number, options?: RequestInit): Promise<AdminClipSourceCheckResult> => {
+
+  return customFetch<AdminClipSourceCheckResult>(getCheckAdminClipSourceUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getCheckAdminClipSourceMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkAdminClipSource>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof checkAdminClipSource>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['checkAdminClipSource'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkAdminClipSource>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  checkAdminClipSource(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckAdminClipSourceMutationResult = NonNullable<Awaited<ReturnType<typeof checkAdminClipSource>>>
+
+    export type CheckAdminClipSourceMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Check whether one clip source is playable in Bunny Stream
+ */
+export const useCheckAdminClipSource = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkAdminClipSource>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof checkAdminClipSource>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getCheckAdminClipSourceMutationOptions(options));
+    }
+
+export const getReclipAdminClipUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/clips/${id}/reclip`
+}
+
+/**
+ * @summary Check and re-render one clip using its existing row
+ */
+export const reclipAdminClip = async (id: number, options?: RequestInit): Promise<AdminClipReclipResult> => {
+
+  return customFetch<AdminClipReclipResult>(getReclipAdminClipUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getReclipAdminClipMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reclipAdminClip>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reclipAdminClip>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['reclipAdminClip'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reclipAdminClip>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  reclipAdminClip(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReclipAdminClipMutationResult = NonNullable<Awaited<ReturnType<typeof reclipAdminClip>>>
+
+    export type ReclipAdminClipMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Check and re-render one clip using its existing row
+ */
+export const useReclipAdminClip = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reclipAdminClip>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reclipAdminClip>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getReclipAdminClipMutationOptions(options));
+    }
 
 export const getGetClaimChainUrl = (id: number,) => {
 

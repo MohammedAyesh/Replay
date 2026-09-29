@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { randomUUID } from "crypto";
 import { followCrop, type FollowPoint } from "../lib/personalMoments";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
@@ -99,6 +100,8 @@ const inFlight = new Set<number>();
  * frontend can show a human-readable stage label instead of a static spinner.
  */
 const exportProgress = new Map<number, string>();
+/** Recent admin re-clip failures, intentionally process-local (no DB column). */
+const adminClipFailureReasons = new Map<number, string>();
 
 /**
  * Renders are CPU-bound and contend with the hourly archive for the same cores,
@@ -141,6 +144,31 @@ export function queueStateFor(clipId: number): {
     position: renderQueue.positionOf(String(clipId)),
     waiting: snap.waiting,
     concurrency: snap.concurrency,
+  };
+}
+
+export function rememberAdminClipFailure(clipId: number, reason: string): void {
+  adminClipFailureReasons.delete(clipId);
+  adminClipFailureReasons.set(clipId, reason.trim().slice(0, 500) || "Unknown export failure");
+  while (adminClipFailureReasons.size > 100) {
+    const oldestId = adminClipFailureReasons.keys().next().value;
+    if (oldestId === undefined) break;
+    adminClipFailureReasons.delete(oldestId);
+  }
+}
+
+export function adminClipExportSnapshot(clipId: number): {
+  renderProgress: string | null;
+  queuePosition: number | null;
+  queueWaiting: number;
+  failureReason: string | null;
+} {
+  const queue = queueStateFor(clipId);
+  return {
+    renderProgress: exportProgress.get(clipId) ?? null,
+    queuePosition: queue.position,
+    queueWaiting: queue.waiting,
+    failureReason: adminClipFailureReasons.get(clipId) ?? null,
   };
 }
 
@@ -446,7 +474,10 @@ async function updateClipScore(clipId: number): Promise<number> {
  *      calling, so polls and duplicate requests see the correct state.
  *   3. Not await this — it is intentionally fire-and-forget via withRenderSlot.
  */
-function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTable.$inferSelect) {
+function startBackgroundExport(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+  options: { exportRevision?: string; trackAdminFailure?: boolean } = {},
+) {
   const clipId = clip.id;
   const startTime = parseFloat(clip.startTime);
   const endTime = parseFloat(clip.endTime);
@@ -595,14 +626,21 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
       }
 
       exportProgress.set(clipId, "uploading");
-      const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId);
+      const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId, options.exportRevision);
       await db
         .update(userClipsTable)
         .set({ exportStatus: "done", exportedUrl })
         .where(eq(userClipsTable.id, clipId));
+      if (options.trackAdminFailure) adminClipFailureReasons.delete(clipId);
       logger.info({ clipId, exportedUrl, method: "primary" }, "Clip export complete");
     } catch (err) {
       logger.error({ err, clipId }, "Background clip export failed");
+      if (options.trackAdminFailure) {
+        rememberAdminClipFailure(
+          clipId,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       if (classifyPortfolioSourceError(err) === "expired") {
         // The recording itself is gone from Bunny Stream. Method B reads the
         // same recording, so there is nothing to fail over to.
@@ -622,6 +660,39 @@ function startBackgroundExport(clip: typeof import("@workspace/db").userClipsTab
       for (const f of assetTmpFiles) cleanupTempFile(f);
     }
   });
+}
+
+/**
+ * Queue an admin-triggered re-clip on the standard render queue. The revision
+ * path keeps the currently published export object intact until the replacement
+ * has uploaded successfully; the clip row and all clip metadata stay the same.
+ */
+export async function queueAdminClipReclip(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+): Promise<{ accepted: boolean; queuePosition: number | null }> {
+  if (inFlight.has(clip.id)) {
+    return { accepted: false, queuePosition: queueStateFor(clip.id).position };
+  }
+
+  inFlight.add(clip.id);
+  adminClipFailureReasons.delete(clip.id);
+  try {
+    // Keep exportedUrl while the replacement renders. It changes only after
+    // Bunny Storage confirms the versioned replacement upload.
+    await db
+      .update(userClipsTable)
+      .set({ exportStatus: "pending" })
+      .where(eq(userClipsTable.id, clip.id));
+  } catch (err) {
+    inFlight.delete(clip.id);
+    throw err;
+  }
+
+  startBackgroundExport(clip, {
+    exportRevision: randomUUID().replace(/-/g, ""),
+    trackAdminFailure: true,
+  });
+  return { accepted: true, queuePosition: queueStateFor(clip.id).position };
 }
 
 /**

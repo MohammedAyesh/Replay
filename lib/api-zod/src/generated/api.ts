@@ -2770,6 +2770,78 @@ export const GetAdStatsResponse = zod.object({
 
 
 /**
+ * @summary Check whether selected clip sources are playable in Bunny Stream
+ */
+export const checkAdminClipsSourcesBodyClipIdsMax = 200;
+
+
+
+export const CheckAdminClipsSourcesBody = zod.object({
+  "clipIds": zod.array(zod.number()).min(1).max(checkAdminClipsSourcesBodyClipIdsMax)
+})
+
+export const CheckAdminClipsSourcesResponseItem = zod.object({
+  "clipId": zod.number(),
+  "sourceStatus": zod.enum(['ready', 'expired', 'live', 'unavailable']),
+  "sourceStatusCode": zod.number().nullable(),
+  "reason": zod.string().nullable()
+})
+export const CheckAdminClipsSourcesResponse = zod.array(CheckAdminClipsSourcesResponseItem)
+
+
+/**
+ * @summary Check and re-render selected clips using the existing clip rows
+ */
+export const reclipAdminClipsBodyClipIdsMax = 200;
+
+
+
+export const ReclipAdminClipsBody = zod.object({
+  "clipIds": zod.array(zod.number()).min(1).max(reclipAdminClipsBodyClipIdsMax)
+})
+
+export const ReclipAdminClipsResponseItem = zod.object({
+  "clipId": zod.number(),
+  "sourceStatus": zod.enum(['ready', 'expired', 'live', 'unavailable']),
+  "state": zod.enum(['queued', 'already_running', 'skipped']),
+  "queuePosition": zod.number().nullable(),
+  "reason": zod.string().nullable()
+})
+export const ReclipAdminClipsResponse = zod.array(ReclipAdminClipsResponseItem)
+
+
+/**
+ * @summary Check whether one clip source is playable in Bunny Stream
+ */
+export const CheckAdminClipSourceParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const CheckAdminClipSourceResponse = zod.object({
+  "clipId": zod.number(),
+  "sourceStatus": zod.enum(['ready', 'expired', 'live', 'unavailable']),
+  "sourceStatusCode": zod.number().nullable(),
+  "reason": zod.string().nullable()
+})
+
+
+/**
+ * @summary Check and re-render one clip using its existing row
+ */
+export const ReclipAdminClipParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ReclipAdminClipResponse = zod.object({
+  "clipId": zod.number(),
+  "sourceStatus": zod.enum(['ready', 'expired', 'live', 'unavailable']),
+  "state": zod.enum(['queued', 'already_running', 'skipped']),
+  "queuePosition": zod.number().nullable(),
+  "reason": zod.string().nullable()
+})
+
+
+/**
  * @summary The caller's claim chain for this recording, and where playback should next stop
  */
 export const GetClaimChainParams = zod.object({

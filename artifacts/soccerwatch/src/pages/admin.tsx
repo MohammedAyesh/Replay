@@ -62,6 +62,10 @@ interface AdminClip {
   endTime: number;
   exportStatus: string | null;
   exportedUrl: string | null;
+  renderProgress: string | null;
+  queuePosition: number | null;
+  queueWaiting: number;
+  failureReason: string | null;
   userName: string;
   userEmail: string;
 }
@@ -600,6 +604,9 @@ function ClipsTab() {
   const [search, setSearch] = useState("");
   const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
   const [bulkWorking, setBulkWorking] = useState(false);
+  const [clipWorkingId, setClipWorkingId] = useState<number | null>(null);
+  const [sourceChecks, setSourceChecks] = useState<Record<number, { status: string; reason: string | null }>>({});
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [playingClip, setPlayingClip] = useState<AdminClip | null>(null);
   const queryClient = useQueryClient();
@@ -614,6 +621,18 @@ function ClipsTab() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const hasPendingExports = clips.some((clip) => clip.exportStatus === "pending");
+  useEffect(() => {
+    if (!hasPendingExports) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const data = await apiFetch("/admin/clips");
+        setClips(data ?? []);
+      } catch { /* keep the latest progress until the next poll */ }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [hasPendingExports]);
 
   const invalidateFeeds = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getGetFeedQueryKey() });
@@ -639,6 +658,105 @@ function ClipsTab() {
       invalidateFeeds();
     } catch { /* silent */ }
     setDeleting(null);
+  };
+
+  const recordSourceResults = (results: { clipId: number; sourceStatus: string; reason: string | null }[]) => {
+    setSourceChecks((current) => ({
+      ...current,
+      ...Object.fromEntries(results.map((result) => [
+        result.clipId,
+        { status: result.sourceStatus, reason: result.reason },
+      ])),
+    }));
+  };
+
+  const fetchBulkResults = async <T,>(endpoint: string, clipIds: number[]): Promise<T[]> => {
+    const results: T[] = [];
+    for (let start = 0; start < clipIds.length; start += 200) {
+      const batch = await apiFetch(endpoint, {
+        method: "POST",
+        body: JSON.stringify({ clipIds: clipIds.slice(start, start + 200) }),
+      }) as T[];
+      results.push(...batch);
+    }
+    return results;
+  };
+
+  const checkOneSource = async (clip: AdminClip) => {
+    setClipWorkingId(clip.id);
+    setActionNotice(null);
+    try {
+      const result = await apiFetch(`/admin/clips/${clip.id}/source-check`, { method: "POST" });
+      recordSourceResults([result]);
+      const fresh = await apiFetch("/admin/clips");
+      setClips(fresh ?? []);
+    } catch {
+      setActionNotice(`Could not check the source for “${clip.title}”.`);
+    }
+    setClipWorkingId(null);
+  };
+
+  const reclipOne = async (clip: AdminClip) => {
+    setClipWorkingId(clip.id);
+    setActionNotice(null);
+    try {
+      const result = await apiFetch(`/admin/clips/${clip.id}/reclip`, { method: "POST" });
+      recordSourceResults([result]);
+      setActionNotice(
+        result.state === "queued" ? `Re-clip queued for “${clip.title}”.`
+          : result.state === "already_running" ? `A render is already running for “${clip.title}”.`
+            : result.reason ?? `Re-clip skipped for “${clip.title}”.`,
+      );
+      const fresh = await apiFetch("/admin/clips");
+      setClips(fresh ?? []);
+    } catch {
+      setActionNotice(`Could not queue a re-clip for “${clip.title}”.`);
+    }
+    setClipWorkingId(null);
+  };
+
+  const bulkCheckSources = async () => {
+    if (!filtered.length) return;
+    setBulkWorking(true);
+    setActionNotice(null);
+    try {
+      const results = await fetchBulkResults<{
+        clipId: number;
+        sourceStatus: string;
+        reason: string | null;
+      }>("/admin/clips/source-check", filtered.map((clip) => clip.id));
+      recordSourceResults(results);
+      const expired = results.filter((result: { sourceStatus: string }) => result.sourceStatus === "expired").length;
+      setActionNotice(`Checked ${results.length} sources; ${expired} marked expired.`);
+      const fresh = await apiFetch("/admin/clips");
+      setClips(fresh ?? []);
+    } catch {
+      setActionNotice("Could not check the selected clip sources.");
+    }
+    setBulkWorking(false);
+  };
+
+  const bulkReclip = async () => {
+    if (!filtered.length) return;
+    setBulkWorking(true);
+    setActionNotice(null);
+    try {
+      const results = await fetchBulkResults<{
+        clipId: number;
+        sourceStatus: string;
+        reason: string | null;
+        state: string;
+      }>("/admin/clips/reclip", filtered.map((clip) => clip.id));
+      recordSourceResults(results);
+      const queued = results.filter((result: { state: string }) => result.state === "queued").length;
+      const skipped = results.length - queued;
+      setActionNotice(`Queued ${queued} re-clips; ${skipped} skipped or already running.`);
+      const fresh = await apiFetch("/admin/clips");
+      setClips(fresh ?? []);
+    } catch {
+      setActionNotice("Could not queue the selected re-clips.");
+    }
+    setBulkWorking(false);
   };
 
   const players = Array.from(
@@ -727,6 +845,23 @@ function ClipsTab() {
         </div>
         <span className="text-zinc-500 text-xs shrink-0">{filtered.length} clips</span>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={bulkCheckSources}
+          disabled={bulkWorking || filtered.length === 0}
+          className="px-3 py-2 rounded-lg bg-zinc-800 text-zinc-200 text-xs font-medium hover:bg-zinc-700 disabled:opacity-40"
+        >
+          {bulkWorking ? "Working…" : "Check sources"}
+        </button>
+        <button
+          onClick={bulkReclip}
+          disabled={bulkWorking || filtered.length === 0}
+          className="px-3 py-2 rounded-lg bg-primary/20 text-primary border border-primary/30 text-xs font-medium hover:bg-primary/30 disabled:opacity-40"
+        >
+          Re-clip visible ({filtered.length})
+        </button>
+        {actionNotice && <span role="status" className="text-xs text-zinc-400">{actionNotice}</span>}
+      </div>
 
       {loading ? (
         <div className="text-center py-16 text-zinc-500">Loading…</div>
@@ -757,9 +892,53 @@ function ClipsTab() {
               <div className="flex-1 min-w-0">
                 <p className="text-white text-sm font-medium truncate">{clip.title}</p>
                 <p className="text-zinc-500 text-xs truncate">{clip.userName} · {clip.viewCount}v · {clip.likeCount}♥</p>
+                {clip.exportStatus === "pending" && (
+                  <p className="text-primary text-[10px] mt-1">
+                    {clip.renderProgress
+                      ? `Re-clip ${clip.renderProgress}`
+                      : clip.queuePosition != null && clip.queuePosition > 0
+                        ? `Queued · ${clip.queuePosition} ahead`
+                        : "Preparing render"}
+                    {clip.queueWaiting > 0 ? ` · ${clip.queueWaiting} waiting` : ""}
+                  </p>
+                )}
+                {clip.exportStatus === "expired" && (
+                  <p className="text-amber-400 text-[10px] mt-1">Source expired</p>
+                )}
+                {clip.failureReason && (
+                  <p className="text-red-400 text-[10px] mt-1 truncate" title={clip.failureReason}>
+                    Last re-clip failure: {clip.failureReason}
+                  </p>
+                )}
+                {sourceChecks[clip.id] && (
+                  <p className={cn(
+                    "text-[10px] mt-1 truncate",
+                    sourceChecks[clip.id].status === "ready" ? "text-emerald-400"
+                      : sourceChecks[clip.id].status === "expired" ? "text-amber-400" : "text-zinc-400",
+                  )}>
+                    Source: {sourceChecks[clip.id].status}
+                    {sourceChecks[clip.id].reason ? ` · ${sourceChecks[clip.id].reason}` : ""}
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => checkOneSource(clip)}
+                  disabled={bulkWorking || clipWorkingId === clip.id}
+                  className="px-2 py-2 rounded-lg bg-zinc-800 text-zinc-300 text-[10px] font-medium hover:bg-zinc-700 disabled:opacity-40"
+                  title="Check Bunny Stream source"
+                >
+                  {clipWorkingId === clip.id ? "…" : "Check"}
+                </button>
+                <button
+                  onClick={() => reclipOne(clip)}
+                  disabled={bulkWorking || clipWorkingId === clip.id}
+                  className="px-2 py-2 rounded-lg bg-primary/15 text-primary text-[10px] font-medium hover:bg-primary/25 disabled:opacity-40"
+                  title="Re-render this clip"
+                >
+                  Re-clip
+                </button>
                 {clip.isHidden && (
                   <span className="text-[10px] bg-red-900/40 text-red-400 px-2 py-0.5 rounded-full border border-red-800/50">
                     Hidden

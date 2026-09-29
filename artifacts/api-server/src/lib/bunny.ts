@@ -29,6 +29,42 @@ export function isBunnyVideoPlayable(video: {
       && video.availableResolutions.trim().length > 0);
 }
 
+/**
+ * Check whether a Stream source has finished processing and has at least one
+ * playable rendition. A missing video is represented by
+ * BunnyVideoNotFoundError; transport/API failures remain errors so callers do
+ * not mistake a temporary Bunny outage for an expired source.
+ */
+export async function getBunnyVideoReadiness(videoId: string): Promise<{
+  ready: boolean;
+  status: number | null;
+}> {
+  const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`;
+  const response = await fetch(url, {
+    headers: { AccessKey: BUNNY_API_KEY },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (response.status === 404) throw new BunnyVideoNotFoundError(videoId);
+  if (!response.ok) {
+    throw new Error(`Bunny API error ${response.status} checking video readiness for ${videoId}`);
+  }
+  const data = await response.json() as {
+    status?: number;
+    availableResolutions?: string;
+  };
+  const status = typeof data.status === "number" ? data.status : null;
+  return {
+    // An absent status is not proof that the video is playable. Require an
+    // explicit finished status here, while keeping the existing helper's
+    // backwards-compatible behavior for callers that lack a status field.
+    ready: status === 4
+      || (status === 3
+        && typeof data.availableResolutions === "string"
+        && data.availableResolutions.trim().length > 0),
+    status,
+  };
+}
+
 export function getBunnyPlaybackUrl(videoId: string): string {
   return `https://${BUNNY_CDN_HOSTNAME}/${videoId}/playlist.m3u8`;
 }
@@ -185,14 +221,18 @@ function exportPathToken(clipId: number): string {
 }
 
 /** Storage-zone-relative path for a rendered clip export. */
-export function getBunnyExportPath(clipId: number): string {
-  return `clips/${clipId}-${exportPathToken(clipId)}.mp4`;
+export function getBunnyExportPath(clipId: number, revision?: string): string {
+  if (revision !== undefined && !/^[A-Za-z0-9_-]{1,80}$/.test(revision)) {
+    throw new Error("Invalid clip export revision");
+  }
+  const suffix = revision ? `-${revision}` : "";
+  return `clips/${clipId}-${exportPathToken(clipId)}${suffix}.mp4`;
 }
 
 /** Returns the public CDN URL for a rendered clip export. */
-export function getBunnyExportUrl(clipId: number): string {
+export function getBunnyExportUrl(clipId: number, revision?: string): string {
   const base = BUNNY_STORAGE_CDN_URL.replace(/\/$/, "");
-  return `${base}/${getBunnyExportPath(clipId)}`;
+  return `${base}/${getBunnyExportPath(clipId, revision)}`;
 }
 
 /** Extracts and validates the storage-zone-relative path for one clip export. */
@@ -222,8 +262,12 @@ export function getPortfolioClipStoragePath(clipId: number, exportedUrl: string)
  * selection runs to hundreds of megabytes, and buffering two of those at once
  * is enough to OOM the API process on the 6-vCPU VPS.
  */
-export async function uploadToBunnyStorage(filePath: string, clipId: number): Promise<string> {
-  const uploadUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${getBunnyExportPath(clipId)}`;
+export async function uploadToBunnyStorage(
+  filePath: string,
+  clipId: number,
+  revision?: string,
+): Promise<string> {
+  const uploadUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${getBunnyExportPath(clipId, revision)}`;
   const { size } = await fs.promises.stat(filePath);
   const fileStream = Readable.toWeb(fs.createReadStream(filePath)) as ReadableStream;
 
@@ -249,7 +293,7 @@ export async function uploadToBunnyStorage(filePath: string, clipId: number): Pr
     );
   }
 
-  return getBunnyExportUrl(clipId);
+  return getBunnyExportUrl(clipId, revision);
 }
 
 /**

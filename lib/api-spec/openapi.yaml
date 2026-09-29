@@ -2403,6 +2403,86 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdStats"
 
+  /admin/clips/source-check:
+    post:
+      operationId: checkAdminClipsSources
+      tags: [admin]
+      summary: Check whether selected clip sources are playable in Bunny Stream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminClipIdsInput"
+      responses:
+        "200":
+          description: Source availability for each selected clip
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminClipSourceCheckResult"
+
+  /admin/clips/reclip:
+    post:
+      operationId: reclipAdminClips
+      tags: [admin]
+      summary: Check and re-render selected clips using the existing clip rows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminClipIdsInput"
+      responses:
+        "200":
+          description: Per-clip re-clip queue results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminClipReclipResult"
+
+  /admin/clips/{id}/source-check:
+    post:
+      operationId: checkAdminClipSource
+      tags: [admin]
+      summary: Check whether one clip source is playable in Bunny Stream
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Source availability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminClipSourceCheckResult"
+
+  /admin/clips/{id}/reclip:
+    post:
+      operationId: reclipAdminClip
+      tags: [admin]
+      summary: Check and re-render one clip using its existing row
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Re-clip queue result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminClipReclipResult"
+
   /recordings/{id}/claim-match/chain:
     get:
       operationId: getClaimChain
@@ -4026,6 +4106,48 @@ components:
           type: string
         createdAt:
           type: string
+
+    AdminClipIdsInput:
+      type: object
+      required: [clipIds]
+      properties:
+        clipIds:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            type: integer
+
+    AdminClipSourceCheckResult:
+      type: object
+      required: [clipId, sourceStatus, sourceStatusCode, reason]
+      properties:
+        clipId:
+          type: integer
+        sourceStatus:
+          type: string
+          enum: [ready, expired, live, unavailable]
+        sourceStatusCode:
+          type: ["integer", "null"]
+        reason:
+          type: ["string", "null"]
+
+    AdminClipReclipResult:
+      type: object
+      required: [clipId, sourceStatus, state, queuePosition, reason]
+      properties:
+        clipId:
+          type: integer
+        sourceStatus:
+          type: string
+          enum: [ready, expired, live, unavailable]
+        state:
+          type: string
+          enum: [queued, already_running, skipped]
+        queuePosition:
+          type: ["integer", "null"]
+        reason:
+          type: ["string", "null"]
 
     CreateAdInput:
       type: object

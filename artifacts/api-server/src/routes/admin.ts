@@ -4,6 +4,14 @@ import { pipeline } from "stream/promises";
 import { eq, count, and, desc, sql, inArray, ne } from "drizzle-orm";
 import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable } from "@workspace/db";
 import {
+  CheckAdminClipSourceParams,
+  CheckAdminClipSourceResponse,
+  CheckAdminClipsSourcesBody,
+  CheckAdminClipsSourcesResponse,
+  ReclipAdminClipParams,
+  ReclipAdminClipResponse,
+  ReclipAdminClipsBody,
+  ReclipAdminClipsResponse,
   UpdateAdParams,
   UpdateAdBody,
   CreateAdBody,
@@ -25,11 +33,18 @@ import {
   isBunnyStorageConfigured,
   isExcludedBunnyVideoTitle,
   uploadClipIntroToBunnyStorage,
+  getBunnyVideoReadiness,
+  BunnyVideoNotFoundError,
 } from "../lib/bunny";
 import { fetchExportObject } from "../lib/backupExport";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
-import { isLiveVideoId } from "./userClips";
+import {
+  adminClipExportSnapshot,
+  isLiveVideoId,
+  queueAdminClipReclip,
+  rememberAdminClipFailure,
+} from "./userClips";
 import multer from "multer";
 import { accountDeletionHttpResponse, deleteUserAccount, DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
 
@@ -277,6 +292,7 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
        endTime: parseFloat(row.endTime),
        exportStatus: row.exportStatus ?? null,
        exportedUrl: row.exportedUrl ?? null,
+      ...adminClipExportSnapshot(row.id),
       // Live-sourced clips carry a synthetic videoId ("live:camera2"), not a
       // Bunny GUID — building CDN URLs from it gives the admin panel a broken
       // thumbnail and a player that 404s. Same guard the user-facing routes use.
@@ -288,6 +304,217 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
   });
 
   res.json(result);
+});
+
+type AdminClipSourceStatus = "ready" | "expired" | "live" | "unavailable";
+
+async function checkAdminClipSource(clipId: number): Promise<{
+  result: {
+    clipId: number;
+    sourceStatus: AdminClipSourceStatus;
+    sourceStatusCode: number | null;
+    reason: string | null;
+  };
+  clip: typeof userClipsTable.$inferSelect | null;
+}> {
+  const [clip] = await db
+    .select()
+    .from(userClipsTable)
+    .where(eq(userClipsTable.id, clipId));
+  if (!clip) {
+    return {
+      clip: null,
+      result: { clipId, sourceStatus: "unavailable", sourceStatusCode: null, reason: "Clip not found" },
+    };
+  }
+
+  if (isLiveVideoId(clip.videoId)) {
+    return {
+      clip,
+      result: {
+        clipId,
+        sourceStatus: "live",
+        sourceStatusCode: null,
+        reason: "Live-source clips cannot be re-clipped until the recording is uploaded to Bunny Stream.",
+      },
+    };
+  }
+  if (!isBunnyConfigured()) {
+    return {
+      clip,
+      result: {
+        clipId,
+        sourceStatus: "unavailable",
+        sourceStatusCode: null,
+        reason: "Bunny Stream is not configured on this server.",
+      },
+    };
+  }
+
+  try {
+    const readiness = await getBunnyVideoReadiness(clip.videoId);
+    if (readiness.ready) {
+      return {
+        clip,
+        result: {
+          clipId,
+          sourceStatus: "ready",
+          sourceStatusCode: readiness.status,
+          reason: null,
+        },
+      };
+    }
+
+    const reason = `Bunny Stream source is not ready (status ${readiness.status ?? "unknown"}).`;
+    await db.update(userClipsTable)
+      .set({ exportStatus: "expired" })
+      .where(eq(userClipsTable.id, clipId));
+    rememberAdminClipFailure(clipId, reason);
+    return {
+      clip: { ...clip, exportStatus: "expired" },
+      result: {
+        clipId,
+        sourceStatus: "expired",
+        sourceStatusCode: readiness.status,
+        reason,
+      },
+    };
+  } catch (err) {
+    if (err instanceof BunnyVideoNotFoundError) {
+      const reason = "Bunny Stream source was not found.";
+      await db.update(userClipsTable)
+        .set({ exportStatus: "expired" })
+        .where(eq(userClipsTable.id, clipId));
+      rememberAdminClipFailure(clipId, reason);
+      return {
+        clip: { ...clip, exportStatus: "expired" },
+        result: {
+          clipId,
+          sourceStatus: "expired",
+          sourceStatusCode: 404,
+          reason,
+        },
+      };
+    }
+    return {
+      clip,
+      result: {
+        clipId,
+        sourceStatus: "unavailable",
+        sourceStatusCode: null,
+        reason: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
+}
+
+async function inBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  operation: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let start = 0; start < items.length; start += batchSize) {
+    results.push(...await Promise.all(items.slice(start, start + batchSize).map(operation)));
+  }
+  return results;
+}
+
+router.post("/admin/clips/source-check", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const parsed = CheckAdminClipsSourcesBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+
+  const results = await inBatches(parsed.data.clipIds, 5, async (clipId) =>
+    (await checkAdminClipSource(clipId)).result,
+  );
+  res.json(CheckAdminClipsSourcesResponse.parse(results));
+});
+
+router.post("/admin/clips/reclip", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const parsed = ReclipAdminClipsBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+
+  const results = await inBatches(parsed.data.clipIds, 5, async (clipId) => {
+    const checked = await checkAdminClipSource(clipId);
+    if (!checked.clip || checked.result.sourceStatus !== "ready") {
+      return {
+        clipId,
+        sourceStatus: checked.result.sourceStatus,
+        state: "skipped" as const,
+        queuePosition: null,
+        reason: checked.result.reason,
+      };
+    }
+    if (!isBunnyStorageConfigured()) {
+      return {
+        clipId,
+        sourceStatus: "ready" as const,
+        state: "skipped" as const,
+        queuePosition: null,
+        reason: "Bunny Storage is not configured on this server.",
+      };
+    }
+    const queued = await queueAdminClipReclip(checked.clip);
+    return {
+      clipId,
+      sourceStatus: "ready" as const,
+      state: queued.accepted ? "queued" as const : "already_running" as const,
+      queuePosition: queued.queuePosition,
+      reason: queued.accepted ? null : "A render for this clip is already running.",
+    };
+  });
+  res.json(ReclipAdminClipsResponse.parse(results));
+});
+
+router.post("/admin/clips/:id/source-check", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const params = CheckAdminClipSourceParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const checked = await checkAdminClipSource(params.data.id);
+  if (!checked.clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  res.json(CheckAdminClipSourceResponse.parse(checked.result));
+});
+
+router.post("/admin/clips/:id/reclip", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const params = ReclipAdminClipParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const checked = await checkAdminClipSource(params.data.id);
+  if (!checked.clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  if (checked.result.sourceStatus !== "ready") {
+    res.json(ReclipAdminClipResponse.parse({
+      clipId: params.data.id,
+      sourceStatus: checked.result.sourceStatus,
+      state: "skipped",
+      queuePosition: null,
+      reason: checked.result.reason,
+    }));
+    return;
+  }
+  if (!isBunnyStorageConfigured()) {
+    res.json(ReclipAdminClipResponse.parse({
+      clipId: params.data.id,
+      sourceStatus: "ready",
+      state: "skipped",
+      queuePosition: null,
+      reason: "Bunny Storage is not configured on this server.",
+    }));
+    return;
+  }
+  const queued = await queueAdminClipReclip(checked.clip);
+  res.json(ReclipAdminClipResponse.parse({
+    clipId: params.data.id,
+    sourceStatus: "ready",
+    state: queued.accepted ? "queued" : "already_running",
+    queuePosition: queued.queuePosition,
+    reason: queued.accepted ? null : "A render for this clip is already running.",
+  }));
 });
 
 /**
