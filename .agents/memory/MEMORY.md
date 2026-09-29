@@ -54,4 +54,4 @@
 - [Roster substitute derivation](roster-hints-substitutes.md) — when a room stores one shared substitute count, derive the unset value from the largest active-team surplus.
 - [Match roster track references](match-roster-track-references.md) — `people/match.json` parts identify segment/local-track pairs; use the referenced bundle track's stored frame bounds.
 - [Cartographer and generic JSX](tsx-generic-cartographer.md) — avoid explicit component type arguments in JSX; Vite metadata injection can break Babel parsing even when TypeScript passes.
-- [Claim bundle cache admission](claim-bundle-cache-admission.md) — pending reads count toward the two-bundle limit; reserve an LRU slot before starting another load.
+- [Claim bundle cache admission](claim-bundle-cache-admission.md) — only settled bundles count toward the cache limit; pending reads never block admission and storage reads time out.

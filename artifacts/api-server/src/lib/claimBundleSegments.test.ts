@@ -127,7 +127,7 @@ describe("claim bundle segment cache", () => {
     expect(reloadedBeforeCFinished).toBe(true);
   });
 
-  it("keeps concurrent cached and in-flight bundles within the two-entry limit", async () => {
+  it("starts misses without waiting on pending reads and trims settled bundles to two", async () => {
     const a = uniqueKey("bounded-a");
     const b = uniqueKey("bounded-b");
     const c = uniqueKey("bounded-c");
@@ -158,15 +158,49 @@ describe("claim bundle segment cache", () => {
     const requestB = loadClaimBundleSegments(b, loadB);
     await startedB;
     const requestC = loadClaimBundleSegments(c, loadC);
-    await Promise.resolve();
-    expect(loadC).not.toHaveBeenCalled();
+    const cStartedBeforeAnyReadFinished = await Promise.race([
+      startedC.then(() => true),
+      new Promise<boolean>((resolve) => { setTimeout(() => resolve(false), 50); }),
+    ]);
+    expect(cStartedBeforeAnyReadFinished).toBe(true);
 
     resolveA(fixture("track-a"));
-    await startedC;
-    expect(loadC).toHaveBeenCalledTimes(1);
     resolveB(fixture("track-b"));
     resolveC(fixture("track-c"));
     await Promise.all([requestA, requestB, requestC]);
+
+    const reloadA = vi.fn(async () => fixture("track-a-reloaded"));
+    await loadClaimBundleSegments(a, reloadA);
+    expect(reloadA).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes a failed load so the bundle can be retried and logs the error message", async () => {
+    const key = uniqueKey("retry-after-error");
+    const log = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    const load = vi.fn(async () => fixture("retried-track"));
+    load.mockImplementationOnce(async () => {
+      throw new Error("segment download failed");
+    });
+
+    try {
+      await expect(loadClaimBundleSegments(key, load, "bundle-failed"))
+        .rejects.toThrow("segment download failed");
+      expect(log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bundleId: "bundle-failed",
+          error: "segment download failed",
+          loadDurationMs: expect.any(Number),
+          heapUsedMB: expect.any(Number),
+        }),
+        "Claim bundle segments load failed",
+      );
+
+      const retried = await loadClaimBundleSegments(key, load, "bundle-failed");
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(retried.tracksById.has("retried-track")).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("logs the bundle ID, load duration, and heap usage for each read", async () => {

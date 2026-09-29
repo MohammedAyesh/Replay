@@ -1,10 +1,10 @@
 ---
 name: Claim bundle cache admission
-description: Why pending tracking reads share the claim bundle cache's fixed capacity.
+description: Why claim bundle cache admission does not wait on pending segment reads.
 ---
 
-Count in-flight segment reads as resident entries in the same fixed capacity as completed cache values. Serialize admission, evict the least-recent settled entry immediately, and wait only when the least-recent entry is itself pending; re-check recency after waiting. Reserve the slot before calling the loader.
+Limit the cache to two completed parsed bundles, but do not count pending reads against that limit or wait on them during admission. Evict only the least-recent completed entry; when a read completes, promote it and trim the completed cache to two. Each object download must destroy its read stream after 60 seconds, and failed entries must be removed so the key can be retried.
 
-**Why:** Parsing another large tracking bundle while two reads or cached values are resident can cause a transient memory spike. Waiting on any pending read, instead of the actual least-recent entry, needlessly stalls loads when a settled entry can be evicted.
+**Why:** A global admission lock held across storage I/O lets one slow or hung download stall unrelated bundles. A bounded completed cache still controls retained parsed data, while a per-download timeout lets failed reads release their in-flight entry.
 
-**How to apply:** Preserve this admission rule when changing cache keys, load concurrency, or eviction policy. Keep tests that verify both the two-entry ceiling and prompt reuse of a settled least-recent slot while a newer load remains pending.
+**How to apply:** Keep same-key in-flight reads shared, but never await storage work under a global lock. Only evict settled entries, trim after completion, and test concurrent misses, failed-load retry, and timeout cancellation.

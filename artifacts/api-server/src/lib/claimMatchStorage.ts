@@ -2,6 +2,7 @@ import { Storage } from "@google-cloud/storage";
 import { gzipSync, gunzipSync } from "node:zlib";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
+export const CLAIM_SEGMENT_DOWNLOAD_TIMEOUT_MS = 60_000;
 
 const objectStorageClient = new Storage({
   credentials: {
@@ -69,17 +70,53 @@ export async function deleteClaimSegment(objectPath: string): Promise<void> {
   await file.delete({ ignoreNotFound: true });
 }
 
-export async function readClaimSegment(objectPath: string): Promise<Buffer> {
+export async function readClaimSegment(
+  objectPath: string,
+  timeoutMs = CLAIM_SEGMENT_DOWNLOAD_TIMEOUT_MS,
+): Promise<Buffer> {
   const file = fileForObjectPath(objectPath);
-  const [body] = await file.download({ decompress: false });
+  const body = await downloadWithTimeout(file, timeoutMs);
   return gunzipSync(body);
 }
 
-export async function readCompressedClaimSegment(objectPath: string): Promise<Buffer> {
+export async function readCompressedClaimSegment(
+  objectPath: string,
+  timeoutMs = CLAIM_SEGMENT_DOWNLOAD_TIMEOUT_MS,
+): Promise<Buffer> {
   const file = fileForObjectPath(objectPath);
   // GCS auto-decompresses objects with contentEncoding=gzip by default.
   // Keep the wire format intact because the segment route forwards this
   // buffer with Content-Encoding: gzip for browser-side decoding.
-  const [body] = await file.download({ decompress: false });
-  return body;
+  return downloadWithTimeout(file, timeoutMs);
+}
+
+function downloadWithTimeout(
+  file: ReturnType<typeof fileForObjectPath>,
+  timeoutMs: number,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const stream = file.createReadStream({ decompress: false });
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const timeout = setTimeout(() => {
+      stream.destroy(new Error(`Claim segment download timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    };
+
+    stream.on("data", (chunk: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    stream.once("error", (error: Error) => finish(() => reject(error)));
+    stream.once("end", () => finish(() => resolve(Buffer.concat(chunks))));
+    stream.once("close", () => {
+      if (!settled) {
+        finish(() => reject(new Error("Claim segment download closed before completing")));
+      }
+    });
+  });
 }

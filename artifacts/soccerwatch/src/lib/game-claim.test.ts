@@ -244,6 +244,7 @@ describe("claim visit order", () => {
 
   it("skips blocks with under thirty seconds of play", () => {
     const ctx = orderFixture([29, 240, 10, 300]);
+    ctx.S.v = 2;
     expect(firstChunk(ctx)).toBe(1);
     expect(claimVisitOrder(ctx)).toEqual([1, 3]);
     ctx.S.order = claimVisitOrder(ctx);
@@ -310,20 +311,25 @@ describe("claim visit order", () => {
     expect(ctx.S.step).toBe("done");
   });
 
-  it("includes answered blocks in new done totals but preserves old saved totals", () => {
+  it("includes answered blocks outside the saved order in new done totals", () => {
     const current = orderFixture([240, 240, 240]);
     current.S.v = 2;
     current.S.order = [2];
     Y(current, 0).cid = "answered-before-wrap";
     Y(current, 1).out.push("rejected-track");
     expect(totals(current).ip).toBe(720);
+  });
 
-    const oldSaved = orderFixture([240, 240, 240]);
-    oldSaved.S.v = 1;
-    oldSaved.S.step = "done";
-    oldSaved.S.order = [2];
-    Y(oldSaved, 0).cid = "legacy-answer-outside-order";
-    expect(totals(oldSaved).ip).toBe(240);
+  it("counts every block in completed version-1 totals regardless of saved visit order", () => {
+    for (const step of ["done", "stats"] as const) {
+      const oldSaved = orderFixture([240, 240, 240]);
+      oldSaved.S.v = 1;
+      oldSaved.S.step = step;
+      oldSaved.S.order = [2];
+      Y(oldSaved, 0).cid = "legacy-answer-outside-order";
+
+      expect(totals(oldSaved).ip).toBe(720);
+    }
   });
 });
 

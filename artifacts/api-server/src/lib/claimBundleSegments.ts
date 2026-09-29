@@ -23,26 +23,38 @@ export type ClaimBundleSegments = {
 const MAX_CACHED_BUNDLES = 2;
 type CacheEntry = {
   promise: Promise<ClaimBundleSegments>;
-  value?: ClaimBundleSegments;
   settled: boolean;
 };
 
-// Pending reads occupy a cache slot too, so a third large bundle cannot load
-// while two cached or in-flight bundles are already resident.
+// Limit completed parsed bundles without making one storage read wait on
+// another. Multiple pending reads may temporarily put the map over this size.
 const cache = new Map<string, CacheEntry>();
-let admissionTail: Promise<void> = Promise.resolve();
-
-function acquireAdmission(): Promise<() => void> {
-  let release!: () => void;
-  const queued = new Promise<void>((resolve) => { release = resolve; });
-  const previous = admissionTail;
-  admissionTail = previous.then(() => queued);
-  return previous.then(() => release);
-}
 
 function promote(key: string, entry: CacheEntry): void {
   cache.delete(key);
   cache.set(key, entry);
+}
+
+function settledEntryCount(): number {
+  let count = 0;
+  for (const entry of cache.values()) if (entry.settled) count++;
+  return count;
+}
+
+function evictLeastRecentlyUsedSettled(): boolean {
+  for (const [key, entry] of cache) {
+    if (entry.settled) {
+      cache.delete(key);
+      return true;
+    }
+  }
+  return false;
+}
+
+function trimSettledEntries(): void {
+  while (settledEntryCount() > MAX_CACHED_BUNDLES) {
+    if (!evictLeastRecentlyUsedSettled()) return;
+  }
 }
 
 function loadMetrics(bundleId: string | number, startedAt: number) {
@@ -58,7 +70,8 @@ function loadMetrics(bundleId: string | number, startedAt: number) {
  *
  * The caller supplies a key that changes when the bundle is replaced. Cache
  * hits are promoted to most-recently-used; concurrent misses share one read.
- * Cached entries and pending reads share the same two-slot limit.
+ * At most two completed bundles are retained. Pending reads are shared by key
+ * but do not block other misses; their count may temporarily exceed the limit.
  */
 export function loadClaimBundleSegments(
   key: string,
@@ -71,73 +84,47 @@ export function loadClaimBundleSegments(
     return existing.promise;
   }
 
-  return reserveAndStart().then(({ request }) => request);
-
-  async function reserveAndStart(): Promise<{ request: Promise<ClaimBundleSegments> }> {
-    const release = await acquireAdmission();
-    try {
-      const raced = cache.get(key);
-      if (raced) {
-        promote(key, raced);
-        return { request: raced.promise };
-      }
-
-      while (cache.size >= MAX_CACHED_BUNDLES) {
-        const leastRecentlyUsed = cache.keys().next().value;
-        if (leastRecentlyUsed === undefined) break;
-        const entry = cache.get(leastRecentlyUsed);
-        if (!entry) continue;
-
-        if (!entry.settled) {
-          await entry.promise.catch(() => undefined);
-          if (cache.get(leastRecentlyUsed) !== entry || cache.keys().next().value !== leastRecentlyUsed) {
-            continue;
-          }
-        }
-        cache.delete(leastRecentlyUsed);
-      }
-
-      // Existing-key requests can arrive while this caller waits for a slot.
-      const afterWait = cache.get(key);
-      if (afterWait) {
-        promote(key, afterWait);
-        return { request: afterWait.promise };
-      }
-
-      const startedAt = Date.now();
-      let resolveRequest!: (value: ClaimBundleSegments) => void;
-      let rejectRequest!: (error: unknown) => void;
-      const request = new Promise<ClaimBundleSegments>((resolve, reject) => {
-        resolveRequest = resolve;
-        rejectRequest = reject;
-      });
-      const entry: CacheEntry = { promise: request, settled: false };
-      cache.set(key, entry);
-
-      void Promise.resolve()
-        .then(load)
-        .then((segments) => {
-          const readonlySegments = segments as unknown as readonly CachedTrackingSegment[];
-          const tracksById = new Map<string, CachedTrack>();
-          for (const segment of readonlySegments) {
-            for (const track of segment.tracks) tracksById.set(track.id, track);
-          }
-
-          const value: ClaimBundleSegments = { segments: readonlySegments, tracksById };
-          entry.value = value;
-          entry.settled = true;
-          logger.info(loadMetrics(bundleId, startedAt), "Claim bundle segments loaded");
-          resolveRequest(value);
-        })
-        .catch((error: unknown) => {
-          if (cache.get(key) === entry) cache.delete(key);
-          logger.error(loadMetrics(bundleId, startedAt), "Claim bundle segments load failed");
-          rejectRequest(error);
-        });
-
-      return { request };
-    } finally {
-      release();
-    }
+  while (settledEntryCount() >= MAX_CACHED_BUNDLES) {
+    if (!evictLeastRecentlyUsedSettled()) break;
   }
+
+  const startedAt = Date.now();
+  let resolveRequest!: (value: ClaimBundleSegments) => void;
+  let rejectRequest!: (error: unknown) => void;
+  const request = new Promise<ClaimBundleSegments>((resolve, reject) => {
+    resolveRequest = resolve;
+    rejectRequest = reject;
+  });
+  const entry: CacheEntry = { promise: request, settled: false };
+  cache.set(key, entry);
+
+  void Promise.resolve()
+    .then(load)
+    .then((segments) => {
+      const readonlySegments = segments as unknown as readonly CachedTrackingSegment[];
+      const tracksById = new Map<string, CachedTrack>();
+      for (const segment of readonlySegments) {
+        for (const track of segment.tracks) tracksById.set(track.id, track);
+      }
+
+      const value: ClaimBundleSegments = { segments: readonlySegments, tracksById };
+      entry.settled = true;
+      promote(key, entry);
+      trimSettledEntries();
+      logger.info(loadMetrics(bundleId, startedAt), "Claim bundle segments loaded");
+      resolveRequest(value);
+    })
+    .catch((error: unknown) => {
+      if (cache.get(key) === entry) cache.delete(key);
+      logger.error(
+        {
+          ...loadMetrics(bundleId, startedAt),
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Claim bundle segments load failed",
+      );
+      rejectRequest(error);
+    });
+
+  return request;
 }

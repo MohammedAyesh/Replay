@@ -847,9 +847,12 @@ export function totals(ctx: Ctx): { fs: number; ip: number; os: number; miss: nu
   let ip = 0;
   let os = 0;
   let miss = 0;
-  const includedChunks = new Set(ctx.S.order);
-  // Version 1 saved states retain their historical done-screen totals. New
-  // claims also include any answered blocks that are outside a legacy order.
+  // Version-1 claims historically summed every block, even when their saved
+  // visit order started later in the match. Version 2 also includes answered
+  // blocks outside its order for claims resumed from older saved suffixes.
+  const includedChunks = ctx.S.v >= 2
+    ? new Set(ctx.S.order)
+    : new Set(ctx.game.chunks.map((chunk) => chunk.k));
   if (ctx.S.v >= 2) {
     for (const c of ctx.game.chunks) {
       const y = ctx.S.you[String(c.k)];
