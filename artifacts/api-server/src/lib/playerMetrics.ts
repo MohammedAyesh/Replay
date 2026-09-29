@@ -79,6 +79,8 @@ function positionSamplesForRanges(
 type SpeedSummary = {
   topSpeedMetresPerSecond: number | null;
   topSpeedUsableTimeFraction: number | null;
+  /** frame where the fastest one-second window starts (not part of the admin payload) */
+  topSpeedFrame?: number | null;
 };
 
 function topSpeedSummary(
@@ -131,6 +133,7 @@ function topSpeedSummary(
     0,
   );
   let topSpeed: number | null = null;
+  let topSpeedFrame: number | null = null;
   for (let start = 0; start < intervals.length; start++) {
     if (!intervals[start].valid) continue;
     let elapsed = 0;
@@ -141,7 +144,10 @@ function topSpeedSummary(
         const remaining = 1 - elapsed;
         distance += interval.distance * (remaining / interval.seconds);
         const average = distance;
-        topSpeed = topSpeed === null ? average : Math.max(topSpeed, average);
+        if (topSpeed === null || average > topSpeed) {
+          topSpeed = average;
+          topSpeedFrame = mapped[start].frame;
+        }
         break;
       }
       elapsed += interval.seconds;
@@ -153,8 +159,19 @@ function topSpeedSummary(
     topSpeedUsableTimeFraction: coveredSeconds > 0
       ? Math.min(1, Math.max(0, Math.round((usableSeconds / coveredSeconds) * 10_000) / 10_000))
       : null,
+    topSpeedFrame,
   };
 }
+
+/**
+ * Optional extras for the match report: distance split into buckets of the
+ * caller's choosing (the report uses five-minute blocks of the booking), and
+ * the frame of the fastest one-second window. Only computed when asked for,
+ * so the claim screen's metrics are unchanged.
+ */
+export type PlayerMetricsTiming = {
+  bucketOfFrame: (frame: number) => number;
+};
 
 export function buildPlayerMetrics(
   manifest: TrackingManifest,
@@ -168,6 +185,7 @@ export function buildPlayerMetrics(
   totalSegments: number,
   matchedEvents: number,
   offPitchSpans: OffPitchWindow[],
+  timing?: PlayerMetricsTiming,
 ) {
   const base = {
     confirmedSeconds: Math.round(coveredSeconds * 100) / 100,
@@ -269,6 +287,7 @@ export function buildPlayerMetrics(
       .sort((a, b) => b.weight - a.weight),
   };
   let distanceMetres: number | null = null;
+  const distanceByBucket = new Map<number, number>();
   if (usablePitchModel) {
     distanceMetres = 0;
     for (let index = 1; index < smoothed.length; index++) {
@@ -276,7 +295,12 @@ export function buildPlayerMetrics(
       const current = smoothed[index];
       const gapSeconds = (current.frame - previous.frame) / Math.max(manifest.frameRate, 0.001);
       if (gapSeconds <= maxGapSeconds) {
-        distanceMetres += Math.hypot(current.pitchX - previous.pitchX, current.pitchY - previous.pitchY);
+        const step = Math.hypot(current.pitchX - previous.pitchX, current.pitchY - previous.pitchY);
+        distanceMetres += step;
+        if (timing) {
+          const bucket = timing.bucketOfFrame(current.frame);
+          distanceByBucket.set(bucket, (distanceByBucket.get(bucket) ?? 0) + step);
+        }
       }
     }
     distanceMetres = Math.round(distanceMetres);
@@ -286,7 +310,7 @@ export function buildPlayerMetrics(
     : coveredSeconds > 0
       ? Math.round((distanceMetres / coveredSeconds) * 100) / 100
       : 0;
-  const speedSummary = topSpeedSummary(manifest, mapped, coveredSeconds);
+  const { topSpeedFrame, ...speedSummary } = topSpeedSummary(manifest, mapped, coveredSeconds);
   return {
     ...base,
     heatmap,
@@ -297,6 +321,12 @@ export function buildPlayerMetrics(
     shots: unavailablePlayerMetric(),
     dribbles: unavailablePlayerMetric(),
     adminPlayerStats: speedSummary,
+    ...(timing ? {
+      timing: {
+        distanceByBucket: Object.fromEntries([...distanceByBucket.entries()].map(([bucket, metres]) => [bucket, Math.round(metres)])),
+        topSpeedFrame: topSpeedFrame ?? null,
+      },
+    } : {}),
   };
 }
 

@@ -28,6 +28,7 @@ import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import { MatchCompetitionAwardsRow, MatchStats } from "@/components/match/MatchStats";
 import { FindYourselfCard, Scoreboard } from "@/components/match/Scoreboard";
+import { MatchReport } from "@/components/match/report/MatchReport";
 import {
   PhaseChip,
   PitchBoard,
@@ -236,6 +237,42 @@ export default function MatchPage() {
     if (result === "copied") toast({ title: copy.copied });
     if (result === "failed") window.open(whatsappLink(inviteText), "_blank", "noopener");
   };
+
+  // After the whistle the match is one scroll (the report), not tabs.
+  if (!preview && ["processing", "ready", "expired"].includes(room.phase)) {
+    const showRsvp = room.phase !== "expired" && (!room.me || room.me.rsvp === "invited");
+    const canInvite = room.phase !== "expired" && (room.isMember || room.canManage || Boolean(room.me));
+    const tools = room.canManage || room.isOwner;
+    return (
+      <Shell>
+        <MatchReport
+          room={room}
+          copy={copy}
+          now={now}
+          colors={colors}
+          names={names}
+          replay={replay.data}
+          onShare={onShare}
+          slots={{
+            rsvp: showRsvp ? <RsvpCard room={room} copy={copy} onRsvp={onRsvp} busy={join.isPending} signedIn={Boolean(user) && !isGuest} /> : null,
+            booking: room.booking ? <BookingPaymentCard room={room} copy={copy} /> : null,
+            lockedStats: <StatsTab room={room} copy={copy} />,
+            teams: <TeamsTab room={room} copy={copy} colors={colors} names={names} />,
+            invite: canInvite ? <InviteCard room={room} copy={copy} inviteText={inviteText} onShare={onShare} /> : null,
+            captainTools: tools ? (
+              <>
+                {room.canManage && <ScoreEditor room={room} copy={copy} colors={colors} names={names} />}
+                <div className="flex flex-wrap gap-2">
+                  <Link href={`/m/${room.code}?preview=pre`} className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-muted-text">{copy.seePreMatch}</Link>
+                  <Link href={`/m/${room.code}?preview=live`} className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-muted-text">{copy.seeLive}</Link>
+                </div>
+              </>
+            ) : null,
+          }}
+        />
+      </Shell>
+    );
+  }
 
   return (
     <Shell>
