@@ -29,7 +29,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");
   const isMatchRoom = location.startsWith("/m/");
-  const isGuidedDemo = location === "/demo";
+  const isGuidedDemo = location === "/demo" || location.startsWith("/demo/");
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
@@ -41,7 +41,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <div
       className={cn(
         "app-shell mx-auto w-full bg-background relative flex flex-col rp-glow",
-        isGuidedDemo ? "max-w-none" : isLegalDocument ? "max-w-[680px]" : "max-w-[440px]",
+        isGuidedDemo ? "max-w-none app-shell--wide" : isLegalDocument ? "max-w-[680px]" : "max-w-[440px]",
         (isLogin || isAuthPage || isWholeGameClaim || isGuidedDemo) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
       )}
     >
@@ -77,8 +77,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      <OrientationLock />
-      <InstallBanner />
+      {/* A prospect on the demo turns the phone sideways to watch the pitch,
+          and has no use for an install prompt. */}
+      {!isGuidedDemo && <OrientationLock />}
+      {!isGuidedDemo && <InstallBanner />}
 
       {!hideTabBar && (
         <nav

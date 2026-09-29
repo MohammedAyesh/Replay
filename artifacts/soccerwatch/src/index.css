@@ -1407,6 +1407,13 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
   }
 }
 
+/* The public demo is a full-width page on every screen, not the phone shell. */
+@media (max-width: 767px) {
+  .app-shell.app-shell--wide {
+    max-width: none;
+  }
+}
+
 /* Claim chain: stretches the viewer has claimed, and the one-time name prompt. */
 .claim-seek-claimed { position: absolute; z-index: 0; top: 50%; height: 9px; transform: translateY(-50%); border-radius: 999px; background: rgba(198,247,124,.55); pointer-events: none; }
 .claim-name-prompt { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(4,10,8,.72); }

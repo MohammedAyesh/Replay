@@ -431,6 +431,34 @@ export const SETTINGS: readonly SettingDefinition[] = [
     defaultValue: true,
     appliesToNewWorkOnly: true,
   },
+
+  // ── Demo page (/demo) ──────────────────────────────────────────────────
+  {
+    key: "demo.salesWhatsapp",
+    group: "Demo page",
+    label: "Sales WhatsApp number",
+    description: "The number the demo's WhatsApp button opens, with country code (e.g. +9627XXXXXXXX). Empty hides the button; the callback form stays.",
+    type: "string",
+    defaultValue: "",
+  },
+  {
+    key: "demo.recordingId",
+    group: "Demo page",
+    label: "Match shown on the demo",
+    description: "Recording id whose video, AI moments and match report the demo shows. 0 picks the most recently analysed match automatically.",
+    type: "number",
+    defaultValue: 0,
+    min: 0,
+    integer: true,
+  },
+  {
+    key: "demo.clipIds",
+    group: "Demo page",
+    label: "Player clips shown on the demo",
+    description: "Comma-separated clip ids, in the order to show them. Empty picks the most watched finished clips automatically. Names are never shown.",
+    type: "string",
+    defaultValue: "",
+  },
 ] as const;
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
