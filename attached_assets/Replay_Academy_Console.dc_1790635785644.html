@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600;700;800&family=Cairo:wght@700;800&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#07090F;}
+body{font-family:Inter,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;color:#F3F6FA;font-size:13px;}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+button,input,select{font-family:inherit;}
+a{color:#2FD8C4;text-decoration:none;}
+a:hover{color:#7B5CFF;}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px;}
+::-webkit-scrollbar-track{background:transparent;}
+@keyframes rpFade{from{opacity:0}to{opacity:1}}
+@keyframes rpPulse{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</helmet>
+<div dir="{{ dir }}" style="min-height:100vh;background:#07090F;display:flex;font-family:{{ fontFamily }};font-size:13px">
+
+<sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ true }}">
+<aside style="width:216px;flex:none;position:sticky;top:0;align-self:flex-start;height:100vh;display:flex;flex-direction:column;background:#0A0E18;border-inline-end:1px solid rgba(255,255,255,.07)">
+<div style="display:flex;align-items:center;gap:9px;padding:16px 16px 14px;border-bottom:1px solid rgba(255,255,255,.06)">
+<div style="width:26px;height:24px;flex:none">
+<svg viewBox="-5 0 225 200" width="100%" height="100%">
+<defs><clipPath id="rpConBall"><circle cx="95" cy="96" r="88"></circle></clipPath></defs>
+<g clip-path="url(#rpConBall)">
+<polygon points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#22C7B5"></polygon>
+<polygon points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#BFFF5C"></polygon>
+<polygon points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#3FE0C9"></polygon>
+<polygon points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#1FA79B"></polygon>
+<polygon points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#186E7E"></polygon>
+<polygon points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#1C8AA0"></polygon>
+<polygon points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#6C4FE0"></polygon>
+</g>
+<polygon points="170,62 170,134 210,98" fill="#0B0F1A"></polygon>
+<polygon points="172,68 172,128 206,98" fill="#D4FF4F"></polygon>
+</svg>
+</div>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-family:'Rajdhani','Cairo',sans-serif;font-size:14px;font-weight:700;letter-spacing:.08em">REPLAY</p>
+<p style="margin:1px 0 0;font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:rgba(243,246,250,.38)">{{ t.consoleSub }}</p>
+</div>
+</div>
+<nav style="flex:1;padding:10px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto">
+<sc-for list="{{ navItems }}" as="n" hint-placeholder-count="7">
+<button onClick="{{ n.go }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:9px;background:{{ n.bg }};color:{{ n.fg }};font-size:12.5px;font-weight:600;text-align:start;cursor:pointer;transition:background .15s ease,color .15s ease" style-hover="background:rgba(255,255,255,.06)">
+<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="{{ n.d }}"></path></svg>
+<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ n.label }}</span>
+<sc-if value="{{ n.hasBadge }}" hint-placeholder-val="{{ false }}">
+<span style="padding:2px 6px;border-radius:6px;background:rgba(212,255,79,.14);font-size:10px;font-weight:800;color:#D4FF4F">{{ n.badge }}</span>
+</sc-if>
+</button>
+</sc-for>
+</nav>
+<div style="padding:10px 8px;border-top:1px solid rgba(255,255,255,.06)">
+<div style="display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.04)">
+<span style="width:28px;height:28px;flex:none;border-radius:8px;background:linear-gradient(140deg,#22C7B5,#6C4FE0);display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-size:12px;font-weight:700;color:#07090F">AE</span>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.academyName }}</p>
+<p style="margin:1px 0 0;font-size:9.5px;font-weight:600;color:rgba(243,246,250,.4)">{{ t.planLine }}</p>
+</div>
+</div>
+</div>
+</aside>
+</sc-if>
+
+<div style="flex:1;min-width:0;display:flex;flex-direction:column">
+
+<header style="position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;padding:10px {{ padX }};background:rgba(7,9,15,.85);backdrop-filter:blur(16px);border-bottom:1px solid rgba(255,255,255,.06)">
+<sc-if value="{{ isMobile }}" hint-placeholder-val="{{ false }}">
+<div style="width:22px;height:20px;flex:none">
+<svg viewBox="-5 0 225 200" width="100%" height="100%">
+<polygon points="95,60 126.2,78 126.2,114 95,132 63.8,114 63.8,78" fill="#22C7B5"></polygon>
+<polygon points="126.2,6 157.4,24 157.4,60 126.2,78 95,60 95,24" fill="#BFFF5C"></polygon>
+<polygon points="63.8,6 95,24 95,60 63.8,78 32.6,60 32.6,24" fill="#3FE0C9"></polygon>
+<polygon points="157.4,60 188.6,78 188.6,114 157.4,132 126.2,114 126.2,78" fill="#1FA79B"></polygon>
+<polygon points="32.6,60 63.8,78 63.8,114 32.6,132 1.4,114 1.4,78" fill="#186E7E"></polygon>
+<polygon points="126.2,114 157.4,132 157.4,168 126.2,186 95,168 95,132" fill="#1C8AA0"></polygon>
+<polygon points="63.8,114 95,132 95,168 63.8,186 32.6,168 32.6,132" fill="#6C4FE0"></polygon>
+</svg>
+</div>
+</sc-if>
+<h1 style="margin:0;font-family:{{ headFont }};font-size:17px;font-weight:700;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ viewTitle }}</h1>
+<span style="flex:1"></span>
+<sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:7px;padding:7px 11px;border-radius:9px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:rgba(243,246,250,.45);min-width:200px">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+<span style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.searchPh }}</span>
+<span style="margin-inline-start:auto;padding:1px 5px;border-radius:5px;border:1px solid rgba(255,255,255,.12);font:10px ui-monospace,Menlo,monospace;color:rgba(243,246,250,.35)">⌘K</span>
+</div>
+</sc-if>
+<button onClick="{{ toggleLang }}" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:9px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#F3F6FA;font-size:11.5px;font-weight:800;white-space:nowrap;cursor:pointer" style-hover="background:rgba(255,255,255,.08)">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3.2 12h17.6"></path><path d="M12 3c2.6 2.4 4 5.6 4 9s-1.4 6.6-4 9c-2.6-2.4-4-5.6-4-9s1.4-6.6 4-9Z"></path></svg>
+{{ t.langBtn }}
+</button>
+<button style="display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:9px;border:0;background:#D4FF4F;color:#07090F;font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer" style-active="transform:scale(.97)">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+{{ newRecLabel }}
+</button>
+</header>
+
+<main style="flex:1;padding:16px {{ padX }} {{ padBottom }};animation:rpFade .25s ease">
+
+<sc-if value="{{ isDashboard }}" hint-placeholder-val="{{ true }}">
+<div>
+<div style="display:grid;grid-template-columns:{{ kpiCols }};gap:10px">
+<sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
+<div style="padding:13px 14px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+<p style="margin:0;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:rgba(243,246,250,.42);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ k.label }}</p>
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{{ k.accent }}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="{{ k.d }}"></path></svg>
+</div>
+<p style="margin:8px 0 0;font-family:'Rajdhani',sans-serif;font-size:26px;font-weight:700;line-height:1;letter-spacing:-.02em">{{ k.value }}</p>
+<p style="margin:6px 0 0;font-size:10.5px;font-weight:600;color:{{ k.deltaColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ k.delta }}</p>
+</div>
+</sc-for>
+</div>
+
+<div style="display:grid;grid-template-columns:{{ dashCols }};gap:10px;margin-top:10px">
+<div style="border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07);overflow:hidden">
+<div style="display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06)">
+<p style="margin:0;flex:1;font-size:12.5px;font-weight:700">{{ t.recentRecordings }}</p>
+<button onClick="{{ goVault }}" style="border:0;background:transparent;color:#2FD8C4;font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer">{{ t.viewVault }}</button>
+</div>
+<sc-for list="{{ recentMatches }}" as="r" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:11px;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.045);cursor:pointer;transition:background .15s ease" style-hover="background:rgba(255,255,255,.03)">
+<div style="position:relative;flex:none;width:64px;height:38px;border-radius:7px;overflow:hidden;background:#0B0F17">
+{{ r.thumb }}
+<span style="position:absolute;inset:0;background:rgba(7,9,15,.25)"></span>
+</div>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.title }}</p>
+<p style="margin:2px 0 0;font-size:10.5px;font-weight:600;color:rgba(243,246,250,.42);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.meta }}</p>
+</div>
+<span style="padding:3px 8px;border-radius:6px;background:{{ r.tagBg }};font-size:10px;font-weight:800;color:{{ r.tagFg }};flex:none;white-space:nowrap">{{ r.tag }}</span>
+<sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ true }}">
+<span style="font:10.5px ui-monospace,Menlo,monospace;color:rgba(243,246,250,.4);flex:none">{{ r.duration }}</span>
+</sc-if>
+</div>
+</sc-for>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:10px">
+<div style="padding:14px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<p style="margin:0 0 10px;font-size:12.5px;font-weight:700">{{ t.quickActions }}</p>
+<div style="display:flex;flex-direction:column;gap:6px">
+<sc-for list="{{ quickActions }}" as="q" hint-placeholder-count="3">
+<button onClick="{{ q.go }}" style="display:flex;align-items:center;gap:9px;width:100%;padding:9px 10px;border-radius:9px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:#F3F6FA;font-size:11.5px;font-weight:600;text-align:start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:background .15s ease" style-hover="background:rgba(255,255,255,.07)">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{ q.accent }}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="{{ q.d }}"></path></svg>
+{{ q.label }}
+</button>
+</sc-for>
+</div>
+</div>
+<div style="padding:14px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px">
+<span style="width:6px;height:6px;border-radius:99px;background:#FF5A3C;animation:rpPulse 1.6s ease-in-out infinite"></span>
+<p style="margin:0;font-size:12.5px;font-weight:700;white-space:nowrap">{{ t.liveNow }}</p>
+</div>
+<div style="position:relative;border-radius:9px;overflow:hidden;aspect-ratio:16/9;background:#0B0F17">
+{{ liveThumb }}
+<span style="position:absolute;inset:0;background:rgba(7,9,15,.3)"></span>
+<span style="position:absolute;bottom:6px;inset-inline-start:7px;font-size:10px;font-weight:700;color:rgba(255,255,255,.85)">{{ t.liveMeta }}</span>
+</div>
+<div style="display:flex;gap:6px;margin-top:9px">
+<button style="flex:1;padding:8px;border-radius:8px;border:0;background:#D4FF4F;color:#07090F;font-size:11px;font-weight:800;white-space:nowrap;cursor:pointer">{{ t.watch }}</button>
+<button onClick="{{ goTactics }}" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#F3F6FA;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer">{{ t.openBoard }}</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isVault }}" hint-placeholder-val="{{ false }}">
+<div>
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<sc-for list="{{ vaultFilters }}" as="vf" hint-placeholder-count="4">
+<button onClick="{{ vf.go }}" style="padding:6px 12px;border-radius:8px;border:1px solid {{ vf.bd }};background:{{ vf.bg }};color:{{ vf.fg }};font-size:11.5px;font-weight:700;white-space:nowrap;cursor:pointer;transition:all .15s ease">{{ vf.label }}</button>
+</sc-for>
+<span style="flex:1"></span>
+<sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ true }}">
+<span style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:rgba(243,246,250,.4);white-space:nowrap">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2FD8C4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.4"></rect><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"></path></svg>
+{{ t.storageLine }}
+</span>
+</sc-if>
+</div>
+<div style="display:grid;grid-template-columns:{{ vaultCols }};gap:10px">
+<sc-for list="{{ vaultItems }}" as="v" hint-placeholder-count="6">
+<div style="border-radius:11px;overflow:hidden;background:#10151F;border:1px solid rgba(255,255,255,.07);cursor:pointer;transition:border-color .18s ease,transform .18s ease" style-hover="border-color:rgba(212,255,79,.35);transform:translateY(-2px)">
+<div style="position:relative;aspect-ratio:16/9;background:#0B0F17">
+{{ v.thumb }}
+<span style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(7,9,15,.1),rgba(7,9,15,.55))"></span>
+<span style="position:absolute;bottom:5px;inset-inline-end:6px;padding:2px 5px;border-radius:4px;background:rgba(7,9,15,.85);font:9.5px ui-monospace,Menlo,monospace;color:#F3F6FA">{{ v.duration }}</span>
+<span style="position:absolute;top:5px;inset-inline-start:6px;padding:2px 7px;border-radius:5px;background:{{ v.tagBg }};font-size:9px;font-weight:800;letter-spacing:.06em;color:{{ v.tagFg }};white-space:nowrap">{{ v.tag }}</span>
+</div>
+<div style="padding:9px 11px 11px">
+<p style="margin:0;font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ v.title }}</p>
+<div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+<p style="margin:0;flex:1;font-size:10px;font-weight:600;color:rgba(243,246,250,.4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ v.meta }}</p>
+<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(243,246,250,.35)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect x="4.5" y="10.5" width="15" height="10" rx="2.4"></rect><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"></path></svg>
+</div>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isTactics }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid;grid-template-columns:{{ tacticsCols }};gap:10px">
+<div>
+<div style="position:relative;border-radius:12px;overflow:hidden;background:#0B0F17;border:1px solid rgba(255,255,255,.08);aspect-ratio:16/9">
+{{ tacticsFrame }}
+<span style="position:absolute;inset:0;background:rgba(7,9,15,.18)"></span>
+<svg viewBox="0 0 640 360" style="position:absolute;inset:0;width:100%;height:100%">
+<defs><marker id="rpArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#D4FF4F"></path></marker></defs>
+<path d="M210 265 C 260 210, 330 205, 395 165" fill="none" stroke="#D4FF4F" stroke-width="3.5" stroke-dasharray="9 7" marker-end="url(#rpArrow)"></path>
+<ellipse cx="205" cy="272" rx="30" ry="12" fill="none" stroke="#2FD8C4" stroke-width="3"></ellipse>
+<ellipse cx="400" cy="160" rx="30" ry="12" fill="none" stroke="rgba(255,90,60,.9)" stroke-width="3"></ellipse>
+<rect x="452" y="60" width="128" height="86" rx="6" fill="none" stroke="rgba(123,92,255,.85)" stroke-width="2.5" stroke-dasharray="6 5"></rect>
+<text x="458" y="52" font-family="Inter,sans-serif" font-size="11" font-weight="700" fill="#B9A6FF">{{ t.pressZone }}</text>
+</svg>
+<span style="position:absolute;top:10px;inset-inline-start:10px;display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:7px;background:rgba(7,9,15,.75);backdrop-filter:blur(8px);font-size:10px;font-weight:800;letter-spacing:.08em;color:#D4FF4F;white-space:nowrap">
+<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4Z"></path></svg>
+{{ t.annotating }}
+</span>
+<span style="position:absolute;top:10px;inset-inline-end:10px;padding:4px 9px;border-radius:7px;background:rgba(7,9,15,.75);font:10.5px ui-monospace,Menlo,monospace;color:#F3F6FA;white-space:nowrap" dir="ltr">48:22 / 91:04</span>
+</div>
+<div style="display:flex;align-items:center;gap:10px;margin-top:9px;padding:9px 12px;border-radius:11px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<button style="width:32px;height:32px;flex:none;border-radius:8px;border:0;background:#D4FF4F;color:#07090F;display:flex;align-items:center;justify-content:center;cursor:pointer">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6L19 12 8 5.2Z"></path></svg>
+</button>
+<div style="flex:1;position:relative;height:5px;border-radius:99px;background:rgba(255,255,255,.09)">
+<div style="position:absolute;inset-inline-start:0;top:0;bottom:0;width:53%;border-radius:99px;background:linear-gradient(90deg,#2FD8C4,#D4FF4F)"></div>
+<span style="position:absolute;inset-inline-start:22%;top:-3px;width:3px;height:11px;border-radius:2px;background:#FF5A3C"></span>
+<span style="position:absolute;inset-inline-start:38%;top:-3px;width:3px;height:11px;border-radius:2px;background:#FF5A3C"></span>
+<span style="position:absolute;inset-inline-start:53%;top:-4.5px;width:13px;height:13px;border-radius:99px;background:#fff;margin-inline-start:-6px;box-shadow:0 0 0 3px rgba(212,255,79,.35)"></span>
+</div>
+<span style="font:10.5px ui-monospace,Menlo,monospace;color:rgba(243,246,250,.45);flex:none" dir="ltr">-42:42</span>
+<button style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;border:1px solid rgba(255,90,60,.35);background:rgba(255,90,60,.1);color:#FF8A6B;font-size:11px;font-weight:800;white-space:nowrap;cursor:pointer;flex:none">
+<span style="width:6px;height:6px;border-radius:99px;background:#FF5A3C;animation:rpPulse 1.4s ease-in-out infinite"></span>
+{{ t.recordVo }}
+</button>
+</div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:10px">
+<div style="padding:12px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<p style="margin:0 0 9px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:rgba(243,246,250,.45)">{{ t.telestration }}</p>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+<sc-for list="{{ tools }}" as="tl" hint-placeholder-count="6">
+<button style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:10px 4px;border-radius:9px;border:1px solid {{ tl.bd }};background:{{ tl.bg }};color:{{ tl.fg }};font-size:9px;font-weight:700;white-space:nowrap;cursor:pointer;transition:all .15s ease" style-hover="background:rgba(255,255,255,.07)">
+<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tl.d }}"></path></svg>
+{{ tl.label }}
+</button>
+</sc-for>
+</div>
+</div>
+<div style="padding:12px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<p style="margin:0 0 9px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:rgba(243,246,250,.45)">{{ t.colors }}</p>
+<div style="display:flex;gap:7px">
+<span style="width:22px;height:22px;border-radius:99px;background:#D4FF4F;box-shadow:0 0 0 2px #10151F,0 0 0 3.5px #D4FF4F;cursor:pointer"></span>
+<span style="width:22px;height:22px;border-radius:99px;background:#2FD8C4;cursor:pointer"></span>
+<span style="width:22px;height:22px;border-radius:99px;background:#7B5CFF;cursor:pointer"></span>
+<span style="width:22px;height:22px;border-radius:99px;background:#FF5A3C;cursor:pointer"></span>
+<span style="width:22px;height:22px;border-radius:99px;background:#F3F6FA;cursor:pointer"></span>
+</div>
+</div>
+<div style="flex:1;padding:12px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column">
+<p style="margin:0 0 9px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:rgba(243,246,250,.45)">{{ t.annotations }}</p>
+<div style="display:flex;flex-direction:column;gap:6px">
+<sc-for list="{{ annotations }}" as="an" hint-placeholder-count="3">
+<div style="display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);cursor:pointer" style-hover="background:rgba(255,255,255,.06)">
+<span style="width:7px;height:7px;flex:none;border-radius:99px;background:{{ an.color }}"></span>
+<span style="flex:1;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ an.label }}</span>
+<span style="font:9.5px ui-monospace,Menlo,monospace;color:rgba(243,246,250,.4)" dir="ltr">{{ an.time }}</span>
+</div>
+</sc-for>
+</div>
+<button style="margin-top:8px;padding:9px;border-radius:8px;border:1px dashed rgba(255,255,255,.14);background:transparent;color:#2FD8C4;font-size:11px;font-weight:800;white-space:nowrap;cursor:pointer" style-hover="background:rgba(255,255,255,.03)">{{ t.saveClip }}</button>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isSquad }}" hint-placeholder-val="{{ false }}">
+<div>
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<sc-for list="{{ squadFilters }}" as="sf" hint-placeholder-count="4">
+<button onClick="{{ sf.go }}" style="padding:6px 12px;border-radius:8px;border:1px solid {{ sf.bd }};background:{{ sf.bg }};color:{{ sf.fg }};font-size:11.5px;font-weight:700;white-space:nowrap;cursor:pointer;transition:all .15s ease">{{ sf.label }}</button>
+</sc-for>
+<span style="flex:1"></span>
+<button style="display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#F3F6FA;font-size:11.5px;font-weight:700;white-space:nowrap;cursor:pointer" style-hover="background:rgba(255,255,255,.08)">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+{{ t.addPlayer }}
+</button>
+</div>
+
+<sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ true }}">
+<div style="border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07);overflow:hidden">
+<div style="display:grid;grid-template-columns:1.8fr .7fr .8fr 1.1fr .8fr .6fr .9fr;gap:8px;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.08);font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:rgba(243,246,250,.38)">
+<span>{{ t.thPlayer }}</span><span>{{ t.thSquad }}</span><span>{{ t.thPosition }}</span><span>{{ t.thAttendance }}</span><span>{{ t.thLast }}</span><span style="text-align:end">{{ t.thMinutes }}</span><span style="text-align:end">{{ t.thPortfolio }}</span>
+</div>
+<sc-for list="{{ roster }}" as="pl" hint-placeholder-count="8">
+<div style="display:grid;grid-template-columns:1.8fr .7fr .8fr 1.1fr .8fr .6fr .9fr;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .13s ease" style-hover="background:rgba(255,255,255,.03)">
+<div style="display:flex;align-items:center;gap:9px;min-width:0">
+<span style="width:26px;height:26px;flex:none;border-radius:7px;background:{{ pl.avatarBg }};display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;color:#07090F">{{ pl.initials }}</span>
+<span style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ pl.name }}</span>
+</div>
+<span style="font-size:11px;font-weight:700;color:rgba(243,246,250,.6)">{{ pl.squad }}</span>
+<span style="font-size:11px;font-weight:600;color:rgba(243,246,250,.6)">{{ pl.position }}</span>
+<div style="display:flex;align-items:center;gap:7px">
+<div style="flex:1;max-width:70px;height:4px;border-radius:99px;background:rgba(255,255,255,.08)">
+<div style="height:100%;width:{{ pl.attendance }};border-radius:99px;background:{{ pl.attColor }}"></div>
+</div>
+<span style="font-size:10.5px;font-weight:700;color:{{ pl.attColor }}">{{ pl.attendance }}</span>
+</div>
+<span style="font-size:11px;font-weight:600;color:rgba(243,246,250,.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ pl.last }}</span>
+<span style="font:11px ui-monospace,Menlo,monospace;color:rgba(243,246,250,.6);text-align:end">{{ pl.minutes }}</span>
+<span style="display:flex;justify-content:flex-end">
+<button style="display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:7px;border:1px solid rgba(47,216,196,.32);background:rgba(47,216,196,.08);color:#2FD8C4;font-size:10.5px;font-weight:800;white-space:nowrap;cursor:pointer;transition:background .15s ease" style-hover="background:rgba(47,216,196,.16)">
+<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-6 9c.9-3 3-4.5 6-4.5s5.1 1.5 6 4.5"></path></svg>
+{{ t.viewPortfolio }}
+</button>
+</span>
+</div>
+</sc-for>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px 12px;font-size:10.5px;font-weight:600;color:rgba(243,246,250,.38)">
+<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.tableFooter }}</span>
+<span style="white-space:nowrap;flex:none" dir="ltr">1–8 / 34</span>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isMobile }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:9px">
+<sc-for list="{{ roster }}" as="pl" hint-placeholder-count="8">
+<div style="padding:12px 13px;border-radius:13px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<div style="display:flex;align-items:center;gap:10px">
+<span style="width:34px;height:34px;flex:none;border-radius:9px;background:{{ pl.avatarBg }};display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;color:#07090F">{{ pl.initials }}</span>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ pl.name }}</p>
+<p style="margin:2px 0 0;font-size:10.5px;font-weight:600;color:rgba(243,246,250,.45)">{{ pl.squad }} · {{ pl.position }} · {{ pl.minutes }} {{ t.minShort }}</p>
+</div>
+<button style="display:flex;align-items:center;gap:5px;padding:7px 11px;border-radius:8px;border:1px solid rgba(47,216,196,.32);background:rgba(47,216,196,.08);color:#2FD8C4;font-size:10.5px;font-weight:800;white-space:nowrap;cursor:pointer;flex:none">{{ t.viewPortfolio }}</button>
+</div>
+<div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+<span style="font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:rgba(243,246,250,.38);white-space:nowrap">{{ t.thAttendance }}</span>
+<div style="flex:1;height:4px;border-radius:99px;background:rgba(255,255,255,.08)">
+<div style="height:100%;width:{{ pl.attendance }};border-radius:99px;background:{{ pl.attColor }}"></div>
+</div>
+<span style="font-size:10.5px;font-weight:700;color:{{ pl.attColor }}">{{ pl.attendance }}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{ isMatches }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid;grid-template-columns:{{ matchCols }};gap:10px">
+<div style="border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07);overflow:hidden;align-self:start">
+<div style="display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06)">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D4FF4F" stroke-width="1.9" stroke-linecap="round"><rect x="3.2" y="5" width="17.6" height="16" rx="3"></rect><path d="M8 3v4M16 3v4M3.2 10.5h17.6"></path></svg>
+<p style="margin:0;flex:1;font-size:12.5px;font-weight:700;white-space:nowrap">{{ t.upcomingTitle }}</p>
+<span style="font-size:10.5px;font-weight:600;color:rgba(243,246,250,.4);white-space:nowrap">{{ t.upcomingCount }}</span>
+</div>
+<sc-for list="{{ fixtures }}" as="fx" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:11px;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.045);transition:background .13s ease" style-hover="background:rgba(255,255,255,.03)">
+<div style="flex:none;width:42px;text-align:center;padding:6px 0;border-radius:9px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)">
+<p style="margin:0;font-family:'Rajdhani',sans-serif;font-size:16px;font-weight:700;line-height:1">{{ fx.day }}</p>
+<p style="margin:2px 0 0;font-size:8.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:rgba(243,246,250,.42)">{{ fx.month }}</p>
+</div>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ fx.title }}</p>
+<p style="margin:2px 0 0;font-size:10.5px;font-weight:600;color:rgba(243,246,250,.42);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ fx.meta }}</p>
+</div>
+<span style="padding:3px 8px;border-radius:6px;background:{{ fx.tagBg }};font-size:9.5px;font-weight:800;color:{{ fx.tagFg }};white-space:nowrap;flex:none">{{ fx.tag }}</span>
+</div>
+</sc-for>
+<div style="padding:10px 14px">
+<button style="width:100%;padding:9px;border-radius:8px;border:1px dashed rgba(255,255,255,.14);background:transparent;color:#2FD8C4;font-size:11px;font-weight:800;white-space:nowrap;cursor:pointer" style-hover="background:rgba(255,255,255,.03)">{{ t.addFixture }}</button>
+</div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:10px">
+<div style="border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07);overflow:hidden">
+<div style="display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06)">
+<p style="margin:0;flex:1;font-size:12.5px;font-weight:700;white-space:nowrap">{{ t.resultsTitle }}</p>
+<span style="display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:6px;background:rgba(212,255,79,.12);font-size:9.5px;font-weight:800;color:#D4FF4F;white-space:nowrap">
+<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3.5v3m0 11v3m8.5-8.5h-3m-11 0h-3m14.9-6.4-2.1 2.1M7.7 16.3l-2.1 2.1m12.8 0-2.1-2.1M7.7 7.7 5.6 5.6"></path></svg>
+{{ t.aiAnalysed }}
+</span>
+</div>
+<sc-for list="{{ results }}" as="rs" hint-placeholder-count="3">
+<div style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.045)">
+<div style="display:flex;align-items:center;gap:10px">
+<span style="flex:none;width:30px;height:30px;border-radius:8px;background:{{ rs.resBg }};display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;color:{{ rs.resFg }}">{{ rs.res }}</span>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ rs.title }}</p>
+<p style="margin:2px 0 0;font-size:10px;font-weight:600;color:rgba(243,246,250,.42);white-space:nowrap">{{ rs.meta }}</p>
+</div>
+<span style="font-family:'Rajdhani',sans-serif;font-size:20px;font-weight:700;letter-spacing:.02em;flex:none" dir="ltr">{{ rs.score }}</span>
+</div>
+<div style="display:flex;gap:8px;margin-top:9px">
+<span style="flex:1;padding:6px 8px;border-radius:7px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);font-size:9.5px;font-weight:700;color:rgba(243,246,250,.55);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.possession }} <span style="color:#2FD8C4;font-weight:800">{{ rs.poss }}</span></span>
+<span style="flex:1;padding:6px 8px;border-radius:7px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);font-size:9.5px;font-weight:700;color:rgba(243,246,250,.55);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.passes }} <span style="color:#B9A6FF;font-weight:800">{{ rs.passes }}</span></span>
+<span style="flex:1;padding:6px 8px;border-radius:7px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);font-size:9.5px;font-weight:700;color:rgba(243,246,250,.55);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.shots }} <span style="color:#D4FF4F;font-weight:800">{{ rs.shots }}</span></span>
+</div>
+</div>
+</sc-for>
+</div>
+
+<div style="padding:14px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+<p style="margin:0;flex:1;font-size:12.5px;font-weight:700;white-space:nowrap">{{ t.trendTitle }}</p>
+<span style="font-size:10px;font-weight:800;color:#2FD8C4;white-space:nowrap">{{ t.trendDelta }}</span>
+</div>
+<p style="margin:0 0 8px;font-size:10px;font-weight:600;color:rgba(243,246,250,.4)">{{ t.trendSub }}</p>
+{{ trendChart }}
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isBoards }}" hint-placeholder-val="{{ false }}">
+<div>
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<sc-for list="{{ boardFilters }}" as="bf" hint-placeholder-count="4">
+<button onClick="{{ bf.go }}" style="padding:6px 12px;border-radius:8px;border:1px solid {{ bf.bd }};background:{{ bf.bg }};color:{{ bf.fg }};font-size:11.5px;font-weight:700;white-space:nowrap;cursor:pointer;transition:all .15s ease">{{ bf.label }}</button>
+</sc-for>
+<span style="flex:1"></span>
+<span style="font-size:10.5px;font-weight:600;color:rgba(243,246,250,.4);white-space:nowrap">{{ t.boardsSub }}</span>
+</div>
+<div style="display:grid;grid-template-columns:{{ boardCols }};gap:10px">
+<sc-for list="{{ boards }}" as="bd" hint-placeholder-count="3">
+<div style="border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07);overflow:hidden">
+<div style="display:flex;align-items:center;gap:9px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);background:linear-gradient(140deg,{{ bd.headTint }},transparent)">
+<span style="width:28px;height:28px;flex:none;border-radius:8px;background:{{ bd.iconBg }};display:flex;align-items:center;justify-content:center;color:{{ bd.accent }}">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="{{ bd.d }}"></path></svg>
+</span>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ bd.title }}</p>
+<p style="margin:1px 0 0;font-size:9.5px;font-weight:600;color:rgba(243,246,250,.42);white-space:nowrap">{{ bd.unit }}</p>
+</div>
+</div>
+<sc-for list="{{ bd.rows }}" as="rw" hint-placeholder-count="5">
+<div style="display:flex;align-items:center;gap:7px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.04);background:{{ rw.rowBg }};transition:background .13s ease" style-hover="background:rgba(255,255,255,.04)">
+<span style="flex:none;width:14px;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;color:{{ rw.rankColor }};text-align:center">{{ rw.rank }}</span>
+<span style="width:22px;height:22px;flex:none;border-radius:6px;background:{{ rw.avatarBg }};display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-size:9.5px;font-weight:700;color:#07090F">{{ rw.initials }}</span>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ rw.name }}</p>
+</div>
+<span style="padding:2px 4px;border-radius:4px;background:rgba(255,255,255,.05);font-size:8.5px;font-weight:800;color:rgba(243,246,250,.5);white-space:nowrap;flex:none">{{ rw.squad }}</span>
+<span style="font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:700;color:{{ bd.accent }};flex:none;white-space:nowrap">{{ rw.value }}</span>
+</div>
+</sc-for>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isBranding }}" hint-placeholder-val="{{ false }}">
+<div style="max-width:660px">
+<div style="display:grid;grid-template-columns:{{ drillGridCols }};gap:10px">
+<div style="padding:16px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<p style="margin:0;font-size:12.5px;font-weight:700">{{ t.sponsorTitle }}</p>
+<p style="margin:5px 0 12px;font-size:11px;line-height:1.5;color:rgba(243,246,250,.45)">{{ t.sponsorSub }}</p>
+<div style="display:flex;flex-direction:column;align-items:center;gap:9px;padding:26px 14px;border-radius:10px;border:1.5px dashed rgba(255,255,255,.16);background:rgba(255,255,255,.02);cursor:pointer;transition:border-color .2s ease,background .2s ease" style-hover="border-color:rgba(212,255,79,.45);background:rgba(212,255,79,.03)">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#D4FF4F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7 9m5-5 5 5"></path><path d="M4 15v3.5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V15"></path></svg>
+<p style="margin:0;font-size:11.5px;font-weight:700">{{ t.dropLogo }}</p>
+<p style="margin:0;font-size:10px;font-weight:600;color:rgba(243,246,250,.38)">{{ t.dropHint }}</p>
+</div>
+<div style="display:flex;align-items:center;gap:9px;margin-top:11px;padding:9px 11px;border-radius:9px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07)">
+<span style="width:30px;height:30px;flex:none;border-radius:7px;background:linear-gradient(140deg,#22C7B5,#6C4FE0);display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;color:#07090F">AE</span>
+<div style="flex:1;min-width:0">
+<p style="margin:0;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" dir="ltr">amman-elite-badge.svg</p>
+<p style="margin:1px 0 0;font-size:9.5px;font-weight:600;color:#2FD8C4">{{ t.activeOnExports }}</p>
+</div>
+<button style="border:0;background:transparent;color:rgba(243,246,250,.4);font-size:10.5px;font-weight:700;white-space:nowrap;cursor:pointer" style-hover="color:#FF8A6B">{{ t.remove }}</button>
+</div>
+</div>
+
+<div style="padding:16px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<p style="margin:0;font-size:12.5px;font-weight:700">{{ t.introTitle }}</p>
+<p style="margin:5px 0 12px;font-size:11px;line-height:1.5;color:rgba(243,246,250,.45)">{{ t.introSub }}</p>
+<div style="position:relative;border-radius:10px;overflow:hidden;aspect-ratio:16/9;background:#0B0F17;border:1px solid rgba(255,255,255,.08)">
+{{ introThumb }}
+<span style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(7,9,15,.25),rgba(7,9,15,.6))"></span>
+<span style="position:absolute;inset:0;margin:auto;width:34px;height:34px;border-radius:99px;background:rgba(212,255,79,.92);color:#07090F;display:flex;align-items:center;justify-content:center">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6L19 12 8 5.2Z"></path></svg>
+</span>
+<span style="position:absolute;bottom:6px;inset-inline-end:7px;padding:2px 5px;border-radius:4px;background:rgba(7,9,15,.85);font:9.5px ui-monospace,Menlo,monospace;color:#F3F6FA">0:04</span>
+</div>
+<button style="width:100%;margin-top:11px;padding:9px;border-radius:9px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#F3F6FA;font-size:11.5px;font-weight:700;white-space:nowrap;cursor:pointer" style-hover="background:rgba(255,255,255,.08)">{{ t.replaceIntro }}</button>
+</div>
+</div>
+
+<div style="margin-top:10px;padding:14px 16px;border-radius:12px;background:#10151F;border:1px solid rgba(255,255,255,.07)">
+<p style="margin:0 0 11px;font-size:12.5px;font-weight:700">{{ t.exportPreview }}</p>
+<div style="display:flex;align-items:center;gap:0;border-radius:9px;overflow:hidden;border:1px solid rgba(255,255,255,.08)">
+<div style="flex:none;display:flex;align-items:center;justify-content:center;width:88px;aspect-ratio:16/10;background:linear-gradient(140deg,#22C7B5,#6C4FE0);font-family:'Rajdhani',sans-serif;font-size:10px;font-weight:700;color:#07090F;text-align:center;line-height:1.2">{{ t.introChip }}</div>
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(243,246,250,.35)" stroke-width="2" style="margin:0 10px;flex:none;transform:{{ chevFlip }}"><path d="m9 6 6 6-6 6"></path></svg>
+<div style="flex:1;position:relative;aspect-ratio:16/3.4;background:#0B0F17;display:flex;align-items:center;padding:0 12px">
+<span style="font-size:10.5px;font-weight:700;color:rgba(243,246,250,.55)">{{ t.studentClip }}</span>
+<span style="position:absolute;bottom:5px;inset-inline-end:8px;display:flex;align-items:center;gap:4px;font-size:8.5px;font-weight:800;color:rgba(243,246,250,.5);white-space:nowrap">
+<span style="width:10px;height:10px;border-radius:3px;background:linear-gradient(140deg,#22C7B5,#6C4FE0)"></span>
+{{ t.watermark }}
+</span>
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+</main>
+</div>
+
+<sc-if value="{{ isMobile }}" hint-placeholder-val="{{ false }}">
+<nav style="position:fixed;bottom:0;left:0;right:0;z-index:50;display:flex;gap:2px;padding:6px 6px calc(8px + env(safe-area-inset-bottom));background:rgba(10,14,24,.94);backdrop-filter:blur(20px);border-top:1px solid rgba(255,255,255,.08);overflow-x:auto">
+<sc-for list="{{ navItems }}" as="n" hint-placeholder-count="7">
+<button onClick="{{ n.go }}" style="flex:1;min-width:58px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:7px 2px 5px;border:0;border-radius:10px;background:{{ n.bg }};color:{{ n.fg }};cursor:pointer;transition:background .15s ease">
+<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="{{ n.d }}"></path></svg>
+<span style="font-size:8.5px;font-weight:800;letter-spacing:.02em;white-space:nowrap">{{ n.short }}</span>
+</button>
+</sc-for>
+</nav>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:860},&quot;defaultLang&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;en&quot;,&quot;options&quot;:[&quot;en&quot;,&quot;ar&quot;],&quot;tsType&quot;:&quot;'en' | 'ar'&quot;,&quot;section&quot;:&quot;Localization&quot;}}">
+class Component extends DCLogic {
+  state = { view: 'dashboard', vaultFilter: 'All', squadFilter: 'all', lang: 'en', isMobile: false };
+
+  copy = {
+    en: {
+      consoleSub: 'Academy Console', academyName: 'Amman Elite Academy', planLine: 'Pro plan · 6 cameras',
+      searchPh: 'Search matches, players…', langBtn: 'عربي', newRec: 'New recording', newRecShort: 'New',
+      titles: { dashboard: 'Dashboard', vault: 'Private Video Vault', tactics: 'Tactics & Telestration', squad: 'Squad Management', matches: 'Match Center & AI Results', boards: 'Academy Leaderboards', branding: 'Custom Branding' },
+      nav: { dashboard: ['Dashboard', 'Home'], vault: ['Video Vault', 'Vault'], tactics: ['Tactics Board', 'Tactics'], squad: ['Squad Management', 'Squad'], matches: ['Match Center', 'Matches'], boards: ['Leaderboards', 'Ranks'], branding: ['Custom Branding', 'Brand'] },
+      recentRecordings: 'Recent recordings', viewVault: 'View vault →', quickActions: 'Quick actions',
+      liveNow: 'Live now — Pitch 2', liveMeta: 'U16 training · 42:18', watch: 'Watch', openBoard: 'Open in board',
+      storageLine: 'Gated cloud storage · 412 GB used',
+      pressZone: 'Press trigger zone', annotating: 'ANNOTATING', recordVo: 'Record voiceover',
+      telestration: 'Telestration', colors: 'Colors', annotations: 'Annotations', saveClip: '+ Save clip to vault',
+      addPlayer: 'Add player', viewPortfolio: 'View Portfolio', minShort: 'min',
+      thPlayer: 'Player', thSquad: 'Squad', thPosition: 'Position', thAttendance: 'Auto-attendance', thLast: 'Last session', thMinutes: 'Minutes', thPortfolio: 'Portfolio',
+      tableFooter: '34 players · attendance detected automatically from match footage',
+      upcomingTitle: 'Upcoming fixtures', upcomingCount: '4 scheduled', addFixture: '+ Schedule fixture',
+      resultsTitle: 'Past results', aiAnalysed: 'AI ANALYSED',
+      possession: 'Poss.', passes: 'Passes', shots: 'Shots',
+      trendTitle: 'Squad progress', trendDelta: '+11% this term', trendSub: 'AI performance index · last 8 matches',
+      boardsSub: 'Ranked from AI match tracking', boardCats: ['Top Scorer', 'Fastest Sprint', 'Best Attendance'],
+      boardUnits: ['Goals · season 25/26', 'kph · verified peak', '% · auto-detected'],
+      sponsorTitle: 'Sponsor logo', sponsorSub: 'Shown as a corner watermark on every student export.',
+      dropLogo: 'Drop PNG or SVG', dropHint: 'Transparent background · max 2 MB',
+      activeOnExports: 'Active on exports', remove: 'Remove',
+      introTitle: 'Video intro', introSub: 'Prepended to every clip a student exports.',
+      replaceIntro: 'Replace intro video', exportPreview: 'Export preview',
+      introChip: 'INTRO · 0:04', studentClip: 'Student highlight clip', watermark: 'SPONSOR WATERMARK',
+      quick: ['Open tactics board', 'Review attendance', 'Open match center'],
+      kpiLabels: ['Recordings this week', 'Active roster', 'Avg attendance', 'Storage used'],
+      kpiDeltas: ['+4 vs last week', '3 squads · U14 / U16 / U19', '-2% vs last month', '2 TB plan · 20%'],
+      filtersVault: ['All', 'Match', 'Training', 'Analysis'],
+      filtersSquad: ['All squads', 'U14', 'U16', 'U19'],
+      tools: ['Arrow', 'Spotlight', 'Zone', 'Freehand', 'Player tag', 'Erase'],
+      fixtures: [
+        { day: '28', month: 'Aug', title: 'U16 vs Nashama FS', meta: 'Pitch 1 · 20:00 · League round 9', tag: 'LEAGUE' },
+        { day: '31', month: 'Aug', title: 'U19 vs Petra SA', meta: 'Pitch 1 · 18:30 · League round 9', tag: 'LEAGUE' },
+        { day: '03', month: 'Sep', title: 'U14 vs Zarqa Youth', meta: 'Away · 17:00 · Friendly', tag: 'FRIENDLY' },
+        { day: '06', month: 'Sep', title: 'U16 vs Wehdat Academy', meta: 'Pitch 2 · 19:00 · Summer Cup QF', tag: 'CUP' }
+      ],
+      results: [
+        { res: 'W', title: 'U16 vs Irbid Falcons', meta: '14 Aug · Pitch 1', score: '3 - 1', poss: '58%', passes: '412', shots: '14' },
+        { res: 'D', title: 'U19 vs Marka United', meta: '10 Aug · Away', score: '2 - 2', poss: '51%', passes: '389', shots: '9' },
+        { res: 'W', title: 'U14 vs Sweifieh FC', meta: '07 Aug · Pitch 2', score: '4 - 0', poss: '64%', passes: '351', shots: '17' }
+      ],
+      recTitles: ['U16 vs Nashama FS — Full match', 'U19 finishing drills — Session 14', 'U14 vs Zarqa Youth — Full match', 'GK unit — crossing analysis', 'U16 pressing shape — tactical cut', 'U19 vs Petra SA — Full match'],
+      tagNames: { MATCH: 'MATCH', TRAINING: 'TRAINING', ANALYSIS: 'ANALYSIS' },
+      annots: ['Left overlap — Faris run', 'Press trigger zone', 'CB spacing on transition'],
+      lastVals: ['Today', 'Today', 'Yesterday', 'Yesterday', '2 days ago', '3 days ago', '5 days ago', '1 week ago']
+    },
+    ar: {
+      consoleSub: 'لوحة الأكاديمية', academyName: 'أكاديمية عمّان النخبة', planLine: 'الباقة الاحترافية · ٦ كاميرات',
+      searchPh: 'ابحث عن مباريات ولاعبين…', langBtn: 'EN', newRec: 'تسجيل جديد', newRecShort: 'جديد',
+      titles: { dashboard: 'الرئيسية', vault: 'خزنة الفيديو الخاصة', tactics: 'الخطط والتحليل المرئي', squad: 'إدارة الفريق', matches: 'مركز المباريات والنتائج الذكية', boards: 'لوحات صدارة الأكاديمية', branding: 'الهوية المخصصة' },
+      nav: { dashboard: ['الرئيسية', 'الرئيسية'], vault: ['خزنة الفيديو', 'الخزنة'], tactics: ['لوحة الخطط', 'الخطط'], squad: ['إدارة الفريق', 'الفريق'], matches: ['مركز المباريات', 'المباريات'], boards: ['لوحات الصدارة', 'الصدارة'], branding: ['الهوية المخصصة', 'الهوية'] },
+      recentRecordings: 'التسجيلات الأخيرة', viewVault: '← عرض الخزنة', quickActions: 'إجراءات سريعة',
+      liveNow: 'مباشر الآن — ملعب ٢', liveMeta: 'تدريب تحت ١٦ · 42:18', watch: 'مشاهدة', openBoard: 'افتح في اللوحة',
+      storageLine: 'تخزين سحابي مؤمّن · ٤١٢ غ.ب مستخدمة',
+      pressZone: 'منطقة الضغط', annotating: 'وضع التحليل', recordVo: 'تسجيل تعليق صوتي',
+      telestration: 'أدوات التحليل', colors: 'الألوان', annotations: 'الملاحظات', saveClip: '+ حفظ المقطع في الخزنة',
+      addPlayer: 'إضافة لاعب', viewPortfolio: 'عرض الملف', minShort: 'د',
+      thPlayer: 'اللاعب', thSquad: 'الفئة', thPosition: 'المركز', thAttendance: 'الحضور التلقائي', thLast: 'آخر جلسة', thMinutes: 'الدقائق', thPortfolio: 'الملف',
+      tableFooter: '٣٤ لاعبًا · يُرصد الحضور تلقائيًا من تسجيلات المباريات',
+      upcomingTitle: 'المباريات القادمة', upcomingCount: '٤ مجدولة', addFixture: '+ جدولة مباراة',
+      resultsTitle: 'النتائج السابقة', aiAnalysed: 'تحليل ذكي',
+      possession: 'استحواذ', passes: 'تمريرات', shots: 'تسديدات',
+      trendTitle: 'تقدم الفريق', trendDelta: '+١١٪ هذا الفصل', trendSub: 'مؤشر الأداء الذكي · آخر ٨ مباريات',
+      boardsSub: 'مرتبة من التتبع الذكي للمباريات', boardCats: ['الهداف', 'أسرع انطلاقة', 'أفضل حضور'],
+      boardUnits: ['هدفًا · موسم ٢٥/٢٦', 'كم/س · ذروة موثقة', '٪ · رصد تلقائي'],
+      sponsorTitle: 'شعار الراعي', sponsorSub: 'يظهر كعلامة مائية في زاوية كل تصدير للطلاب.',
+      dropLogo: 'أسقط ملف PNG أو SVG', dropHint: 'خلفية شفافة · حد أقصى ٢ م.ب',
+      activeOnExports: 'مفعّل على التصديرات', remove: 'إزالة',
+      introTitle: 'مقدمة الفيديو', introSub: 'تُضاف قبل كل مقطع يصدّره الطالب.',
+      replaceIntro: 'استبدال المقدمة', exportPreview: 'معاينة التصدير',
+      introChip: 'مقدمة · 0:04', studentClip: 'مقطع الطالب المميز', watermark: 'علامة الراعي المائية',
+      quick: ['افتح لوحة الخطط', 'راجع الحضور', 'افتح مركز المباريات'],
+      kpiLabels: ['تسجيلات هذا الأسبوع', 'اللاعبون النشطون', 'متوسط الحضور', 'التخزين المستخدم'],
+      kpiDeltas: ['+٤ عن الأسبوع الماضي', '٣ فئات · ت١٤ / ت١٦ / ت١٩', '-٢٪ عن الشهر الماضي', 'باقة ٢ ت.ب · ٢٠٪'],
+      filtersVault: ['الكل', 'مباراة', 'تدريب', 'تحليل'],
+      filtersSquad: ['كل الفئات', 'ت١٤', 'ت١٦', 'ت١٩'],
+      tools: ['سهم', 'إبراز', 'منطقة', 'رسم حر', 'وسم لاعب', 'مسح'],
+      fixtures: [
+        { day: '٢٨', month: 'آب', title: 'تحت ١٦ ضد النشامى', meta: 'ملعب ١ · ٢٠:٠٠ · الجولة ٩', tag: 'دوري' },
+        { day: '٣١', month: 'آب', title: 'تحت ١٩ ضد البترا', meta: 'ملعب ١ · ١٨:٣٠ · الجولة ٩', tag: 'دوري' },
+        { day: '٠٣', month: 'أيلول', title: 'تحت ١٤ ضد شباب الزرقاء', meta: 'خارج الأرض · ١٧:٠٠ · ودية', tag: 'ودية' },
+        { day: '٠٦', month: 'أيلول', title: 'تحت ١٦ ضد أكاديمية الوحدات', meta: 'ملعب ٢ · ١٩:٠٠ · ربع نهائي كأس الصيف', tag: 'كأس' }
+      ],
+      results: [
+        { res: 'ف', title: 'تحت ١٦ ضد صقور إربد', meta: '١٤ آب · ملعب ١', score: '3 - 1', poss: '٥٨٪', passes: '٤١٢', shots: '١٤' },
+        { res: 'ت', title: 'تحت ١٩ ضد ماركا يونايتد', meta: '١٠ آب · خارج الأرض', score: '2 - 2', poss: '٥١٪', passes: '٣٨٩', shots: '٩' },
+        { res: 'ف', title: 'تحت ١٤ ضد الصويفية', meta: '٧ آب · ملعب ٢', score: '4 - 0', poss: '٦٤٪', passes: '٣٥١', shots: '١٧' }
+      ],
+      recTitles: ['تحت ١٦ ضد النشامى — مباراة كاملة', 'تدريبات إنهاء تحت ١٩ — جلسة ١٤', 'تحت ١٤ ضد شباب الزرقاء — مباراة كاملة', 'وحدة الحراس — تحليل العرضيات', 'شكل الضغط تحت ١٦ — قص تكتيكي', 'تحت ١٩ ضد البترا — مباراة كاملة'],
+      tagNames: { MATCH: 'مباراة', TRAINING: 'تدريب', ANALYSIS: 'تحليل' },
+      annots: ['تداخل أيسر — انطلاقة فارس', 'منطقة الضغط', 'تباعد قلبي الدفاع في التحول'],
+      lastVals: ['اليوم', 'اليوم', 'أمس', 'أمس', 'قبل يومين', 'قبل ٣ أيام', 'قبل ٥ أيام', 'قبل أسبوع']
+    }
+  };
+
+  photos = {
+    m1: 'photo-1487466365202-1afdb86c764e', m2: 'photo-1517927033932-b3d18e61fb3a',
+    m3: 'photo-1560272564-c83b66b1ad12', m4: 'photo-1526232761682-d26e03ac148e',
+    m5: 'photo-1522778119026-d647f0596c20', m6: 'photo-1543326727-cf6c39e8f84c'
+  };
+  pic(id, w) { return 'https://images.unsplash.com/' + this.photos[id] + '?auto=format&fit=crop&w=' + w + '&q=70'; }
+  thumb(id, w) {
+    return React.createElement('img', { src: this.pic(id, w || 320), alt: '', loading: 'lazy',
+      style: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' } });
+  }
+  el(t, p, c) { return React.createElement(t, p, c); }
+
+  navDefs = [
+    { key: 'dashboard', d: 'M3.5 3.5h7v7h-7v-7Zm10 0h7v4.5h-7V3.5Zm0 8.5h7v8.5h-7V12Zm-10 3h7v5.5h-7V15Z' },
+    { key: 'vault', badge: '128', d: 'M3.2 7.4h11.6a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H3.2a2 2 0 0 1-2-2V9.4a2 2 0 0 1 2-2Zm13.6 3.4 4.6-2.8v8l-4.6-2.8' },
+    { key: 'tactics', d: 'M4 20h4L19 9l-4-4L4 16v4Zm9.5-13.5 4 4' },
+    { key: 'squad', d: 'M15.5 8a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0ZM4.5 20c1.3-3.2 3.9-4.8 7.5-4.8s6.2 1.6 7.5 4.8' },
+    { key: 'matches', d: 'M3.2 5h17.6v16H3.2V5Zm4.8-2v4M16 3v4M3.2 10.5h17.6M8 15l2.5 2.5L16.5 12' },
+    { key: 'boards', d: 'M8 21V10m8 11V4M4 21v-5m16 5v-8' },
+    { key: 'branding', d: 'M12 3.2l2.1 4.5 4.9.6-3.6 3.4.9 4.9L12 14.2l-4.3 2.4.9-4.9L5 8.3l4.9-.6L12 3.2Z' }
+  ];
+
+  vaultData = [
+    { id: 'm1', metaEn: '12 Aug · Pitch 1 · 4K', metaAr: '١٢ آب · ملعب ١ · 4K', duration: '91:04', tag: 'MATCH' },
+    { id: 'm2', metaEn: '11 Aug · Pitch 2', metaAr: '١١ آب · ملعب ٢', duration: '58:30', tag: 'TRAINING' },
+    { id: 'm3', metaEn: '09 Aug · Pitch 1', metaAr: '٩ آب · ملعب ١', duration: '70:12', tag: 'MATCH' },
+    { id: 'm4', metaEn: '08 Aug · Pitch 3', metaAr: '٨ آب · ملعب ٣', duration: '32:48', tag: 'ANALYSIS' },
+    { id: 'm5', metaEn: '06 Aug · From match 04', metaAr: '٦ آب · من مباراة ٠٤', duration: '14:22', tag: 'ANALYSIS' },
+    { id: 'm6', metaEn: '04 Aug · Pitch 1 · 4K', metaAr: '٤ آب · ملعب ١ · 4K', duration: '88:51', tag: 'MATCH' }
+  ];
+
+  rosterData = [
+    { en: 'Omar Haddad', ar: 'عمر حداد', squad: 'U16', sqAr: 'ت١٦', position: 'ST', posAr: 'مهاجم', attendance: 96, minutes: '1,240', minAr: '١٬٢٤٠' },
+    { en: 'Zaid Al-Rawi', ar: 'زيد الراوي', squad: 'U16', sqAr: 'ت١٦', position: 'CM', posAr: 'وسط', attendance: 91, minutes: '1,105', minAr: '١٬١٠٥' },
+    { en: 'Karim Nasser', ar: 'كريم ناصر', squad: 'U19', sqAr: 'ت١٩', position: 'GK', posAr: 'حارس', attendance: 88, minutes: '980', minAr: '٩٨٠' },
+    { en: 'Faris Odeh', ar: 'فارس عودة', squad: 'U19', sqAr: 'ت١٩', position: 'LW', posAr: 'جناح أيسر', attendance: 84, minutes: '1,410', minAr: '١٬٤١٠' },
+    { en: 'Layth Khoury', ar: 'ليث خوري', squad: 'U14', sqAr: 'ت١٤', position: 'RB', posAr: 'ظهير أيمن', attendance: 79, minutes: '720', minAr: '٧٢٠' },
+    { en: 'Sami Barakat', ar: 'سامي بركات', squad: 'U16', sqAr: 'ت١٦', position: 'CB', posAr: 'قلب دفاع', attendance: 73, minutes: '860', minAr: '٨٦٠' },
+    { en: 'Yousef Amman', ar: 'يوسف عمّان', squad: 'U14', sqAr: 'ت١٤', position: 'CAM', posAr: 'صانع ألعاب', attendance: 64, minutes: '540', minAr: '٥٤٠' },
+    { en: 'Hadi Mansour', ar: 'هادي منصور', squad: 'U19', sqAr: 'ت١٩', position: 'RW', posAr: 'جناح أيمن', attendance: 52, minutes: '395', minAr: '٣٩٥' }
+  ];
+
+  trendData = [58, 62, 60, 67, 71, 69, 76, 79];
+  boardData = [
+    { key: 0, accent: '#D4FF4F', iconBg: 'rgba(212,255,79,.14)', headTint: 'rgba(212,255,79,.07)', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13 3.4 2.5-1.3 4h-4.2l-1.3-4L12 8Z',
+      rows: [['Omar Haddad', 'عمر حداد', 'U16', 14, '١٤'], ['Faris Odeh', 'فارس عودة', 'U19', 11, '١١'], ['Yousef Amman', 'يوسف عمّان', 'U14', 9, '٩'], ['Zaid Al-Rawi', 'زيد الراوي', 'U16', 7, '٧'], ['Hadi Mansour', 'هادي منصور', 'U19', 6, '٦']] },
+    { key: 1, accent: '#2FD8C4', iconBg: 'rgba(47,216,196,.14)', headTint: 'rgba(47,216,196,.07)', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-9 4.5-4.5M12 12h.01',
+      rows: [['Faris Odeh', 'فارس عودة', 'U19', 31.6, '٣١٫٦'], ['Omar Haddad', 'عمر حداد', 'U16', 30.2, '٣٠٫٢'], ['Layth Khoury', 'ليث خوري', 'U14', 29.1, '٢٩٫١'], ['Hadi Mansour', 'هادي منصور', 'U19', 28.8, '٢٨٫٨'], ['Sami Barakat', 'سامي بركات', 'U16', 27.9, '٢٧٫٩']] },
+    { key: 2, accent: '#B9A6FF', iconBg: 'rgba(123,92,255,.16)', headTint: 'rgba(123,92,255,.08)', d: 'm5 12.5 4.5 4.5L19 7',
+      rows: [['Omar Haddad', 'عمر حداد', 'U16', '96%', '٩٦٪'], ['Zaid Al-Rawi', 'زيد الراوي', 'U16', '91%', '٩١٪'], ['Karim Nasser', 'كريم ناصر', 'U19', '88%', '٨٨٪'], ['Faris Odeh', 'فارس عودة', 'U19', '84%', '٨٤٪'], ['Layth Khoury', 'ليث خوري', 'U14', '79%', '٧٩٪']] }
+  ];
+
+  onResize = () => {
+    const m = window.innerWidth < 860;
+    if (m !== this.state.isMobile) this.setState({ isMobile: m });
+  };
+  componentDidMount() { this.onResize(); window.addEventListener('resize', this.onResize); }
+  componentWillUnmount() { window.removeEventListener('resize', this.onResize); }
+
+  go(view) { return () => this.setState({ view }); }
+
+  hexPoint(cx, cy, r, i) { const a = (-90 + i * 60) * Math.PI / 180; return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }; }
+
+  trendChart() {
+    const vals = this.trendData, W = 300, H = 110;
+    const min = 50, max = 85;
+    const px = (i) => 12 + i * (W - 24) / (vals.length - 1);
+    const py = (v) => H - 14 - (v - min) / (max - min) * (H - 30);
+    const pts = vals.map((v, i) => px(i).toFixed(1) + ',' + py(v).toFixed(1)).join(' ');
+    const kids = [
+      this.el('defs', { key: 'd' }, this.el('linearGradient', { id: 'rpTrendFill', x1: '0%', y1: '0%', x2: '0%', y2: '100%' }, [
+        this.el('stop', { key: 's0', offset: '0%', stopColor: '#2FD8C4', stopOpacity: 0.28 }),
+        this.el('stop', { key: 's1', offset: '100%', stopColor: '#2FD8C4', stopOpacity: 0 })
+      ]))
+    ];
+    [0.25, 0.5, 0.75].forEach((fr, i) => kids.push(this.el('line', { key: 'g' + i, x1: 12, y1: (14 + fr * (H - 30)).toFixed(1), x2: W - 12, y2: (14 + fr * (H - 30)).toFixed(1), stroke: 'rgba(255,255,255,.06)', strokeWidth: 1 })));
+    kids.push(this.el('polygon', { key: 'a', points: pts + ' ' + px(vals.length - 1).toFixed(1) + ',' + (H - 14) + ' 12,' + (H - 14), fill: 'url(#rpTrendFill)' }));
+    kids.push(this.el('polyline', { key: 'l', points: pts, fill: 'none', stroke: '#2FD8C4', strokeWidth: 2.2, strokeLinejoin: 'round', strokeLinecap: 'round' }));
+    vals.forEach((v, i) => kids.push(this.el('circle', { key: 'p' + i, cx: px(i).toFixed(1), cy: py(v).toFixed(1), r: i === vals.length - 1 ? 4 : 2.4, fill: i === vals.length - 1 ? '#D4FF4F' : '#2FD8C4' })));
+    kids.push(this.el('text', { key: 'last', x: px(vals.length - 1).toFixed(1), y: (py(vals[vals.length - 1]) - 9).toFixed(1), textAnchor: 'end', fontFamily: 'Rajdhani, sans-serif', fontSize: 13, fontWeight: 700, fill: '#D4FF4F' }, String(vals[vals.length - 1])));
+    return this.el('svg', { viewBox: '0 0 ' + W + ' ' + H, style: { width: '100%', display: 'block' } }, kids);
+  }
+
+  renderVals() {
+    const s = this.state;
+    const rtl = s.lang === 'ar';
+    const t = this.copy[s.lang];
+    const mob = s.isMobile;
+    const avatarGrads = ['linear-gradient(140deg,#BFFF5C,#22C7B5)', 'linear-gradient(140deg,#3FE0C9,#1C8AA0)', 'linear-gradient(140deg,#6C4FE0,#1FA79B)', 'linear-gradient(140deg,#D4FF4F,#186E7E)'];
+    const tagStyle = (tg) => tg === 'MATCH' ? { bg: 'rgba(212,255,79,.16)', fg: '#D4FF4F' } : tg === 'TRAINING' ? { bg: 'rgba(47,216,196,.16)', fg: '#2FD8C4' } : { bg: 'rgba(123,92,255,.18)', fg: '#B9A6FF' };
+    const vaultShown = this.vaultData.map((v, i) => ({ ...v, title: t.recTitles[i] }))
+      .filter(v => s.vaultFilter === 'All' || v.tag === s.vaultFilter);
+    const rosterShown = this.rosterData.filter(p => s.squadFilter === 'all' || p.squad === s.squadFilter);
+    const kpiIcons = ['M3.2 7.4h11.6a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H3.2a2 2 0 0 1-2-2V9.4a2 2 0 0 1 2-2Zm13.6 3.4 4.6-2.8v8l-4.6-2.8', 'M15.5 8a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0ZM4.5 20c1.3-3.2 3.9-4.8 7.5-4.8s6.2 1.6 7.5 4.8', 'm5 12.5 4.5 4.5L19 7', 'M4 6.5C4 5 7.6 4 12 4s8 1 8 2.5v11C20 19 16.4 20 12 20s-8-1-8-2.5v-11Zm0 5.5c0 1.5 3.6 2.5 8 2.5s8-1 8-2.5'];
+    const kpiVals = rtl ? ['١٨', '٣٤', '٨١٪', '٤١٢ غ.ب'] : ['18', '34', '81%', '412 GB'];
+    const kpiAccents = ['#D4FF4F', '#2FD8C4', '#7B5CFF', '#FF8A6B'];
+    const kpiDeltaColors = ['#2FD8C4', 'rgba(243,246,250,.45)', '#FF8A6B', 'rgba(243,246,250,.45)'];
+    const quickDefs = [
+      { accent: '#D4FF4F', go: this.go('tactics'), d: 'M4 20h4L19 9l-4-4L4 16v4Z' },
+      { accent: '#2FD8C4', go: this.go('squad'), d: 'm5 12.5 4.5 4.5L19 7' },
+      { accent: '#7B5CFF', go: this.go('matches'), d: 'M3.2 5h17.6v16H3.2V5Zm4.8-2v4M16 3v4M3.2 10.5h17.6' }
+    ];
+    const vaultKeys = ['All', 'MATCH', 'TRAINING', 'ANALYSIS'];
+    const squadKeys = ['all', 'U14', 'U16', 'U19'];
+    const toolDs = ['M5 19 19 5m0 0h-7m7 0v7', 'M12 15a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm-4 6h8m-6-6-1 6m6-6 1 6', 'M4 6.5h16v11H4v-11Z', 'M4 17c3-6 5 3 8-3s5 1 8-4', 'M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-6 9c.9-3 3-4.5 6-4.5s5.1 1.5 6 4.5', 'm5 14 7-7 7 7-4.5 4.5h-5L5 14Z'];
+    const annotColors = ['#D4FF4F', '#B9A6FF', '#2FD8C4'];
+    const annotTimes = ['22:10', '38:04', '48:22'];
+    return {
+      dir: rtl ? 'rtl' : 'ltr',
+      fontFamily: rtl ? "'Tajawal','Cairo',system-ui,sans-serif" : "Inter,system-ui,sans-serif",
+      headFont: rtl ? "'Cairo','Rajdhani',sans-serif" : "'Rajdhani','Cairo',sans-serif",
+      t, isMobile: mob, isDesktop: !mob, chevFlip: rtl ? 'scaleX(-1)' : 'none',
+      padX: mob ? '14px' : '18px',
+      padBottom: mob ? '92px' : '28px',
+      kpiCols: mob ? 'repeat(2,1fr)' : 'repeat(4,1fr)',
+      dashCols: mob ? '1fr' : '1.7fr 1fr',
+      vaultCols: mob ? '1fr' : 'repeat(3,1fr)',
+      tacticsCols: mob ? '1fr' : '1fr 232px',
+      matchCols: mob ? '1fr' : '1fr 1.35fr',
+      boardCols: mob ? '1fr' : 'repeat(3,1fr)',
+      drillGridCols: mob ? '1fr' : 'repeat(2,1fr)',
+      toggleLang: () => this.setState({ lang: rtl ? 'en' : 'ar' }),
+      newRecLabel: mob ? t.newRecShort : t.newRec,
+      viewTitle: t.titles[s.view],
+      isDashboard: s.view === 'dashboard', isVault: s.view === 'vault', isTactics: s.view === 'tactics',
+      isSquad: s.view === 'squad', isMatches: s.view === 'matches', isBoards: s.view === 'boards', isBranding: s.view === 'branding',
+      goVault: this.go('vault'), goTactics: this.go('tactics'),
+      navItems: this.navDefs.map(n => ({
+        label: t.nav[n.key][0], short: t.nav[n.key][1], d: n.d, go: this.go(n.key),
+        bg: s.view === n.key ? 'rgba(212,255,79,.12)' : 'transparent',
+        fg: s.view === n.key ? '#D4FF4F' : 'rgba(243,246,250,.62)',
+        hasBadge: !!n.badge && !mob, badge: n.badge || ''
+      })),
+      kpis: t.kpiLabels.map((label, i) => ({
+        label, value: kpiVals[i], delta: t.kpiDeltas[i], deltaColor: kpiDeltaColors[i], accent: kpiAccents[i], d: kpiIcons[i]
+      })),
+      recentMatches: this.vaultData.slice(0, 4).map((v, i) => ({
+        title: t.recTitles[i], meta: rtl ? v.metaAr : v.metaEn, duration: v.duration,
+        tag: t.tagNames[v.tag], tagBg: tagStyle(v.tag).bg, tagFg: tagStyle(v.tag).fg, thumb: this.thumb(v.id, 200)
+      })),
+      quickActions: quickDefs.map((q, i) => ({ ...q, label: t.quick[i] })),
+      liveThumb: this.thumb('m6', 480),
+      vaultFilters: vaultKeys.map((k, i) => ({
+        label: t.filtersVault[i], go: () => this.setState({ vaultFilter: k }),
+        bg: s.vaultFilter === k ? 'rgba(212,255,79,.13)' : 'rgba(255,255,255,.03)',
+        fg: s.vaultFilter === k ? '#D4FF4F' : 'rgba(243,246,250,.55)',
+        bd: s.vaultFilter === k ? 'rgba(212,255,79,.35)' : 'rgba(255,255,255,.08)'
+      })),
+      vaultItems: vaultShown.map(v => ({
+        title: v.title, meta: rtl ? v.metaAr : v.metaEn, duration: v.duration,
+        tag: t.tagNames[v.tag], tagBg: tagStyle(v.tag).bg, tagFg: tagStyle(v.tag).fg, thumb: this.thumb(v.id, 420)
+      })),
+      tacticsFrame: this.thumb('m1', 900),
+      tools: toolDs.map((d, i) => ({
+        d, label: t.tools[i],
+        bg: i === 0 ? 'rgba(212,255,79,.13)' : 'rgba(255,255,255,.03)',
+        fg: i === 0 ? '#D4FF4F' : 'rgba(243,246,250,.6)',
+        bd: i === 0 ? 'rgba(212,255,79,.35)' : 'rgba(255,255,255,.07)'
+      })),
+      annotations: t.annots.map((label, i) => ({ label, time: annotTimes[i], color: annotColors[i] })),
+      squadFilters: squadKeys.map((k, i) => ({
+        label: t.filtersSquad[i], go: () => this.setState({ squadFilter: k }),
+        bg: s.squadFilter === k ? 'rgba(212,255,79,.13)' : 'rgba(255,255,255,.03)',
+        fg: s.squadFilter === k ? '#D4FF4F' : 'rgba(243,246,250,.55)',
+        bd: s.squadFilter === k ? 'rgba(212,255,79,.35)' : 'rgba(255,255,255,.08)'
+      })),
+      roster: rosterShown.map((p, i) => ({
+        name: rtl ? p.ar : p.en,
+        squad: rtl ? p.sqAr : p.squad,
+        position: rtl ? p.posAr : p.position,
+        last: t.lastVals[this.rosterData.indexOf(p)],
+        minutes: rtl ? p.minAr : p.minutes,
+        initials: p.en.split(' ').map(x => x[0]).join(''),
+        avatarBg: avatarGrads[i % avatarGrads.length],
+        attendance: p.attendance + '%',
+        attColor: p.attendance >= 85 ? '#2FD8C4' : p.attendance >= 70 ? '#D4FF4F' : '#FF8A6B'
+      })),
+      fixtures: t.fixtures.map(fx => ({
+        ...fx,
+        tagBg: fx.tag === t.fixtures[0].tag ? 'rgba(212,255,79,.14)' : (fx.tag === t.fixtures[2].tag ? 'rgba(47,216,196,.14)' : 'rgba(123,92,255,.16)'),
+        tagFg: fx.tag === t.fixtures[0].tag ? '#D4FF4F' : (fx.tag === t.fixtures[2].tag ? '#2FD8C4' : '#B9A6FF')
+      })),
+      results: t.results.map(rs => ({
+        ...rs,
+        resBg: rs.res === t.results[0].res ? 'rgba(47,216,196,.14)' : 'rgba(255,255,255,.06)',
+        resFg: rs.res === t.results[0].res ? '#2FD8C4' : 'rgba(243,246,250,.7)'
+      })),
+      trendChart: this.trendChart(),
+      boardFilters: squadKeys.map((k, i) => ({
+        label: t.filtersSquad[i], go: () => this.setState({ squadFilter: k }),
+        bg: s.squadFilter === k ? 'rgba(212,255,79,.13)' : 'rgba(255,255,255,.03)',
+        fg: s.squadFilter === k ? '#D4FF4F' : 'rgba(243,246,250,.55)',
+        bd: s.squadFilter === k ? 'rgba(212,255,79,.35)' : 'rgba(255,255,255,.08)'
+      })),
+      boards: this.boardData.map((b, bi) => {
+        const rows = b.rows.filter(r => s.squadFilter === 'all' || r[2] === s.squadFilter);
+        return {
+          title: t.boardCats[bi], unit: t.boardUnits[bi], accent: b.accent, iconBg: b.iconBg, headTint: b.headTint, d: b.d,
+          rows: rows.map((r, ri) => ({
+            name: rtl ? r[1] : r[0],
+            squad: rtl ? { U14: 'ت١٤', U16: 'ت١٦', U19: 'ت١٩' }[r[2]] : r[2],
+            value: rtl ? r[4] : String(r[3]),
+            rank: rtl ? ['١', '٢', '٣', '٤', '٥'][ri] : String(ri + 1),
+            rankColor: ri === 0 ? b.accent : 'rgba(243,246,250,.4)',
+            rowBg: ri === 0 ? 'rgba(255,255,255,.025)' : 'transparent',
+            initials: r[0].split(' ').map(x => x[0]).join(''),
+            avatarBg: avatarGrads[ri % avatarGrads.length]
+          }))
+        };
+      }),
+      introThumb: this.thumb('m6', 420)
+    };
+  }
+}
+</script>
+</body>
+</html>

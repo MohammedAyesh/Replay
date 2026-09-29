@@ -29,12 +29,12 @@ export function FrameSizeSlider({
     <div
       className={cn(
         "pointer-events-auto rounded-2xl bg-black/60 backdrop-blur-sm px-3 py-2",
-        inline ? "w-36 shrink-0" : compact ? "w-56" : "w-full max-w-sm",
+        inline ? "w-40 shrink-0" : compact ? "w-56" : "w-full max-w-sm",
       )}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between gap-2 whitespace-nowrap">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-white/60">Frame size</span>
         <span className="text-[10px] tabular-nums text-white/70">
           {zoom.toFixed(2)}x{blackPct > 0 ? ` · ${blackPct}% black` : ""}

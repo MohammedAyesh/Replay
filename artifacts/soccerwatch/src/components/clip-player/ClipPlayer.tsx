@@ -99,6 +99,8 @@ export type ClipPlayerProps = {
   liveDvr?: LiveDvrOptions;
   liveCameraId?: string;
   layout: "overlay" | "inline";
+  /** Condense idle editing controls into a single docked row. */
+  toolbarLayout?: "stacked" | "single-row";
   onClose?: () => void;
   canSave: boolean;
   onRequireAuth: (draft: ClipDraft) => void;
@@ -264,6 +266,7 @@ export function ClipPlayer({
   liveDvr,
   liveCameraId,
   layout,
+  toolbarLayout = "stacked",
   onClose,
   canSave,
   onRequireAuth,
@@ -271,6 +274,7 @@ export function ClipPlayer({
   seekToSeconds,
   seekToUtcMs,
 }: ClipPlayerProps) {
+  const singleRowToolbar = toolbarLayout === "single-row";
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const fallbackRestoreUtcRef = useRef<number | null>(null);
@@ -1380,7 +1384,19 @@ export function ClipPlayer({
               </button>
             </div>
 
-            <div className="px-4 pointer-events-auto space-y-3" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
+            <div
+              className={cn(
+                "px-4 pointer-events-auto",
+                singleRowToolbar
+                  ? "space-y-2 border-t border-white/15 bg-black/70 py-2 backdrop-blur-md"
+                  : "space-y-3",
+              )}
+              style={{
+                paddingBottom: singleRowToolbar
+                  ? "max(0.75rem, env(safe-area-inset-bottom))"
+                  : "max(1.5rem, env(safe-area-inset-bottom))",
+              }}
+            >
               {!isLive && duration > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-white text-xs tabular-nums w-10 text-end">{formatDuration(currentTime)}</span>
@@ -1433,8 +1449,22 @@ export function ClipPlayer({
                   )}
                 </div>
               )}
-              <div className="space-y-2">
-                <div role="group" aria-label="Frame stepping" data-testid="player-step-controls" className="grid grid-cols-6 gap-1">
+              <div
+                role="group"
+                aria-label="Playback and clip editing controls"
+                className={singleRowToolbar ? "flex min-w-0 items-center gap-2" : "space-y-2"}
+              >
+                <div
+                  className={singleRowToolbar
+                    ? "flex min-w-0 flex-1 touch-pan-x items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                    : "space-y-2"}
+                >
+                <div
+                  role="group"
+                  aria-label="Frame stepping"
+                  data-testid="player-step-controls"
+                  className={singleRowToolbar ? "flex shrink-0 gap-1" : "grid grid-cols-6 gap-1"}
+                >
                   {([
                     { label: "−1 s", seconds: -1, testId: "step-back-one-second" },
                     { label: "−2 frames", seconds: -2 * FRAME_DURATION_SECONDS, testId: "step-back-two-frames" },
@@ -1457,13 +1487,23 @@ export function ClipPlayer({
                       onClick={repeat
                         ? (event) => { if (event.detail === 0) stepVideoBy(seconds); }
                         : () => stepVideoBy(seconds)}
-                      className="min-h-12 min-w-0 touch-manipulation rounded-lg border border-white/20 bg-black/50 px-1 text-[10px] font-semibold leading-tight text-white disabled:opacity-40 sm:px-2 sm:text-xs"
+                      className={cn(
+                        "touch-manipulation rounded-lg border border-white/20 bg-black/50 font-semibold leading-tight text-white disabled:opacity-40",
+                        singleRowToolbar
+                          ? "min-h-11 shrink-0 whitespace-nowrap px-1.5 text-[10px]"
+                          : "min-h-12 min-w-0 px-1 text-[10px] sm:px-2 sm:text-xs",
+                      )}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
-                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                <div className={cn(
+                  "items-center",
+                  singleRowToolbar
+                    ? "flex shrink-0 flex-nowrap gap-1"
+                    : "flex flex-wrap justify-center gap-1.5",
+                )}>
                   {PLAYBACK_SPEEDS.map((rate, index) => (
                     <button
                       key={rate}
@@ -1477,7 +1517,9 @@ export function ClipPlayer({
                         resetControlsTimer();
                       }}
                       className={cn(
-                        "min-h-11 min-w-14 rounded-lg border px-3 text-xs font-bold",
+                        singleRowToolbar
+                          ? "min-h-11 min-w-11 shrink-0 rounded-lg border px-2 text-[11px] font-bold"
+                          : "min-h-11 min-w-14 rounded-lg border px-3 text-xs font-bold",
                         Math.abs(playbackRate - rate) < 0.01
                           ? "border-primary bg-primary/20 text-white"
                           : "border-white/20 bg-black/50 text-white",
@@ -1486,7 +1528,10 @@ export function ClipPlayer({
                       {rate}×
                     </button>
                   ))}
-                <label className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-white/20 bg-black/50 px-3 text-xs font-semibold text-white">
+                <label className={cn(
+                  "flex min-h-11 shrink-0 items-center rounded-lg border border-white/20 bg-black/50 font-semibold text-white",
+                  singleRowToolbar ? "gap-1 px-2 text-[11px]" : "gap-2 px-3 text-xs",
+                )}>
                   <span>Look</span>
                   <select
                     aria-label="Video look filter"
@@ -1504,19 +1549,47 @@ export function ClipPlayer({
                   </select>
                 </label>
               </div>
-              </div>
-              <p className="hidden text-center text-[10px] text-white/50 sm:block">
-                ←/→: 1 frame · ,/.: 2 frames · Shift+←/→: 1 s · 1/2/3: 0.25×/0.5×/1×
-              </p>
-              <div className="flex justify-center">
-                <FrameSizeSlider zoom={frameZoom} frame={frame} maxZoom={maxZoomFor(selectedRatio)} onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)} />
-              </div>
-              <div className="flex justify-center">
-        <button onClick={startRecording} className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-primary-foreground font-bold text-sm">
+                {singleRowToolbar && (
+                  <FrameSizeSlider
+                    zoom={frameZoom}
+                    frame={frame}
+                    maxZoom={maxZoomFor(selectedRatio)}
+                    inline
+                    onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)}
+                  />
+                )}
+                </div>
+                {singleRowToolbar && (
+                  <button
+                    onClick={startRecording}
+                    className="flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-primary px-3 text-xs font-bold text-primary-foreground"
+                  >
                   <Circle className="w-4 h-4 fill-primary-foreground" />
                   {t.clipping.record}
                 </button>
+                )}
               </div>
+              {!singleRowToolbar && (
+                <>
+                  <p className="hidden text-center text-[10px] text-white/50 sm:block">
+                    ←/→: 1 frame · ,/.: 2 frames · Shift+←/→: 1 s · 1/2/3: 0.25×/0.5×/1×
+                  </p>
+                  <div className="flex justify-center">
+                    <FrameSizeSlider
+                      zoom={frameZoom}
+                      frame={frame}
+                      maxZoom={maxZoomFor(selectedRatio)}
+                      onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)}
+                    />
+                  </div>
+                  <div className="flex justify-center">
+                    <button onClick={startRecording} className="flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground">
+                      <Circle className="h-4 w-4 fill-primary-foreground" />
+                      {t.clipping.record}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </motion.div>
         )}

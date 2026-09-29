@@ -1,0 +1,137 @@
+Use Free mode for this entire task.
+
+PHASE 1 — ACADEMY CONSOLE: SHELL + FOUNDATIONS + DASHBOARD
+
+You completed the read-only diagnosis of academies, roles, and the desktop-console
+building blocks. This task builds Phase 1 of the Academy Console. Do NOT start
+building yet — produce an implementation plan first and stop for my approval
+(see PROCESS at the end).
+
+── ABOUT THE ATTACHED DESIGN SCREENSHOTS ──
+The attached screenshots are a concept prototype. They are INSPIRATION AND
+VISUALIZATION ONLY — for mood, density, and layout ideas. Do not replicate them.
+Specifically:
+- Do NOT copy its markup, components, colors, fonts, or placeholder images.
+  The console must use OUR app's existing design system, tokens, and components
+  (ui/sidebar.tsx, ui/table.tsx, existing typography and color scheme).
+- The prototype shows sections and copy we are NOT building: tactics boards,
+  leaderboards, branding editor, "Auto-attendance", anything labeled AI.
+  Ignore all of that. This brief defines the scope, not the pictures.
+- If anything in the screenshots confuses you or conflicts with this brief,
+  this brief wins. Don't ask about the screenshots — just follow the brief.
+- The one thing the prototype does show correctly: the console must be equally
+  first-class in English (LTR) and Arabic (RTL). That requirement is real and
+  non-negotiable throughout.
+
+── WHAT WE ARE BUILDING (whole-project context) ──
+An Academy Console at /academy: a desktop-first management surface for football
+academy owners and coaches. v1 features (across phases): Squads & Roster,
+Attendance, Schedule & Manual Match Results, Fees & Payment Tracking (JOD),
+Announcements. No AI features. Roster entries are academy-owned records with an
+optional link to a Replay user account. Academies are onboarded by admins from
+/admin.
+
+Phase 1 (this task) = tenancy + admin onboarding + the full console shell with
+ALL sections present in navigation (unbuilt ones as branded "Coming Soon") + the
+Dashboard as the first real section. Later tasks finish the sections one by one.
+
+── ZERO-REGRESSION RULES ──
+- Additive schema changes only. Do not modify or drop any existing table/column.
+- Do not "fix" or refactor the existing public academies routes or their
+  response shapes. The known drift there stays as-is.
+- Do not touch users.academy_id (legacy singleton). New membership lives in a
+  new table.
+- Do not touch anything in the recording/AI/pipeline code paths.
+- Known pre-existing typecheck error (field-detail.tsx: toolbarLayout prop not
+  in ClipPlayerProps) is the baseline. You may fix that one prop error so
+  typecheck is clean; change nothing else in that file.
+
+── 1. TENANCY: academy_members ──
+New table academy_members, modeled exactly on the field_owners precedent:
+user_id, academy_id, role ('owner' | 'coach'), unique on (user_id, academy_id,
+role). A user can be a member of multiple academies and can hold both roles.
+Server-side helper that resolves the current user's academy memberships;
+EVERY console endpoint must enforce membership (and role where relevant)
+server-side, per-route, following the owner.ts pattern. Never UI-only gating.
+
+── 2. FULL v1 SCHEMA NOW (one DB push for all phases) ──
+Design and create ALL v1 tables in this task, even though most features come
+later, so we do exactly one schema push:
+- academy_members (above)
+- academy_squads (academy_id, name, optional description/age-group)
+- academy_players (academy-owned roster record: academy_id, squad_id nullable,
+  name, optional jersey number, optional position, optional date of birth,
+  optional guardian phone, optional linked user_id nullable, active flag)
+- academy_sessions (academy_id, squad_id, type training|match, starts_at UTC,
+  optional ends_at, location text, optional opponent name, optional our/their
+  score for manual match results, optional notes)
+- academy_attendance (session_id, player_id, status present|absent|late|excused,
+  unique on session_id+player_id)
+- academy_fees (academy_id, player_id, label, amount_fils integer, due_date,
+  status due|paid|waived, optional paid_at, optional note) — JOD via the
+  existing amount_fils integer precedent
+- academy_announcements (academy_id, optional squad_id, title, body, created_by,
+  created_at)
+All timestamps stored UTC; display in Amman time using the same approach as
+owner.tsx. Spec-first: add the new endpoints to openapi.yaml (NO query
+parameters — path/body only, per our Orval constraint), run codegen, and keep
+the schema additive so `pnpm --filter db run push` shows only green additions.
+
+── 3. ADMIN ONBOARDING (in /admin) ──
+In the existing admin surface, an "Academy Console" management capability:
+for a given academy, an admin can add/remove members by user email + role
+(owner or coach), and see the current member list. Minimal, functional UI
+consistent with the rest of /admin.
+
+── 4. THE CONSOLE SHELL at /academy ──
+- Route /academy, using the app's full-bleed escape (like /portfolio), NOT the
+  440px mobile shell. Desktop-first with a proper responsive mobile layout
+  (sidebar collapses to the existing Sheet pattern).
+- Access: users with at least one academy_members row. Others get a clean
+  branded "no access" state. Anonymous → sign-in.
+- Entry point: a row on the Account page ("Academy Console") visible only to
+  members.
+- Sidebar navigation with ALL v1 sections, in this order:
+  Dashboard, Squads & Roster, Attendance, Schedule & Matches, Recordings,
+  Fees & Payments (visible to owners only), Announcements.
+  Unbuilt sections render a polished, branded "Coming Soon" state (our design
+  language, EN/AR) — never a blank page or dead link.
+- Academy switcher in the shell header for users belonging to multiple
+  academies; selection persists during the session.
+- EN/AR from day one: every string through the existing i18n system
+  (strings.ts / LocaleProvider), full RTL mirroring (logical properties,
+  mirrored chevrons, correct digit handling). Arabic labels should follow the
+  app's existing Arabic conventions; as reference, natural Arabic for the
+  sections is: لوحة التحكم (Dashboard), الفرق واللاعبون (Squads & Roster),
+  الحضور (Attendance), الجدول والمباريات (Schedule & Matches), التسجيلات
+  (Recordings), الرسوم والمدفوعات (Fees & Payments), الإعلانات (Announcements).
+  Adjust wording to match existing app terminology where it exists.
+
+── 5. DASHBOARD (the one real section in this phase) ──
+Simple and honest — only data that exists in Phase 1:
+- Academy name + the member's role
+- Counts: squads, active players, upcoming sessions (next 7 days)
+- "Getting started" cards linking to the sections (Coming Soon ones say so)
+No fake stats, no placeholder numbers, no charts.
+
+── VALIDATION (you must actually perform and report) ──
+- Server-side: a non-member calling any console endpoint gets 403; anonymous
+  gets 401. Show evidence.
+- Typecheck clean (including the one baseline fix).
+- Served-page verification in the browser, dev preview: /academy as a member
+  (owner and coach), as a non-member, and signed out — in BOTH English and
+  Arabic, desktop and mobile widths. RTL must be genuinely mirrored, not
+  best-effort.
+- /admin membership management works end-to-end: add a member, see them gain
+  access; remove, see them lose it.
+
+── PROCESS (mandatory) ──
+1. First reply: implementation plan only (schema DDL summary, endpoint list,
+   file-touch list, build order). STOP for my approval.
+2. After approval: write schema + openapi + codegen, then STOP. I will run
+   `pnpm --filter db run push` myself in the shell and confirm it was
+   green/additions-only before you continue.
+3. Then build, then validate as above.
+4. EVERY response you send must end with: (a) a report of what was done and
+   what was verified vs. assumed, and (b) a diff summary — every file created
+   or modified with a one-line description of the change.
