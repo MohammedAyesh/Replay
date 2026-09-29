@@ -123,8 +123,9 @@ def log(job, msg):
 
 # ------------------------------------------------------------------------ source
 
-def http_get(url, headers=None, timeout=30):
-    req = urllib.request.Request(url, headers={"Referer": REFERER, "User-Agent": UA, **(headers or {})})
+def http_get(url, headers=None, timeout=30, referer=True):
+    base = {"Referer": REFERER, "User-Agent": UA} if referer else {"User-Agent": UA}
+    req = urllib.request.Request(url, headers={**base, **(headers or {})})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
@@ -274,7 +275,9 @@ def load_overlay(url, out_w, out_h, job):
         host = urllib.parse.urlparse(url).hostname or ""
         if host == "storage.bunnycdn.com" and STORAGE_KEY:
             headers["AccessKey"] = STORAGE_KEY
-        data = http_get(url, headers=headers, timeout=20)
+        # No Stream Referer here: Bunny Storage answers 401 to a request that
+        # carries the iframe.mediadelivery.net Referer, even with a valid key.
+        data = http_get(url, headers=headers, timeout=20, referer=False)
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_UNCHANGED)
         if img is None or img.ndim != 3 or img.shape[2] != 4:
             log(job, "overlay is not an RGBA image -- exporting unbranded")
