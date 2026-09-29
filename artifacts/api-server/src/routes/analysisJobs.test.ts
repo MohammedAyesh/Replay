@@ -17,6 +17,9 @@ import {
   usersTable,
   fieldsTable,
   recordingsTable,
+  footageRequestsTable,
+  matchRoomsTable,
+  matchPlayersTable,
   analysisJobsTable,
   analysisWorkersTable,
   recordingTrackingBundlesTable,
@@ -43,6 +46,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
   }),
 }));
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { buildRosterHintsForRecording } from "../lib/rosterHints";
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
 /** The smallest bundle the validator accepts: one segment, frames 0..1. */
@@ -91,6 +95,8 @@ let fieldId: number;
 let recA: number;
 let recB: number;
 let recNoVideo: number;
+let roomRequestIds: number[] = [];
+let roomSequence = 0;
 
 const guid = (n: number) => `0000000${n}-0000-4000-8000-00000000000${n}`;
 
@@ -128,6 +134,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (roomRequestIds.length) {
+    await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, roomRequestIds));
+  }
   await db.delete(recordingTrackingBundlesTable)
     .where(inArray(recordingTrackingBundlesTable.recordingId, [recA, recB, recNoVideo]));
   await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.recordingId, [recA, recB, recNoVideo]));
@@ -145,6 +154,10 @@ beforeEach(async () => {
   await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.recordingId, [recA, recB, recNoVideo]));
   await db.delete(analysisWorkersTable)
     .where(inArray(analysisWorkersTable.id, ["w1", "w2", "w0", "w3", "w4", "w5", "w6", "w7"]));
+  if (roomRequestIds.length) {
+    await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, roomRequestIds));
+    roomRequestIds = [];
+  }
   mockedGetLocalUserId.mockResolvedValue(adminId);
   process.env.ANALYSIS_WORKER_KEY = KEY;
 });
@@ -159,6 +172,69 @@ function queueJob(body: Record<string, unknown> = {}) {
     matchStartSeconds: 1080,
     ...body,
   });
+}
+
+type HintPlayerFixture = {
+  team: "A" | "B" | "C";
+  rsvp: "in" | "maybe" | "out" | "invited";
+  shirtNumber?: number | null;
+};
+
+async function makeRoomForRecording(
+  recordingId: number,
+  options: {
+    teamCount?: 2 | 3;
+    playersPerSide?: number;
+    substitutesPerTeam?: number | null;
+    shirts?: { A?: "yes" | "no" | "unknown"; B?: "yes" | "no" | "unknown"; C?: "yes" | "no" | "unknown" };
+    players?: HintPlayerFixture[];
+  } = {},
+) {
+  const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, recordingId));
+  if (!recording) throw new Error(`Missing recording ${recordingId}`);
+  const [hourText, minuteText] = recording.timeSlot.split(":");
+  const endTotalMinutes = Number(hourText) * 60 + Number(minuteText) + 60;
+  const endHour = String(Math.floor(endTotalMinutes / 60) % 24).padStart(2, "0");
+  const endMinute = String(endTotalMinutes % 60).padStart(2, "0");
+  const endDate = endTotalMinutes >= 24 * 60
+    ? new Date(new Date(`${recording.date}T00:00:00Z`).getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    : recording.date;
+  const startLocal = `${recording.date} ${recording.timeSlot}`;
+  const endLocal = `${endDate} ${endHour}:${endMinute}`;
+  const [requestRow] = await db.insert(footageRequestsTable).values({
+    fieldId: recording.fieldId,
+    cameraId: "cam1",
+    requestedBy: adminId,
+    startLocal,
+    endLocal,
+    requestedSeconds: 3600,
+    status: "ready",
+  }).returning({ id: footageRequestsTable.id });
+  roomRequestIds.push(requestRow.id);
+  const sequence = ++roomSequence;
+  const [room] = await db.insert(matchRoomsTable).values({
+    footageRequestId: requestRow.id,
+    fieldId: recording.fieldId,
+    code: `RH${sequence}_${TAG}`,
+    captainToken: `captain_${sequence}_${TAG}`,
+    playersPerSide: options.playersPerSide ?? 6,
+    teamCount: options.teamCount ?? 2,
+    substitutesPerTeam: options.substitutesPerTeam === undefined ? null : options.substitutesPerTeam,
+    teamAShirtsHaveNumbers: options.shirts?.A ?? "unknown",
+    teamBShirtsHaveNumbers: options.shirts?.B ?? "unknown",
+    teamCShirtsHaveNumbers: options.shirts?.C ?? "unknown",
+  }).returning({ id: matchRoomsTable.id, code: matchRoomsTable.code });
+  if (options.players?.length) {
+    await db.insert(matchPlayersTable).values(options.players.map((player, index) => ({
+      matchId: room.id,
+      displayName: `Hint Player ${sequence}-${index}`,
+      inviteToken: `hint_${sequence}_${index}_${TAG}`,
+      rsvp: player.rsvp,
+      team: player.team,
+      shirtNumber: player.shirtNumber ?? null,
+    })));
+  }
+  return room;
 }
 
 describe("queueing a job", () => {
@@ -266,6 +342,137 @@ describe("claiming", () => {
     await asWorker("/api/worker/analysis/claim", "w2").expect(200);
     const [worker] = await db.select().from(analysisWorkersTable).where(eq(analysisWorkersTable.id, "w2"));
     expect(worker.status).toBe("idle");
+  });
+});
+
+describe("roster hints for analysis", () => {
+  it("returns no hints when the recording has no overlapping match room", async () => {
+    await expect(buildRosterHintsForRecording(recNoVideo)).resolves.toBeUndefined();
+  });
+
+  it("includes known shirt numbers and infers numbers when at least two are present", async () => {
+    await makeRoomForRecording(recA, {
+      shirts: { A: "unknown", B: "no" },
+      players: [
+        { team: "A", rsvp: "in", shirtNumber: 10 },
+        { team: "A", rsvp: "in", shirtNumber: 5 },
+        { team: "A", rsvp: "maybe", shirtNumber: 7 },
+        { team: "B", rsvp: "in" },
+      ],
+    });
+    const hints = await buildRosterHintsForRecording(recA);
+    expect(hints?.teams[0]).toMatchObject({
+      key: "A",
+      shirtsHaveNumbers: "yes, inferred",
+      shirtNumbers: [5, 7, 10],
+      squadSize: 3,
+    });
+    expect(hints?.teams[1]).toMatchObject({
+      key: "B",
+      shirtsHaveNumbers: "no",
+      shirtNumbers: [],
+      squadSize: 1,
+    });
+  });
+
+  it("derives substitutes from the largest confirmed team surplus", async () => {
+    await makeRoomForRecording(recA, {
+      players: [
+        ...Array.from({ length: 8 }, () => ({ team: "A" as const, rsvp: "in" as const })),
+        { team: "A", rsvp: "maybe" },
+        ...Array.from({ length: 6 }, () => ({ team: "B" as const, rsvp: "in" as const })),
+      ],
+    });
+    const hints = await buildRosterHintsForRecording(recA);
+    expect(hints?.substitutesPerTeam).toBe(2);
+    expect(hints?.teams[0].squadSize).toBe(9);
+    expect(hints?.totalPlayersExpected).toBe(14);
+  });
+
+  it("uses an explicit substitutes value instead of deriving one", async () => {
+    await makeRoomForRecording(recA, {
+      substitutesPerTeam: 3,
+      players: [
+        ...Array.from({ length: 8 }, () => ({ team: "A" as const, rsvp: "in" as const })),
+        ...Array.from({ length: 6 }, () => ({ team: "B" as const, rsvp: "in" as const })),
+      ],
+    });
+    const hints = await buildRosterHintsForRecording(recA);
+    expect(hints?.substitutesPerTeam).toBe(3);
+    expect(hints?.totalPlayersExpected).toBe(15);
+  });
+
+  it("includes team C for three-team rooms", async () => {
+    await makeRoomForRecording(recA, {
+      teamCount: 3,
+      shirts: { A: "yes", B: "no", C: "yes" },
+      players: [
+        { team: "A", rsvp: "in", shirtNumber: 4 },
+        { team: "B", rsvp: "in" },
+        { team: "C", rsvp: "maybe", shirtNumber: 12 },
+      ],
+    });
+    const hints = await buildRosterHintsForRecording(recA);
+    expect(hints?.teamCount).toBe(3);
+    expect(hints?.teams.map((team) => team.key)).toEqual(["A", "B", "C"]);
+    expect(hints?.teams[2]).toMatchObject({ shirtsHaveNumbers: "yes", shirtNumbers: [12], squadSize: 1 });
+    expect(hints?.totalPlayersExpected).toBe(18);
+  });
+
+  it("keeps an admin-supplied rosterHints object when the worker claims the job", async () => {
+    const override = { source: "admin", chosenNumbers: [4, 9] };
+    await queueJob({
+      sourceRecordingIds: [recA],
+      params: { gpu: "auto", rosterHints: override },
+    }).expect(201);
+    const claim = await asWorker("/api/worker/analysis/claim").expect(200);
+    expect(claim.body.job.params.rosterHints).toEqual(override);
+  });
+
+  it("injects computed roster hints into worker params when a room is linked", async () => {
+    const room = await makeRoomForRecording(recA, {
+      shirts: { A: "yes", B: "no" },
+      players: [
+        ...Array.from({ length: 7 }, (_, index) => ({
+          team: "A" as const,
+          rsvp: "in" as const,
+          shirtNumber: index === 0 ? 10 : null,
+        })),
+        ...Array.from({ length: 6 }, () => ({ team: "B" as const, rsvp: "in" as const })),
+      ],
+    });
+    await queueJob({ sourceRecordingIds: [recA] }).expect(201);
+    const claim = await asWorker("/api/worker/analysis/claim").expect(200);
+    expect(claim.body.job.params.rosterHints).toMatchObject({
+      matchCode: room.code,
+      playersPerSide: 6,
+      teamCount: 2,
+      substitutesPerTeam: 1,
+      totalPlayersExpected: 13,
+      teams: [
+        { key: "A", shirtsHaveNumbers: "yes", shirtNumbers: [10], squadSize: 7 },
+        { key: "B", shirtsHaveNumbers: "no", shirtNumbers: [], squadSize: 6 },
+      ],
+    });
+  });
+
+  it("returns roster hints from the per-job preview route to admins", async () => {
+    const room = await makeRoomForRecording(recA, { teamCount: 3 });
+    const queued = await queueJob({ sourceRecordingIds: [recA] }).expect(201);
+    const preview = await request(app)
+      .get(`/api/admin/analysis-jobs/${queued.body.id}/roster-hints`)
+      .expect(200);
+    expect(preview.body.rosterHints).toMatchObject({
+      matchCode: room.code,
+      teamCount: 3,
+      teams: [{ key: "A" }, { key: "B" }, { key: "C" }],
+    });
+  });
+
+  it("refuses the roster-hints preview route for non-admins", async () => {
+    const queued = await queueJob({ sourceRecordingIds: [recA] }).expect(201);
+    mockedGetLocalUserId.mockResolvedValue(plainId);
+    await request(app).get(`/api/admin/analysis-jobs/${queued.body.id}/roster-hints`).expect(401);
   });
 });
 

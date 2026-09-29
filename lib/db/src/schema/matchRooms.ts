@@ -8,10 +8,14 @@ import {
   real,
   unique,
   index,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 import { fieldsTable } from "./fields";
 import { footageRequestsTable } from "./footageRequests";
+
+export type ShirtNumberStatus = "yes" | "no" | "unknown";
 
 /**
  * A match room is the players' side of a booked match. Every owner booking
@@ -34,6 +38,11 @@ export const matchRoomsTable = pgTable("match_rooms", {
   title: text("title"),
   /** Players per side, e.g. 6 for 6v6. Drives "7 of 12 coming". */
   playersPerSide: integer("players_per_side").notNull().default(6),
+  /** Null means the analysis hint should estimate the substitute count from the squad. */
+  substitutesPerTeam: integer("substitutes_per_team"),
+  teamAShirtsHaveNumbers: text("team_a_shirts_have_numbers").$type<ShirtNumberStatus>().notNull().default("unknown"),
+  teamBShirtsHaveNumbers: text("team_b_shirts_have_numbers").$type<ShirtNumberStatus>().notNull().default("unknown"),
+  teamCShirtsHaveNumbers: text("team_c_shirts_have_numbers").$type<ShirtNumberStatus>().notNull().default("unknown"),
   teamAName: text("team_a_name"),
   teamBName: text("team_b_name"),
   teamAColor: text("team_a_color").notNull().default("#F2F4F8"),
@@ -47,7 +56,24 @@ export const matchRoomsTable = pgTable("match_rooms", {
   scoreUpdatedAt: timestamp("score_updated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  check(
+    "match_rooms_substitutes_per_team_check",
+    sql`${table.substitutesPerTeam} IS NULL OR ${table.substitutesPerTeam} BETWEEN 0 AND 10`,
+  ),
+  check(
+    "match_rooms_team_a_shirts_have_numbers_check",
+    sql`${table.teamAShirtsHaveNumbers} IN ('yes', 'no', 'unknown')`,
+  ),
+  check(
+    "match_rooms_team_b_shirts_have_numbers_check",
+    sql`${table.teamBShirtsHaveNumbers} IN ('yes', 'no', 'unknown')`,
+  ),
+  check(
+    "match_rooms_team_c_shirts_have_numbers_check",
+    sql`${table.teamCShirtsHaveNumbers} IN ('yes', 'no', 'unknown')`,
+  ),
+]);
 
 /**
  * One row per person on the roster. user_id is null for people the captain

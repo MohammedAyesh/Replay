@@ -49,3 +49,4 @@
 - [GitHub REST commit fallback](github-rest-commit-fallback.md) — recreate local history from immutable blobs; use full-block chunks and verify every Git object before moving refs.
 - [Whole-game claim boundary](whole-game-claim-boundary.md) — `/find` persists names and identity through game saves; `/claim` remains a separate, explicit fallback.
 - [HLS player callback lifecycle](hls-player-callback-lifecycle.md) — keep HLS setup callbacks stable and suppress async quality updates after player teardown.
+- [Roster substitute derivation](roster-hints-substitutes.md) — when a room stores one shared substitute count, derive the unset value from the largest active-team surplus.

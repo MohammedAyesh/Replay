@@ -37,6 +37,7 @@ const json = (body: unknown) => JSON.stringify(body ?? {});
 export type MatchPhase = "pre" | "live" | "processing" | "ready" | "expired" | "failed" | "cancelled";
 export type Rsvp = "invited" | "in" | "maybe" | "out";
 export type TeamSide = "A" | "B" | "C";
+export type ShirtNumberStatus = "yes" | "no" | "unknown";
 
 export type MatchPlayer = {
   id: number;
@@ -64,7 +65,7 @@ export type MatchMark = {
   mine: boolean;
 };
 
-export type TeamInfo = { name: string | null; color: string };
+export type TeamInfo = { name: string | null; color: string; shirtsHaveNumbers: ShirtNumberStatus };
 export type StandingRow = {
   team: TeamSide; played: number; won: number; drawn: number; lost: number;
   goalsFor: number; goalsAgainst: number; points: number;
@@ -95,6 +96,7 @@ export type MatchRoom = {
   field: { id: number; name: string; location: string | null; imageUrl: string | null; cameraId?: string | null };
   title: string | null;
   playersPerSide: number;
+  substitutesPerTeam: number | null;
   teamCount: 2 | 3;
   teams: { A: TeamInfo; B: TeamInfo; C?: TeamInfo };
   score: { a: number; b: number } | null;
@@ -403,6 +405,10 @@ export const useUpdateRoom = (code: string) =>
   useRoomMutation(code, (body: {
     title?: string | null; teamAName?: string | null; teamBName?: string | null; teamCName?: string | null;
     teamAColor?: string; teamBColor?: string; teamCColor?: string; teamCount?: 2 | 3; playersPerSide?: number;
+    substitutesPerTeam?: number | null;
+    teamAShirtsHaveNumbers?: ShirtNumberStatus;
+    teamBShirtsHaveNumbers?: ShirtNumberStatus;
+    teamCShirtsHaveNumbers?: ShirtNumberStatus;
   }) =>
     call<MatchRoom>(`/m/${code}`, { method: "PATCH", body: json(body) }));
 

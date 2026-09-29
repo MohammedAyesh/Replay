@@ -15,6 +15,7 @@ import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge"
 import { logger } from "../lib/logger";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
+import { buildRosterHintsForJob, type RosterHintCache, type RosterHints } from "../lib/rosterHints";
 import { parseZipBundleDetailed, storeUploadBundle } from "./claimMatch";
 import {
   ACTIVE_STATUSES,
@@ -170,9 +171,11 @@ type JobView = AnalysisJobRow & {
   sources: SourceDescriptor[];
   queuePosition: number | null;
   recordingLabel: string | null;
+  rosterHints: RosterHints | null;
 };
 
 async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
+  const rosterHintCache: RosterHintCache = new Map();
   const allIds = [...new Set(rows.flatMap((row) => [row.recordingId, ...row.sourceRecordingIds]))];
   const sources = await loadSources(allIds);
   const byId = new Map(sources.map((row) => [row.id, row]));
@@ -180,7 +183,10 @@ async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
     .filter((row) => row.status === "queued")
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((row) => row.id);
-  return rows.map((row) => {
+  const hints = await Promise.all(rows.map((row) =>
+    buildRosterHintsForJob(row.recordingId, row.sourceRecordingIds, rosterHintCache),
+  ));
+  return rows.map((row, index) => {
     const target = byId.get(row.recordingId);
     return {
       ...row,
@@ -190,6 +196,7 @@ async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
         .map(describeSource),
       queuePosition: queuePosition(row, queuedOldestFirst),
       recordingLabel: target ? `${target.court} ${target.date} ${target.timeSlot}`.trim() : null,
+      rosterHints: hints[index] ?? null,
     };
   });
 }
@@ -297,6 +304,18 @@ router.get("/admin/analysis-jobs", async (req, res): Promise<void> => {
     logger.error({ err: error }, "Could not read the analysis queue");
     res.status(500).json({ error: "Could not read the analysis queue." });
   }
+});
+
+/** GET /admin/analysis-jobs/:id/roster-hints — a read-only preview for one job. */
+router.get("/admin/analysis-jobs/:id/roster-hints", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid job id" }); return; }
+  const [job] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, id));
+  if (!job) { res.status(404).json({ error: "No such analysis job" }); return; }
+  const rosterHints = await buildRosterHintsForJob(job.recordingId, job.sourceRecordingIds);
+  res.json({ rosterHints: rosterHints ?? null });
 });
 
 /** GET /admin/analysis-jobs/recordings — what can be analysed, newest first. */
@@ -469,13 +488,20 @@ router.post("/worker/analysis/claim", async (req, res): Promise<void> => {
     if (!claimed) { res.json({ job: null }); return; }
     const found = await loadSources(claimed.sourceRecordingIds);
     const byId = new Map(found.map((row) => [row.id, row]));
+    const params = { ...claimed.params };
+    const suppliedRosterHints = params.rosterHints;
+    if (typeof suppliedRosterHints !== "object" || suppliedRosterHints === null || Array.isArray(suppliedRosterHints)) {
+      delete params.rosterHints;
+      const rosterHints = await buildRosterHintsForJob(claimed.recordingId, claimed.sourceRecordingIds);
+      if (rosterHints) params.rosterHints = rosterHints;
+    }
     logger.info({ jobId: claimed.id, workerId }, "Analysis job claimed");
     res.json({
       job: {
         id: claimed.id,
         recordingId: claimed.recordingId,
         matchStartSeconds: claimed.matchStartSeconds,
-        params: claimed.params,
+        params,
         attempts: claimed.attempts,
         sources: claimed.sourceRecordingIds
           .map((id) => byId.get(id))

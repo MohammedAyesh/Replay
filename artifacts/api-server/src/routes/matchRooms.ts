@@ -324,11 +324,14 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
     },
     title: room.title,
     playersPerSide: room.playersPerSide,
+    substitutesPerTeam: room.substitutesPerTeam,
     teamCount,
     teams: {
-      A: { name: room.teamAName, color: room.teamAColor },
-      B: { name: room.teamBName, color: room.teamBColor },
-      ...(teamCount === 3 ? { C: { name: room.teamCName, color: room.teamCColor } } : {}),
+      A: { name: room.teamAName, color: room.teamAColor, shirtsHaveNumbers: room.teamAShirtsHaveNumbers },
+      B: { name: room.teamBName, color: room.teamBColor, shirtsHaveNumbers: room.teamBShirtsHaveNumbers },
+      ...(teamCount === 3 ? {
+        C: { name: room.teamCName, color: room.teamCColor, shirtsHaveNumbers: room.teamCShirtsHaveNumbers },
+      } : {}),
     },
     // Two teams: one score line. Three teams: the table (standings) is the result.
     score: teamCount === 2 && room.scoreA !== null && room.scoreB !== null ? { a: room.scoreA, b: room.scoreB } : null,
@@ -1297,6 +1300,10 @@ const roomPatchSchema = z.object({
   teamCColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   teamCount: z.union([z.literal(2), z.literal(3)]).optional(),
   playersPerSide: z.number().int().min(3).max(11).optional(),
+  substitutesPerTeam: z.number().int().min(0).max(10).nullable().optional(),
+  teamAShirtsHaveNumbers: z.enum(["yes", "no", "unknown"]).optional(),
+  teamBShirtsHaveNumbers: z.enum(["yes", "no", "unknown"]).optional(),
+  teamCShirtsHaveNumbers: z.enum(["yes", "no", "unknown"]).optional(),
 });
 
 router.patch("/m/:code", async (req, res): Promise<void> => {

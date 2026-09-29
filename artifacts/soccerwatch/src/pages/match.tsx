@@ -891,6 +891,19 @@ function RoomEditor({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
   const [c, setC] = useState(room.teams.C?.name ?? "");
   const [teamCount, setTeamCount] = useState<2 | 3>(room.teamCount);
   const [pps, setPps] = useState(room.playersPerSide);
+  const [subs, setSubs] = useState(room.substitutesPerTeam === null ? "" : String(room.substitutesPerTeam));
+  const [shirtStatuses, setShirtStatuses] = useState({
+    A: room.teams.A.shirtsHaveNumbers,
+    B: room.teams.B.shirtsHaveNumbers,
+    C: room.teams.C?.shirtsHaveNumbers ?? "unknown" as const,
+  });
+  const parsedSubs = subs.trim() === "" ? null : Number(subs);
+  const subsValid = parsedSubs === null || (Number.isInteger(parsedSubs) && parsedSubs >= 0 && parsedSubs <= 10);
+  const shirtTeams = [
+    { key: "A" as const, label: copy.teamA },
+    { key: "B" as const, label: copy.teamB },
+    ...(teamCount === 3 ? [{ key: "C" as const, label: copy.teamC }] : []),
+  ];
   if (!open) {
     return <button type="button" onClick={() => setOpen(true)} className="self-start text-xs font-semibold text-muted-text underline underline-offset-2">{copy.editMatch}</button>;
   }
@@ -920,14 +933,69 @@ function RoomEditor({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
         </div>
       </div>
       {teamCount === 3 && <p className="mt-1.5 text-[11px] leading-4 text-muted-text">{copy.threeTeamsHint}</p>}
-      <div className="mt-3 flex items-center justify-between">
-        <span className="text-xs text-muted-text">{copy.format}</span>
-        <Stepper value={pps} min={3} max={11} onChange={setPps} label={`${pps}v${pps}`} />
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-text">{copy.format}</span>
+          <Stepper value={pps} min={3} max={11} onChange={setPps} label={`${pps}v${pps}`} />
+        </div>
+        <label className="flex items-center justify-between gap-3 text-xs text-muted-text">
+          <span>{copy.substitutesPerTeam}</span>
+          <input
+            type="number"
+            min={0}
+            max={10}
+            step={1}
+            inputMode="numeric"
+            value={subs}
+            onChange={(e) => setSubs(e.target.value)}
+            aria-label={copy.substitutesPerTeam}
+            className="min-h-10 w-20 rounded-xl border border-line bg-void px-2 text-center text-sm text-text outline-none focus:border-turf"
+            dir="ltr"
+          />
+        </label>
+      </div>
+      <p className="mt-1 text-[11px] leading-4 text-muted-text">{copy.substitutesHint}</p>
+      <div className="mt-3 space-y-3">
+        {shirtTeams.map(({ key, label }) => (
+          <div key={key} className="rounded-xl border border-line/70 p-3">
+            <p className="text-xs font-semibold text-muted-text">{label} · {copy.shirtsHaveNumbers}</p>
+            <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label={`${label}: ${copy.shirtsHaveNumbers}`}>
+              {([
+                ["yes", copy.shirtsYes],
+                ["no", copy.shirtsNo],
+                ["unknown", copy.shirtsNotSure],
+              ] as const).map(([value, optionLabel]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={shirtStatuses[key] === value}
+                  onClick={() => setShirtStatuses((current) => ({ ...current, [key]: value }))}
+                  className={cn(
+                    "min-h-9 rounded-full border px-3 text-xs font-semibold",
+                    shirtStatuses[key] === value
+                      ? "border-turf bg-turf/15 text-turf"
+                      : "border-line text-muted-text",
+                  )}
+                >
+                  {optionLabel}
+                </button>
+              ))}
+            </div>
+            {room.isCaptain && shirtStatuses[key] === "yes" && (
+              <p className="mt-2 text-[11px] leading-4 text-muted-text">{copy.shirtNumberReminder}</p>
+            )}
+          </div>
+        ))}
       </div>
       <div className="mt-4 flex gap-2">
-        <button type="button" disabled={update.isPending} onClick={() => void update.mutateAsync({
+        <button type="button" disabled={update.isPending || !subsValid} onClick={() => void update.mutateAsync({
           title: title.trim() || null, teamAName: a.trim() || null, teamBName: b.trim() || null,
           ...(teamCount === 3 ? { teamCName: c.trim() || null } : {}), teamCount, playersPerSide: pps,
+          substitutesPerTeam: parsedSubs,
+          teamAShirtsHaveNumbers: shirtStatuses.A,
+          teamBShirtsHaveNumbers: shirtStatuses.B,
+          ...(teamCount === 3 ? { teamCShirtsHaveNumbers: shirtStatuses.C } : {}),
         }).then(() => setOpen(false))} className="min-h-11 flex-1 rounded-full bg-floodlight text-sm font-bold text-void">{copy.save}</button>
         <button type="button" onClick={() => setOpen(false)} className="min-h-11 flex-1 rounded-full border border-line text-sm font-semibold">{copy.cancel}</button>
       </div>

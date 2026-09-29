@@ -22,10 +22,29 @@ interface SourceDescriptor {
   durationSeconds: number | null;
 }
 
+type RosterHintTeam = {
+  key: "A" | "B" | "C";
+  name: string | null;
+  color: string;
+  shirtsHaveNumbers: "yes" | "no" | "unknown" | "yes, inferred";
+  shirtNumbers: number[];
+  squadSize: number;
+};
+
+type RosterHints = {
+  matchCode: string;
+  playersPerSide: number;
+  teamCount: 2 | 3;
+  substitutesPerTeam: number;
+  teams: RosterHintTeam[];
+  totalPlayersExpected: number;
+};
+
 interface Job {
   id: number;
   recordingId: number;
   recordingLabel: string | null;
+  rosterHints: RosterHints | null;
   sourceRecordingIds: number[];
   sources: SourceDescriptor[];
   bundleRecordingIds: number[];
@@ -96,6 +115,37 @@ function recordingLabel(option: RecordingOption): string {
   return [option.fieldName, option.court, option.date, option.timeSlot]
     .filter(Boolean)
     .join(" · ");
+}
+
+const COLOR_NAMES: Record<string, string> = {
+  "#F2F4F8": "white",
+  "#FF6B1A": "orange",
+  "#7AA2FF": "blue",
+  "#0B0F1A": "black",
+  "#2FD8C4": "teal",
+  "#FFD23F": "yellow",
+  "#E23B3B": "red",
+  "#1F8A4C": "green",
+};
+
+function rosterHintLine(hints: RosterHints | null): string {
+  if (!hints) return "No match room linked";
+  const teams = hints.teams.map((team) => {
+    const label = team.name?.trim() || COLOR_NAMES[team.color.toUpperCase()] || team.color;
+    let numbers: string;
+    if (team.shirtNumbers.length) {
+      numbers = team.shirtNumbers.join(", ");
+      if (team.shirtsHaveNumbers === "yes, inferred") numbers += " (yes, inferred)";
+    } else if (team.shirtsHaveNumbers === "no") {
+      numbers = "no numbers";
+    } else if (team.shirtsHaveNumbers === "yes") {
+      numbers = "yes; none entered";
+    } else {
+      numbers = "number status unknown";
+    }
+    return `${team.key} ${label}: ${numbers}`;
+  });
+  return `${hints.playersPerSide} a side · ${hints.substitutesPerTeam} subs · ${teams.join(" · ")}`;
 }
 
 export default function AnalysisTab() {
@@ -387,6 +437,10 @@ export default function AnalysisTab() {
               {" · GPU: "}{job.params?.gpu && job.params.gpu !== "auto" ? job.params.gpu : "Auto"}
               {job.bundleRecordingIds.length > 0 &&
                 ` · ${job.bundleRecordingIds.length}/${job.sources.length} bundles attached`}
+            </p>
+            <p className="text-zinc-400 text-xs mt-1.5">
+              <span className="text-zinc-500">Roster for analysis: </span>
+              {rosterHintLine(job.rosterHints)}
             </p>
 
             {job.status === "queued" && (
