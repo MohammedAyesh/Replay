@@ -53,5 +53,17 @@ BUNNY_STORAGE_HOSTNAME = "storage.bunnycdn.com"
 defaultBucketID = "replit-objstore-2c134a01-f9f8-464d-94bb-e95a0528ae27"
 
 [[ports]]
+localPort = 8080
+externalPort = 80
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
 localPort = 8082
 externalPort = 3001
+
+[[ports]]
+localPort = 20097
+externalPort = 3000
