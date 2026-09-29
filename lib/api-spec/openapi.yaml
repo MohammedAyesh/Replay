@@ -5184,7 +5184,7 @@ components:
 
     ClaimMatchRosterPart:
       type: object
-      required: [segmentIndex, segmentName, trackId, fromFrame, toFrame, segmentStartFrame, absoluteFromFrame, absoluteToFrame]
+      required: [segmentIndex, segmentName, trackId, fromFrame, toFrame]
       properties:
         segmentIndex:
           type: integer
@@ -5196,18 +5196,11 @@ components:
         fromFrame:
           type: integer
           minimum: 0
+          description: Exact start frame from the referenced track in its stored bundle segment.
         toFrame:
           type: integer
           minimum: 0
-        segmentStartFrame:
-          type: integer
-          minimum: 0
-        absoluteFromFrame:
-          type: integer
-          minimum: 0
-        absoluteToFrame:
-          type: integer
-          minimum: 0
+          description: Exact end frame from the referenced track in its stored bundle segment.
 
     ClaimMatchRosterPhoto:
       type: object

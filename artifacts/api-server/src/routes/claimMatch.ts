@@ -934,12 +934,6 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
     try {
       matchRoster = parseMatchRoster(
         JSON.parse(strFromU8(entries[matchRosterEntry])),
-        segments.map((segment) => ({
-          index: segment.segmentIndex,
-          name: segment.name,
-          startFrame: segment.startFrame,
-          endFrame: segment.endFrame,
-        })),
         segments,
       ) ?? undefined;
     } catch {
@@ -2539,11 +2533,11 @@ async function rosterPlayersWithPhotos(
             typeof value.j === "string"
             && typeof value.f === "number"
             && Number.isFinite(value.f)
-            && value.f >= part.absoluteFromFrame
-            && value.f <= part.absoluteToFrame
+            && value.f >= part.fromFrame
+            && value.f <= part.toFrame
           ));
         if (!candidates.length) return [];
-        const targetFrame = (part.absoluteFromFrame + part.absoluteToFrame) / 2;
+        const targetFrame = (part.fromFrame + part.toFrame) / 2;
         const photo = candidates.reduce((best, candidate) => (
           Math.abs((candidate.f as number) - targetFrame) < Math.abs((best.f as number) - targetFrame)
             ? candidate

@@ -13,6 +13,60 @@ function makeZip(manifest: Record<string, unknown>, segments: Record<string, unk
 }
 
 describe("claim match segmented bundles", () => {
+  it("resolves match roster segment/track pairs from the stored segment bounds without offsetting", () => {
+    const manifest = {
+      version: 1,
+      label: "rostered match",
+      width: 1920,
+      height: 1080,
+      frameRate: 25,
+      frameCount: 200,
+      duration: 8,
+      segmentCount: 1,
+      segments: [
+        { index: 0, name: "c2", startFrame: 100, endFrame: 199, startSeconds: 4, endSeconds: 8 },
+      ],
+    };
+    const payload = {
+      tracks: [{
+        id: "t12",
+        startFrame: 105,
+        endFrame: 150,
+        boxes: [
+          { frame: 105, x: 1, y: 1, w: 10, h: 20 },
+          { frame: 150, x: 2, y: 2, w: 10, h: 20 },
+        ],
+      }],
+      crossings: [],
+      inPlaySpans: [],
+      events: [],
+    };
+    const zip = zipSync({
+      "manifest.json": strToU8(JSON.stringify(manifest)),
+      "segments/c2.json": strToU8(JSON.stringify(payload)),
+      "people/match.json": strToU8(JSON.stringify({
+        players: [{
+          id: "player-12",
+          name: "Sam",
+          number: 12,
+          minutes: 38,
+          parts: [["c2", "t12"]],
+        }],
+      })),
+    });
+
+    const result = parseZipBundleDetailed(Buffer.from(zip));
+
+    expect(result.error).toBeNull();
+    expect(result.upload?.matchRoster?.players[0].parts).toEqual([{
+      segmentIndex: 0,
+      segmentName: "c2",
+      trackId: "s0:t12",
+      fromFrame: 105,
+      toFrame: 150,
+    }]);
+  });
+
   it("parses a manifest plus segment files and namespaces local track IDs", () => {
     const manifest = {
       version: 1,

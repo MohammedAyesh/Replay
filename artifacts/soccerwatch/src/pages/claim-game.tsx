@@ -783,15 +783,15 @@ export function GameClaim({
     for (const part of player.parts) {
       if (
         !Number.isInteger(part.segmentIndex)
-        || !Number.isSafeInteger(part.absoluteFromFrame)
-        || !Number.isSafeInteger(part.absoluteToFrame)
-        || part.absoluteToFrame <= part.absoluteFromFrame
+        || !Number.isSafeInteger(part.fromFrame)
+        || !Number.isSafeInteger(part.toFrame)
+        || part.toFrame <= part.fromFrame
       ) continue;
       const ranges = byChunk.get(part.segmentIndex) ?? [];
       ranges.push({
         trackId: part.trackId,
-        fromFrame: part.absoluteFromFrame,
-        toFrame: part.absoluteToFrame,
+        fromFrame: part.fromFrame,
+        toFrame: part.toFrame,
       });
       byChunk.set(part.segmentIndex, ranges);
     }

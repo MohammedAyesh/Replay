@@ -11,14 +11,14 @@ export interface ClaimMatchRosterPart {
   segmentIndex: number;
   segmentName: string;
   trackId: string;
-  /** @minimum 0 */
+  /**
+     * Exact start frame from the referenced track in its stored bundle segment.
+     * @minimum 0
+     */
   fromFrame: number;
-  /** @minimum 0 */
+  /**
+     * Exact end frame from the referenced track in its stored bundle segment.
+     * @minimum 0
+     */
   toFrame: number;
-  /** @minimum 0 */
-  segmentStartFrame: number;
-  /** @minimum 0 */
-  absoluteFromFrame: number;
-  /** @minimum 0 */
-  absoluteToFrame: number;
 }

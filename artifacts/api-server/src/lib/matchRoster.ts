@@ -5,13 +5,9 @@ export type MatchRosterPart = {
   segmentIndex: number;
   segmentName: string;
   trackId: string;
-  /** Frames as supplied by the pipeline, local to segmentStartFrame. */
+  /** The referenced track's exact frame bounds in the bundle's tracking timeline. */
   fromFrame: number;
   toFrame: number;
-  segmentStartFrame: number;
-  /** Absolute tracking frames used when saving a claim. */
-  absoluteFromFrame: number;
-  absoluteToFrame: number;
 };
 
 export type MatchRosterPlayer = {
@@ -32,13 +28,6 @@ export type MatchRosterSummary = {
 
 const MAX_MATCH_ROSTER_PLAYERS = 200;
 const MAX_MATCH_ROSTER_PARTS_PER_PLAYER = 256;
-
-type RosterSegment = {
-  index: number;
-  name: string;
-  startFrame: number;
-  endFrame: number;
-};
 
 function rosterId(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) return value.trim().slice(0, 120);
@@ -65,16 +54,12 @@ function namespacedTrackId(segmentIndex: number, value: unknown): string | null 
  */
 export function parseMatchRoster(
   input: unknown,
-  segments: RosterSegment[],
-  trackingSegments?: TrackingSegmentPayload[],
+  trackingSegments: TrackingSegmentPayload[],
 ): MatchRoster | null {
   const raw = asRecord(input);
   if (!Array.isArray(raw.players)) return null;
 
-  const segmentByName = new Map(segments.map((segment) => [segment.name, segment]));
-  const tracksBySegment = trackingSegments
-    ? new Map(trackingSegments.map((segment) => [segment.segmentIndex, new Set(segment.tracks.map((track) => track.id))]))
-    : null;
+  const segmentByName = new Map(trackingSegments.map((segment) => [segment.name, segment]));
   const seenPlayerIds = new Set<string>();
   const assignedTracks = new Set<string>();
   const players: MatchRosterPlayer[] = [];
@@ -87,49 +72,35 @@ export function parseMatchRoster(
     const parts: MatchRosterPart[] = [];
     const ownParts = new Set<string>();
     for (const valuePart of player.parts.slice(0, MAX_MATCH_ROSTER_PARTS_PER_PLAYER)) {
-      const part = asRecord(valuePart);
-      const segmentName = firstString(part.segment, part.segmentName, part.segment_name, part.name);
+      if (!Array.isArray(valuePart) || valuePart.length !== 2) continue;
+      const segmentName = firstString(valuePart[0]);
       const segment = segmentName ? segmentByName.get(segmentName) : undefined;
-      const trackId = segment ? namespacedTrackId(segment.index, part.trackId ?? part.track_id) : null;
-      const fromFrame = firstNumber(part.fromFrame, part.from_frame);
-      const toFrame = firstNumber(part.toFrame, part.to_frame);
-      const segmentStartFrame = firstNumber(part.segmentStartFrame, part.segment_start_frame);
+      const trackId = segment ? namespacedTrackId(segment.segmentIndex, valuePart[1]) : null;
+      const track = segment?.tracks.find((candidate) => candidate.id === trackId);
+      const fromFrame = track?.startFrame;
+      const toFrame = track?.endFrame;
       if (
         !segment
         || !trackId
+        || !track
         || fromFrame === undefined
         || toFrame === undefined
-        || segmentStartFrame === undefined
         || !Number.isSafeInteger(fromFrame)
         || !Number.isSafeInteger(toFrame)
-        || !Number.isSafeInteger(segmentStartFrame)
         || fromFrame < 0
-        || toFrame < fromFrame
-        || segmentStartFrame < 0
+        || toFrame <= fromFrame
       ) continue;
-      const absoluteFromFrame = segmentStartFrame + fromFrame;
-      const absoluteToFrame = segmentStartFrame + toFrame;
-      if (
-        !Number.isSafeInteger(absoluteFromFrame)
-        || !Number.isSafeInteger(absoluteToFrame)
-        || absoluteFromFrame < segment.startFrame
-        || absoluteToFrame > segment.endFrame + 1
-      ) continue;
-      if (tracksBySegment && !tracksBySegment.get(segment.index)?.has(trackId)) continue;
 
-      const key = `${segment.index}\u0000${trackId}\u0000${absoluteFromFrame}\u0000${absoluteToFrame}`;
-      if (ownParts.has(key) || assignedTracks.has(`${segment.index}\u0000${trackId}`)) continue;
+      const key = `${segment.segmentIndex}\u0000${trackId}`;
+      if (ownParts.has(key) || assignedTracks.has(key)) continue;
       ownParts.add(key);
-      assignedTracks.add(`${segment.index}\u0000${trackId}`);
+      assignedTracks.add(key);
       parts.push({
-        segmentIndex: segment.index,
+        segmentIndex: segment.segmentIndex,
         segmentName: segment.name,
         trackId,
         fromFrame,
         toFrame,
-        segmentStartFrame,
-        absoluteFromFrame,
-        absoluteToFrame,
       });
     }
     if (!parts.length) continue;
@@ -142,7 +113,7 @@ export function parseMatchRoster(
       name: name?.trim().slice(0, 120) || null,
       number: shirtNumber(player.number),
       minutes: minutes !== undefined && minutes >= 0 ? minutes : 0,
-      parts: parts.sort((a, b) => a.segmentIndex - b.segmentIndex || a.absoluteFromFrame - b.absoluteFromFrame),
+      parts: parts.sort((a, b) => a.segmentIndex - b.segmentIndex || a.fromFrame - b.fromFrame),
     });
   }
 

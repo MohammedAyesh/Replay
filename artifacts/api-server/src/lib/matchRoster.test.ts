@@ -1,22 +1,33 @@
 import { describe, expect, it } from "vitest";
+import type { TrackingSegmentPayload } from "@workspace/db";
 import { parseMatchRoster, summarizeMatchRoster } from "./matchRoster";
 
 const segments = [
-  { index: 0, name: "first-half", startFrame: 100, endFrame: 199 },
-  { index: 1, name: "second-half", startFrame: 200, endFrame: 299 },
-];
+  {
+    segmentIndex: 0,
+    name: "first-half",
+    startFrame: 100,
+    endFrame: 199,
+    tracks: [{ id: "s0:t1", startFrame: 110, endFrame: 180, boxes: [] }],
+  },
+  {
+    segmentIndex: 1,
+    name: "second-half",
+    startFrame: 200,
+    endFrame: 299,
+    tracks: [{ id: "s1:t41", startFrame: 208, endFrame: 224, boxes: [] }],
+  },
+] as unknown as TrackingSegmentPayload[];
 
 describe("parseMatchRoster", () => {
-  it("keeps valid names, shirt numbers, minutes, and absolute namespaced parts", () => {
+  it("resolves segment/local-track pairs to the referenced track's exact stored frame bounds", () => {
     const roster = parseMatchRoster({
       players: [{
         player_id: "player-7",
         name: "  Sam  ",
         number: "07",
         minutes: 51.5,
-        parts: [
-          { segment_name: "second-half", track_id: "t41", from_frame: 8, to_frame: 24, segment_start_frame: 200 },
-        ],
+        parts: [["second-half", "t41"]],
       }],
     }, segments);
 
@@ -31,11 +42,8 @@ describe("parseMatchRoster", () => {
           segmentIndex: 1,
           segmentName: "second-half",
           trackId: "s1:t41",
-          fromFrame: 8,
-          toFrame: 24,
-          segmentStartFrame: 200,
-          absoluteFromFrame: 208,
-          absoluteToFrame: 224,
+          fromFrame: 208,
+          toFrame: 224,
         }],
       }],
     });
@@ -52,7 +60,7 @@ describe("parseMatchRoster", () => {
     expect(parseMatchRoster({
       players: [{
         id: "bad-player",
-        parts: [{ segment: "first-half", track_id: "t1", from_frame: 120, to_frame: 130, segment_start_frame: 100 }],
+        parts: [{ segment: "first-half", track_id: "t1" }],
       }],
     }, segments)).toBeNull();
   });
@@ -61,12 +69,9 @@ describe("parseMatchRoster", () => {
     const roster = parseMatchRoster({
       players: [{
         id: "player-1",
-        parts: [{ segment: "first-half", track_id: "t404", from_frame: 0, to_frame: 10, segment_start_frame: 100 }],
+        parts: [["first-half", "t404"]],
       }],
-    }, segments, [{
-      segmentIndex: 0,
-      tracks: [{ id: "s0:t1" }],
-    } as never]);
+    }, segments);
 
     expect(roster).toBeNull();
   });

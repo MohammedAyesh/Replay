@@ -955,12 +955,6 @@ export const getClaimMatchRosterResponsePlayersItemPartsItemFromFrameMin = 0;
 
 export const getClaimMatchRosterResponsePlayersItemPartsItemToFrameMin = 0;
 
-export const getClaimMatchRosterResponsePlayersItemPartsItemSegmentStartFrameMin = 0;
-
-export const getClaimMatchRosterResponsePlayersItemPartsItemAbsoluteFromFrameMin = 0;
-
-export const getClaimMatchRosterResponsePlayersItemPartsItemAbsoluteToFrameMin = 0;
-
 export const getClaimMatchRosterResponsePlayersItemPhotosItemSegmentIndexMin = 0;
 
 export const getClaimMatchRosterResponsePlayersItemPhotosItemFrameMin = 0;
@@ -977,11 +971,8 @@ export const GetClaimMatchRosterResponse = zod.object({
   "segmentIndex": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemSegmentIndexMin),
   "segmentName": zod.string(),
   "trackId": zod.string(),
-  "fromFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemFromFrameMin),
-  "toFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemToFrameMin),
-  "segmentStartFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemSegmentStartFrameMin),
-  "absoluteFromFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemAbsoluteFromFrameMin),
-  "absoluteToFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemAbsoluteToFrameMin)
+  "fromFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemFromFrameMin).describe('Exact start frame from the referenced track in its stored bundle segment.'),
+  "toFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemToFrameMin).describe('Exact end frame from the referenced track in its stored bundle segment.')
 })),
   "photos": zod.array(zod.object({
   "trackId": zod.string(),
