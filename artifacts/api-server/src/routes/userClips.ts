@@ -490,7 +490,7 @@ async function updateClipScore(clipId: number): Promise<number> {
  * ready (or close to it) by the time the user taps Download.
  *
  * Callers must:
- *   1. Guard on !isLiveVideoId and isBunnyStorageConfigured() before calling.
+ *   1. Guard on !isLiveVideoId before calling.
  *   2. Add clipId to inFlight and mark exportStatus "pending" in the DB *before*
  *      calling, so polls and duplicate requests see the correct state.
  *   3. Not await this — it is intentionally fire-and-forget via withRenderSlot.
@@ -959,7 +959,8 @@ startBackupStorageUrlUpgradeSweep();
 /**
  * Queue the existing MP4 export pipeline for a live capture after its Bunny
  * Stream source is ready. The persisted fractions must already be normalized
- * against the source duration before this is called.
+ * against the source duration before this is called. Either renderer can own
+ * the job; with neither configured, the row is marked error for later repair.
  */
 export async function queueUserClipExport(clip: typeof userClipsTable.$inferSelect): Promise<string | null> {
   if (isLiveVideoId(clip.videoId)) return null;

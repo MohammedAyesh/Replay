@@ -4,16 +4,15 @@
  * Method A is this server's own pipeline (ffmpegExport.ts → Bunny Storage). It
  * runs on Replit, in this Node process, with Replit's FFmpeg and Replit's
  * Bunny Storage key. Method B shares none of that: it runs on vps1 (Contabo),
- * is written in Python, renders with its own crop implementation on Ubuntu's
- * FFmpeg, reads the source over the public HLS playlist, and keeps the MP4 on
- * vps1's disk, which the control API serves. The only thing the two have in
- * common is the recording on Bunny Stream, because that is the only place the
- * footage exists.
+ * is written in Python and renders with its own crop implementation on
+ * Ubuntu's FFmpeg. It serves the local MP4 while working and can expose its
+ * verified Bunny Storage copy after upload.
  *
  * A finished Method B export is recorded in `user_clips.exported_url` as
  * `vps1-export:<job>` — not a URL anyone can fetch, a reference only this
- * server can resolve (with the control key). Every reader of exported_url goes
- * through `fetchExportObject` so both kinds work everywhere.
+ * server can resolve (with the control key). Once the storage copy is reported,
+ * the reference is upgraded to its Bunny URL; both formats remain readable
+ * during migration through `fetchExportObject`.
  *
  * Why this exists: on 2026-09-29 five exports in a row failed because the
  * branding overlay returned 401 from Bunny Storage, and one failed dependency
@@ -72,7 +71,7 @@ export type BackupExportStatus = {
   running: boolean;
   output: { bytes: number; duration: number; width: number; height: number } | null;
   /** Bunny Storage copy, when vps1 has verified and published one. */
-  storageUrl: string | null;
+  storageUrl?: string | null;
 };
 
 export type BackupExportSpec = {
@@ -167,7 +166,7 @@ export function validatedBackupStorageUrl(status: BackupExportStatus): string | 
 
   try {
     const url = new URL(candidate);
-    if (url.protocol !== "https:") return null;
+    if (url.protocol !== "https:" || url.search || url.hash) return null;
     const zone = BUNNY_STORAGE_ZONE.replace(/^\/+|\/+$/g, "");
     const pathname = decodeURIComponent(url.pathname).replace(/^\/+/, "");
     const expectedPath = `${zone}/clips/${status.job}.mp4`;
