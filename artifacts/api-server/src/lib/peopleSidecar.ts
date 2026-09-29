@@ -25,6 +25,8 @@ export type PeopleGroup = {
   dur: number;
   team: string | null;
   torso: [number, number, number] | null;
+  player?: string;
+  number?: string | number;
   members: string[];
   junctions: PeopleJunction[];
   nb: Array<[number, string]>;
@@ -67,11 +69,23 @@ export function parsePeopleSidecar(input: unknown, segmentIndex: number): People
     const g = value as Record<string, unknown>;
     const members = Array.isArray(g?.members) ? (g.members as unknown[]).map(ns) : [];
     if (!members.length) continue;
+    const player = typeof g.player === "string" && g.player.trim()
+      ? g.player.trim()
+      : typeof g.player === "number" && Number.isSafeInteger(g.player)
+        ? String(g.player)
+        : undefined;
+    const number = typeof g.number === "string" && g.number.trim()
+      ? g.number.trim()
+      : typeof g.number === "number" && Number.isFinite(g.number)
+        ? g.number
+        : undefined;
     groups.push({
       cid: ns(g.cid ?? members[0]),
       dur: num(g.dur),
       team: typeof g.team === "string" ? g.team : null,
       torso: triple(g.torso),
+      ...(player !== undefined ? { player } : {}),
+      ...(number !== undefined ? { number } : {}),
       members,
       junctions: (Array.isArray(g.junctions) ? g.junctions : []).map((j) => {
         const r = j as Record<string, unknown>;

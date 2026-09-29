@@ -13,6 +13,12 @@ import { sql } from "drizzle-orm";
 import { recordingsTable } from "./recordings";
 import { usersTable } from "./users";
 
+export type TrackingMatchRosterSummary = {
+  playerCount: number;
+  numberedPlayerCount: number;
+  playerMinutes: number;
+};
+
 export type ClaimEarnedClip = {
   id: string;
   title: string;
@@ -107,6 +113,10 @@ export type TrackingManifest = {
     /** Normalized shirt-number readings from jersey/<segment>.json, when present. */
     jerseyPath?: string;
   }>;
+  /** Match-wide roster sidecar stored beside the per-segment sidecars. */
+  matchRosterPath?: string;
+  /** Compact index for the admin analysis queue; the full roster remains in object storage. */
+  matchRosterSummary?: TrackingMatchRosterSummary;
   /**
    * Optional camera-to-pitch calibration. Grid rows run from the top of the
    * image to the bottom and columns from left to right; each point is a pitch

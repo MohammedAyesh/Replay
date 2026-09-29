@@ -9,6 +9,8 @@ import { z } from "zod";
 import {
   GetClaimMatchResponse,
   GetClaimMatchParams,
+  GetClaimMatchRosterParams,
+  GetClaimMatchRosterResponse,
   GetClaimMatchSegmentParams,
   GetClaimMatchSegmentResponse,
   ListClaimMatchClipsResponse,
@@ -65,6 +67,11 @@ import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { parseBallSidecar, type BallSidecar } from "../lib/matchPlay";
 import { playCache } from "../lib/matchPlayLoad";
 import { parsePeopleSidecar, type PeopleSidecar } from "../lib/peopleSidecar";
+import {
+  parseMatchRoster,
+  summarizeMatchRoster,
+  type MatchRoster,
+} from "../lib/matchRoster";
 import { parseJerseySidecar, type JerseySidecar } from "../lib/jerseySidecar";
 import { ensureClaimMomentUserClip } from "./userClips";
 import {
@@ -498,6 +505,8 @@ export type UploadBundle = {
   people?: Record<number, PeopleSidecar>;
   /** Optional per-segment shirt numbers from jersey/<segment name>.json. */
   jersey?: Record<number, JerseySidecar>;
+  /** Optional match-wide roster from people/match.json. */
+  matchRoster?: MatchRoster;
 };
 
 export function summarizeTrackingSegments(segments: TrackingSegmentPayload[]): TrackingBundleSummary {
@@ -804,6 +813,9 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
   const ball: Record<number, BallSidecar> = {};
   const people: Record<number, PeopleSidecar> = {};
   const jersey: Record<number, JerseySidecar> = {};
+  const matchRosterEntry = entries["people/match.json"] ? "people/match.json" : null;
+  let matchRoster: MatchRoster | undefined;
+  if (matchRosterEntry) selectedEntries.add(matchRosterEntry);
   for (let index = 0; index < rawSegments.length; index++) {
     const entry = asRecord(rawSegments[index]);
     const startFrame = Math.max(0, Math.round(firstNumber(entry.startFrame, entry.start_frame) ?? 0));
@@ -870,7 +882,7 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
     }
 
     const peopleEntry = `people/${name}.json`;
-    if (entries[peopleEntry] && !selectedEntries.has(peopleEntry)) {
+    if (peopleEntry !== matchRosterEntry && entries[peopleEntry] && !selectedEntries.has(peopleEntry)) {
       selectedEntries.add(peopleEntry);
       try {
         const parsed = parsePeopleSidecar(JSON.parse(strFromU8(entries[peopleEntry])), index);
@@ -918,6 +930,23 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
     }
   }
 
+  if (matchRosterEntry) {
+    try {
+      matchRoster = parseMatchRoster(
+        JSON.parse(strFromU8(entries[matchRosterEntry])),
+        segments.map((segment) => ({
+          index: segment.segmentIndex,
+          name: segment.name,
+          startFrame: segment.startFrame,
+          endFrame: segment.endFrame,
+        })),
+        segments,
+      ) ?? undefined;
+    } catch {
+      // Match roster is optional; a malformed sidecar does not invalidate tracking.
+    }
+  }
+
   const declaredFrameCount = firstNumber(rawManifest.frameCount, rawManifest.frames);
   if (declaredFrameCount !== undefined && (!Number.isInteger(declaredFrameCount) || declaredFrameCount < 1)) {
     return { upload: null, error: "Manifest frame count must be a positive integer" };
@@ -940,6 +969,7 @@ export function parseZipBundleDetailed(buffer: Buffer): { upload: UploadBundle |
       ball,
       people,
       jersey,
+      ...(matchRoster ? { matchRoster } : {}),
       manifest: {
         version: Math.max(1, Math.round(firstNumber(rawManifest.version) ?? 1)),
         label: firstString(rawManifest.label, rawManifest.name) ?? "Match tracking",
@@ -2108,6 +2138,9 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
     ...(segment.peoplePath ? [segment.peoplePath] : []),
     ...(segment.jerseyPath ? [segment.jerseyPath] : []),
   ]) ?? [];
+  if (previousBundle?.manifest.matchRosterPath) {
+    previousObjectPaths.push(previousBundle.manifest.matchRosterPath);
+  }
   const storedSegments: Array<{
     segment: TrackingSegmentPayload;
     objectPath: string;
@@ -2117,6 +2150,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
   const ballPaths: Record<number, string> = {};
   const peoplePaths: Record<number, string> = {};
   const jerseyPaths: Record<number, string> = {};
+  let matchRosterPath: string | undefined;
   try {
     for (const segment of upload.segments) {
       const stored = await writeClaimSegment(`${recordingId}/${randomUUID()}-${segment.segmentIndex}.json.gz`, segment);
@@ -2142,6 +2176,13 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
         jerseyPaths[segment.segmentIndex] = storedJersey.objectPath;
       }
     }
+    if (upload.matchRoster) {
+      const storedRoster = await writeClaimSegment(
+        `${recordingId}/${randomUUID()}-match-roster.json.gz`,
+        upload.matchRoster,
+      );
+      matchRosterPath = storedRoster.objectPath;
+    }
     const bundleFingerprint = trackingBundleFingerprint(upload.manifest, upload.segments);
     const manifest: TrackingManifest = {
       ...upload.manifest,
@@ -2151,6 +2192,12 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
          identityMapBundleFingerprint: undefined,
        },
       summary: summarizeTrackingSegments(upload.segments),
+      ...(upload.matchRoster
+        ? {
+            matchRosterPath,
+            matchRosterSummary: summarizeMatchRoster(upload.matchRoster),
+          }
+        : {}),
       videoStartSeconds: Math.max(0, upload.manifest.videoStartSeconds ?? 0),
       segmentCount: storedSegments.length,
       segments: storedSegments.map(({ segment, objectPath }) => ({
@@ -2239,6 +2286,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       frameCoverage: `0-${manifest.frameCount - 1} (${manifest.frameCount} frames)`,
       videoStartSeconds: manifest.videoStartSeconds,
       segmentRanges: manifest.segments,
+      matchRosterSummary: manifest.matchRosterSummary ?? null,
       pitchModel: pitchModelSummary(manifest.pitchModel),
       uploadedAt: saved.updatedAt.toISOString(),
     };
@@ -2249,6 +2297,7 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       ...Object.values(ballPaths),
       ...Object.values(peoplePaths),
       ...Object.values(jerseyPaths),
+      ...(matchRosterPath ? [matchRosterPath] : []),
     ];
     await cleanupClaimObjects(newObjectPaths, "failed replacement");
     throw error;
@@ -2445,6 +2494,106 @@ router.get("/recordings/:id/claim-match/people/:segmentIndex", async (req, res):
     res.status(200).send(compressed);
   } catch {
     res.status(404).json({ error: "Grouping not found" });
+  }
+});
+
+function sampleRosterParts<T>(items: T[], maximum: number): T[] {
+  if (items.length <= maximum) return items;
+  if (maximum <= 1) return items.length ? [items[0]] : [];
+  return Array.from({ length: maximum }, (_, index) => (
+    items[Math.round(index * (items.length - 1) / (maximum - 1))]
+  ));
+}
+
+async function rosterPlayersWithPhotos(
+  manifest: TrackingManifest,
+  roster: MatchRoster,
+) {
+  const samplesByPlayer = roster.players.map((player) => sampleRosterParts(player.parts, 3));
+  const candidateSegmentIndexes = [...new Set(samplesByPlayer.flatMap((parts) => parts.map((part) => part.segmentIndex)))]
+    .sort((a, b) => a - b);
+  const previewSegmentIndexes = new Set(sampleRosterParts(candidateSegmentIndexes, 24));
+  const spriteData = new Map<number, Record<string, unknown>>();
+  const segmentByIndex = new Map(manifest.segments.map((segment) => [segment.index, segment]));
+
+  await Promise.all([...previewSegmentIndexes].map(async (index) => {
+    const segment = segmentByIndex.get(index);
+    if (!segment?.spritesPath) return;
+    try {
+      const bytes = await readClaimSegment(segment.spritesPath);
+      spriteData.set(index, asRecord(JSON.parse(bytes.toString("utf8"))));
+    } catch {
+      // A missing preview strip should not hide an otherwise valid roster.
+    }
+  }));
+
+  return roster.players.map((player, playerIndex) => {
+    const photos = samplesByPlayer[playerIndex]
+      .filter((part) => previewSegmentIndexes.has(part.segmentIndex))
+      .flatMap((part) => {
+        const strips = spriteData.get(part.segmentIndex)?.[part.trackId];
+        if (!Array.isArray(strips)) return [];
+        const candidates = strips
+          .map((value) => asRecord(value))
+          .filter((value) => (
+            typeof value.j === "string"
+            && typeof value.f === "number"
+            && Number.isFinite(value.f)
+            && value.f >= part.absoluteFromFrame
+            && value.f <= part.absoluteToFrame
+          ));
+        if (!candidates.length) return [];
+        const targetFrame = (part.absoluteFromFrame + part.absoluteToFrame) / 2;
+        const photo = candidates.reduce((best, candidate) => (
+          Math.abs((candidate.f as number) - targetFrame) < Math.abs((best.f as number) - targetFrame)
+            ? candidate
+            : best
+        ));
+        return [{
+          trackId: part.trackId,
+          segmentIndex: part.segmentIndex,
+          frame: photo.f as number,
+          jpeg: photo.j as string,
+        }];
+      });
+    return { ...player, photos };
+  });
+}
+
+/** GET /recordings/:id/claim-match/roster -- match-wide roster and a few existing crop samples. */
+router.get("/recordings/:id/claim-match/roster", async (req, res): Promise<void> => {
+  const userId = await requireAccountUser(req);
+  if (!userId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+  const params = GetClaimMatchRosterParams.safeParse({
+    id: recordingIdFromRequest(req.params.id),
+  });
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const access = await getClaimMatchBundleForRequest(req, params.data.id);
+  if (access.error) {
+    res.status(404).json({ error: access.error ?? "Recording not found", code: access.code ?? "recording_not_found" });
+    return;
+  }
+  const manifest = access.row?.bundle?.manifest;
+  if (!manifest?.matchRosterPath) {
+    res.status(404).json({ error: "No match roster for this recording" });
+    return;
+  }
+  try {
+    const bytes = await readClaimSegment(manifest.matchRosterPath);
+    const roster = JSON.parse(bytes.toString("utf8")) as MatchRoster;
+    const response = GetClaimMatchRosterResponse.parse({
+      players: await rosterPlayersWithPhotos(manifest, roster),
+    });
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.json(response);
+  } catch {
+    res.status(404).json({ error: "Match roster not found" });
   }
 });
 

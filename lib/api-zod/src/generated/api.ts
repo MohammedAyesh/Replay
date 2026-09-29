@@ -941,6 +941,59 @@ export const GetClaimMatchResponse = zod.object({
 
 
 /**
+ * @summary Get the optional match-wide player roster
+ */
+export const GetClaimMatchRosterParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const getClaimMatchRosterResponsePlayersItemMinutesMin = 0;
+
+export const getClaimMatchRosterResponsePlayersItemPartsItemSegmentIndexMin = 0;
+
+export const getClaimMatchRosterResponsePlayersItemPartsItemFromFrameMin = 0;
+
+export const getClaimMatchRosterResponsePlayersItemPartsItemToFrameMin = 0;
+
+export const getClaimMatchRosterResponsePlayersItemPartsItemSegmentStartFrameMin = 0;
+
+export const getClaimMatchRosterResponsePlayersItemPartsItemAbsoluteFromFrameMin = 0;
+
+export const getClaimMatchRosterResponsePlayersItemPartsItemAbsoluteToFrameMin = 0;
+
+export const getClaimMatchRosterResponsePlayersItemPhotosItemSegmentIndexMin = 0;
+
+export const getClaimMatchRosterResponsePlayersItemPhotosItemFrameMin = 0;
+
+
+
+export const GetClaimMatchRosterResponse = zod.object({
+  "players": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string().nullable(),
+  "number": zod.string().nullable(),
+  "minutes": zod.number().min(getClaimMatchRosterResponsePlayersItemMinutesMin),
+  "parts": zod.array(zod.object({
+  "segmentIndex": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemSegmentIndexMin),
+  "segmentName": zod.string(),
+  "trackId": zod.string(),
+  "fromFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemFromFrameMin),
+  "toFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemToFrameMin),
+  "segmentStartFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemSegmentStartFrameMin),
+  "absoluteFromFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemAbsoluteFromFrameMin),
+  "absoluteToFrame": zod.number().min(getClaimMatchRosterResponsePlayersItemPartsItemAbsoluteToFrameMin)
+})),
+  "photos": zod.array(zod.object({
+  "trackId": zod.string(),
+  "segmentIndex": zod.number().min(getClaimMatchRosterResponsePlayersItemPhotosItemSegmentIndexMin),
+  "frame": zod.number().min(getClaimMatchRosterResponsePlayersItemPhotosItemFrameMin),
+  "jpeg": zod.string()
+}))
+}))
+})
+
+
+/**
  * @summary List the current player's earned match moments
  */
 export const ListClaimMatchClipsResponseItem = zod.object({

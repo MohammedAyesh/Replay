@@ -55,6 +55,7 @@ import type {
   ClaimMatchDispute,
   ClaimMatchDisputesResponse,
   ClaimMatchResponse,
+  ClaimMatchRosterResponse,
   ClaimOffPitchDeleteResponse,
   ClaimOffPitchInput,
   ClaimOffPitchSpan,
@@ -2862,6 +2863,83 @@ export function useGetClaimMatch<TData = Awaited<ReturnType<typeof getClaimMatch
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetClaimMatchQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetClaimMatchRosterUrl = (id: number,) => {
+
+
+
+
+  return `/api/recordings/${id}/claim-match/roster`
+}
+
+/**
+ * @summary Get the optional match-wide player roster
+ */
+export const getClaimMatchRoster = async (id: number, options?: RequestInit): Promise<ClaimMatchRosterResponse> => {
+
+  return customFetch<ClaimMatchRosterResponse>(getGetClaimMatchRosterUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetClaimMatchRosterQueryKey = (id: number,) => {
+    return [
+    `/api/recordings/${id}/claim-match/roster`
+    ] as const;
+    }
+
+
+export const getGetClaimMatchRosterQueryOptions = <TData = Awaited<ReturnType<typeof getClaimMatchRoster>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchRoster>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetClaimMatchRosterQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getClaimMatchRoster>>> = ({ signal }) => getClaimMatchRoster(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchRoster>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetClaimMatchRosterQueryResult = NonNullable<Awaited<ReturnType<typeof getClaimMatchRoster>>>
+export type GetClaimMatchRosterQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the optional match-wide player roster
+ */
+
+export function useGetClaimMatchRoster<TData = Awaited<ReturnType<typeof getClaimMatchRoster>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getClaimMatchRoster>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetClaimMatchRosterQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

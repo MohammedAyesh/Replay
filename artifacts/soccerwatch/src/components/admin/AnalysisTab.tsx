@@ -40,11 +40,18 @@ type RosterHints = {
   totalPlayersExpected: number;
 };
 
+type MatchRosterSummary = {
+  playerCount: number;
+  numberedPlayerCount: number;
+  playerMinutes: number;
+};
+
 interface Job {
   id: number;
   recordingId: number;
   recordingLabel: string | null;
   rosterHints: RosterHints | null;
+  matchRosterSummary: MatchRosterSummary | null;
   sourceRecordingIds: number[];
   sources: SourceDescriptor[];
   bundleRecordingIds: number[];
@@ -146,6 +153,11 @@ function rosterHintLine(hints: RosterHints | null): string {
     return `${team.key} ${label}: ${numbers}`;
   });
   return `${hints.playersPerSide} a side · ${hints.substitutesPerTeam} subs · ${teams.join(" · ")}`;
+}
+
+function matchRosterSummaryLine(summary: MatchRosterSummary | null): string | null {
+  if (!summary) return null;
+  return `${summary.playerCount} players · ${summary.numberedPlayerCount} numbered · ${Math.round(summary.playerMinutes)} player-min`;
 }
 
 export default function AnalysisTab() {
@@ -442,6 +454,12 @@ export default function AnalysisTab() {
               <span className="text-zinc-500">Roster for analysis: </span>
               {rosterHintLine(job.rosterHints)}
             </p>
+            {job.matchRosterSummary && (
+              <p className="text-zinc-400 text-xs mt-1.5" data-testid={`match-roster-summary-${job.id}`}>
+                <span className="text-zinc-500">Tracking roster: </span>
+                {matchRosterSummaryLine(job.matchRosterSummary)}
+              </p>
+            )}
 
             {job.status === "queued" && (
               <p className="text-zinc-400 text-xs mt-1.5">

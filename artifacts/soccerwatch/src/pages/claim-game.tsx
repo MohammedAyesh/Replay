@@ -28,8 +28,11 @@ import {
   getClaimMatchSegment,
   getGetClaimChainQueryKey,
   getGetClaimMatchQueryKey,
+  getGetClaimMatchRosterQueryKey,
   useGetClaimChain,
   useGetClaimMatch,
+  useGetClaimMatchRoster,
+  type ClaimMatchRosterResponse,
   type TrackingManifest,
 } from "@workspace/api-client-react";
 
@@ -61,7 +64,7 @@ import {
   newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
   hkey, recordSwitch, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
-import { benchSpansOut, chainParts } from "@/lib/game-claim/parts";
+import { benchSpansOut, chainParts, materializeRosterParts } from "@/lib/game-claim/parts";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -72,6 +75,8 @@ type ClaimMatch = ClaimMatchWindow & {
   teamCount: number;
   recordingOffsetSec: number;
 };
+
+type MatchRosterPlayer = ClaimMatchRosterResponse["players"][number];
 
 type ServerGame = {
   state: (ClaimState & { saved?: number }) | null;
@@ -97,6 +102,7 @@ export default function ClaimGamePage() {
   const enabled = Number.isInteger(recordingId) && recordingId > 0 && Boolean(user) && !isGuest;
   const matchQueryKey = useMemo(() => getGetClaimMatchQueryKey(recordingId), [recordingId]);
   const chainQueryKey = useMemo(() => getGetClaimChainQueryKey(recordingId), [recordingId]);
+  const rosterQueryKey = useMemo(() => getGetClaimMatchRosterQueryKey(recordingId), [recordingId]);
   const claimQuery = useGetClaimMatch(recordingId, {
     query: {
       enabled,
@@ -106,6 +112,15 @@ export default function ClaimGamePage() {
     },
   });
   const chainQuery = useGetClaimChain(recordingId, { query: { enabled, queryKey: chainQueryKey } });
+  const rosterQuery = useGetClaimMatchRoster(recordingId, {
+    query: {
+      enabled,
+      queryKey: rosterQueryKey,
+      retry: false,
+      refetchOnWindowFocus: false,
+    },
+  });
+  const rosterPlayers = rosterQuery.data?.players ?? [];
   const manifest = claimQuery.data?.manifest;
   const recording = claimQuery.data?.recording ?? null;
 
@@ -203,6 +218,12 @@ export default function ClaimGamePage() {
       accountName={user?.name ?? ""}
       matches={server.matches ?? []}
       continuation={server.continuation ?? null}
+      rosterPlayers={rosterPlayers}
+      loadRoster={async () => {
+        if (rosterQuery.isFetched) return rosterQuery.data?.players ?? [];
+        const refreshed = await rosterQuery.refetch();
+        return refreshed.data?.players ?? [];
+      }}
     />
   );
 }
@@ -239,6 +260,8 @@ type Props = {
   accountName: string;
   matches: ClaimMatch[];
   continuation: ServerGame["continuation"];
+  rosterPlayers: MatchRosterPlayer[];
+  loadRoster: () => Promise<MatchRosterPlayer[]>;
 };
 
 type PendingNamePick = {
@@ -252,7 +275,7 @@ type PendingNamePick = {
 
 export function GameClaim({
   game, manifest, recordingId, videoUrl, eyebrow, saved, fingerprint, copy,
-  staleState = false,
+  staleState = false, rosterPlayers, loadRoster,
   identities, identityId, identityName, resetByAdmin, coveragePercent, accountName,
   matches, continuation,
 }: Props) {
@@ -325,6 +348,9 @@ export function GameClaim({
         },
       }).then((c) => {
         chunks.current[k] = c;
+        if (ctxRef.current.S.you[String(k)]?.rosterParts?.length) {
+          materializeRosterParts(ctxRef.current, k);
+        }
         setChunkVer((v) => v + 1);
         return c;
       }).catch((error) => {
@@ -743,8 +769,50 @@ export function GameClaim({
     startClaim(ctxRef.current);
     applyMatchWindows(ctxRef.current, matchChoices);
     bump();
+    const availableRoster = await loadRoster();
+    if (availableRoster.length) {
+      go("roster");
+      return;
+    }
     await ensure(ctxRef.current.S.k!);
     go("kit");
+  };
+
+  const pickRosterPlayer = (player: MatchRosterPlayer) => {
+    const byChunk = new Map<number, Array<{ trackId: string; fromFrame: number; toFrame: number }>>();
+    for (const part of player.parts) {
+      if (
+        !Number.isInteger(part.segmentIndex)
+        || !Number.isSafeInteger(part.absoluteFromFrame)
+        || !Number.isSafeInteger(part.absoluteToFrame)
+        || part.absoluteToFrame <= part.absoluteFromFrame
+      ) continue;
+      const ranges = byChunk.get(part.segmentIndex) ?? [];
+      ranges.push({
+        trackId: part.trackId,
+        fromFrame: part.absoluteFromFrame,
+        toFrame: part.absoluteToFrame,
+      });
+      byChunk.set(part.segmentIndex, ranges);
+    }
+    const firstChunk = game.chunks.find((chunk) => (
+      byChunk.has(chunk.k) && !Y(ctxRef.current, chunk.k).skipped
+    ));
+    if (!firstChunk) {
+      go("kit");
+      return;
+    }
+
+    for (const [k, parts] of byChunk) {
+      if (Y(ctxRef.current, k).skipped) continue;
+      Y(ctxRef.current, k).rosterParts = parts;
+    }
+    const state = ctxRef.current.S;
+    state.k = firstChunk.k;
+    state.oi = Math.max(0, state.order.indexOf(firstChunk.k));
+    state.step = "review";
+    setVer((v) => v + 1);
+    go("review");
   };
 
   const applyMatchWindows = (target: Ctx, choices: string[]) => {
@@ -1051,6 +1119,59 @@ export function GameClaim({
         onStart={() => void startNew()}
         onResume={() => savedClaim && void resume(savedClaim)}
       />
+    );
+  } else if (S.step === "roster") {
+    body = (
+      <div className="flex flex-col gap-4">
+        <Eyebrow>{copy.roster.eyebrow}</Eyebrow>
+        <Title>{copy.roster.title}</Title>
+        <Lede>{copy.roster.lead}</Lede>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {rosterPlayers.map((player) => {
+            const label = player.name || copy.roster.unnamed;
+            const number = player.number ? `#${player.number}` : copy.roster.noNumber;
+            const photos = player.photos.slice(0, 3);
+            return (
+              <button
+                key={player.id}
+                type="button"
+                onClick={() => pickRosterPlayer(player)}
+                aria-label={`${label}, ${number}, ${copy.roster.minutes(Math.round(player.minutes))}`}
+                className="group rounded-2xl border border-line bg-surface p-3 text-start transition hover:border-accent hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <div className="grid h-24 grid-cols-3 gap-1 overflow-hidden rounded-xl bg-black/30">
+                  {photos.length ? photos.map((photo) => (
+                    <img
+                      key={`${photo.segmentIndex}-${photo.trackId}-${photo.frame}`}
+                      src={`data:image/jpeg;base64,${photo.jpeg}`}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  )) : (
+                    <div className="col-span-3 flex items-center justify-center text-3xl font-display font-bold text-muted-text">
+                      {player.number || label.slice(0, 1)}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate font-display text-lg font-bold text-text">{label}</span>
+                  {player.number && (
+                    <span className="rounded-full border border-line px-2 py-0.5 text-sm font-display tabular-nums text-text">
+                      #{player.number}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-text">
+                  <span>{copy.roster.minutes(Math.round(player.minutes))}</span>
+                  <span className="font-semibold text-accent">{copy.roster.choose}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <Row><Btn onClick={() => go("kit")}>{copy.roster.back}</Btn></Row>
+      </div>
     );
   } else if (S.step === "kit" && currentChunk) {
     const d = currentChunk;

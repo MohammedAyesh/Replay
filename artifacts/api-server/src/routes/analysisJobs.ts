@@ -6,6 +6,7 @@ import {
   analysisJobsTable,
   analysisWorkersTable,
   recordingsTable,
+  recordingTrackingBundlesTable,
   fieldsTable,
   usersTable,
   type AnalysisJobRow,
@@ -172,6 +173,11 @@ type JobView = AnalysisJobRow & {
   queuePosition: number | null;
   recordingLabel: string | null;
   rosterHints: RosterHints | null;
+  matchRosterSummary: {
+    playerCount: number;
+    numberedPlayerCount: number;
+    playerMinutes: number;
+  } | null;
 };
 
 async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
@@ -186,8 +192,30 @@ async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
   const hints = await Promise.all(rows.map((row) =>
     buildRosterHintsForJob(row.recordingId, row.sourceRecordingIds, rosterHintCache),
   ));
+  const bundleRecordingIds = [...new Set(rows.flatMap((row) => [
+    row.recordingId,
+    ...row.bundleRecordingIds,
+  ]))];
+  const rosterBundles = bundleRecordingIds.length
+    ? await db
+        .select({
+          recordingId: recordingTrackingBundlesTable.recordingId,
+          matchRosterSummary: recordingTrackingBundlesTable.manifest,
+        })
+        .from(recordingTrackingBundlesTable)
+        .where(inArray(recordingTrackingBundlesTable.recordingId, bundleRecordingIds))
+    : [];
+  const rosterSummaryByRecording = new Map(rosterBundles.map((bundle) => [
+    bundle.recordingId,
+    bundle.matchRosterSummary.matchRosterSummary ?? null,
+  ]));
   return rows.map((row, index) => {
     const target = byId.get(row.recordingId);
+    // Bundle recording order is the worker's match order; the first uploaded
+    // roster is the job-level summary when the match spans several recordings.
+    const matchRosterSummary = [row.recordingId, ...row.bundleRecordingIds]
+      .map((recordingId) => rosterSummaryByRecording.get(recordingId))
+      .find((summary) => summary !== null && summary !== undefined) ?? null;
     return {
       ...row,
       sources: row.sourceRecordingIds
@@ -197,6 +225,7 @@ async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
       queuePosition: queuePosition(row, queuedOldestFirst),
       recordingLabel: target ? `${target.court} ${target.date} ${target.timeSlot}`.trim() : null,
       rosterHints: hints[index] ?? null,
+      matchRosterSummary,
     };
   });
 }

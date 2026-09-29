@@ -69,6 +69,16 @@ const en = {
     matchesLead: "Choose the match windows to include. We preselected the ones where you were rostered.",
     rostered: "rostered",
   },
+  roster: {
+    eyebrow: "Match roster",
+    title: "Which one is you?",
+    lead: "Choose your name. We’ll start with the tracking parts linked to you, then you can review and adjust them.",
+    choose: "This is me",
+    noNumber: "No number",
+    unnamed: "Player",
+    minutes: (n: number) => `${n} min`,
+    back: "Back to match",
+  },
   kit: {
     title: "What were you wearing?",
     people: (n: number) => (n === 1 ? "1 person found" : `${n} people found`),
@@ -347,6 +357,16 @@ const ar: GameStrings = {
     matchesTitle: "في أي مباريات لعبت؟",
     matchesLead: "اختر فترات المباريات التي تريد تضمينها. اخترنا مسبقًا المباريات التي كنت ضمن قائمتها.",
     rostered: "ضمن القائمة",
+  },
+  roster: {
+    eyebrow: "قائمة المباراة",
+    title: "أيّهم أنت؟",
+    lead: "اختر اسمك. سنبدأ بمقاطع التتبّع المرتبطة بك، ثم يمكنك مراجعتها وتعديلها.",
+    choose: "هذا أنا",
+    noNumber: "بلا رقم",
+    unnamed: "لاعب",
+    minutes: (n: number) => `${n} د`,
+    back: "العودة إلى المباراة",
   },
   kit: {
     title: "ماذا كنت ترتدي؟",

@@ -969,6 +969,31 @@ paths:
         "404":
           description: Recording or tracking bundle not found
 
+  /recordings/{id}/claim-match/roster:
+    get:
+      operationId: getClaimMatchRoster
+      tags: [claimMatch]
+      summary: Get the optional match-wide player roster
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Match roster with a few existing sprite crops per player
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimMatchRosterResponse"
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Recording or match roster not found
+
   /claim-match/clips:
     get:
       operationId: listClaimMatchClips
@@ -5125,6 +5150,79 @@ components:
         offPitchSeconds:
           type: number
           minimum: 0
+
+    ClaimMatchRosterResponse:
+      type: object
+      required: [players]
+      properties:
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimMatchRosterPlayer"
+
+    ClaimMatchRosterPlayer:
+      type: object
+      required: [id, name, number, minutes, parts, photos]
+      properties:
+        id:
+          type: string
+        name:
+          type: ["string", "null"]
+        number:
+          type: ["string", "null"]
+        minutes:
+          type: number
+          minimum: 0
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimMatchRosterPart"
+        photos:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimMatchRosterPhoto"
+
+    ClaimMatchRosterPart:
+      type: object
+      required: [segmentIndex, segmentName, trackId, fromFrame, toFrame, segmentStartFrame, absoluteFromFrame, absoluteToFrame]
+      properties:
+        segmentIndex:
+          type: integer
+          minimum: 0
+        segmentName:
+          type: string
+        trackId:
+          type: string
+        fromFrame:
+          type: integer
+          minimum: 0
+        toFrame:
+          type: integer
+          minimum: 0
+        segmentStartFrame:
+          type: integer
+          minimum: 0
+        absoluteFromFrame:
+          type: integer
+          minimum: 0
+        absoluteToFrame:
+          type: integer
+          minimum: 0
+
+    ClaimMatchRosterPhoto:
+      type: object
+      required: [trackId, segmentIndex, frame, jpeg]
+      properties:
+        trackId:
+          type: string
+        segmentIndex:
+          type: integer
+          minimum: 0
+        frame:
+          type: integer
+          minimum: 0
+        jpeg:
+          type: string
 
     ClaimMatchClipGroup:
       type: object

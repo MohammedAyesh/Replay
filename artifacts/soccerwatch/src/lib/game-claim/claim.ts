@@ -28,6 +28,8 @@ export type ChunkAnswers = {
   extra: string[];
   seen: string[];
   manual: ManualPiece[];
+  /** Exact parts imported from a match roster, waiting for this chunk to load. */
+  rosterParts?: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
   skipped: boolean;
 };
 
@@ -44,7 +46,7 @@ export type SwitchEvent = {
   pendingIdentity?: boolean;
 };
 
-export type Step = "intro" | "kit" | "shirt" | "gallery" | "review" | "joins" | "gaps" | "next" | "done" | "stats";
+export type Step = "intro" | "roster" | "kit" | "shirt" | "gallery" | "review" | "joins" | "gaps" | "next" | "done" | "stats";
 
 export type ClaimState = {
   v: 1;
@@ -101,7 +103,7 @@ export type Ctx = { game: Game; CH: Record<number, Chunk>; S: ClaimState };
 export function Y(ctx: Ctx, k: number): ChunkAnswers {
   const key = String(k);
   if (!ctx.S.you[key]) {
-    ctx.S.you[key] = { cid: null, out: [], added: [], dropped: [], extra: [], seen: [], manual: [], skipped: false };
+    ctx.S.you[key] = { cid: null, out: [], added: [], dropped: [], extra: [], seen: [], manual: [], rosterParts: [], skipped: false };
   }
   return ctx.S.you[key];
 }
@@ -112,8 +114,8 @@ const has = (list: string[], id: string) => list.includes(id);
 export function mine(ctx: Ctx, k: number): AnyPiece[] {
   const d = ctx.CH[k];
   const y = Y(ctx, k);
-  if (!d || !y.cid || !d.byCid[y.cid]) return y.manual.slice().sort((a, b) => a.t0 - b.t0);
-  const ids = new Set(d.byCid[y.cid].members);
+  if (!d) return y.manual.slice().sort((a, b) => a.t0 - b.t0);
+  const ids = new Set(y.cid && d.byCid[y.cid] ? d.byCid[y.cid].members : []);
   for (const c of y.added) d.byCid[c]?.members.forEach((m) => ids.add(m));
   for (const m of y.extra) ids.add(m);
   return [...ids]
@@ -298,7 +300,12 @@ export function profile(ctx: Ctx, atTime = Number.POSITIVE_INFINITY): Appearance
       const globalStart = L2G(ctx.game, k, p.t0);
       const globalEnd = L2G(ctx.game, k, p.t1);
       if (globalStart < cutoff || globalStart > atTime || globalEnd <= cutoff) continue;
-      if (!p.manual && p.feat) items.push({ feat: p.feat, w: Math.max(p.nr, 1) });
+      if (p.manual) {
+        const source = p.src ? ctx.CH[k].pieces[p.src] : undefined;
+        if (source?.feat) items.push({ feat: source.feat, w: Math.max(source.nr, 1) });
+      } else if (p.feat) {
+        items.push({ feat: p.feat, w: Math.max(p.nr, 1) });
+      }
     }
   }
   return averageProfiles(items);
@@ -503,7 +510,7 @@ export function twins(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start): Ar
   const d = ctx.CH[k];
   const y = Y(ctx, k);
   const q = profile(ctx, atTime);
-  if (!y.cid || !q) return [];
+  if ((!y.cid && !y.manual.length) || !q) return [];
   const mineIds = [...youIds(ctx, k)];
   const weak = isWeakColour(q);
   const out: Array<{ g: Group; d: number; sep: { sec: number; med: number } | null }> = [];
@@ -677,7 +684,7 @@ export function isSure(r: Array<{ d: number | null }>): boolean {
 /** Pick a group as you in chunk k: resets the chunk and auto-adds your twins. */
 export function pick(ctx: Ctx, k: number, cid: string, atTime = chunkMeta(ctx, k).start): void {
   const y = Y(ctx, k);
-  Object.assign(y, { cid, skipped: false, out: [], added: [], dropped: [], extra: [], seen: [], manual: [] });
+  Object.assign(y, { cid, skipped: false, out: [], added: [], dropped: [], extra: [], seen: [], manual: [], rosterParts: [] });
   ctx.S.qi = 0;
   const profileAt = profileTimeForChunk(ctx, k, atTime);
   const tw = weakColour(ctx, profileAt) ? [] : twins(ctx, k, profileAt);

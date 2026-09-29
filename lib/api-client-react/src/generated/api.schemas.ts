@@ -1852,6 +1852,48 @@ export interface ClaimMatchResponse {
   offPitchSeconds: number;
 }
 
+export interface ClaimMatchRosterPart {
+  /** @minimum 0 */
+  segmentIndex: number;
+  segmentName: string;
+  trackId: string;
+  /** @minimum 0 */
+  fromFrame: number;
+  /** @minimum 0 */
+  toFrame: number;
+  /** @minimum 0 */
+  segmentStartFrame: number;
+  /** @minimum 0 */
+  absoluteFromFrame: number;
+  /** @minimum 0 */
+  absoluteToFrame: number;
+}
+
+export interface ClaimMatchRosterPhoto {
+  trackId: string;
+  /** @minimum 0 */
+  segmentIndex: number;
+  /** @minimum 0 */
+  frame: number;
+  jpeg: string;
+}
+
+export interface ClaimMatchRosterPlayer {
+  id: string;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  number: string | null;
+  /** @minimum 0 */
+  minutes: number;
+  parts: ClaimMatchRosterPart[];
+  photos: ClaimMatchRosterPhoto[];
+}
+
+export interface ClaimMatchRosterResponse {
+  players: ClaimMatchRosterPlayer[];
+}
+
 export interface ClaimMatchClipGroup {
   recordingId: number;
   /** Human-readable match label. */
