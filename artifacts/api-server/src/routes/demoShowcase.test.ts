@@ -19,6 +19,7 @@ const showcase = {
   match: null,
   clips: [],
   salesWhatsapp: null,
+  leadsEnabled: false,
 };
 
 afterEach(() => {

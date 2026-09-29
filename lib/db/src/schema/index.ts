@@ -31,3 +31,4 @@ export * from "./matchPlayerTeamSpans";
 export * from "./safety";
 export * from "./friends";
 export * from "./matchPlayerStatsCache";
+export * from "./demoLeads";

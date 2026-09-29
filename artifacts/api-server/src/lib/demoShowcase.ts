@@ -37,6 +37,7 @@ import {
   teamStats,
   type Lab,
 } from "./matchPlay";
+import { demoLeadsReady } from "./demoLeads";
 import { buildPlayerMetrics } from "./playerMetrics";
 import { extractBunnyVideoId } from "./publicFootage";
 import { getSettingValue } from "./settings";
@@ -71,6 +72,8 @@ export type DemoShowcase = {
   match: DemoMatch | null;
   clips: DemoClip[];
   salesWhatsapp: string | null;
+  /** True once the demo_leads table exists, so the callback form has somewhere to go. */
+  leadsEnabled: boolean;
 };
 
 export type DemoMoment = { type: "goal" | "shot"; t: number; side: 0 | 1 | null };
@@ -312,17 +315,19 @@ async function demoCounts(): Promise<DemoShowcase["counts"]> {
 }
 
 export async function buildDemoShowcase(): Promise<DemoShowcase> {
-  const [counts, picked, clips, whatsapp] = await Promise.all([
+  const [counts, picked, clips, whatsapp, leadsEnabled] = await Promise.all([
     demoCounts(),
     pickDemoRecording(),
     pickDemoClips(),
     settingString("demo.salesWhatsapp"),
+    demoLeadsReady(),
   ]);
   return {
     counts,
     match: picked ? matchMedia(picked.recording, picked.analysed) : null,
     clips,
     salesWhatsapp: whatsappDigits(whatsapp),
+    leadsEnabled,
   };
 }
 

@@ -12,6 +12,7 @@ export function Contact({ persona, copy, whatsapp, leadsEnabled }: {
   const [name, setName] = useState("");
   const [place, setPlace] = useState("");
   const [phone, setPhone] = useState("");
+  const [website, setWebsite] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const whatsappUrl = whatsapp
     ? `https://wa.me/${whatsapp}?text=${encodeURIComponent(copy.whatsappMessage[persona])}`
@@ -26,7 +27,7 @@ export function Contact({ persona, copy, whatsapp, leadsEnabled }: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "omit",
-        body: JSON.stringify({ name, place, phone, persona, locale: document.documentElement.lang || "ar" }),
+        body: JSON.stringify({ name, place, phone, persona, website, locale: document.documentElement.lang === "en" ? "en" : "ar" }),
       });
       setState(response.ok ? "sent" : "error");
     } catch {
@@ -59,6 +60,15 @@ export function Contact({ persona, copy, whatsapp, leadsEnabled }: {
               dir="ltr"
             />
           </label>
+          <input
+            className="dm-hp"
+            name="website"
+            tabIndex={-1}
+            autoComplete="off"
+            aria-hidden="true"
+            value={website}
+            onChange={(e) => setWebsite(e.target.value)}
+          />
           <button type="submit" className="dm-btn dm-btn--primary dm-btn--wide" disabled={state === "sending"}>
             {state === "sending" ? copy.sending : copy.send}
           </button>

@@ -21,6 +21,7 @@ import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
 import SettingsTab from "@/components/admin/SettingsTab";
+import DemoLeadsTab from "@/components/admin/DemoLeadsTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
 import BrandingTab from "@/components/admin/BrandingTab";
 import {
@@ -40,7 +41,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings";
+type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -6512,6 +6513,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   analysis: { label: "Analysis", render: () => <AnalysisTab /> },
   branding: { label: "Branding", render: () => <BrandingTab /> },
   settings: { label: "Settings", render: () => <SettingsTab /> },
+  "demo-leads": { label: "Demo leads", render: () => <DemoLeadsTab /> },
 };
 
 const TAB_ORDER = Object.keys(TABS) as Tab[];
