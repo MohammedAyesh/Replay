@@ -67,6 +67,7 @@ import {
 } from "./matchPlay";
 import { loadRecordingPlay, type RecordingPlay } from "./matchPlayLoad";
 import { buildPlayerMetrics } from "./playerMetrics";
+import { MatchPlayerReportBuilder, REPORT_BLOCK_SECONDS, type MatchPlayerReport } from "./matchPlayerReport";
 import { teamAtTime, type TeamSpanAtTime, type TeamSpanTeam } from "./matchTeamSpans";
 
 function teamFor(base: string | null, spans: readonly unknown[], offsetSec: number): string | null {
@@ -415,6 +416,8 @@ export type MatchPlayerStats = {
   dribblesLost: number | null;
   shots: number | null;
   goals: number | null;
+  /** the whole-match report timeline; only on claimed rows of a whole-match request */
+  report?: MatchPlayerReport;
 };
 
 export type MatchTeamStats = {
@@ -587,6 +590,16 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
     goals: null,
   });
   for (const p of roster) perPlayer.set(p.id, blank(p));
+  // The report timeline only makes sense for the whole booking, not one game of it.
+  const reports = new Map<number, MatchPlayerReportBuilder>();
+  const reportFor = (playerId: number) => {
+    let builder = reports.get(playerId);
+    if (!builder) {
+      builder = new MatchPlayerReportBuilder();
+      reports.set(playerId, builder);
+    }
+    return builder;
+  };
   let hasBall = false;
   let hasPitch = false;
   let team: MatchTeamStats | null = null;
@@ -729,11 +742,30 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
       row.claimed = true;
       const seconds = eligibleParts.reduce((s, x) => s + (x.toFrame - x.fromFrame) / play.fps, 0);
       row.minutes = Math.round(((row.minutes ?? 0) + seconds / 60) * 10) / 10;
+      const report = game ? null : reportFor(p.id);
+      const bookingSeconds = (frame: number) => frame / play.fps + link.recordingOffsetSec;
+      if (report) {
+        report.beginRecording();
+        for (const part of eligibleParts) report.addSpan(bookingSeconds(part.fromFrame), bookingSeconds(part.toFrame));
+      }
       if (play.segments) {
-        const m = buildPlayerMetrics(play.manifest, play.segments, eligibleParts, seconds, 0, 0, 0, 0, 0, 0, []);
+        const frameRate = Math.max(play.manifest.frameRate, 0.001);
+        const m = buildPlayerMetrics(
+          play.manifest, play.segments, eligibleParts, seconds, 0, 0, 0, 0, 0, 0, [],
+          report ? { bucketOfFrame: (frame) => Math.floor(Math.max(0, frame / frameRate + link.recordingOffsetSec) / REPORT_BLOCK_SECONDS) } : undefined,
+        );
         if (m.distanceMetres !== null) row.distanceKm = Math.round(((row.distanceKm ?? 0) + m.distanceMetres / 1000) * 100) / 100;
         const top = m.adminPlayerStats.topSpeedMetresPerSecond;
         if (typeof top === "number") row.topSpeedKmh = Math.max(row.topSpeedKmh ?? 0, Math.round(top * 36) / 10);
+        if (report) {
+          if (m.distanceMetres !== null) {
+            report.markDistanceMeasured();
+            report.addDistance(m.timing?.distanceByBucket ?? {});
+          }
+          const topFrame = m.timing?.topSpeedFrame ?? null;
+          report.addTopSpeed(typeof top === "number" ? top * 3.6 : null, topFrame === null ? null : topFrame / frameRate + link.recordingOffsetSec);
+          report.addHeatmap(m.heatmap.coordinateSpace, m.heatmap.cells, seconds);
+        }
       }
       if (play.hasBall) {
          const mine = playerPlay(touches, events, eligibleParts, Boolean(pick));
@@ -747,6 +779,11 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
         row.dribblesLost = add(row.dribblesLost, own.dribblesLost);
         row.shots = add(row.shots, own.shots.length);
         row.goals = add(row.goals, own.goals.length);
+        if (report) {
+          report.addTouches(mine.touches.map((touch) => touch.t + link.recordingOffsetSec));
+          report.addGoals(own.goals.map((goal) => goal.t + link.recordingOffsetSec));
+          report.addDribblesWon(own.dribbles.filter((d) => d.outcome === "won").map((d) => d.t0 + link.recordingOffsetSec));
+        }
       }
     }
   }
@@ -758,6 +795,10 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
     const attempts = t.passesTried.reduce((a, b) => a + b, 0);
     const completions = t.passesCompleted.reduce((a, b) => a + b, 0);
     t.completionPercent = attempts ? Math.round((1000 * completions) / attempts) / 10 : 0;
+  }
+  for (const [playerId, builder] of reports) {
+    const row = perPlayer.get(playerId);
+    if (row?.claimed) row.report = builder.build();
   }
   if (includePlayers && !game) {
     try {

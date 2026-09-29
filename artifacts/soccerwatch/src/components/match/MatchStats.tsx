@@ -8,6 +8,7 @@ import type { MatchStrings } from "@/i18n/match-strings";
 import type { MatchRoom, PlayerForm, PlayerMetricValues, TeamSide } from "@/lib/match-api";
 import { useAuth } from "@/lib/auth";
 import type { Lab } from "@/lib/game-claim/play";
+import type { ReportTimeline } from "@/lib/match-report";
 import { cn } from "@/lib/utils";
 import {
   metricDeltaDirection,
@@ -19,15 +20,17 @@ import {
 type MetricKey = "distanceKm" | "topSpeedKmh" | "touches" | "passesCompleted" | "dribblesWon" | "goals";
 type AwardKey = "motm" | "distance" | "speed" | "touches" | "passes" | "dribbles" | "goals";
 
-type PlayerStats = PlayerMetricValues & {
+export type PlayerStats = PlayerMetricValues & {
   playerId: number;
   name: string;
   team: string | null;
   claimed: boolean;
   personalBestMetrics?: MetricKey[];
+  /** the whole-match report timeline, on claimed rows */
+  report?: ReportTimeline;
 };
 
-type TeamStats = {
+export type TeamStats = {
   sides: string[];
   colours: Lab[];
   measured: boolean[];
@@ -43,13 +46,13 @@ type TeamStats = {
   goals?: number[];
 };
 
-type CompetitionAward = { key: AwardKey; playerIds: number[]; value: number | null; personalBest: boolean };
+export type CompetitionAward = { key: AwardKey; playerIds: number[]; value: number | null; personalBest: boolean };
 type CompetitionCallout =
   | { kind: "outran"; outran: number; total: number }
   | { kind: "speed-beaten"; otherPlayerId: number; gap: number }
   | { kind: "team-dribbles-lead" };
 
-type Stats = {
+export type Stats = {
   available: boolean;
   recordings: number[];
   hasBall: boolean;
@@ -68,7 +71,7 @@ type Stats = {
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 const pct = (x: number, y: number) => (y > 0 ? Math.round((100 * x) / y) : 0);
 
-function useMatchStatsData(room: MatchRoom, viewerId: number | null, gameId: number | null = null, enabled = true) {
+export function useMatchStatsData(room: MatchRoom, viewerId: number | null, gameId: number | null = null, enabled = true) {
   return useQuery<Stats>({
     queryKey: ["match-stats", room.code, viewerId, room.stats.unlocked, gameId],
     queryFn: async () => {
