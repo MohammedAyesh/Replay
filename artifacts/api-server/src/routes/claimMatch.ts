@@ -534,12 +534,12 @@ export function summarizeTrackingSegments(segments: TrackingSegmentPayload[]): T
  */
 export function trackingBundleFingerprint(
   manifest: Pick<TrackingManifest, "version" | "width" | "height" | "frameRate" | "frameCount" | "duration">,
-  segments: Array<{
+  segments: readonly {
     segmentIndex: number;
     startFrame: number;
     endFrame: number;
-    tracks: Array<{ id: string; startFrame: number; endFrame: number }>;
-  }>,
+    tracks: readonly { id: string; startFrame: number; endFrame: number }[];
+  }[],
 ): string {
   const payload = {
     version: manifest.version,

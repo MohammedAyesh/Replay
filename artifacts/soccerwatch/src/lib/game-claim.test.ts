@@ -3,6 +3,9 @@ import type { JerseySidecar, TrackingManifest } from "@workspace/api-client-reac
 import { buildChunk, splitAtColourJumps, type BundleTrack } from "./game-claim/build";
 import {
   chunkPercent,
+  afterChunk,
+  claimVisitOrder,
+  firstChunk,
   isSure,
   newState,
   pick,
@@ -11,8 +14,11 @@ import {
   rankNext,
   recordSwitch,
   questions,
+  restoreClaimVisitOrder,
+  startClaim,
   subtract,
   tapSpan,
+  totals,
   timeline,
   twins,
   updatePendingSwitchIdentity,
@@ -94,6 +100,77 @@ function fixture(): Ctx {
   Y(ctx, 0).cid = "g1";
   return ctx;
 }
+
+function orderFixture(play: number[]): Ctx {
+  const g: Game = {
+    chunks: play.map((seconds, k) => ({ k, start: k * 600, dur: 600 })),
+    total: play.length * 600,
+    srcW: 4096,
+    srcH: 1152,
+    frameRate: FPS,
+    videoStartSeconds: 0,
+    matchOffset: 0,
+    outOfPlay: [],
+    inplay: [],
+    pitch: null,
+  };
+  const ctx: Ctx = { game: g, CH: {}, S: newState(g) };
+  // `off` is the complement of play: make each chunk's requested amount
+  // visible while keeping the fixture independent of tracking data.
+  ctx.S.off = play.flatMap((seconds, k) => {
+    const start = k * 600;
+    return seconds < 600 ? [[start, start + 600 - seconds, "play" as const]] : [];
+  });
+  return ctx;
+}
+
+describe("claim visit order", () => {
+  it("starts with the first block that has 2m47s of play", () => {
+    const ctx = orderFixture([167, 240, 300]);
+    expect(firstChunk(ctx)).toBe(0);
+    expect(claimVisitOrder(ctx)).toEqual([0, 1, 2]);
+  });
+
+  it("wraps earlier playable blocks after a later starting block", () => {
+    const ctx = orderFixture([167, 240, 300]);
+    expect(claimVisitOrder(ctx, 2)).toEqual([2, 0, 1]);
+    ctx.S.order = claimVisitOrder(ctx, 2);
+    ctx.S.k = 2;
+    ctx.S.oi = 0;
+    expect(afterChunk(ctx)).toBe("next");
+    expect(ctx.S.k).toBe(0);
+  });
+
+  it("restores an older saved suffix at its current chunk and appends omitted earlier blocks", () => {
+    const ctx = orderFixture([167, 240, 300]);
+    expect(restoreClaimVisitOrder(ctx, [2], 0, 2)).toEqual({
+      order: [2, 0, 1],
+      index: 0,
+      chunk: 2,
+    });
+    expect(restoreClaimVisitOrder(ctx, [2, 0, 1], 2, 1)).toEqual({
+      order: [2, 0, 1],
+      index: 2,
+      chunk: 1,
+    });
+  });
+
+  it("skips blocks with under thirty seconds of play", () => {
+    const ctx = orderFixture([29, 240, 10, 300]);
+    expect(firstChunk(ctx)).toBe(1);
+    expect(claimVisitOrder(ctx)).toEqual([1, 3]);
+    ctx.S.order = claimVisitOrder(ctx);
+    expect(totals(ctx).ip).toBe(540);
+  });
+
+  it("does not include unplayable chunks in a claim order", () => {
+    const ctx = orderFixture([29, 10]);
+    expect(claimVisitOrder(ctx)).toEqual([]);
+    startClaim(ctx);
+    expect(ctx.S.order).toEqual([]);
+    expect(ctx.S.step).toBe("done");
+  });
+});
 
 describe("shirt switch profile timeline", () => {
   it("does not use the old shirt after a shirt change", () => {

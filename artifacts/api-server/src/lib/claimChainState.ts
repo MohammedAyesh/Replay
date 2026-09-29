@@ -78,8 +78,8 @@ export type ChainClaimEvent = {
 };
 
 export type ChainClaimSegment = {
-  tracks: Array<{ id: string }>;
-  events: ChainClaimEvent[];
+  tracks: readonly { id: string }[];
+  events: readonly ChainClaimEvent[];
 };
 
 export type ChainClaimState = {
@@ -119,7 +119,7 @@ function formatMoment(seconds: number): string {
  * every goal that happened to fall between checkpoints.
  */
 export function clipsForIntervals(
-  segments: ChainClaimSegment[],
+  segments: readonly ChainClaimSegment[],
   attributed: Array<{ startSeconds: number; endSeconds: number }>,
 ): ChainEarnedClip[] {
   const byId = new Map<string, ChainEarnedClip>();
@@ -142,7 +142,7 @@ export function clipsForIntervals(
 
 export function deriveChainClaimState(
   manifest: Pick<TrackingManifest, "frameRate" | "duration">,
-  segments: ChainClaimSegment[],
+  segments: readonly ChainClaimSegment[],
   chain: ChainPart[],
   opts: {
     offPitch?: Array<{ fromSeconds: number; toSeconds: number }>;
@@ -218,7 +218,7 @@ export function deriveChainClaimState(
 export function chainPlayerMetrics(
   manifest: TrackingManifest,
   fullSegments: TrackingSegmentPayload[] | undefined,
-  segments: ChainClaimSegment[],
+  segments: readonly ChainClaimSegment[],
   chain: ChainPart[],
   state: Pick<ChainClaimState, "coverageSeconds" | "coveragePercent" | "trackedSegments" | "matchedEvents">,
   opts: { answeredMoments: number; offPitch?: OffPitchWindow[] },

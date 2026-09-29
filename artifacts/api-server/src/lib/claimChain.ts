@@ -36,10 +36,11 @@
  */
 
 import type { TrackingManifest, TrackingSegmentPayload } from "@workspace/db";
+import type { DeepReadonly } from "./claimBundleSegments";
 
 type Box = TrackingSegmentPayload["tracks"][number]["boxes"][number];
-type Track = TrackingSegmentPayload["tracks"][number];
-type Crossing = TrackingSegmentPayload["crossings"][number];
+type Track = DeepReadonly<TrackingSegmentPayload["tracks"][number]>;
+type Crossing = DeepReadonly<TrackingSegmentPayload["crossings"][number]>;
 
 /** One link of the chain: this source track, for this stretch of frames. */
 export type ChainPart = {
@@ -439,8 +440,8 @@ export function scanFloor(
  */
 export function openUncertainties(
   chain: ChainPart[],
-  tracksById: Map<string, Track>,
-  crossings: Crossing[],
+  tracksById: ReadonlyMap<string, Track>,
+  crossings: readonly Crossing[],
   fromFrame: number,
   decisions?: IdentityDecision[],
   /**
@@ -642,8 +643,8 @@ export function openUncertainties(
  */
 export function nextUncertainty(
   chain: ChainPart[],
-  tracksById: Map<string, Track>,
-  crossings: Crossing[],
+  tracksById: ReadonlyMap<string, Track>,
+  crossings: readonly Crossing[],
   fromFrame: number,
   decisions?: IdentityDecision[],
   answeredFrames?: Set<number>,
@@ -705,7 +706,7 @@ export type DecisionGeometry = {
 
 /** The candidates visible at a frame: every track with a box within ±2 frames. */
 export function candidatesAtFrame(
-  tracksById: Map<string, Track>,
+  tracksById: ReadonlyMap<string, Track>,
   frame: number,
   decisions?: IdentityDecision[],
   tolerance = 2,
@@ -740,13 +741,13 @@ function sampleTrack(track: Track | undefined, frame: number): TrackSample | nul
  * recording. The ones worth recording are not knowable in advance.
  */
 export function captureDecisionGeometry(
-  tracksById: Map<string, Track>,
+  tracksById: ReadonlyMap<string, Track>,
   frame: number,
   opts: {
     frameRate: number;
     chosenTrackId?: string | null;
     rejectedTrackId?: string | null;
-    crossings?: Crossing[];
+    crossings?: readonly Crossing[];
     uncertaintyKind?: UncertaintyKind | null;
     decisions?: IdentityDecision[];
     maxAlternatives?: number;
@@ -804,7 +805,7 @@ export function captureDecisionGeometry(
  */
 export function normaliseChain(
   chain: ChainPart[],
-  tracksById: Map<string, Track>,
+  tracksById: ReadonlyMap<string, Track>,
 ): ChainPart[] {
   const clamped: ChainPart[] = [];
   for (const part of chain) {
@@ -1017,7 +1018,7 @@ function before(part: ChainPart, nextStart: number): ChainPart | null {
  */
 export function extendChain(
   chain: ChainPart[],
-  tracksById: Map<string, Track>,
+  tracksById: ReadonlyMap<string, Track>,
   trackId: string,
   frame: number,
   opts: { decisions?: IdentityDecision[]; identities?: ChainIdentity[] } = {},

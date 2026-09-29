@@ -53,3 +53,4 @@
 - [HLS player callback lifecycle](hls-player-callback-lifecycle.md) — keep HLS setup callbacks stable and suppress async quality updates after player teardown.
 - [Roster substitute derivation](roster-hints-substitutes.md) — when a room stores one shared substitute count, derive the unset value from the largest active-team surplus.
 - [Match roster track references](match-roster-track-references.md) — `people/match.json` parts identify segment/local-track pairs; use the referenced bundle track's stored frame bounds.
+- [Cartographer and generic JSX](tsx-generic-cartographer.md) — avoid explicit component type arguments in JSX; Vite metadata injection can break Babel parsing even when TypeScript passes.

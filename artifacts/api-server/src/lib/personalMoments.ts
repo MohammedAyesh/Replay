@@ -13,6 +13,7 @@
  * so the exported clip is framed on them instead of the whole panorama.
  */
 import type { CropKeyframe, TrackingManifest, TrackingSegmentPayload } from "@workspace/db";
+import type { DeepReadonly } from "./claimBundleSegments";
 
 import type { ChainEarnedClip } from "./claimChainState";
 import {
@@ -52,12 +53,12 @@ const clock = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60))
  */
 export function followPath(
   parts: ClaimedPart[],
-  segments: TrackingSegmentPayload[],
+  segments: readonly DeepReadonly<TrackingSegmentPayload>[],
   manifest: Pick<TrackingManifest, "frameRate" | "width" | "height">,
   centreSeconds: number,
 ): FollowPoint[] | undefined {
   const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
-  const tracks = new Map<string, Array<{ frame: number; x: number; y: number; w: number; h: number }>>();
+  const tracks = new Map<string, readonly DeepReadonly<TrackingSegmentPayload["tracks"][number]["boxes"][number]>[]>();
   for (const segment of segments) for (const track of segment.tracks) tracks.set(track.id, track.boxes);
   const out: FollowPoint[] = [];
   let last: [number, number] | null = null;
@@ -134,7 +135,7 @@ export function followCrop(
 export function personalMoments(
   play: RecordingPlay,
   parts: ClaimedPart[],
-  segments: TrackingSegmentPayload[],
+  segments: readonly DeepReadonly<TrackingSegmentPayload>[],
   manifest: TrackingManifest,
 ): PersonalMoment[] {
   if (!play.hasBall || !parts.length) return [];

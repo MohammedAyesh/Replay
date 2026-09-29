@@ -60,9 +60,9 @@ import { pictureForPiece, type PiecePicture } from "@/lib/game-claim/images";
 import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
-  addTap, afterChunk, benchInHole, benchSpans, candidates, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
+  addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
   newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
-  hkey, recordSwitch, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
+  hkey, recordSwitch, restoreClaimVisitOrder, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts, materializeRosterParts } from "@/lib/game-claim/parts";
 
@@ -797,6 +797,7 @@ export function GameClaim({
     }
     const firstChunk = game.chunks.find((chunk) => (
       byChunk.has(chunk.k) && !Y(ctxRef.current, chunk.k).skipped
+        && inPlaySec(ctxRef.current, chunk.k) >= 30
     ));
     if (!firstChunk) {
       go("kit");
@@ -809,7 +810,8 @@ export function GameClaim({
     }
     const state = ctxRef.current.S;
     state.k = firstChunk.k;
-    state.oi = Math.max(0, state.order.indexOf(firstChunk.k));
+    state.order = claimVisitOrder(ctxRef.current, firstChunk.k);
+    state.oi = 0;
     state.step = "review";
     setVer((v) => v + 1);
     go("review");
@@ -843,6 +845,15 @@ export function GameClaim({
   const resume = async (j: ClaimState) => {
     ctxRef.current.S = { ...newState(game), ...j };
     const s = ctxRef.current.S;
+    // Expand older saved orders without moving the claimant off their current
+    // chunk. Already-finished earlier chunks stay behind the cursor.
+    if (s.k !== null && s.step !== "done" && s.step !== "stats") {
+      const restored = restoreClaimVisitOrder(ctxRef.current, s.order, s.oi, s.k);
+      s.order = restored.order;
+      s.oi = restored.index;
+      s.k = restored.chunk;
+      if (s.k === null) s.step = "done";
+    }
     t0.current = Date.now() - (s.elapsed || 0);
     await Promise.all(Object.keys(s.you).map((k) => ensure(Number(k))));
     if (s.k !== null) await ensure(s.k);
@@ -1219,14 +1230,14 @@ export function GameClaim({
             onChange={async (e) => {
               const k = Number(e.target.value);
               S.k = k;
-              S.order = game.chunks.map((c) => c.k).filter((x) => x >= k);
+              S.order = claimVisitOrder(ctx, k);
               S.oi = 0;
               await ensure(k);
               setVer((v) => v + 1);
             }}
             className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-text"
           >
-            {game.chunks.map((c) => (
+            {game.chunks.filter((c) => inPlaySec(ctx, c.k) >= 30).map((c) => (
               <option key={c.k} value={c.k}>{span(c.k)}{inPlaySec(ctx, c.k) < 60 ? ` ${copy.kit.noPlay}` : ""}</option>
             ))}
           </select>

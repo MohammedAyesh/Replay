@@ -28,7 +28,6 @@ import {
   db,
   claimMatchOffPitchSpansTable,
   claimMatchProgressTable,
-  type TrackingSegmentPayload,
   matchTeamSpansTable,
   matchRoomsTable,
   matchPlayersTable,
@@ -120,7 +119,6 @@ const DecisionLabelBody = z.object({
 /** State is the page's own document; keep it bounded rather than trusting its size. */
 const MAX_STATE_BYTES = 2_000_000;
 
-const inPlayCache = new Map<string, Array<[number, number]>>();
 const DEAD_BOOKINGS = ["cancelled", "refunded", "failed"];
 
 function finiteNumber(value: unknown): number | null {
@@ -209,17 +207,13 @@ async function claimMatchChoices(ctx: ChainContext): Promise<{
 }
 
 function inPlaySpans(ctx: ChainContext): Array<[number, number]> {
-  const cached = inPlayCache.get(ctx.fingerprint);
-  if (cached) return cached;
   const spans: Array<[number, number]> = [];
-  for (const segment of ctx.segments as TrackingSegmentPayload[]) {
+  for (const segment of ctx.segments) {
     for (const span of segment.inPlaySpans ?? []) {
       if (span.end > span.start) spans.push([span.start, span.end]);
     }
   }
   spans.sort((a, b) => a[0] - b[0]);
-  if (inPlayCache.size > 32) inPlayCache.clear();
-  inPlayCache.set(ctx.fingerprint, spans);
   return spans;
 }
 
@@ -465,7 +459,7 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
 });
 
 router.delete("/recordings/:id/claim-match/game", async (req, res): Promise<void> => {
-  const ctx = await begin(req, res);
+  const ctx = await begin(req, res, { includeSegments: false });
   if (!ctx) return;
   try {
     await persistChain(ctx, [], { chosen: null, fallback: null }, { kind: "decision", answeredFrame: null });

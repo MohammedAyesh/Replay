@@ -30,6 +30,11 @@ import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "crypto";
 import { z } from "zod";
 import { writeFindDecisionLabelOnce, type FindDecisionLabelStore } from "../lib/idempotentFindDecisionLabel";
+import {
+  loadClaimBundleSegments,
+  type CachedTrack,
+  type CachedTrackingSegment,
+} from "../lib/claimBundleSegments";
 
 import {
   db,
@@ -43,7 +48,6 @@ import {
   type ClaimChainLabelRow,
   type TrackingIdentity,
   type TrackingManifest,
-  type TrackingSegmentPayload,
 } from "@workspace/db";
 import { unauthenticatedResponse } from "../lib/clerkUserBridge";
 import {
@@ -72,8 +76,6 @@ import {
 } from "../lib/claimChain";
 
 const router: IRouter = Router();
-
-type Track = TrackingSegmentPayload["tracks"][number];
 
 /**
  * How many decisions "undo" can walk back.
@@ -124,15 +126,7 @@ export function claimIdentityId(userId: number, recordingId: number): string {
   return `claim:${digest.slice(0, 12)}`;
 }
 
-function tracksFromSegments(segments: TrackingSegmentPayload[]): Map<string, Track> {
-  const map = new Map<string, Track>();
-  for (const segment of segments) {
-    for (const track of segment.tracks) map.set(track.id, track);
-  }
-  return map;
-}
-
-function crossingsFromSegments(segments: TrackingSegmentPayload[]) {
+function crossingsFromSegments(segments: readonly CachedTrackingSegment[]) {
   return segments.flatMap((segment) => segment.crossings);
 }
 
@@ -212,8 +206,8 @@ export type ChainContext = {
   recordingId: number;
   bundleId: number;
   manifest: TrackingManifest;
-  segments: TrackingSegmentPayload[];
-  tracksById: Map<string, Track>;
+  segments: readonly CachedTrackingSegment[];
+  tracksById: ReadonlyMap<string, CachedTrack>;
   fingerprint: string;
   identityId: string;
   /** Frames this claimant has already answered on this bundle. */
@@ -267,26 +261,43 @@ export async function loadContext(
   req: Parameters<typeof requireAccountUser>[0],
   recordingId: number,
   userId: number,
+  options: { includeSegments?: boolean } = {},
 ): Promise<{ ctx?: ChainContext; status?: number; error?: string }> {
   const access = await getClaimMatchWritableBundle(req, recordingId);
   if (access.status) return { status: access.status, error: access.error ?? "Refused" };
   const row = access.row;
-  if (!row?.bundle?.manifest) return { status: 404, error: "Recording or tracking bundle not found" };
+  const bundle = row?.bundle;
+  if (!bundle?.manifest) return { status: 404, error: "Recording or tracking bundle not found" };
 
-  const manifest = row.bundle.manifest;
-  const segments = await readBundleSegments(row.bundle.id);
-  const fingerprint = trackingBundleFingerprint(
-    manifest,
-    manifest.summary?.segments?.length ? manifest.summary.segments : segments,
-  );
+  const manifest = bundle.manifest;
+  // Most uploaded bundles have the compact fingerprint summary. Endpoints
+  // that only reset a claim can use it without reading the large segment
+  // objects; older bundles still load once when the summary is absent because
+  // their exact fingerprint must remain compatible with saved claims.
+  const includeSegments = options.includeSegments !== false;
+  const summarySegments = manifest.summary?.segments;
+  const summaryFingerprint = summarySegments?.length
+    ? trackingBundleFingerprint(manifest, summarySegments)
+    : null;
+  const needsCachedSegments = includeSegments || !summaryFingerprint;
+  // The summary catches structural tracking changes; updatedAt also catches
+  // a replacement of boxes whose track ids and frame ranges stayed the same.
+  const bundleSegments = needsCachedSegments
+    ? await loadClaimBundleSegments(
+      `${bundle.id}:${bundle.updatedAt.toISOString()}:${summaryFingerprint ?? "legacy"}`,
+      () => readBundleSegments(bundle.id),
+    )
+    : null;
+  const fingerprint = summaryFingerprint
+    ?? trackingBundleFingerprint(manifest, bundleSegments!.segments);
   return {
     ctx: {
       userId,
       recordingId,
-      bundleId: row.bundle.id,
+      bundleId: bundle.id,
       manifest,
-      segments,
-      tracksById: tracksFromSegments(segments),
+      segments: bundleSegments?.segments ?? [],
+      tracksById: bundleSegments?.tracksById ?? new Map<string, CachedTrack>(),
       fingerprint,
       identityId: claimIdentityId(userId, recordingId),
       answeredFrames: await answeredFramesFor(recordingId, userId, fingerprint),
@@ -862,7 +873,11 @@ function parseId(value: unknown): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-export async function begin(req: any, res: any) {
+export async function begin(
+  req: any,
+  res: any,
+  options: { includeSegments?: boolean } = {},
+) {
   const userId = await requireAccountUser(req);
   if (!userId) {
     unauthenticatedResponse(res, req, "Authenticated account required");
@@ -873,7 +888,7 @@ export async function begin(req: any, res: any) {
     res.status(400).json({ error: "Invalid recording id" });
     return null;
   }
-  const loaded = await loadContext(req, recordingId, userId);
+  const loaded = await loadContext(req, recordingId, userId, options);
   if (!loaded.ctx) {
     res.status(loaded.status ?? 500).json({ error: loaded.error ?? "Refused" });
     return null;

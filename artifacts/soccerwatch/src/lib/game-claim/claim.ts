@@ -620,16 +620,61 @@ export function addTap(
   }
 }
 
-/** The first ten minutes with at least three minutes of play: where the claim starts. */
+/** Playable seconds in a chunk. Thirty seconds is the flow's skip threshold. */
 export function inPlaySec(ctx: Ctx, k: number): number {
   const c = chunkMeta(ctx, k);
   const out = union(ctx.S.off.filter((r) => OUT(r[2])).map((r) => [r[0], r[1]] as [number, number]));
   return Math.max(0, c.dur - overlapSeconds(c.start, c.start + c.dur, out));
 }
 
+export const MIN_PLAYABLE_SECONDS = 30;
+
 export function firstChunk(ctx: Ctx): number {
-  for (const c of ctx.game.chunks) if (inPlaySec(ctx, c.k) >= 180) return c.k;
+  for (const c of ctx.game.chunks) if (inPlaySec(ctx, c.k) >= MIN_PLAYABLE_SECONDS) return c.k;
   return ctx.game.chunks[0]?.k ?? 0;
+}
+
+/**
+ * The chunks visited by a new claim. Chunks are chronological in the bundle,
+ * but a claimant may start anywhere, so rotate the playable chunks at the
+ * chosen one rather than losing the earlier part of the match.
+ */
+export function claimVisitOrder(ctx: Ctx, from = firstChunk(ctx)): number[] {
+  const playable = ctx.game.chunks
+    .map((c) => c.k)
+    .filter((k) => inPlaySec(ctx, k) >= MIN_PLAYABLE_SECONDS);
+  if (!playable.length) return [];
+  let start = playable.indexOf(from);
+  if (start < 0) {
+    start = playable.findIndex((k) => k > from);
+    if (start < 0) start = 0;
+  }
+  return [...playable.slice(start), ...playable.slice(0, start)];
+}
+
+/**
+ * Expand a saved chronological suffix to the full rotated order while keeping
+ * the claimant at their saved chunk. Older claims did not include chunks
+ * before their starting point, so those are appended after the saved suffix.
+ */
+export function restoreClaimVisitOrder(
+  ctx: Ctx,
+  savedOrder: number[],
+  savedIndex: number,
+  savedChunk: number,
+): { order: number[]; index: number; chunk: number | null } {
+  const order = claimVisitOrder(ctx, savedOrder[0] ?? savedChunk);
+  if (!order.length) return { order, index: 0, chunk: null };
+
+  const currentIndex = order.indexOf(savedChunk);
+  if (currentIndex >= 0) return { order, index: currentIndex, chunk: savedChunk };
+
+  const nextSaved = savedOrder
+    .slice(Math.max(0, savedIndex + 1))
+    .find((k) => order.includes(k));
+  const missingEarlier = order.find((k) => !savedOrder.includes(k));
+  const chunk = nextSaved ?? missingEarlier ?? order[0];
+  return { order, index: order.indexOf(chunk), chunk };
 }
 
 /** Calibrated on two hand-labelled players over nine chunks (see the project doc). */
@@ -692,10 +737,9 @@ export function pick(ctx: Ctx, k: number, cid: string, atTime = chunkMeta(ctx, k
   ctx.S.autoAdded = tw.length;
 }
 
-/** Advance to the next chunk with play in it; 'done' after the last. */
+/** Advance to the next chunk in the rotated playable order; 'done' at its end. */
 export function afterChunk(ctx: Ctx): "next" | "done" {
   ctx.S.oi++;
-  while (ctx.S.oi < ctx.S.order.length && inPlaySec(ctx, ctx.S.order[ctx.S.oi]) < 30) ctx.S.oi++;
   if (ctx.S.oi >= ctx.S.order.length) {
     ctx.S.step = "done";
     return "done";
@@ -706,11 +750,12 @@ export function afterChunk(ctx: Ctx): "next" | "done" {
 }
 
 export function startClaim(ctx: Ctx, from?: number): void {
-  const k = from ?? firstChunk(ctx);
-  ctx.S.k = k;
-  ctx.S.order = ctx.game.chunks.map((c) => c.k).filter((x) => x >= k);
+  const requested = from ?? firstChunk(ctx);
+  const order = claimVisitOrder(ctx, requested);
+  ctx.S.k = order[0] ?? null;
+  ctx.S.order = order;
   ctx.S.oi = 0;
-  ctx.S.step = "kit";
+  ctx.S.step = order.length ? "kit" : "done";
 }
 
 /** Every chunk's timeline summed, for the done screen. */
@@ -719,7 +764,9 @@ export function totals(ctx: Ctx): { fs: number; ip: number; os: number; miss: nu
   let ip = 0;
   let os = 0;
   let miss = 0;
+  const includedChunks = new Set(ctx.S.order);
   for (const c of ctx.game.chunks) {
+    if (!includedChunks.has(c.k)) continue;
     const y = ctx.S.you[String(c.k)];
     const sk = y?.skipped;
     if (!ctx.CH[c.k] || !y || sk || (!y.cid && !y.manual.length)) {

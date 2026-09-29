@@ -294,7 +294,13 @@ function LadderSheet({ metric, onClose, players, meId, r, unclaimed }: {
         </SheetHeader>
         {metric !== "topSpeed" && (
           <div className="mt-3 shrink-0">
-            <PillToggle<"rate" | "total"> value={mode} onChange={setMode} options={[{ value: "rate", label: r.perTen }, { value: "total", label: r.wholeGame }]} />
+            <PillToggle
+              value={mode}
+              onChange={(value) => {
+                if (value === "rate" || value === "total") setMode(value);
+              }}
+              options={[{ value: "rate", label: r.perTen }, { value: "total", label: r.wholeGame }]}
+            />
           </div>
         )}
         <div className="mt-4 flex-1 overflow-y-auto">
