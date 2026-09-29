@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
+import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import {
   db,
@@ -13,7 +14,12 @@ import {
   type AnalysisJobRow,
   type AnalysisJobStatus,
 } from "@workspace/db";
-import { getPortfolioClipStoragePath } from "../lib/bunny";
+import {
+  BUNNY_STORAGE_API_KEY,
+  BUNNY_STORAGE_HOSTNAME,
+  BUNNY_STORAGE_ZONE,
+  getPortfolioClipStoragePath,
+} from "../lib/bunny";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { logger } from "../lib/logger";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
@@ -49,9 +55,10 @@ const router: IRouter = Router();
  */
 const WORKER_KEY = () => process.env.ANALYSIS_WORKER_KEY ?? "";
 
+const MAX_ANALYSIS_BUNDLE_BYTES = 75 * 1024 * 1024;
 const bundleUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 75 * 1024 * 1024 },
+  limits: { fileSize: MAX_ANALYSIS_BUNDLE_BYTES },
 });
 const bundleUploadSingle: import("express").RequestHandler = (req, res, next) => {
   bundleUpload.single("bundle")(req, res, (error) => {
@@ -703,6 +710,137 @@ async function jobHeldBy(id: number, workerId: string): Promise<AnalysisJobRow |
   return job.workerId === workerId ? job : null;
 }
 
+function isAnalysisBundleStoragePath(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 1024) return false;
+  if (!value.startsWith("analysis-bundles/") || value.includes("\\") || /[%?#\u0000-\u001f]/.test(value)) {
+    return false;
+  }
+  const parts = value.split("/");
+  return parts.length >= 2
+    && parts.every((part) => part.length > 0 && part !== "." && part !== ".." && /^[A-Za-z0-9._-]+$/.test(part))
+    && /\.zip$/i.test(parts[parts.length - 1]);
+}
+
+class AnalysisBundleStorageError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "AnalysisBundleStorageError";
+  }
+}
+
+async function downloadAnalysisBundleFromStorage(storagePath: string): Promise<Buffer> {
+  if (BUNNY_STORAGE_ZONE !== "galaxyfield" || !BUNNY_STORAGE_API_KEY || !BUNNY_STORAGE_HOSTNAME) {
+    throw new AnalysisBundleStorageError(503, "Bunny Storage access for analysis bundles is not configured.");
+  }
+
+  const encodedPath = storagePath.split("/").map(encodeURIComponent).join("/");
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://${BUNNY_STORAGE_HOSTNAME}/${encodeURIComponent(BUNNY_STORAGE_ZONE)}/${encodedPath}`,
+      { headers: { AccessKey: BUNNY_STORAGE_API_KEY }, redirect: "error" },
+    );
+  } catch {
+    throw new AnalysisBundleStorageError(502, "Could not download the analysis bundle from Bunny Storage.");
+  }
+
+  if (response.status === 404) {
+    throw new AnalysisBundleStorageError(404, "The analysis bundle object was not found in Bunny Storage.");
+  }
+  if (!response.ok) {
+    throw new AnalysisBundleStorageError(502, `Bunny Storage returned HTTP ${response.status} for the analysis bundle.`);
+  }
+
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_ANALYSIS_BUNDLE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new AnalysisBundleStorageError(413, "The ZIP file exceeds the 75 MB upload limit.");
+  }
+  if (!response.body) {
+    throw new AnalysisBundleStorageError(502, "Bunny Storage returned an empty response body.");
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_ANALYSIS_BUNDLE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new AnalysisBundleStorageError(413, "The ZIP file exceeds the 75 MB upload limit.");
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } catch (error) {
+    if (error instanceof AnalysisBundleStorageError) throw error;
+    await reader.cancel().catch(() => undefined);
+    throw new AnalysisBundleStorageError(502, "The analysis bundle download from Bunny Storage was interrupted.");
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
+type ParsedWorkerBundle = NonNullable<ReturnType<typeof parseZipBundleDetailed>["upload"]>;
+
+function parseWorkerBundle(buffer: Buffer, videoStartSeconds: unknown) {
+  const parsed = parseZipBundleDetailed(buffer);
+  if (!parsed.upload) return parsed;
+  const overrideStart = Number(videoStartSeconds);
+  if (Number.isFinite(overrideStart)) {
+    parsed.upload.manifest.videoStartSeconds = Math.max(0, overrideStart);
+  }
+  return parsed;
+}
+
+async function persistWorkerBundle(
+  id: number,
+  workerId: string,
+  job: AnalysisJobRow,
+  recordingId: number,
+  upload: ParsedWorkerBundle,
+) {
+  const stored = await storeUploadBundle(recordingId, job.createdBy ?? 0, upload);
+  const landed = [...new Set([...job.bundleRecordingIds, recordingId])];
+  await db
+    .update(analysisJobsTable)
+    .set({ bundleRecordingIds: landed, heartbeatAt: new Date(), updatedAt: new Date() })
+    .where(eq(analysisJobsTable.id, id));
+  await invalidateMatchStatsCacheForRecording(recordingId);
+  queueMatchStatsCacheForRecording(recordingId);
+  logger.info({ jobId: id, workerId, recordingId }, "Analysis worker stored a tracking bundle");
+  return {
+    ok: true,
+    recordingId,
+    remaining: job.sourceRecordingIds.filter((sourceId) => !landed.includes(sourceId)),
+    stored,
+  };
+}
+
+async function acceptWorkerBundle(
+  res: import("express").Response,
+  id: number,
+  workerId: string,
+  job: AnalysisJobRow,
+  recordingId: number,
+  buffer: Buffer,
+  videoStartSeconds: unknown,
+): Promise<void> {
+  const parsed = parseWorkerBundle(buffer, videoStartSeconds);
+  if (!parsed.upload) {
+    res.status(400).json({ error: parsed.error ?? "Invalid tracking bundle." });
+    return;
+  }
+
+  try {
+    res.json(await persistWorkerBundle(id, workerId, job, recordingId, parsed.upload));
+  } catch (error) {
+    logger.error({ jobId: id, recordingId, err: error }, "Worker bundle upload failed");
+    res.status(400).json({ error: (error as Error)?.message ?? "Could not store the bundle." });
+  }
+}
+
 /** POST /worker/analysis/:id/heartbeat — stage, progress, still alive. */
 router.post("/worker/analysis/:id/heartbeat", async (req, res): Promise<void> => {
   const workerId = requireWorker(req, res);
@@ -783,28 +921,98 @@ router.put("/worker/analysis/:id/bundle", bundleUploadSingle, async (req, res): 
   }
   if (!req.file?.buffer) { res.status(400).json({ error: "Attach the bundle zip as the 'bundle' field." }); return; }
 
-  const parsed = parseZipBundleDetailed(req.file.buffer);
-  if (!parsed.upload) { res.status(400).json({ error: parsed.error ?? "Invalid tracking bundle." }); return; }
+  await acceptWorkerBundle(
+    res,
+    id,
+    workerId,
+    job,
+    target,
+    req.file.buffer,
+    (req.body as Record<string, unknown>)?.videoStartSeconds,
+  );
+});
 
-  const overrideStart = Number((req.body as Record<string, unknown>)?.videoStartSeconds);
-  if (Number.isFinite(overrideStart)) {
-    parsed.upload.manifest.videoStartSeconds = Math.max(0, overrideStart);
+/**
+ * POST /worker/analysis/:id/bundle-from-storage
+ *
+ * Large worker bundles travel through Bunny Storage instead of the hosting
+ * platform's capped HTTP request body. The worker sends only object metadata;
+ * this server fetches and verifies the bytes before using the same parser and
+ * persistence path as the multipart endpoint.
+ */
+router.post("/worker/analysis/:id/bundle-from-storage", async (req, res): Promise<void> => {
+  const workerId = requireWorker(req, res);
+  if (!workerId) return;
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid job id" }); return; }
+
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  const job = await jobHeldBy(id, workerId);
+  if (!job) { res.status(404).json({ error: "This worker does not hold that job" }); return; }
+  if (job.status === "cancelled") { res.status(409).json({ error: "This job was cancelled." }); return; }
+
+  const recordingId = parseId(body.recordingId);
+  if (!recordingId || !job.sourceRecordingIds.includes(recordingId)) {
+    res.status(400).json({ error: "recordingId must be one of the job's source recordings." });
+    return;
+  }
+  if (!isAnalysisBundleStoragePath(body.storagePath)) {
+    res.status(400).json({ error: "storagePath must name a .zip object inside analysis-bundles/." });
+    return;
+  }
+  if (typeof body.bytes !== "number" || !Number.isSafeInteger(body.bytes) || body.bytes <= 0) {
+    res.status(400).json({ error: "bytes must be a positive integer." });
+    return;
+  }
+  if (body.bytes > MAX_ANALYSIS_BUNDLE_BYTES) {
+    res.status(413).json({ error: "The ZIP file exceeds the 75 MB upload limit." });
+    return;
+  }
+  if (typeof body.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(body.sha256)) {
+    res.status(400).json({ error: "sha256 must be a 64-character hexadecimal digest." });
+    return;
   }
 
   try {
-    const stored = await storeUploadBundle(target, job.createdBy ?? 0, parsed.upload);
-    const landed = [...new Set([...job.bundleRecordingIds, target])];
-    await db
-      .update(analysisJobsTable)
-      .set({ bundleRecordingIds: landed, heartbeatAt: new Date(), updatedAt: new Date() })
-      .where(eq(analysisJobsTable.id, id));
-    await invalidateMatchStatsCacheForRecording(target);
-    queueMatchStatsCacheForRecording(target);
-    logger.info({ jobId: id, workerId, recordingId: target }, "Analysis worker stored a tracking bundle");
-    res.json({ ok: true, recordingId: target, remaining: job.sourceRecordingIds.filter((s) => !landed.includes(s)), stored });
+    const buffer = await downloadAnalysisBundleFromStorage(body.storagePath);
+    if (buffer.byteLength !== body.bytes) {
+      res.status(400).json({ error: `Bundle size mismatch: expected ${body.bytes} bytes, received ${buffer.byteLength}.` });
+      return;
+    }
+    const actualSha256 = createHash("sha256").update(buffer).digest("hex");
+    if (actualSha256.toLowerCase() !== body.sha256.toLowerCase()) {
+      res.status(400).json({ error: "Bundle SHA-256 mismatch." });
+      return;
+    }
+
+    // A long Storage download can overlap an operator cancelling the job or
+    // reclaiming it. Check ownership again before persisting any bundle data.
+    const currentJob = await jobHeldBy(id, workerId);
+    if (!currentJob) { res.status(404).json({ error: "This worker does not hold that job" }); return; }
+    if (currentJob.status === "cancelled") { res.status(409).json({ error: "This job was cancelled." }); return; }
+    if (!currentJob.sourceRecordingIds.includes(recordingId)) {
+      res.status(400).json({ error: "recordingId must be one of the job's source recordings." });
+      return;
+    }
+
+    await acceptWorkerBundle(
+      res,
+      id,
+      workerId,
+      currentJob,
+      recordingId,
+      buffer,
+      body.videoStartSeconds,
+    );
   } catch (error) {
-    logger.error({ jobId: id, recordingId: target, err: error }, "Worker bundle upload failed");
-    res.status(400).json({ error: (error as Error)?.message ?? "Could not store the bundle." });
+    if (error instanceof AnalysisBundleStorageError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
+    logger.error({ jobId: id, recordingId, err: error }, "Could not fetch worker bundle from Bunny Storage");
+    res.status(502).json({ error: "Could not fetch the analysis bundle from Bunny Storage." });
   }
 });
 

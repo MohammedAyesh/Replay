@@ -7,10 +7,11 @@
  * because the worker had not noticed, a job marked succeeded with no bundle
  * behind it, and the order of the chosen recordings surviving the round trip.
  */
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import { eq, inArray } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { strToU8, zipSync } from "fflate";
 import {
   db,
@@ -40,6 +41,9 @@ vi.mock("../lib/claimMatchStorage", () => ({
 }));
 
 vi.mock("../lib/bunny", () => ({
+  BUNNY_STORAGE_API_KEY: "test-bunny-storage-key",
+  BUNNY_STORAGE_HOSTNAME: "storage.bunnycdn.com",
+  BUNNY_STORAGE_ZONE: "galaxyfield",
   getPortfolioClipStoragePath: vi.fn((clipId: number, exportedUrl: string) =>
     exportedUrl === `storage:${clipId}` ? `clips/${clipId}.mp4` : null),
 }));
@@ -171,6 +175,10 @@ beforeEach(async () => {
   }
   mockedGetLocalUserId.mockResolvedValue(adminId);
   process.env.ANALYSIS_WORKER_KEY = KEY;
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 const asWorker = (path: string, worker = "w1") =>
@@ -738,6 +746,149 @@ describe("the bundle the worker sends back", () => {
       .attach("bundle", bundleZip(), "idbundle.zip");
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("source recordings");
+  });
+
+  function storagePayload(id: number, buffer: Buffer, overrides: Record<string, unknown> = {}) {
+    const sha256 = createHash("sha256").update(buffer).digest("hex");
+    return {
+      workerId: "w1",
+      recordingId: recB,
+      storagePath: `analysis-bundles/job${id}/${recB}-${sha256}.zip`,
+      bytes: buffer.byteLength,
+      sha256,
+      ...overrides,
+    };
+  }
+
+  function stubBunnyStorageResponse(buffer: Buffer | null, status = 200) {
+    const response = new Response(buffer ? new Uint8Array(buffer) : null, { status });
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => response);
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("downloads, verifies, and stores a Bunny bundle through the same path as multipart uploads", async () => {
+    const id = await claimAJob();
+    const buffer = bundleZip();
+    const payload = storagePayload(id, buffer, { videoStartSeconds: 1080 });
+    const fetchMock = stubBunnyStorageResponse(buffer);
+
+    const response = await request(app)
+      .post(`/api/worker/analysis/${id}/bundle-from-storage`)
+      .set("x-worker-key", KEY)
+      .send({ ...payload, sha256: String(payload.sha256).toUpperCase() })
+      .expect(200);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://storage.bunnycdn.com/galaxyfield/${payload.storagePath}`,
+      expect.objectContaining({ headers: { AccessKey: "test-bunny-storage-key" }, redirect: "error" }),
+    );
+    expect(response.body).toMatchObject({
+      ok: true,
+      recordingId: recB,
+      remaining: [recA],
+    });
+    expect(response.body.stored).toBeTruthy();
+
+    const [job] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, id));
+    expect(job.bundleRecordingIds).toEqual([recB]);
+    const [bundle] = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recB));
+    expect(bundle.manifest.videoStartSeconds).toBe(1080);
+  });
+
+  it("rejects a Bunny object whose SHA-256 does not match the request", async () => {
+    const id = await claimAJob();
+    const buffer = bundleZip();
+    stubBunnyStorageResponse(buffer);
+    const payload = storagePayload(id, buffer, { sha256: "0".repeat(64) });
+
+    const response = await request(app)
+      .post(`/api/worker/analysis/${id}/bundle-from-storage`)
+      .set("x-worker-key", KEY)
+      .send(payload)
+      .expect(400);
+    expect(response.body.error).toContain("SHA-256 mismatch");
+    expect(await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recB))).toHaveLength(0);
+  });
+
+  it("rejects a Bunny object whose byte length does not match the request", async () => {
+    const id = await claimAJob();
+    const buffer = bundleZip();
+    stubBunnyStorageResponse(buffer);
+    const payload = storagePayload(id, buffer, { bytes: buffer.byteLength + 1 });
+
+    const response = await request(app)
+      .post(`/api/worker/analysis/${id}/bundle-from-storage`)
+      .set("x-worker-key", KEY)
+      .send(payload)
+      .expect(400);
+    expect(response.body.error).toContain("size mismatch");
+  });
+
+  it("reports a missing Bunny object without attempting to parse it", async () => {
+    const id = await claimAJob();
+    const buffer = bundleZip();
+    stubBunnyStorageResponse(null, 404);
+
+    const response = await request(app)
+      .post(`/api/worker/analysis/${id}/bundle-from-storage`)
+      .set("x-worker-key", KEY)
+      .send(storagePayload(id, buffer))
+      .expect(404);
+    expect(response.body.error).toContain("not found");
+  });
+
+  it.each([
+    "clips/not-a-bundle.zip",
+    "analysis-bundles/../clips/escape.zip",
+    "https://storage.bunnycdn.com/galaxyfield/analysis-bundles/object.zip",
+    "/analysis-bundles/absolute.zip",
+  ])("rejects an unsafe Bunny storage path: %s", async (storagePath) => {
+    const id = await claimAJob();
+    const buffer = bundleZip();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await request(app)
+      .post(`/api/worker/analysis/${id}/bundle-from-storage`)
+      .set("x-worker-key", KEY)
+      .send(storagePayload(id, buffer, { storagePath }))
+      .expect(400);
+    expect(response.body.error).toContain("analysis-bundles");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a storage upload when another worker holds the job", async () => {
+    const id = await claimAJob();
+    const buffer = bundleZip();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await request(app)
+      .post(`/api/worker/analysis/${id}/bundle-from-storage`)
+      .set("x-worker-key", KEY)
+      .send(storagePayload(id, buffer, { workerId: "w2" }))
+      .expect(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a storage upload after the job has been cancelled", async () => {
+    const id = await claimAJob();
+    await request(app).post(`/api/admin/analysis-jobs/${id}/cancel`).send({}).expect(200);
+    const buffer = bundleZip();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await request(app)
+      .post(`/api/worker/analysis/${id}/bundle-from-storage`)
+      .set("x-worker-key", KEY)
+      .send(storagePayload(id, buffer))
+      .expect(409);
+    expect(response.body.error).toContain("cancelled");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("completes once a bundle has landed, and the segments are there to claim", async () => {
