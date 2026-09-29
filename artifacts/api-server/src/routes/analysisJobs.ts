@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import {
   db,
   analysisJobsTable,
@@ -9,9 +9,11 @@ import {
   recordingTrackingBundlesTable,
   fieldsTable,
   usersTable,
+  userClipsTable,
   type AnalysisJobRow,
   type AnalysisJobStatus,
 } from "@workspace/db";
+import { getPortfolioClipStoragePath } from "../lib/bunny";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { logger } from "../lib/logger";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
@@ -72,20 +74,25 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
   return user?.isAdmin ? userId : null;
 }
 
-function requireWorker(req: import("express").Request, res: import("express").Response): string | null {
+function requireWorkerKey(req: import("express").Request, res: import("express").Response): boolean {
   const expected = WORKER_KEY();
   if (!expected) {
     // Distinguished from a wrong key on purpose: this is the server's fault,
     // and a worker that keeps retrying a 401 forever is harder to diagnose
     // than one told the deployment has no key set.
     res.status(503).json({ error: "This deployment has no ANALYSIS_WORKER_KEY set, so it cannot accept workers." });
-    return null;
+    return false;
   }
   const header = req.header("x-worker-key");
   if (!workerKeyMatches(expected, header)) {
     res.status(401).json({ error: "Bad worker key" });
-    return null;
+    return false;
   }
+  return true;
+}
+
+function requireWorker(req: import("express").Request, res: import("express").Response): string | null {
+  if (!requireWorkerKey(req, res)) return null;
   const workerId = String(req.body?.workerId ?? req.header("x-worker-id") ?? "").trim();
   if (!workerId || workerId.length > 120) {
     res.status(400).json({ error: "workerId is required" });
@@ -98,6 +105,91 @@ function parseId(raw: unknown): number | null {
   const value = Number.parseInt(Array.isArray(raw) ? String(raw[0]) : String(raw), 10);
   return Number.isFinite(value) && value > 0 ? value : null;
 }
+
+const BUNNY_VIDEO_ID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i;
+
+function bunnyVideoIdFromSource(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const raw = value.trim();
+  if (BUNNY_VIDEO_ID_RE.test(raw)) return raw;
+  try {
+    const pathname = new URL(raw).pathname;
+    return pathname.split("/").find((part) => BUNNY_VIDEO_ID_RE.test(part)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /worker/analysis/retention-holds
+ *
+ * vps1 calls this before Bunny Stream cleanup. A source stays on hold until
+ * every clip has a finished Bunny Storage MP4 and no active analysis job still
+ * needs the recording. Clip rows are keyset-read through the existing primary
+ * key; active jobs use their status index and recordings are loaded by PK.
+ */
+router.get("/worker/analysis/retention-holds", async (req, res): Promise<void> => {
+  if (!requireWorkerKey(req, res)) return;
+
+  const holdVideoIds = new Set<string>();
+  let cursor = 0;
+  const pageSize = 500;
+  while (true) {
+    const clips = await db
+      .select({
+        id: userClipsTable.id,
+        videoId: userClipsTable.videoId,
+        exportStatus: userClipsTable.exportStatus,
+        exportedUrl: userClipsTable.exportedUrl,
+      })
+      .from(userClipsTable)
+      .where(gt(userClipsTable.id, cursor))
+      .orderBy(asc(userClipsTable.id))
+      .limit(pageSize);
+
+    for (const clip of clips) {
+      const exportIsPermanent = clip.exportStatus === "done"
+        && !!clip.exportedUrl
+        && !!getPortfolioClipStoragePath(clip.id, clip.exportedUrl);
+      if (!exportIsPermanent) {
+        const videoId = bunnyVideoIdFromSource(clip.videoId);
+        if (videoId) holdVideoIds.add(videoId);
+      }
+    }
+
+    if (clips.length < pageSize) break;
+    cursor = clips[clips.length - 1].id;
+  }
+
+  const activeJobs = await db
+    .select({
+      recordingId: analysisJobsTable.recordingId,
+      sourceRecordingIds: analysisJobsTable.sourceRecordingIds,
+    })
+    .from(analysisJobsTable)
+    .where(inArray(analysisJobsTable.status, ACTIVE_STATUSES));
+  const recordingIds = new Set<number>();
+  for (const job of activeJobs) {
+    recordingIds.add(job.recordingId);
+    for (const sourceId of job.sourceRecordingIds) {
+      if (Number.isInteger(sourceId) && sourceId > 0) recordingIds.add(sourceId);
+    }
+  }
+
+  if (recordingIds.size > 0) {
+    const sourceRows = await db
+      .select({ videoUrl: recordingsTable.videoUrl })
+      .from(recordingsTable)
+      .where(inArray(recordingsTable.id, [...recordingIds]));
+    for (const source of sourceRows) {
+      const videoId = bunnyVideoIdFromSource(source.videoUrl);
+      if (videoId) holdVideoIds.add(videoId);
+    }
+  }
+
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ holdVideoIds: [...holdVideoIds].sort() });
+});
 
 const SCHEMA_MISSING =
   "The analysis queue tables have not been created in this database yet. Open a Shell tab and run: pnpm --filter @workspace/db run push";
