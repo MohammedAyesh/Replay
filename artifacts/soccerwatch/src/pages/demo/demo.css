@@ -582,6 +582,7 @@
   color: #0b0f1a;
   font: 500 17px/1.2 var(--dm-text);
 }
+.dm-hp { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .dm-sent { margin: 0; font-size: 20px; font-weight: 700; }
 .dm-error { color: #7a1500 !important; }
 

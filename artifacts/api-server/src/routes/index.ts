@@ -37,6 +37,7 @@ import safetyRouter from "./safety";
 import friendsRouter from "./friends";
 import portfoliosRouter from "./portfolios";
 import demoShowcaseRouter from "./demoShowcase";
+import demoLeadsRouter from "./demoLeads";
 
 const router: IRouter = Router();
 
@@ -47,6 +48,7 @@ router.use(bunnyVideosRouter);
 router.use(fieldsRouter);
 router.use(recordingsRouter);
 router.use(demoShowcaseRouter);
+router.use(demoLeadsRouter);
 router.use(clipsRouter);
 router.use(savedClipsRouter);
 router.use(userClipsRouter);
