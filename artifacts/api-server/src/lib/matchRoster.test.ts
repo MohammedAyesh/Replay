@@ -54,6 +54,27 @@ describe("parseMatchRoster", () => {
     });
   });
 
+  it("accepts the pipeline's pid alias for older roster bundles", () => {
+    const roster = parseMatchRoster({
+      players: [{
+        pid: "legacy-player-9",
+        name: "Legacy player",
+        parts: [["first-half", "t1"]],
+      }],
+    }, segments);
+
+    expect(roster?.players[0]).toMatchObject({
+      id: "legacy-player-9",
+      name: "Legacy player",
+      parts: [{
+        segmentName: "first-half",
+        trackId: "s0:t1",
+        fromFrame: 110,
+        toFrame: 180,
+      }],
+    });
+  });
+
   it("discards invalid entries without requiring a roster to exist", () => {
     expect(parseMatchRoster(null, segments)).toBeNull();
     expect(parseMatchRoster({ players: "not an array" }, segments)).toBeNull();

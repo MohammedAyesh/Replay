@@ -66,7 +66,7 @@ export function parseMatchRoster(
 
   for (const value of raw.players.slice(0, MAX_MATCH_ROSTER_PLAYERS)) {
     const player = asRecord(value);
-    const id = rosterId(player.id ?? player.playerId ?? player.player_id);
+    const id = rosterId(player.id ?? player.playerId ?? player.player_id ?? player.pid);
     if (!id || seenPlayerIds.has(id) || !Array.isArray(player.parts)) continue;
 
     const parts: MatchRosterPart[] = [];

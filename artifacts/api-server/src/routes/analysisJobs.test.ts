@@ -46,6 +46,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
   }),
 }));
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import * as rosterHintsModule from "../lib/rosterHints";
 import { buildRosterHintsForRecording } from "../lib/rosterHints";
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
@@ -429,6 +430,27 @@ describe("roster hints for analysis", () => {
     expect(claim.body.job.params.rosterHints).toEqual(override);
   });
 
+  it("returns a claimed job without roster hints when hint building fails", async () => {
+    await queueJob({ sourceRecordingIds: [recA] }).expect(201);
+    const hintsSpy = vi.spyOn(rosterHintsModule, "buildRosterHintsForJob")
+      .mockRejectedValue(new Error("simulated roster lookup failure"));
+    try {
+      const claim = await asWorker("/api/worker/analysis/claim").expect(200);
+      expect(claim.body.job).toMatchObject({ recordingId: recA });
+      expect(claim.body.job.params).not.toHaveProperty("rosterHints");
+
+      const [job] = await db.select().from(analysisJobsTable)
+        .where(eq(analysisJobsTable.recordingId, recA));
+      const [worker] = await db.select().from(analysisWorkersTable)
+        .where(eq(analysisWorkersTable.id, "w1"));
+      expect(job.status).toBe("claimed");
+      expect(job.workerId).toBe("w1");
+      expect(worker.currentJobId).toBe(job.id);
+    } finally {
+      hintsSpy.mockRestore();
+    }
+  });
+
   it("injects computed roster hints into worker params when a room is linked", async () => {
     const room = await makeRoomForRecording(recA, {
       shirts: { A: "yes", B: "no" },
@@ -469,6 +491,20 @@ describe("roster hints for analysis", () => {
     });
   });
 
+  it("keeps the admin roster-hints preview available when hint building fails", async () => {
+    const queued = await queueJob({ sourceRecordingIds: [recA] }).expect(201);
+    const hintsSpy = vi.spyOn(rosterHintsModule, "buildRosterHintsForJob")
+      .mockRejectedValue(new Error("simulated roster lookup failure"));
+    try {
+      const preview = await request(app)
+        .get(`/api/admin/analysis-jobs/${queued.body.id}/roster-hints`)
+        .expect(200);
+      expect(preview.body.rosterHints).toBeNull();
+    } finally {
+      hintsSpy.mockRestore();
+    }
+  });
+
   it("refuses the roster-hints preview route for non-admins", async () => {
     const queued = await queueJob({ sourceRecordingIds: [recA] }).expect(201);
     mockedGetLocalUserId.mockResolvedValue(plainId);
@@ -492,6 +528,22 @@ describe("heartbeat and cancellation", () => {
     expect(row.status).toBe("running");
     expect(row.stage).toBe("analysing chunk 2 of 6");
     expect(row.progress).toBe(31);
+  });
+
+  it("returns a clear 503 when the heartbeat database query fails", async () => {
+    const selectSpy = vi.spyOn(db, "select").mockImplementation(() => {
+      throw new Error("simulated database outage");
+    });
+    try {
+      const response = await request(app).post("/api/worker/analysis/1/heartbeat")
+        .set("x-worker-key", KEY)
+        .send({ workerId: "w1", stage: "analysing" })
+        .expect(503);
+      expect(response.body.error).toContain("database is unavailable");
+      expect(response.body.error).toContain("heartbeat");
+    } finally {
+      selectSpy.mockRestore();
+    }
   });
 
   it("tells a worker to stop once the job has been cancelled, and does not revive it", async () => {
@@ -667,5 +719,45 @@ describe("the queue as the console sees it", () => {
     await queueJob().expect(201);
     const res = await asWorker("/api/worker/analysis/ping").expect(200);
     expect(res.body.queued).toBe(1);
+  });
+
+  it("keeps the queue listing available when roster-hint building fails", async () => {
+    const queued = await queueJob({ sourceRecordingIds: [recA] }).expect(201);
+    const hintsSpy = vi.spyOn(rosterHintsModule, "buildRosterHintsForJob")
+      .mockRejectedValue(new Error("simulated roster lookup failure"));
+    try {
+      const response = await request(app).get("/api/admin/analysis-jobs").expect(200);
+      const listed = response.body.jobs.find((job: { id: number }) => job.id === queued.body.id);
+      expect(response.body.schemaReady).toBe(true);
+      expect(listed).toBeDefined();
+      expect(listed.rosterHints).toBeNull();
+    } finally {
+      hintsSpy.mockRestore();
+    }
+  });
+
+  it("reports a missing analysis column as schema-not-ready and names it", async () => {
+    const missingColumn = Object.assign(
+      new Error("column analysis_jobs.future_column does not exist"),
+      { code: "42703" },
+    );
+    const originalSelect = db.select.bind(db);
+    let selectCalls = 0;
+    const selectSpy = vi.spyOn(db, "select").mockImplementation((fields: Parameters<typeof db.select>[0]) => {
+      selectCalls += 1;
+      if (selectCalls === 2) throw missingColumn;
+      return originalSelect(fields);
+    });
+    try {
+      const response = await request(app).get("/api/admin/analysis-jobs").expect(200);
+      expect(response.body).toMatchObject({
+        schemaReady: false,
+        jobs: [],
+        workers: [],
+      });
+      expect(response.body.message).toContain("analysis_jobs.future_column");
+    } finally {
+      selectSpy.mockRestore();
+    }
   });
 });

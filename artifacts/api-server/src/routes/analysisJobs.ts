@@ -99,15 +99,62 @@ function parseId(raw: unknown): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-/** The schema is pushed, not migrated, so a fresh deploy may not have it yet. */
-export function isMissingAnalysisSchema(err: unknown): boolean {
-  const code = (err as { code?: string })?.code ?? ((err as { cause?: { code?: string } })?.cause)?.code;
-  if (code === "42P01") return true;
-  return /relation .* does not exist/i.test(String((err as Error)?.message ?? ""));
-}
-
 const SCHEMA_MISSING =
   "The analysis queue tables have not been created in this database yet. Open a Shell tab and run: pnpm --filter @workspace/db run push";
+
+function schemaErrorChain(err: unknown): Array<{ code?: string; message: string }> {
+  const chain: Array<{ code?: string; message: string }> = [];
+  const seen = new Set<object>();
+  let current = err;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const value = current as { code?: unknown; message?: unknown; cause?: unknown };
+    chain.push({
+      code: typeof value.code === "string" ? value.code : undefined,
+      message: typeof value.message === "string" ? value.message : "",
+    });
+    current = value.cause;
+  }
+  return chain;
+}
+
+/** The schema may be incomplete even when its tables exist. */
+export function isMissingAnalysisSchema(err: unknown): boolean {
+  return schemaErrorChain(err).some(({ code, message }) =>
+    code === "42P01"
+    || code === "42703"
+    || /relation .+ does not exist|column .+ does not exist/i.test(message),
+  );
+}
+
+function schemaMissingMessage(err: unknown): string {
+  const column = schemaErrorChain(err)
+    .map(({ message }) => {
+      const relationQualified = message.match(/column\s+(.+?)\s+of relation\s+.+?\s+does not exist/i);
+      const plain = message.match(/column\s+(.+?)\s+does not exist/i);
+      return (relationQualified?.[1] ?? plain?.[1])?.replace(/"/g, "").trim();
+    })
+    .find((name): name is string => !!name);
+  return column
+    ? `The database is missing required column "${column}" for the analysis queue.`
+    : SCHEMA_MISSING;
+}
+
+async function buildRosterHintsBestEffort(
+  recordingId: number,
+  sourceRecordingIds: number[],
+  cache?: RosterHintCache,
+): Promise<RosterHints | undefined> {
+  try {
+    return await buildRosterHintsForJob(recordingId, sourceRecordingIds, cache);
+  } catch (error) {
+    logger.warn(
+      { err: error, recordingId, sourceRecordingIds },
+      "Roster hints unavailable; continuing without them",
+    );
+    return undefined;
+  }
+}
 
 async function loadSources(ids: number[]) {
   if (!ids.length) return [];
@@ -190,7 +237,7 @@ async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((row) => row.id);
   const hints = await Promise.all(rows.map((row) =>
-    buildRosterHintsForJob(row.recordingId, row.sourceRecordingIds, rosterHintCache),
+    buildRosterHintsBestEffort(row.recordingId, row.sourceRecordingIds, rosterHintCache),
   ));
   const bundleRecordingIds = [...new Set(rows.flatMap((row) => [
     row.recordingId,
@@ -327,7 +374,7 @@ router.get("/admin/analysis-jobs", async (req, res): Promise<void> => {
     });
   } catch (error) {
     if (isMissingAnalysisSchema(error)) {
-      res.json({ schemaReady: false, jobs: [], workers: [], message: SCHEMA_MISSING });
+      res.json({ schemaReady: false, jobs: [], workers: [], message: schemaMissingMessage(error) });
       return;
     }
     logger.error({ err: error }, "Could not read the analysis queue");
@@ -343,7 +390,7 @@ router.get("/admin/analysis-jobs/:id/roster-hints", async (req, res): Promise<vo
   if (!id) { res.status(400).json({ error: "Invalid job id" }); return; }
   const [job] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, id));
   if (!job) { res.status(404).json({ error: "No such analysis job" }); return; }
-  const rosterHints = await buildRosterHintsForJob(job.recordingId, job.sourceRecordingIds);
+  const rosterHints = await buildRosterHintsBestEffort(job.recordingId, job.sourceRecordingIds);
   res.json({ rosterHints: rosterHints ?? null });
 });
 
@@ -438,7 +485,7 @@ router.post("/worker/analysis/ping", async (req, res): Promise<void> => {
       .where(eq(analysisJobsTable.status, "queued"));
     res.json({ ok: true, queued: Number(waiting?.count ?? 0) });
   } catch (error) {
-    if (isMissingAnalysisSchema(error)) { res.status(503).json({ error: SCHEMA_MISSING }); return; }
+    if (isMissingAnalysisSchema(error)) { res.status(503).json({ error: schemaMissingMessage(error) }); return; }
     throw error;
   }
 });
@@ -521,7 +568,7 @@ router.post("/worker/analysis/claim", async (req, res): Promise<void> => {
     const suppliedRosterHints = params.rosterHints;
     if (typeof suppliedRosterHints !== "object" || suppliedRosterHints === null || Array.isArray(suppliedRosterHints)) {
       delete params.rosterHints;
-      const rosterHints = await buildRosterHintsForJob(claimed.recordingId, claimed.sourceRecordingIds);
+      const rosterHints = await buildRosterHintsBestEffort(claimed.recordingId, claimed.sourceRecordingIds);
       if (rosterHints) params.rosterHints = rosterHints;
     }
     logger.info({ jobId: claimed.id, workerId }, "Analysis job claimed");
@@ -539,7 +586,7 @@ router.post("/worker/analysis/claim", async (req, res): Promise<void> => {
       },
     });
   } catch (error) {
-    if (isMissingAnalysisSchema(error)) { res.status(503).json({ error: SCHEMA_MISSING }); return; }
+    if (isMissingAnalysisSchema(error)) { res.status(503).json({ error: schemaMissingMessage(error) }); return; }
     logger.error({ err: error, workerId }, "Analysis claim failed");
     res.status(500).json({ error: "Could not claim a job." });
   }
@@ -557,39 +604,50 @@ router.post("/worker/analysis/:id/heartbeat", async (req, res): Promise<void> =>
   if (!workerId) return;
   const id = parseId(req.params.id);
   if (!id) { res.status(400).json({ error: "Invalid job id" }); return; }
-  const [job] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, id));
-  if (!job) { res.status(404).json({ error: "No such analysis job" }); return; }
-  // Two ways a heartbeat should mean "put your tools down", and both answer the
-  // same way so the worker needs one branch: the job has finished or been
-  // cancelled underneath it, or it has been reclaimed and another machine is
-  // now doing this work. Carrying on in either case duplicates six GPU-hours.
-  if (job.workerId !== workerId || !canTransition(job.status, "running")) {
-    res.json({
-      job: { id: job.id, status: job.status },
-      stop: true,
-      reason: job.workerId !== workerId
-        ? "Another worker holds this job now."
-        : `The job is ${job.status}.`,
+  try {
+    const [job] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, id));
+    if (!job) { res.status(404).json({ error: "No such analysis job" }); return; }
+    // Two ways a heartbeat should mean "put your tools down", and both answer the
+    // same way so the worker needs one branch: the job has finished or been
+    // cancelled underneath it, or it has been reclaimed and another machine is
+    // now doing this work. Carrying on in either case duplicates six GPU-hours.
+    if (job.workerId !== workerId || !canTransition(job.status, "running")) {
+      res.json({
+        job: { id: job.id, status: job.status },
+        stop: true,
+        reason: job.workerId !== workerId
+          ? "Another worker holds this job now."
+          : `The job is ${job.status}.`,
+      });
+      return;
+    }
+    const progress = Number(req.body?.progress);
+    const [updated] = await db
+      .update(analysisJobsTable)
+      .set({
+        status: "running",
+        stage: typeof req.body?.stage === "string" ? req.body.stage.slice(0, 200) : job.stage,
+        progress: Number.isFinite(progress) ? Math.min(100, Math.max(0, progress)) : job.progress,
+        heartbeatAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(analysisJobsTable.id, id))
+      .returning();
+    await db
+      .update(analysisWorkersTable)
+      .set({ lastSeenAt: new Date(), status: "busy", currentJobId: id })
+      .where(eq(analysisWorkersTable.id, workerId));
+    res.json({ job: { id: updated.id, status: updated.status }, stop: false });
+  } catch (error) {
+    if (isMissingAnalysisSchema(error)) {
+      res.status(503).json({ error: schemaMissingMessage(error) });
+      return;
+    }
+    logger.error({ err: error, jobId: id, workerId }, "Could not record analysis heartbeat");
+    res.status(503).json({
+      error: "Could not record the worker heartbeat because the database is unavailable. Please retry.",
     });
-    return;
   }
-  const progress = Number(req.body?.progress);
-  const [updated] = await db
-    .update(analysisJobsTable)
-    .set({
-      status: "running",
-      stage: typeof req.body?.stage === "string" ? req.body.stage.slice(0, 200) : job.stage,
-      progress: Number.isFinite(progress) ? Math.min(100, Math.max(0, progress)) : job.progress,
-      heartbeatAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(analysisJobsTable.id, id))
-    .returning();
-  await db
-    .update(analysisWorkersTable)
-    .set({ lastSeenAt: new Date(), status: "busy", currentJobId: id })
-    .where(eq(analysisWorkersTable.id, workerId));
-  res.json({ job: { id: updated.id, status: updated.status }, stop: false });
 });
 
 /**
