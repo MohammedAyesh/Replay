@@ -21,7 +21,11 @@
  * claude/export-failover-two-independent-renderers-2026-09-29.md.
  */
 import { logger } from "./logger";
-import { BUNNY_STORAGE_API_KEY } from "./bunny";
+import {
+  BUNNY_STORAGE_API_KEY,
+  BUNNY_STORAGE_ZONE,
+  isBunnyStorageUrl,
+} from "./bunny";
 import type { Response as ExpressResponse } from "express";
 
 export const BACKUP_EXPORT_PREFIX = "vps1-export:";
@@ -67,6 +71,8 @@ export type BackupExportStatus = {
   errorKind: string | null;
   running: boolean;
   output: { bytes: number; duration: number; width: number; height: number } | null;
+  /** Bunny Storage copy, when vps1 has verified and published one. */
+  storageUrl: string | null;
 };
 
 export type BackupExportSpec = {
@@ -79,6 +85,8 @@ export type BackupExportSpec = {
   aspectRatio: string;
   title: string;
   overlayUrl?: string | null;
+  /** Makes an intentional re-clip a distinct, permanent vps1 export object. */
+  exportRevision?: string;
 };
 
 function controlBase(): string {
@@ -144,7 +152,37 @@ function parseStatus(body: unknown): BackupExportStatus | null {
     output: b.output && typeof b.output === "object"
       ? (b.output as BackupExportStatus["output"])
       : null,
+    storageUrl: typeof b.storageUrl === "string" ? b.storageUrl : null,
   };
+}
+
+/**
+ * Accept a vps1 storage URL only when it points at this job's expected object
+ * in the configured zone. The old vps1 reference remains the serving path if
+ * the control service returns an unexpected URL or an older status response.
+ */
+export function validatedBackupStorageUrl(status: BackupExportStatus): string | null {
+  const candidate = status.storageUrl?.trim();
+  if (!candidate || !isBunnyStorageUrl(candidate)) return null;
+
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "https:") return null;
+    const zone = BUNNY_STORAGE_ZONE.replace(/^\/+|\/+$/g, "");
+    const pathname = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    const expectedPath = `${zone}/clips/${status.job}.mp4`;
+    if (
+      !Number.isInteger(status.clipId)
+      || status.clipId <= 0
+      || !status.job.startsWith(`c${status.clipId}-`)
+      || pathname !== expectedPath
+    ) {
+      return null;
+    }
+    return candidate;
+  } catch {
+    return null;
+  }
 }
 
 /**

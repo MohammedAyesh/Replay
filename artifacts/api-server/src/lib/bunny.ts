@@ -251,7 +251,9 @@ export function getPortfolioClipStoragePath(clipId: number, exportedUrl: string)
     storagePath = storagePath.slice(zonePrefix.length);
   }
 
-  const expectedPath = new RegExp(`^clips/${clipId}(?:-[A-Za-z0-9_-]+)?\\.mp4$`);
+  // Primary renders use clips/<id>[-revision].mp4. vps1 copies use
+  // clips/c<id>-<job-hash>.mp4; both are permanent portfolio exports.
+  const expectedPath = new RegExp(`^clips/(?:${clipId}|c${clipId})(?:-[A-Za-z0-9_-]+)?\\.mp4$`);
   return expectedPath.test(storagePath) ? storagePath : null;
 }
 /**

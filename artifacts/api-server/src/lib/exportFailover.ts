@@ -24,12 +24,16 @@
  * decision function `decideBackupAction` is exported for tests and the rest is
  * thin I/O around it.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, like } from "drizzle-orm";
 import { db, userClipsTable } from "@workspace/db";
 import { logger } from "./logger";
 import {
+  BACKUP_EXPORT_PREFIX,
+  backupJobFromRef,
   backupExportRef,
+  getBackupExportStatus,
   isBackupExportConfigured,
+  validatedBackupStorageUrl,
   submitBackupExport,
   type BackupExportSpec,
   type BackupExportStatus,
@@ -93,7 +97,11 @@ export function primaryRunningForMs(clipId: number): number | null {
   return at == null ? null : Date.now() - at;
 }
 
-export function backupSpecFor(clip: ClipRow, overlayUrl?: string | null): BackupExportSpec {
+export function backupSpecFor(
+  clip: ClipRow,
+  overlayUrl?: string | null,
+  exportRevision?: string,
+): BackupExportSpec {
   return {
     clipId: clip.id,
     videoId: clip.videoId,
@@ -103,6 +111,7 @@ export function backupSpecFor(clip: ClipRow, overlayUrl?: string | null): Backup
     aspectRatio: clip.aspectRatio ?? "16:9",
     title: clip.title,
     overlayUrl: overlayUrl ?? null,
+    ...(exportRevision ? { exportRevision } : {}),
   };
 }
 
@@ -115,7 +124,12 @@ export function backupSpecFor(clip: ClipRow, overlayUrl?: string | null): Backup
  */
 export async function reconcileBackup(
   clip: ClipRow,
-  opts: { overlayUrl?: string | null; primaryActive?: boolean; cacheMs?: number } = {},
+  opts: {
+    overlayUrl?: string | null;
+    primaryActive?: boolean;
+    cacheMs?: number;
+    exportRevision?: string;
+  } = {},
 ): Promise<BackupOutcome> {
   const now = Date.now();
   if (!isBackupExportConfigured()) {
@@ -131,9 +145,9 @@ export async function reconcileBackup(
 
 async function reconcileUncached(
   clip: ClipRow,
-  opts: { overlayUrl?: string | null; primaryActive?: boolean },
+  opts: { overlayUrl?: string | null; primaryActive?: boolean; exportRevision?: string },
 ): Promise<BackupOutcome> {
-  const spec = backupSpecFor(clip, opts.overlayUrl);
+  const spec = backupSpecFor(clip, opts.overlayUrl, opts.exportRevision);
   let status: BackupExportStatus;
   try {
     status = await submitBackupExport(spec);
@@ -149,7 +163,13 @@ async function reconcileUncached(
   const action = decideBackupAction(status, relaunchCount.get(clip.id) ?? 0);
   switch (action) {
     case "done": {
-      const url = backupExportRef(status.job);
+      const url = validatedBackupStorageUrl(status) ?? backupExportRef(status.job);
+      if (status.storageUrl && url === backupExportRef(status.job)) {
+        logger.warn(
+          { clipId: clip.id, job: status.job },
+          "Ignoring an invalid vps1 Bunny Storage URL; keeping the vps1 export reference",
+        );
+      }
       // Never overwrite a finished Method A export; both are valid, first wins.
       const updated = await db
         .update(userClipsTable)
@@ -332,4 +352,65 @@ export function startExportFailoverSweep(deps: {
   const first = setTimeout(() => { void tick(); }, 20_000);
   first.unref?.();
   return () => { clearInterval(handle); clearTimeout(first); };
+}
+
+/**
+ * Upgrade completed legacy vps1 references to their permanent Bunny Storage
+ * copies as those copies become available. Keep the vps1 URL untouched until
+ * the status response contains a validated object URL.
+ */
+export function startBackupStorageUrlUpgradeSweep(intervalMs = 5 * 60_000): () => void {
+  if (process.env.NODE_ENV === "test") return () => {};
+
+  const tick = async () => {
+    if (!isBackupExportConfigured()) return;
+    try {
+      const rows = await db
+        .select({
+          id: userClipsTable.id,
+          exportStatus: userClipsTable.exportStatus,
+          exportedUrl: userClipsTable.exportedUrl,
+        })
+        .from(userClipsTable)
+        .where(and(
+          eq(userClipsTable.exportStatus, "done"),
+          like(userClipsTable.exportedUrl, `${BACKUP_EXPORT_PREFIX}%`),
+        ))
+        .orderBy(asc(userClipsTable.id))
+        .limit(8);
+
+      await Promise.all(rows.map(async (clip) => {
+        if (!clip.exportedUrl) return;
+        const job = backupJobFromRef(clip.exportedUrl);
+        if (!job) return;
+        try {
+          const status = await getBackupExportStatus(job);
+          if (!status || status.status !== "ready") return;
+          const storageUrl = validatedBackupStorageUrl(status);
+          if (!storageUrl) return;
+          await db
+            .update(userClipsTable)
+            .set({ exportedUrl: storageUrl })
+            .where(and(
+              eq(userClipsTable.id, clip.id),
+              eq(userClipsTable.exportStatus, "done"),
+              eq(userClipsTable.exportedUrl, clip.exportedUrl),
+            ));
+        } catch (err) {
+          logger.warn({ err, clipId: clip.id, job }, "Could not upgrade a vps1 export to Bunny Storage");
+        }
+      }));
+    } catch (err) {
+      logger.error({ err }, "vps1 Bunny Storage URL upgrade sweep failed");
+    }
+  };
+
+  const interval = setInterval(() => { void tick(); }, intervalMs);
+  interval.unref?.();
+  const first = setTimeout(() => { void tick(); }, 30_000);
+  first.unref?.();
+  return () => {
+    clearInterval(interval);
+    clearTimeout(first);
+  };
 }
