@@ -88,7 +88,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
   const primary: "find" | "vote" | "watch" = canFind ? "find" : canVote ? "vote" : "watch";
 
   return (
-    <div className="flex flex-col px-4 pb-16" data-testid="match-report">
+    <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
       <ReportHeader copy={copy} r={r} onShare={onShare} />
       <TitleBlock room={room} copy={copy} r={r} now={now} colors={colors} names={names} replay={replay} meId={meId} durationSeconds={durationSeconds} />
       <TimelineBlock room={room} r={r} colors={colors} replay={replay} me={me} meId={meId} durationSeconds={durationSeconds} />
