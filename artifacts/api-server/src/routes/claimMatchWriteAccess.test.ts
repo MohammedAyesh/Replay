@@ -6,8 +6,8 @@
  * scheduled for players. The write paths used getVisibleRecordingBundle,
  * which has none.
  *
- * isRecordingVisible() returns false when a field has no recording_schedules
- * rows at all, so that is the DEFAULT state of every unscheduled recording.
+ * An unscheduled recording starts hidden. An explicit admin visibility toggle
+ * makes it available to players even without a schedule.
  * The result was that an admin could open the claim page and answer every
  * question while each write returned 404 and nothing was ever stored. The
  * client reported those 404s as "Saved on this device" and then discarded
@@ -16,8 +16,8 @@
  *
  * The flow those writes belonged to is gone; the gate is not. Both halves are
  * still held here, now through the chain's tap, which shares the same
- * getClaimMatchWritableBundle: an admin can write to an unscheduled recording,
- * and an ordinary account still cannot.
+ * getClaimMatchWritableBundle: an admin can write to a hidden recording, and
+ * an ordinary account can write after the admin enables Visible.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
@@ -171,9 +171,8 @@ beforeAll(async () => {
   }).returning({ id: usersTable.id });
   playerId = player.id;
 
-  // Deliberately NO recording_schedules row for this field: that is what makes
-  // the recording invisible to players and is the default for anything an
-  // admin is still validating.
+  // Deliberately NO recording_schedules row for this field. The explicit
+  // visibility toggle, not a schedule, controls imported recording access.
   const [recording] = await db.insert(recordingsTable).values({
     fieldId,
     court: "1",
@@ -181,7 +180,7 @@ beforeAll(async () => {
     timeSlot: "18:00",
     duration: "00:10:00",
     videoUrl: "https://example.test/unscheduled.m3u8",
-    isVisible: true,
+    isVisible: false,
   }).returning({ id: recordingsTable.id });
   recordingId = recording.id;
 
@@ -213,6 +212,7 @@ beforeEach(async () => {
   await db.delete(claimMatchProgressTable)
     .where(eq(claimMatchProgressTable.recordingId, recordingId));
   await db.delete(recordingSchedulesTable).where(eq(recordingSchedulesTable.fieldId, fieldId));
+  await db.update(recordingsTable).set({ isVisible: false }).where(eq(recordingsTable.id, recordingId));
   vi.clearAllMocks();
 });
 
@@ -261,7 +261,7 @@ describe("claim-match write access on an unscheduled recording", () => {
     expect(stored).toHaveLength(0);
   });
 
-  it("lets an ordinary account write once the recording IS scheduled", async () => {
+  it("keeps an explicitly hidden recording unavailable even if a schedule matches", async () => {
     await db.insert(recordingSchedulesTable).values({
       fieldId,
       allowedDate: "2026-08-31",
@@ -272,7 +272,18 @@ describe("claim-match write access on an unscheduled recording", () => {
     actAs(playerId);
     const res = await request(app)
       .post(`/api/recordings/${recordingId}/claim-match/chain/tap`)
-      .send(tapBody(`${TAG} player scheduled`));
+      .send(tapBody(`${TAG} player hidden`));
+    expect(res.status).toBe(403);
+  });
+
+  it("lets an ordinary account access the recording after Visible is enabled without a schedule", async () => {
+    await db.update(recordingsTable)
+      .set({ isVisible: true })
+      .where(eq(recordingsTable.id, recordingId));
+    actAs(playerId);
+    const res = await request(app)
+      .post(`/api/recordings/${recordingId}/claim-match/chain/tap`)
+      .send(tapBody(`${TAG} player visible`));
     expect(res.status).toBe(200);
   });
 });

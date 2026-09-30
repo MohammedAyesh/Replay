@@ -19,7 +19,7 @@ import { ReportsTab } from "@/components/admin/ReportsTab";
 import { useAdminReports } from "@/lib/safety-api";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
-import { matchesRecordingSchedule, parseFormatCVideoTitle } from "@workspace/api-zod";
+import { parseFormatCVideoTitle } from "@workspace/api-zod";
 import SettingsTab from "@/components/admin/SettingsTab";
 import DemoLeadsTab from "@/components/admin/DemoLeadsTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
@@ -5141,14 +5141,6 @@ function LiveTab() {
 
 // ─── Recordings Tab ──────────────────────────────────────────────────────────
 
-export function recMatchesSchedules(
-  rec: Pick<AdminRecording, "date" | "timeSlot">,
-  schedules: Array<Pick<AdminSchedule, "allowedDate" | "startTime" | "endTime">>,
-): boolean {
-  if (schedules.length === 0 || !rec.date || !rec.timeSlot) return false;
-  return matchesRecordingSchedule(rec.date, rec.timeSlot, schedules);
-}
-
 function formatMonthLabel(month: Date): string {
   return month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
@@ -5567,7 +5559,7 @@ function FieldScheduleSection({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
 
-  const matchedCount = recordings.filter((r) => r.isVisible && recMatchesSchedules(r, schedules)).length;
+  const matchedCount = recordings.filter((r) => r.isVisible).length;
   const selectedSchedules = schedules.filter((s) => s.allowedDate === selectedDate);
   const allowedDates = new Set(
     schedules.map((s) => s.allowedDate).filter((date): date is string => Boolean(date)),
@@ -5725,6 +5717,7 @@ function FieldScheduleSection({
 }
 
 function RecordingsTab() {
+  const queryClient = useQueryClient();
   const [recordings, setRecordings] = useState<AdminRecording[]>([]);
   const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
   const [fields, setFields] = useState<AdminField[]>([]);
@@ -5773,6 +5766,7 @@ function RecordingsTab() {
   };
 
   const updateRecordingVisibility = async (recordingId: number, isVisible: boolean) => {
+    const recording = recordings.find((item) => item.id === recordingId);
     await apiFetch(`/admin/recordings/${recordingId}`, {
       method: "PATCH",
       body: JSON.stringify({ isVisible }),
@@ -5782,6 +5776,13 @@ function RecordingsTab() {
         recording.id === recordingId ? { ...recording, isVisible } : recording,
       ),
     );
+    if (recording) {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: getGetFieldQueryKey(recording.fieldId) }),
+        queryClient.invalidateQueries({ queryKey: getGetFieldVideosQueryKey(recording.fieldId) }),
+        queryClient.invalidateQueries({ queryKey: getGetFieldRecordingsQueryKey(recording.fieldId) }),
+      ]);
+    }
   };
 
   const fieldGroups = useMemo(() => {
@@ -5810,9 +5811,9 @@ function RecordingsTab() {
     return map;
   }, [schedules]);
 
-  const visibleCount = useMemo(() =>
-    recordings.filter((r) => r.isVisible && recMatchesSchedules(r, schedulesByField.get(r.fieldId) ?? [])).length,
-    [recordings, schedulesByField]
+  const visibleCount = useMemo(
+    () => recordings.filter((recording) => recording.isVisible).length,
+    [recordings],
   );
 
   return (
@@ -5829,7 +5830,7 @@ function RecordingsTab() {
             )}
           </p>
           <p className="text-zinc-500 text-xs mt-0.5">
-            Recordings are shown to users only when they fall within a configured time window
+            Visible recordings bypass time windows; unimported videos still use configured windows
           </p>
         </div>
         <button

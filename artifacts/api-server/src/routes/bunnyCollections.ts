@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, getBunnyProxiedThumbnailUrl, isBunnyConfigured, isBunnyVideoPlayable, isExcludedBunnyVideoTitle } from "../lib/bunny.js";
-import { db, fieldsTable, recordingsTable, recordingSchedulesTable } from "@workspace/db";
+import { db, fieldsTable, recordingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import {
   createPublicFootageContext,
@@ -196,26 +196,13 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     return;
   }
 
-  // Fetch schedules and registered recordings in parallel. Registered rows are
-  // kept for compatibility with older imported titles, but visibility must not
-  // depend on the admin having manually run "Import from Bunny" first.
+  // Explicitly visible imported rows may be shown without a schedule. Videos
+  // that have not been imported still need a matching schedule based on title.
   const context = await createPublicFootageContext(req, [dbField.id]);
-  const [schedules, dbRecordings] = await Promise.all([
-    db
-      .select()
-      .from(recordingSchedulesTable)
-      .where(eq(recordingSchedulesTable.fieldId, dbField.id)),
-    db
-      .select()
-      .from(recordingsTable)
-      .where(eq(recordingsTable.fieldId, dbField.id)),
-  ]);
-
-  if (schedules.length === 0) {
-    // No windows defined yet — show nothing.
-    res.json([]);
-    return;
-  }
+  const dbRecordings = await db
+    .select()
+    .from(recordingsTable)
+    .where(eq(recordingsTable.fieldId, dbField.id));
 
   const videos = (raw as BunnyApiVideo[])
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")

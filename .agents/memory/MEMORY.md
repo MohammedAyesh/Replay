@@ -13,7 +13,7 @@
 - [Collection preview thumbnail paths](collection-preview-thumbnail-paths.md) — collection GUIDs can differ from preview video IDs and custom thumbnail filenames; proxy the selected raw preview URL, not a fabricated collection-GUID path.
 - [Clip intro — playback vs export](clip-intro-playback-export.md) — intro is suppressed in all playback responses (hardcoded null); export path calls resolveIntroVideoUrl and prepends at correct dimensions.
 - [ClipPlayer loading controls](clip-player-loading-controls.md) — loading hides editing controls but keeps quality selection reachable so a lower encoded rendition can be chosen during a stall.
-- [Recording visibility dates](recording-visibility-dates.md) — exact-date visibility windows can continue into the next date; API and admin preview share the same matcher.
+- [Recording visibility dates](recording-visibility-dates.md) — overnight schedule windows roll into the next date; an admin's per-recording Visible toggle overrides schedules.
 - [Clerk auth card surface](clerk-card-surface.md) — card and footer are separate appearance surfaces; existing development badges may need a card-scoped exact-text UI guard.
 - [FFmpeg crop w/h per-frame](ffmpeg-crop-wh-per-frame.md) — crop w/h expressions evaluate with t=NaN at init (never per-frame); if(lt(t,...)) zoom expressions never animate; sendcmd w/h changes are silently ignored (not stream-terminating) in FFmpeg 7.1.1.
 - [Zoompan renderer geometry](zoompan-renderer.md) — map the padded 32:9 source onto an output-aspect canvas before zoompan; supersample 4x by default, 2x for large vertical canvases.
@@ -36,7 +36,7 @@
 - [Export rendition geometry](export-rendition-geometry.md) — select Bunny variants by declared 3840×1080 pixels, never folder labels or adaptive master fallback.
 - [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.
 - [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.
-- [Public footage access](public-footage-access.md) — owner-request videos follow the same field, recording-visibility, and schedule rules as other public footage.
+- [Public footage access](public-footage-access.md) — explicit per-recording visibility overrides schedules, but hidden fields and hidden recordings remain private.
 - [SoccerWatch build environment](soccerwatch-build-environment.md) — direct Vite builds require both PORT and BASE_PATH; the workflow supplies them automatically.
 - [Orval input path](orval-input-path.md) — use an absolute OpenAPI target or codegen can clean generated outputs before failing from the workspace root.
 - [Claim continuity questions](claim-continuity-questions.md) — internal long gaps and optional kit changes use continuity questions without changing the tracking payload.

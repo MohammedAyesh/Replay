@@ -107,10 +107,10 @@ export function isPublicRecordingInContext(
   context: PublicFootageContext,
 ): boolean {
   if (context.isAdmin) return true;
-  if (field.isHidden || !recording.isVisible) return false;
-
-  const schedules = context.schedulesByField.get(field.id) ?? [];
-  return matchesRecordingSchedule(recording.date, recording.timeSlot, schedules);
+  // This is an explicit per-recording admin override. Keep field-level hiding
+  // authoritative, but do not require a second schedule match after an admin
+  // has marked the imported recording visible.
+  return !field.isHidden && recording.isVisible;
 }
 
 export function isPublicBunnyVideoInContext(
@@ -129,7 +129,8 @@ export function isPublicBunnyVideoInContext(
  * Apply the same visibility rule to a video returned from a Bunny collection
  * that the media proxy applies when the browser requests its manifest.
  *
- * Imported rows are authoritative: a hidden imported recording must not become
+ * Imported rows are authoritative: an admin-visible imported recording is
+ * public without a schedule, and a hidden imported recording must not become
  * public again just because its Bunny title contains a scheduled timestamp.
  * Unimported videos may still be shown when their title identifies a scheduled
  * public recording.
@@ -139,15 +140,16 @@ export function isPublicBunnyCollectionVideo(
   videoId: string,
   title: string,
   context: PublicFootageContext,
-  importedRecordings: Array<typeof recordingsTable.$inferSelect>,
+  importedRecordings: Array<Pick<typeof recordingsTable.$inferSelect, "videoUrl" | "isVisible">>,
 ): boolean {
   if (context.isAdmin) return true;
+  if (field.isHidden) return false;
 
   const matchingRecordings = importedRecordings.filter(
     (recording) => extractBunnyVideoId(recording.videoUrl) === videoId,
   );
   if (matchingRecordings.length > 0) {
-    return matchingRecordings.some((recording) => isPublicRecordingInContext(recording, field, context));
+    return matchingRecordings.some((recording) => recording.isVisible);
   }
 
   const timestamp = parseRecordingTitleTimestamp(title);

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { BUNNY_API_KEY, BUNNY_CDN_HOSTNAME, BUNNY_LIBRARY_ID, isBunnyConfigured, isBunnyVideoPlayable, isExcludedBunnyVideoTitle } from "../lib/bunny.js";
 import {
   createPublicFootageContext,
-  extractBunnyVideoId,
+  isPublicBunnyCollectionVideo,
   isPublicBunnyVideoInContext,
   parseRecordingTitleTimestamp,
 } from "../lib/publicFootage";
@@ -75,41 +75,22 @@ router.get("/fields/:id/videos", async (req, res): Promise<void> => {
   const importedRecordings = await db
     .select({
       videoUrl: recordingsTable.videoUrl,
-      date: recordingsTable.date,
-      timeSlot: recordingsTable.timeSlot,
       isVisible: recordingsTable.isVisible,
     })
     .from(recordingsTable)
     .where(eq(recordingsTable.fieldId, field.id));
-  const visibleGuids = new Set(
-    importedRecordings
-      .filter((recording) => recording.isVisible)
-      .filter((recording) => context.isAdmin || (
-        (context.schedulesByField.get(field.id) ?? []).length > 0
-        && (recording.date && recording.timeSlot)
-      ))
-      .filter((recording) => context.isAdmin || isPublicBunnyVideoInContext(
-        field,
-        context,
-        recording.date,
-        recording.timeSlot,
-      ))
-      .map((recording) => extractBunnyVideoId(recording.videoUrl))
-      .filter((videoId): videoId is string => Boolean(videoId))
-  );
 
   const videos = raw
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
     .filter((v) => !isExcludedBunnyVideoTitle(v.title))
     .filter(isBunnyVideoPlayable)
     .filter((v) => {
-      const guid = v.guid as string;
-      if (context.isAdmin) return true;
-      if (visibleGuids.has(guid)) return true;
-      const timestamp = parseRecordingTitleTimestamp(v.title as string);
-      return Boolean(
-        timestamp
-        && isPublicBunnyVideoInContext(field, context, timestamp.date, timestamp.timeSlot)
+      return isPublicBunnyCollectionVideo(
+        field,
+        v.guid as string,
+        v.title as string,
+        context,
+        importedRecordings,
       );
     })
     .map((v) => ({

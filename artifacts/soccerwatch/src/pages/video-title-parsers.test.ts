@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseVideoFilename } from "./field-detail";
-import { parseVideoTitle, recMatchesSchedules } from "./admin";
+import { parseVideoTitle } from "./admin";
 
 describe("owner footage Format C titles", () => {
   it("keeps the owner request start date and time in the field archive parser", () => {
@@ -30,19 +30,5 @@ describe("owner footage Format C titles", () => {
       timeSlot: "22:00",
       duration: "",
     });
-  });
-});
-
-describe("admin recording schedule preview", () => {
-  it("includes the after-midnight part of a scheduled field window", () => {
-    const schedule = {
-      allowedDate: "2026-09-22",
-      startTime: "23:00",
-      endTime: "01:00",
-    };
-
-    expect(recMatchesSchedules({ date: "2026-09-22", timeSlot: "23:30" }, [schedule])).toBe(true);
-    expect(recMatchesSchedules({ date: "2026-09-23", timeSlot: "00:30" }, [schedule])).toBe(true);
-    expect(recMatchesSchedules({ date: "2026-09-23", timeSlot: "01:00" }, [schedule])).toBe(false);
   });
 });

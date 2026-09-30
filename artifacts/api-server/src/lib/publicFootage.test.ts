@@ -9,15 +9,15 @@ describe("public Bunny collection visibility", () => {
   const title = "cam1_2026_09_26_00:00";
   const field = { id: 10, isHidden: false } as Parameters<typeof isPublicBunnyCollectionVideo>[0];
 
-  function context(): PublicFootageContext {
+  function context(withSchedule = true): PublicFootageContext {
     return {
       viewer: null,
       isAdmin: false,
-      schedulesByField: new Map([[10, [{
+      schedulesByField: withSchedule ? new Map([[10, [{
         allowedDate: "2026-09-26",
         startTime: "00:00",
         endTime: "02:00",
-      }]]]),
+      }]]]) : new Map(),
     };
   }
 
@@ -31,12 +31,12 @@ describe("public Bunny collection visibility", () => {
     } as unknown as Parameters<typeof isPublicBunnyCollectionVideo>[4][number];
   }
 
-  it("lists a scheduled imported owner-request recording", () => {
+  it("shows an explicitly visible imported owner-request recording without any schedule", () => {
     expect(isPublicBunnyCollectionVideo(
       field,
       videoId,
       title,
-      context(),
+      context(false),
       [importedRecording()],
     )).toBe(true);
   });
@@ -75,17 +75,23 @@ describe("public Bunny collection visibility", () => {
     )).toBe(true);
   });
 
-  it("continues to hide recordings outside the schedule", () => {
-    const outsideSchedule = {
-      ...importedRecording(),
-      timeSlot: "03:00",
-    };
+  it("lets the explicit visible toggle override a schedule boundary", () => {
+    expect(isPublicBunnyCollectionVideo(
+      field,
+      videoId,
+      "cam1_2026-09-26_03:00",
+      context(),
+      [importedRecording()],
+    )).toBe(true);
+  });
+
+  it("continues to require a schedule for unimported Bunny videos", () => {
     expect(isPublicBunnyCollectionVideo(
       field,
       videoId,
       title,
-      context(),
-      [outsideSchedule],
+      context(false),
+      [],
     )).toBe(false);
   });
 
