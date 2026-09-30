@@ -7,17 +7,21 @@ import { ClipRail, HeroVideo } from "./ClipRail";
 import { Contact } from "./Contact";
 import { demoCopy, type DemoLocale, type Persona } from "./copy";
 import { formatMatchDate, formatNumber, useReport, useShowcase, withBase } from "./data";
+import { FamilyWatching } from "./FamilyWatching";
 import { LiveBlock } from "./LiveBlock";
+import { LiveBroadcast } from "./LiveBroadcast";
 import { Panorama } from "./Panorama";
+import { PlayerSection } from "./PlayerSection";
 import { useInView } from "./playback";
 import { Report } from "./Report";
+import { SocialSection } from "./SocialSection";
 import "./demo.css";
 
-type SectionKey = "clips" | "try" | "live" | "report" | "tools" | "numbers" | "setup";
+type SectionKey = "clips" | "social" | "try" | "live" | "report" | "players" | "tools" | "numbers" | "setup";
 
 const ORDER: Record<Persona, SectionKey[]> = {
-  pitch: ["clips", "try", "live", "report", "tools", "numbers", "setup"],
-  academy: ["try", "report", "clips", "live", "tools", "numbers", "setup"],
+  pitch: ["clips", "social", "try", "live", "report", "players", "tools", "numbers", "setup"],
+  academy: ["try", "players", "live", "social", "report", "clips", "tools", "numbers", "setup"],
 };
 
 const PERSONA_KEY = "replay-demo-persona";
@@ -85,6 +89,8 @@ export default function DemoPage() {
   const { ref: heroRef, inView: heroInView } = useInView<HTMLElement>("0px", 0.05);
   const { ref: contactRef, inView: contactInView } = useInView<HTMLElement>("0px", 0.05);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const [brandName, setBrandName] = useState("");
+  const brand = brandName.trim() || copy.sections.social.defaultName[persona];
 
   useEffect(() => {
     const previous = document.title;
@@ -112,11 +118,14 @@ export default function DemoPage() {
 
   const scrollToContact = () => document.getElementById("contact")?.scrollIntoView({ behavior: "smooth", block: "start" });
 
+  const socialClips = (data?.socialClips?.length ? data.socialClips : data?.clips) ?? [];
   const available: Record<SectionKey, boolean> = {
     clips: (data?.clips.length ?? 0) > 0,
+    social: socialClips.length > 0,
     try: Boolean(data?.match),
     live: true,
     report: reportVisible,
+    players: Boolean(report && report.players.length >= 2),
     tools: true,
     numbers: true,
     setup: true,
@@ -125,10 +134,10 @@ export default function DemoPage() {
 
   const tiles = data
     ? ([
-      [data.counts.recordings, copy.proof.recordings],
-      [data.counts.clips, copy.proof.clips],
-      [data.counts.analysed, copy.proof.analysed],
-    ] as Array<[number, string]>).filter(([n]) => n > 0)
+      [data.returnRatePercent ?? 0, copy.proof.returnRate, "%"],
+      [data.counts.clips, copy.proof.clips, ""],
+      [data.counts.analysed, copy.proof.analysed, ""],
+    ] as Array<[number, string, string]>).filter(([n]) => n > 0)
     : [];
 
   const s = copy.sections;
@@ -138,7 +147,7 @@ export default function DemoPage() {
         return (
           <Section key={key} id="clips" index={index} kicker={s.clips.kicker} title={s.clips.title[persona]} body={s.clips.body}>
             {persona === "pitch" && <p className="dm-loss">{s.clips.loss}</p>}
-            <ClipRail clips={data!.clips} copy={s.clips} />
+            <ClipRail clips={data!.clips} copy={s.clips} brandName={brand} />
           </Section>
         );
       case "try":
@@ -147,10 +156,48 @@ export default function DemoPage() {
             <Panorama match={data!.match!} moments={report?.moments ?? []} momentsState={momentsState} copy={s.tryIt} />
           </Section>
         );
+      case "social":
+        return (
+          <Section key={key} id="social" index={index} kicker={s.social.kicker} title={s.social.title[persona]} tone="raised">
+            <SocialSection clips={socialClips} persona={persona} copy={s.social} name={brandName} onName={setBrandName} />
+          </Section>
+        );
+      case "players":
+        return (
+          <Section key={key} id="players" index={index} kicker={s.players.kicker} title={s.players.title[persona]} body={s.players.body} tone={persona === "academy" ? "raised" : undefined}>
+            <PlayerSection report={report!} persona={persona} copy={s.players} reportCopy={s.report} locale={lang} />
+          </Section>
+        );
       case "live":
         return (
-          <Section key={key} id="live" index={index} kicker={s.live.kicker} title={s.live.title[persona]}>
-            <LiveBlock copy={s.live} poster={data?.match?.poster ?? null} />
+          <Section key={key} id="live" index={index} kicker={s.live.kicker} title={s.live.title[persona]} body={s.live.body[persona]}>
+            {report?.broadcast && data?.match ? (
+              <>
+                <div className={persona === "academy" ? "dm-live-grid" : undefined}>
+                  <div>
+                    <LiveBroadcast match={data.match} report={report} copy={s.live} />
+                    <p className="dm-small">{s.live.demoNote}</p>
+                  </div>
+                  {persona === "academy" && (
+                    <figure className="dm-family-wrap">
+                      <FamilyWatching title={s.live.familyAlt} />
+                      <figcaption className="dm-small">{s.live.family}</figcaption>
+                    </figure>
+                  )}
+                </div>
+                <LiveBlock copy={s.live} poster={null} onlyWhenLive />
+              </>
+            ) : (
+              <>
+                <LiveBlock copy={s.live} poster={data?.match?.poster ?? null} />
+                {persona === "academy" && (
+                  <figure className="dm-family-wrap">
+                    <FamilyWatching title={s.live.familyAlt} />
+                    <figcaption className="dm-small">{s.live.family}</figcaption>
+                  </figure>
+                )}
+              </>
+            )}
           </Section>
         );
       case "report":
@@ -233,6 +280,8 @@ export default function DemoPage() {
             {order.map((key) => {
               const label = {
                 clips: s.clips.kicker,
+                social: s.social.kicker,
+                players: s.players.kicker,
                 try: s.tryIt.kicker,
                 live: s.live.kicker,
                 report: s.report.kicker,
@@ -256,7 +305,7 @@ export default function DemoPage() {
         <section ref={heroRef} className="dm-hero" aria-labelledby="dm-hero-title">
           <HeroVideo clip={heroClip} fallbackPoster={data?.match?.poster ?? null} />
           <div className="dm-wrap dm-hero-body">
-            <p className="dm-hero-kicker">{copy.hero.kicker}</p>
+            <p className="dm-hero-kicker">{copy.hero.kicker[persona]}</p>
             <h1 id="dm-hero-title" className="dm-h1">{copy.hero.title[persona]}</h1>
             <p className="dm-hero-lead">{copy.hero.body[persona]}</p>
             <fieldset className="dm-persona">
@@ -280,10 +329,10 @@ export default function DemoPage() {
           <div className="dm-proof">
             <div className="dm-wrap">
               <dl className="dm-proof-grid" style={{ gridTemplateColumns: `repeat(${tiles.length}, minmax(0, 1fr))` }}>
-                {tiles.map(([n, label]) => (
+                {tiles.map(([n, label, suffix]) => (
                   <div key={label} className="dm-proof-tile">
                     <dt>{label}</dt>
-                    <dd className="dm-num">{formatNumber(n, lang)}</dd>
+                    <dd className="dm-num">{formatNumber(n, lang)}{suffix}</dd>
                   </div>
                 ))}
               </dl>

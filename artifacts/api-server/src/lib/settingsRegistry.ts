@@ -452,6 +452,17 @@ export const SETTINGS: readonly SettingDefinition[] = [
     integer: true,
   },
   {
+    key: "demo.returnRatePercent",
+    group: "Demo page",
+    label: "Return rate shown on the demo",
+    description: "Share of paying customers who book again, shown at the top of the demo (%). 0 hides it.",
+    type: "number",
+    defaultValue: 87,
+    min: 0,
+    max: 100,
+    integer: true,
+  },
+  {
     key: "demo.clipIds",
     group: "Demo page",
     label: "Player clips shown on the demo",

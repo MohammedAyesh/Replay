@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { hexToLab } from "./matchPlay";
-import { labToHex, parseIdList, playerLabels, whatsappDigits } from "./demoShowcase";
+import { labToHex, parseIdList, pickBroadcastWindow, playerLabels, whatsappDigits } from "./demoShowcase";
 
 describe("labToHex", () => {
   it("inverts hexToLab closely enough to show a kit colour", () => {
@@ -34,5 +34,22 @@ describe("whatsappDigits", () => {
     expect(whatsappDigits("0790000000")).toBe("962790000000");
     expect(whatsappDigits("")).toBeNull();
     expect(whatsappDigits("12345")).toBeNull();
+  });
+});
+
+describe("pickBroadcastWindow", () => {
+  it("centres on the busiest goal and skips warm-up", () => {
+    const moments = [
+      { type: "goal" as const, t: 31, side: 0 as const },
+      { type: "shot" as const, t: 1500, side: 0 as const },
+      { type: "shot" as const, t: 1550, side: 1 as const },
+      { type: "goal" as const, t: 1583, side: 0 as const },
+      { type: "goal" as const, t: 2785, side: 1 as const },
+    ];
+    expect(pickBroadcastWindow(moments, 3600)).toEqual({ start: 1433, end: 1613 });
+  });
+
+  it("falls back to a fixed window when nothing was detected", () => {
+    expect(pickBroadcastWindow([], 3600)).toEqual({ start: 600, end: 780 });
   });
 });
