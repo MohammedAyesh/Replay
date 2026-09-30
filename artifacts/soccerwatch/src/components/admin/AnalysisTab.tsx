@@ -89,6 +89,38 @@ interface RecordingOption {
 
 const basePath = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
+const SALAD_GPU_OPTIONS = [
+  {
+    value: "salad",
+    label: "Salad · cheapest free RTX 4090 / 5090 · ~$0.16–0.25/h · ~$0.32–0.50 per 2-hour match",
+  },
+  {
+    value: "salad:RTX 4090",
+    label: "Salad RTX 4090 · $0.16/h · ~2h · ~$0.32 per 2-hour match",
+  },
+  {
+    value: "salad:RTX 5090",
+    label: "Salad RTX 5090 · $0.25/h · ~2h · ~$0.50 per 2-hour match",
+  },
+] as const;
+
+function analysisGpuLabel(gpu?: string): string {
+  switch (gpu) {
+    case "auto":
+    case "":
+    case undefined:
+      return "Auto";
+    case "salad":
+      return "Salad (cheapest)";
+    case "salad:RTX 4090":
+      return "Salad RTX 4090";
+    case "salad:RTX 5090":
+      return "Salad RTX 5090";
+    default:
+      return gpu;
+  }
+}
+
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(`${basePath}/api${path}`, {
     credentials: "include",
@@ -406,10 +438,20 @@ export default function AnalysisTab() {
               <option value="RTX 4080 (Super)">RTX 4080 Super · $0.25/h · ~2h40 · ~$0.66 per 2-hour match (cheapest)</option>
               <option value="RTX 5090D">RTX 5090D · $0.41/h · ~2h05 · ~$0.84 per 2-hour match (fastest for the money)</option>
               <option value="RTX 5090">RTX 5090 · $0.46/h · ~2h00 · ~$0.92 per 2-hour match</option>
+              <optgroup label="SaladCloud (cheaper, can be interrupted)">
+                {SALAD_GPU_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </optgroup>
             </select>
             <p className="text-zinc-600 text-[11px] mt-1">
               Auto takes the cheapest card that is free. If you pick a specific card and none is free, the job waits up to 30 minutes and then fails with a message.
             </p>
+            {SALAD_GPU_OPTIONS.some((option) => option.value === selectedGpu) && (
+              <p className="text-zinc-600 text-[11px] mt-1">
+                Salad runs on home PCs at its lowest price tier. The machine can be taken away mid-job; the job then fails with a message and you press Queue again. Setup adds 5–20 minutes before the job starts.
+              </p>
+            )}
           </div>
           <button
             onClick={queueJob}
@@ -446,7 +488,7 @@ export default function AnalysisTab() {
             <p className="text-zinc-500 text-xs mt-1.5">
               {job.sources.length > 1 ? `${job.sources.length} recordings` : "1 recording"}
               {" · kick-off "}{formatStartTime(job.matchStartSeconds)}
-              {" · GPU: "}{job.params?.gpu && job.params.gpu !== "auto" ? job.params.gpu : "Auto"}
+              {" · GPU: "}{analysisGpuLabel(job.params?.gpu)}
               {job.bundleRecordingIds.length > 0 &&
                 ` · ${job.bundleRecordingIds.length}/${job.sources.length} bundles attached`}
             </p>
