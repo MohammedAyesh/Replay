@@ -339,6 +339,21 @@ type JobView = AnalysisJobRow & {
   } | null;
 };
 
+function validateAnalysisGpuList(params: unknown): string | null {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return null;
+  const gpus = (params as Record<string, unknown>).gpus;
+  if (gpus === undefined) return null;
+  if (
+    !Array.isArray(gpus)
+    || gpus.length < 2
+    || gpus.length > 10
+    || gpus.some((gpu) => typeof gpu !== "string" || gpu.length > 64)
+  ) {
+    return "params.gpus must be an array of 2 to 10 strings, each at most 64 characters.";
+  }
+  return null;
+}
+
 async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
   const rosterHintCache: RosterHintCache = new Map();
   const allIds = [...new Set(rows.flatMap((row) => [row.recordingId, ...row.sourceRecordingIds]))];
@@ -401,6 +416,11 @@ router.post("/admin/analysis-jobs", async (req, res): Promise<void> => {
   if (!adminId) { unauthenticatedResponse(res, req); return; }
 
   const body = (req.body ?? {}) as Record<string, unknown>;
+  const gpuListError = validateAnalysisGpuList(body.params);
+  if (gpuListError) {
+    res.status(400).json({ error: gpuListError });
+    return;
+  }
   const rawSources = Array.isArray(body.sourceRecordingIds) ? body.sourceRecordingIds : [];
   const sourceIds = rawSources
     .map((value) => Number.parseInt(String(value), 10))

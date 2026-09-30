@@ -333,6 +333,42 @@ describe("queueing a job", () => {
     expect(res.body.sources[0].title).toBe("cam1_2026-09-01_21:00");
   });
 
+  it("stores multi-card GPU values in params without changing their order", async () => {
+    const params = {
+      gpu: "multi",
+      gpus: [
+        "salad:RTX 3090@batch",
+        "salad:RTX 3090@low",
+        "salad:RTX 5090",
+      ],
+    };
+    const res = await queueJob({ params }).expect(201);
+    expect(res.body.params).toEqual(params);
+  });
+
+  it("accepts the maximum GPU count and 64-character values", async () => {
+    const gpus = Array.from({ length: 10 }, (_, index) => `GPU-${index + 1}`.padEnd(64, "x"));
+    const res = await queueJob({ params: { gpu: "multi", gpus } }).expect(201);
+    expect(res.body.params.gpus).toEqual(gpus);
+  });
+
+  it("rejects invalid params.gpus shapes and values", async () => {
+    const invalidGpuLists: unknown[] = [
+      "RTX 5090",
+      [],
+      ["RTX 5090"],
+      Array.from({ length: 11 }, () => "RTX 5090"),
+      ["RTX 5090", 4090],
+      ["RTX 5090", "x".repeat(65)],
+    ];
+
+    for (const gpus of invalidGpuLists) {
+      const res = await queueJob({ params: { gpu: "multi", gpus } });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("params.gpus");
+    }
+  });
+
   it("refuses a plain user", async () => {
     mockedGetLocalUserId.mockResolvedValue(plainId);
     await queueJob().expect(401);

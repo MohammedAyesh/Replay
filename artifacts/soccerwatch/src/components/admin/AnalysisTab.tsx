@@ -56,7 +56,7 @@ interface Job {
   sources: SourceDescriptor[];
   bundleRecordingIds: number[];
   matchStartSeconds: number;
-  params?: { gpu?: string };
+  params?: { gpu?: string; gpus?: string[] };
   status: JobStatus;
   stage: string | null;
   progress: number;
@@ -108,6 +108,48 @@ const SALAD_GPU_OPTIONS = [
   },
 ] as const;
 
+type SaladTier = "cheapest" | "batch" | "low";
+
+interface GpuCardSelection {
+  gpu: string;
+  saladTier: SaladTier;
+}
+
+const DEFAULT_GPU_CARD: GpuCardSelection = { gpu: "auto", saladTier: "cheapest" };
+
+const SALAD_TIER_OPTIONS: Array<{ value: SaladTier; label: string }> = [
+  { value: "cheapest", label: "Cheapest free (batch, else low)" },
+  { value: "batch", label: "Batch only" },
+  { value: "low", label: "Low only" },
+];
+
+function GpuOptionList() {
+  return (
+    <>
+      <option value="auto">Auto — cheapest free card (usually RTX 4080 Super)</option>
+      <option value="RTX 4080 (Super)">RTX 4080 Super · $0.25/h · ~2h40 · ~$0.66 per 2-hour match (cheapest)</option>
+      <option value="RTX 5090D">RTX 5090D · $0.41/h · ~2h05 · ~$0.84 per 2-hour match (fastest for the money)</option>
+      <option value="RTX 5090">RTX 5090 · $0.46/h · ~2h00 · ~$0.92 per 2-hour match</option>
+      <optgroup label="SaladCloud (cheaper, can be interrupted)">
+        {SALAD_GPU_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </optgroup>
+    </>
+  );
+}
+
+function isSaladGpu(gpu: string): boolean {
+  return SALAD_GPU_OPTIONS.some((option) => option.value === gpu);
+}
+
+function gpuValueForCard(card: GpuCardSelection): string {
+  if (!isSaladGpu(card.gpu)) return card.gpu;
+  if (card.saladTier === "batch") return `${card.gpu}@batch`;
+  if (card.saladTier === "low") return `${card.gpu}@low`;
+  return card.gpu;
+}
+
 function analysisGpuLabel(gpu?: string): string {
   switch (gpu) {
     case "auto":
@@ -127,6 +169,33 @@ function analysisGpuLabel(gpu?: string): string {
     default:
       return gpu;
   }
+}
+
+function multiGpuCardLabel(gpu: string): string {
+  if (gpu === "salad-split-test") return analysisGpuLabel(gpu);
+  if (!gpu.startsWith("salad")) return analysisGpuLabel(gpu);
+
+  const suffixIndex = gpu.lastIndexOf("@");
+  const baseGpu = suffixIndex === -1 ? gpu : gpu.slice(0, suffixIndex);
+  const suffix = suffixIndex === -1 ? undefined : gpu.slice(suffixIndex + 1);
+  const tierLabel = suffix === undefined
+    ? "batch→low"
+    : suffix === "batch"
+      ? "batch"
+      : suffix === "low"
+        ? "low"
+        : suffix === "batch/low"
+          ? "batch→low"
+          : null;
+  const label = analysisGpuLabel(baseGpu);
+  return tierLabel ? `${label} (${tierLabel})` : analysisGpuLabel(gpu);
+}
+
+function analysisGpuQueueLabel(params?: Job["params"]): string {
+  if (Array.isArray(params?.gpus)) {
+    return `${params.gpus.length} cards: ${params.gpus.map(multiGpuCardLabel).join(" + ")}`;
+  }
+  return analysisGpuLabel(params?.gpu);
 }
 
 async function api(path: string, opts?: RequestInit) {
@@ -206,7 +275,8 @@ export default function AnalysisTab() {
   const [options, setOptions] = useState<RecordingOption[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [startInput, setStartInput] = useState("0:00");
-  const [selectedGpu, setSelectedGpu] = useState("auto");
+  const [cardCount, setCardCount] = useState(1);
+  const [gpuCards, setGpuCards] = useState<GpuCardSelection[]>([{ ...DEFAULT_GPU_CARD }]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [schemaNotice, setSchemaNotice] = useState<string | null>(null);
@@ -266,23 +336,47 @@ export default function AnalysisTab() {
     });
   }
 
+  function changeCardCount(nextCount: number) {
+    const count = Math.max(1, Math.min(6, Math.round(nextCount)));
+    setCardCount(count);
+    setGpuCards((current) => {
+      if (count <= current.length) return current.slice(0, count);
+      const firstCard = current[0] ?? DEFAULT_GPU_CARD;
+      return [
+        ...current,
+        ...Array.from({ length: count - current.length }, () => ({ ...firstCard })),
+      ];
+    });
+  }
+
+  function updateGpuCard(index: number, update: Partial<GpuCardSelection>) {
+    setGpuCards((current) =>
+      current.map((card, cardIndex) => cardIndex === index ? { ...card, ...update } : card),
+    );
+  }
+
   async function queueJob() {
     if (!selected.length || startSeconds === null) return;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
+      const gpuValues = gpuCards.map(gpuValueForCard);
+      const params = gpuValues.length === 1
+        ? { gpu: gpuValues[0] }
+        : { gpu: "multi", gpus: gpuValues };
       await api("/admin/analysis-jobs", {
         method: "POST",
         body: JSON.stringify({
           recordingId: selected[0],
           sourceRecordingIds: selected,
           matchStartSeconds: startSeconds,
-          params: { gpu: selectedGpu },
+          params,
         }),
       });
       setSelected([]);
-      setSelectedGpu("auto");
+      setCardCount(1);
+      setGpuCards([{ ...DEFAULT_GPU_CARD }]);
       setNotice(
         anyWorkerOnline
           ? "Queued. A GPU will be rented for it within a minute."
@@ -435,29 +529,105 @@ export default function AnalysisTab() {
             </p>
           </div>
           <div className="min-w-0 flex-1">
-            <label htmlFor="analysis-gpu" className="text-zinc-500 text-[11px] uppercase tracking-wider block">GPU</label>
-            <select
-              id="analysis-gpu"
-              value={selectedGpu}
-              onChange={(e) => setSelectedGpu(e.target.value)}
-              className="mt-1 w-full min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
-            >
-              <option value="auto">Auto — cheapest free card (usually RTX 4080 Super)</option>
-              <option value="RTX 4080 (Super)">RTX 4080 Super · $0.25/h · ~2h40 · ~$0.66 per 2-hour match (cheapest)</option>
-              <option value="RTX 5090D">RTX 5090D · $0.41/h · ~2h05 · ~$0.84 per 2-hour match (fastest for the money)</option>
-              <option value="RTX 5090">RTX 5090 · $0.46/h · ~2h00 · ~$0.92 per 2-hour match</option>
-              <optgroup label="SaladCloud (cheaper, can be interrupted)">
-                {SALAD_GPU_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </optgroup>
-            </select>
-            <p className="text-zinc-600 text-[11px] mt-1">
-              Auto takes the cheapest card that is free. If you pick a specific card and none is free, the job waits up to 30 minutes and then fails with a message.
-            </p>
-            {SALAD_GPU_OPTIONS.some((option) => option.value === selectedGpu) && (
+            <div className="flex items-start gap-2">
+              <div className="w-20 shrink-0">
+                <label htmlFor="analysis-card-count" className="text-zinc-500 text-[11px] uppercase tracking-wider block">Cards</label>
+                <select
+                  id="analysis-card-count"
+                  value={cardCount}
+                  onChange={(e) => changeCardCount(Number(e.target.value))}
+                  className="mt-1 w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
+                >
+                  {Array.from({ length: 6 }, (_, index) => index + 1).map((count) => (
+                    <option key={count} value={count}>{count}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="min-w-0 flex-1">
+                {cardCount === 1 ? (
+                  <div className="flex items-end gap-2">
+                    <div className="min-w-0 flex-1">
+                      <label htmlFor="analysis-gpu-1" className="text-zinc-500 text-[11px] uppercase tracking-wider block">GPU</label>
+                      <select
+                        id="analysis-gpu-1"
+                        value={gpuCards[0]?.gpu ?? "auto"}
+                        onChange={(e) => updateGpuCard(0, { gpu: e.target.value })}
+                        className="mt-1 w-full min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
+                      >
+                        <GpuOptionList />
+                      </select>
+                    </div>
+                    {isSaladGpu(gpuCards[0]?.gpu ?? "") && (
+                      <div className="w-44 shrink-0">
+                        <label htmlFor="analysis-salad-tier-1" className="text-zinc-500 text-[11px] uppercase tracking-wider block">Salad tier</label>
+                        <select
+                          id="analysis-salad-tier-1"
+                          value={gpuCards[0]?.saladTier ?? "cheapest"}
+                          onChange={(e) => updateGpuCard(0, { saladTier: e.target.value as SaladTier })}
+                          className="mt-1 w-full min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
+                        >
+                          {SALAD_TIER_OPTIONS.map((tier) => (
+                            <option key={tier.value} value={tier.value}>{tier.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+                    {gpuCards.map((card, index) => {
+                      const gpuId = `analysis-gpu-${index + 1}`;
+                      const tierId = `analysis-salad-tier-${index + 1}`;
+                      return (
+                        <div key={index} className="min-w-0">
+                          <div className="flex items-end gap-2">
+                            <div className="min-w-0 flex-1">
+                              <label htmlFor={gpuId} className="text-zinc-500 text-[11px] uppercase tracking-wider block">Card {index + 1}</label>
+                              <select
+                                id={gpuId}
+                                value={card.gpu}
+                                onChange={(e) => updateGpuCard(index, { gpu: e.target.value })}
+                                className="mt-1 w-full min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
+                              >
+                                <GpuOptionList />
+                              </select>
+                            </div>
+                            {isSaladGpu(card.gpu) && (
+                              <div className="w-44 shrink-0">
+                                <label htmlFor={tierId} className="text-zinc-500 text-[11px] uppercase tracking-wider block">Salad tier</label>
+                                <select
+                                  id={tierId}
+                                  value={card.saladTier}
+                                  onChange={(e) => updateGpuCard(index, { saladTier: e.target.value as SaladTier })}
+                                  className="mt-1 w-full min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
+                                >
+                                  {SALAD_TIER_OPTIONS.map((tier) => (
+                                    <option key={tier.value} value={tier.value}>{tier.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            {gpuCards.some((card) => card.gpu === "auto") && (
               <p className="text-zinc-600 text-[11px] mt-1">
-                Salad runs on home PCs. The runner takes the cheaper &apos;batch&apos; price when a machine is free, otherwise &apos;low&apos;; the lower price shown is batch. The machine can be taken away mid-job; the job then fails with a message and you press Queue again. Setup adds 5–20 minutes before analysis starts.
+                Auto takes the cheapest card that is free. If you pick a specific card and none is free, the job waits up to 30 minutes and then fails with a message.
+              </p>
+            )}
+            {cardCount > 1 && (
+              <p className="text-zinc-600 text-[11px] mt-1">
+                These choices are sent as one analysis with one GPU entry per card, in the order shown.
+              </p>
+            )}
+            {gpuCards.some((card) => isSaladGpu(card.gpu)) && (
+              <p className="text-zinc-600 text-[11px] mt-1">
+                Salad runs on home PCs. The tier controls whether the runner uses batch only, low only, or batch with low fallback. A machine can be taken away mid-job; that job fails and can be queued again. Setup adds 5–20 minutes before analysis starts.
               </p>
             )}
           </div>
@@ -496,7 +666,7 @@ export default function AnalysisTab() {
             <p className="text-zinc-500 text-xs mt-1.5">
               {job.sources.length > 1 ? `${job.sources.length} recordings` : "1 recording"}
               {" · kick-off "}{formatStartTime(job.matchStartSeconds)}
-              {" · GPU: "}{analysisGpuLabel(job.params?.gpu)}
+              {" · GPU: "}{analysisGpuQueueLabel(job.params)}
               {job.bundleRecordingIds.length > 0 &&
                 ` · ${job.bundleRecordingIds.length}/${job.sources.length} bundles attached`}
             </p>
