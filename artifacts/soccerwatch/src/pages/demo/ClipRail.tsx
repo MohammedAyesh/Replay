@@ -14,6 +14,7 @@ function ClipCard({ clip, copy }: { clip: DemoClip; copy: DemoCopy["sections"]["
   const [muted, setMuted] = useState(true);
   const [started, setStarted] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [duration, setDuration] = useState<number | null>(null);
 
   // Another player started, or this card scrolled away: stop.
   useEffect(() => {
@@ -47,7 +48,11 @@ function ClipCard({ clip, copy }: { clip: DemoClip; copy: DemoCopy["sections"]["
         className="dm-clip-video"
         src={withBase(clip.src)}
         poster={withBase(clip.poster)}
-        preload={started ? "auto" : "none"}
+        preload={started ? "auto" : "metadata"}
+        onLoadedMetadata={(event) => {
+          const d = event.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0) setDuration(d);
+        }}
         playsInline
         muted={muted}
         loop
@@ -66,7 +71,7 @@ function ClipCard({ clip, copy }: { clip: DemoClip; copy: DemoCopy["sections"]["
         )}
       </button>
       <div className="dm-clip-foot">
-        <span className="dm-tc">{formatClock(clip.durationSeconds)}</span>
+        <span className="dm-tc">{duration !== null ? formatClock(duration) : ""}</span>
         {started && (
           <span className="dm-clip-tools">
             <button type="button" className="dm-icon-btn" onClick={toggle} aria-label={playing ? copy.pause : copy.play}>

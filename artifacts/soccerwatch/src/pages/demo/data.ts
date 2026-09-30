@@ -7,7 +7,6 @@ export const withBase = (path: string) => (path.startsWith("/") ? `${basePath}${
 export type DemoClip = {
   id: number;
   aspectRatio: "16:9" | "9:16";
-  durationSeconds: number;
   src: string;
   poster: string;
 };

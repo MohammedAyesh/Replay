@@ -45,13 +45,19 @@ import { shareToken } from "./shareCard";
 
 export const DEMO_FIELD_NAME = "Jordan Galaxy";
 const MAX_DEMO_CLIPS = 8;
-const MIN_CLIP_SECONDS = 4;
-const MAX_CLIP_SECONDS = 60;
+/**
+ * user_clips.start_time / end_time are fractions of the source video (0-1),
+ * not seconds, so a clip's length cannot be read from the row. The page reads
+ * it from the MP4's own metadata instead.
+ */
+/** Below this a "top speed" is a tracking artefact, not a sprint. */
+const MIN_BELIEVABLE_TOP_SPEED_KMH = 12;
+/** Above this it is a box jumping between players. */
+const MAX_BELIEVABLE_TOP_SPEED_KMH = 38;
 
 export type DemoClip = {
   id: number;
   aspectRatio: "16:9" | "9:16";
-  durationSeconds: number;
   src: string;
   poster: string;
 };
@@ -270,11 +276,7 @@ async function pickDemoClips(): Promise<DemoClip[]> {
       .orderBy(desc(userClipsTable.score), desc(userClipsTable.viewCount), desc(userClipsTable.createdAt))
       .limit(60);
 
-  const usable = rows.filter((row) => {
-    if (!row.exportedUrl) return false;
-    const seconds = Number(row.endTime) - Number(row.startTime);
-    return Number.isFinite(seconds) && seconds >= MIN_CLIP_SECONDS && seconds <= MAX_CLIP_SECONDS;
-  });
+  const usable = rows.filter((row) => Boolean(row.exportedUrl) && Number(row.endTime) > Number(row.startTime));
   const ordered = pinned.length
     ? pinned.map((id) => usable.find((row) => row.id === id)).filter((row): row is (typeof usable)[number] => Boolean(row))
     : usable.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
@@ -297,7 +299,6 @@ async function pickDemoClips(): Promise<DemoClip[]> {
     return {
       id: row.id,
       aspectRatio: row.aspectRatio === "9:16" ? "9:16" : "16:9",
-      durationSeconds: Math.round((Number(row.endTime) - Number(row.startTime)) * 10) / 10,
       src: `/api/s/${row.id}/${token}/clip.mp4`,
       poster: `/api/s/${row.id}/${token}/poster.jpg`,
     };
@@ -409,7 +410,9 @@ export async function buildDemoReport(recordingId: number): Promise<DemoReport |
           side,
           minutes: Math.round(seconds / 6) / 10,
           distanceKm: metrics.distanceMetres === null ? null : Math.round(metrics.distanceMetres / 10) / 100,
-          topSpeedKmh: typeof top === "number" ? Math.round(top * 36) / 10 : null,
+          topSpeedKmh: typeof top === "number" && top * 3.6 >= MIN_BELIEVABLE_TOP_SPEED_KMH && top * 3.6 <= MAX_BELIEVABLE_TOP_SPEED_KMH
+            ? Math.round(top * 36) / 10
+            : null,
           touches: mine ? mine.touches.length : null,
           passesCompleted: mine && pick ? mine.passesCompleted : null,
           heatmap: metrics.heatmap.coordinateSpace === "pitch" ? metrics.heatmap.cells : [],
