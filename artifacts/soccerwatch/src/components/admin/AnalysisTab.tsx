@@ -91,16 +91,20 @@ const basePath = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
 const SALAD_GPU_OPTIONS = [
   {
-    value: "salad",
-    label: "Salad · cheapest free RTX 4090 / 5090 · ~$0.16–0.25/h · ~$0.32–0.50 per 2-hour match",
+    value: "salad:RTX 3090",
+    label: "Salad RTX 3090 · $0.09–0.12/h · slower card (~1.5× a 4080 Super), speed being tested",
   },
   {
     value: "salad:RTX 4090",
-    label: "Salad RTX 4090 · $0.16/h · ~2h · ~$0.32 per 2-hour match",
+    label: "Salad RTX 4090 · $0.16–0.22/h · ~$0.32–0.43 per 2-hour match",
   },
   {
     value: "salad:RTX 5090",
-    label: "Salad RTX 5090 · $0.25/h · ~2h · ~$0.50 per 2-hour match",
+    label: "Salad RTX 5090 · $0.25–0.33/h · ~$0.50–0.67 per 2-hour match",
+  },
+  {
+    value: "salad",
+    label: "Salad · cheapest free RTX 4090 / 5090",
   },
 ] as const;
 
@@ -112,10 +116,14 @@ function analysisGpuLabel(gpu?: string): string {
       return "Auto";
     case "salad":
       return "Salad (cheapest)";
+    case "salad:RTX 3090":
+      return "Salad RTX 3090";
     case "salad:RTX 4090":
       return "Salad RTX 4090";
     case "salad:RTX 5090":
       return "Salad RTX 5090";
+    case "salad-split-test":
+      return "Salad split test (3 cards: 3090 batch, 3090 low, 5090)";
     default:
       return gpu;
   }
@@ -449,7 +457,7 @@ export default function AnalysisTab() {
             </p>
             {SALAD_GPU_OPTIONS.some((option) => option.value === selectedGpu) && (
               <p className="text-zinc-600 text-[11px] mt-1">
-                Salad runs on home PCs at its lowest price tier. The machine can be taken away mid-job; the job then fails with a message and you press Queue again. Setup adds 5–20 minutes before the job starts.
+                Salad runs on home PCs. The runner takes the cheaper &apos;batch&apos; price when a machine is free, otherwise &apos;low&apos;; the lower price shown is batch. The machine can be taken away mid-job; the job then fails with a message and you press Queue again. Setup adds 5–20 minutes before analysis starts.
               </p>
             )}
           </div>
