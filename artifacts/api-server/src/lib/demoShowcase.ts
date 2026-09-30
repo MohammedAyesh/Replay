@@ -524,16 +524,34 @@ function demoBroadcast(play: Awaited<ReturnType<typeof loadRecordingPlay>>, mome
   const height = play.manifest.height || 1080;
   const duration = (play.manifest.duration || 0) + offset;
   const span = pickBroadcastWindow(moments, duration);
+  const inSpan = (t: number) => t >= span.start - 2 && t <= span.end + 2;
+  const point = (t: number, x: number, y: number): [number, number, number] =>
+    [Math.round(t * 100) / 100, Math.round((x / width) * 10000) / 10000, Math.round((y / height) * 10000) / 10000];
+
+  // The ~4 Hz ball path when the bundle carries one...
   const path: Array<[number, number, number]> = [];
   for (const sidecar of play.sidecars) {
     if (!sidecar) continue;
     const fps = sidecar.fps || play.fps;
     for (const [frame, x, y] of sidecar.ball) {
       const t = frame / fps + offset;
-      if (t < span.start - 2 || t > span.end + 2) continue;
-      path.push([Math.round(t * 100) / 100, Math.round((x / width) * 10000) / 10000, Math.round((y / height) * 10000) / 10000]);
+      if (inSpan(t)) path.push(point(t, x, y));
+    }
+  }
+  // ...otherwise where the ball was at each touch: the ball's pixel when the
+  // tracker had it, else the feet of the player who touched it.
+  if (path.length < 20) {
+    path.length = 0;
+    for (const sidecar of play.sidecars) {
+      if (!sidecar) continue;
+      const fps = sidecar.fps || play.fps;
+      for (const [frame, x0, , x1, y1, bx, by] of sidecar.touches) {
+        const t = frame / fps + offset;
+        if (!inSpan(t)) continue;
+        path.push(bx !== null && by !== null ? point(t, bx, by) : point(t, (x0 + x1) / 2, y1));
+      }
     }
   }
   path.sort((a, b) => a[0] - b[0]);
-  return path.length >= 20 ? { ...span, path } : null;
+  return path.length >= 12 ? { ...span, path } : null;
 }
