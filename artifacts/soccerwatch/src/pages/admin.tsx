@@ -19,7 +19,7 @@ import { ReportsTab } from "@/components/admin/ReportsTab";
 import { useAdminReports } from "@/lib/safety-api";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
-import { parseFormatCVideoTitle } from "@workspace/api-zod";
+import { matchesRecordingSchedule, parseFormatCVideoTitle } from "@workspace/api-zod";
 import SettingsTab from "@/components/admin/SettingsTab";
 import DemoLeadsTab from "@/components/admin/DemoLeadsTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
@@ -5141,21 +5141,12 @@ function LiveTab() {
 
 // ─── Recordings Tab ──────────────────────────────────────────────────────────
 
-function recMatchesSchedules(rec: AdminRecording, schedules: AdminSchedule[]): boolean {
+export function recMatchesSchedules(
+  rec: Pick<AdminRecording, "date" | "timeSlot">,
+  schedules: Array<Pick<AdminSchedule, "allowedDate" | "startTime" | "endTime">>,
+): boolean {
   if (schedules.length === 0 || !rec.date || !rec.timeSlot) return false;
-  const parts = rec.timeSlot.split(":");
-  const th = Number(parts[0] ?? 0);
-  const tm = Number(parts[1] ?? 0);
-  if (isNaN(th) || isNaN(tm)) return false;
-  const recMins = th * 60 + tm;
-  return schedules.some((s) => {
-    const sp = s.startTime.split(":");
-    const ep = s.endTime.split(":");
-    const startMins = Number(sp[0] ?? 0) * 60 + Number(sp[1] ?? 0);
-    const rawEndMins = Number(ep[0] ?? 0) * 60 + Number(ep[1] ?? 0);
-    const endMins = rawEndMins === 0 && startMins > 0 ? 24 * 60 : rawEndMins;
-    return s.allowedDate === rec.date && recMins >= startMins && recMins < endMins;
-  });
+  return matchesRecordingSchedule(rec.date, rec.timeSlot, schedules);
 }
 
 function formatMonthLabel(month: Date): string {
