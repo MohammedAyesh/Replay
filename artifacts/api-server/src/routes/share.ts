@@ -1026,9 +1026,14 @@ router.get(["/s/:id/:token/clip.mp4", "/api/s/:id/:token/clip.mp4"], async (req,
     await proxyBackupExport(req, res, clip.exportedUrl, "public, max-age=86400");
     return;
   }
-  // exportedUrl is a CDN URL over the same storage zone; the storage path is
-  // everything after the zone root.
-  const storagePath = clip.exportedUrl.replace(/^https?:\/\/[^/]+\//, "");
+  // exportedUrl is either the storage API URL (https://storage.bunnycdn.com/
+  // <zone>/clips/…) or a pull-zone URL. Stripping only the host left the zone
+  // name in the path, which proxyStorageObject adds again, so every shared MP4
+  // answered 404. The portfolio helper strips the zone and checks the path.
+  const hostless = clip.exportedUrl.replace(/^https?:\/\/[^/]+\//, "");
+  const zonePrefix = `${BUNNY_STORAGE_ZONE}/`;
+  const storagePath = getPortfolioClipStoragePath(clip.id, clip.exportedUrl)
+    ?? (BUNNY_STORAGE_ZONE && hostless.startsWith(zonePrefix) ? hostless.slice(zonePrefix.length) : hostless);
   await proxyStorageObject(req, res, storagePath, "video/mp4", 86400);
 });
 
