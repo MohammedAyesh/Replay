@@ -54,14 +54,24 @@ export function Calculator({ persona, copy, jod, locale }: {
   const [bookings, setBookings] = useState(20);
   const [extra, setExtra] = useState(3);
   const [share, setShare] = useState(40);
+  const [price, setPrice] = useState(40);
+  const [extraBookings, setExtraBookings] = useState(2);
   const [players, setPlayers] = useState(60);
   const [perPlayer, setPerPlayer] = useState(3);
   const [newPlayers, setNewPlayers] = useState(2);
   const [fee, setFee] = useState(35);
 
-  const monthly = persona === "pitch"
-    ? bookings * (52 / 12) * (share / 100) * extra
-    : players * perPlayer + newPlayers * fee;
+  const weeksPerMonth = 52 / 12;
+  const parts: Array<[string, number]> = persona === "pitch"
+    ? [
+      [copy.fromFilmed, bookings * weeksPerMonth * (share / 100) * extra],
+      [copy.fromBookings, extraBookings * weeksPerMonth * price],
+    ]
+    : [
+      [copy.fromFees, players * perPlayer],
+      [copy.fromNewPlayers, newPlayers * fee],
+    ];
+  const monthly = parts.reduce((sum, [, value]) => sum + value, 0);
 
   return (
     <div className="dm-calc">
@@ -71,6 +81,8 @@ export function Calculator({ persona, copy, jod, locale }: {
             <Field label={copy.pitch.bookings} value={bookings} onChange={setBookings} min={0} max={150} step={1} locale={locale} />
             <Field label={copy.pitch.extra} value={extra} onChange={setExtra} min={0} max={20} step={0.5} locale={locale} />
             <Field label={copy.pitch.share} value={share} onChange={setShare} min={0} max={100} step={5} locale={locale} />
+            <Field label={copy.pitch.price} value={price} onChange={setPrice} min={0} max={150} step={5} locale={locale} />
+            <Field label={copy.pitch.extraBookings} value={extraBookings} onChange={setExtraBookings} min={0} max={30} step={1} locale={locale} />
           </>
         ) : (
           <>
@@ -85,6 +97,11 @@ export function Calculator({ persona, copy, jod, locale }: {
         <span className="dm-small">{copy.result}</span>
         <strong className="dm-big-num">{formatNumber(Math.round(monthly), locale)} <small>{jod}</small></strong>
         <span className="dm-small">{copy.perYear(formatNumber(Math.round(monthly * 12), locale))}</span>
+        <ul className="dm-calc-parts">
+          {parts.map(([label, value]) => (
+            <li key={label}><span>{label}</span><b className="dm-num">{formatNumber(Math.round(value), locale)} {jod}</b></li>
+          ))}
+        </ul>
         <span className="dm-formula">{persona === "pitch" ? copy.formulaPitch : copy.formulaAcademy}</span>
       </div>
       <p className="dm-small">{copy.note}</p>

@@ -75,8 +75,12 @@ export type DemoMatch = {
 
 export type DemoShowcase = {
   counts: { recordings: number; clips: number; analysed: number };
+  /** Share of paying customers who book again, as the business measures it (setting demo.returnRatePercent; 0 hides it). */
+  returnRatePercent: number | null;
   match: DemoMatch | null;
   clips: DemoClip[];
+  /** Vertical (9:16) exports for the social-media section; may be empty. */
+  socialClips: DemoClip[];
   salesWhatsapp: string | null;
   /** True once the demo_leads table exists, so the callback form has somewhere to go. */
   leadsEnabled: boolean;
@@ -97,6 +101,17 @@ export type DemoPlayer = {
   heatmap: Array<{ x: number; y: number; weight: number }>;
 };
 
+/**
+ * A few minutes of the match with the ball's path through them, so the page
+ * can show what a ball-following broadcast looks like. Times are seconds in
+ * the video file; x and y are fractions of the frame.
+ */
+export type DemoBroadcast = {
+  start: number;
+  end: number;
+  path: Array<[number, number, number]>;
+};
+
 export type DemoReport = {
   recordingId: number;
   date: string;
@@ -113,8 +128,10 @@ export type DemoReport = {
     goals: [number, number];
     dribblesWon: [number, number];
   } | null;
+  /** Moment times are seconds in the video file (tracking time + the video offset). */
   moments: DemoMoment[];
   players: DemoPlayer[];
+  broadcast: DemoBroadcast | null;
 };
 
 /** OpenCV 8-bit Lab (L 0-255, a/b offset by 128) back to #rrggbb; the inverse of matchPlay.hexToLab. */
@@ -260,6 +277,40 @@ function matchMedia(recording: typeof recordingsTable.$inferSelect, analysed: bo
  * Finished player clips, newest-and-most-watched first, or the admin's list.
  * Deleted, reported and admin-hidden clips never appear.
  */
+function toDemoClip(row: { id: number; aspectRatio: string }): DemoClip {
+  const token = shareToken(row.id);
+  return {
+    id: row.id,
+    aspectRatio: row.aspectRatio === "9:16" ? "9:16" : "16:9",
+    src: `/api/s/${row.id}/${token}/clip.mp4`,
+    poster: `/api/s/${row.id}/${token}/poster.jpg`,
+  };
+}
+
+/** The best finished vertical clips, for the social-media section. */
+async function pickSocialClips(): Promise<DemoClip[]> {
+  const rows = await db
+    .select()
+    .from(userClipsTable)
+    .where(and(
+      eq(userClipsTable.exportStatus, "done"),
+      eq(userClipsTable.isHidden, false),
+      isNull(userClipsTable.hiddenReason),
+      eq(userClipsTable.aspectRatio, "9:16"),
+    ))
+    .orderBy(desc(userClipsTable.score), desc(userClipsTable.viewCount), desc(userClipsTable.createdAt))
+    .limit(20);
+  const seen = new Set<string>();
+  const picked: typeof rows = [];
+  for (const row of rows) {
+    if (!row.exportedUrl || seen.has(row.videoId)) continue;
+    seen.add(row.videoId);
+    picked.push(row);
+    if (picked.length >= 3) break;
+  }
+  return picked.map(toDemoClip);
+}
+
 async function pickDemoClips(): Promise<DemoClip[]> {
   const pinned = parseIdList(await settingString("demo.clipIds"));
   const base = and(
@@ -294,15 +345,7 @@ async function pickDemoClips(): Promise<DemoClip[]> {
     if (picked.length >= MAX_DEMO_CLIPS) break;
   }
 
-  return picked.map((row) => {
-    const token = shareToken(row.id);
-    return {
-      id: row.id,
-      aspectRatio: row.aspectRatio === "9:16" ? "9:16" : "16:9",
-      src: `/api/s/${row.id}/${token}/clip.mp4`,
-      poster: `/api/s/${row.id}/${token}/poster.jpg`,
-    };
-  });
+  return picked.map(toDemoClip);
 }
 
 async function demoCounts(): Promise<DemoShowcase["counts"]> {
@@ -316,17 +359,21 @@ async function demoCounts(): Promise<DemoShowcase["counts"]> {
 }
 
 export async function buildDemoShowcase(): Promise<DemoShowcase> {
-  const [counts, picked, clips, whatsapp, leadsEnabled] = await Promise.all([
+  const [counts, picked, clips, socialClips, whatsapp, leadsEnabled, returnRate] = await Promise.all([
     demoCounts(),
     pickDemoRecording(),
     pickDemoClips(),
+    pickSocialClips(),
     settingString("demo.salesWhatsapp"),
     demoLeadsReady(),
+    settingNumber("demo.returnRatePercent"),
   ]);
   return {
     counts,
+    returnRatePercent: returnRate > 0 && returnRate <= 100 ? Math.round(returnRate) : null,
     match: picked ? matchMedia(picked.recording, picked.analysed) : null,
     clips,
+    socialClips,
     salesWhatsapp: whatsappDigits(whatsapp),
     leadsEnabled,
   };
@@ -372,12 +419,16 @@ export async function buildDemoReport(recordingId: number): Promise<DemoReport |
     };
   }
 
+  // Tracking frame 0 sits videoStartSeconds into the file; everything the
+  // page seeks to is file time.
+  const offset = Number.isFinite(play.manifest.videoStartSeconds) ? play.manifest.videoStartSeconds : 0;
   const moments: DemoMoment[] = [
-    ...goals.map((goal) => ({ type: "goal" as const, t: Math.round(goal.t * 10) / 10, side: sideOfKit(goal.kit, pick) })),
+    ...goals.map((goal) => ({ type: "goal" as const, t: Math.round((goal.t + offset) * 10) / 10, side: sideOfKit(goal.kit, pick) })),
     ...shots
       .filter((shot) => !goals.some((goal) => Math.abs(goal.t - shot.t) < 8))
-      .map((shot) => ({ type: "shot" as const, t: Math.round(shot.t * 10) / 10, side: sideOfKit(shot.kit, pick) })),
+      .map((shot) => ({ type: "shot" as const, t: Math.round((shot.t + offset) * 10) / 10, side: sideOfKit(shot.kit, pick) })),
   ].sort((a, b) => a.t - b.t);
+  const broadcast = demoBroadcast(play, moments, offset);
 
   const players: DemoPlayer[] = [];
   const manifestRoster = play.manifest.matchRosterPath;
@@ -439,5 +490,50 @@ export async function buildDemoReport(recordingId: number): Promise<DemoReport |
     team,
     moments,
     players,
+    broadcast,
   };
+}
+
+/**
+ * Pick the busiest few minutes (the goal with the most goals and shots in the
+ * 150 s before it, skipping the first two minutes, which are usually warm-up)
+ * and return the ball's path through them.
+ */
+export function pickBroadcastWindow(moments: DemoMoment[], duration: number): { start: number; end: number } {
+  const anchors = moments.filter((m) => m.type === "goal" && m.t > 120);
+  const pool = anchors.length ? anchors : moments.filter((m) => m.t > 120);
+  if (!pool.length) {
+    const start = Math.max(0, Math.min(600, duration - 180));
+    return { start, end: Math.min(duration || start + 180, start + 180) };
+  }
+  let best = pool[0];
+  let bestScore = -1;
+  for (const anchor of pool) {
+    const score = moments.filter((m) => m.t <= anchor.t + 30 && m.t >= anchor.t - 150).length;
+    if (score > bestScore || (score === bestScore && anchor.t > best.t)) {
+      best = anchor;
+      bestScore = score;
+    }
+  }
+  return { start: Math.max(0, best.t - 150), end: best.t + 30 };
+}
+
+function demoBroadcast(play: Awaited<ReturnType<typeof loadRecordingPlay>>, moments: DemoMoment[], offset: number): DemoBroadcast | null {
+  if (!play) return null;
+  const width = play.manifest.width || 3840;
+  const height = play.manifest.height || 1080;
+  const duration = (play.manifest.duration || 0) + offset;
+  const span = pickBroadcastWindow(moments, duration);
+  const path: Array<[number, number, number]> = [];
+  for (const sidecar of play.sidecars) {
+    if (!sidecar) continue;
+    const fps = sidecar.fps || play.fps;
+    for (const [frame, x, y] of sidecar.ball) {
+      const t = frame / fps + offset;
+      if (t < span.start - 2 || t > span.end + 2) continue;
+      path.push([Math.round(t * 100) / 100, Math.round((x / width) * 10000) / 10000, Math.round((y / height) * 10000) / 10000]);
+    }
+  }
+  path.sort((a, b) => a[0] - b[0]);
+  return path.length >= 20 ? { ...span, path } : null;
 }

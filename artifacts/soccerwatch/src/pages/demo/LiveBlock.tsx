@@ -13,7 +13,12 @@ const PLAYER_ID = "live";
  * Live, honestly: the real camera when it is on, and a plain "off right now"
  * when it is not. There is no simulated stream and no viewer count.
  */
-export function LiveBlock({ copy, poster }: { copy: DemoCopy["sections"]["live"]; poster: string | null }) {
+export function LiveBlock({ copy, poster, onlyWhenLive = false }: {
+  copy: DemoCopy["sections"]["live"];
+  poster: string | null;
+  /** Render nothing until camera 1 is actually live (used under the broadcast demo). */
+  onlyWhenLive?: boolean;
+}) {
   const [source, setSource] = useState<LiveSource | null>(null);
   const [checked, setChecked] = useState(false);
   const { ref, inView } = useInView<HTMLDivElement>("200px", 0.1);
@@ -66,8 +71,11 @@ export function LiveBlock({ copy, poster }: { copy: DemoCopy["sections"]["live"]
     if (video && active !== null && active !== PLAYER_ID && !video.paused) video.pause();
   }, [active]);
 
+  if (onlyWhenLive && !live) return <div ref={ref} className="dm-live-probe" aria-hidden="true" />;
+
   return (
-    <div ref={ref} className="dm-live">
+    <div ref={ref} className={`dm-live ${onlyWhenLive ? "dm-live--real" : ""}`}>
+      {onlyWhenLive && <p className="dm-kicker dm-kicker--live">{copy.realLive}</p>}
       <div className="dm-live-head">
         {live ? (
           <span className="dm-live-badge"><span className="dm-live-dot" aria-hidden="true" />{copy.liveBadge}</span>

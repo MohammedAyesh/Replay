@@ -16,8 +16,10 @@ app.use("/api", demoShowcaseRouter);
 
 const showcase = {
   counts: { recordings: 40, clips: 12, analysed: 3 },
+  returnRatePercent: 87,
   match: null,
   clips: [],
+  socialClips: [],
   salesWhatsapp: null,
   leadsEnabled: false,
 };
@@ -57,7 +59,7 @@ describe("GET /api/demo/showcase/report", () => {
     vi.mocked(pickDemoRecording).mockResolvedValue({ recording: { id: 387 } as never, analysed: true });
     vi.mocked(buildDemoReport).mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
-      return { recordingId: 387, date: "2026-09-28", timeSlot: "22:00", durationSeconds: 3600, hasBall: true, hasPitch: true, team: null, moments: [], players: [] };
+      return { recordingId: 387, date: "2026-09-28", timeSlot: "22:00", durationSeconds: 3600, hasBall: true, hasPitch: true, team: null, moments: [], players: [], broadcast: null };
     });
     const [a, b] = await Promise.all([
       request(app).get("/api/demo/showcase/report"),

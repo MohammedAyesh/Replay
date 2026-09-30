@@ -3,9 +3,10 @@ import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 
 import type { DemoCopy } from "./copy";
 import { formatClock, withBase, type DemoClip } from "./data";
+import { LogoBug } from "./FieldLogo";
 import { claimPlayback, releasePlayback, useActivePlayback, useInView } from "./playback";
 
-function ClipCard({ clip, copy }: { clip: DemoClip; copy: DemoCopy["sections"]["clips"] }) {
+function ClipCard({ clip, copy, brandName }: { clip: DemoClip; copy: DemoCopy["sections"]["clips"]; brandName: string }) {
   const id = `clip-${useId()}`;
   const videoRef = useRef<HTMLVideoElement>(null);
   const active = useActivePlayback();
@@ -70,6 +71,7 @@ function ClipCard({ clip, copy }: { clip: DemoClip; copy: DemoCopy["sections"]["
           </span>
         )}
       </button>
+      <span className="dm-clip-bug" aria-hidden="true"><LogoBug name={brandName} compact /></span>
       <div className="dm-clip-foot">
         <span className="dm-tc">{duration !== null ? formatClock(duration) : ""}</span>
         {started && (
@@ -88,12 +90,12 @@ function ClipCard({ clip, copy }: { clip: DemoClip; copy: DemoCopy["sections"]["
   );
 }
 
-export function ClipRail({ clips, copy }: { clips: DemoClip[]; copy: DemoCopy["sections"]["clips"] }) {
+export function ClipRail({ clips, copy, brandName }: { clips: DemoClip[]; copy: DemoCopy["sections"]["clips"]; brandName: string }) {
   return (
     <div className="dm-rail" role="list">
       {clips.map((clip) => (
         <div role="listitem" key={clip.id} className="dm-rail-item">
-          <ClipCard clip={clip} copy={copy} />
+          <ClipCard clip={clip} copy={copy} brandName={brandName} />
         </div>
       ))}
     </div>

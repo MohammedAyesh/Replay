@@ -23,8 +23,10 @@ export type DemoMatch = {
 
 export type DemoShowcase = {
   counts: { recordings: number; clips: number; analysed: number };
+  returnRatePercent?: number | null;
   match: DemoMatch | null;
   clips: DemoClip[];
+  socialClips?: DemoClip[];
   salesWhatsapp: string | null;
   /** Set once the callback form has somewhere to go. */
   leadsEnabled?: boolean;
@@ -60,8 +62,11 @@ export type DemoReport = {
     goals: [number, number];
     dribblesWon: [number, number];
   } | null;
+  /** Seconds in the video file. */
   moments: DemoMoment[];
   players: DemoPlayer[];
+  /** A few busy minutes and the ball's path through them: [video s, x 0-1, y 0-1]. */
+  broadcast?: { start: number; end: number; path: Array<[number, number, number]> } | null;
 };
 
 async function getJson<T>(path: string): Promise<T> {

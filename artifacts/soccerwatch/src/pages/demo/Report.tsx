@@ -1,11 +1,9 @@
-import { useState } from "react";
-
 import type { DemoCopy } from "./copy";
 import { formatNumber, type DemoPlayer, type DemoReport } from "./data";
 
 type Copy = DemoCopy["sections"]["report"];
 
-function readable(hex: string): string {
+export function readable(hex: string): string {
   // Kits are measured under floodlights; a near-black kit would vanish on the
   // page background, so it is lifted to a visible grey.
   const m = /^#([0-9a-f]{6})$/i.exec(hex);
@@ -40,7 +38,7 @@ function Bar({ label, a, b, colours, suffix = "", locale }: {
   );
 }
 
-function Heatmap({ player, colour, label }: { player: DemoPlayer; colour: string; label: string }) {
+export function Heatmap({ player, colour, label }: { player: DemoPlayer; colour: string; label: string }) {
   const max = Math.max(0.0001, ...player.heatmap.map((cell) => cell.weight));
   return (
     <figure className="dm-heat">
@@ -71,14 +69,7 @@ function Heatmap({ player, colour, label }: { player: DemoPlayer; colour: string
 }
 
 export function Report({ report, copy, locale }: { report: DemoReport; copy: Copy; locale: "ar" | "en" }) {
-  const withHeat = report.players.filter((player) => player.heatmap.length > 0);
-  const [selected, setSelected] = useState<string | null>(withHeat[0]?.label ?? null);
-  const current = report.players.find((player) => player.label === selected) ?? withHeat[0] ?? null;
   const team = report.team;
-  const sideColour = (side: 0 | 1 | null) => (team && side !== null ? readable(team.colours[side]) : "#8A93A6");
-  const showSpeed = report.players.some((player) => player.topSpeedKmh !== null);
-  const showDistance = report.players.some((player) => player.distanceKm !== null);
-  const showTouches = report.players.some((player) => player.touches !== null);
 
   return (
     <div className="dm-report">
@@ -96,47 +87,6 @@ export function Report({ report, copy, locale }: { report: DemoReport; copy: Cop
         </div>
       )}
 
-      {report.players.length > 0 && (
-        <div className="dm-report-grid">
-          <div className="dm-table-wrap">
-            <table className="dm-table">
-              <thead>
-                <tr>
-                  <th scope="col">{copy.player}</th>
-                  <th scope="col">{copy.minutes}</th>
-                  {showDistance && <th scope="col">{copy.distance}</th>}
-                  {showSpeed && <th scope="col">{copy.topSpeed}</th>}
-                  {showTouches && <th scope="col">{copy.touches}</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {report.players.map((player) => (
-                  <tr
-                    key={player.label}
-                    className={current?.label === player.label ? "is-on" : ""}
-                  >
-                    <th scope="row">
-                      <button type="button" className="dm-row-btn" onClick={() => setSelected(player.label)} disabled={player.heatmap.length === 0}>
-                        <i style={{ background: sideColour(player.side) }} aria-hidden="true" />
-                        {player.label}
-                      </button>
-                    </th>
-                    <td className="dm-num">{formatNumber(player.minutes, locale)}</td>
-                    {showDistance && <td className="dm-num">{player.distanceKm === null ? "–" : `${formatNumber(player.distanceKm, locale, 1)} ${copy.km}`}</td>}
-                    {showSpeed && <td className="dm-num">{player.topSpeedKmh === null ? "–" : `${formatNumber(player.topSpeedKmh, locale)} ${copy.kmh}`}</td>}
-                    {showTouches && <td className="dm-num">{player.touches === null ? "–" : formatNumber(player.touches, locale)}</td>}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {withHeat.length > 0 && <p className="dm-small">{copy.tapRow}</p>}
-          </div>
-          {current && current.heatmap.length > 0 && (
-            <Heatmap player={current} colour="#D4FF4F" label={copy.heatmap(current.label)} />
-          )}
-        </div>
-      )}
-      <p className="dm-small">{copy.find}</p>
     </div>
   );
 }

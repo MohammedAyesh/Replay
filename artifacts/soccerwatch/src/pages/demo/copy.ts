@@ -19,12 +19,13 @@ export interface DemoCopy {
   personaQuestion: string;
   personas: PersonaText;
   hero: {
-    kicker: string;
+    kicker: PersonaText;
     title: PersonaText;
     body: PersonaText;
     scroll: string;
   };
   proof: {
+    returnRate: string;
     recordings: string;
     clips: string;
     analysed: string;
@@ -32,6 +33,34 @@ export interface DemoCopy {
   };
   sections: {
     clips: { kicker: string; title: PersonaText; body: string; loss: string; mute: string; unmute: string; play: string; pause: string };
+    social: {
+      kicker: string;
+      title: PersonaText;
+      body: PersonaText;
+      nameLabel: PersonaText;
+      defaultName: PersonaText;
+      points: Record<Persona, string[]>;
+      endBook: PersonaText;
+      endFilmed: string;
+      platforms: string;
+      sample: string;
+    };
+    players: {
+      kicker: string;
+      title: PersonaText;
+      body: string;
+      pick: string;
+      vsAverage: string;
+      average: string;
+      rank: (rank: number, total: number) => string;
+      trendTitle: string;
+      trendNote: string;
+      trendMetric: string;
+      thisGame: string;
+      gameLabel: (n: number) => string;
+      passes: string;
+      leaderboard: string;
+    };
     tryIt: {
       kicker: string;
       title: string;
@@ -85,6 +114,14 @@ export interface DemoCopy {
       offBody: string;
       delay: string;
       checking: string;
+      body: PersonaText;
+      demoNote: string;
+      realLive: string;
+      backToDemo: string;
+      family: string;
+      familyAlt: string;
+      teamA: string;
+      teamB: string;
     };
     report: {
       kicker: string;
@@ -117,7 +154,11 @@ export interface DemoCopy {
     numbers: {
       kicker: string;
       title: PersonaText;
-      pitch: { bookings: string; extra: string; share: string };
+      pitch: { bookings: string; extra: string; share: string; price: string; extraBookings: string };
+      fromFilmed: string;
+      fromBookings: string;
+      fromFees: string;
+      fromNewPlayers: string;
       academy: { players: string; extra: string; newPlayers: string; fee: string };
       result: string;
       perYear: (value: string) => string;
@@ -160,33 +201,68 @@ const ar: DemoCopy = {
   personaQuestion: "شو عندك؟",
   personas: { pitch: "عندي ملعب", academy: "عندي أكاديمية" },
   hero: {
-    kicker: "مصوّر في ملعب جوردان جالاكسي، عمّان",
+    kicker: { pitch: "ريبلاي لأصحاب الملاعب", academy: "ريبلاي للأكاديميات" },
     title: {
-      pitch: "مش لازم تحكي عنها.\nإحنا صورناها.",
-      academy: "كل حصة مصوّرة.\nوكل لاعب إله سجل.",
+      pitch: "خلّي لاعبينك\nيسوّقوا لملعبك.",
+      academy: "خلّي لاعبينك\nيسوّقوا لأكاديميتك.",
     },
     body: {
-      pitch: "كاميرا وحدة على ملعبك بتصوّر كل مباراة. اللاعبين بقصّوا أهدافهم وبنشروها، وبرجعوا يحجزوا.",
-      academy: "المدرب بشوف الملعب كامل، الأهل بشوفوا التطور، وكل مقطع بطلع باسم أكاديميتك.",
+      pitch: "كاميرا وحدة بتصوّر كل مباراة. كل لاعب بتوصله مقاطعه جاهزة وعليها شعار ملعبك، بنشرها لأصحابه، وهمّ بيجوا يلعبوا عندك.",
+      academy: "كل حصة مصوّرة. كل لاعب بتوصله مقاطعه وعليها شعار الأكاديمية، الأهل بتابعوا مباشر من البيت، واللاعب بشوف أرقامه بتتحسن من مباراة لمباراة.",
     },
     scroll: "انزل تشوف",
   },
   proof: {
+    returnRate: "من الزباين اللي بدفعوا بيرجعوا يحجزوا",
     recordings: "تسجيل محفوظ",
     clips: "مقطع قصّه اللاعبين",
     analysed: "مباراة حللها الذكاء الاصطناعي",
-    note: "أرقام حقيقية من النظام، بتتحدث لحالها.",
+    note: "اللي بدّه فيديو لمبارياته، بضل يرجع.",
   },
   sections: {
     clips: {
       kicker: "من اللاعبين",
       title: { pitch: "هيك بشاركوا ملعبك", academy: "هيك بشارك اللاعبين والأهل" },
-      body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي من التطبيق. أخفينا الأسماء.",
+      body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي من التطبيق، وكل مقطع بطلع وعليه شعار الملعب. أخفينا الأسماء.",
       loss: "بدون كاميرا، كل مباراة على ملعبك الليلة بتخلص وما بيضل منها إشي.",
       mute: "اكتم الصوت",
       unmute: "شغّل الصوت",
       play: "شغّل",
       pause: "وقّف",
+    },
+    social: {
+      kicker: "سوشال ميديا",
+      title: { pitch: "كل مقطع إعلان لملعبك", academy: "كل مقطع إعلان لأكاديميتك" },
+      body: {
+        pitch: "بعد الصافرة، كل لاعب بتوصله مقاطعه لحالها: طولية وجاهزة للستوري، عليها شعار ملعبك، وبآخرها بطاقة فيها اسم ملعبك. هو بنشر، وأصحابه بيعرفوا وين يحجزوا.",
+        academy: "كل لاعب بتوصله مقاطعه لحالها وعليها شعار أكاديميتك. الأهل بنشروها، وكل أهل بشوفوها بيعرفوا وين يسجّلوا أولادهم.",
+      },
+      nameLabel: { pitch: "اكتب اسم ملعبك وشوفه على المقاطع", academy: "اكتب اسم أكاديميتك وشوفه على المقاطع" },
+      defaultName: { pitch: "ملعبك", academy: "أكاديميتك" },
+      points: {
+        pitch: ["أوتوماتيك: ما حدا بحتاج يمنتج إشي", "شعارك على كل مقطع", "بطاقة بالآخر فيها وين يحجزوا"],
+        academy: ["أوتوماتيك لكل لاعب", "شعار الأكاديمية على كل مقطع", "بطاقة بالآخر فيها كيف يسجّلوا"],
+      },
+      endBook: { pitch: "احجز مباراتك الجاية", academy: "سجّل ابنك معنا" },
+      endFilmed: "مصوّرة بـ ريبلاي",
+      platforms: "إنستغرام · تيك توك · واتساب · سناب",
+      sample: "الشعار هون مثال. بنحط شعارك الحقيقي.",
+    },
+    players: {
+      kicker: "أرقام كل لاعب",
+      title: { pitch: "كل لاعب إله بطاقته", academy: "كل لاعب بشوف تطوره" },
+      body: "اختار لاعب. الأرقام من نفس المباراة الحقيقية، والأسماء مخفية.",
+      pick: "اختار لاعب",
+      vsAverage: "مقارنة بمعدل المباراة",
+      average: "المعدل",
+      rank: (r, n) => `المركز ${r} من ${n}`,
+      trendTitle: "آخر 5 مباريات",
+      trendNote: "المباراة الأخيرة حقيقية؛ اللي قبلها مثال عشان توضح الفكرة.",
+      trendMetric: "المسافة (كم)",
+      thisGame: "هاي المباراة",
+      gameLabel: (n) => `م${n}`,
+      passes: "تمريرات وصلت",
+      leaderboard: "كل اللاعبين",
     },
     tryIt: {
       kicker: "جرّبها بإيدك",
@@ -233,7 +309,7 @@ const ar: DemoCopy = {
     },
     live: {
       kicker: "بث مباشر",
-      title: { pitch: "الأصحاب بتابعوا من البيت", academy: "الأهل بتابعوا من الشغل" },
+      title: { pitch: "الأصحاب بتابعوا من البيت", academy: "الأهل بتابعوا مباشر من البيت" },
       liveBadge: "مباشر",
       camera: "كاميرا 1 · جوردان جالاكسي",
       following: "الكاميرا بتلحق الطابة",
@@ -241,10 +317,21 @@ const ar: DemoCopy = {
       offBody: "بشتغل وقت المباريات. لما يكون في لعب، بتشوفه هون مباشرة.",
       delay: "البث بتأخر حوالي 20–30 ثانية عن الملعب.",
       checking: "عم نشيّك على الكاميرا…",
+      body: {
+        pitch: "الكاميرا بتلحق الطابة لحالها، والنتيجة والوقت على الشاشة مثل أي بث حقيقي. الأصحاب والأهل بتابعوا من جوالاتهم.",
+        academy: "الأهل اللي ما قدروا ييجوا بتابعوا الحصة أو المباراة مباشر من البيت أو الشغل، والكاميرا بتلحق الطابة لحالها.",
+      },
+      demoNote: "عرض تجريبي من مباراة مسجّلة، بنفس شكل البث المباشر.",
+      realLive: "كاميرا 1 شغّالة هلأ. شوف البث الحقيقي",
+      backToDemo: "رجوع للعرض التجريبي",
+      family: "الأهل بتابعوا مباراة ابنهم من الصالون.",
+      familyAlt: "رسمة لعيلة قاعدة على الكنباية بتتابع مباراة مباشرة على التلفزيون",
+      teamA: "أ",
+      teamB: "ب",
     },
     report: {
       kicker: "بعد الصافرة",
-      title: { pitch: "كل لاعب بطلعله تقرير", academy: "تقرير لكل لاعب، من كل مباراة" },
+      title: { pitch: "تقرير المباراة جاهز لحاله", academy: "تقرير لكل مباراة وحصة" },
       body: (date) => `الكاميرا قاستها، ما حدا كتبها. من مباراة حقيقية بتاريخ ${date}، والأسماء مخفية.`,
       loading: "عم نحسب التقرير من المباراة… أول مرة بتاخد شوي.",
       teamA: "فريق أ",
@@ -288,16 +375,22 @@ const ar: DemoCopy = {
         bookings: "حجوزات بالأسبوع",
         extra: "الزيادة اللي بتاخدها عن المباراة المصوّرة (دينار)",
         share: "كم حجز من كل 100 بختار «مصوّر»",
+        price: "سعر الحجز عندك (دينار)",
+        extraBookings: "حجوزات زيادة بالأسبوع من السوشال ميديا واللاعبين اللي بيرجعوا",
       },
+      fromFilmed: "من المباريات المصوّرة",
+      fromBookings: "من الحجوزات الزيادة",
+      fromFees: "من زيادة الاشتراك",
+      fromNewPlayers: "من اللاعبين الجداد",
       academy: {
         players: "عدد اللاعبين",
         extra: "زيادة شهرية لكل لاعب مقابل التصوير والتقرير (دينار)",
-        newPlayers: "لاعبين جداد بالشهر من المقاطع اللي بتنتشر",
+        newPlayers: "لاعبين جداد بالشهر من المقاطع اللي بتنتشر وكلام الأهل",
         fee: "الاشتراك الشهري (دينار)",
       },
       result: "دخل إضافي بالشهر",
       perYear: (v) => `يعني حوالي ${v} دينار بالسنة`,
-      formulaPitch: "حجوزات بالأسبوع × 4.3 أسبوع × النسبة × الزيادة",
+      formulaPitch: "(حجوزات بالأسبوع × 4.3 × النسبة × الزيادة) + (حجوزات زيادة × 4.3 × سعر الحجز)",
       formulaAcademy: "(اللاعبين × الزيادة) + (اللاعبين الجداد × الاشتراك)",
       note: "هاي أرقامك إنت. سعر ريبلاي بنحكي فيه بالمكالمة، لأنه بعتمد على الملعب.",
     },
@@ -357,33 +450,68 @@ const en: DemoCopy = {
   personaQuestion: "Which are you?",
   personas: { pitch: "I own a pitch", academy: "I run an academy" },
   hero: {
-    kicker: "Filmed at Jordan Galaxy, Amman",
+    kicker: { pitch: "Replay for pitch owners", academy: "Replay for academies" },
     title: {
-      pitch: "No need to tell the story.\nWe already filmed it.",
-      academy: "Every session filmed.\nEvery player on record.",
+      pitch: "Let your players\nmarket your pitch.",
+      academy: "Let your players\nmarket your academy.",
     },
     body: {
-      pitch: "One camera on your pitch films every match. Players cut their goals, share them, and come back to book again.",
-      academy: "Coaches see the whole pitch, parents see the progress, and every clip goes out under your academy's name.",
+      pitch: "One camera films every match. Every player gets his clips with your logo already on them, shares them with his friends, and they come to play at your pitch.",
+      academy: "Every session is filmed. Every player gets clips with your academy's badge on them, parents watch live from home, and players see their numbers improve game after game.",
     },
     scroll: "Scroll to see it",
   },
   proof: {
+    returnRate: "of paying customers come back to book again",
     recordings: "recordings on file",
     clips: "clips cut by players",
     analysed: "matches analysed by AI",
-    note: "Live counts from the system.",
+    note: "Players who want their videos keep coming back.",
   },
   sections: {
     clips: {
       kicker: "Made by players",
       title: { pitch: "This is how players share your pitch", academy: "This is how players and parents share it" },
-      body: "Real clips players cut at Jordan Galaxy in the app. Names hidden.",
+      body: "Real clips players cut at Jordan Galaxy in the app. Every clip goes out with the pitch's logo on it. Names hidden.",
       loss: "Without a camera, every match on your pitch tonight ends and nothing of it is left.",
       mute: "Mute",
       unmute: "Unmute",
       play: "Play",
       pause: "Pause",
+    },
+    social: {
+      kicker: "Social media",
+      title: { pitch: "Every clip is an ad for your pitch", academy: "Every clip is an ad for your academy" },
+      body: {
+        pitch: "After the whistle each player gets his clips automatically: vertical and ready for stories, with your logo on them and your end card at the finish. He posts; his friends see where to book.",
+        academy: "Every player gets his clips automatically, with your academy's badge on them. Parents share them, and every parent who sees one knows where to sign their kid up.",
+      },
+      nameLabel: { pitch: "Type your pitch's name and see it on the clips", academy: "Type your academy's name and see it on the clips" },
+      defaultName: { pitch: "Your pitch", academy: "Your academy" },
+      points: {
+        pitch: ["Automatic: nobody edits anything", "Your logo on every clip", "An end card that says where to book"],
+        academy: ["Automatic for every player", "Your academy's badge on every clip", "An end card that says how to join"],
+      },
+      endBook: { pitch: "Book your next match", academy: "Join the academy" },
+      endFilmed: "Filmed by Replay",
+      platforms: "Instagram · TikTok · WhatsApp · Snapchat",
+      sample: "The logo here is a sample. We put yours on.",
+    },
+    players: {
+      kicker: "Player stats",
+      title: { pitch: "Every player gets his own card", academy: "Every player sees his progress" },
+      body: "Pick a player. Numbers from the same real match; names hidden.",
+      pick: "Pick a player",
+      vsAverage: "vs the match average",
+      average: "average",
+      rank: (r, n) => `${r} of ${n}`,
+      trendTitle: "Last 5 games",
+      trendNote: "The latest game is real; earlier games are an example of how progress shows.",
+      trendMetric: "Distance (km)",
+      thisGame: "This game",
+      gameLabel: (n) => `G${n}`,
+      passes: "Passes completed",
+      leaderboard: "All players",
     },
     tryIt: {
       kicker: "Try it",
@@ -430,7 +558,7 @@ const en: DemoCopy = {
     },
     live: {
       kicker: "Live",
-      title: { pitch: "Friends watch from home", academy: "Parents watch from work" },
+      title: { pitch: "Friends watch from home", academy: "Parents watch live from home" },
       liveBadge: "LIVE",
       camera: "Camera 1 · Jordan Galaxy",
       following: "Following the ball",
@@ -438,10 +566,21 @@ const en: DemoCopy = {
       offBody: "It runs during matches. When there's a game on, you'll see it here as it happens.",
       delay: "Live runs about 20–30 seconds behind the pitch.",
       checking: "Checking the camera…",
+      body: {
+        pitch: "The camera follows the ball by itself, with the score and clock on screen like a real broadcast. Friends and family watch on their phones.",
+        academy: "Parents who can't make it watch the session or match live from home or work, and the camera follows the ball by itself.",
+      },
+      demoNote: "Demo replayed from a recorded match, exactly as live looks.",
+      realLive: "Camera 1 is live right now. Watch it",
+      backToDemo: "Back to the demo",
+      family: "Parents follow their son's match from the living room.",
+      familyAlt: "Illustration of a family on a sofa watching a live match on TV",
+      teamA: "A",
+      teamB: "B",
     },
     report: {
       kicker: "After the whistle",
-      title: { pitch: "Every player gets a match report", academy: "A report for every player, every match" },
+      title: { pitch: "The match report writes itself", academy: "A report for every match and session" },
       body: (date) => `Measured by the camera, not typed in. From a real match on ${date}, names hidden.`,
       loading: "Working out the report from the match… the first time takes a moment.",
       teamA: "Team A",
@@ -485,16 +624,22 @@ const en: DemoCopy = {
         bookings: "Bookings a week",
         extra: "Extra you charge for a filmed match (JOD)",
         share: "Bookings out of 100 that pick “filmed”",
+        price: "Your booking price (JOD)",
+        extraBookings: "Extra bookings a week from social media and returning players",
       },
+      fromFilmed: "from filmed matches",
+      fromBookings: "from extra bookings",
+      fromFees: "from the higher fee",
+      fromNewPlayers: "from new players",
       academy: {
         players: "Players enrolled",
         extra: "Extra per player a month for filming and reports (JOD)",
-        newPlayers: "New players a month from shared clips",
+        newPlayers: "New players a month from shared clips and parents talking",
         fee: "Monthly fee (JOD)",
       },
       result: "Extra income a month",
       perYear: (v) => `About ${v} JOD a year`,
-      formulaPitch: "bookings a week × 4.3 weeks × share × extra",
+      formulaPitch: "(bookings a week × 4.3 × share × extra) + (extra bookings × 4.3 × booking price)",
       formulaAcademy: "(players × extra) + (new players × monthly fee)",
       note: "These are your numbers. Replay's own price we go through on the call, because it depends on the pitch.",
     },
