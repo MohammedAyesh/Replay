@@ -55,7 +55,11 @@ vi.mock("../lib/clerkUserBridge", () => ({
     res.status(401).json({ error, reason: "no_credentials" });
   }),
 }));
+vi.mock("./contabo", () => ({
+  controlFetch: vi.fn(),
+}));
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { controlFetch } from "./contabo";
 import * as rosterHintsModule from "../lib/rosterHints";
 import { buildRosterHintsForRecording } from "../lib/rosterHints";
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
@@ -179,6 +183,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 const asWorker = (path: string, worker = "w1") =>
@@ -254,6 +259,56 @@ function queueJob(body: Record<string, unknown> = {}) {
     ...body,
   });
 }
+
+describe("analysis quote proxy", () => {
+  beforeEach(() => {
+    vi.stubEnv("CONTABO_CONTROL_URL", "http://control.test");
+    vi.stubEnv("CONTABO_CONTROL_KEY", "test-control-key");
+    vi.mocked(controlFetch).mockReset();
+  });
+
+  it("passes the quote JSON through and applies the 100-second timeout", async () => {
+    const quote = {
+      chunks: 12,
+      options: [{
+        targetMin: 120,
+        label: "About 2 hours",
+        cards: 4,
+        etaMin: 119,
+        usd: 0.96,
+        blind: 0,
+        gpus: ["RTX 4090", "RTX 4090"],
+      }],
+      note: "Current Salad availability.",
+    };
+    vi.mocked(controlFetch).mockResolvedValueOnce({ ok: true, status: 200, body: quote });
+
+    const response = await request(app)
+      .get("/api/admin/analysis-jobs/quote?seconds=7200")
+      .expect(200);
+
+    expect(response.body).toEqual(quote);
+    expect(controlFetch).toHaveBeenCalledWith("/analysis/quote?seconds=7200", {}, 100_000);
+  });
+
+  it("returns the upstream failure status and message unchanged", async () => {
+    vi.mocked(controlFetch).mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      body: { error: "Quote service is busy" },
+    });
+
+    await request(app)
+      .get("/api/admin/analysis-jobs/quote?seconds=3600")
+      .expect(429, { error: "Quote service is busy" });
+  });
+
+  it("keeps the quote endpoint admin-only", async () => {
+    mockedGetLocalUserId.mockResolvedValue(plainId);
+    await request(app).get("/api/admin/analysis-jobs/quote?seconds=3600").expect(401);
+    expect(controlFetch).not.toHaveBeenCalled();
+  });
+});
 
 type HintPlayerFixture = {
   team: "A" | "B" | "C";

@@ -25,6 +25,7 @@ import { logger } from "../lib/logger";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { buildRosterHintsForJob, type RosterHintCache, type RosterHints } from "../lib/rosterHints";
+import { controlFetch } from "./contabo";
 import { parseZipBundleDetailed, storeUploadBundle } from "./claimMatch";
 import {
   ACTIVE_STATUSES,
@@ -405,6 +406,42 @@ async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
 }
 
 /* ------------------------------------------------------------------ admin -- */
+
+/**
+ * GET /admin/analysis-jobs/quote?seconds=<number>
+ * Ask the GPU control service for current finish-time, cost, and machine estimates.
+ */
+router.get("/admin/analysis-jobs/quote", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+
+  const rawSeconds = req.query.seconds;
+  const seconds = typeof rawSeconds === "string" ? Number(rawSeconds) : Number.NaN;
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    res.status(400).json({ error: "seconds must be a positive number." });
+    return;
+  }
+
+  const missing: string[] = [];
+  if (!process.env.CONTABO_CONTROL_URL) missing.push("CONTABO_CONTROL_URL");
+  if (!process.env.CONTABO_CONTROL_KEY) missing.push("CONTABO_CONTROL_KEY");
+  if (missing.length) {
+    res.status(503).json({ error: "Control server not configured", missing });
+    return;
+  }
+
+  try {
+    const result = await controlFetch(
+      `/analysis/quote?seconds=${encodeURIComponent(String(seconds))}`,
+      {},
+      100_000,
+    );
+    res.status(result.ok ? 200 : result.status).json(result.body);
+  } catch (error) {
+    logger.error({ err: error }, "Failed to reach analysis quote service");
+    res.status(502).json({ error: "Control server unreachable" });
+  }
+});
 
 /**
  * POST /admin/analysis-jobs

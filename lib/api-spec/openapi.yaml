@@ -1028,6 +1028,38 @@ paths:
         "403":
           description: Admin required
 
+  /admin/analysis-jobs/quote:
+    get:
+      operationId: getAdminAnalysisJobQuote
+      tags: [admin]
+      summary: Estimate analysis completion time and GPU cost
+      security:
+        - clerkSession: []
+      parameters:
+        - name: seconds
+          in: query
+          required: true
+          schema:
+            type: number
+            exclusiveMinimum: 0
+      responses:
+        "200":
+          description: Current estimates for supported finish targets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisJobQuote"
+        "400":
+          description: Invalid seconds value
+        "401":
+          description: Authenticated admin required
+        "503":
+          description: Control server is not configured
+        "502":
+          description: Control server unavailable
+        default:
+          description: Upstream quote service failure
+
   /admin/claim-match/disputes/{id}:
     patch:
       operationId: resolveClaimMatchDispute
@@ -2720,6 +2752,41 @@ paths:
 
 components:
   schemas:
+    AnalysisJobQuote:
+      type: object
+      required: [chunks, options, note]
+      properties:
+        chunks:
+          type: integer
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalysisJobQuoteOption"
+        note:
+          type: string
+
+    AnalysisJobQuoteOption:
+      type: object
+      required: [targetMin, label, cards, etaMin, usd, blind, gpus]
+      properties:
+        targetMin:
+          type: integer
+          enum: [60, 120, 240, 480]
+        label:
+          type: string
+        cards:
+          type: integer
+        etaMin:
+          type: number
+        usd:
+          type: number
+        blind:
+          type: integer
+        gpus:
+          type: array
+          items:
+            type: string
+
     LiveRtmpStatus:
       type: object
       required: [cam, state]

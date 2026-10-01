@@ -42,6 +42,7 @@ import type {
   AdminRecordingPlayerMetricsResponse,
   AdminTrackingBundlePatchBody,
   AdminTrackingBundlePatchResponse,
+  AnalysisJobQuote,
   AuthResponse,
   Banner,
   BunnyCollection,
@@ -69,6 +70,7 @@ import type {
   Field,
   FieldRecording,
   FollowResult,
+  GetAdminAnalysisJobQuoteParams,
   HealthStatus,
   ImpressionInput,
   JerseySidecar,
@@ -3094,6 +3096,90 @@ export function useListClaimMatchDisputes<TData = Awaited<ReturnType<typeof list
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListClaimMatchDisputesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminAnalysisJobQuoteUrl = (params: GetAdminAnalysisJobQuoteParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/analysis-jobs/quote?${stringifiedParams}` : `/api/admin/analysis-jobs/quote`
+}
+
+/**
+ * @summary Estimate analysis completion time and GPU cost
+ */
+export const getAdminAnalysisJobQuote = async (params: GetAdminAnalysisJobQuoteParams, options?: RequestInit): Promise<AnalysisJobQuote> => {
+
+  return customFetch<AnalysisJobQuote>(getGetAdminAnalysisJobQuoteUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminAnalysisJobQuoteQueryKey = (params?: GetAdminAnalysisJobQuoteParams,) => {
+    return [
+    `/api/admin/analysis-jobs/quote`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAdminAnalysisJobQuoteQueryOptions = <TData = Awaited<ReturnType<typeof getAdminAnalysisJobQuote>>, TError = ErrorType<void>>(params: GetAdminAnalysisJobQuoteParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminAnalysisJobQuote>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminAnalysisJobQuoteQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminAnalysisJobQuote>>> = ({ signal }) => getAdminAnalysisJobQuote(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminAnalysisJobQuote>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminAnalysisJobQuoteQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminAnalysisJobQuote>>>
+export type GetAdminAnalysisJobQuoteQueryError = ErrorType<void>
+
+
+/**
+ * @summary Estimate analysis completion time and GPU cost
+ */
+
+export function useGetAdminAnalysisJobQuote<TData = Awaited<ReturnType<typeof getAdminAnalysisJobQuote>>, TError = ErrorType<void>>(
+ params: GetAdminAnalysisJobQuoteParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminAnalysisJobQuote>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminAnalysisJobQuoteQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

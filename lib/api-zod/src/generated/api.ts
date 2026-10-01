@@ -1029,6 +1029,32 @@ export const ListClaimMatchDisputesResponse = zod.array(ListClaimMatchDisputesRe
 
 
 /**
+ * @summary Estimate analysis completion time and GPU cost
+ */
+export const getAdminAnalysisJobQuoteQuerySecondsExclusiveMin = 0;
+
+
+
+export const GetAdminAnalysisJobQuoteQueryParams = zod.object({
+  "seconds": zod.coerce.number().gt(getAdminAnalysisJobQuoteQuerySecondsExclusiveMin)
+})
+
+export const GetAdminAnalysisJobQuoteResponse = zod.object({
+  "chunks": zod.number(),
+  "options": zod.array(zod.object({
+  "targetMin": zod.union([zod.literal(60),zod.literal(120),zod.literal(240),zod.literal(480)]),
+  "label": zod.string(),
+  "cards": zod.number(),
+  "etaMin": zod.number(),
+  "usd": zod.number(),
+  "blind": zod.number(),
+  "gpus": zod.array(zod.string())
+})),
+  "note": zod.string()
+})
+
+
+/**
  * @summary Transfer a disputed person to one claimant
  */
 export const ResolveClaimMatchDisputeParams = zod.object({

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { formatStartTime, parseStartTime } from "@/lib/analysisStart";
 
@@ -56,7 +56,12 @@ interface Job {
   sources: SourceDescriptor[];
   bundleRecordingIds: number[];
   matchStartSeconds: number;
-  params?: { gpu?: string; gpus?: string[]; cards?: "auto" | number };
+  params?: {
+    gpu?: string;
+    gpus?: string[];
+    cards?: "auto" | number;
+    fleetTargetMin?: FleetTargetMin;
+  };
   status: JobStatus;
   stage: string | null;
   progress: number;
@@ -109,6 +114,43 @@ const SALAD_GPU_OPTIONS = [
 ] as const;
 
 type SaladFleetCardCount = "auto" | 2 | 3 | 4 | 5 | 6 | 8 | 10;
+type FleetTargetMin = 60 | 120 | 240 | 480;
+
+interface AnalysisQuoteOption {
+  targetMin: FleetTargetMin;
+  label: string;
+  cards: number;
+  etaMin: number;
+  usd: number;
+  blind: number;
+  gpus: string[];
+}
+
+interface AnalysisQuote {
+  chunks: number;
+  options: AnalysisQuoteOption[];
+  note: string;
+}
+
+interface QuoteCacheEntry {
+  requestedAt: number;
+  quote?: AnalysisQuote;
+  error?: string;
+  promise?: Promise<AnalysisQuote>;
+}
+
+type QuoteState = {
+  seconds: number | null;
+  status: "idle" | "loading" | "ready" | "error";
+  quote: AnalysisQuote | null;
+};
+
+const FINISH_TIME_CHOICES: Array<{ targetMin: FleetTargetMin; label: string }> = [
+  { targetMin: 60, label: "About 1 hour" },
+  { targetMin: 120, label: "About 2 hours" },
+  { targetMin: 240, label: "About 4 hours" },
+  { targetMin: 480, label: "No rush (cheapest)" },
+];
 
 const SALAD_FLEET_CARD_OPTIONS: Array<{ value: SaladFleetCardCount; label: string }> = [
   { value: "auto", label: "Auto (finish in about an hour)" },
@@ -207,6 +249,15 @@ function multiGpuCardLabel(gpu: string): string {
 
 export function analysisGpuQueueLabel(params?: Job["params"]): string {
   if (params?.gpu === "salad-fleet") {
+    const finishLabel: Record<FleetTargetMin, string> = {
+      60: "~1 h",
+      120: "~2 h",
+      240: "~4 h",
+      480: "no rush",
+    };
+    if (params.fleetTargetMin && finishLabel[params.fleetTargetMin]) {
+      return `Salad fleet · finish within ${finishLabel[params.fleetTargetMin]}`;
+    }
     const cardsLabel = typeof params.cards === "number" && Number.isInteger(params.cards)
       ? `${params.cards} ${params.cards === 1 ? "card" : "cards"}`
       : "auto";
@@ -219,10 +270,14 @@ export function analysisGpuQueueLabel(params?: Job["params"]): string {
 }
 
 export function buildAnalysisJobParams(
-  gpuMode: "manual" | "salad-fleet",
+  gpuMode: "manual" | "salad-fleet" | "finish",
   gpuCards: GpuCardSelection[],
   fleetCardCount: SaladFleetCardCount,
+  fleetTargetMin: FleetTargetMin = 120,
 ): NonNullable<Job["params"]> {
+  if (gpuMode === "finish") {
+    return { gpu: "salad-fleet", cards: "auto", fleetTargetMin };
+  }
   if (gpuMode === "salad-fleet") {
     return { gpu: "salad-fleet", cards: fleetCardCount };
   }
@@ -230,6 +285,28 @@ export function buildAnalysisJobParams(
   return gpuValues.length === 1
     ? { gpu: gpuValues[0] }
     : { gpu: "multi", gpus: gpuValues };
+}
+
+function recordingDurationSeconds(duration: string): number | null {
+  const parts = duration.trim().split(":");
+  if ((parts.length !== 2 && parts.length !== 3) || parts.some((part) => !/^\d+$/.test(part))) return null;
+  const values = parts.map(Number);
+  if (values.slice(1).some((part) => part >= 60)) return null;
+  return values.length === 2 ? values[0] * 60 + values[1] : values[0] * 3600 + values[1] * 60 + values[2];
+}
+
+function formatEtaMinutes(value: number): string {
+  const minutes = Math.max(0, Math.round(value));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining ? `${hours} h ${remaining} min` : `${hours} h 0 min`;
+}
+
+function quoteGpuMix(gpus: string[]): string {
+  const counts = new Map<string, number>();
+  for (const gpu of gpus) counts.set(gpu, (counts.get(gpu) ?? 0) + 1);
+  return [...counts.entries()].map(([gpu, count]) => `${count}× ${gpu}`).join(" · ");
 }
 
 async function api(path: string, opts?: RequestInit) {
@@ -309,10 +386,14 @@ export default function AnalysisTab() {
   const [options, setOptions] = useState<RecordingOption[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [startInput, setStartInput] = useState("0:00");
+  const [queueMode, setQueueMode] = useState<"finish" | "advanced">("finish");
+  const [fleetTargetMin, setFleetTargetMin] = useState<FleetTargetMin>(120);
   const [cardCount, setCardCount] = useState(1);
   const [gpuCards, setGpuCards] = useState<GpuCardSelection[]>([{ ...DEFAULT_GPU_CARD }]);
   const [gpuMode, setGpuMode] = useState<"manual" | "salad-fleet">("manual");
   const [fleetCardCount, setFleetCardCount] = useState<SaladFleetCardCount>("auto");
+  const [quoteState, setQuoteState] = useState<QuoteState>({ seconds: null, status: "idle", quote: null });
+  const quoteCache = useRef(new Map<number, QuoteCacheEntry>());
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [schemaNotice, setSchemaNotice] = useState<string | null>(null);
@@ -349,7 +430,66 @@ export default function AnalysisTab() {
     () => selected.map((id) => options.find((option) => option.id === id)).filter(Boolean) as RecordingOption[],
     [selected, options],
   );
+  const quoteSeconds = useMemo(() => {
+    if (!orderedSelection.length || startSeconds === null) return null;
+    const totalSeconds = orderedSelection.reduce(
+      (total, option) => total + (recordingDurationSeconds(option.duration) ?? 7200),
+      0,
+    );
+    const remainingSeconds = totalSeconds - startSeconds;
+    return remainingSeconds > 0 ? Math.round(remainingSeconds) : null;
+  }, [orderedSelection, startSeconds]);
   const anyWorkerOnline = workers.some((worker) => worker.online);
+  const visibleQuote = quoteState.seconds === quoteSeconds ? quoteState.quote : null;
+  const visibleQuoteStatus = quoteState.seconds === quoteSeconds
+    ? quoteState.status
+    : quoteSeconds === null ? "idle" : "loading";
+
+  useEffect(() => {
+    if (quoteSeconds === null) {
+      setQuoteState({ seconds: null, status: "idle", quote: null });
+      return;
+    }
+
+    let active = true;
+    setQuoteState({ seconds: quoteSeconds, status: "loading", quote: null });
+    const timer = window.setTimeout(() => {
+      const cached = quoteCache.current.get(quoteSeconds);
+      const cacheIsFresh = cached && Date.now() - cached.requestedAt < 60_000;
+      const applySuccess = (quote: AnalysisQuote) => {
+        if (active) setQuoteState({ seconds: quoteSeconds, status: "ready", quote });
+      };
+      const applyFailure = () => {
+        if (active) setQuoteState({ seconds: quoteSeconds, status: "error", quote: null });
+      };
+
+      if (cacheIsFresh && cached) {
+        if (cached.quote) applySuccess(cached.quote);
+        else if (cached.error) applyFailure();
+        else cached.promise?.then(applySuccess).catch(applyFailure);
+        return;
+      }
+
+      const entry: QuoteCacheEntry = { requestedAt: Date.now() };
+      const promise = api(`/admin/analysis-jobs/quote?seconds=${encodeURIComponent(String(quoteSeconds))}`) as Promise<AnalysisQuote>;
+      entry.promise = promise;
+      quoteCache.current.set(quoteSeconds, entry);
+      promise.then((quote) => {
+        entry.quote = quote;
+        delete entry.promise;
+        applySuccess(quote);
+      }).catch(() => {
+        entry.error = "estimate unavailable";
+        delete entry.promise;
+        applyFailure();
+      });
+    }, 1000);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [quoteSeconds]);
 
   const visibleOptions = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -412,7 +552,9 @@ export default function AnalysisTab() {
     setError(null);
     setNotice(null);
     try {
-      const params = buildAnalysisJobParams(gpuMode, gpuCards, fleetCardCount);
+      const params = queueMode === "finish"
+        ? buildAnalysisJobParams("finish", gpuCards, fleetCardCount, fleetTargetMin)
+        : buildAnalysisJobParams(gpuMode, gpuCards, fleetCardCount);
       await api("/admin/analysis-jobs", {
         method: "POST",
         body: JSON.stringify({
@@ -423,6 +565,8 @@ export default function AnalysisTab() {
         }),
       });
       setSelected([]);
+      setQueueMode("finish");
+      setFleetTargetMin(120);
       setCardCount(1);
       setGpuCards([{ ...DEFAULT_GPU_CARD }]);
       setGpuMode("manual");
@@ -458,7 +602,8 @@ export default function AnalysisTab() {
         <h2 className="text-white font-display font-black text-xl uppercase tracking-tight">Analysis</h2>
         <p className="text-zinc-500 text-xs mt-1">
           Runs the tracking pipeline over one or more recordings and attaches the result, so the
-          match becomes claimable. Runs on a GPU rented for each job and deleted afterwards. A two-hour match takes about 2–2¾ hours depending on the GPU and costs well under $1.
+          match becomes claimable. Runs on a GPU rented for each job and deleted afterwards. The
+          completion time depends on the speed chosen.
         </p>
       </div>
 
@@ -560,6 +705,76 @@ export default function AnalysisTab() {
           )}
         </div>
 
+        <div className="space-y-2">
+          {queueMode === "finish" ? (
+            <>
+              <fieldset>
+                <legend className="text-zinc-500 text-[11px] uppercase tracking-wider">Finish within</legend>
+                <div role="radiogroup" aria-label="Finish within" className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                  {FINISH_TIME_CHOICES.map((choice) => {
+                    const estimate = visibleQuote?.options.find((option) => option.targetMin === choice.targetMin);
+                    const estimateText = visibleQuoteStatus === "ready"
+                      ? estimate
+                        ? `~${formatEtaMinutes(estimate.etaMin)} · ~$${estimate.usd.toFixed(2)} · ${estimate.cards} cards`
+                        : "estimate unavailable"
+                      : visibleQuoteStatus === "error"
+                        ? "estimate unavailable"
+                        : visibleQuoteStatus === "loading"
+                          ? "pricing…"
+                          : quoteSeconds === null
+                            ? selected.length ? "check match start" : "select recordings"
+                            : "pricing…";
+                    return (
+                      <button
+                        key={choice.targetMin}
+                        type="button"
+                        role="radio"
+                        aria-checked={fleetTargetMin === choice.targetMin}
+                        onClick={() => setFleetTargetMin(choice.targetMin)}
+                        className={cn(
+                          "min-w-0 rounded border p-2.5 text-left transition-colors",
+                          fleetTargetMin === choice.targetMin
+                            ? "border-sky-500 bg-sky-950/40 text-sky-100"
+                            : "border-zinc-800 bg-zinc-950/60 text-zinc-300 hover:border-zinc-600",
+                        )}
+                      >
+                        <span className="block text-sm font-semibold">{choice.label}</span>
+                        <span className="block text-xs mt-1 text-zinc-300">{estimateText}</span>
+                        {estimate && (
+                          <span className="block text-[10px] mt-1 text-zinc-500">
+                            {quoteGpuMix(estimate.gpus)}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+              {visibleQuote?.options.some((option) => option.blind > 0) && (
+                <p className="text-amber-300/80 text-[11px]">
+                  Salad shows no free machines right now, so these are best guesses from machines on call.
+                </p>
+              )}
+              {visibleQuote?.note && <p className="text-zinc-500 text-[11px]">{visibleQuote.note}</p>}
+              <button
+                type="button"
+                onClick={() => setQueueMode("advanced")}
+                className="text-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2"
+              >
+                Advanced: pick cards yourself
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setQueueMode("finish")}
+              className="text-xs text-sky-400 hover:text-sky-300 underline underline-offset-2"
+            >
+              Choose a finish time
+            </button>
+          )}
+        </div>
+
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="text-zinc-500 text-[11px] uppercase tracking-wider block">Match starts at</label>
@@ -578,7 +793,7 @@ export default function AnalysisTab() {
                 : `${formatStartTime(startSeconds)} into the first recording`}
             </p>
           </div>
-          <div className="min-w-0 flex-1">
+          {queueMode === "advanced" && <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <div className="w-20 shrink-0">
                 <label htmlFor="analysis-card-count" className="text-zinc-500 text-[11px] uppercase tracking-wider block">Cards</label>
@@ -686,7 +901,7 @@ export default function AnalysisTab() {
             </div>
             {isSaladFleet ? (
               <p className="text-zinc-600 text-[11px] mt-1">
-                Picks the best value cards free on Salad right now, cheapest per chunk first, and skips very slow cards. A 2-hour match is usually 5–6 cards, about an hour and roughly $0.30–0.50. Cards at the batch price can be taken away mid-job; their chunks are re-run on the other cards.
+                Cards come from Salad (home PCs, cheapest per hour). A machine can be taken away mid-job; each chunk's progress is saved every few minutes and carried to another card, so little work is lost. Times and costs are estimates.
               </p>
             ) : gpuCards.some((card) => card.gpu === "auto") && (
               <p className="text-zinc-600 text-[11px] mt-1">
@@ -703,7 +918,7 @@ export default function AnalysisTab() {
                 Salad runs on home PCs. The tier controls whether the runner uses batch only, low only, or batch with low fallback. A machine can be taken away mid-job; that job fails and can be queued again. Setup adds 5–20 minutes before analysis starts.
               </p>
             )}
-          </div>
+          </div>}
           <button
             onClick={queueJob}
             disabled={busy || !selected.length || startSeconds === null}

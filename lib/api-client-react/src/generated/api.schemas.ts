@@ -5,6 +5,32 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+export type AnalysisJobQuoteOptionTargetMin = typeof AnalysisJobQuoteOptionTargetMin[keyof typeof AnalysisJobQuoteOptionTargetMin];
+
+
+export const AnalysisJobQuoteOptionTargetMin = {
+  NUMBER_60: 60,
+  NUMBER_120: 120,
+  NUMBER_240: 240,
+  NUMBER_480: 480,
+} as const;
+
+export interface AnalysisJobQuoteOption {
+  targetMin: AnalysisJobQuoteOptionTargetMin;
+  label: string;
+  cards: number;
+  etaMin: number;
+  usd: number;
+  blind: number;
+  gpus: string[];
+}
+
+export interface AnalysisJobQuote {
+  chunks: number;
+  options: AnalysisJobQuoteOption[];
+  note: string;
+}
+
 export type LiveRtmpStatusCam = typeof LiveRtmpStatusCam[keyof typeof LiveRtmpStatusCam];
 
 
@@ -2049,6 +2075,13 @@ export interface AccountDeletionError {
   reason: AccountDeletionErrorReason;
   activeFootageRequests?: number;
 }
+
+export type GetAdminAnalysisJobQuoteParams = {
+/**
+ * @exclusiveMinimum 0
+ */
+seconds: number;
+};
 
 export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */
