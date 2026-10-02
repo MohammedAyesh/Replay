@@ -7,11 +7,12 @@
  * decides what is listed, in what order, and what "play my moments" plays.
  */
 
+import { flowMarks, type MatchFlowData } from "./match-flow";
 import type { ReportTimeline } from "./match-report";
 
-export type MomentKind = "matchGoal" | "goal" | "shot" | "dribble" | "pass" | "touch" | "flag";
+export type MomentKind = "matchGoal" | "goal" | "shot" | "dribble" | "pass" | "touch" | "flag" | "phase";
 
-export const MOMENT_KINDS: MomentKind[] = ["matchGoal", "goal", "shot", "dribble", "pass", "touch", "flag"];
+export const MOMENT_KINDS: MomentKind[] = ["matchGoal", "goal", "shot", "dribble", "pass", "touch", "flag", "phase"];
 
 /** Kinds that belong to the chosen player (the rest belong to the match). */
 export const PLAYER_KINDS: MomentKind[] = ["goal", "shot", "dribble", "pass", "touch"];
@@ -26,7 +27,7 @@ export type Moment = {
   count: number;
   /** how it ended: a pass completed or not, a dribble won or lost */
   outcome: "won" | "lost" | "completed" | "missed" | null;
-  /** a scorer's name or a flag's note */
+  /** a scorer's name, a flag's note, or for a phase: kickoff / restart / break / fullTime */
   label: string | null;
   /** team colour for a match goal */
   colour: string | null;
@@ -42,7 +43,7 @@ export const LEAD_IN = 4;
 /** Seconds kept after it. */
 export const TAIL = 3;
 
-const PRIORITY: Record<MomentKind, number> = { matchGoal: 0, goal: 0, shot: 1, dribble: 2, pass: 3, touch: 4, flag: 5 };
+const PRIORITY: Record<MomentKind, number> = { matchGoal: 0, goal: 0, shot: 1, dribble: 2, pass: 3, touch: 4, flag: 5, phase: 6 };
 
 function moment(kind: MomentKind, at: number, extra: Partial<Moment> = {}): Moment {
   return { kind, at, endAt: at, count: 1, outcome: null, label: null, colour: null, ...extra };
@@ -69,10 +70,11 @@ export function touchRuns(times: number[]): Array<{ at: number; endAt: number; c
  * Every moment, in time order. A goal is listed once: the player's own goal
  * replaces the match goal it matches and the shot that scored it.
  */
-export function buildMoments({ report, matchGoals, flags }: {
+export function buildMoments({ report, matchGoals, flags, flow }: {
   report: ReportTimeline | null | undefined;
   matchGoals: MatchGoalInput[];
   flags: FlagInput[];
+  flow?: MatchFlowData | null;
 }): Moment[] {
   const out: Moment[] = [];
   const myGoals = report?.goalTimes ?? [];
@@ -99,6 +101,7 @@ export function buildMoments({ report, matchGoals, flags }: {
   for (const flag of flags) {
     if (Number.isFinite(flag.at) && flag.at >= 0) out.push(moment("flag", flag.at, { label: flag.note ?? flag.kind }));
   }
+  for (const mark of flowMarks(flow)) out.push(moment("phase", mark.at, { label: mark.mark }));
   return out
     .filter((m) => Number.isFinite(m.at) && m.at >= 0)
     .sort((a, b) => a.at - b.at || PRIORITY[a.kind] - PRIORITY[b.kind]);
@@ -151,7 +154,8 @@ export type ReelStop = { start: number; end: number; moments: Moment[] };
 /** "Play my moments": each moment's window, merged where they overlap or nearly touch. */
 export function reel(moments: Moment[], durationSeconds = Infinity): ReelStop[] {
   const stops: ReelStop[] = [];
-  for (const m of [...moments].sort((a, b) => a.at - b.at)) {
+  // The match's flow marks are for finding your way, not highlights.
+  for (const m of [...moments].filter((x) => x.kind !== "phase").sort((a, b) => a.at - b.at)) {
     const start = startOf(m);
     const end = Math.min(durationSeconds, m.endAt + TAIL);
     const last = stops.at(-1);

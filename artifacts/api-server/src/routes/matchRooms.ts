@@ -672,7 +672,7 @@ router.get("/m/:code/replay", async (req, res): Promise<void> => {
     res.json(await matchReplay(ctx));
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "match replay failed");
-    res.json({ recordings: [], goals: [], shots: null, suggested: null });
+    res.json({ recordings: [], goals: [], shots: null, suggested: null, flow: { phases: null, inPlay: null } });
   }
 });
 

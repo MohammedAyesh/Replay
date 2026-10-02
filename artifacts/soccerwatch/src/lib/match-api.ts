@@ -1,3 +1,4 @@
+import type { MatchFlowData } from "@/lib/match-flow";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 /** Match rooms: /m/:code. Hand-written client for the matchRooms router. */
@@ -338,6 +339,8 @@ export type MatchReplay = {
   }>;
   shots: [number, number] | null;
   suggested: { a: number; b: number } | null;
+  /** where the game was on and where the ball was in play, booking seconds; absent on older servers */
+  flow?: MatchFlowData;
 };
 
 export function useMatchReplay(code: string, enabled = true) {

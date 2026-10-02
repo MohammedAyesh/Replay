@@ -324,6 +324,7 @@ export default function OwnerShare() {
           }}
           seekToSeconds={selectedMomentSeconds}
           timelineMarkers={matchCode ? moments.markers : undefined}
+          timelineBands={matchCode ? moments.bands : undefined}
           onPositionChange={matchCode ? moments.onPositionChange : undefined}
           seekRequest={matchCode ? moments.seekRequest : undefined}
           stageBadge={matchCode ? moments.badge : undefined}

@@ -93,6 +93,9 @@ export type ClipTimelineMarker = {
   emphasis?: boolean;
 };
 
+/** A shaded stretch under the seek bar, e.g. where the ball was in play. */
+export type ClipTimelineBand = { from: number; to: number; color: string };
+
 /** A seek the page asks for; a new id seeks again even to the same second. */
 export type ClipSeekRequest = { seconds: number; id: number; play?: boolean };
 
@@ -122,6 +125,8 @@ export type ClipPlayerProps = {
   seekToUtcMs?: number | null;
   /** Ticks drawn on the seek bar (recorded footage only). */
   timelineMarkers?: ClipTimelineMarker[];
+  /** Stretches shaded in a thin strip under the seek bar (recorded footage only). */
+  timelineBands?: ClipTimelineBand[];
   /** Called as playback moves, with the video position in seconds. */
   onPositionChange?: (seconds: number) => void;
   /** Seek on demand; unlike seekToSeconds it repeats when the id changes. */
@@ -295,6 +300,7 @@ export function ClipPlayer({
   seekToSeconds,
   seekToUtcMs,
   timelineMarkers,
+  timelineBands,
   onPositionChange,
   seekRequest,
   stageBadge,
@@ -1444,6 +1450,21 @@ export function ClipPlayer({
                 <div className="flex items-center gap-2">
                   <span className="text-white text-xs tabular-nums w-10 text-end">{formatDuration(currentTime)}</span>
                   <div className="relative flex flex-1 items-center">
+                  {timelineBands && timelineBands.length > 0 && (
+                    <div aria-hidden className="pointer-events-none absolute inset-x-1.5 top-[calc(50%+5px)] h-[3px] overflow-hidden rounded-full">
+                      {timelineBands.map((band, index) => {
+                        const from = Math.min(100, Math.max(0, (band.from / duration) * 100));
+                        const to = Math.min(100, Math.max(0, (band.to / duration) * 100));
+                        return to > from ? (
+                          <span
+                            key={index}
+                            className="absolute inset-y-0"
+                            style={{ insetInlineStart: `${from}%`, width: `${to - from}%`, background: band.color }}
+                          />
+                        ) : null;
+                      })}
+                    </div>
+                  )}
                   {timelineMarkers && timelineMarkers.length > 0 && (
                     <div aria-hidden className="pointer-events-none absolute inset-x-1.5 top-1/2 z-10 h-0">
                       {timelineMarkers.map((marker, index) => (

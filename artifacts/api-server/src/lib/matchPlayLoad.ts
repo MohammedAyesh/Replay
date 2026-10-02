@@ -7,6 +7,7 @@
  * could change it: the bundle row's updatedAt (a re-upload or an extras
  * attach) and the camera's calibration id.
  */
+import { mergeSpans, phasesFromProvenance } from "./matchFlow";
 import { asc, eq } from "drizzle-orm";
 import {
   db,
@@ -53,10 +54,14 @@ export type RecordingPlay = {
   dribbles: Dribble[];
   /** ball-tracker jumps dropped before touches were resolved (matchPlay.dropTeleports) */
   teleports: number;
+  /** ball in play, tracking seconds, merged across segments; null when segments were not read */
+  inPlay: Array<[number, number]> | null;
+  /** before / game / break / after, tracking seconds (manifest.provenance.phases); null on older bundles */
+  phases: Array<{ kind: string; start: number; end: number }> | null;
 };
 
 /** Bumped whenever what is derived here changes, so cached results are rebuilt. */
-const DERIVE_VERSION = 3;
+const DERIVE_VERSION = 4;
 
 const MAX_CACHED = 6;
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
@@ -150,6 +155,12 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
     events,
     dribbles,
     teleports,
+    inPlay: segments
+      ? mergeSpans(segments.flatMap((segment) => (segment.inPlaySpans ?? [])
+        .filter((span) => Number.isFinite(span.start) && Number.isFinite(span.end))
+        .map((span) => [span.start, span.end] as [number, number])))
+      : null,
+    phases: phasesFromProvenance(manifest.provenance),
   };
   playCache.set(recordingId, { key, data, at: Date.now() });
   if (playCache.size > MAX_CACHED) {

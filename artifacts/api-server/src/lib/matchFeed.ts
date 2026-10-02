@@ -67,6 +67,7 @@ import {
 } from "./matchPlay";
 import { loadRecordingPlay, type RecordingPlay } from "./matchPlayLoad";
 import { buildPlayerMetrics } from "./playerMetrics";
+import { matchFlow, type MatchFlow, type RecordingFlowInput } from "./matchFlow";
 import { MatchPlayerReportBuilder, REPORT_BLOCK_SECONDS, type MatchPlayerReport } from "./matchPlayerReport";
 import { teamAtTime, type TeamSpanAtTime, type TeamSpanTeam } from "./matchTeamSpans";
 
@@ -872,6 +873,8 @@ export async function matchReplay(ctx: RoomContext): Promise<{
   goals: ReplayGoal[];
   shots: [number, number] | null;
   suggested: { a: number; b: number } | null;
+  /** where the game was on, and where the ball was in play, booking seconds */
+  flow: MatchFlow;
 }> {
   const roster = await rosterFor(ctx.room.id);
   const games = await db.select().from(matchGamesTable).where(eq(matchGamesTable.matchId, ctx.room.id));
@@ -906,6 +909,23 @@ export async function matchReplay(ctx: RoomContext): Promise<{
     }
   }
   goals.sort((a, b) => a.atSeconds - b.atSeconds);
+  // linkPlays splits each recording into windows; the flow wants its whole share.
+  const shares = new Map<number, RecordingFlowInput>();
+  for (const { link, play } of plays) {
+    const share = shares.get(link.recordingId);
+    if (share) {
+      share.fromSeconds = Math.min(share.fromSeconds, link.fromSeconds);
+      share.toSeconds = Math.max(share.toSeconds, link.toSeconds);
+    } else {
+      shares.set(link.recordingId, {
+        fromSeconds: link.fromSeconds,
+        toSeconds: link.toSeconds,
+        offsetSec: link.recordingOffsetSec,
+        phases: play.phases,
+        inPlay: play.inPlay,
+      });
+    }
+  }
   const sided = goals.filter((g) => g.side);
   const suggested = ctx.room.teamCount < 3 && goals.length && sided.length === goals.length
     ? { a: sided.filter((g) => g.side === "A").length, b: sided.filter((g) => g.side === "B").length }
@@ -915,5 +935,6 @@ export async function matchReplay(ctx: RoomContext): Promise<{
     goals,
     shots: ctx.room.teamCount < 3 ? shots : null,
     suggested,
+    flow: matchFlow([...shares.values()]),
   };
 }
