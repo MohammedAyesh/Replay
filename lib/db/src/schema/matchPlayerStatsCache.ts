@@ -27,6 +27,24 @@ export type MatchPlayerStatsCacheValue = {
   dribblesLost: number | null;
   shots: number | null;
   goals: number | null;
+  /**
+   * The match timeline the Home stat tiles draw on (cache version 2+). Optional
+   * inside the jsonb, so older rows still read; no column change.
+   */
+  extras?: MatchPlayerStatsCacheExtras;
+};
+
+export type MatchPlayerStatsCacheExtras = {
+  /** five-minute blocks of the booking: [block index, metres or null, touches or null] */
+  blocks: Array<[number, number | null, number | null]>;
+  /** booking seconds where the fastest one-second run started */
+  topSpeedAt: number | null;
+  /** booking seconds */
+  shotTimes: number[];
+  goalTimes: number[];
+  /** the side the player was on for the whole match, and that side's completed passes */
+  team: string | null;
+  teamPassesCompleted: number | null;
 };
 
 /**

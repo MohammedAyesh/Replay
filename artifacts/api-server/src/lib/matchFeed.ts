@@ -242,7 +242,8 @@ function cacheFingerprints(
     }
     if (!sources.length) continue;
     const input = {
-      version: 1,
+      // 2: the cached row also carries the timeline extras the Home tiles use.
+      version: 2,
       matchId,
       matchPlayerId: player.id,
       userId: player.userId,
@@ -259,7 +260,9 @@ function cacheFingerprints(
   return fingerprints;
 }
 
-function cacheStatsValues(stats: MatchPlayerStats): MatchStatsCacheInput["stats"] {
+function cacheStatsValues(stats: MatchPlayerStats, team: MatchTeamStats | null): MatchStatsCacheInput["stats"] {
+  const side = stats.team && team ? team.sides.indexOf(stats.team) : -1;
+  const report = stats.report;
   return {
     minutes: stats.minutes,
     distanceKm: stats.distanceKm,
@@ -273,6 +276,14 @@ function cacheStatsValues(stats: MatchPlayerStats): MatchStatsCacheInput["stats"
     dribblesLost: stats.dribblesLost,
     shots: stats.shots,
     goals: stats.goals,
+    extras: {
+      blocks: (report?.blocks ?? []).map((block) => [block.index, block.metres, block.touches]),
+      topSpeedAt: report?.topSpeedAt ?? null,
+      shotTimes: report?.shotTimes ?? [],
+      goalTimes: report?.goalTimes ?? [],
+      team: stats.team,
+      teamPassesCompleted: side >= 0 && team ? team.passesCompleted[side] ?? null : null,
+    },
   };
 }
 
@@ -810,7 +821,7 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
       const cacheRows: MatchStatsCacheInput[] = cacheFingerprints(ctx.room.id, roster, plays.map((item) => item.link))
         .flatMap((fingerprint) => {
           const player = byPlayerId.get(fingerprint.matchPlayerId);
-          return player?.claimed ? [{ ...fingerprint, stats: cacheStatsValues(player) }] : [];
+          return player?.claimed ? [{ ...fingerprint, stats: cacheStatsValues(player, team) }] : [];
         });
       await persistMatchStatsCache(ctx.room.id, cacheRows);
     } catch (error) {
