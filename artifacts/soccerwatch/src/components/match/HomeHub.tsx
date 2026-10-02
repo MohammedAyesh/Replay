@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { CalendarDays, ChevronRight, CirclePlus, Film, Play } from "lucide-react";
 import { useListUserClips, getListUserClipsQueryKey } from "@workspace/api-client-react";
+import { StatTileCard } from "@/components/home/StatTile";
 import { MatchCard } from "@/components/match/MatchCard";
 import { PlayerAvatar } from "@/components/match/bits";
 import { useMatchCopy } from "@/i18n/match-strings";
@@ -56,6 +57,8 @@ export function HomeHub() {
   const voting = data?.recent.filter((m) => m.voteOpen) ?? [];
   const recent = (data?.recent ?? []).filter((m) => !m.voteOpen).slice(0, 3);
   const myClips = (clips.data ?? []).slice(0, 6);
+  // The most impressive thing Replay can tell this player right now, chosen by the server.
+  const statTile = data?.statTile ? <StatTileCard tile={data.statTile} /> : null;
 
   return (
     <div className="mb-8 flex flex-col gap-6">
@@ -76,6 +79,7 @@ export function HomeHub() {
       ) : hero ? (
         <>
           <MatchCard item={hero} copy={copy} now={now} variant="hero" />
+          {statTile}
           {bookRow}
         </>
       ) : (
@@ -94,6 +98,7 @@ export function HomeHub() {
           )}
         </section>
       )}
+      {!matches.isLoading && !hero && statTile}
 
       {invites.length > 0 && (
         <Section title={copy.invites}>

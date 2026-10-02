@@ -1,3 +1,4 @@
+import type { StatTile } from "@/lib/stat-tile";
 import type { MatchFlowData } from "@/lib/match-flow";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -239,6 +240,8 @@ export type MyMatches = {
   invites: MyMatchItem[];
   personalForm?: PlayerForm | null;
   personalFormPending?: boolean;
+  /** the one stat tile under "Your next match", chosen by the server */
+  statTile?: StatTile | null;
 };
 
 export type MatchClip = {
