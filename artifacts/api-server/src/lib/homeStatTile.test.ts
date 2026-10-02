@@ -82,8 +82,13 @@ describe("claim tiles win while a recent match is waiting", () => {
     expect(tile).toMatchObject({ kind: "notFound", found: 1, teaser: { metric: "topSpeedKmh", value: 24.3 } });
   });
 
-  it("an unclaimed match older than the newest claimed one doesn't count", () => {
-    const tile = pickStatTile(base({ history, unclaimed: [{ match: match(9, "2026-09-20 21:00"), findRecordingId: 77, claimed: 0, peers: [] }] }));
+  it("an unclaimed match from earlier the same night still counts", () => {
+    const tile = pickStatTile(base({ history, unclaimed: [{ match: match(9, "2026-09-25 20:00"), findRecordingId: 77, claimed: 0, peers: [] }] }));
+    expect(tile?.kind).toBe("unclaimed");
+  });
+
+  it("an unclaimed match more than two weeks old doesn't count", () => {
+    const tile = pickStatTile(base({ history, unclaimed: [{ match: match(9, "2026-09-10 21:00"), findRecordingId: 77, claimed: 0, peers: [] }] }));
     expect(tile?.kind).not.toBe("unclaimed");
   });
 });

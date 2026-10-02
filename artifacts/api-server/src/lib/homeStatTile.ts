@@ -563,8 +563,9 @@ function challenge(input: HomeTileInput): ScoredTile | null {
 
 /** What the player stands to see, and who already has theirs. */
 function claim(input: HomeTileInput): ScoredTile | null {
-  const newestClaimed = input.history[0]?.match.startLocal ?? "";
-  const next = input.unclaimed.find((row) => row.match.startLocal > newestClaimed);
+  // Any recent match still waiting, newest first, even one older than a match
+  // already claimed: two games the same night are two sets of numbers.
+  const next = input.unclaimed.find((row) => daysBetween(row.match.startLocal, input.nowLocal) <= 14);
   if (!next) return null;
   const age = daysBetween(next.match.startLocal, input.nowLocal);
   if (age > 14) return null;
