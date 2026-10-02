@@ -26,6 +26,12 @@ export type ReportTimeline = {
   touchTimes: number[];
   goalTimes: number[];
   dribbleWonTimes: number[];
+  /** shots, goals included; absent from servers before the moments player */
+  shotTimes?: number[];
+  /** passes the player played; completed is null without a team pick */
+  passes?: Array<{ t: number; completed: boolean | null }>;
+  /** every dribble the player started */
+  dribbles?: Array<{ t: number; outcome: "won" | "lost" | null }>;
   topSpeedAt: number | null;
   heatmap: { coordinateSpace: "pitch" | "camera"; columns: number; rows: number; weights: number[] } | null;
 };

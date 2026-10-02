@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -83,6 +83,19 @@ export type LiveDvrOptions = {
   onCurrentTimeUtcChange?: (timeUtcMs: number | null) => void;
 };
 
+/** A tick on the seek bar: a moment worth finding in a long recording. */
+export type ClipTimelineMarker = {
+  /** seconds into the video */
+  at: number;
+  color: string;
+  label: string;
+  /** drawn taller, for the moments the viewer is looking for */
+  emphasis?: boolean;
+};
+
+/** A seek the page asks for; a new id seeks again even to the same second. */
+export type ClipSeekRequest = { seconds: number; id: number; play?: boolean };
+
 export type ClipPlayerProps = {
   /** Preferred HLS manifest URL. Bunny recordings should use the direct CDN URL. */
   src: string;
@@ -107,6 +120,14 @@ export type ClipPlayerProps = {
   onSave: (draft: ClipDraft) => Promise<void>;
   seekToSeconds?: number | null;
   seekToUtcMs?: number | null;
+  /** Ticks drawn on the seek bar (recorded footage only). */
+  timelineMarkers?: ClipTimelineMarker[];
+  /** Called as playback moves, with the video position in seconds. */
+  onPositionChange?: (seconds: number) => void;
+  /** Seek on demand; unlike seekToSeconds it repeats when the id changes. */
+  seekRequest?: ClipSeekRequest | null;
+  /** A small label pinned to the top corner of the picture, e.g. the moment now playing. */
+  stageBadge?: ReactNode;
 };
 
 type ClipMode = "idle" | "recording" | "review";
@@ -273,6 +294,10 @@ export function ClipPlayer({
   onSave,
   seekToSeconds,
   seekToUtcMs,
+  timelineMarkers,
+  onPositionChange,
+  seekRequest,
+  stageBadge,
 }: ClipPlayerProps) {
   const singleRowToolbar = toolbarLayout === "single-row";
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -425,6 +450,20 @@ export function ClipPlayer({
     videoRef.current.currentTime = position;
     lastKnownPositionRef.current = position;
   }, [seekToSeconds]);
+
+  const onPositionChangeRef = useRef(onPositionChange);
+  onPositionChangeRef.current = onPositionChange;
+  const lastSeekRequestIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const element = videoRef.current;
+    if (!seekRequest || !element || lastSeekRequestIdRef.current === seekRequest.id) return;
+    lastSeekRequestIdRef.current = seekRequest.id;
+    const position = Math.max(0, Math.min(element.duration || Infinity, seekRequest.seconds));
+    element.currentTime = position;
+    lastKnownPositionRef.current = position;
+    setCurrentTime(position);
+    if (seekRequest.play && element.paused) void element.play().catch(() => undefined);
+  }, [seekRequest]);
 
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
@@ -1275,7 +1314,11 @@ export function ClipPlayer({
             style={{ ...frameToVideoStyle(frame), filter: videoFilter }}
             playsInline
             onLoadedMetadata={onLoadedMetadata}
+            onTimeUpdate={(event) => onPositionChangeRef.current?.(event.currentTarget.currentTime)}
           />
+          {stageBadge && (
+            <div className="pointer-events-none absolute start-3 top-3 z-20 max-w-[70%]">{stageBadge}</div>
+          )}
           <AnimatePresence>
             {playbackUiState === "loading" && (
               <motion.div
@@ -1400,6 +1443,22 @@ export function ClipPlayer({
               {!isLive && duration > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-white text-xs tabular-nums w-10 text-end">{formatDuration(currentTime)}</span>
+                  <div className="relative flex flex-1 items-center">
+                  {timelineMarkers && timelineMarkers.length > 0 && (
+                    <div aria-hidden className="pointer-events-none absolute inset-x-1.5 top-1/2 z-10 h-0">
+                      {timelineMarkers.map((marker, index) => (
+                        <span
+                          key={index}
+                          title={marker.label}
+                          className={cn("absolute w-[3px] -translate-y-1/2 rounded-full", marker.emphasis ? "h-3.5" : "h-2 opacity-80")}
+                          style={{
+                            insetInlineStart: `calc(${Math.min(100, Math.max(0, (marker.at / duration) * 100))}% - 1.5px)`,
+                            background: marker.color,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
                   <input
                     type="range"
                     min={0}
@@ -1415,8 +1474,9 @@ export function ClipPlayer({
                     onChange={(event) => {
                       handleSeekSliderChange(parseFloat(event.currentTarget.value));
                     }}
-                    className="flex-1 accent-primary h-1"
+                    className="relative flex-1 accent-primary h-1"
                   />
+                  </div>
                   <span className="text-white text-xs tabular-nums w-10">{formatDuration(duration)}</span>
                 </div>
               )}

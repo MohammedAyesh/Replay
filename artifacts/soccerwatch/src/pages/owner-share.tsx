@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -6,6 +6,7 @@ import {
   useCreateUserClip,
 } from "@workspace/api-client-react";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
+import { MatchMomentsPanel, useMatchMoments } from "@/components/match/moments/MatchMoments";
 import {
   Dialog,
   DialogContent,
@@ -122,6 +123,13 @@ export default function OwnerShare() {
   const [selectedMomentSeconds, setSelectedMomentSeconds] = useState<number | null>(Number.isFinite(startAt) && startAt >= 0 ? startAt : null);
   const restoringRef = useRef(false);
   const isArabic = locale === "ar";
+  const flags = useMemo(
+    () => (meta?.keyMoments ?? []).map((moment) => ({ at: moment.offsetSeconds, kind: moment.kind, note: moment.note })),
+    [meta],
+  );
+  // With a match code the page becomes the full-match player: every goal, and
+  // the viewer's touches, passes, shots and dribbles, on the seek bar and listed.
+  const moments = useMatchMoments(matchCode, flags, isArabic);
   const copy = isArabic
     ? {
         availableUntil: "متاح حتى",
@@ -315,9 +323,16 @@ export default function OwnerShare() {
             await saveOwnerClip(draft);
           }}
           seekToSeconds={selectedMomentSeconds}
+          timelineMarkers={matchCode ? moments.markers : undefined}
+          onPositionChange={matchCode ? moments.onPositionChange : undefined}
+          seekRequest={matchCode ? moments.seekRequest : undefined}
+          stageBadge={matchCode ? moments.badge : undefined}
         />
       </div>
 
+      {matchCode && <MatchMomentsPanel state={moments} />}
+
+      {(!matchCode || (!moments.room && !moments.loading)) && (
       <section className="mx-3 mb-5 rounded-2xl border border-line bg-surface p-4 sm:mx-5">
         <h2 className="text-sm font-bold">{copy.keyMoments}</h2>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -339,6 +354,7 @@ export default function OwnerShare() {
           )}
         </div>
       </section>
+      )}
 
       <div className="mx-3 mb-6 flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4 sm:mx-5">
         <p className="text-sm font-semibold">{copy.wantClips}</p>

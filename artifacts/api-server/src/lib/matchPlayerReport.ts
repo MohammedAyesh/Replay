@@ -32,6 +32,12 @@ export type MatchPlayerReport = {
   touchTimes: number[];
   goalTimes: number[];
   dribbleWonTimes: number[];
+  /** seconds from kick-off of each shot (goals included, as the shot total counts them) */
+  shotTimes: number[];
+  /** passes this player played, seconds from kick-off; completed is null without a team pick */
+  passes: Array<{ t: number; completed: boolean | null }>;
+  /** every dribble this player started, with how it ended (null when it was not settled) */
+  dribbles: Array<{ t: number; outcome: "won" | "lost" | null }>;
   /** seconds from kick-off where the fastest one-second run started */
   topSpeedAt: number | null;
   /** share of on-camera time in each cell, row-major, 12 columns x 8 rows; null when nothing was placed */
@@ -47,6 +53,9 @@ export class MatchPlayerReportBuilder {
   private touchTimes: number[] = [];
   private goalTimes: number[] = [];
   private dribbleWonTimes: number[] = [];
+  private shotTimes: number[] = [];
+  private passes: Array<{ t: number; completed: boolean | null }> = [];
+  private dribbles: Array<{ t: number; outcome: "won" | "lost" | null }> = [];
   private topSpeed: { kmh: number; at: number } | null = null;
   private heat = new Array<number>(REPORT_HEAT_COLUMNS * REPORT_HEAT_ROWS).fill(0);
   private heatSeconds = 0;
@@ -124,6 +133,20 @@ export class MatchPlayerReportBuilder {
     for (const at of times) if (Number.isFinite(at) && at >= 0) this.dribbleWonTimes.push(at);
   }
 
+  addShots(times: number[]): void {
+    for (const at of times) if (Number.isFinite(at) && at >= 0) this.shotTimes.push(at);
+  }
+
+  /** Passes the player played. */
+  addPasses(passes: Array<{ t: number; completed: boolean | null }>): void {
+    for (const pass of passes) if (Number.isFinite(pass.t) && pass.t >= 0) this.passes.push({ t: pass.t, completed: pass.completed });
+  }
+
+  /** Every dribble the player started, won, lost or unsettled. */
+  addDribbles(dribbles: Array<{ t: number; outcome: "won" | "lost" | null }>): void {
+    for (const dribble of dribbles) if (Number.isFinite(dribble.t) && dribble.t >= 0) this.dribbles.push({ t: dribble.t, outcome: dribble.outcome });
+  }
+
   addTopSpeed(kmh: number | null, at: number | null): void {
     if (kmh === null || at === null || !Number.isFinite(kmh) || !Number.isFinite(at)) return;
     if (!this.topSpeed || kmh > this.topSpeed.kmh) this.topSpeed = { kmh, at: Math.max(0, at) };
@@ -171,6 +194,9 @@ export class MatchPlayerReportBuilder {
       touchTimes: this.touchTimes.sort((a, b) => a - b).map(round1),
       goalTimes: this.goalTimes.sort((a, b) => a - b).map(round1),
       dribbleWonTimes: this.dribbleWonTimes.sort((a, b) => a - b).map(round1),
+      shotTimes: this.shotTimes.sort((a, b) => a - b).map(round1),
+      passes: this.passes.sort((p, q) => p.t - q.t).map((pass) => ({ t: round1(pass.t), completed: pass.completed })),
+      dribbles: this.dribbles.sort((p, q) => p.t - q.t).map((dribble) => ({ t: round1(dribble.t), outcome: dribble.outcome })),
       topSpeedAt: this.topSpeed ? round1(this.topSpeed.at) : null,
       heatmap: total > 0 && this.coordinateSpace
         ? {

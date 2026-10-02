@@ -783,6 +783,9 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
           report.addTouches(mine.touches.map((touch) => touch.t + link.recordingOffsetSec));
           report.addGoals(own.goals.map((goal) => goal.t + link.recordingOffsetSec));
           report.addDribblesWon(own.dribbles.filter((d) => d.outcome === "won").map((d) => d.t0 + link.recordingOffsetSec));
+          report.addShots(own.shots.map((shot) => shot.t + link.recordingOffsetSec));
+          report.addPasses(mine.passes.filter((pass) => pass.give).map((pass) => ({ t: pass.t0 + link.recordingOffsetSec, completed: pick ? pass.completed : null })));
+          report.addDribbles(own.dribbles.map((d) => ({ t: d.t0 + link.recordingOffsetSec, outcome: d.outcome })));
         }
       }
     }

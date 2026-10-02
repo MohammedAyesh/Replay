@@ -54,9 +54,20 @@ describe("MatchPlayerReportBuilder", () => {
     expect(report.heatmap?.weights[4 * 12 + 6]).toBe(0.5);
   });
 
+  it("orders shots, passes and dribbles across recordings and drops impossible times", () => {
+    const builder = new MatchPlayerReportBuilder();
+    builder.addShots([900.04, 120, -1, Number.NaN]);
+    builder.addPasses([{ t: 400, completed: true }, { t: 35.26, completed: null }, { t: -3, completed: false }]);
+    builder.addDribbles([{ t: 700, outcome: "lost" }, { t: 50, outcome: null }, { t: 60, outcome: "won" }]);
+    const report = builder.build();
+    expect(report.shotTimes).toEqual([120, 900]);
+    expect(report.passes).toEqual([{ t: 35.3, completed: null }, { t: 400, completed: true }]);
+    expect(report.dribbles).toEqual([{ t: 50, outcome: null }, { t: 60, outcome: "won" }, { t: 700, outcome: "lost" }]);
+  });
+
   it("returns an empty report with no heatmap when nothing was added", () => {
     expect(new MatchPlayerReportBuilder().build()).toEqual({
-      spans: [], blocks: [], touchTimes: [], goalTimes: [], dribbleWonTimes: [], topSpeedAt: null, heatmap: null,
+      spans: [], blocks: [], touchTimes: [], goalTimes: [], dribbleWonTimes: [], shotTimes: [], passes: [], dribbles: [], topSpeedAt: null, heatmap: null,
     });
   });
 });
