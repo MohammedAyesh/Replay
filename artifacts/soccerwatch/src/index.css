@@ -2279,3 +2279,22 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     transition: none;
   }
 }
+
+/* Home stat tiles (components/home/StatTile.tsx). Each visual draws in once
+   when its tile comes into view; .tile-wait holds it at the start until then. */
+.tile-num { font-family: 'Rajdhani', 'Inter', sans-serif; font-variant-numeric: tabular-nums; }
+.tile-arc { animation: tile-arc 1.1s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes tile-arc { from { stroke-dashoffset: var(--tile-arc-from); } }
+.tile-grow { transform-origin: bottom; animation: tile-grow .9s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes tile-grow { from { transform: scaleY(0); } }
+.tile-grow-x { transform-origin: left; animation: tile-grow-x .9s cubic-bezier(.2,.8,.2,1) both; }
+[dir="rtl"] .tile-grow-x { transform-origin: right; }
+@keyframes tile-grow-x { from { transform: scaleX(0); } }
+.tile-draw { stroke-dasharray: 1; animation: tile-draw 1.2s ease-out both; }
+@keyframes tile-draw { from { stroke-dashoffset: 1; } }
+.tile-fade { animation: tile-fade .5s ease-out .6s both; }
+@keyframes tile-fade { from { opacity: 0; } }
+.tile-wait .tile-arc, .tile-wait .tile-grow, .tile-wait .tile-grow-x, .tile-wait .tile-draw, .tile-wait .tile-fade { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .tile-arc, .tile-grow, .tile-grow-x, .tile-draw, .tile-fade { animation: none; }
+}

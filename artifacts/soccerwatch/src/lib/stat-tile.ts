@@ -29,6 +29,9 @@ export type StatTile =
   | { kind: "dribbleDuel"; match: MatchBit; me: { won: number; tries: number }; other: { name: string; won: number; tries: number } }
   | { kind: "week"; matches: number; distanceKm: number; touches: number; passesCompleted: number; passesTried: number; dribblesWon: number; dribbles: number; shots: number }
   | { kind: "friends"; match: MatchBit; findRecordingId: number; found: number; peers: Array<{ name: string; distanceKm: number | null; topSpeedKmh: number | null; shots: number | null; dribblesWon: number | null }> }
-  | { kind: "unclaimed"; match: MatchBit; findRecordingId: number };
+  | { kind: "unclaimed"; match: MatchBit; findRecordingId: number }
+  | { kind: "strain"; match: MatchBit; strain: number; zone: StrainZone; calories: number; distanceKm: number; minutes: number; previous: number | null };
+
+export type StrainZone = "light" | "moderate" | "high" | "allOut";
 
 export type StatTileKind = StatTile["kind"];
