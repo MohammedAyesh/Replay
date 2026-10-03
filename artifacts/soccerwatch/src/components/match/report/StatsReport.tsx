@@ -21,6 +21,7 @@ import {
   formLine,
   formatMetric,
   isPersonalBest,
+  ladderSummary,
   levelWith,
   metricValue,
   minuteMark,
@@ -278,13 +279,8 @@ function LadderSheet({ metric, onClose, players, meId, r, unclaimed }: {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effective, players, height]);
-  const above = me && me.ranked ? table.filter((entry) => entry.ranked && entry.rank < me.rank).at(-1) ?? null : null;
-  const level = me && effective ? levelWith(players, effective, me.player.playerId) : [];
-  const summary = !me || !effective ? null
-    : !above ? r.ladderTop
-      : effective === "distanceRate"
-        ? r.ladderAhead(firstName(above.player.name), `${formatMetric(effective, above.value - me.value)} km`, Math.round((above.value - me.value) * 1000))
-        : r.ladderAheadPlain(firstName(above.player.name), unitGap(effective, above.value - me.value));
+  // Not ranked (under ten minutes on camera) gets the not-ranked line, never a 0th.
+  const summary = effective ? ladderSummary(players, effective, meId, r) : null;
   return (
     <Sheet open={metric !== null} onOpenChange={(next) => { if (!next) onClose(); }}>
       <SheetContent side="bottom" dir={r.locale === "ar" ? "rtl" : "ltr"} closeLabel={r.close} className="flex max-h-[92dvh] flex-col overflow-hidden rounded-t-3xl border-line bg-void px-5 pb-6 pt-5 text-text">
@@ -356,9 +352,7 @@ function LadderSheet({ metric, onClose, players, meId, r, unclaimed }: {
         </div>
         <div className="mt-3 flex shrink-0 flex-col gap-1.5 border-t border-[#1B2236] pt-3">
           {summary && (
-            <p className="text-xs leading-5 text-text">
-              {summary}{level.length > 0 && me ? ` ${r.ladderShare(level.map((p) => firstName(p.name)).join(", "), `${me.shared ? "=" : ""}${r.ordinal(me.rank)}`)}` : ""}
-            </p>
+            <p className="text-xs leading-5 text-text">{summary}</p>
           )}
           {unclaimed > 0 && <p className="text-[11px] text-muted-text">{r.notOnLineYet(unclaimed)}</p>}
         </div>

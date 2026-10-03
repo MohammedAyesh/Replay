@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as shared from "@workspace/api-zod";
 
 import {
   cameraGaps,
@@ -10,11 +11,14 @@ import {
   formLine,
   isLevel,
   isPersonalBest,
+  MIN_RANKED_MINUTES,
+  ladderSummary,
   levelWith,
   rivalRows,
   standOut,
   standings,
   tally,
+  type LadderCopy,
   type ReportPlayer,
 } from "./match-report";
 
@@ -168,5 +172,74 @@ describe("comparisons", () => {
     const folded = foldHeat(weights);
     expect(folded).toHaveLength(24);
     expect(folded.reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+  });
+});
+
+describe("one rule with Home", () => {
+  it("the report's rules are the shared module's, not a copy", () => {
+    expect(isLevel).toBe(shared.isLevel);
+    expect(isPersonalBest).toBe(shared.isPersonalBest);
+    expect(MIN_RANKED_MINUTES).toBe(shared.MIN_RANKED_MINUTES);
+    expect(MIN_RANKED_MINUTES).toBe(10);
+  });
+
+  it("ranks the same fixtures exactly as the shared rule Home uses", () => {
+    const players = [
+      player(1, { distanceKm: 3.78, touches: 41, topSpeedKmh: 24 }),
+      player(2, { distanceKm: 3.7, touches: 30, topSpeedKmh: 27 }),
+      player(3, { distanceKm: 4.0, minutes: 80, touches: 50, topSpeedKmh: 22 }),
+      player(4, { distanceKm: 1.5, minutes: 8, touches: 20, topSpeedKmh: 31 }),
+    ];
+    for (const metric of ["distanceRate", "topSpeed", "touchRate", "distance", "touches"] as const) {
+      const mine = standings(players, metric).map(({ player: p, rank, shared: s, ranked }) => ({ id: p.playerId, rank, shared: s, ranked }));
+      const theirs = shared.standings(players, metric).map(({ player: p, rank, shared: s, ranked }) => ({ id: p.playerId, rank, shared: s, ranked }));
+      expect(mine).toEqual(theirs);
+    }
+    // the Home headline "further than anyone" needs clearly first per ten minutes: 1 and 2 are level here
+    expect(shared.isClearlyFirst(players, shared.RANK_BASIS.distanceKm, 1)).toBe(false);
+    // the 8-minute player is never ranked, however fast
+    expect(shared.standingOf(players, "topSpeed", 4)).toMatchObject({ ranked: false, rank: 0 });
+  });
+});
+
+describe("the ladder line", () => {
+  const copy: LadderCopy = {
+    ladderTop: "TOP",
+    ladderAhead: (name, gap, metres) => `AHEAD ${name} ${gap} ${metres}`,
+    ladderAheadPlain: (name, gap) => `AHEAD ${name} ${gap}`,
+    ladderShare: (names, rank) => `SHARE ${names} ${rank}`,
+    notRankedShort: (min) => `NOT RANKED ${min}`,
+    ordinal: (n) => `#${n}`,
+  };
+
+  it("gives a player under ten minutes the not-ranked line, never a 0th or 'nobody ahead'", () => {
+    const players = [
+      player(1, { minutes: 6, topSpeedKmh: 27 }),
+      player(2, { topSpeedKmh: 27.5 }),
+      player(3, { topSpeedKmh: 22 }),
+    ];
+    const line = ladderSummary(players, "topSpeed", 1, copy);
+    expect(line).toBe("NOT RANKED 6");
+    expect(line).not.toContain("#0");
+    expect(line).not.toContain("TOP");
+    expect(line).not.toContain("SHARE");
+  });
+
+  it("names who is clearly ahead and who shares the rank when ranked", () => {
+    const players = [
+      player(1, { topSpeedKmh: 24 }),
+      player(2, { name: "Omar Ali", topSpeedKmh: 28 }),
+      player(3, { name: "Zaid", topSpeedKmh: 24.5 }),
+    ];
+    expect(ladderSummary(players, "topSpeed", 1, copy)).toBe("AHEAD Omar 4 km/h SHARE Zaid =#2");
+  });
+
+  it("says nobody is clearly ahead for the leader", () => {
+    const players = [player(1, { topSpeedKmh: 30 }), player(2, { topSpeedKmh: 24 })];
+    expect(ladderSummary(players, "topSpeed", 1, copy)).toBe("TOP");
+  });
+
+  it("says nothing when the viewer is not on the ladder", () => {
+    expect(ladderSummary([player(2, { topSpeedKmh: 24 })], "topSpeed", 1, copy)).toBeNull();
   });
 });

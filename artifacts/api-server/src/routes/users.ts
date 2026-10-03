@@ -31,6 +31,7 @@ import { normaliseOffPitchSpans } from "./claimOffPitch";
 import { logger } from "../lib/logger";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { playerMoments } from "../lib/matchPlay";
+import { loadPublicMeasured } from "../lib/publicMeasuredStats";
 
 const router: IRouter = Router();
 
@@ -360,6 +361,10 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
     ? roundStat(matches.reduce((sum, match) => sum + (match.distanceMetres ?? 0), 0))
     : null;
 
+  // Top speed, goals, shots, passes, touches: the match report's own cached
+  // figures. One indexed read; nothing is parsed per view.
+  const measured = await loadPublicMeasured(targetId);
+
   res.json(GetPublicPlayerStatsResponse.parse({
     matches,
     totals: {
@@ -378,6 +383,7 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
         : null,
     },
     excludedClaimCount: reviewClaims.length,
+    measured,
   }));
 });
 

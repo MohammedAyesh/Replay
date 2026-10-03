@@ -12,6 +12,8 @@ import {
   PublicPlayerHeatmap,
   PublicPlayerMatchStats,
   PublicPlayerStats,
+  PublicPlayerMeasured,
+  PublicPlayerMeasuredMatch,
   PlayerDribbleStats,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -24,7 +26,9 @@ import { cn } from "@/lib/utils";
 import { FriendButton } from "@/components/friends/FriendButton";
 import {
   aggregatePitchHeatmaps,
+  attachMeasured,
   formatDistance,
+  measuredTiles,
   shouldShowEmptyStatsCta,
   shouldShowPerMatchHeatmaps,
 } from "@/lib/player-stats";
@@ -386,13 +390,16 @@ function PlayerStatsSection({
             <p className="player-stats-neutral-empty">{t.profile.noConfirmedOther}</p>
           )}
         </div>
-        <UnavailableMetricTiles />
+        <MeasuredTotalTiles measured={stats.measured ?? null} />
+        <OtherMeasuredMatches matches={stats.measured?.matches ?? []} locale={locale} titled={false} />
       </section>
     );
   }
 
   const showPerMatch = shouldShowPerMatchHeatmaps(stats.matches);
   const aggregateHeatmap = aggregatePitchHeatmaps(stats.matches);
+  // Each measured match sits beside the claimed recording it was measured on.
+  const measured = attachMeasured(stats.matches, stats.measured?.matches ?? []);
 
   return (
     <section className="player-stats-section" aria-labelledby="player-stats-title">
@@ -421,6 +428,8 @@ function PlayerStatsSection({
           <b>{formatDistance(stats.totals.totalDistanceMetres, t.profile.distanceUnavailable)}</b>
         </div>
       </div>
+
+      <MeasuredTotalTiles measured={stats.measured ?? null} fallbackDribbles={stats.totals.dribbles ?? null} />
 
       <div className="player-stats-trust-grid">
         <div>
@@ -453,27 +462,34 @@ function PlayerStatsSection({
           <PlayerMatchStatsRow
             key={match.recordingId}
             match={match}
+            measured={measured.byRecording.get(match.recordingId) ?? null}
             locale={locale}
             showHeatmap={showPerMatch}
           />
         ))}
       </div>
 
-      <UnavailableMetricTiles dribbles={stats.totals.dribbles ?? null} />
+      <OtherMeasuredMatches matches={measured.unattached} locale={locale} titled />
     </section>
   );
 }
 
 function PlayerMatchStatsRow({
   match,
+  measured,
   locale,
   showHeatmap,
 }: {
   match: PublicPlayerMatchStats;
+  /** the match report's figures for this game, when Replay measured them */
+  measured: PublicPlayerMeasuredMatch | null;
   locale: "en" | "ar";
   showHeatmap: boolean;
 }) {
   const { t } = useTranslation();
+  // Dribbles from the match report when it has them, so the two never disagree.
+  const reportFigures = measuredTiles(measured);
+  const showClaimDribbles = Boolean(match.dribbles) && !reportFigures.some((tile) => tile.key === "dribbles");
   const date = new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", {
     dateStyle: "medium",
   }).format(new Date(`${match.date}T12:00:00`));
@@ -497,13 +513,14 @@ function PlayerMatchStatsRow({
           <b>{formatDistance(match.distanceMetres, t.profile.distanceUnavailable)}</b>
           {match.distanceMetres === null && <small>{t.profile.matchUnavailableDistance}</small>}
         </div>
-        {match.dribbles && (
+        {showClaimDribbles && match.dribbles && (
           <div>
             <span>{t.profile.dribbles}</span>
             <b>{match.dribbles.total}</b>
             <small>{t.profile.dribblesSplit(match.dribbles.succeeded, match.dribbles.failed)}</small>
           </div>
         )}
+        {reportFigures.map((tile) => <MeasuredCell key={tile.key} tile={tile} />)}
         <div>
           <span>{t.profile.humanVouched}</span>
           <b>{formatMinutes(match.humanVouchedSeconds / 60)} min</b>
@@ -555,35 +572,131 @@ function PlayerStatsHeatmap({ heatmap, label }: { heatmap: PublicPlayerHeatmap; 
   );
 }
 
-/**
- * Metrics the ball tracking can't stand behind yet, plus dribbles once any
- * claimed game has them (runs past an opponent, graded successful or failed).
- */
-function UnavailableMetricTiles({ dribbles = null }: { dribbles?: PlayerDribbleStats | null }) {
+type MeasuredTileValue = ReturnType<typeof measuredTiles>[number];
+
+/** A tile's label, headline and small line, in the reader's language. */
+function useMeasuredText() {
   const { t } = useTranslation();
-  const metrics = [
-    t.profile.touches,
-    t.profile.passes,
-    t.profile.shots,
-    ...(dribbles ? [] : [t.profile.dribbles]),
-    t.profile.topSpeed,
-  ];
+  return (tile: MeasuredTileValue, count: number | null): { label: string; value: string; note: string | null } => {
+    const inMatches = count !== null ? t.profile.inMatches(count) : null;
+    switch (tile.key) {
+      case "topSpeed":
+        return { label: t.profile.topSpeed, value: `${tile.value.toFixed(1)} ${t.profile.kmh}`, note: count !== null ? t.profile.topSpeedBest(count) : null };
+      case "distance":
+        return { label: t.profile.distance, value: `${tile.value.toFixed(2)} km`, note: inMatches };
+      case "goals":
+        return { label: t.profile.goals, value: String(tile.value), note: inMatches };
+      case "shots":
+        return { label: t.profile.shots, value: String(tile.value), note: inMatches };
+      case "passes":
+        return { label: t.profile.passes, value: String(tile.value), note: tile.tried !== null ? t.profile.passesOf(tile.tried) : inMatches };
+      case "touches":
+        return { label: t.profile.touches, value: String(tile.value), note: inMatches };
+      case "dribbles":
+        return {
+          label: t.profile.dribbles,
+          value: String(tile.value),
+          note: tile.won !== null && tile.lost !== null ? t.profile.dribblesWonLost(tile.won, tile.lost) : inMatches,
+        };
+    }
+  };
+}
+
+const MEASURED_KEY_FIELD: Record<MeasuredTileValue["key"], keyof PublicPlayerMeasuredMatch> = {
+  topSpeed: "topSpeedKmh",
+  distance: "distanceKm",
+  goals: "goals",
+  shots: "shots",
+  passes: "passesCompleted",
+  touches: "touches",
+  dribbles: "dribbles",
+};
+
+/**
+ * What Replay measured across the player's matches -- the match reports' own
+ * figures. A figure no match measured is simply not shown; nothing is labelled
+ * "Unavailable". Dribbles fall back to the claimed games' count when no match
+ * report has them.
+ */
+function MeasuredTotalTiles({ measured, fallbackDribbles = null }: { measured: PublicPlayerMeasured | null; fallbackDribbles?: PlayerDribbleStats | null }) {
+  const { t } = useTranslation();
+  const text = useMeasuredText();
+  const matches = measured?.matches ?? [];
+  const tiles = matches.length ? measuredTiles(measured!.totals) : [];
+  const showFallbackDribbles = Boolean(fallbackDribbles) && !tiles.some((tile) => tile.key === "dribbles");
+  if (!tiles.length && !showFallbackDribbles) return null;
   return (
-    <div className="player-stats-unavailable-grid">
-      {dribbles && (
-        <div className="player-stats-unavailable-tile is-measured" title={t.profile.dribblesDesc}>
-          <span>{t.profile.dribbles}</span>
-          <b>{dribbles.total}</b>
-          <small>{t.profile.dribblesSplit(dribbles.succeeded, dribbles.failed)}</small>
+    <div className="flex flex-col gap-2">
+      {tiles.length > 0 && (
+        <div className="player-stats-card-heading">
+          <span>{t.profile.measuredTitle}</span>
+          <small>{t.profile.measuredDesc}</small>
         </div>
       )}
-      {metrics.map((label) => (
-        <div className="player-stats-unavailable-tile" key={label}>
-          <span>{label}</span>
-          <b>{t.profile.unavailable}</b>
-          <small>{t.profile.ballTrackingUnavailable}</small>
-        </div>
-      ))}
+      <div className="player-stats-unavailable-grid">
+        {tiles.map((tile) => {
+          const count = matches.filter((match) => match[MEASURED_KEY_FIELD[tile.key]] !== null).length;
+          const shown = text(tile, count);
+          return (
+            <div className="player-stats-unavailable-tile is-measured" key={tile.key} title={tile.key === "dribbles" ? t.profile.dribblesDesc : undefined}>
+              <span>{shown.label}</span>
+              <b dir="ltr" className="text-start">{shown.value}</b>
+              {shown.note && <small>{shown.note}</small>}
+            </div>
+          );
+        })}
+        {showFallbackDribbles && fallbackDribbles && (
+          <div className="player-stats-unavailable-tile is-measured" title={t.profile.dribblesDesc}>
+            <span>{t.profile.dribbles}</span>
+            <b>{fallbackDribbles.total}</b>
+            <small>{t.profile.dribblesSplit(fallbackDribbles.succeeded, fallbackDribbles.failed)}</small>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One measured figure inside a match row, styled like the row's other metrics. */
+function MeasuredCell({ tile }: { tile: MeasuredTileValue }) {
+  const text = useMeasuredText();
+  const shown = text(tile, null);
+  return (
+    <div>
+      <span>{shown.label}</span>
+      <b dir="ltr" className="text-start">{shown.value}</b>
+      {shown.note && <small>{shown.note}</small>}
+    </div>
+  );
+}
+
+/** Measured matches with no claimed recording on the page: their figures, one row each. */
+function OtherMeasuredMatches({ matches, locale, titled }: { matches: PublicPlayerMeasuredMatch[]; locale: "en" | "ar"; titled: boolean }) {
+  const { t } = useTranslation();
+  if (!matches.length) return null;
+  const format = new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { dateStyle: "medium" });
+  return (
+    <div className="player-stats-match-list">
+      {titled && <p className="player-stats-coordinate-note">{t.profile.otherMatches}</p>}
+      {matches.map((match) => {
+        const figures = measuredTiles(match, { distance: true });
+        return (
+          <article className="player-stats-match" key={match.matchId}>
+            <div className="player-stats-match-heading">
+              <div>
+                <h3>{match.fieldName ?? t.profile.measuredTitle}</h3>
+                <span>{t.profile.matchDate(format.format(new Date(`${match.date}T12:00:00`)))}</span>
+              </div>
+              {match.minutes !== null && <strong>{t.profile.onCameraMin(formatMinutes(match.minutes))}</strong>}
+            </div>
+            {figures.length > 0 && (
+              <div className="player-stats-match-metrics">
+                {figures.map((tile) => <MeasuredCell key={tile.key} tile={tile} />)}
+              </div>
+            )}
+          </article>
+        );
+      })}
     </div>
   );
 }
