@@ -14,9 +14,31 @@
  *     is bigger than the margin.
  */
 
-export const MIN_RANKED_MINUTES = 10;
+import {
+  band,
+  isLevel,
+  metricValue,
+  levelWith as sharedLevelWith,
+  rankedCount as sharedRankedCount,
+  standings as sharedStandings,
+  type RankingMetric,
+  type Standing as SharedStanding,
+} from "@workspace/api-zod";
 
-export type ReportMetric = "distanceRate" | "topSpeed" | "touchRate" | "distance" | "touches" | "passes" | "dribblesWon" | "goals";
+// The ranking rules (eligibility, margins, ranks, personal bests) live in one
+// module shared with the server's Home tiles, so Home and the report can never
+// disagree. Re-exported here so the report's imports stay where they were.
+export {
+  MIN_RANKED_MINUTES,
+  PB_MIN_EARLIER_MATCHES,
+  band,
+  isLevel,
+  isPersonalBest,
+  isRanked,
+  metricValue,
+} from "@workspace/api-zod";
+
+export type ReportMetric = RankingMetric;
 
 export type ReportBlock = { index: number; seconds: number; metres: number | null; touches: number | null };
 
@@ -52,99 +74,23 @@ export type ReportPlayer = {
   report?: ReportTimeline;
 };
 
-/** The measuring margin around a value: half-width of the band inside which two players are level. */
-export function band(metric: ReportMetric, value: number): number {
-  switch (metric) {
-    case "distanceRate":
-    case "distance":
-      return Math.abs(value) * 0.05;
-    case "topSpeed":
-      return 1.5;
-    case "touchRate":
-    case "touches":
-      return Math.abs(value) * 0.12;
-    case "passes":
-      return Math.max(2, Math.abs(value) * 0.15);
-    case "dribblesWon":
-      return 1;
-    case "goals":
-      return 0;
-  }
-}
-
-/** Level: the gap is inside the larger of the two margins. */
-export function isLevel(metric: ReportMetric, a: number, b: number): boolean {
-  return Math.abs(a - b) <= Math.max(band(metric, a), band(metric, b)) + 1e-9;
-}
-
-export function metricValue(player: ReportPlayer, metric: ReportMetric): number | null {
-  const minutes = player.minutes ?? 0;
-  switch (metric) {
-    case "distanceRate":
-      return player.distanceKm !== null && minutes > 0 ? (player.distanceKm / minutes) * 10 : null;
-    case "touchRate":
-      return player.touches !== null && minutes > 0 ? (player.touches / minutes) * 10 : null;
-    case "topSpeed":
-      return player.topSpeedKmh;
-    case "distance":
-      return player.distanceKm;
-    case "touches":
-      return player.touches;
-    case "passes":
-      return player.passesCompleted;
-    case "dribblesWon":
-      return player.dribblesWon;
-    case "goals":
-      return player.goals;
-  }
-}
-
-/** Ranked means claimed, measured on this metric, and on camera long enough. */
-export function isRanked(player: ReportPlayer, metric: ReportMetric): boolean {
-  return player.claimed && (player.minutes ?? 0) >= MIN_RANKED_MINUTES && metricValue(player, metric) !== null;
-}
-
-export type Standing = {
-  player: ReportPlayer;
-  value: number;
-  /** 1 + the number of players clearly ahead (by more than the margin) */
-  rank: number;
-  /** someone else is level with this player */
-  shared: boolean;
-  ranked: boolean;
-};
+export type Standing<T extends ReportPlayer = ReportPlayer> = SharedStanding<T>;
 
 /**
  * Everyone measured on one metric, best first. Players under ten minutes are
  * included (so they can be drawn) but carry ranked=false and no rank of their own.
  */
-export function standings(players: ReportPlayer[], metric: ReportMetric): Standing[] {
-  const measured = players
-    .filter((player) => player.claimed && metricValue(player, metric) !== null)
-    .map((player) => ({ player, value: metricValue(player, metric)!, ranked: isRanked(player, metric) }))
-    .sort((a, b) => b.value - a.value);
-  const ranked = measured.filter((entry) => entry.ranked);
-  return measured.map((entry) => {
-    if (!entry.ranked) return { ...entry, rank: 0, shared: false };
-    const others = ranked.filter((other) => other.player.playerId !== entry.player.playerId);
-    const ahead = others.filter((other) => other.value > entry.value && !isLevel(metric, other.value, entry.value)).length;
-    const shared = others.some((other) => isLevel(metric, other.value, entry.value));
-    return { ...entry, rank: ahead + 1, shared };
-  });
+export function standings<T extends ReportPlayer>(players: T[], metric: ReportMetric): Array<Standing<T>> {
+  return sharedStandings(players, metric);
 }
 
 export function rankedCount(players: ReportPlayer[], metric: ReportMetric): number {
-  return players.filter((player) => isRanked(player, metric)).length;
+  return sharedRankedCount(players, metric);
 }
 
 /** Players level with a value, not counting the player it belongs to. */
-export function levelWith(players: ReportPlayer[], metric: ReportMetric, playerId: number): ReportPlayer[] {
-  const me = players.find((player) => player.playerId === playerId);
-  const mine = me ? metricValue(me, metric) : null;
-  if (mine === null) return [];
-  return players.filter((player) => player.playerId !== playerId
-    && isRanked(player, metric)
-    && isLevel(metric, metricValue(player, metric)!, mine));
+export function levelWith<T extends ReportPlayer>(players: T[], metric: ReportMetric, playerId: number): T[] {
+  return sharedLevelWith(players, metric, playerId);
 }
 
 /** Round a metric the way the report shows it: the precision the measurement supports, no more. */
@@ -375,15 +321,6 @@ export function formLine(me: ReportPlayer, averages: FormAverages | null | undef
   return line.distance || line.speed || line.touches ? line : null;
 }
 
-/**
- * A personal best is only claimed with at least three earlier matches to beat,
- * and only when this one clears the old best by more than the margin.
- */
-export function isPersonalBest(metric: ReportMetric, value: number | null, previousBest: number | null | undefined, earlierMatches: number): boolean {
-  if (value === null || previousBest === null || previousBest === undefined || earlierMatches < 3) return false;
-  return value > previousBest && !isLevel(metric, value, previousBest);
-}
-
 /* ------------------------------------------------------------------ standing out */
 
 export type StandOut = {
@@ -408,6 +345,54 @@ export function standOut(players: ReportPlayer[], metric: ReportMetric, minimum 
   const next = table.find((entry) => entry.rank > 1);
   const clearBy = winners.length === 1 && next ? top.value - next.value : null;
   return { metric, winners, value: top.value, clearBy };
+}
+
+/* ------------------------------------------------------------------ the ladder */
+
+export const METRIC_UNITS: Partial<Record<ReportMetric, string>> = {
+  distanceRate: "km",
+  distance: "km",
+  topSpeed: "km/h",
+};
+
+/** A value with its unit, at the report's precision ("0.12 km", "3 km/h", "4"). */
+export function formatWithUnit(metric: ReportMetric, value: number): string {
+  const unit = METRIC_UNITS[metric];
+  return `${formatMetric(metric, value)}${unit ? ` ${unit}` : ""}`;
+}
+
+export function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
+export type LadderCopy = {
+  ladderTop: string;
+  ladderAhead: (name: string, gap: string, metres: number) => string;
+  ladderAheadPlain: (name: string, gap: string) => string;
+  ladderShare: (names: string, rank: string) => string;
+  notRankedShort: (min: number) => string;
+  ordinal: (n: number) => string;
+};
+
+/**
+ * The line under one stat's ladder: who is clearly ahead of the viewer and who
+ * shares their rank. A viewer under ten minutes on camera has no rank at all,
+ * so they get the not-ranked line, never "nobody is ahead" or "you share 0th".
+ */
+export function ladderSummary(players: ReportPlayer[], metric: ReportMetric, meId: number | null, copy: LadderCopy): string | null {
+  const table = standings(players, metric);
+  const me = table.find((entry) => entry.player.playerId === meId) ?? null;
+  if (!me) return null;
+  if (!me.ranked) return copy.notRankedShort(Math.round(me.player.minutes ?? 0));
+  const above = table.filter((entry) => entry.ranked && entry.rank < me.rank).at(-1) ?? null;
+  const lead = !above
+    ? copy.ladderTop
+    : metric === "distanceRate"
+      ? copy.ladderAhead(firstName(above.player.name), `${formatMetric(metric, above.value - me.value)} km`, Math.round((above.value - me.value) * 1000))
+      : copy.ladderAheadPlain(firstName(above.player.name), formatWithUnit(metric, above.value - me.value));
+  const level = levelWith(players, metric, me.player.playerId);
+  if (!level.length || me.rank < 1) return lead;
+  return `${lead} ${copy.ladderShare(level.map((player) => firstName(player.name)).join(", "), `${me.shared ? "=" : ""}${copy.ordinal(me.rank)}`)}`;
 }
 
 /* ------------------------------------------------------------------ misc */

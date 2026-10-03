@@ -39,6 +39,13 @@ const en = {
   lastMatchMeta: (field: string, when: string, players: number) => `${field} · ${when}${players ? ` · ${players} players` : ""}`,
   pitchAverage: "Pitch average",
   numberOne: (metric: string) => `#1 ${metric}`,
+  /** Distance and touches are ranked per 10 minutes on camera, as the match report ranks them. */
+  lastMatchHeadPer10: {
+    distanceKm: "You covered the most ground on the pitch, per 10 minutes on camera.",
+    touches: "Nobody saw more of the ball than you, per 10 minutes on camera.",
+  } as Partial<Record<TileMetric, string>>,
+  per10Short: "/ 10 min",
+  per10OnCamera: "per 10 min on camera",
 
   newBest: "New personal best",
   bestSpeedBody: (at: string | null, day: string, time: string) => at ? `Your fastest run yet, ${at} into ${day}'s ${time} match.` : `Your fastest run yet, in ${day}'s ${time} match.`,
@@ -220,6 +227,12 @@ const ar: TileStrings = {
   lastMatchMeta: (field: string, when: string, players: number) => `${field} · ${when}${players ? ` · ${players} لاعب` : ""}`,
   pitchAverage: "معدّل الملعب",
   numberOne: (metric: string) => `#1 ${metric}`,
+  lastMatchHeadPer10: {
+    distanceKm: "إنت أكثر واحد غطّى مسافة بالملعب، كل 10 دقايق على الكاميرا.",
+    touches: "ما حدا لمس الطابة أكثر منك، كل 10 دقايق على الكاميرا.",
+  },
+  per10Short: "/ 10 د",
+  per10OnCamera: "كل 10 دقايق على الكاميرا",
 
   newBest: "رقم شخصي جديد",
   bestSpeedBody: (at: string | null, day: string, time: string) => at ? `أسرع ركضة إلك لهلّق، بالدقيقة ${at} من ماتش ${day} الساعة ${time}.` : `أسرع ركضة إلك لهلّق، بماتش ${day} الساعة ${time}.`,

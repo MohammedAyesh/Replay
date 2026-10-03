@@ -654,6 +654,85 @@ export interface PublicPlayerStatsTotals {
   dribbles?: PlayerDribbleStats | null;
 }
 
+/**
+ * One match's figures, exactly as the match report shows them. A null figure was not measured for that match.
+ */
+export interface PublicPlayerMeasuredMatch {
+  matchId: number;
+  /** The public recordings this match was measured on, so a profile can show the figures beside its claimed recording. */
+  recordingIds: number[];
+  /** YYYY-MM-DD, Amman. */
+  date: string;
+  /** YYYY-MM-DD HH:MM, Amman. */
+  startLocal: string;
+  /** @nullable */
+  fieldName: string | null;
+  /**
+     * Minutes on camera.
+     * @nullable
+     */
+  minutes: number | null;
+  /** @nullable */
+  distanceKm: number | null;
+  /** @nullable */
+  topSpeedKmh: number | null;
+  /** @nullable */
+  touches: number | null;
+  /** @nullable */
+  passesTried: number | null;
+  /** @nullable */
+  passesCompleted: number | null;
+  /** @nullable */
+  shots: number | null;
+  /** @nullable */
+  goals: number | null;
+  /** @nullable */
+  dribbles: number | null;
+  /** @nullable */
+  dribblesWon: number | null;
+  /** @nullable */
+  dribblesLost: number | null;
+}
+
+/**
+ * Sums over the matches that measured each figure (top speed is the best); null when no match measured it.
+ */
+export interface PublicPlayerMeasuredTotals {
+  /** @minimum 0 */
+  matches: number;
+  /** @nullable */
+  minutes: number | null;
+  /** @nullable */
+  distanceKm: number | null;
+  /** @nullable */
+  topSpeedKmh: number | null;
+  /** @nullable */
+  touches: number | null;
+  /**
+     * Passes tried in the matches that measured completed passes; null when any of them did not measure tries.
+     * @nullable
+     */
+  passesTried: number | null;
+  /** @nullable */
+  passesCompleted: number | null;
+  /** @nullable */
+  shots: number | null;
+  /** @nullable */
+  goals: number | null;
+  /** @nullable */
+  dribbles: number | null;
+  /** @nullable */
+  dribblesWon: number | null;
+  /** @nullable */
+  dribblesLost: number | null;
+}
+
+export interface PublicPlayerMeasured {
+  /** Newest first; only matches on recordings the public can see. */
+  matches: PublicPlayerMeasuredMatch[];
+  totals: PublicPlayerMeasuredTotals;
+}
+
 export interface PublicPlayerStats {
   matches: PublicPlayerMatchStats[];
   totals: PublicPlayerStatsTotals;
@@ -662,6 +741,8 @@ export interface PublicPlayerStats {
      * @minimum 0
      */
   excludedClaimCount: number;
+  /** What Replay measured for the player in each match, read from the match stats cache the match report and Home use (no tracking is parsed per view). Null when the cache could not be read. */
+  measured?: PublicPlayerMeasured | null;
 }
 
 export interface FollowResult {

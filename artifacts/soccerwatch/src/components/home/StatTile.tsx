@@ -260,7 +260,7 @@ function LastMatch({ tile, c, now }: P<"lastMatch">) {
       <Two
         left={<>
           <Eyebrow>{c.lastMatchEyebrow}</Eyebrow>
-          <Head>{c.lastMatchHead[tile.metric]}</Head>
+          <Head>{(tile.per10 && c.lastMatchHeadPer10[tile.metric]) || c.lastMatchHead[tile.metric]}</Head>
           <Body className="mt-1">{c.lastMatchMeta(tile.match.fieldName, matchWhen(tile.match, c, now), tile.match.players)}</Body>
           {shown.length > 0 && (
             <div className="mt-4 flex gap-5">
@@ -272,9 +272,10 @@ function LastMatch({ tile, c, now }: P<"lastMatch">) {
         right={<div className="flex flex-col gap-3 md:items-end">
           <Chip tone="violet">{c.numberOne(c.metricShort[tile.metric])}</Chip>
           <Big v={value(tile.metric, tile.value)} unit={c.bigUnit(tile.metric, tile.value)} word />
+          {tile.per10 && <p className="-mt-1 text-xs text-muted-text">{c.per10OnCamera}</p>}
           <div className="flex w-full flex-col gap-3">
-            <Meter label={c.you} valueText={`${value(tile.metric, tile.value)} ${unit}`} fraction={tile.value / max} mine />
-            <Meter label={c.pitchAverage} valueText={`${value(tile.metric, tile.pitchAverage)} ${unit}`} fraction={tile.pitchAverage / max} mine={false} />
+            <Meter label={c.you} valueText={`${value(tile.metric, tile.value)} ${unit}${tile.per10 ? ` ${c.per10Short}` : ""}`} fraction={tile.value / max} mine />
+            <Meter label={c.pitchAverage} valueText={`${value(tile.metric, tile.pitchAverage)} ${unit}${tile.per10 ? ` ${c.per10Short}` : ""}`} fraction={tile.pitchAverage / max} mine={false} />
           </div>
         </div>}
       />
@@ -567,12 +568,12 @@ function Ranks({ tile, c, now }: P<"ranks">) {
         {tile.ranks.map((r, i) => (
           <div key={r.metric} className={cn("min-w-0 flex-1 rounded-2xl p-4", i === 0 ? "border border-turf/60 bg-turf/5" : "bg-[#182035]")}>
             <span className={cn("inline-flex h-11 min-w-11 items-center justify-center rounded-xl bg-void px-2 font-display text-xl font-bold", i === 0 && "text-turf")}>
-              {c.locale === "ar" ? <N>{`#${r.rank}`}</N> : <N>{c.ordinal(r.rank)}</N>}
+              {c.locale === "ar" ? <N>{`${r.shared ? "=" : ""}#${r.rank}`}</N> : <N>{`${r.shared ? "=" : ""}${c.ordinal(r.rank)}`}</N>}
             </span>
             <p className="mt-3 text-sm font-semibold">{c.metric[r.metric]}</p>
             <p className="text-xs text-muted-text">{r.of !== null
               ? <><N className="font-sans">{value(r.metric, r.value)}</N> {c.of} <N className="font-sans">{r.of}</N></>
-              : <><N className="font-sans">{value(r.metric, r.value)}</N>{r.metric === "distanceKm" ? ` ${c.units.distanceKm}` : r.metric === "topSpeedKmh" ? ` ${c.units.topSpeedKmh}` : ""}</>}</p>
+              : <><N className="font-sans">{value(r.metric, r.value)}</N>{r.metric === "distanceKm" ? ` ${c.units.distanceKm}` : r.metric === "topSpeedKmh" ? ` ${c.units.topSpeedKmh}` : ""}{r.per10 ? ` ${c.per10Short}` : ""}</>}</p>
           </div>
         ))}
       </div>

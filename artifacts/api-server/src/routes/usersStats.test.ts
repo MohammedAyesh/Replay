@@ -390,5 +390,7 @@ describe("public player stats", () => {
       totalMinutesPlayed: 0,
       totalDistanceMetres: 0,
     });
+    // measured figures come from the match stats cache; none yet, and none invented
+    expect(response.body.measured).toMatchObject({ matches: [], totals: { matches: 0, topSpeedKmh: null, goals: null } });
   });
 });

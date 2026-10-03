@@ -76,10 +76,10 @@ beforeAll(async () => {
   const [field] = await db.insert(fieldsTable).values({ name: `Galaxy ${TAG}`, location: "Test", cameraId: `cam-${TAG}` }).returning({ id: fieldsTable.id });
   fieldId = field.id;
 
-  // Three claimed matches; the newest has the player's fastest run yet.
+  // Four claimed matches (a personal best needs three earlier ones); the newest has the player's fastest run yet.
   const everyone: Array<[string, string]> = [["me", "in"], ["laith", "in"], ["omar", "in"], ["yazan", "in"], ["blocked", "in"]];
-  const speeds = [24.3, 22.1, 21.4];
-  for (const [i, days] of [5, 9, 13].entries()) {
+  const speeds = [24.3, 22.1, 21.4, 20.9];
+  for (const [i, days] of [5, 9, 13, 17].entries()) {
     const { room, players } = await match(`m${i}`, daysAgo(days), everyone);
     await cache(room.id, players.me, "me", stats({ topSpeedKmh: speeds[i], distanceKm: 3.4 }));
     await cache(room.id, players.laith, "laith", stats({ topSpeedKmh: 25, distanceKm: 3 }));
