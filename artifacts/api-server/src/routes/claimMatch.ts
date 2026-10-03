@@ -1400,11 +1400,20 @@ export function vouchedFragmentsOverlap(
  * A map update is safe when every frame that a player directly vouched for
  * still belongs to the same identity row. Unvouched parts are intentionally
  * ignored, so regrouping can continue around the protected fragments.
+ *
+ * The same frames may also sit in ANOTHER PLAYER's row: two players can pick
+ * the same person and both are counted (claimChain persistChain). That is not
+ * a move -- the fragment is still in the binding's own row -- so rows that are
+ * player claims ("claim:" ids, or rows in `playerRowIds`) are not counted as
+ * taking it. A board row holding a vouched frame still is.
  */
 export function identityMapMovesVouchedFragment(
   binding: Pick<ClaimIdentityBindingRow, "personId" | "vouchedFragments">,
   incomingIdentities: TrackingIdentity[],
+  playerRowIds: ReadonlySet<string> = new Set(),
 ): boolean {
+  const isPlayerRow = (identityId: string) =>
+    identityId.startsWith("claim:") || playerRowIds.has(identityId);
   return canonicalVouchedFragments(binding.vouchedFragments).some((fragment) => {
     const overlappingParts = incomingIdentities.flatMap((identity) =>
       identity.parts
@@ -1413,7 +1422,8 @@ export function identityMapMovesVouchedFragment(
           && part.fromFrame <= fragment.toFrame
           && part.toFrame >= fragment.fromFrame)
         .map((part) => ({ ...part, identityId: identity.id })));
-    if (overlappingParts.some((part) => part.identityId !== binding.personId)) return true;
+    if (overlappingParts.some((part) =>
+      part.identityId !== binding.personId && !isPlayerRow(part.identityId))) return true;
     const ownerParts = overlappingParts
       .filter((part) => part.identityId === binding.personId)
       .sort((a, b) => a.fromFrame - b.fromFrame);
@@ -2869,9 +2879,15 @@ router.put("/admin/recordings/:id/identities", async (req, res): Promise<void> =
     })
     .from(claimMatchIdentityBindingsTable)
     .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+  // Rows a player is bound to. Two players' rows may share frames (both are
+  // counted), so one player's row holding another's vouched frames is not a
+  // move of them; see identityMapMovesVouchedFragment.
+  const playerRowIds = new Set(existingBindings
+    .filter((binding) => binding.state !== "released" && binding.state !== "rejected")
+    .map((binding) => binding.personId));
   const lockedBindings = existingBindings.filter((binding) =>
     binding.state !== "released"
-    && identityMapMovesVouchedFragment(binding, body.data.identities),
+    && identityMapMovesVouchedFragment(binding, body.data.identities, playerRowIds),
   );
   const preview = req.query.preview === "true" || req.query.preview === "1";
   const lockSummary = {

@@ -152,53 +152,44 @@ function trackedEndFrame(manifest: TrackingManifest): number {
 }
 
 /**
- * Frames another claimant has personally vouched for.
+ * Whether an identity row is a player's claim rather than a board row.
  *
- * A claimant may build any chain they like except one that takes frames
- * someone else stood behind. The existing admin path refuses the same thing
- * with a 409; this is the same rule applied to the claimant path, because the
- * whole point of a vouched fragment is that it is not up for grabs.
+ * Every claim made on the chain page or at /find is stored under
+ * `claimIdentityId` ("claim:<hash>"), and the old anchor flow's split
+ * fragments are "claim:<person>:<hash>" -- so the prefix alone identifies a
+ * row a player built. `boundToOthers` adds board rows another player's live
+ * binding points at (the anchor flow bound players to board rows directly).
  */
-async function foreignVouchedRanges(
-  recordingId: number,
-  userId: number,
-): Promise<Array<{ trackId: string; fromFrame: number; toFrame: number }>> {
-  const rows = await db
-    .select({
-      userId: claimMatchIdentityBindingsTable.userId,
-      state: claimMatchIdentityBindingsTable.state,
-      vouchedFragments: claimMatchIdentityBindingsTable.vouchedFragments,
-    })
-    .from(claimMatchIdentityBindingsTable)
-    .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
-
-  const out: Array<{ trackId: string; fromFrame: number; toFrame: number }> = [];
-  for (const row of rows) {
-    if (row.userId === userId) continue;
-    if (row.state === "released" || row.state === "rejected") continue;
-    for (const fragment of (row.vouchedFragments ?? []) as Array<Record<string, unknown>>) {
-      const trackId = fragment.trackId;
-      const fromFrame = fragment.fromFrame;
-      const toFrame = fragment.toFrame;
-      if (typeof trackId === "string" && typeof fromFrame === "number" && typeof toFrame === "number") {
-        out.push({ trackId, fromFrame, toFrame });
-      }
-    }
-  }
-  return out;
+export function isPlayerClaimRow(
+  identityId: string,
+  boundToOthers: ReadonlySet<string> = new Set(),
+): boolean {
+  return identityId.startsWith("claim:") || boundToOthers.has(identityId);
 }
 
-function collidesWithForeignVouch(
-  chain: ChainPart[],
-  foreign: Array<{ trackId: string; fromFrame: number; toFrame: number }>,
-): { trackId: string; fromFrame: number; toFrame: number } | null {
-  for (const part of chain) {
-    for (const claimed of foreign) {
-      if (claimed.trackId !== part.trackId) continue;
-      if (part.fromFrame <= claimed.toFrame && part.toFrame >= claimed.fromFrame) return claimed;
-    }
+/**
+ * The identity rows other players' live bindings point at.
+ *
+ * Best effort: a database still waiting for the bindings migration has no
+ * other players to protect, and a claim must never fail over it.
+ */
+async function rowsBoundToOtherPlayers(recordingId: number, userId: number): Promise<Set<string>> {
+  try {
+    const rows = await db
+      .select({
+        userId: claimMatchIdentityBindingsTable.userId,
+        personId: claimMatchIdentityBindingsTable.personId,
+        state: claimMatchIdentityBindingsTable.state,
+      })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    return new Set(rows
+      .filter((row) => row.userId !== userId && row.state !== "released" && row.state !== "rejected")
+      .map((row) => row.personId));
+  } catch (error) {
+    console.error("[claim-chain] binding read failed", { recordingId, error });
+    return new Set();
   }
-  return null;
 }
 
 export type ChainContext = {
@@ -453,11 +444,12 @@ function describe(
  * Remove every frame `taken` covers from `parts`, splitting a part in two when
  * the claim lands in its middle.
  *
- * Used so a claim never leaves the same track frames sitting under two people.
- * Overlapping identity rows are not rejected anywhere -- the board's PUT does
- * not check for them -- so nothing downstream would report the duplicate;
- * resolvePersonForTrack would just take whichever row it happened to see
- * first, which is a coin flip that changes with array order.
+ * Used so a claim never leaves the same track frames sitting under the claimant
+ * AND a board row: claiming yourself in the video moves you on the board.
+ * Another PLAYER's claim is the exception and is never passed through this --
+ * two players may both pick the same person, and both are counted (see
+ * persistChain). Everything downstream reads one player's own row at a time,
+ * so two claim rows sharing frames is a supported state, not a duplicate.
  */
 export function subtractParts(
   parts: TrackingIdentity["parts"],
@@ -517,6 +509,9 @@ export async function persistChain(
    */
   write: { kind: "decision"; answeredFrame: number | null } | { kind: "undo" },
 ): Promise<{ chain: ChainPart[]; name: string | null; reviewedThroughFrame: number }> {
+  // Read outside the transaction: a failed query inside it would abort the
+  // whole write, and this read is allowed to fail.
+  const boundToOthers = await rowsBoundToOtherPlayers(ctx.recordingId, ctx.userId);
   return db.transaction(async (tx) => {
     await tx.execute(
       sql`select id from ${recordingTrackingBundlesTable} where id = ${ctx.bundleId} for update`,
@@ -577,14 +572,22 @@ export async function persistChain(
       }].slice(-HISTORY_DEPTH);
     }
 
-    // A frame belongs to exactly one person. Anything this claim now holds is
-    // taken off whoever held it before, rather than sitting in two rows at
-    // once -- that is what makes the board and the video one map instead of
-    // two views that disagree. It is also the requirement stated directly:
+    // Anything this claim now holds is taken off the BOARD row that held it
+    // -- that is what makes the board and the video one map instead of two
+    // views that disagree, and it is the requirement stated directly:
     // claiming yourself in the video moves you on the board.
+    //
+    // Another player's claim is never taken from. Two people can pick the
+    // same person in the video, and the owner's rule (2026-10-03) is that it
+    // "shouldn't take away, should be counted for both": both rows keep the
+    // shared frames, and each player's coverage, binding, clips and stats are
+    // read from their own row. Before this, the second claimant silently
+    // stripped the first.
     const others = (manifest.identities ?? [])
       .filter((item) => item.id !== ctx.identityId)
-      .map((item) => ({ ...item, parts: subtractParts(item.parts, next) }))
+      .map((item) => (isPlayerClaimRow(item.id, boundToOthers)
+        ? item
+        : { ...item, parts: subtractParts(item.parts, next) }))
       .filter((item) => item.parts.length > 0);
 
     const identities: TrackingIdentity[] = next.length
@@ -695,10 +698,13 @@ export async function syncChainClaim(
     // would litter My Clips with clips from a claim the person may still
     // truncate with "that is not me".
     //
-    // A contested binding blocks the award as well. Two people claiming the
-    // same person on one recording cannot both have played those minutes, and
-    // handing the clips to whoever tapped first would make the dispute
-    // pointless to resolve. The claim stays; the clips wait for an admin.
+    // Only a binding that is not confirmed holds the award back. A chain or
+    // /find claim binds the player to their OWN row (claimIdentityId), so two
+    // players who picked the same person are two confirmed bindings and both
+    // get their clips: sharing frames with another claim is never a dispute.
+    // What can still hold this back is a binding a bundle replacement marked
+    // needs_resolution, or a legacy anchor-flow binding to a shared board row
+    // (the bindings table allows one confirmed binding per row).
     const bindingAwards = !binding || binding.state === "confirmed";
     let earnedClips: Array<ClaimEarnedClip & { follow?: FollowPoint[] }> = state.earnedClips.map((clip) => ({ ...clip }));
     if (state.completed && bindingAwards) {
@@ -968,15 +974,10 @@ router.post("/recordings/:id/claim-match/chain/tap", async (req, res): Promise<v
       .map((item) => ({ id: item.id, parts: item.parts })),
   });
 
-  const foreign = await foreignVouchedRanges(ctx.recordingId, ctx.userId);
-  const clash = collidesWithForeignVouch(next, foreign);
-  if (clash) {
-    res.status(409).json({
-      error: "Another player has already vouched for that stretch.",
-      conflict: clash,
-    });
-    return;
-  }
+  // No refusal for frames another player has claimed or vouched for: picking
+  // someone another player already picked counts for both of them, and
+  // persistChain leaves the other player's row untouched. (This used to be a
+  // 409, "Another player has already vouched for that stretch.")
 
   // Always fetched, never conditionally: making the read depend on what this
   // request happens to know about the identity would leave the ordering rule
