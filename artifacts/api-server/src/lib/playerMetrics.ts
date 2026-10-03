@@ -83,83 +83,147 @@ type SpeedSummary = {
   topSpeedFrame?: number | null;
 };
 
+/**
+ * Top speed: the fastest pace the player held for a full second.
+ *
+ * Measured one claimed piece (one track) at a time, never across a switch
+ * from one track to the next: a hand-over between two tracks is a jump in
+ * position, not a sprint. Pieces shorter than 8 s are skipped: on recording
+ * 388 a 6.8 s fragment set the top speed (30.9 km/h, 28.2 without it).
+ * Within a piece, positions are taken every 0.5 s as
+ * the median foot point of the boxes within ±0.25 s, which removes the
+ * frame-to-frame box jitter that 10 Hz differencing reads as acceleration.
+ * A 0.5 s step is dropped when:
+ *   - it is faster than 9 m/s (the tracker changed its mind about who it was
+ *     following; the step is dropped, never clipped);
+ *   - the box height changes by more than 25% (a detector swap);
+ *   - it is within 0.5 s of the piece's start or 1 s of its end, where a
+ *     track is most often on the wrong person;
+ *   - it is in the far third of the pitch, where a pixel is too many metres;
+ *   - its speed changes by more than 4 m/s from the step before.
+ * The top speed is the best average of two consecutive kept steps.
+ *
+ * This replaces a 10 Hz version whose neighbour-rejection loop marked samples
+ * invalid in place while walking forwards, so one bad sample invalidated the
+ * whole rest of the match: recording 388 (2026-09-29) kept 0.23% of its time
+ * and reported 0.53 m/s. See
+ * claude/top-speed-read-1-9-kmh-because-one-bad-sample-voided-the-rest-of-the-match-2026-10-03.md.
+ */
+export const TOP_SPEED = {
+  stepSeconds: 0.5,
+  halfWindowSeconds: 0.25,
+  minBoxesPerSample: 3,
+  ceilingMetresPerSecond: 9,
+  heightJump: 0.25,
+  edgeStartSeconds: 0.5,
+  edgeEndSeconds: 1,
+  farThird: 1 / 3,
+  maxSpeedChange: 4,
+  minPieceSeconds: 8,
+} as const;
+
+type SpeedBox = { frame: number; x: number; y: number; w: number; h: number };
+
+const medianOf = (values: number[]): number => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+};
+
 function topSpeedSummary(
   manifest: TrackingManifest,
-  mapped: MappedPosition[],
+  fullSegments: TrackingSegmentPayload[],
+  claimed: ClaimedRange[],
+  offPitchSpans: OffPitchWindow[],
   coveredSeconds: number,
 ): SpeedSummary {
-  if (!hasUsablePitchModel(manifest) || mapped.length < 2) {
+  if (!hasUsablePitchModel(manifest)) {
     return { topSpeedMetresPerSecond: null, topSpeedUsableTimeFraction: coveredSeconds > 0 ? 0 : null };
   }
-
-  const maxDirectGapSeconds = Math.max(0.2, 3 / Math.max(manifest.frameRate, 0.001));
-  const intervals = mapped.slice(1).map((current, index) => {
-    const previous = mapped[index];
-    const seconds = (current.frame - previous.frame) / Math.max(manifest.frameRate, 0.001);
-    const distance = Math.hypot(current.pitchX - previous.pitchX, current.pitchY - previous.pitchY);
-    const speed = seconds > 0 ? distance / seconds : Number.POSITIVE_INFINITY;
-    const valid = seconds > 0
-      && seconds <= maxDirectGapSeconds
-      && speed <= 11
-      // Image-space y increases toward the camera, so the far third is ny < 1/3.
-      && previous.ny >= 1 / 3
-      && current.ny >= 1 / 3;
-    return { seconds, distance, speed, valid };
-  });
-
-  // A rejected sample invalidates its surrounding speed window. This prevents
-  // an erroneous spike from being clipped into an apparently plausible sprint.
-  for (let index = 0; index < intervals.length; index++) {
-    if (!intervals[index].valid) {
-      if (intervals[index - 1]) intervals[index - 1].valid = false;
-      if (intervals[index + 1]) intervals[index + 1].valid = false;
+  const fps = Math.max(manifest.frameRate, 0.001);
+  const pitchHeight = manifest.pitchModel!.pitchHeightMetres;
+  const boxesByTrack = new Map<string, SpeedBox[]>();
+  for (const segment of fullSegments) {
+    for (const track of segment.tracks) {
+      const list = boxesByTrack.get(track.id) ?? [];
+      for (const box of track.boxes) list.push(box);
+      boxesByTrack.set(track.id, list);
     }
   }
-  for (let index = 1; index < intervals.length; index++) {
-    const previous = intervals[index - 1];
-    const current = intervals[index];
-    if (!previous.valid || !current.valid) continue;
-    const elapsed = Math.max((previous.seconds + current.seconds) / 2, 0.001);
-    if (Math.abs(current.speed - previous.speed) / elapsed > 10) {
-      previous.valid = false;
-      current.valid = false;
-      if (intervals[index - 2]) intervals[index - 2].valid = false;
-      if (intervals[index + 1]) intervals[index + 1].valid = false;
-    }
-  }
-
-  const usableSeconds = intervals.reduce(
-    (total, interval) => total + (interval.valid ? interval.seconds : 0),
-    0,
-  );
-  let topSpeed: number | null = null;
-  let topSpeedFrame: number | null = null;
-  for (let start = 0; start < intervals.length; start++) {
-    if (!intervals[start].valid) continue;
-    let elapsed = 0;
-    let distance = 0;
-    for (let end = start; end < intervals.length && intervals[end].valid; end++) {
-      const interval = intervals[end];
-      if (elapsed + interval.seconds >= 1) {
-        const remaining = 1 - elapsed;
-        distance += interval.distance * (remaining / interval.seconds);
-        const average = distance;
-        if (topSpeed === null || average > topSpeed) {
-          topSpeed = average;
-          topSpeedFrame = mapped[start].frame;
-        }
-        break;
+  const offPitch = (seconds: number) => offPitchSpans.some((span) => seconds >= span.fromSeconds && seconds < span.toSeconds);
+  const T = TOP_SPEED;
+  let best: { speed: number; frame: number } | null = null;
+  let usableSeconds = 0;
+  for (const range of claimed) {
+    if (range.toFrame < range.fromFrame) continue;
+    const boxes = (boxesByTrack.get(range.trackId) ?? [])
+      .filter((box) => box.frame >= range.fromFrame && box.frame <= range.toFrame && !offPitch(box.frame / fps))
+      .sort((a, b) => a.frame - b.frame);
+    if (boxes.length < T.minBoxesPerSample * 2) continue;
+    const t0 = boxes[0].frame / fps;
+    const t1 = boxes[boxes.length - 1].frame / fps;
+    if (t1 - t0 < T.minPieceSeconds) continue;
+    type Sample = { t: number; x: number; y: number; h: number; ny: number } | null;
+    const samples: Sample[] = [];
+    let first = 0;
+    for (let t = t0; t <= t1 + 1e-9; t += T.stepSeconds) {
+      while (first < boxes.length && boxes[first].frame / fps < t - T.halfWindowSeconds) first++;
+      const inWindow: SpeedBox[] = [];
+      for (let k = first; k < boxes.length && boxes[k].frame / fps <= t + T.halfWindowSeconds; k++) inWindow.push(boxes[k]);
+      if (inWindow.length < T.minBoxesPerSample) {
+        samples.push(null);
+        continue;
       }
-      elapsed += interval.seconds;
-      distance += interval.distance;
+      const pitch = interpolatePitchPosition(
+        medianOf(inWindow.map((box) => box.x + box.w / 2)),
+        medianOf(inWindow.map((box) => box.y + box.h)),
+        manifest,
+      );
+      if (!pitch) {
+        samples.push(null);
+        continue;
+      }
+      samples.push({ t, x: pitch.x, y: pitch.y, h: medianOf(inWindow.map((box) => box.h)), ny: Math.max(0, Math.min(1, pitch.y / pitchHeight)) });
+    }
+    const steps: Array<{ speed: number; ok: boolean; t: number }> = [];
+    for (let index = 1; index < samples.length; index++) {
+      const a = samples[index - 1];
+      const b = samples[index];
+      if (!a || !b) {
+        steps.push({ speed: 0, ok: false, t: a?.t ?? b?.t ?? t0 });
+        continue;
+      }
+      const speed = Math.hypot(b.x - a.x, b.y - a.y) / T.stepSeconds;
+      const ok = speed <= T.ceilingMetresPerSecond
+        && Math.abs(b.h - a.h) / Math.max(a.h, 1) <= T.heightJump
+        && a.t - t0 >= T.edgeStartSeconds
+        && t1 - b.t >= T.edgeEndSeconds
+        && a.ny >= T.farThird
+        && b.ny >= T.farThird;
+      steps.push({ speed, ok, t: a.t });
+    }
+    // Decided from the speeds as measured, so one rejection cannot spread.
+    const jumps = steps.map((step, index) => index > 0
+      && step.ok && steps[index - 1].ok
+      && Math.abs(step.speed - steps[index - 1].speed) > T.maxSpeedChange);
+    jumps.forEach((jump, index) => {
+      if (jump) {
+        steps[index].ok = false;
+        steps[index - 1].ok = false;
+      }
+    });
+    for (const step of steps) if (step.ok) usableSeconds += T.stepSeconds;
+    for (let index = 1; index < steps.length; index++) {
+      if (!steps[index].ok || !steps[index - 1].ok) continue;
+      const speed = (steps[index].speed + steps[index - 1].speed) / 2;
+      if (!best || speed > best.speed) best = { speed, frame: Math.round(steps[index - 1].t * fps) };
     }
   }
   return {
-    topSpeedMetresPerSecond: topSpeed === null ? null : Math.round(topSpeed * 100) / 100,
+    topSpeedMetresPerSecond: best === null ? null : Math.round(best.speed * 100) / 100,
     topSpeedUsableTimeFraction: coveredSeconds > 0
       ? Math.min(1, Math.max(0, Math.round((usableSeconds / coveredSeconds) * 10_000) / 10_000))
       : null,
-    topSpeedFrame,
+    topSpeedFrame: best?.frame ?? null,
   };
 }
 
@@ -310,7 +374,7 @@ export function buildPlayerMetrics(
     : coveredSeconds > 0
       ? Math.round((distanceMetres / coveredSeconds) * 100) / 100
       : 0;
-  const { topSpeedFrame, ...speedSummary } = topSpeedSummary(manifest, mapped, coveredSeconds);
+  const { topSpeedFrame, ...speedSummary } = topSpeedSummary(manifest, fullSegments, claimed, offPitchSpans, coveredSeconds);
   return {
     ...base,
     heatmap,

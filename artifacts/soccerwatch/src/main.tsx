@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { primeVideoCacheWorker } from "./lib/video-cache";
+import { watchForNewBuilds } from "./lib/fresh-build";
 import { isTransientClerkSessionTouchError } from "./lib/clerk-network";
 import "./index.css";
 
@@ -24,3 +25,7 @@ if (import.meta.env.DEV) {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+// The published HTML has no Cache-Control, so browsers can keep last week's app
+// after a publish; reload once when the live build is newer.
+watchForNewBuilds();
