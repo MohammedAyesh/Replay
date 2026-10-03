@@ -399,6 +399,11 @@ const en = {
   yourNumbers: "Your numbers",
   slideOf: (index: number, total: number) => `${index} / ${total}`,
   slideLabel: (index: number, total: number) => `Tile ${index} of ${total}`,
+  /** The "statistics are in beta" notice shown beside every player stat (components/stats/StatsBeta.tsx). */
+  statsBeta: {
+    pill: "Beta",
+    note: "Stats are in beta: tracking can sometimes mix players up.",
+  },
   photo: {
     add: "Add a profile photo",
     change: "Change profile photo",
@@ -830,6 +835,10 @@ const ar: MatchStrings = {
   yourNumbers: "أرقامك",
   slideOf: (index, total) => `${index} / ${total}`,
   slideLabel: (index, total) => `البطاقة ${index} من ${total}`,
+  statsBeta: {
+    pill: "تجريبي",
+    note: "الإحصائيات تجريبية: قد يخلط التتبع أحياناً بين اللاعبين.",
+  },
   photo: {
     add: "ضيف صورتك",
     change: "غيّر صورتك",

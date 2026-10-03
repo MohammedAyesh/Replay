@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StatTileCard } from "@/components/home/StatTile";
+import { BetaPill, StatsBetaNote } from "@/components/match/StatsBeta";
 import { useMatchCopy } from "@/i18n/match-strings";
 import type { StatTile } from "@/lib/stat-tile";
 import { cn } from "@/lib/utils";
@@ -37,7 +38,15 @@ export function StatCarousel({ tiles }: { tiles: StatTile[] }) {
   }, [step, tiles.length]);
 
   if (tiles.length === 0) return null;
-  if (tiles.length === 1) return <StatTileCard tile={tiles[0]} />;
+  // The beta note sits outside the tile: the tiles keep their fixed height.
+  if (tiles.length === 1) {
+    return (
+      <section aria-label={copy.yourNumbers} data-testid="home-stat-single">
+        <StatsBetaNote className="mb-2 px-1" />
+        <StatTileCard tile={tiles[0]} />
+      </section>
+    );
+  }
 
   const go = (index: number) => {
     const el = rail.current;
@@ -48,10 +57,11 @@ export function StatCarousel({ tiles }: { tiles: StatTile[] }) {
 
   return (
     <section aria-roledescription="carousel" aria-label={copy.yourNumbers} data-testid="home-stat-carousel">
-      <div className="mb-2 flex items-baseline justify-between px-1">
-        <h2 className="text-sm font-bold">{copy.yourNumbers}</h2>
+      <div className="mb-2 flex items-center justify-between px-1">
+        <h2 className="flex items-center gap-2 text-sm font-bold">{copy.yourNumbers}<BetaPill /></h2>
         <span dir="ltr" className="text-xs font-semibold tabular-nums text-muted-text">{copy.slideOf(active + 1, tiles.length)}</span>
       </div>
+      <p className="-mt-1 mb-2 px-1 text-[11px] leading-4 text-muted-text" data-testid="stats-beta-note">{copy.statsBeta.note}</p>
       <div
         ref={rail}
         className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-2.5 overflow-x-auto scroll-px-4 px-4"

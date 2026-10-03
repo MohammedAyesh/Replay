@@ -5,6 +5,7 @@ import { FriendButton } from "@/components/friends/FriendButton";
 import { PlayerAvatar, StandingsTable, formatDate, formatDay, splitDuration } from "@/components/match/bits";
 import { useMatchStatsData, type PlayerStats } from "@/components/match/MatchStats";
 import { SafetyMenu } from "@/components/safety/SafetyMenu";
+import { StatsBetaNote } from "@/components/match/StatsBeta";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import type { MatchStrings } from "@/i18n/match-strings";
@@ -115,6 +116,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
               <Section><p className="text-sm text-muted-text">{r.statsUnavailable}</p></Section>
             ) : (
               <>
+                <StatsBetaNote className="pt-5" />
                 {me && <YouSection me={me} players={players ?? []} stats={stats} room={room} r={r} durationSeconds={durationSeconds} replay={replay} teamNames={names} />}
                 {players && <EveryoneSection players={players} meId={me ? meId : null} r={r} />}
                 {me && <NightSection me={me} r={r} durationSeconds={durationSeconds} room={room} />}

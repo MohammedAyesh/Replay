@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowUpRight, Crown, Medal, RefreshCw, Trophy } from "lucide-react";
 import { Link } from "wouter";
 import { PlayerAvatar } from "@/components/match/bits";
+import { BetaPill, StatsBetaNote } from "@/components/match/StatsBeta";
 import type { MatchStrings } from "@/i18n/match-strings";
 import type { MatchRoom, PlayerForm, PlayerMetricValues, TeamSide } from "@/lib/match-api";
 import { useAuth } from "@/lib/auth";
@@ -233,6 +234,7 @@ export function RecentFormPanel({ form, copy }: { form: PlayerForm | null; copy:
 
   return (
     <div className="flex flex-col gap-3" data-testid="your-form-last-match">
+      <StatsBetaNote />
       <Link href={`/m/${latest.code}`} className="flex min-h-10 items-center justify-between gap-2 rounded-xl border border-line bg-raised/50 px-3 text-xs font-semibold">
         <span className="text-muted-text">{copy.competitionLastMatch}</span>
         <span className="font-mono text-text">{latest.code}</span>
@@ -541,7 +543,7 @@ export function MatchCompetitionAwardsRow({ room, copy }: { room: MatchRoom; cop
   return (
     <section className="rounded-2xl border border-floodlight/25 bg-surface p-3" data-testid="overview-competition-awards">
       <p className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-muted-text">
-        <Medal className="h-3.5 w-3.5 text-floodlight" />{copy.competitionAwards}
+        <Medal className="h-3.5 w-3.5 text-floodlight" />{copy.competitionAwards}<BetaPill />
       </p>
       <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
         {awards.map(({ award, names }) => {
@@ -639,6 +641,7 @@ export function MatchStats({ room, copy, gameId = null }: { room: MatchRoom; cop
 
   return (
     <section className="flex flex-col gap-5 rounded-2xl border border-line bg-surface p-4">
+      <StatsBetaNote />
       {stats.competition && <CompetitionPanel stats={stats} copy={copy} room={room} />}
       <div>
         <p className="text-base font-bold">{copy.h2hTitle}</p>

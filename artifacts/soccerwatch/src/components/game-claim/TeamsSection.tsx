@@ -3,6 +3,7 @@ import { mmss } from "@/lib/game-claim/model";
 import { hexToLab, labCss, labHex, sameLab, type Lab, type Play } from "@/lib/game-claim/play";
 import type { GameStrings } from "@/i18n/game-strings";
 import { Section, Stat } from "./bits";
+import { StatsBetaNote } from "@/components/match/StatsBeta";
 import { cn } from "@/lib/utils";
 
 /**
@@ -65,6 +66,7 @@ export function TeamsSection({ copy, play, loading, onPick }: {
   return (
     <Section title={c.title}>
       <p className="max-w-[62ch] text-sm leading-6 text-muted-text">{c.lead}</p>
+      <StatsBetaNote />
       <div className="flex flex-col gap-2">{row(0)}{row(1)}</div>
       {s && (
         <>

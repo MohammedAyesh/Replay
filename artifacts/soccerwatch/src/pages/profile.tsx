@@ -34,6 +34,7 @@ import {
 } from "@/lib/player-stats";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { SafetyMenu } from "@/components/safety/SafetyMenu";
+import { StatsBetaNote } from "@/components/match/StatsBeta";
 import { useMyBlocks, useUnblockUser, type BlockedPlayer } from "@/lib/safety-api";
 import { useSafetyCopy } from "@/i18n/safety-strings";
 
@@ -412,6 +413,7 @@ function PlayerStatsSection({
           <span className="player-stats-review-pill">{t.profile.awaitingReview(stats.excludedClaimCount)}</span>
         )}
       </div>
+      <StatsBetaNote />
 
       {stats.excludedClaimCount > 0 && (
         <div className="player-stats-review-note" role="status">

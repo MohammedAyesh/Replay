@@ -1875,6 +1875,48 @@ export interface ClaimChain {
   labelRecorded: boolean | null;
 }
 
+export interface ClaimChainForUserInput {
+  userId: number;
+  /** @minItems 1 */
+  parts: ClaimChainPart[];
+  /** @nullable */
+  name?: string | null;
+  /** The bundle the parts were built against; a mismatch is a 409. */
+  bundleFingerprint: string;
+  dryRun?: boolean;
+}
+
+/**
+ * The player's identity binding after the write; null on a dry run.
+ */
+export type ClaimChainForUserBinding = {
+  personId: string;
+  state: string;
+} | null;
+
+/**
+ * The player's claim progress row after the write; null on a dry run.
+ */
+export type ClaimChainForUserProgress = {
+  completed: boolean;
+  claimedPercent: number;
+  clipsUnlocked: number;
+  stage: string;
+} | null;
+
+export type ClaimChainForUser = ClaimChain & {
+  dryRun: boolean;
+  userId: number;
+  /** Dry run only. Why the chain would or would not count. */
+  completionReason?: string;
+  /** Dry run only. Scoreable events inside the claimed stretch. */
+  earnedClipCount?: number;
+  /** The player's identity binding after the write; null on a dry run. */
+  binding: ClaimChainForUserBinding;
+  /** The player's claim progress row after the write; null on a dry run. */
+  progress: ClaimChainForUserProgress;
+};
+
 export interface ClaimChainConflict {
   error: string;
   currentBundleFingerprint?: string;

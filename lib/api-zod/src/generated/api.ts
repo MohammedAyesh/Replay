@@ -1171,6 +1171,87 @@ export const ListClaimMatchBindingsResponse = zod.array(ListClaimMatchBindingsRe
 
 
 /**
+ * Stores the parts as the player's own claim chain (marked fully reviewed, so the player is not re-asked at every crossing), moves them off any board rows that held them, and syncs the binding, completion, earned clips and stats exactly as the player's own taps do. With dryRun it validates and returns the resulting state without writing.
+ * @summary Set a player's claim chain on their behalf, through the real claim flow
+ */
+export const SetClaimChainForUserParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+
+
+export const SetClaimChainForUserBody = zod.object({
+  "userId": zod.number(),
+  "parts": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number(),
+  "toFrame": zod.number()
+})).min(1),
+  "name": zod.string().nullish(),
+  "bundleFingerprint": zod.string().describe('The bundle the parts were built against; a mismatch is a 409.'),
+  "dryRun": zod.boolean().optional()
+})
+
+export const SetClaimChainForUserResponse = zod.object({
+  "openQuestions": zod.array(zod.object({
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
+  "frame": zod.number(),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
+  "confidence": zod.number(),
+  "reason": zod.string().describe('A plain sentence for the person watching. Never a code.')
+}).describe('Where playback should stop and ask. Playback stops here and nowhere else: a track end is definitive, a swap is judged and only raised when the geometry or the tracker\'s own confidence passes a threshold.')).describe('Every question still open on this chain, earliest first (capped). The page stops at the next one AHEAD of the playhead and lists the ones behind it - a filled gap leaves questions behind, and a stop behind the playhead must be shown, never fired.'),
+  "completed": zod.boolean().describe('Whether this claim counts as the person\'s match - enough of it claimed and nothing left to answer. The same rule that awards clips.'),
+  "requiredCoveragePercent": zod.number().describe('The coverage this recording needs for a claim to count.'),
+  "resetByAdmin": zod.boolean().describe('True when this claimant has no chain but an administrator released their claim on the identity board - i.e. the claim was removed by someone else, not by the claimant. The page says so instead of looking like a fresh start.'),
+  "recordingId": zod.number(),
+  "identityId": zod.string().describe('The caller\'s identity row on the identity board. The chain IS that identity, so a merge made in the video is a merge on the board.'),
+  "identityMap": zod.object({
+  "people": zod.number(),
+  "matchesBundle": zod.boolean(),
+  "tracks": zod.number(),
+  "segments": zod.number(),
+  "linker": zod.string().nullable().describe('Which linker produced this bundle, from the pipeline\'s own provenance stamp. Null means unstamped.')
+}).describe('The state of the identity map behind this recording. The chain only stops where a part has nothing to continue onto, so frequent stops mean the map is not joining this person\'s pieces -- which is either an empty map or one whose fingerprint no longer matches the bundle, in which case all of it is discarded silently.'),
+  "name": zod.string().nullable(),
+  "bundleFingerprint": zod.string().describe('Send this back on writes; a mismatch is a 409, never a blind merge.'),
+  "frameRate": zod.number(),
+  "chain": zod.array(zod.object({
+  "trackId": zod.string(),
+  "fromFrame": zod.number(),
+  "toFrame": zod.number()
+})),
+  "coverageSeconds": zod.number(),
+  "coveragePercent": zod.number(),
+  "nextUncertainty": zod.union([zod.object({
+  "kind": zod.enum(['track-end', 'swap', 'continuity']),
+  "frame": zod.number(),
+  "trackId": zod.string(),
+  "otherTrackId": zod.string().optional().describe('For a swap, the player the identity may have been exchanged with.'),
+  "confidence": zod.number(),
+  "reason": zod.string().describe('A plain sentence for the person watching. Never a code.')
+}).describe('Where playback should stop and ask. Playback stops here and nowhere else: a track end is definitive, a swap is judged and only raised when the geometry or the tracker\'s own confidence passes a threshold.'),zod.null()]),
+  "labelRecorded": zod.boolean().nullable().describe('Whether this decision\'s training label landed. A label write never fails the claim, so this is how a silently empty corpus becomes visible. Null on reads, which record nothing.')
+}).and(zod.object({
+  "dryRun": zod.boolean(),
+  "userId": zod.number(),
+  "completionReason": zod.string().optional().describe('Dry run only. Why the chain would or would not count.'),
+  "earnedClipCount": zod.number().optional().describe('Dry run only. Scoreable events inside the claimed stretch.'),
+  "binding": zod.union([zod.object({
+  "personId": zod.string(),
+  "state": zod.string()
+}),zod.null()]).describe('The player\'s identity binding after the write; null on a dry run.'),
+  "progress": zod.union([zod.object({
+  "completed": zod.boolean(),
+  "claimedPercent": zod.number(),
+  "clipsUnlocked": zod.number(),
+  "stage": zod.string()
+}),zod.null()]).describe('The player\'s claim progress row after the write; null on a dry run.')
+}))
+
+
+/**
  * @summary Get one compressed tracking segment for the current player
  */
 export const getClaimMatchSegmentPathSegmentIndexMin = 0;

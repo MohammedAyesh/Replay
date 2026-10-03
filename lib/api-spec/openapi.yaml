@@ -1145,6 +1145,53 @@ paths:
         "400":
           description: Invalid recording id
 
+  /admin/recordings/{id}/claim-match/chain-for-user:
+    post:
+      operationId: setClaimChainForUser
+      tags: [admin]
+      summary: Set a player's claim chain on their behalf, through the real claim flow
+      description: >-
+        Stores the parts as the player's own claim chain (marked fully reviewed,
+        so the player is not re-asked at every crossing), moves them off any
+        board rows that held them, and syncs the binding, completion, earned
+        clips and stats exactly as the player's own taps do. With dryRun it
+        validates and returns the resulting state without writing.
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimChainForUserInput"
+      responses:
+        "200":
+          description: The player's chain and claim state after the write (or as it would be, on a dry run)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChainForUser"
+        "400":
+          description: Invalid body, unknown track, frames outside a track, reversed or overlapping parts
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Admin required
+        "404":
+          description: User, recording or tracking bundle not found
+        "409":
+          description: The parts were built against a replaced bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimChainConflict"
+
   /recordings/{id}/claim-match/segments/{segmentIndex}:
     get:
       operationId: getClaimMatchSegment
@@ -5199,6 +5246,66 @@ components:
             fails the claim, so this is how a silently empty corpus becomes
             visible. Null on reads, which record nothing.
 
+    ClaimChainForUserInput:
+      type: object
+      required: [userId, parts, bundleFingerprint]
+      properties:
+        userId:
+          type: integer
+        parts:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ClaimChainPart"
+        name:
+          type: ["string", "null"]
+        bundleFingerprint:
+          type: string
+          description: The bundle the parts were built against; a mismatch is a 409.
+        dryRun:
+          type: boolean
+    ClaimChainForUser:
+      allOf:
+        - $ref: "#/components/schemas/ClaimChain"
+        - type: object
+          required: [dryRun, userId, binding, progress]
+          properties:
+            dryRun:
+              type: boolean
+            userId:
+              type: integer
+            completionReason:
+              type: string
+              description: Dry run only. Why the chain would or would not count.
+            earnedClipCount:
+              type: integer
+              description: Dry run only. Scoreable events inside the claimed stretch.
+            binding:
+              description: The player's identity binding after the write; null on a dry run.
+              oneOf:
+                - type: object
+                  required: [personId, state]
+                  properties:
+                    personId:
+                      type: string
+                    state:
+                      type: string
+                - type: "null"
+            progress:
+              description: The player's claim progress row after the write; null on a dry run.
+              oneOf:
+                - type: object
+                  required: [completed, claimedPercent, clipsUnlocked, stage]
+                  properties:
+                    completed:
+                      type: boolean
+                    claimedPercent:
+                      type: number
+                    clipsUnlocked:
+                      type: integer
+                    stage:
+                      type: string
+                - type: "null"
     ClaimChainConflict:
       type: object
       required: [error]

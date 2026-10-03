@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 import { useMatchStatsData, type PlayerStats } from "@/components/match/MatchStats";
 import { Num, visibleColour } from "@/components/match/report/ReportParts";
+import { StatsBetaNote } from "@/components/match/StatsBeta";
 import type { ClipSeekRequest, ClipTimelineBand, ClipTimelineMarker } from "@/components/clip-player/ClipPlayer";
 import { useAuth } from "@/lib/auth";
 import { useMatchReplay, useMatchRoom, type MatchRoom } from "@/lib/match-api";
@@ -416,6 +417,7 @@ export function MatchMomentsPanel({ state }: { state: MatchMomentsState }) {
           <span className="text-xs font-semibold text-turf" role="status">{copy.skipping}</span>
         ) : null}
       </div>
+      {state.statsOn && !empty && <StatsBetaNote />}
 
       {empty ? (
         <p className="text-xs text-muted-text">

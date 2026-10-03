@@ -49,6 +49,8 @@ import type {
   BunnyVideo,
   ClaimChain,
   ClaimChainConflict,
+  ClaimChainForUser,
+  ClaimChainForUserInput,
   ClaimChainFrameInput,
   ClaimChainTapInput,
   ClaimIdentityBinding,
@@ -3409,6 +3411,78 @@ export function useListClaimMatchBindings<TData = Awaited<ReturnType<typeof list
 
 
 
+
+export const getSetClaimChainForUserUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/claim-match/chain-for-user`
+}
+
+/**
+ * Stores the parts as the player's own claim chain (marked fully reviewed, so the player is not re-asked at every crossing), moves them off any board rows that held them, and syncs the binding, completion, earned clips and stats exactly as the player's own taps do. With dryRun it validates and returns the resulting state without writing.
+ * @summary Set a player's claim chain on their behalf, through the real claim flow
+ */
+export const setClaimChainForUser = async (id: number,
+    claimChainForUserInput: ClaimChainForUserInput, options?: RequestInit): Promise<ClaimChainForUser> => {
+
+  return customFetch<ClaimChainForUser>(getSetClaimChainForUserUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimChainForUserInput)
+  }
+);}
+
+
+
+
+export const getSetClaimChainForUserMutationOptions = <TError = ErrorType<void | ClaimChainConflict>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setClaimChainForUser>>, TError,{id: number;data: BodyType<ClaimChainForUserInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setClaimChainForUser>>, TError,{id: number;data: BodyType<ClaimChainForUserInput>}, TContext> => {
+
+const mutationKey = ['setClaimChainForUser'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setClaimChainForUser>>, {id: number;data: BodyType<ClaimChainForUserInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setClaimChainForUser(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetClaimChainForUserMutationResult = NonNullable<Awaited<ReturnType<typeof setClaimChainForUser>>>
+    export type SetClaimChainForUserMutationBody = BodyType<ClaimChainForUserInput>
+    export type SetClaimChainForUserMutationError = ErrorType<void | ClaimChainConflict>
+
+    /**
+ * @summary Set a player's claim chain on their behalf, through the real claim flow
+ */
+export const useSetClaimChainForUser = <TError = ErrorType<void | ClaimChainConflict>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setClaimChainForUser>>, TError,{id: number;data: BodyType<ClaimChainForUserInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setClaimChainForUser>>,
+        TError,
+        {id: number;data: BodyType<ClaimChainForUserInput>},
+        TContext
+      > => {
+      return useMutation(getSetClaimChainForUserMutationOptions(options));
+    }
 
 export const getGetClaimMatchSegmentUrl = (id: number,
     segmentIndex: number,) => {

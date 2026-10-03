@@ -1160,4 +1160,191 @@ router.get("/admin/recordings/:id/claim-chain-labels", async (req, res): Promise
   });
 });
 
+const ChainForUserBody = z.object({
+  userId: z.number().int().positive(),
+  parts: z.array(z.object({
+    trackId: z.string().min(1),
+    fromFrame: z.number().int().min(0),
+    toFrame: z.number().int().min(0),
+  })).min(1).max(2000),
+  name: z.string().trim().min(1).max(60).nullish(),
+  /** The bundle the admin built the parts against; a mismatch is a 409. */
+  bundleFingerprint: z.string().min(1),
+  /** Validate and return the state the chain would have, writing nothing. */
+  dryRun: z.boolean().optional(),
+});
+
+/**
+ * Check admin-supplied parts against the bundle and turn them into a chain.
+ *
+ * Every part is marked fully reviewed (`reviewedThrough = toFrame + 1`). An
+ * administrator who sets a chain has watched it, so it is an answered chain:
+ * left unmarked, `openUncertainties` would raise every crossing and track end
+ * inside it again, the claim would sit "not completed" behind an open question,
+ * and the player would be asked to re-confirm a chain they never built. A
+ * later "that is not me" or tap by the player still edits it as usual.
+ *
+ * Exported for the tests.
+ */
+export function chainFromAdminParts(
+  parts: Array<{ trackId: string; fromFrame: number; toFrame: number }>,
+  tracksById: ReadonlyMap<string, CachedTrack>,
+): { chain: ChainPart[] } | { error: string } {
+  for (const [index, part] of parts.entries()) {
+    const track = tracksById.get(part.trackId);
+    if (!track) return { error: `parts[${index}]: no track ${part.trackId} in this bundle` };
+    if (part.toFrame < part.fromFrame) {
+      return { error: `parts[${index}]: toFrame ${part.toFrame} is before fromFrame ${part.fromFrame}` };
+    }
+    if (part.fromFrame < track.startFrame || part.toFrame > track.endFrame) {
+      return {
+        error: `parts[${index}]: frames ${part.fromFrame}-${part.toFrame} fall outside track ${part.trackId} (${track.startFrame}-${track.endFrame})`,
+      };
+    }
+  }
+  // One person cannot be two tracks at once. Overlapping parts of one track
+  // are harmless (normaliseChain merges them); overlapping different tracks
+  // is a mistake in the request.
+  const sorted = [...parts].sort((a, b) => a.fromFrame - b.fromFrame);
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const cur = sorted[i];
+    if (cur.trackId !== prev.trackId && cur.fromFrame <= prev.toFrame) {
+      return {
+        error: `parts overlap: ${prev.trackId} ${prev.fromFrame}-${prev.toFrame} and ${cur.trackId} ${cur.fromFrame}-${cur.toFrame}`,
+      };
+    }
+  }
+  const chain = normaliseChain(
+    parts.map((part) => ({ ...part, reviewedThrough: part.toFrame + 1 })),
+    tracksById,
+  );
+  return { chain };
+}
+
+/**
+ * Set a player's claim chain on their behalf.
+ *
+ * For when the claim flow cannot get someone there -- a tracker that keeps
+ * swapping them, a player who will not sit through it -- and an admin has
+ * worked out which pieces are theirs on the identity board. It goes through
+ * exactly what a player's own decisions go through: loadContext (as that
+ * player), persistChain under the row lock (so their row moves off the board
+ * rows it takes from, history and undo included) and syncChainClaim (binding,
+ * completion, earned clips and stats). No training label is written: an
+ * admin's assembly is not a decision at a frame.
+ */
+router.post("/admin/recordings/:id/claim-match/chain-for-user", async (req, res): Promise<void> => {
+  const adminId = await requireAccountUser(req);
+  if (!adminId) {
+    unauthenticatedResponse(res, req, "Authenticated account required");
+    return;
+  }
+  const [admin] = await db
+    .select({ isAdmin: usersTable.isAdmin })
+    .from(usersTable)
+    .where(eq(usersTable.id, adminId));
+  if (!admin?.isAdmin) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const recordingId = parseId(req.params.id);
+  if (!recordingId) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const body = ChainForUserBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const [player] = await db
+    .select({ id: usersTable.id, name: usersTable.name })
+    .from(usersTable)
+    .where(eq(usersTable.id, body.data.userId));
+  if (!player) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  const loaded = await loadContext(req, recordingId, body.data.userId);
+  if (!loaded.ctx) {
+    res.status(loaded.status ?? 500).json({ error: loaded.error ?? "Refused" });
+    return;
+  }
+  const ctx = loaded.ctx;
+  if (body.data.bundleFingerprint !== ctx.fingerprint) {
+    res.status(409).json({
+      error: "This recording's tracking has been replaced. Rebuild the parts against the current bundle.",
+      currentBundleFingerprint: ctx.fingerprint,
+    });
+    return;
+  }
+
+  const built = chainFromAdminParts(body.data.parts, ctx.tracksById);
+  if ("error" in built) {
+    res.status(400).json({ error: built.error });
+    return;
+  }
+
+  const existing = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
+  if (body.data.dryRun) {
+    const preview = describe(ctx, built.chain, body.data.name ?? existing?.name ?? null);
+    const state = deriveChainClaimState(
+      ctx.manifest,
+      ctx.segments.map((segment) => ({ tracks: segment.tracks, events: segment.events })),
+      built.chain,
+      { offPitch: ctx.offPitch, hasOpenQuestion: preview.nextUncertainty !== null },
+    );
+    res.json({
+      dryRun: true,
+      userId: body.data.userId,
+      ...preview,
+      completionReason: state.completionReason,
+      earnedClipCount: state.earnedClips.length,
+      binding: null,
+      progress: null,
+    });
+    return;
+  }
+
+  const saved = await persistChain(ctx, built.chain, { chosen: body.data.name ?? null },
+    { kind: "decision", answeredFrame: null });
+  const described = describe(ctx, saved.chain, saved.name);
+  await syncChainClaim(ctx, saved.chain, described.nextUncertainty !== null);
+
+  const [binding] = await db
+    .select({
+      personId: claimMatchIdentityBindingsTable.personId,
+      state: claimMatchIdentityBindingsTable.state,
+    })
+    .from(claimMatchIdentityBindingsTable)
+    .where(and(
+      eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+      eq(claimMatchIdentityBindingsTable.userId, body.data.userId),
+    ));
+  const [progress] = await db
+    .select({
+      completed: claimMatchProgressTable.completed,
+      claimedPercent: claimMatchProgressTable.claimedPercent,
+      clipsUnlocked: claimMatchProgressTable.clipsUnlocked,
+      stage: claimMatchProgressTable.stage,
+    })
+    .from(claimMatchProgressTable)
+    .where(and(
+      eq(claimMatchProgressTable.recordingId, recordingId),
+      eq(claimMatchProgressTable.userId, body.data.userId),
+    ));
+  console.info("[claim-chain] admin set chain", {
+    adminId, recordingId, userId: body.data.userId, parts: saved.chain.length,
+  });
+  res.json({
+    dryRun: false,
+    userId: body.data.userId,
+    ...described,
+    binding: binding ?? null,
+    progress: progress ?? null,
+  });
+});
+
 export default router;
