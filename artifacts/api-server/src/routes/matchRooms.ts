@@ -670,7 +670,8 @@ router.get("/m/:code/replay", async (req, res): Promise<void> => {
   const ctx = await loadOr404(req, res);
   if (!ctx) return;
   try {
-    res.json(await matchReplay(ctx));
+    const viewer = await optionalUser(req);
+    res.json(await matchReplay(ctx, viewer && !viewer.isGuest ? viewer.id : null));
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "match replay failed");
     res.json({ recordings: [], goals: [], shots: null, suggested: null, flow: { phases: null, inPlay: null } });

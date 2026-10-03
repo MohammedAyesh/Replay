@@ -843,8 +843,14 @@ export type ReplayGoal = {
   /** seconds from the booked kick-off */
   atSeconds: number;
   side: "A" | "B" | "C" | null;
-  /** a claimed player on the roster whose touch it was */
+  /**
+   * A claimed player on the roster whose touch it was. When two players
+   * claimed the same person (both are counted), the viewer if they are one of
+   * them, else the first; `scorers` lists them all.
+   */
   scorer: { playerId: number; name: string } | null;
+  /** every claimed player whose claim covers the scoring touch */
+  scorers: Array<{ playerId: number; name: string }>;
   recordingId: number;
   /** configured game index when this goal falls inside a configured game */
   gameIndex: number | null;
@@ -880,7 +886,7 @@ export function replaySideForGoal(
  * 19 Sep game its inferred goals had to be merged to stop one kick-off
  * counting two or three times.
  */
-export async function matchReplay(ctx: RoomContext): Promise<{
+export async function matchReplay(ctx: RoomContext, viewerUserId: number | null = null): Promise<{
   recordings: number[];
   goals: ReplayGoal[];
   shots: [number, number] | null;
@@ -902,13 +908,17 @@ export async function matchReplay(ctx: RoomContext): Promise<{
       const game = games.find((candidate) =>
         atSeconds >= candidate.startOffsetSec && atSeconds < candidate.endOffsetSec);
       const side = replaySideForGoal(ctx.room.teamCount, game, kits, pick, g.kit);
-      const who = g.trackId && g.touchF !== null
-        ? claimed.find((c) => c.test({ trackId: g.trackId!, f: g.touchF! } as Touch))?.p ?? null
-        : null;
+      // Two players may have claimed the same person; the goal is in both
+      // their stats, so it is not "first claimant wins" here either.
+      const owners = g.trackId && g.touchF !== null
+        ? claimed.filter((c) => c.test({ trackId: g.trackId!, f: g.touchF! } as Touch)).map((c) => c.p)
+        : [];
+      const who = owners.find((p) => viewerUserId !== null && p.userId === viewerUserId) ?? owners[0] ?? null;
       goals.push({
         atSeconds,
         side,
         scorer: who ? { playerId: who.id, name: who.displayName } : null,
+        scorers: owners.map((p) => ({ playerId: p.id, name: p.displayName })),
         recordingId: link.recordingId,
         gameIndex: game?.idx ?? null,
         t: g.t,
