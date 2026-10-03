@@ -26,7 +26,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/api-server run test"
+args = "bash artifacts/api-server/run-tests-isolated.sh"
 
 [workflows.workflow.metadata]
 isValidation = true
