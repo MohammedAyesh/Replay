@@ -234,6 +234,7 @@ export default function MatchPage() {
 
   const onShare = async () => {
     const result = await shareOrCopy({ title: room.title || room.field.name, text: inviteText.replace(shareUrl, "").trim(), url: shareUrl });
+    // "cancelled" = the player closed the share sheet: do nothing.
     if (result === "copied") toast({ title: copy.copied });
     if (result === "failed") window.open(whatsappLink(inviteText), "_blank", "noopener");
   };
@@ -608,6 +609,8 @@ function Roster({ room, copy, colors }: { room: MatchRoom; copy: MatchStrings & 
   const friends = useFriends(room.signedIn && postWhistle);
   // Two taps to hand over the armband, so a stray tap can't do it.
   const [confirmCaptain, setConfirmCaptain] = useState<number | null>(null);
+  // Same for removing a player: the bin asks first, then "Remove" does it.
+  const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
   const { toast } = useToast();
   const order: Record<string, number> = { in: 0, maybe: 1, invited: 2, out: 3 };
   const players = [...room.players].sort((a, b) => order[a.rsvp] - order[b.rsvp]);
@@ -626,7 +629,7 @@ function Roster({ room, copy, colors }: { room: MatchRoom; copy: MatchStrings & 
       </p>
       <ul className="mt-3 flex flex-col divide-y divide-line">
         {visible.map((p) => (
-          <li key={p.id} className="flex items-center gap-3 py-2.5">
+          <li key={p.id} className={cn("flex items-center gap-3 py-2.5", confirmRemove === p.id && "flex-wrap")}>
             <PlayerAvatar name={p.name} initials={p.initials} avatarUrl={p.avatarUrl} size={40} dashed={!p.signedUp} ring={p.team ? colors[p.team] : undefined} />
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
@@ -672,11 +675,38 @@ function Roster({ room, copy, colors }: { room: MatchRoom; copy: MatchStrings & 
               <button
                 type="button"
                 aria-label={copy.remove}
-                onClick={() => void remove.mutateAsync(p.id).catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }))}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-text hover:bg-raised"
+                title={copy.remove}
+                aria-expanded={confirmRemove === p.id}
+                onClick={() => setConfirmRemove((id) => (id === p.id ? null : p.id))}
+                className={cn("flex h-8 w-8 items-center justify-center rounded-full text-muted-text hover:bg-raised", confirmRemove === p.id && "bg-raised text-live")}
+                data-testid={`button-remove-player-${p.id}`}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
+            )}
+            {room.canManage && !p.isMe && room.phase === "pre" && confirmRemove === p.id && (
+              <div role="alertdialog" aria-label={copy.removeConfirm(p.name)} className="flex w-full basis-full flex-wrap items-center gap-2 rounded-xl border border-live/40 bg-live/10 px-3 py-2">
+                <p className="min-w-0 flex-1 text-xs font-semibold">{copy.removeConfirm(p.name)}</p>
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemove(null)}
+                  className="flex h-8 items-center rounded-full border border-line px-3 text-[11px] font-semibold text-muted-text"
+                  data-testid={`button-cancel-remove-${p.id}`}
+                >
+                  {copy.cancel}
+                </button>
+                <button
+                  type="button"
+                  disabled={remove.isPending}
+                  onClick={() => void remove.mutateAsync(p.id)
+                    .then(() => setConfirmRemove(null))
+                    .catch((e) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }))}
+                  className="flex h-8 items-center gap-1 rounded-full bg-live px-3 text-[11px] font-bold text-text"
+                  data-testid={`button-confirm-remove-${p.id}`}
+                >
+                  {remove.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}{copy.remove}
+                </button>
+              </div>
             )}
           </li>
         ))}
@@ -768,6 +798,7 @@ function InviteCard({ room, copy, inviteText, onShare }: { room: MatchRoom; copy
       text: friendCopy.sharePrefix,
       url: friendLink.data.url,
     });
+    if (result === "cancelled") return;
     if (result === "copied") toast({ title: friendCopy.linkCopied });
     else if (result === "shared") toast({ title: friendCopy.linkShared });
     else toast({ title: friendCopy.shareFailed, variant: "destructive" });
@@ -1970,6 +2001,8 @@ function BookingPaymentCard({ room, copy }: { room: MatchRoom; copy: MatchString
   const collect = useCollectCash(room.code);
   const { toast } = useToast();
   const [open, setOpen] = useState(true);
+  // Cancelling asks first: one stray tap shouldn't drop a booked recording.
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const fail = (e: unknown) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" });
   const field = booking.method === "field";
   const jod = formatJod(booking.amountFils);
@@ -2035,17 +2068,44 @@ function BookingPaymentCard({ room, copy }: { room: MatchRoom; copy: MatchString
                 {field ? b.switchToCliq : b.switchToField}
               </button>
             )}
-            {canCancel && (
+            {canCancel && !confirmCancel && (
               <button
                 type="button"
-                disabled={cancel.isPending}
-                onClick={() => void cancel.mutateAsync(booking.requestId!).then(() => toast({ title: b.cancelled })).catch(fail)}
+                onClick={() => setConfirmCancel(true)}
                 className="text-xs font-semibold text-muted-text underline underline-offset-2"
+                data-testid="button-cancel-booking"
               >
                 {b.cancelBooking}
               </button>
             )}
           </div>
+          {canCancel && confirmCancel && (
+            <div role="alertdialog" aria-label={b.cancelConfirm} className="mt-3 rounded-xl border border-live/40 bg-live/10 p-3" data-testid="confirm-cancel-booking">
+              <p className="text-sm font-bold">{b.cancelConfirm}</p>
+              <p className="mt-1 text-xs text-muted-text">{field ? b.cancelConfirmField : b.cancelConfirmCliq}</p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmCancel(false)}
+                  className="min-h-11 flex-1 rounded-full border border-line text-sm font-semibold"
+                  data-testid="button-keep-booking"
+                >
+                  {b.keepBooking}
+                </button>
+                <button
+                  type="button"
+                  disabled={cancel.isPending}
+                  onClick={() => void cancel.mutateAsync(booking.requestId!)
+                    .then(() => { setConfirmCancel(false); toast({ title: b.cancelled }); })
+                    .catch(fail)}
+                  className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-full bg-live text-sm font-bold text-text"
+                  data-testid="button-confirm-cancel-booking"
+                >
+                  {cancel.isPending && <Loader2 className="h-4 w-4 animate-spin" />}{b.cancelConfirmYes}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>

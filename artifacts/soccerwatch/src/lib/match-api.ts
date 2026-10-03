@@ -523,14 +523,20 @@ export function calendarUrl(code: string): string {
   return `${apiBase}/m/${code}/calendar.ics`;
 }
 
-export async function shareOrCopy(payload: { title?: string; text: string; url: string }): Promise<"shared" | "copied" | "failed"> {
+/**
+ * "cancelled" means the person closed the phone's share sheet themselves:
+ * callers must treat it as a silent no-op (no WhatsApp fallback, no error toast).
+ */
+export type ShareResult = "shared" | "copied" | "cancelled" | "failed";
+
+export async function shareOrCopy(payload: { title?: string; text: string; url: string }): Promise<ShareResult> {
   try {
     if (typeof navigator.share === "function") {
       await navigator.share(payload);
       return "shared";
     }
   } catch (error) {
-    if ((error as Error)?.name === "AbortError") return "failed";
+    if ((error as Error)?.name === "AbortError") return "cancelled";
   }
   try {
     await navigator.clipboard.writeText(`${payload.text} ${payload.url}`.trim());

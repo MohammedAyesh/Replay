@@ -358,6 +358,11 @@ const en = {
     rejected: "Payment wasn't received, so this booking was cancelled.",
     cancelBooking: "Cancel booking",
     cancelled: "Booking cancelled",
+    cancelConfirm: "Cancel this booking? The match won't be recorded.",
+    cancelConfirmCliq: "Already sent the CliQ transfer? Don't cancel: we'll confirm it and lock in the recording.",
+    cancelConfirmField: "Nothing has been paid yet, so there's nothing to refund.",
+    cancelConfirmYes: "Yes, cancel it",
+    keepBooking: "Keep it",
     noFields: "No fields can record yet.",
     back: "Home",
     closed: "Booking is closed for now. Check back soon.",
@@ -424,6 +429,7 @@ const en = {
   save: "Save",
   cancel: "Cancel",
   remove: "Remove",
+  removeConfirm: (name: string) => `Remove ${name} from this match?`,
   error: "Something went wrong. Try again.",
 };
 
@@ -783,6 +789,11 @@ const ar: MatchStrings = {
     rejected: "ما وصلتنا الدفعة، فانلغى الحجز.",
     cancelBooking: "الغِ الحجز",
     cancelled: "انلغى الحجز",
+    cancelConfirm: "إلغاء الحجز؟ ما رح يتصوّر الماتش.",
+    cancelConfirmCliq: "حوّلت على كليك؟ لا تلغي: رح نأكد الدفعة ونثبّت التسجيل.",
+    cancelConfirmField: "لسا ما انْدفع إشي، فما في مصاري ترجع.",
+    cancelConfirmYes: "آه، الغيه",
+    keepBooking: "خلّيه",
     noFields: "ما في ملاعب بتسجّل لسا.",
     back: "الرئيسية",
     closed: "الحجز مسكّر هلأ. ارجع بعدين.",
@@ -849,6 +860,7 @@ const ar: MatchStrings = {
   save: "احفظ",
   cancel: "إلغاء",
   remove: "شيل",
+  removeConfirm: (name) => `شيل ${name} من الماتش؟`,
   error: "صار خطأ. جرّب كمان مرة.",
 };
 

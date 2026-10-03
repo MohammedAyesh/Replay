@@ -68,6 +68,7 @@ export default function FriendsPage() {
       text: copy.sharePrefix,
       url: friendLink.data.url,
     });
+    if (result === "cancelled") return;
     if (result === "copied") toast({ title: copy.linkCopied });
     else if (result === "shared") toast({ title: copy.linkShared });
     else toast({ title: copy.shareFailed, variant: "destructive" });
