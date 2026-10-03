@@ -864,59 +864,244 @@ export const KEEPER = {
   lineMetres: 1.4,
   /** ...and this close to the middle of it is the goalkeeper's, metres */
   halfWidthMetres: 4,
+  /**
+   * A keeper who stands further out is known by where he spends the spell:
+   * a track with at least `spellTouches` touches within `spellSeconds` of the
+   * shot, `spellShare` of them in the goal area being attacked, spread over at
+   * least `spellSpanSeconds` (so three touches in one scramble do not make a
+   * keeper). On recording 392 the rush goalie took the ball 3 m out, beyond
+   * `lineMetres`, and was credited with the shot he was receiving; 8 of his
+   * 10 touches that minute were in his own goal area. The match's real
+   * keepers sit at 95-100%.
+   */
+  spellSeconds: 60,
+  spellTouches: 3,
+  spellShare: 0.75,
+  spellSpanSeconds: 10,
 } as const;
 
-/**
- * Who struck it: the last touch before the ball went in (or was seen in the
- * goal mouth) that was not the goalkeeper's. On a goal the keeper picks the
- * ball out of the net; on a save he is the one who stopped it -- either way
- * "the last touch" was his, and he was being credited with other people's
- * goals and shots (Mohammed, 2026-09-26; 7 of 12 real shots on the 19 Sep
- * game). So touches from inside the goal mouth at the end being attacked are
- * skipped, and so is every touch by that same track in the window. Shirt
- * colour is not used: a keeper's kit often looks like the attackers' and it
- * took real shooters' credit away. Without a pitch model this falls back to
- * the plain last touch.
- */
-function strikerBefore(touches: Touch[], t: number, window: number, pitch: PitchSize | null): Touch | null {
+export const STRIKE = {
+  /**
+   * The goal area: this deep from the goal line and this far either side of
+   * its middle, metres. A touch in it is a finish, a save, a block or a
+   * scramble, and is only credited as the shot when the ball came to it from
+   * outside the area.
+   */
+  areaDepthMetres: 5,
+  areaHalfWidthMetres: 7,
+  /**
+   * A touch this close to the goal line, met by a ball that was already
+   * heading into the mouth from further out, is a save or a block: the shot
+   * was the earlier touch's. (Rec 392, 56:56: a shot from 9 m was credited to
+   * the player it reached 1.6 m off the line.)
+   */
+  deflectMetres: 2.5,
+  /**
+   * ...and the ball reached it at least this fast, m/s (about 43 km/h): a
+   * shot. A slower ball is a pass, and the touch on it the finish (the 19 Sep
+   * game's real close-range shooters, 1.7 m out).
+   */
+  shotSpeed: 12,
+  /** "heading into the mouth": the line through the two touches crosses the goal line this close to its middle, metres */
+  mouthHalfWidthMetres: 4,
+  /** ...and the later touch is at least this much nearer the goal line, metres */
+  approachMetres: 1,
+  /** a touch more than this long before the next one is not the ball that reached it, seconds */
+  flightSeconds: 3,
+  /**
+   * No shot flies faster than this, m/s (about 115 km/h). A "striker" whose
+   * ball would have had to go faster to reach the goal mouth when it did did
+   * not strike it: the ball tracker jumped (rec 392, 68:24: a spare ball
+   * lying in the goal) or the real striker was not seen. Credit goes to
+   * nobody rather than to him.
+   */
+  maxBallSpeed: 32,
+} as const;
+
+export const KICKOFF = {
+  /**
+   * A shot "on target" this soon after a goal, with the ball at the centre
+   * spot just before it, is the kick-off -- the ball tracker or goals.py saw
+   * a ball in a goal mouth (often the one just scored, or a spare) while the
+   * game restarted (rec 392, 68:24). It is dropped.
+   */
+  afterGoalSeconds: 120,
+  /** the centre-spot touch is this close to the spot, metres... */
+  radiusMetres: 3,
+  /** ...and this long before the shot at most, seconds */
+  leadSeconds: 4,
+} as const;
+
+/** Touches with t in [from, to], by binary search (touches are sorted by frame). */
+function touchesBetween(touches: Touch[], from: number, to: number): Touch[] {
   let lo = 0;
   let hi = touches.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (touches[mid].t <= t + 0.5) lo = mid + 1; else hi = mid;
+    if (touches[mid].t < from) lo = mid + 1; else hi = mid;
   }
-  const candidates: Touch[] = [];
-  for (let k = lo - 1; k >= 0 && t - touches[k].t <= window; k--) candidates.push(touches[k]);
+  const out: Touch[] = [];
+  for (let k = lo; k < touches.length && touches[k].t <= to; k++) out.push(touches[k]);
+  return out;
+}
+
+/**
+ * Which goal the event happened at: the end nearest the ball among the
+ * touches within 1.5 s of it (the ball is in, or arriving at, a goal mouth),
+ * else nearest the latest touch before it.
+ */
+function attackedGoalX(touches: Touch[], t: number, fallback: Touch | undefined, pitch: PitchSize): number | null {
+  let best: { d: number; x: number } | null = null;
+  for (const c of touchesBetween(touches, t - 1.5, t + 1.5)) {
+    const p = c.ball ?? c.foot;
+    if (!p) continue;
+    for (const x of [0, pitch.length]) {
+      const d = Math.abs(p[0] - x);
+      if (!best || d < best.d) best = { d, x };
+    }
+  }
+  if (best) return best.x;
+  const at = fallback?.foot ?? fallback?.ball ?? null;
+  return at ? (at[0] < pitch.length / 2 ? 0 : pitch.length) : null;
+}
+
+/**
+ * Who struck it, walking back from the event through the touches in the
+ * window (newest first). The rules, from recording 392 (first real match,
+ * 2026-10-04) and the 19 Sep game:
+ *
+ *   1. Never the goalkeeper. A keeper is a track with a touch in the goal
+ *      mouth at the end being attacked (KEEPER.lineMetres), or one who spent
+ *      the spell in that goal area (KEEPER.spell*). Every touch of his is
+ *      skipped. Shirt colour is not used: a keeper's kit often looks like the
+ *      attackers' and it took real shooters' credit away.
+ *   2. A touch outside the goal area is the strike.
+ *   3. A touch inside the goal area is the strike only if the ball came to it
+ *      from outside the area (a pass or cross finished from close in) --
+ *      unless it was within STRIKE.deflectMetres of the line and the ball was
+ *      already flying into the mouth at shot speed: then it was a save or a
+ *      block, that track is skipped and the earlier touch is the strike.
+ *   4. If the ball reached it from another touch inside the area, it was a
+ *      scramble and nobody can be named.
+ *   5. The ball must be able to get from the striker to the goal mouth in
+ *      time (STRIKE.maxBallSpeed); otherwise nobody is named.
+ *
+ * Without a pitch model this falls back to the plain last touch.
+ */
+function strikerBefore(touches: Touch[], t: number, window: number, pitch: PitchSize | null): Touch | null {
+  const candidates = touchesBetween(touches, t - window, t + 0.5).reverse();
   if (!candidates.length) return null;
-  const at = candidates.find((c) => c.foot)?.foot ?? candidates.find((c) => c.ball)?.ball ?? null;
-  if (!pitch || !at) return candidates[0];
-  const goalX = at[0] < pitch.length / 2 ? 0 : pitch.length;
+  if (!pitch) return candidates[0];
+  const goalX = attackedGoalX(touches, t, candidates[0], pitch);
+  if (goalX === null) return candidates[0];
+  const mid = pitch.width / 2;
+  const depth = (p: [number, number]) => Math.abs(p[0] - goalX);
+  const inArea = (c: Touch) => {
+    const p = c.foot ?? c.ball;
+    return !!p && depth(p) <= STRIKE.areaDepthMetres && Math.abs(p[1] - mid) <= STRIKE.areaHalfWidthMetres;
+  };
   const inMouth = (c: Touch) => !!c.foot
-    && Math.abs(c.foot[0] - goalX) <= KEEPER.lineMetres
-    && Math.abs(c.foot[1] - pitch.width / 2) <= KEEPER.halfWidthMetres;
-  const keeperIds = new Set(candidates.filter(inMouth).map((c) => c.trackId));
-  return candidates.find((c) => !keeperIds.has(c.trackId)) ?? null;
+    && depth(c.foot) <= KEEPER.lineMetres
+    && Math.abs(c.foot[1] - mid) <= KEEPER.halfWidthMetres;
+  const skipped = new Set(candidates.filter(inMouth).map((c) => c.trackId));
+  const spellKeeper = (trackId: string): boolean => {
+    const spell = touchesBetween(touches, t - KEEPER.spellSeconds, t + KEEPER.spellSeconds).filter((c) => c.trackId === trackId && (c.foot ?? c.ball));
+    if (spell.length < KEEPER.spellTouches || spell[spell.length - 1].t - spell[0].t < KEEPER.spellSpanSeconds) return false;
+    return spell.filter(inArea).length >= KEEPER.spellShare * spell.length;
+  };
+  const keeperChecked = new Map<string, boolean>();
+  const isKeeper = (trackId: string) => {
+    if (skipped.has(trackId)) return true;
+    if (!keeperChecked.has(trackId)) keeperChecked.set(trackId, spellKeeper(trackId));
+    return keeperChecked.get(trackId)!;
+  };
+  // the ball reached the goal mouth here: the first save/block touch after the strike, else the event itself
+  const reached = (striker: Touch): { t: number; at: [number, number] } | null => {
+    const after = touchesBetween(touches, striker.t + 0.01, t + 0.5)
+      .find((c) => c.trackId !== striker.trackId && inArea(c) && (c.ball ?? c.foot));
+    if (after) return { t: after.t, at: (after.ball ?? after.foot)! };
+    const p = striker.ball ?? striker.foot;
+    return p ? { t, at: [goalX, Math.min(Math.max(p[1], mid - STRIKE.mouthHalfWidthMetres), mid + STRIKE.mouthHalfWidthMetres)] } : null;
+  };
+  const plausible = (striker: Touch): Touch | null => {
+    const p = striker.ball ?? striker.foot;
+    const r = reached(striker);
+    // a touch at (or after) the moment the ball was seen there cannot be timed: no verdict
+    if (!p || !r || r.t - striker.t < 0.25) return striker;
+    const metres = Math.hypot(r.at[0] - p[0], r.at[1] - p[1]);
+    return metres <= STRIKE.maxBallSpeed * (r.t - striker.t) ? striker : null;
+  };
+  /** the ball from p to q was heading into the goal mouth */
+  const goalward = (p: [number, number], q: [number, number]) => {
+    if (depth(q) > depth(p) - STRIKE.approachMetres) return false;
+    const y = q[1] + ((q[1] - p[1]) * depth(q)) / (depth(p) - depth(q));
+    return Math.abs(y - mid) <= STRIKE.mouthHalfWidthMetres;
+  };
+  for (let k = 0; k < candidates.length; k++) {
+    const c = candidates[k];
+    if (isKeeper(c.trackId)) continue;
+    if (!inArea(c)) return plausible(c);
+    // the start of this player's run of touches, and the touch the ball came from before it
+    let first = k;
+    while (first + 1 < candidates.length && candidates[first + 1].trackId === c.trackId) first++;
+    const c0 = candidates[first];
+    const before = touchesBetween(touches, c0.t - STRIKE.flightSeconds, c0.t - 0.01).reverse().find((x) => x.trackId !== c.trackId) ?? null;
+    if (!before) return plausible(c);
+    const from = before.ball ?? before.foot;
+    const to = c0.ball ?? c0.foot;
+    // the ball came from inside the area: off the keeper (a rebound) the touch is the strike, off anyone
+    // else it was a scramble and nobody can say who struck it
+    if (inArea(before)) return isKeeper(before.trackId) ? plausible(c) : null;
+    const near = c0.foot ?? c0.ball;
+    const fast = !!from && !!to && Math.hypot(to[0] - from[0], to[1] - from[1]) >= STRIKE.shotSpeed * (c0.t - before.t);
+    if (from && to && near && depth(near) <= STRIKE.deflectMetres && fast && goalward(from, to)) {
+      skipped.add(c.trackId); // a save or a block: the strike was earlier
+      k = first;
+      continue;
+    }
+    return plausible(c);
+  }
+  return null;
 }
 
 /** Goals the detector saw, merged, each with the player who scored it (never the goalkeeper). */
 export function detectedGoals(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null): DetectedGoal[] {
+  return mergedGoalTimes(events).map((t) => {
+    const touch = strikerBefore(touches, t, GOAL.scorerSeconds, pitch);
+    return { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null };
+  });
+}
+
+function mergedGoalTimes(events: BundleEvent[]): number[] {
   const goals = events.filter((e) => e.type.toLowerCase() === "goal").map((e) => e.t).sort((a, b) => a - b);
   const merged: number[] = [];
   for (const t of goals) {
     if (merged.length && t - merged[merged.length - 1] <= GOAL.mergeSeconds) merged[merged.length - 1] = t;
     else merged.push(t);
   }
-  return merged.map((t) => {
-    const touch = strikerBefore(touches, t, GOAL.scorerSeconds, pitch);
-    return { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null };
+  return merged;
+}
+
+/** The restart after a goal: the ball at the centre spot shortly after one (KICKOFF). */
+function isKickoff(t: number, goals: number[], touches: Touch[], pitch: PitchSize | null): boolean {
+  if (!pitch || !goals.some((g) => g < t && t - g <= KICKOFF.afterGoalSeconds)) return false;
+  return touchesBetween(touches, t - KICKOFF.leadSeconds, t).some((c) => {
+    const p = c.ball ?? c.foot;
+    return !!p && Math.hypot(p[0] - pitch.length / 2, p[1] - pitch.width / 2) <= KICKOFF.radiusMetres;
   });
 }
 
-/** Shots on target (the ball seen inside a goal mouth), each with the player who struck it (never the goalkeeper). */
+/**
+ * Shots on target (the ball seen inside a goal mouth), each with the player
+ * who struck it -- never the goalkeeper, and nobody when no touch can have
+ * been the strike. Kick-offs read as shots are dropped.
+ */
 export function detectedShots(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null): DetectedShot[] {
+  const goals = events.filter((e) => e.type.toLowerCase() === "goal").map((e) => e.t);
   return events
     .filter((e) => e.type.toLowerCase() === "shot")
     .sort((a, b) => a.t - b.t)
+    .filter((e) => !isKickoff(e.t, goals, touches, pitch))
     .map((e) => {
       const touch = strikerBefore(touches, e.t, GOAL.shooterSeconds, pitch);
       return { t: e.t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, touchF: touch?.f ?? null };
