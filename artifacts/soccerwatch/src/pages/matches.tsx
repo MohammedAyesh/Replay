@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { useFriendsCopy } from "@/i18n/friends-strings";
 import { useAuth } from "@/lib/auth";
+import { findPath } from "@/lib/find-nav";
 import { useJoinMatch, useMyMatches, useReplayProfile, type MyMatchItem } from "@/lib/match-api";
 
 type MatchCodeFormValues = { code: string };
@@ -64,7 +65,8 @@ export default function Matches() {
   });
 
   const data = matches.data;
-  const recentFindRecordingId = data?.recent.find((match) => match.findRecordingId != null)?.findRecordingId ?? null;
+  const recentFind = data?.recent.find((match) => match.findRecordingId != null) ?? null;
+  const recentFindRecordingId = recentFind?.findRecordingId ?? null;
   const empty = data && !data.live.length && !data.upcoming.length && !data.recent.length && !data.invites.length;
 
   return (
@@ -170,7 +172,7 @@ export default function Matches() {
           <p className="text-sm leading-5 text-muted-text">{copy.competitionFormStart}</p>
           {recentFindRecordingId !== null && (
             <Link
-              href={`/find/${recentFindRecordingId}`}
+              href={findPath(recentFindRecordingId, recentFind?.code)}
               data-testid="button-find-yourself-start-form"
               className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
             >
@@ -224,7 +226,7 @@ function Section({ title, items, copy, now, icon }: {
             <MatchCard item={m} copy={copy} now={now} />
             {m.findRecordingId ? (
               <Link
-                href={`/find/${m.findRecordingId}`}
+                href={findPath(m.findRecordingId, m.code)}
                 className="ms-4 inline-flex w-fit items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
               >
                 <Sparkles className="h-3.5 w-3.5" />{copy.findTitle}

@@ -5,7 +5,13 @@ import { L2G, mmss, OUT } from "@/lib/game-claim/model";
 import { hkey, offLocal, timeline, type Ctx, type Hole } from "@/lib/game-claim/claim";
 import type { GameStrings } from "@/i18n/game-strings";
 
-/** Small building blocks the game-claim screens share. */
+/**
+ * Small building blocks the game-claim screens share.
+ *
+ * They follow the match report (components/match/report): Turf eyebrows,
+ * Surface cards with rounded-2xl corners, rounded-full buttons, one Floodlight
+ * action per screen, LTR tabular numbers.
+ */
 
 export function Btn({
   children,
@@ -19,7 +25,7 @@ export function Btn({
 }: {
   children: React.ReactNode;
   onClick?: () => void;
-  kind?: "primary" | "ghost" | "violet";
+  kind?: "primary" | "ghost" | "violet" | "turf";
   size?: "sm" | "md";
   disabled?: boolean;
   className?: string;
@@ -35,10 +41,12 @@ export function Btn({
       onClick={onClick}
       className={cn(
         "inline-flex items-center justify-center rounded-full font-semibold leading-snug transition-colors disabled:opacity-40",
-        size === "sm" ? "min-h-9 px-3 py-1.5 text-xs" : "min-h-11 px-4 py-2 text-sm",
-        kind === "primary" && "bg-floodlight font-display font-bold text-void hover:opacity-90",
+        size === "sm" ? "min-h-9 px-3.5 py-1.5 text-xs" : "min-h-12 px-5 py-2 text-sm",
+        kind === "primary" && cn("bg-floodlight font-bold text-void hover:opacity-90", size === "md" && "text-base"),
+        // #7B5CFF fails AA as text on Void; violet TEXT is #A98CFF, the border keeps the brand violet.
         kind === "violet" && "border border-violet text-[#A98CFF] hover:bg-violet/10",
-        kind === "ghost" && "border border-line text-text hover:border-muted-text",
+        kind === "ghost" && "border border-line bg-surface/60 text-text hover:border-muted-text",
+        kind === "turf" && "border border-turf/60 text-turf hover:bg-turf/10",
         className,
       )}
     >
@@ -52,11 +60,46 @@ export function Row({ children, className }: { children: React.ReactNode; classN
 }
 
 export function Eyebrow({ children }: { children: React.ReactNode }) {
-  return <p className="font-display text-xs font-bold uppercase tracking-[0.14em] text-muted-text">{children}</p>;
+  return <p className="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-turf rtl:text-xs rtl:tracking-normal">{children}</p>;
 }
 
 export function Title({ children, big }: { children: React.ReactNode; big?: boolean }) {
-  return <h1 className={cn("font-display font-bold leading-tight text-text", big ? "text-3xl" : "text-2xl")}>{children}</h1>;
+  return <h1 className={cn("font-display font-bold leading-tight text-text", big ? "text-[28px]" : "text-2xl")}>{children}</h1>;
+}
+
+/** A small rounded pill: who else picked a person, counts, states. */
+export function Chip({ children, tone = "muted", className }: {
+  children: React.ReactNode;
+  tone?: "muted" | "turf" | "violet";
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex min-h-7 w-fit items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold",
+        tone === "turf" && "border-turf/40 bg-turf/10 text-turf",
+        tone === "violet" && "border-violet/40 bg-violet/10 text-[#A98CFF]",
+        tone === "muted" && "border-line bg-raised text-muted-text",
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Where the player is in the game: one segment per ten-minute block. */
+export function ProgressRail({ step, of, label }: { step: number; of: number; label: string }) {
+  return (
+    <div className="flex items-center gap-2" role="progressbar" aria-valuemin={0} aria-valuemax={of} aria-valuenow={step} aria-label={label}>
+      <div className="flex flex-1 gap-1">
+        {Array.from({ length: of }, (_, index) => (
+          <span key={index} className={cn("h-1 flex-1 rounded-full", index < step ? "bg-turf" : "bg-line")} />
+        ))}
+      </div>
+      <span dir="ltr" className="shrink-0 font-mono text-[11px] tabular-nums text-muted-text">{step}/{of}</span>
+    </div>
+  );
 }
 
 export function Lede({ children }: { children: React.ReactNode }) {
@@ -65,8 +108,9 @@ export function Lede({ children }: { children: React.ReactNode }) {
 
 export function Section({ title, children }: { title?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-3 border-t border-line pt-4">
-      {title && <h3 className="font-display text-lg font-bold text-text">{title}</h3>}
+    // A divider-led block, like a match report section (cards sit inside it).
+    <div className="flex flex-col gap-3 border-t border-[#1B2236] pt-5">
+      {title && <h3 className="font-display text-lg font-bold leading-tight text-text">{title}</h3>}
       {children}
     </div>
   );
@@ -90,7 +134,7 @@ export function Crop({ chunk, keyName, h = 104, className }: { chunk: Chunk; key
 export function Stat({ value, label }: { value: React.ReactNode; label: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-line bg-surface p-3">
-      <b dir="ltr" className="block font-display text-3xl font-bold leading-none tabular-nums text-floodlight">{value}</b>
+      <b dir="ltr" className="block font-mono text-[28px] font-bold leading-none tabular-nums text-text rtl:text-end">{value}</b>
       <span className="mt-1 block text-xs text-muted-text">{label}</span>
     </div>
   );
