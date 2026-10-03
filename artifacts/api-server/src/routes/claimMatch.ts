@@ -64,6 +64,13 @@ import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { logger } from "../lib/logger";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
+import {
+  fitMatchWindow,
+  framesTouchMatchWindow,
+  parseStoredMatchWindow,
+  readMatchWindow,
+  type StoredMatchWindow,
+} from "../lib/matchWindow";
 import { parseBallSidecar, type BallSidecar } from "../lib/matchPlay";
 import { playCache } from "../lib/matchPlayLoad";
 import { parsePeopleSidecar, type PeopleSidecar } from "../lib/peopleSidecar";
@@ -246,6 +253,23 @@ export function sanitizeUploadedProvenance(value: unknown): Record<string, unkno
   for (const [key, entry] of Object.entries(raw)) {
     if (Object.keys(out).length >= PROVENANCE_MAX_KEYS) break;
     if (SERVER_OWNED_PROVENANCE.has(key)) continue;
+    if (key === "matchWindow") {
+      // The one structured value an upload may carry: the pipeline's detected
+      // match window (lib/matchWindow.ts). Parsed to its fixed shape, and
+      // always recorded as the detector's -- an upload is not an admin's
+      // decision, and setBy/setAt belong to the admin endpoint. Checked
+      // against the bundle's duration in storeUploadBundle.
+      const window = parseStoredMatchWindow(entry, "detector");
+      if (window) {
+        out.matchWindow = {
+          startSeconds: window.startSeconds,
+          endSeconds: window.endSeconds ?? null,
+          source: "detector",
+          ...(window.why ? { why: window.why } : {}),
+        } satisfies StoredMatchWindow;
+      }
+      continue;
+    }
     if (typeof entry === "string") {
       out[key] = entry.slice(0, PROVENANCE_MAX_VALUE_CHARS);
     } else if (typeof entry === "number" && Number.isFinite(entry)) {
@@ -2128,6 +2152,32 @@ async function cleanupClaimObjects(paths: Iterable<string>, context: string): Pr
   }
 }
 
+/**
+ * Which match window a newly uploaded bundle keeps.
+ *
+ * The new bundle's own (detector) window wins: it was measured on the
+ * tracking being stored, and a replacement is treated as new tracking
+ * everywhere else too. Only when the new bundle carries none is an ADMIN
+ * window from the bundle it replaces carried over -- an admin's "this match
+ * starts at 24:20" is a fact about the footage, which a re-run of the tracker
+ * does not change, and dropping it silently would put the previous group's
+ * game back into everyone's numbers. A detector window from the old bundle is
+ * not carried: the new run had the chance to detect one and did not.
+ * Either way the window is refitted to the new duration, and dropped when it
+ * no longer fits (it starts after the new footage ends).
+ */
+export function matchWindowForReplacement(
+  uploaded: unknown,
+  previous: unknown,
+  duration: number,
+): StoredMatchWindow | null {
+  const fromUpload = fitMatchWindow(parseStoredMatchWindow(uploaded, "detector"), duration);
+  if (fromUpload) return { ...fromUpload, source: "detector" };
+  const kept = parseStoredMatchWindow(previous, "detector");
+  if (kept?.source !== "admin") return null;
+  return fitMatchWindow(kept, duration);
+}
+
 export async function storeUploadBundle(recordingId: number, adminId: number, upload: UploadBundle) {
   const validationError = validateUploadBundle(upload);
   if (validationError) throw new Error(validationError);
@@ -2188,10 +2238,17 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       matchRosterPath = storedRoster.objectPath;
     }
     const bundleFingerprint = trackingBundleFingerprint(upload.manifest, upload.segments);
+    const matchWindow = matchWindowForReplacement(
+      upload.manifest.provenance?.matchWindow,
+      previousBundle?.manifest.provenance?.matchWindow,
+      upload.manifest.duration,
+    );
+    const { matchWindow: _uploadedWindow, ...uploadedProvenance } = upload.manifest.provenance ?? {};
     const manifest: TrackingManifest = {
       ...upload.manifest,
        provenance: {
-         ...(upload.manifest.provenance ?? {}),
+         ...uploadedProvenance,
+         ...(matchWindow ? { matchWindow } : {}),
          bundleFingerprint,
          identityMapBundleFingerprint: undefined,
        },
@@ -2564,6 +2621,25 @@ async function rosterPlayersWithPhotos(
   });
 }
 
+/**
+ * The roster the claim flow offers, without the tracks that lie entirely
+ * outside the recording's match window (another group's game running over).
+ * A track straddling the window's edge stays: the person in it is playing
+ * this match too. A player left with no tracks is not offered at all.
+ */
+export function rosterInsideMatchWindow(roster: MatchRoster, manifest: TrackingManifest): MatchRoster {
+  if (!readMatchWindow(manifest)) return roster;
+  return {
+    ...roster,
+    players: roster.players
+      .map((player) => ({
+        ...player,
+        parts: player.parts.filter((part) => framesTouchMatchWindow(part.fromFrame, part.toFrame, manifest)),
+      }))
+      .filter((player) => player.parts.length > 0),
+  };
+}
+
 /** GET /recordings/:id/claim-match/roster -- match-wide roster and a few existing crop samples. */
 router.get("/recordings/:id/claim-match/roster", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
@@ -2590,7 +2666,7 @@ router.get("/recordings/:id/claim-match/roster", async (req, res): Promise<void>
   }
   try {
     const bytes = await readClaimSegment(manifest.matchRosterPath);
-    const roster = JSON.parse(bytes.toString("utf8")) as MatchRoster;
+    const roster = rosterInsideMatchWindow(JSON.parse(bytes.toString("utf8")) as MatchRoster, manifest);
     const response = GetClaimMatchRosterResponse.parse({
       players: await rosterPlayersWithPhotos(manifest, roster),
     });

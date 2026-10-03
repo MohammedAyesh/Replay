@@ -1643,6 +1643,53 @@ export interface AdminTrackingBundlePatchBody {
   pitchModel?: TrackingPitchModel | null;
 }
 
+export interface AdminMatchWindowBody {
+  /**
+     * Tracking seconds where the match starts; null clears the window.
+     * @minimum 0
+     * @nullable
+     */
+  startSeconds: number | null;
+  /**
+     * Tracking seconds where the match ends; omitted or null means the end of the recording.
+     * @nullable
+     */
+  endSeconds?: number | null;
+  /** @maxLength 500 */
+  why?: string;
+}
+
+export type RecordingMatchWindowSource = typeof RecordingMatchWindowSource[keyof typeof RecordingMatchWindowSource];
+
+
+export const RecordingMatchWindowSource = {
+  admin: 'admin',
+  detector: 'detector',
+} as const;
+
+export interface RecordingMatchWindow {
+  startSeconds: number;
+  /**
+     * Null means the end of the recording.
+     * @nullable
+     */
+  endSeconds: number | null;
+  source: RecordingMatchWindowSource;
+  setBy?: number;
+  setAt?: string;
+  why?: string;
+}
+
+export interface AdminMatchWindowResponse {
+  recordingId: number;
+  /** The tracked duration the window is checked against, seconds. */
+  duration: number;
+  matchWindow: RecordingMatchWindow | null;
+  /** Claims on the recording whose coverage, completion and clip list were re-derived. */
+  resyncedClaims: number;
+  updatedAt: string;
+}
+
 export interface AdminTrackingBundlePatchResponse {
   recordingId: number;
   /** @minimum 0 */

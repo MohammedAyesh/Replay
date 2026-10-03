@@ -75,6 +75,7 @@ import {
 import { getClaimMatchWritableBundle, requireAccountUser } from "./claimMatch";
 import { ammanLocalInstant } from "../lib/matchRooms";
 import { recordingWindow } from "../lib/matchFeed";
+import { clipPartsToMatchWindow, clipRangeToMatchWindow, readMatchWindow } from "../lib/matchWindow";
 
 const router: IRouter = Router();
 
@@ -151,8 +152,17 @@ async function claimMatchChoices(ctx: ChainContext): Promise<{
     const start = ammanLocalInstant(request.startLocal);
     const end = ammanLocalInstant(request.endLocal);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= rw.startMs || start >= rw.endMs) continue;
-    const startSeconds = Math.max(0, (start - rw.startMs) / 1000);
-    const endSeconds = Math.min(source.manifest.duration, (end - rw.startMs) / 1000);
+    // The picker offers the booking only where it is the match: clipped to
+    // manifest.provenance.matchWindow, and not at all when the booking only
+    // covers footage outside it (another group's game running over).
+    const share = clipRangeToMatchWindow(
+      Math.max(0, (start - rw.startMs) / 1000),
+      Math.min(source.manifest.duration, (end - rw.startMs) / 1000),
+      source.manifest,
+    );
+    if (!share) continue;
+    const startSeconds = share.fromSeconds;
+    const endSeconds = share.toSeconds;
     const recordingOffsetSec = (rw.startMs - start) / 1000;
     const [players, games, spans] = await Promise.all([
       db.select().from(matchPlayersTable).where(eq(matchPlayersTable.matchId, room.id)),
@@ -189,7 +199,10 @@ async function claimMatchChoices(ctx: ChainContext): Promise<{
       })).filter((s) => s.toSeconds > s.fromSeconds) : [],
       rosterTeam: own ? own.team : null,
     });
-    if (end > rw.endMs && !continuation) {
+    // A window that ends before the footage does says the match ended here,
+    // so there is nothing to continue onto in the next recording.
+    const windowEnd = readMatchWindow(source.manifest)?.endSeconds ?? source.manifest.duration;
+    if (end > rw.endMs && !continuation && windowEnd >= source.manifest.duration) {
       const next = await db.select({ recording: recordingsTable, manifest: recordingTrackingBundlesTable.manifest, field: fieldsTable })
         .from(recordingsTable)
         .innerJoin(recordingTrackingBundlesTable, eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id))
@@ -217,6 +230,11 @@ function inPlaySpans(ctx: ChainContext): Array<[number, number]> {
   return spans;
 }
 
+function matchWindowForClient(ctx: ChainContext): { startSeconds: number; endSeconds: number } | null {
+  const window = readMatchWindow(ctx.manifest);
+  return window ? { startSeconds: window.startSeconds, endSeconds: window.endSeconds } : null;
+}
+
 router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> => {
   const ctx = await begin(req, res);
   if (!ctx) return;
@@ -239,6 +257,12 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     staleState: stale,
     bundleFingerprint: ctx.fingerprint,
     inPlaySpans: inPlaySpans(ctx),
+    /**
+     * Where the match is on this recording (tracking seconds), or null for
+     * the whole recording. The page starts the claim inside it and skips
+     * blocks that lie entirely outside it, as it does for a chosen booking.
+     */
+    matchWindow: matchWindowForClient(ctx),
     matches: choices.matches,
     continuation: choices.continuation,
     updatedAt: row?.updatedAt?.toISOString() ?? null,
@@ -509,7 +533,17 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
     return;
   }
   const identity = (access.row?.bundle?.manifest.identities ?? []).find((item) => item.id === claimIdentityId(userId, recordingId));
-  const parts: ClaimedPart[] = (identity?.parts ?? []).map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame }));
+  // Only the match counts: the claimant's parts, and every touch, dribble and
+  // detected event the stats screen sums, are cut to the match window.
+  const window = readMatchWindow(play.manifest);
+  const inWindow = (t: number) => !window || (t >= window.startSeconds && t < window.endSeconds);
+  const parts: ClaimedPart[] = clipPartsToMatchWindow(
+    (identity?.parts ?? []).map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
+    play.manifest,
+  );
+  const touches = window ? play.touches.filter((t) => inWindow(t.t)) : play.touches;
+  const playDribbles = window ? play.dribbles.filter((d) => inWindow(d.t0)) : play.dribbles;
+  const playEvents = window ? play.events.filter((e) => inWindow(e.t)) : play.events;
   const ownKit = kitOfParts(parts, play.sidecars, play.fps);
 
   const [row] = await db
@@ -529,18 +563,18 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
   else { pick = seedTeams(ownKit, play.kitOptions); source = pick ? "seeded" : null; }
   if (!play.hasKits) { pick = null; source = null; }
 
-  const events = passEvents(play.touches, pick);
-  const mine = playerPlay(play.touches, events, parts, Boolean(pick));
+  const events = passEvents(touches, pick);
+  const mine = playerPlay(touches, events, parts, Boolean(pick));
   const pitch = pitchSizeOf(play.manifest);
-  const goals = detectedGoals(play.events, play.touches, pitch);
-  const shots = detectedShots(play.events, play.touches, pitch);
-  const own = playerMoments(parts, play.dribbles, goals, shots);
+  const goals = detectedGoals(playEvents, touches, pitch);
+  const shots = detectedShots(playEvents, touches, pitch);
+  const own = playerMoments(parts, playDribbles, goals, shots);
   const perSide = <T extends { kit: Lab | null }>(rows: T[]): [number, number] => {
     const n: [number, number] = [0, 0];
     for (const r of rows) { const side = sideOfKit(r.kit, pick); if (side !== null) n[side]++; }
     return n;
   };
-  const dribbleTeams = pick ? teamDribbles(play.dribbles, play.kits, pick) : null;
+  const dribbleTeams = pick ? teamDribbles(playDribbles, play.kits, pick) : null;
   res.json({
     available: play.hasBall,
     hasPitch: play.hasPitch,
@@ -550,14 +584,14 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
     ownKit,
     teams: pick ? { a: pick.a, b: pick.b, source } : null,
     team: pick ? {
-      ...teamStats(play.touches, events, pick),
+      ...teamStats(touches, events, pick),
       dribbles: dribbleTeams!.total,
       dribblesWon: dribbleTeams!.won,
       dribblesLost: dribbleTeams!.lost,
       shots: perSide(shots),
       goals: perSide(goals),
     } : null,
-    totals: { touches: play.touches.length, rejected: play.rejected },
+    totals: { touches: touches.length, rejected: play.rejected },
     rule: { passMetres: PASS.passMetres, contestMetres: PASS.contestMetres, maxGapSeconds: PASS.maxGapSeconds },
     mine: {
       touches: mine.touches.map((t) => ({ f: t.f, t: t.t, trackId: t.trackId, ball: t.ball, foot: t.foot })),
@@ -571,7 +605,7 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
       goals: own.goals.map((g) => ({ t: g.t, trackId: g.trackId })),
       shots: own.shots.map((x) => ({ t: x.t, trackId: x.trackId })),
     },
-    dribbleRule: { minMetres: DRIBBLE.minMetres, outcomeSeconds: DRIBBLE.outcomeSeconds, total: play.dribbles.length },
+    dribbleRule: { minMetres: DRIBBLE.minMetres, outcomeSeconds: DRIBBLE.outcomeSeconds, total: playDribbles.length },
   });
 });
 

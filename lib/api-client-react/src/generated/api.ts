@@ -39,6 +39,8 @@ import type {
   AdminFootageOwnerInput,
   AdminFootagePayment,
   AdminFootagePaymentInput,
+  AdminMatchWindowBody,
+  AdminMatchWindowResponse,
   AdminRecordingPlayerMetricsResponse,
   AdminTrackingBundlePatchBody,
   AdminTrackingBundlePatchResponse,
@@ -3931,6 +3933,78 @@ export const useReplaceTrackingBundle = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getReplaceTrackingBundleMutationOptions(options));
+    }
+
+export const getSetRecordingMatchWindowUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/match-window`
+}
+
+/**
+ * Stores manifest.provenance.matchWindow, in tracking-clock seconds (the clock of segments, events and claim parts). Everything a player's numbers, moments and claim picker come from is clipped to it: match and team stats, the report and Home tiles, the claim picker's booking windows, claim coverage (measured against the window's length), earned clips and personal moments. startSeconds null clears it. It does not change the bundle fingerprint, so no claim is invalidated.
+ * @summary Set or clear where the match is on a recording
+ */
+export const setRecordingMatchWindow = async (id: number,
+    adminMatchWindowBody: AdminMatchWindowBody, options?: RequestInit): Promise<AdminMatchWindowResponse> => {
+
+  return customFetch<AdminMatchWindowResponse>(getSetRecordingMatchWindowUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminMatchWindowBody)
+  }
+);}
+
+
+
+
+export const getSetRecordingMatchWindowMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setRecordingMatchWindow>>, TError,{id: number;data: BodyType<AdminMatchWindowBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setRecordingMatchWindow>>, TError,{id: number;data: BodyType<AdminMatchWindowBody>}, TContext> => {
+
+const mutationKey = ['setRecordingMatchWindow'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setRecordingMatchWindow>>, {id: number;data: BodyType<AdminMatchWindowBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  setRecordingMatchWindow(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetRecordingMatchWindowMutationResult = NonNullable<Awaited<ReturnType<typeof setRecordingMatchWindow>>>
+    export type SetRecordingMatchWindowMutationBody = BodyType<AdminMatchWindowBody>
+    export type SetRecordingMatchWindowMutationError = ErrorType<void>
+
+    /**
+ * @summary Set or clear where the match is on a recording
+ */
+export const useSetRecordingMatchWindow = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setRecordingMatchWindow>>, TError,{id: number;data: BodyType<AdminMatchWindowBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setRecordingMatchWindow>>,
+        TError,
+        {id: number;data: BodyType<AdminMatchWindowBody>},
+        TContext
+      > => {
+      return useMutation(getSetRecordingMatchWindowMutationOptions(options));
     }
 
 export const getGetAdminRecordingPlayerMetricsUrl = (id: number,) => {

@@ -31,6 +31,7 @@ import { normaliseOffPitchSpans } from "./claimOffPitch";
 import { logger } from "../lib/logger";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { playerMoments } from "../lib/matchPlay";
+import { clipPartsToMatchWindow, matchWindowKey } from "../lib/matchWindow";
 import { loadPublicMeasured } from "../lib/publicMeasuredStats";
 
 const router: IRouter = Router();
@@ -136,13 +137,16 @@ function timestampForFingerprint(value: Date | string | null | undefined): strin
  */
 /** Bumped when what a cached statistic contains changes, so every cached row is rebuilt once. */
 const PUBLIC_STATS_VERSION = "dribbles-1";
+// The match window is part of the input (below), so setting or clearing it
+// rebuilds the affected rows without a version bump for everyone else.
 
 /** One claim's dribbles from the recording's ball play, or null without ball tracking. */
 async function claimDribbles(recordingId: number, chain: Array<{ trackId: string; fromFrame: number; toFrame: number }>) {
   try {
     const play = await loadRecordingPlay(recordingId);
     if (!play?.hasBall || !play.hasPitch) return null;
-    const own = playerMoments(chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })), play.dribbles, [], []);
+    const parts = clipPartsToMatchWindow(chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })), play.manifest);
+    const own = playerMoments(parts, play.dribbles, [], []);
     return { total: own.dribbles.length, succeeded: own.dribblesWon, failed: own.dribblesLost };
   } catch (error) {
     logger.warn({ recordingId, err: error }, "Could not read dribbles for player stats");
@@ -156,6 +160,7 @@ async function publicStatsInputFingerprint(
   bundleFingerprint: string,
   pitchKey: string,
   chain: Array<{ trackId: string; fromFrame: number; toFrame: number }>,
+  windowKey = "-",
 ): Promise<string> {
   const [offPitchMeta] = await db
     .select({
@@ -174,6 +179,9 @@ async function publicStatsInputFingerprint(
     chain.map((part) => `${part.trackId}:${part.fromFrame}-${part.toFrame}`).join(","),
     Number(offPitchMeta?.count ?? 0),
     timestampForFingerprint(offPitchMeta?.latestAt),
+    // Only present when a window is set, so rows on recordings without one
+    // keep their fingerprint.
+    ...(windowKey !== "-" ? [`window:${windowKey}`] : []),
   ];
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
@@ -280,6 +288,7 @@ router.get("/users/:id/stats", async (req, res): Promise<void> => {
       bundleFingerprint,
       pitchModelCacheKey(manifest.pitchModel),
       chain,
+      matchWindowKey(manifest),
     );
     let computedStats = binding.computedStats;
     const hasFreshStats = binding.statsInputFingerprint === inputFingerprint

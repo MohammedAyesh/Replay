@@ -87,6 +87,12 @@ type ServerGame = {
   inPlaySpans: Array<[number, number]>;
   /** Optional Part 2 match windows; older responses omit this field. */
   matches?: ClaimMatch[];
+  /**
+   * Where the match is on this recording (tracking seconds), set by an admin
+   * or the detector; null or absent means the whole recording. Booking
+   * windows in `matches` are already clipped to it.
+   */
+  matchWindow?: { startSeconds: number; endSeconds: number } | null;
   continuation?: null | { recordingId: number; timeLabel: string; matchCode: string };
 };
 
@@ -239,6 +245,7 @@ export default function ClaimGamePage() {
       coveragePercent={chain?.coveragePercent ?? 0}
       accountName={user?.name ?? ""}
       matches={server.matches ?? []}
+      matchWindow={server.matchWindow ?? null}
       continuation={server.continuation ?? null}
       rosterPlayers={rosterPlayers}
       loadRoster={async () => {
@@ -319,6 +326,7 @@ type Props = {
   coveragePercent: number;
   accountName: string;
   matches: ClaimMatch[];
+  matchWindow?: ServerGame["matchWindow"];
   continuation: ServerGame["continuation"];
   rosterPlayers: MatchRosterPlayer[];
   loadRoster: () => Promise<MatchRosterPlayer[]>;
@@ -337,7 +345,7 @@ export function GameClaim({
   game, manifest, recordingId, videoUrl, eyebrow, saved, fingerprint, copy,
   staleState = false, rosterPlayers, loadRoster,
   identities, identityId, identityName, resetByAdmin, coveragePercent, accountName,
-  matches, continuation,
+  matches, matchWindow = null, continuation,
 }: Props) {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
@@ -894,6 +902,11 @@ export function GameClaim({
     const benchRanges = selected.flatMap((match) => (
       matchBenchRanges(match, target.S.switches ?? [])
     ));
+    // No booking chosen, but the recording has a match window: claim inside
+    // it, so blocks that are all another group's game are never offered.
+    if (!windows.length && matchWindow && matchWindow.endSeconds > matchWindow.startSeconds) {
+      windows.push([matchWindow.startSeconds, matchWindow.endSeconds]);
+    }
     return startClaimWithWindows(target, windows, benchRanges);
   };
 

@@ -1607,6 +1607,42 @@ export const ReplaceTrackingBundleResponse = zod.object({
 
 
 /**
+ * Stores manifest.provenance.matchWindow, in tracking-clock seconds (the clock of segments, events and claim parts). Everything a player's numbers, moments and claim picker come from is clipped to it: match and team stats, the report and Home tiles, the claim picker's booking windows, claim coverage (measured against the window's length), earned clips and personal moments. startSeconds null clears it. It does not change the bundle fingerprint, so no claim is invalidated.
+ * @summary Set or clear where the match is on a recording
+ */
+export const SetRecordingMatchWindowParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const setRecordingMatchWindowBodyStartSecondsMin = 0;
+
+export const setRecordingMatchWindowBodyWhyMax = 500;
+
+
+
+export const SetRecordingMatchWindowBody = zod.object({
+  "startSeconds": zod.number().min(setRecordingMatchWindowBodyStartSecondsMin).nullable().describe('Tracking seconds where the match starts; null clears the window.'),
+  "endSeconds": zod.number().nullish().describe('Tracking seconds where the match ends; omitted or null means the end of the recording.'),
+  "why": zod.string().max(setRecordingMatchWindowBodyWhyMax).optional()
+})
+
+export const SetRecordingMatchWindowResponse = zod.object({
+  "recordingId": zod.number(),
+  "duration": zod.number().describe('The tracked duration the window is checked against, seconds.'),
+  "matchWindow": zod.union([zod.object({
+  "startSeconds": zod.number(),
+  "endSeconds": zod.number().nullable().describe('Null means the end of the recording.'),
+  "source": zod.enum(['admin', 'detector']),
+  "setBy": zod.number().optional(),
+  "setAt": zod.string().optional(),
+  "why": zod.string().optional()
+}),zod.null()]),
+  "resyncedClaims": zod.number().describe('Claims on the recording whose coverage, completion and clip list were re-derived.'),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Get claim player metrics including unvalidated top speed
  */
 export const GetAdminRecordingPlayerMetricsParams = zod.object({

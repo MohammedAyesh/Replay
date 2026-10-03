@@ -28,6 +28,7 @@ import {
   type ClaimedPart,
 } from "./matchPlay";
 import type { RecordingPlay } from "./matchPlayLoad";
+import { clipPartsToMatchWindow } from "./matchWindow";
 
 /** [tracking seconds, centre x, centre y] -- the claimant in the frame, as fractions of it. */
 export type FollowPoint = [number, number, number];
@@ -138,6 +139,9 @@ export function personalMoments(
   segments: readonly DeepReadonly<TrackingSegmentPayload>[],
   manifest: TrackingManifest,
 ): PersonalMoment[] {
+  // A moment outside the recording's match window is not this match's: the
+  // claimant's parts are cut to it before anything is credited to them.
+  parts = clipPartsToMatchWindow(parts, manifest);
   if (!play.hasBall || !parts.length) return [];
   const pitch = pitchSizeOf(play.manifest);
   const goals = detectedGoals(play.events, play.touches, pitch);

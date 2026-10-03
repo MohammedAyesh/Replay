@@ -59,6 +59,7 @@ import {
   trackingBundleFingerprint,
 } from "./claimMatch";
 import { deriveChainClaimState, isChainComplete, requiredCoverageFor } from "../lib/claimChainState";
+import { clipPartsToMatchWindow, matchWindowSeconds, offPitchWithMatchWindow } from "../lib/matchWindow";
 import {
   captureDecisionGeometry,
   chainIntervals,
@@ -293,7 +294,9 @@ export async function loadContext(
       fingerprint,
       identityId: claimIdentityId(userId, recordingId),
       answeredFrames: await answeredFramesFor(recordingId, userId, fingerprint),
-      offPitch: await db
+      // The time outside the recording's match window counts as off-pitch,
+      // so describe() shows the same coverage deriveChainClaimState decides on.
+      offPitch: offPitchWithMatchWindow(await db
         .select({
           fromSeconds: claimMatchOffPitchSpansTable.fromSeconds,
           toSeconds: claimMatchOffPitchSpansTable.toSeconds,
@@ -302,7 +305,7 @@ export async function loadContext(
         .where(and(
           eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
           eq(claimMatchOffPitchSpansTable.userId, userId),
-        )),
+        )), manifest),
     },
   };
 }
@@ -421,10 +424,10 @@ function describe(
     completed: isChainComplete({
       chainLength: chain.length,
       coveragePercent,
-      durationSeconds: ctx.manifest.duration,
+      durationSeconds: matchWindowSeconds(ctx.manifest),
       hasOpenQuestion: uncertainty !== null,
     }),
-    requiredCoveragePercent: requiredCoverageFor(ctx.manifest.duration),
+    requiredCoveragePercent: requiredCoverageFor(matchWindowSeconds(ctx.manifest)),
     /**
      * Whether this decision's training label actually landed.
      *
@@ -713,7 +716,11 @@ export async function syncChainClaim(
       try {
         const play = await loadRecordingPlay(ctx.recordingId);
         if (play?.hasBall) {
-          const parts = chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame }));
+          // Only the match: parts outside the window earn no moments.
+          const parts = clipPartsToMatchWindow(
+            chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
+            ctx.manifest,
+          );
           earnedClips = mergeMoments(earnedClips, personalMoments(play, parts, ctx.segments, ctx.manifest));
         }
       } catch (error) {
@@ -760,6 +767,46 @@ export async function syncChainClaim(
   } catch (error) {
     console.error("[claim-chain] claim sync failed", { recordingId: ctx.recordingId, error });
   }
+}
+
+/**
+ * Re-derive every claim on a recording after something that changes what a
+ * claim is worth without changing the claim -- the match window.
+ *
+ * Coverage, completion and the earned-clip list are stored on the progress
+ * row by syncChainClaim, so a window set after the claims were made would
+ * leave them describing the old window until each claimant next tapped. This
+ * runs the same sync for every claimant with a progress row.
+ *
+ * It can only take an award away, never grant one: a claim that was complete
+ * is re-judged with no open question (it was settled), and one that was not
+ * is re-judged as still open, so it completes on the claimant's own next
+ * save -- the person finishes their claim, not an admin's edit. Clips already
+ * materialised into My Clips are left where they are; only the progress row's
+ * list changes. Best effort per claimant, like syncChainClaim itself.
+ */
+export async function resyncChainClaimsForRecording(
+  req: Parameters<typeof requireAccountUser>[0],
+  recordingId: number,
+): Promise<number> {
+  const rows = await db
+    .select({ userId: claimMatchProgressTable.userId, completed: claimMatchProgressTable.completed })
+    .from(claimMatchProgressTable)
+    .where(eq(claimMatchProgressTable.recordingId, recordingId));
+  let synced = 0;
+  for (const row of rows) {
+    try {
+      const loaded = await loadContext(req, recordingId, row.userId);
+      if (!loaded.ctx) continue;
+      const chain = chainOf(loaded.ctx.manifest, loaded.ctx.identityId);
+      if (!chain.length) continue;
+      await syncChainClaim(loaded.ctx, chain, !row.completed);
+      synced++;
+    } catch (error) {
+      console.error("[claim-chain] resync failed", { recordingId, userId: row.userId, error });
+    }
+  }
+  return synced;
 }
 
 async function recordLabel(

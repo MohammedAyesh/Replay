@@ -14,6 +14,7 @@
 import type { TrackingManifest, TrackingSegmentPayload } from "@workspace/db";
 import { chainIntervals, totalSeconds, type ChainPart } from "./claimChain";
 import { buildPlayerMetrics, type OffPitchWindow } from "./playerMetrics";
+import { matchWindowSeconds, offPitchWithMatchWindow } from "./matchWindow";
 
 /** Kept identical to the anchor flow's ids so a clip already materialised for
  * a person is recognised rather than duplicated when they re-claim. */
@@ -140,8 +141,19 @@ export function clipsForIntervals(
   return [...byId.values()].sort((a, b) => a.momentSeconds - b.momentSeconds);
 }
 
+/**
+ * The claim's state.
+ *
+ * The recording's match window (manifest.provenance.matchWindow) is applied
+ * here, so every caller gets it: the time outside the window is treated as
+ * off-pitch. That one move does three things. Coverage outside it does not
+ * count; the denominator becomes the window's length rather than the whole
+ * recording, so a player of a 95-minute match in a 120-minute recording can
+ * still reach the bar; and an event outside it (another group's goal) is not
+ * inside any attributed interval, so it earns no clip.
+ */
 export function deriveChainClaimState(
-  manifest: Pick<TrackingManifest, "frameRate" | "duration">,
+  manifest: Pick<TrackingManifest, "frameRate" | "duration"> & { provenance?: Record<string, unknown> | null },
   segments: readonly ChainClaimSegment[],
   chain: ChainPart[],
   opts: {
@@ -150,7 +162,7 @@ export function deriveChainClaimState(
     hasOpenQuestion: boolean;
   },
 ): ChainClaimState {
-  const offPitch = opts.offPitch ?? [];
+  const offPitch = offPitchWithMatchWindow(opts.offPitch ?? [], manifest);
   const attributed = chainIntervals(chain, manifest, offPitch);
   const coverageSeconds = totalSeconds(attributed);
   const offPitchSeconds = totalSeconds(offPitch.map((span) => ({
@@ -163,7 +175,9 @@ export function deriveChainClaimState(
     Math.round((coverageSeconds / denominator) * 10000) / 100,
   );
 
-  const required = requiredCoverageFor(manifest.duration);
+  // The short-match rule is about the match, so it reads the window's length.
+  const matchSeconds = matchWindowSeconds(manifest);
+  const required = requiredCoverageFor(matchSeconds);
 
   const claimedTrackIds = new Set(chain.map((part) => part.trackId));
   const trackedSegments = segments.filter((segment) =>
@@ -179,7 +193,7 @@ export function deriveChainClaimState(
   const completed = isChainComplete({
     chainLength: chain.length,
     coveragePercent,
-    durationSeconds: manifest.duration,
+    durationSeconds: matchSeconds,
     hasOpenQuestion: opts.hasOpenQuestion,
   });
   const completionReason = completed
@@ -240,6 +254,8 @@ export function chainPlayerMetrics(
     state.trackedSegments,
     segments.length,
     state.matchedEvents,
-    opts.offPitch ?? [],
+    // Outside the match window is off-pitch for minutes, distance, speed and
+    // the heatmap too, the same rule deriveChainClaimState applies.
+    offPitchWithMatchWindow(opts.offPitch ?? [], manifest),
   );
 }

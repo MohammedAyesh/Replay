@@ -70,6 +70,7 @@ import { buildPlayerMetrics } from "./playerMetrics";
 import { matchFlow, mergeSpans, type MatchFlow, type RecordingFlowInput } from "./matchFlow";
 import { MatchPlayerReportBuilder, REPORT_BLOCK_SECONDS, type MatchPlayerReport } from "./matchPlayerReport";
 import { teamAtTime, type TeamSpanAtTime, type TeamSpanTeam } from "./matchTeamSpans";
+import { clipRangeToMatchWindow } from "./matchWindow";
 
 function teamFor(base: string | null, spans: readonly unknown[], offsetSec: number): string | null {
   return teamAtTime(base as TeamSpanTeam, spans as readonly TeamSpanAtTime[], offsetSec);
@@ -147,12 +148,21 @@ export async function recordingsForRoom(ctx: RoomContext, perField?: FieldRecord
   for (const { recording, bundleId, manifest } of rows) {
     const w = recordingWindow(recording, manifest);
     if (!Number.isFinite(w.startMs) || w.endMs <= start || w.startMs >= end) continue;
+    // The booking's share of the recording, then only the part of it that is
+    // the match (manifest.provenance.matchWindow): a previous group's game
+    // running over, or the empty pitch after it, is nobody's stats here.
+    const share = clipRangeToMatchWindow(
+      Math.max(0, (start - w.startMs) / 1000),
+      Math.min(manifest.duration, (end - w.startMs) / 1000),
+      manifest,
+    );
+    if (!share) continue;
     out.push({
       recordingId: recording.id,
       bundleId,
       manifest,
-      fromSeconds: Math.max(0, (start - w.startMs) / 1000),
-      toSeconds: Math.min(manifest.duration, (end - w.startMs) / 1000),
+      fromSeconds: share.fromSeconds,
+      toSeconds: share.toSeconds,
       recordingOffsetSec: (w.startMs - start) / 1000,
     });
   }
@@ -179,7 +189,12 @@ export async function roomsForRecording(recordingId: number): Promise<Array<{ ro
     const start = ammanLocalInstant(request.startLocal);
     const end = ammanLocalInstant(request.endLocal);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= w.startMs || start >= w.endMs) continue;
-    out.push({ room, fromSeconds: Math.max(0, (start - w.startMs) / 1000), toSeconds: (end - w.startMs) / 1000 });
+    // Clipped to the match window like recordingsForRoom; a booking that
+    // only overlaps the footage outside it (the previous group's overrun)
+    // is not a match this recording's claimants played in.
+    const share = clipRangeToMatchWindow(Math.max(0, (start - w.startMs) / 1000), (end - w.startMs) / 1000, row.manifest);
+    if (!share) continue;
+    out.push({ room, ...share });
   }
   return out;
 }

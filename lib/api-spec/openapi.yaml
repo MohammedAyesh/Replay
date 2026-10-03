@@ -1410,6 +1410,45 @@ paths:
         "404":
           description: Recording not found
 
+  /admin/recordings/{id}/match-window:
+    patch:
+      operationId: setRecordingMatchWindow
+      tags: [admin]
+      summary: Set or clear where the match is on a recording
+      description: >-
+        Stores manifest.provenance.matchWindow, in tracking-clock seconds (the
+        clock of segments, events and claim parts). Everything a player's numbers,
+        moments and claim picker come from is clipped to it: match and team stats,
+        the report and Home tiles, the claim picker's booking windows, claim
+        coverage (measured against the window's length), earned clips and personal
+        moments. startSeconds null clears it. It does not change the bundle
+        fingerprint, so no claim is invalidated.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminMatchWindowBody"
+      responses:
+        "200":
+          description: Match window stored (or cleared)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminMatchWindowResponse"
+        "400":
+          description: Invalid window (needs 0 <= start < end <= duration)
+        "403":
+          description: Forbidden
+        "404":
+          description: Tracking bundle not found
+
   /admin/recordings/{id}/player-metrics:
     get:
       operationId: getAdminRecordingPlayerMetrics
@@ -4930,6 +4969,60 @@ components:
           oneOf:
             - $ref: "#/components/schemas/TrackingPitchModel"
             - type: "null"
+
+    AdminMatchWindowBody:
+      type: object
+      required: [startSeconds]
+      properties:
+        startSeconds:
+          type: ["number", "null"]
+          minimum: 0
+          description: Tracking seconds where the match starts; null clears the window.
+        endSeconds:
+          type: ["number", "null"]
+          description: Tracking seconds where the match ends; omitted or null means the end of the recording.
+        why:
+          type: string
+          maxLength: 500
+
+    RecordingMatchWindow:
+      type: object
+      required: [startSeconds, endSeconds, source]
+      properties:
+        startSeconds:
+          type: number
+        endSeconds:
+          type: ["number", "null"]
+          description: Null means the end of the recording.
+        source:
+          type: string
+          enum: [admin, detector]
+        setBy:
+          type: integer
+        setAt:
+          type: string
+        why:
+          type: string
+
+    AdminMatchWindowResponse:
+      type: object
+      required: [recordingId, duration, matchWindow, resyncedClaims, updatedAt]
+      properties:
+        recordingId:
+          type: integer
+        duration:
+          type: number
+          description: The tracked duration the window is checked against, seconds.
+        matchWindow:
+          oneOf:
+            - $ref: "#/components/schemas/RecordingMatchWindow"
+            - type: "null"
+        resyncedClaims:
+          type: integer
+          description: Claims on the recording whose coverage, completion and clip list were re-derived.
+        updatedAt:
+          type: string
+          format: date-time
 
     AdminTrackingBundlePatchResponse:
       type: object
