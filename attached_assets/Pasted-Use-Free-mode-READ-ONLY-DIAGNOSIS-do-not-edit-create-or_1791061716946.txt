@@ -1,0 +1,16 @@
+Use Free mode.
+
+READ-ONLY DIAGNOSIS — do not edit, create, or delete any file, do not run any git merge/rebase/push/checkout/pull, do not run database pushes, do not fix anything you find. Your only output is the report at the end.
+
+Context: a long-running task branch (replit-agent, containing the complete Academy Console feature) is about to be landed on main. A read-only diagnosis run inside that task reported: the task branch already contains a merge of main at commit c1de790, its tree is identical to main's tree, and landing it would be a pure fast-forward with no conflicts. I need main's side to confirm this is still true.
+
+Answer these using read-only inspection only:
+
+CURRENT STATE. What commit is main at right now? Is it still c1de790, or has main moved since? If it moved, list every commit after c1de790 and the files each touched. Also report git status on main — any uncommitted or untracked changes in the working tree?
+OTHER IN-FLIGHT WORK. List all local branches and any other Replit Agent task branches that exist in this workspace. For each, say whether it contains commits not in main. I need to know if anything besides the Academy Console task is waiting to land.
+REMOTE SYNC. The task-side report said local main is 136 commits ahead of origin/main. Run git fetch (fetch only — no pull, no merge) and then report: what is the true relationship between local main and the GitHub remote after fetching? Is the remote genuinely behind (unpushed local commits), or had the local origin/main ref simply gone stale? Does the remote have ANY commits that local main lacks?
+RECEIVING THE TASK. Confirm from main's side that merging branch replit-agent into main would be a fast-forward (e.g. git merge-base --is-ancestor main replit-agent). If it would not be a fast-forward, explain exactly why and what diverged.
+PUBLISH SOURCE. Confirm what the Publish flow deploys for this Repl: the workspace's main branch state, or the GitHub remote. I need to know whether the GitHub sync status in (3) has any effect on publishing.
+HEALTH. Run the non-destructive checks only: pnpm run typecheck (or this repo's equivalent) on current main, and report pass/fail with any errors verbatim. Do not run the dev DB push.
+
+End with a verdict: is main ready to receive the task as a fast-forward right now — yes/no — and if no, the exact blocker. Do not take any action beyond inspection and the fetch in (3). If git status shows you modified anything, say so and list it.
