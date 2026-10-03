@@ -4,6 +4,7 @@ import { Countdown, PlayerAvatar, formatClock, formatDay } from "@/components/ma
 import type { MatchStrings } from "@/i18n/match-strings";
 import { useSetScore, type MatchReplay, type MatchRoom, type TeamSide } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
+import { findPath } from "@/lib/find-nav";
 
 /**
  * The scoreboard: always there, from the invite to the memory. Before the
@@ -168,10 +169,10 @@ export function Scoreboard({ room, copy, now, colors, names, replay }: {
 }
 
 /** After the whistle: the way into /find, where a player claims themselves and earns their numbers and moments. */
-export function FindYourselfCard({ recordingId, copy }: { recordingId: number; copy: MatchStrings }) {
+export function FindYourselfCard({ recordingId, matchCode, copy }: { recordingId: number; matchCode: string; copy: MatchStrings }) {
   return (
     <Link
-      href={`/find/${recordingId}`}
+      href={findPath(recordingId, matchCode)}
       className="relative block overflow-hidden rounded-3xl border border-turf/40 p-5"
       style={{ background: "radial-gradient(120% 120% at 100% 0%, rgba(47,216,196,.28), transparent 60%), radial-gradient(90% 90% at 0% 100%, rgba(212,255,79,.16), transparent 60%), #141B2C" }}
     >

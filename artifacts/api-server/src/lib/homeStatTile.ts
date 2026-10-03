@@ -17,6 +17,20 @@
  */
 
 import type { MatchPlayerStatsCacheValue } from "@workspace/db";
+import {
+  BEST_BASIS,
+  MIN_RANKED_MINUTES,
+  PB_MIN_EARLIER_MATCHES,
+  RANK_BASIS,
+  isLevel,
+  isPersonalBest,
+  isRateMetric,
+  previousBest as bestOf,
+  rankedCount,
+  standings,
+  type HeadlineStat,
+  type RankablePlayer,
+} from "@workspace/api-zod";
 
 export type TileStats = MatchPlayerStatsCacheValue;
 
@@ -64,7 +78,7 @@ export type TileMetric = "distanceKm" | "topSpeedKmh" | "touches" | "passesCompl
 type MatchBit = { code: string; startLocal: string; fieldName: string; players: number; watch: string | null };
 
 export type StatTile =
-  | { kind: "lastMatch"; match: MatchBit; metric: TileMetric; value: number; pitchAverage: number; claimed: number; secondary: Partial<Record<TileMetric, number>> }
+  | { kind: "lastMatch"; match: MatchBit; metric: TileMetric; value: number; pitchAverage: number; claimed: number; secondary: Partial<Record<TileMetric, number>>; per10?: boolean }
   | { kind: "personalBest"; match: MatchBit; metric: TileMetric; value: number; previousBest: number; previousBestLocal: string; at: number | null; fasterAtField: number | null }
   | { kind: "rival"; fieldName: string; month: string; board: Array<{ rank: number; name: string; distanceKm: number; me: boolean }>; total: number; myRank: number; other: { name: string; distanceKm: number }; mine: number; perMatch: number; upcoming: { code: string; startLocal: string } | null }
   | { kind: "form"; metric: "distanceKm" | "topSpeedKmh" | "touches"; values: Array<{ startLocal: string; value: number }>; streak: number; latest: number; average: number; upcoming: { code: string; startLocal: string } | null }
@@ -73,7 +87,7 @@ export type StatTile =
   | { kind: "touches"; match: MatchBit; total: number; firstIndex: number; blocks: number[]; busiest: { index: number; count: number }; everySeconds: number | null }
   | { kind: "distanceTotal"; fieldName: string | null; sinceLocal: string; latestLocal: string; matches: number; totalKm: number; perMatch: number[]; milestone: number; passed: boolean; matchesToGo: number }
   | { kind: "distanceSpells"; match: MatchBit; spells: number[]; strongest: number; finishedStrongest: boolean }
-  | { kind: "ranks"; match: MatchBit; claimed: number; ranks: Array<{ metric: TileMetric; rank: number; value: number; of: number | null }> }
+  | { kind: "ranks"; match: MatchBit; claimed: number; ranks: Array<{ metric: TileMetric; rank: number; value: number; of: number | null; shared?: boolean; per10?: boolean }> }
   | { kind: "style"; matches: number; touches: number; passes: number; dribbles: number; shots: number; other: number; lean: "passer" | "dribbler" | "shooter" | "allRounder" }
   | { kind: "challenge"; upcoming: { code: string; startLocal: string; fieldName: string }; metric: "passesCompleted" | "distanceKm" | "touches" | "dribblesWon"; target: number; average: number; best: number; scaleMax: number }
   | { kind: "dribbles"; match: MatchBit; won: number; lost: number; rank: number | null; leaderName: string | null }
@@ -117,23 +131,49 @@ export function freshness(matchStartLocal: string, nowLocal: string): number {
   return age <= 3 ? 1 : age <= 10 ? 0.9 : age <= 21 ? 0.8 : 0.65;
 }
 
-/** Smallest change that counts as better, per metric (inside the measuring noise it's a tie). */
-const MIN_GAIN: Record<TileMetric, number> = {
-  distanceKm: 0.05, topSpeedKmh: 0.3, touches: 1, passesCompleted: 1, dribblesWon: 1, goals: 1, shots: 1,
-};
+/*
+ * Every comparison below -- who is first, what rank, what counts as a
+ * personal best, what counts as "more" -- goes through the rule set the match
+ * report uses (@workspace/api-zod statsRanking): at least ten minutes on
+ * camera to be ranked, distance and touches per ten minutes on camera, the
+ * same measuring margins (a gap inside one is level, not a win), and a
+ * personal best only over three earlier matches and by more than the margin.
+ * Home must never say something the report would contradict.
+ */
+
+/** The players of one match as the shared ranking rule sees them. */
+function rankable(peers: TilePeer[]): RankablePlayer[] {
+  return peers.map((peer) => ({
+    playerId: peer.matchPlayerId,
+    claimed: true,
+    minutes: peer.stats.minutes,
+    distanceKm: peer.stats.distanceKm,
+    topSpeedKmh: peer.stats.topSpeedKmh,
+    touches: peer.stats.touches,
+    passesCompleted: peer.stats.passesCompleted,
+    dribblesWon: peer.stats.dribblesWon,
+    goals: peer.stats.goals,
+  }));
+}
+
+/** Rounded for display: distance to 10 m (or 0.01 km per 10 min), speed and rates to one decimal, counts whole. */
+function shown(metric: HeadlineStat, value: number, per10: boolean): number {
+  if (metric === "distanceKm") return Math.round(value * 100) / 100;
+  if (metric === "topSpeedKmh" || per10) return round1(value);
+  return value;
+}
 
 function personalBest(input: HomeTileInput): ScoredTile | null {
   const [latest, ...before] = input.history;
-  if (!latest || before.length < 2) return null;
+  if (!latest || before.length < PB_MIN_EARLIER_MATCHES) return null;
   let best: ScoredTile | null = null;
   for (const metric of ["topSpeedKmh", "distanceKm", "passesCompleted", "dribblesWon", "touches", "goals"] as const) {
     const value = latest.stats[metric];
     if (!num(value) || value <= 0) continue;
-    const previous = before.filter((row) => num(row.stats[metric]));
-    if (previous.length < 2) continue;
-    const top = previous.reduce((a, b) => ((b.stats[metric] as number) > (a.stats[metric] as number) ? b : a));
-    const previousBest = top.stats[metric] as number;
-    if (value < previousBest + MIN_GAIN[metric]) continue;
+    const previousBest = bestOf(before.map((row) => row.stats[metric]));
+    // the report's rule: three earlier matches, and clear of the old best by more than the margin
+    if (previousBest === null || !isPersonalBest(BEST_BASIS[metric], value, previousBest, before.length)) continue;
+    const top = before.find((row) => row.stats[metric] === previousBest)!;
     const gain = previousBest > 0 ? (value - previousBest) / previousBest : 0.3;
     const score = (86 + Math.min(12, gain * 40)) * freshness(latest.match.startLocal, input.nowLocal);
     if (!best || score > best.score) {
@@ -163,16 +203,23 @@ function lastMatchFirst(input: HomeTileInput): ScoredTile | null {
   if (!latest || !peers || peers.length < PEERS_FOR_RANKS) return null;
   const me = peers.find((p) => p.me);
   if (!me) return null;
+  const players = rankable(peers);
   let best: ScoredTile | null = null;
   for (const metric of ["distanceKm", "topSpeedKmh", "touches", "passesCompleted", "dribblesWon", "goals"] as const) {
-    const mine = me.stats[metric];
-    const others = peers.filter((p) => !p.me && num(p.stats[metric])).map((p) => p.stats[metric] as number);
-    if (!num(mine) || mine <= 0 || others.length < PEERS_FOR_RANKS - 1) continue;
+    const basis = RANK_BASIS[metric];
+    // enough players the report would rank, and the report shows this one clearly first
+    if (rankedCount(players, basis) < PEERS_FOR_RANKS) continue;
+    const table = standings(players, basis).filter((entry) => entry.ranked);
+    const mineEntry = table.find((entry) => entry.player.playerId === me.matchPlayerId);
+    if (!mineEntry || mineEntry.rank !== 1 || mineEntry.shared) continue;
+    const mine = mineEntry.value;
+    const others = table.filter((entry) => entry !== mineEntry).map((entry) => entry.value);
+    if (mine <= 0 || !others.length) continue;
     const second = Math.max(...others);
-    if (mine < second + MIN_GAIN[metric]) continue;
     const margin = second > 0 ? (mine - second) / second : 0.3;
     const score = (80 + Math.min(10, margin * 50)) * freshness(latest.match.startLocal, input.nowLocal);
     if (!best || score > best.score) {
+      const per10 = isRateMetric(basis);
       const average = others.reduce((a, b) => a + b, 0) / others.length;
       const secondary: Partial<Record<TileMetric, number>> = {};
       for (const m of ["topSpeedKmh", "distanceKm", "touches", "passesCompleted"] as const) {
@@ -185,10 +232,11 @@ function lastMatchFirst(input: HomeTileInput): ScoredTile | null {
           kind: "lastMatch",
           match: bit(latest.match),
           metric,
-          value: metric === "distanceKm" ? Math.round(mine * 100) / 100 : metric === "topSpeedKmh" ? round1(mine) : mine,
+          value: shown(metric, mine, per10),
           pitchAverage: metric === "distanceKm" ? Math.round(average * 100) / 100 : round1(average),
           claimed: peers.length,
           secondary,
+          ...(per10 ? { per10: true } : {}),
         },
       };
     }
@@ -196,7 +244,8 @@ function lastMatchFirst(input: HomeTileInput): ScoredTile | null {
   return best;
 }
 
-const RANK_METRICS: TileMetric[] = ["distanceKm", "dribblesWon", "passesCompleted", "shots", "touches", "topSpeedKmh"];
+// Shots are not ranked: the report doesn't rank them, so Home doesn't either.
+const RANK_METRICS: HeadlineStat[] = ["distanceKm", "dribblesWon", "passesCompleted", "touches", "topSpeedKmh"];
 
 function ranks(input: HomeTileInput): ScoredTile | null {
   const latest = input.history[0];
@@ -204,15 +253,24 @@ function ranks(input: HomeTileInput): ScoredTile | null {
   if (!latest || !peers || peers.length < PEERS_FOR_RANKS) return null;
   const me = peers.find((p) => p.me);
   if (!me) return null;
-  const list: Array<{ metric: TileMetric; rank: number; value: number; of: number | null }> = [];
+  const players = rankable(peers);
+  const list: Array<{ metric: HeadlineStat; rank: number; value: number; of: number | null; shared?: boolean; per10?: boolean }> = [];
   for (const metric of RANK_METRICS) {
-    const value = me.stats[metric];
-    if (!num(value)) continue;
-    const field = peers.filter((p) => num(p.stats[metric]));
-    if (field.length < PEERS_FOR_RANKS) continue;
-    const rank = 1 + field.filter((p) => (p.stats[metric] as number) > value).length;
+    const basis = RANK_BASIS[metric];
+    if (rankedCount(players, basis) < PEERS_FOR_RANKS) continue;
+    const mine = standings(players, basis).find((entry) => entry.player.playerId === me.matchPlayerId);
+    // under ten minutes on camera the report ranks nobody, so neither does Home
+    if (!mine || !mine.ranked) continue;
+    const per10 = isRateMetric(basis);
     const of = metric === "dribblesWon" ? me.stats.dribbles : metric === "passesCompleted" ? me.stats.passesTried : null;
-    list.push({ metric, rank, value: metric === "distanceKm" ? Math.round(value * 100) / 100 : metric === "topSpeedKmh" ? round1(value) : value, of: num(of) ? of : null });
+    list.push({
+      metric,
+      rank: mine.rank,
+      value: shown(metric, mine.value, per10),
+      of: num(of) ? of : null,
+      ...(mine.shared ? { shared: true } : {}),
+      ...(per10 ? { per10: true } : {}),
+    });
   }
   list.sort((a, b) => a.rank - b.rank || RANK_METRICS.indexOf(a.metric) - RANK_METRICS.indexOf(b.metric));
   const top = list.slice(0, 5);
@@ -233,7 +291,8 @@ function form(input: HomeTileInput): ScoredTile | null {
     if (rows.length < 3) continue;
     const values = rows.map((row) => row.stats[metric] as number);
     let streak = 0;
-    for (let i = values.length - 1; i > 0 && values[i] >= values[i - 1] + MIN_GAIN[metric]; i--) streak++;
+    // each match clearly up on the one before: past the report's margin, not a decimal
+    for (let i = values.length - 1; i > 0 && values[i] > values[i - 1] && !isLevel(BEST_BASIS[metric], values[i], values[i - 1]); i--) streak++;
     if (streak < 2) continue;
     const average = values.slice(0, -1).reduce((a, b) => a + b, 0) / (values.length - 1);
     const score = (66 + Math.min(12, 3 * streak)) * freshness(recent[0].match.startLocal, input.nowLocal);
@@ -264,7 +323,7 @@ function passing(input: HomeTileInput): ScoredTile | null {
   const rate = rateOf(latest.stats);
   if (rate === null) return null;
   const previous = input.history.slice(1).map((row) => rateOf(row.stats)).filter((r): r is number => r !== null);
-  const bestRate = previous.length >= 2 && previous.every((r) => rate > r + 0.01);
+  const bestRate = previous.length >= PB_MIN_EARLIER_MATCHES && previous.every((r) => rate > r + 0.01);
   const peerRates = (input.lastPeers ?? []).filter((p) => !p.me).map((p) => (num(p.stats.passesTried) && p.stats.passesTried >= 5 && num(p.stats.passesCompleted) ? p.stats.passesCompleted / p.stats.passesTried : null)).filter((r): r is number => r !== null);
   const pitchRate = peerRates.length >= 3 ? peerRates.reduce((a, b) => a + b, 0) / peerRates.length : null;
   const base = bestRate ? 72 : pitchRate !== null && rate >= pitchRate + 0.1 ? 60 : rate >= 0.7 ? 48 : 0;
@@ -426,9 +485,15 @@ function dribbles(input: HomeTileInput): ScoredTile | null {
   const lost = latest?.stats.dribblesLost;
   if (!latest || !num(won) || !num(lost) || won < 2 || won + lost < 4) return null;
   const peers = input.lastPeers ?? [];
-  const field = peers.filter((p) => num(p.stats.dribblesWon));
-  const rank = field.length >= PEERS_FOR_RANKS ? 1 + field.filter((p) => (p.stats.dribblesWon as number) > won).length : null;
-  const leader = rank === 2 ? field.find((p) => !p.me && (p.stats.dribblesWon as number) > won) ?? null : null;
+  const players = rankable(peers);
+  const me = peers.find((p) => p.me);
+  const table = standings(players, "dribblesWon");
+  const mine = me ? table.find((entry) => entry.player.playerId === me.matchPlayerId) : undefined;
+  // a rank only where the report gives one: ranked, enough ranked players, and not level with anyone
+  const rank = mine && mine.ranked && !mine.shared && rankedCount(players, "dribblesWon") >= PEERS_FOR_RANKS ? mine.rank : null;
+  const leaders = table.filter((entry) => entry.ranked && entry.rank === 1);
+  const leaderId = rank === 2 && leaders.length === 1 ? leaders[0].player.playerId : null;
+  const leader = leaderId === null ? null : peers.find((p) => p.matchPlayerId === leaderId) ?? null;
   const rate = won / (won + lost);
   if (rate < 0.55 && rank !== 2) return null;
   return {
@@ -445,13 +510,17 @@ function dribbleDuel(input: HomeTileInput): ScoredTile | null {
   const won = me.stats.dribblesWon;
   const tries = me.stats.dribbles;
   if (!num(won) || !num(tries) || won < 2) return null;
-  const others = peers.filter((p) => !p.me && num(p.stats.dribblesWon) && num(p.stats.dribbles));
-  // The closest duel: someone a dribble or two either side of you, at the top.
+  // "X beat you by two" is a ranking claim: both must be on camera long enough
+  // to be ranked, and the gap must be past the report's margin (one dribble is level).
+  if ((me.stats.minutes ?? 0) < MIN_RANKED_MINUTES) return null;
+  const others = peers.filter((p) => !p.me && num(p.stats.dribblesWon) && num(p.stats.dribbles) && (p.stats.minutes ?? 0) >= MIN_RANKED_MINUTES);
+  // The closest duel: someone a few dribbles either side of you, at the top.
   const top = Math.max(won, ...others.map((p) => p.stats.dribblesWon as number));
   const rival = others
-    .filter((p) => Math.abs((p.stats.dribblesWon as number) - won) <= 2 && Math.max(won, p.stats.dribblesWon as number) === top)
+    .filter((p) => Math.abs((p.stats.dribblesWon as number) - won) <= 3 && Math.max(won, p.stats.dribblesWon as number) === top)
+    .filter((p) => !isLevel("dribblesWon", p.stats.dribblesWon as number, won))
     .sort((a, b) => Math.abs((a.stats.dribblesWon as number) - won) - Math.abs((b.stats.dribblesWon as number) - won))[0];
-  if (!rival || rival.stats.dribblesWon === won) return null;
+  if (!rival) return null;
   return {
     score: 56 * freshness(latest.match.startLocal, input.nowLocal),
     tile: {

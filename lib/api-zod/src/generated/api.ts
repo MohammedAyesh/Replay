@@ -2649,6 +2649,8 @@ export const getPublicPlayerStatsResponseTotalsDribblesOneFailedMin = 0;
 
 export const getPublicPlayerStatsResponseExcludedClaimCountMin = 0;
 
+export const getPublicPlayerStatsResponseMeasuredOneTotalsMatchesMin = 0;
+
 
 
 export const GetPublicPlayerStatsResponse = zod.object({
@@ -2688,7 +2690,41 @@ export const GetPublicPlayerStatsResponse = zod.object({
   "failed": zod.number().min(getPublicPlayerStatsResponseTotalsDribblesOneFailedMin)
 }).describe('Runs with the ball past at least one opponent. Successful when his side still had it after; failed when the other side got it. Dribbles nobody touched after are counted in total only.'),zod.null()]).optional().describe('Dribbles summed over the matches that have ball tracking, or null when none do.')
 }),
-  "excludedClaimCount": zod.number().min(getPublicPlayerStatsResponseExcludedClaimCountMin).describe('Claims awaiting review because they are disputed or need resolution.')
+  "excludedClaimCount": zod.number().min(getPublicPlayerStatsResponseExcludedClaimCountMin).describe('Claims awaiting review because they are disputed or need resolution.'),
+  "measured": zod.union([zod.object({
+  "matches": zod.array(zod.object({
+  "matchId": zod.number(),
+  "recordingIds": zod.array(zod.number()).describe('The public recordings this match was measured on, so a profile can show the figures beside its claimed recording.'),
+  "date": zod.string().describe('YYYY-MM-DD, Amman.'),
+  "startLocal": zod.string().describe('YYYY-MM-DD HH:MM, Amman.'),
+  "fieldName": zod.string().nullable(),
+  "minutes": zod.number().nullable().describe('Minutes on camera.'),
+  "distanceKm": zod.number().nullable(),
+  "topSpeedKmh": zod.number().nullable(),
+  "touches": zod.number().nullable(),
+  "passesTried": zod.number().nullable(),
+  "passesCompleted": zod.number().nullable(),
+  "shots": zod.number().nullable(),
+  "goals": zod.number().nullable(),
+  "dribbles": zod.number().nullable(),
+  "dribblesWon": zod.number().nullable(),
+  "dribblesLost": zod.number().nullable()
+}).describe('One match\'s figures, exactly as the match report shows them. A null figure was not measured for that match.')).describe('Newest first; only matches on recordings the public can see.'),
+  "totals": zod.object({
+  "matches": zod.number().min(getPublicPlayerStatsResponseMeasuredOneTotalsMatchesMin),
+  "minutes": zod.number().nullable(),
+  "distanceKm": zod.number().nullable(),
+  "topSpeedKmh": zod.number().nullable(),
+  "touches": zod.number().nullable(),
+  "passesTried": zod.number().nullable().describe('Passes tried in the matches that measured completed passes; null when any of them did not measure tries.'),
+  "passesCompleted": zod.number().nullable(),
+  "shots": zod.number().nullable(),
+  "goals": zod.number().nullable(),
+  "dribbles": zod.number().nullable(),
+  "dribblesWon": zod.number().nullable(),
+  "dribblesLost": zod.number().nullable()
+}).describe('Sums over the matches that measured each figure (top speed is the best); null when no match measured it.')
+}),zod.null()]).optional().describe('What Replay measured for the player in each match, read from the match stats cache the match report and Home use (no tracking is parsed per view). Null when the cache could not be read.')
 })
 
 

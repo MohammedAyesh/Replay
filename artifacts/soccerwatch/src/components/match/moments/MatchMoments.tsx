@@ -30,6 +30,7 @@ import {
   type MomentKind,
 } from "@/lib/player-moments";
 import { cn } from "@/lib/utils";
+import { findPath } from "@/lib/find-nav";
 
 /**
  * The full-match player's moments: the match's flow (kick-off, breaks, ball
@@ -91,6 +92,7 @@ export function momentsCopy(arabic: boolean) {
         nothing: "ما في لحظات لهالماتش بعد. بتظهر بعد ما يخلص تحليل الفيديو.",
         loading: "جاري تحميل اللحظات…",
         goMatch: "روح للماتش",
+        findYourself: "لاقي حالك",
         none: "ما في لحظات بهالفلتر.",
       }
     : {
@@ -124,6 +126,7 @@ export function momentsCopy(arabic: boolean) {
         nothing: "No moments for this match yet. They appear once the video has been analysed.",
         loading: "Loading moments…",
         goMatch: "Go to match",
+        findYourself: "Find yourself",
         none: "No moments with these filters.",
       };
 }
@@ -314,6 +317,8 @@ export function useMatchMoments(code: string | null, flags: FlagInput[], arabic:
   return {
     enabled: Boolean(code),
     room,
+    /** The recording to find yourself in, when the match has one. */
+    findRecordingId: replayQuery.data?.recordings[0] ?? stats?.recordings[0] ?? null,
     loading: roomQuery.isLoading || (statsOn && statsQuery.isLoading) || replayQuery.isLoading,
     statsOn,
     hasBall: stats?.hasBall ?? false,
@@ -568,7 +573,9 @@ export function MatchMomentsPanel({ state }: { state: MatchMomentsState }) {
           {notice && (
             <p className="text-xs text-muted-text">
               {notice}{" "}
-              {(notice === copy.noClaim || notice === copy.locked) && (
+              {notice === copy.noClaim && state.findRecordingId !== null ? (
+                <Link href={findPath(state.findRecordingId, room.code)} className="font-semibold text-turf" data-testid="link-moments-find-yourself">{copy.findYourself}</Link>
+              ) : (notice === copy.noClaim || notice === copy.locked) && (
                 <Link href={`/m/${room.code}`} className="font-semibold text-turf">{copy.goMatch}</Link>
               )}
             </p>

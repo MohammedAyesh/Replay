@@ -24,6 +24,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { createPortal } from "react-dom";
 import { useLocation, useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Users } from "lucide-react";
 import {
   getClaimMatchSegment,
   getGetClaimChainQueryKey,
@@ -39,7 +40,8 @@ import {
 import { useAuth } from "@/lib/auth";
 import { useGameCopy, type GameStrings } from "@/i18n/game-strings";
 import { GameMedia, type MediaHandle, type MediaView, type TapHit } from "@/components/game-claim/GameMedia";
-import { Btn, ChunkTimeline, Crop, Eyebrow, GameTimeline, Lede, Row, Section, Stat, Title } from "@/components/game-claim/bits";
+import { Btn, Chip, ChunkTimeline, Crop, Eyebrow, GameTimeline, Lede, ProgressRail, Row, Section, Stat, Title } from "@/components/game-claim/bits";
+import { authPathWithReturn, findBackTarget, matchReportPath, previousInAppLocation, resolveFindMatchCode } from "@/lib/find-nav";
 import { ClaimantNameDialog } from "@/components/claim/ClaimantNameDialog";
 import { StatsScreen } from "@/components/game-claim/StatsScreen";
 import { gameFromManifest, loadChunkData, kitNameKey, type LoadedChunk } from "@/lib/game-claim/load";
@@ -55,12 +57,12 @@ import {
   type ShirtConfirmationUiState,
 } from "@/lib/game-claim/shirt-confirmation";
 import { matchBenchRanges, type ClaimMatchWindow } from "@/lib/game-claim/match-windows";
-import { claimCountsForGroups, claimStatusForGroup, type ClaimStatusIdentity } from "@/lib/game-claim/claim-status";
+import { claimCountsForGroups, claimStatusForGroup, otherClaimOwners, type ClaimStatusIdentity } from "@/lib/game-claim/claim-status";
 import { pictureForPiece, type PiecePicture } from "@/lib/game-claim/images";
 import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
-  addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
+  addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, clearPick, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
   newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
   hkey, recordSwitch, restoreClaimVisitOrder, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
@@ -95,9 +97,11 @@ type GameDecisionLabel =
 
 export default function ClaimGamePage() {
   const params = useParams<{ id?: string }>();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { user, isLoading: authLoading, isGuest } = useAuth();
   const copy = useGameCopy();
+  const requestedMatchCode = new URLSearchParams(window.location.search).get("match");
+  const exit = useFindExit(requestedMatchCode);
   const recordingId = Number(params.id);
   const enabled = Number.isInteger(recordingId) && recordingId > 0 && Boolean(user) && !isGuest;
   const matchQueryKey = useMemo(() => getGetClaimMatchQueryKey(recordingId), [recordingId]);
@@ -160,11 +164,18 @@ export default function ClaimGamePage() {
   );
 
   if (!authLoading && (!user || isGuest)) {
+    // Both come back to this exact URL (path + ?match=...), not to Home.
+    const returnTo = `${location}${window.location.search}`;
     return (
-      <Shell>
-        <Title>{copy.common.signedOut}</Title>
-        <Lede>{copy.common.signedOutDesc}</Lede>
-        <Row><Btn kind="primary" onClick={() => setLocation("/sign-in")}>{copy.common.signIn}</Btn></Row>
+      <Shell copy={copy} onBack={exit}>
+        <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-5">
+          <Title>{copy.find.signedOutTitle}</Title>
+          <Lede>{copy.find.signedOutDesc}</Lede>
+          <div className="mt-1 flex flex-col gap-2.5">
+            <Btn kind="primary" testId="button-find-sign-up" onClick={() => setLocation(authPathWithReturn("sign-up", returnTo))}>{copy.find.signUp}</Btn>
+            <Btn testId="button-find-sign-in" onClick={() => setLocation(authPathWithReturn("sign-in", returnTo))}>{copy.find.signIn}</Btn>
+          </div>
+        </div>
       </Shell>
     );
   }
@@ -173,23 +184,34 @@ export default function ClaimGamePage() {
   const manifestNotReady = claimQuery.isSuccess && Boolean(manifest && manifest.segments.length === 0);
   if (claimNotReady || manifestNotReady) {
     return (
-      <Shell>
-        <Title>{copy.common.notReady}</Title>
-        <Lede>{copy.common.notReadyDesc}</Lede>
-        <Row><Btn onClick={() => setLocation(recording?.fieldId ? `/fields/${recording.fieldId}` : "/fields")}>{copy.common.back}</Btn></Row>
+      <Shell copy={copy} onBack={exit}>
+        <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-5">
+          <Title>{copy.common.notReady}</Title>
+          <Lede>{copy.common.notReadyDesc}</Lede>
+          <Row><Btn onClick={() => setLocation(recording?.fieldId ? `/fields/${recording.fieldId}` : "/fields")}>{copy.common.back}</Btn></Row>
+        </div>
       </Shell>
     );
   }
   if ((claimQuery.isError && !claimNotReady) || chainQuery.isError || serverError) {
     return (
-      <Shell>
-        <Lede>{copy.common.gameLoadError}</Lede>
-        <Row><Btn kind="primary" testId="button-retry-find-game" onClick={retryGame}>{copy.common.retry}</Btn></Row>
+      <Shell copy={copy} onBack={exit}>
+        <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-5">
+          <Lede>{copy.common.gameLoadError}</Lede>
+          <Row><Btn kind="primary" testId="button-retry-find-game" onClick={retryGame}>{copy.common.retry}</Btn></Row>
+        </div>
       </Shell>
     );
   }
   if (!game || !manifest || !server || chainQuery.isLoading) {
-    return <Shell><p className="py-10 text-center text-sm text-muted-text">{copy.common.loading}</p></Shell>;
+    return (
+      <Shell copy={copy} onBack={exit}>
+        <p className="flex items-center justify-center gap-2 py-10 text-center text-sm text-muted-text">
+          <span aria-hidden="true" className="h-1.5 w-10 animate-pulse rounded-full bg-turf" />
+          {copy.common.loading}
+        </p>
+      </Shell>
+    );
   }
   const identities: ClaimStatusIdentity[] = (manifest.identities ?? []).map((identity) => ({
     id: identity.id,
@@ -228,18 +250,56 @@ export default function ClaimGamePage() {
   );
 }
 
-function Shell({ children, meter }: { children: React.ReactNode; meter?: React.ReactNode }) {
+/**
+ * The page around every step. The app's own header (with the language switch)
+ * and tab bar sit around it; this adds the match-report row: a back/close
+ * button, the page's name, the time/taps meter, and progress through the
+ * game's ten-minute blocks.
+ */
+function Shell({ children, meter, onBack, copy, progress }: {
+  children: React.ReactNode;
+  meter?: React.ReactNode;
+  onBack: () => void;
+  copy: GameStrings;
+  progress?: { step: number; of: number } | null;
+}) {
   return (
-    <div className="min-h-full bg-void px-4 pb-12">
+    <div className="min-h-full px-4 pb-28" data-testid="page-find-yourself">
       <div className="mx-auto max-w-[760px]">
-        <div className="sticky top-0 z-10 mb-5 flex items-center gap-3 border-b border-line bg-void/95 py-3 backdrop-blur">
-          <div className="font-display text-xl font-bold tracking-wide text-text">RE<b className="text-floodlight">PLAY</b></div>
-          <div className="ms-auto">{meter}</div>
+        <div className="flex items-center gap-3 pb-3 pt-1">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label={copy.find.back}
+            data-testid="button-find-back"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-surface/80 text-text hover:border-muted-text"
+          >
+            <ArrowLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+          </button>
+          <span className="min-w-0 flex-1 truncate font-display text-[11px] font-bold uppercase tracking-[0.3em] text-turf rtl:text-xs rtl:tracking-normal">
+            {copy.find.title}
+          </span>
+          {meter && <div className="shrink-0">{meter}</div>}
         </div>
+        {progress && progress.of > 1 && (
+          <div className="pb-4">
+            <ProgressRail step={progress.step} of={progress.of} label={copy.find.progress(progress.step, progress.of)} />
+          </div>
+        )}
         <div className="flex flex-col gap-4">{children}</div>
       </div>
     </div>
   );
+}
+
+/** Back/close: history when the player came from inside the app, else the match, else their matches. */
+function useFindExit(matchCode: string | null) {
+  const [, setLocation] = useLocation();
+  return useCallback(() => {
+    const target = findBackTarget(previousInAppLocation(), matchCode);
+    if (target.kind === "history") window.history.back();
+    else setLocation(target.path);
+  }, [matchCode, setLocation]);
 }
 
 type Props = {
@@ -313,6 +373,11 @@ export function GameClaim({
       ? [requestedMatchCode]
       : matches.filter((match) => match.rostered).map((match) => match.code);
   const [matchChoices, setMatchChoices] = useState<string[]>(initialMatchChoices);
+  // The match this visit is about: back/close and "See my match report" go there.
+  const reportMatchCode = resolveFindMatchCode({ requested: requestedMatchCode, choices: matchChoices, matches });
+  const exit = useFindExit(reportMatchCode);
+  /** Picking someone another player already picked: asked inline before it counts. */
+  const [pendingShare, setPendingShare] = useState<{ slot: string; names: string; proceed: () => void } | null>(null);
   const [saveError, setSaveError] = useState(false);
   const [staleNoticeDismissed, setStaleNoticeDismissed] = useState(false);
   const [labelError, setLabelError] = useState(false);
@@ -910,7 +975,33 @@ export function GameClaim({
     completeGroupPick(pendingNamePick);
   };
 
-  const pickGroup = (cid: string) => {
+  /** Names of the other players who already picked these groups, or null when nobody else did. */
+  const sharedWith = (groups: Group[]): string | null => {
+    const names = new Map<string, string>();
+    for (const group of groups) {
+      for (const owner of otherClaimOwners(group.members, identities, identityId, claimName)) {
+        names.set(owner.identityId, owner.name);
+      }
+    }
+    return names.size ? [...names.values()].join(", ") : null;
+  };
+
+  /**
+   * Run a pick, first asking "is it you too?" when another player already
+   * picked that person (approved decision #8). Never blocks: yes proceeds
+   * exactly as an ordinary pick, no changes nothing.
+   */
+  const confirmIfShared = (slot: string, groups: Group[], proceed: () => void) => {
+    const names = sharedWith(groups);
+    if (!names) {
+      setPendingShare(null);
+      proceed();
+      return;
+    }
+    setPendingShare({ slot, names, proceed });
+  };
+
+  const pickGroup = (cid: string, slot = `card:${cid}`) => {
     const k = S.k;
     const d = k === null ? null : chunks.current[k];
     if (!d || k === null || !d.byCid[cid]) return;
@@ -924,8 +1015,26 @@ export function GameClaim({
     const expectedCid = S.step === "next"
       ? rankNext(ctx, k, chunkMeta(ctx, k).start)[0]?.g.cid ?? null
       : pendingNextGuess.current;
-    chooseGroup({ k, cid, expectedCid, shirtIdentity: null });
+    confirmIfShared(slot, [group], () => chooseGroup({ k, cid, expectedCid, shirtIdentity: null }));
   };
+
+  // A question about a pick belongs to the screen it was asked on.
+  useEffect(() => { setPendingShare(null); }, [S.step, S.k]);
+
+  const sharedPickConfirm = (slot: string) => pendingShare?.slot === slot ? (
+    <SharedPickConfirm
+      key={`share-${slot}`}
+      text={copy.find.sharedPick(pendingShare.names)}
+      yes={copy.find.sharedYes}
+      no={copy.find.sharedNo}
+      onYes={() => {
+        const run = pendingShare.proceed;
+        setPendingShare(null);
+        run();
+      }}
+      onNo={() => setPendingShare(null)}
+    />
+  ) : null;
 
   const chooseKit = (team: string | null) => {
     const shirtIdentity = team && S.shirtIdentity?.kitKey === team
@@ -990,13 +1099,22 @@ export function GameClaim({
     if (k === null || !candidate || !d) return;
     const matchingCids = new Set(groupsForShirtIdentity(d.groups, d.jersey, candidate).map((match) => match.groupId));
     if (!matchingCids.has(selection.primaryCid) || selection.addedCids.some((cid) => !matchingCids.has(cid))) return;
-    chooseGroup({
+    const picked = [selection.primaryCid, ...selection.addedCids].flatMap((cid) => d.byCid[cid] ? [d.byCid[cid]] : []);
+    confirmIfShared("shirt", picked, () => chooseGroup({
       k,
       cid: selection.primaryCid,
       expectedCid: null,
       shirtIdentity: candidate,
       shirtConfirmation: selection,
-    });
+    }));
+  };
+
+  /** Finish at the match report, which shows the player's stats once the claim is saved. */
+  const openMatchReport = async () => {
+    if (!reportMatchCode) return;
+    await save({ immediate: true });
+    void queryClient.invalidateQueries({ queryKey: ["match-stats", reportMatchCode] });
+    setLocation(matchReportPath(reportMatchCode));
   };
 
   const advance = async () => {
@@ -1088,8 +1206,8 @@ export function GameClaim({
   const claimLabelForGroup = (group: Group): string | undefined => {
     const status = claimStatusForGroup(group.members, identities, identityId, claimName);
     if (!status.taken) return undefined;
-    const names = status.owners.map((owner) => owner.name || copy.gallery.you);
-    return copy.gallery.claimedBy(names.join(", "));
+    const others = sharedWith([group]);
+    return others ? copy.find.alsoPickedBy(others) : copy.find.pickedByYou;
   };
 
   const needsChunk = ["kit", "shirt", "gallery", "review", "joins", "gaps", "next"].includes(S.step);
@@ -1139,7 +1257,7 @@ export function GameClaim({
                 type="button"
                 onClick={() => pickRosterPlayer(player)}
                 aria-label={`${label}, ${number}, ${copy.roster.minutes(Math.round(player.minutes))}`}
-                className="group rounded-2xl border border-line bg-surface p-3 text-start transition hover:border-accent hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="group rounded-2xl border border-line bg-surface p-3 text-start transition hover:border-accent hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 <div className="grid h-24 grid-cols-3 gap-1 overflow-hidden rounded-xl bg-black/30">
                   {photos.length ? photos.map((photo) => (
@@ -1345,6 +1463,7 @@ export function GameClaim({
                 );
               })}
             </div>
+            {sharedPickConfirm("shirt")}
             <div>
               <Btn kind="primary" disabled={!selectedShirtGroups} onClick={() => {
                 if (selectedShirtGroups) confirmShirtGroup(selectedShirtGroups);
@@ -1385,7 +1504,8 @@ export function GameClaim({
           {gs.length === 0 && <p className="text-sm text-muted-text">{copy.gallery.empty}</p>}
           {gs.map((g) => (
             <GroupCard key={g.cid} d={d} g={g} copy={copy} game={game} claimLabel={claimLabelForGroup(g)} onWatch={() => previewGroup(d, g)}
-              action={<Btn kind="primary" size="sm" onClick={() => pickGroup(g.cid)}>{copy.gallery.thatsMe}</Btn>} />
+              action={<Btn kind="primary" size="sm" onClick={() => pickGroup(g.cid)}>{copy.gallery.thatsMe}</Btn>}
+              footer={sharedPickConfirm(`card:${g.cid}`)} />
           ))}
         </div>
         <Row><Btn onClick={() => go("kit")}>{copy.gallery.changeKit}</Btn></Row>
@@ -1498,16 +1618,18 @@ export function GameClaim({
         <GameTimeline ctx={ctx} ph={chunkMeta(ctx, d.k).start} />
         {sure && r[0] && (
           <>
-            <Row><Btn kind="primary" onClick={() => pickGroup(r[0].g.cid)}>{copy.next.fast}</Btn></Row>
+            <Row><Btn kind="primary" onClick={() => pickGroup(r[0].g.cid, "fast")}>{copy.next.fast}</Btn></Row>
             <p className="-mt-2 text-xs text-muted-text">
               {copy.next.fastNote}{fastClaimLabel ? ` · ${fastClaimLabel}` : ""}
             </p>
+            {sharedPickConfirm("fast")}
           </>
         )}
         <div className="flex flex-col gap-3">
           {r.map(({ g }) => (
             <GroupCard key={g.cid} d={d} g={g} copy={copy} game={game} claimLabel={claimLabelForGroup(g)} onWatch={() => previewGroup(d, g)}
-              action={<Btn kind={sure ? "ghost" : "primary"} size="sm" onClick={() => pickGroup(g.cid)}>{copy.gallery.thatsMe}</Btn>} />
+              action={<Btn kind={sure ? "ghost" : "primary"} size="sm" onClick={() => pickGroup(g.cid)}>{copy.gallery.thatsMe}</Btn>}
+              footer={sharedPickConfirm(`card:${g.cid}`)} />
           ))}
         </div>
         <Row>
@@ -1522,7 +1644,7 @@ export function GameClaim({
   } else if (S.step === "done") {
     body = <DoneScreen ctx={ctx} copy={copy} elapsed={elapsed}
       onStats={() => go("stats")}
-      onExport={() => exportClaim(S, recordingId)}
+      onReport={reportMatchCode ? () => void openMatchReport() : null}
       continuation={continuation && (!matchChoices.length || matchChoices.includes(continuation.matchCode)) ? continuation : null}
       onContinue={() => continuation && (!matchChoices.length || matchChoices.includes(continuation.matchCode)) && setLocation(`/find/${continuation.recordingId}?match=${encodeURIComponent(continuation.matchCode)}&kit=${encodeURIComponent(S.shirtIdentity?.kitKey ?? S.team ?? "")}&number=${encodeURIComponent(S.shirtIdentity?.number ?? "")}`)}
       onAgain={async () => {
@@ -1541,11 +1663,20 @@ export function GameClaim({
     body = <StatsScreen ctx={ctx} copy={copy} mediaSlot={mediaSlot} now={mediaNow} eyebrow={eyebrow}
       recordingId={recordingId} videoUrl={videoUrl}
       onTeams={(pick) => act(() => { S.teams = pick; }, false)}
-      onBack={() => go("done")} onExport={() => exportClaim(S, recordingId)} ensure={ensure} />;
+      onBack={() => go("done")}
+      onReport={reportMatchCode ? () => void openMatchReport() : null}
+      reportLabel={copy.find.seeReport}
+      ensure={ensure} />;
   }
 
+  // Progress through the ten-minute blocks while the player is working on one.
+  const playableOrder = S.order.filter((k) => !S.you[String(k)]?.skipped && inPlaySec(ctx, k) >= 30);
+  const progress = needsChunk && S.k !== null && playableOrder.length > 1
+    ? { step: Math.max(1, playableOrder.indexOf(S.k) + 1), of: playableOrder.length }
+    : null;
+
   return (
-    <Shell meter={meter}>
+    <Shell meter={meter} copy={copy} onBack={exit} progress={progress}>
       {staleState && !staleNoticeDismissed && (
         <div role="status" aria-live="polite" className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
           <p className="text-sm leading-6 text-muted-text">{copy.common.staleStateNotice}</p>
@@ -1587,14 +1718,6 @@ function picturesForGroup(d: LoadedChunk, group: Group, frameRate: number, count
   return spread(pictures, count);
 }
 
-function exportClaim(S: ClaimState, recordingId: number) {
-  const blob = new Blob([JSON.stringify(S)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `my-claim-${recordingId}.json`;
-  a.click();
-}
-
 function CropWithNote({ d, picture, h, nearbyLabel }: {
   d: LoadedChunk; picture: PiecePicture | null; h: number; nearbyLabel: string;
 }) {
@@ -1632,7 +1755,7 @@ function Tile({ d, photo, nearbyLabel, label, children, onClick, out, pickOn }: 
 }
 
 function GroupCard({
-  d, g, copy, game, onWatch, action, claimLabel, photos: suppliedPhotos, selected, selectable, photoRemoval,
+  d, g, copy, game, onWatch, action, claimLabel, photos: suppliedPhotos, selected, selectable, photoRemoval, footer,
 }: {
   d: LoadedChunk;
   g: Group;
@@ -1641,6 +1764,8 @@ function GroupCard({
   onWatch: () => void;
   action?: React.ReactNode;
   claimLabel?: string;
+  /** Inline follow-up under the card, e.g. "is it you too?". */
+  footer?: React.ReactNode;
   photos?: Array<{ id: string; picture: PiecePicture }>;
   selected?: boolean;
   selectable?: { selected: boolean; disabled: boolean; label: string; onChange: () => void };
@@ -1686,7 +1811,12 @@ function GroupCard({
           })}
         </div>
       )}
-      {claimLabel && <p role="note" className="text-xs font-medium text-muted-text">{claimLabel}</p>}
+      {claimLabel && (
+        <Chip tone="violet">
+          <Users className="h-3.5 w-3.5" aria-hidden="true" />
+          <span role="note">{claimLabel}</span>
+        </Chip>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <div className="me-auto text-xs text-muted-text">
           <b dir="ltr" className="me-1.5 font-display text-lg font-semibold tabular-nums text-text">{mmss(g.dur)}</b>
@@ -1709,6 +1839,34 @@ function GroupCard({
             <span>{selectable.label}</span>
           </label>
         )}
+      </div>
+      {footer}
+    </div>
+  );
+}
+
+/**
+ * "{name} already picked this person. Is it you too?" -- inline, under the
+ * pick, in the app's card style. Yes proceeds with the pick; No leaves
+ * everything as it was.
+ */
+function SharedPickConfirm({ text, yes, no, onYes, onNo }: {
+  text: string; yes: string; no: string; onYes: () => void; onNo: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+  return (
+    <div ref={ref} role="alertdialog" aria-live="polite" aria-label={text} data-testid="shared-pick-confirm"
+      className="flex flex-col gap-3 rounded-2xl border border-violet/50 bg-violet/10 p-3.5">
+      <p className="flex items-start gap-2 text-sm leading-6 text-text">
+        <Users className="mt-1 h-4 w-4 shrink-0 text-[#A98CFF]" aria-hidden="true" />
+        <span>{text}</span>
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <Btn kind="primary" size="sm" testId="button-shared-pick-yes" onClick={onYes}>{yes}</Btn>
+        <Btn size="sm" testId="button-shared-pick-no" onClick={onNo}>{no}</Btn>
       </div>
     </div>
   );
@@ -1887,8 +2045,11 @@ function ReviewScreen({
           if (g) writeGroupDecision(d, g);
           act(() => { S.qi = 0; S.step = "joins"; });
         }}>{copy.review.looksRight}</Btn>
-        <Btn onClick={() => {
+        <Btn testId="button-review-not-me" onClick={() => {
           if (g) writeRejectedGroup(d, g);
+          // Forget this block's pick before saving, or the rejected person
+          // stays in the saved claim as you.
+          clearPick(ctx, k);
           go(S.oi ? "next" : "gallery");
         }}>{copy.review.notMe}</Btn>
         <Btn title={copy.review.cameOff} onClick={() => act(() => {
@@ -1996,8 +2157,8 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
 
 /* ------------------------------------------------------------------- done */
 
-function DoneScreen({ ctx, copy, elapsed, onStats, onExport, onAgain, continuation, onContinue }: {
-  ctx: Ctx; copy: GameStrings; elapsed: number; onStats: () => void; onExport: () => void; onAgain: () => void;
+function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuation, onContinue }: {
+  ctx: Ctx; copy: GameStrings; elapsed: number; onStats: () => void; onReport: (() => void) | null; onAgain: () => void;
   continuation: ServerGame["continuation"]; onContinue: () => void;
 }) {
   const tt = totals(ctx);
@@ -2028,12 +2189,19 @@ function DoneScreen({ ctx, copy, elapsed, onStats, onExport, onAgain, continuati
         })}
       </div>
       <p className="border-s-2 border-violet ps-2.5 text-xs text-muted-text">{copy.done.note}</p>
-      <Row>
-        <Btn kind="primary" onClick={onStats}>{copy.done.toStats}</Btn>
-        {continuation && <Btn onClick={onContinue}>{copy.done.keepGoing}</Btn>}
-        <Btn onClick={onExport}>{copy.done.download}</Btn>
-        <Btn onClick={onAgain}>{copy.done.again}</Btn>
-      </Row>
+      {/* Finishing leads to the match report (it now shows the player's
+          stats). Without a known match the in-flow stats stay primary. */}
+      <div className="flex flex-col gap-2.5">
+        {onReport
+          ? <Btn kind="primary" testId="button-find-see-report" onClick={onReport}>{copy.find.seeReport}</Btn>
+          : <Btn kind="primary" onClick={onStats}>{copy.done.toStats}</Btn>}
+        {continuation && <Btn kind="turf" testId="button-find-keep-going" onClick={onContinue}>{copy.done.keepGoing}</Btn>}
+        {onReport && <Btn onClick={onStats}>{copy.done.toStats}</Btn>}
+        <button type="button" onClick={onAgain} data-testid="button-find-start-over"
+          className="flex min-h-11 items-center justify-center px-2 text-sm font-medium text-muted-text underline-offset-4 hover:text-text hover:underline">
+          {copy.done.again}
+        </button>
+      </div>
     </div>
   );
 }

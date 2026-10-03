@@ -1,4 +1,4 @@
-import type { PublicPlayerHeatmap, PublicPlayerMatchStats } from "@workspace/api-client-react";
+import type { PublicPlayerHeatmap, PublicPlayerMatchStats, PublicPlayerMeasuredMatch } from "@workspace/api-client-react";
 
 export function aggregatePitchHeatmaps(
   matches: Pick<PublicPlayerMatchStats, "heatmap">[],
@@ -48,4 +48,53 @@ export function shouldShowEmptyStatsCta(
   isGuest: boolean,
 ): boolean {
   return !isGuest && viewerId === profileId;
+}
+
+export type MeasuredFigures = Pick<PublicPlayerMeasuredMatch,
+  "minutes" | "distanceKm" | "topSpeedKmh" | "touches" | "passesTried" | "passesCompleted" | "shots" | "goals" | "dribbles" | "dribblesWon" | "dribblesLost">;
+
+/**
+ * Puts each measured match beside the claimed recording it was measured on:
+ * the newest claimed row whose recording is one of the match's. A match
+ * spanning two claimed recordings is shown once, so nothing is counted twice;
+ * a match with no claimed row on the page is returned in `unattached`.
+ */
+export function attachMeasured(
+  claimRows: Pick<PublicPlayerMatchStats, "recordingId">[],
+  measured: PublicPlayerMeasuredMatch[],
+): { byRecording: Map<number, PublicPlayerMeasuredMatch>; unattached: PublicPlayerMeasuredMatch[] } {
+  const byRecording = new Map<number, PublicPlayerMeasuredMatch>();
+  const unattached: PublicPlayerMeasuredMatch[] = [];
+  for (const match of measured) {
+    const row = claimRows.find((claim) => match.recordingIds.includes(claim.recordingId) && !byRecording.has(claim.recordingId));
+    if (row) byRecording.set(row.recordingId, match);
+    else unattached.push(match);
+  }
+  return { byRecording, unattached };
+}
+
+export type MeasuredTile =
+  | { key: "topSpeed"; value: number }
+  | { key: "distance"; value: number }
+  | { key: "goals"; value: number }
+  | { key: "shots"; value: number }
+  | { key: "passes"; value: number; tried: number | null }
+  | { key: "touches"; value: number }
+  | { key: "dribbles"; value: number; won: number | null; lost: number | null };
+
+/**
+ * The figures a profile can show from some measured stats, in a fixed order.
+ * A figure that was not measured is left out: never shown as "Unavailable".
+ */
+export function measuredTiles(figures: MeasuredFigures | null | undefined, opts: { distance?: boolean } = {}): MeasuredTile[] {
+  if (!figures) return [];
+  const tiles: MeasuredTile[] = [];
+  if (figures.topSpeedKmh !== null) tiles.push({ key: "topSpeed", value: figures.topSpeedKmh });
+  if (opts.distance && figures.distanceKm !== null) tiles.push({ key: "distance", value: figures.distanceKm });
+  if (figures.goals !== null) tiles.push({ key: "goals", value: figures.goals });
+  if (figures.shots !== null) tiles.push({ key: "shots", value: figures.shots });
+  if (figures.passesCompleted !== null) tiles.push({ key: "passes", value: figures.passesCompleted, tried: figures.passesTried });
+  if (figures.touches !== null) tiles.push({ key: "touches", value: figures.touches });
+  if (figures.dribbles !== null) tiles.push({ key: "dribbles", value: figures.dribbles, won: figures.dribblesWon, lost: figures.dribblesLost });
+  return tiles;
 }

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { PublicPlayerMatchStats } from './publicPlayerMatchStats';
+import type { PublicPlayerMeasured } from './publicPlayerMeasured';
 import type { PublicPlayerStatsTotals } from './publicPlayerStatsTotals';
 
 export interface PublicPlayerStats {
@@ -16,4 +17,6 @@ export interface PublicPlayerStats {
      * @minimum 0
      */
   excludedClaimCount: number;
+  /** What Replay measured for the player in each match, read from the match stats cache the match report and Home use (no tracking is parsed per view). Null when the cache could not be read. */
+  measured?: PublicPlayerMeasured | null;
 }

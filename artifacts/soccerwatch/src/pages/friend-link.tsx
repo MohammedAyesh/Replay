@@ -74,6 +74,7 @@ export default function FriendLinkPage() {
   const shareOwnLink = async () => {
     const url = myLink.data?.url ?? `${window.location.origin}${appBasePath}/f/${code}`;
     const result = await shareOrCopy({ title: copy.shareTitle, text: copy.sharePrefix, url });
+    if (result === "cancelled") return;
     if (result === "copied") toast({ title: copy.linkCopied });
     else if (result === "shared") toast({ title: copy.linkShared });
     else toast({ title: copy.shareFailed, variant: "destructive" });

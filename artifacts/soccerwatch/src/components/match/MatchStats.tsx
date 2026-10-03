@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth";
 import type { Lab } from "@/lib/game-claim/play";
 import type { ReportTimeline } from "@/lib/match-report";
 import { cn } from "@/lib/utils";
+import { findPath } from "@/lib/find-nav";
 import {
   metricDeltaDirection,
   podiumPlaces,
@@ -345,7 +346,7 @@ function CompetitionPanel({ stats, copy, room }: { stats: Stats; copy: MatchStri
       </motion.div>
     );
   };
-  const findHref = stats.recordings[0] ? `/find/${stats.recordings[0]}` : null;
+  const findHref = stats.recordings[0] ? findPath(stats.recordings[0], room.code) : null;
   const viewerGap = ranked.viewer && ranked.above
     ? (metricValue(ranked.above, metric) ?? 0) - (metricValue(ranked.viewer, metric) ?? 0)
     : null;
@@ -591,7 +592,7 @@ export function MatchStats({ room, copy, gameId = null }: { room: MatchRoom; cop
   if (!stats) {
     return <section className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-4" data-testid="stats-loading"><div className="h-4 w-36 animate-pulse rounded bg-raised" /><div className="h-3 w-full animate-pulse rounded bg-raised" /><div className="h-20 animate-pulse rounded-xl bg-raised" /></section>;
   }
-  const findHref = stats.recordings[0] ? `/find/${stats.recordings[0]}` : null;
+  const findHref = stats.recordings[0] ? findPath(stats.recordings[0], room.code) : null;
   if (!stats.available) return <section className="rounded-2xl border border-line bg-surface p-4 text-sm text-muted-text">{copy.matchStatsNoFootage}</section>;
   const t = stats.team;
   const name = (side: string) => room.teams[side as TeamSide]?.name || side;

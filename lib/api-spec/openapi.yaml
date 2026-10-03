@@ -3456,6 +3456,102 @@ components:
           type: integer
           minimum: 0
           description: Claims awaiting review because they are disputed or need resolution.
+        measured:
+          description: >-
+            What Replay measured for the player in each match, read from the
+            match stats cache the match report and Home use (no tracking is
+            parsed per view). Null when the cache could not be read.
+          oneOf:
+            - $ref: "#/components/schemas/PublicPlayerMeasured"
+            - type: "null"
+
+    PublicPlayerMeasured:
+      type: object
+      required: [matches, totals]
+      properties:
+        matches:
+          type: array
+          description: Newest first; only matches on recordings the public can see.
+          items:
+            $ref: "#/components/schemas/PublicPlayerMeasuredMatch"
+        totals:
+          $ref: "#/components/schemas/PublicPlayerMeasuredTotals"
+
+    PublicPlayerMeasuredMatch:
+      type: object
+      description: One match's figures, exactly as the match report shows them. A null figure was not measured for that match.
+      required: [matchId, recordingIds, date, startLocal, fieldName, minutes, distanceKm, topSpeedKmh, touches, passesTried, passesCompleted, shots, goals, dribbles, dribblesWon, dribblesLost]
+      properties:
+        matchId:
+          type: integer
+        recordingIds:
+          type: array
+          description: The public recordings this match was measured on, so a profile can show the figures beside its claimed recording.
+          items:
+            type: integer
+        date:
+          type: string
+          description: YYYY-MM-DD, Amman.
+        startLocal:
+          type: string
+          description: "YYYY-MM-DD HH:MM, Amman."
+        fieldName:
+          type: ["string", "null"]
+        minutes:
+          type: ["number", "null"]
+          description: Minutes on camera.
+        distanceKm:
+          type: ["number", "null"]
+        topSpeedKmh:
+          type: ["number", "null"]
+        touches:
+          type: ["integer", "null"]
+        passesTried:
+          type: ["integer", "null"]
+        passesCompleted:
+          type: ["integer", "null"]
+        shots:
+          type: ["integer", "null"]
+        goals:
+          type: ["integer", "null"]
+        dribbles:
+          type: ["integer", "null"]
+        dribblesWon:
+          type: ["integer", "null"]
+        dribblesLost:
+          type: ["integer", "null"]
+
+    PublicPlayerMeasuredTotals:
+      type: object
+      description: Sums over the matches that measured each figure (top speed is the best); null when no match measured it.
+      required: [matches, minutes, distanceKm, topSpeedKmh, touches, passesTried, passesCompleted, shots, goals, dribbles, dribblesWon, dribblesLost]
+      properties:
+        matches:
+          type: integer
+          minimum: 0
+        minutes:
+          type: ["number", "null"]
+        distanceKm:
+          type: ["number", "null"]
+        topSpeedKmh:
+          type: ["number", "null"]
+        touches:
+          type: ["integer", "null"]
+        passesTried:
+          type: ["integer", "null"]
+          description: Passes tried in the matches that measured completed passes; null when any of them did not measure tries.
+        passesCompleted:
+          type: ["integer", "null"]
+        shots:
+          type: ["integer", "null"]
+        goals:
+          type: ["integer", "null"]
+        dribbles:
+          type: ["integer", "null"]
+        dribblesWon:
+          type: ["integer", "null"]
+        dribblesLost:
+          type: ["integer", "null"]
 
     PublicPlayerStatsTotals:
       type: object

@@ -41,6 +41,7 @@ const en = {
   },
   ordinal: ordinalEn,
   you: "You",
+  per10Short: "/ 10 min",
   m: "m",
   min: "min",
   s: "s",
@@ -74,9 +75,10 @@ const en = {
 
   last: {
     title: { distanceKm: "Furthest on the pitch", topSpeedKmh: "Fastest on the pitch", touches: "Most on the ball", passesCompleted: "Most passes on the pitch", dribblesWon: "Most dribbles won", goals: "Top scorer on the pitch", shots: "Most shots on the pitch" } as Record<TileMetric, string>,
-    sub: (claimed: number) => `Number 1 of ${claimed} who claimed`,
+    sub: (claimed: number) => `Number 1 of ${claimed} who found themselves`,
     pitch: "Pitch average",
-    line: (field: string) => `At ${field}. Nobody who claimed the match did better.`,
+    per10: "per 10 min on camera",
+    line: (field: string) => `At ${field}. Nobody who found themselves did better.`,
   },
 
   rival: {
@@ -111,7 +113,7 @@ const en = {
     plain: "Your numbers are ready. Find yourself to see them.",
     teaserLabel: { topSpeedKmh: "top speed on the pitch", distanceKm: "most run on the pitch", dribblesWon: "most dribbles won", shots: "most shots" } as Partial<Record<TileMetric, string>>,
     found: "found",
-    toGo: "still to claim",
+    toGo: "still to find themselves",
     minutes: "to find yourself",
   },
 
@@ -158,9 +160,9 @@ const en = {
 
   ranks: {
     title: "Where you finished",
-    line: (n: number) => `Out of ${n} ${en.players(n)} who claimed the match.`,
+    line: (n: number) => `Out of ${n} ${en.players(n)} who found themselves.`,
     top3: "top-three finishes",
-    claimed: "claimed",
+    claimed: "found themselves",
     best: "best finish",
   },
 
@@ -260,15 +262,15 @@ const en = {
     line: (names: string[]) => `${names.length === 2 ? `${names[0]} and ${names[1]}` : names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`} found themselves. Where do you land?`,
     found: "found",
     players: "players",
-    minutes: "to claim yours",
+    minutes: "to find yourself",
   },
 
   unclaimed: {
     title: "Your numbers are waiting",
     sub: "Find yourself in the video",
-    line: "Nobody from this match has claimed yet. Be the first.",
+    line: "Nobody from this match has found themselves yet. Be the first.",
     players: "players",
-    minutes: "to claim",
+    minutes: "to find yourself",
   },
 };
 
@@ -292,6 +294,7 @@ const ar: TileStrings = {
   },
   ordinal: (n: number) => (["", "الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر"][n] ?? `#${n}`),
   you: "إنت",
+  per10Short: "/ 10 د",
   m: "م",
   min: "د",
   s: "ث",
@@ -325,9 +328,10 @@ const ar: TileStrings = {
 
   last: {
     title: { distanceKm: "ركضت أكثر من الكل", topSpeedKmh: "أسرع واحد بالملعب", touches: "أكثر واحد لمس الكرة", passesCompleted: "أكثر تمريرات بالملعب", dribblesWon: "أكثر مراوغات ناجحة", goals: "هدّاف الملعب", shots: "أكثر تسديدات بالملعب" },
-    sub: (claimed: number) => `الأول من ${claimed} حدّدوا حالهم`,
+    sub: (claimed: number) => `الأول من ${claimed} لقوا حالهم`,
     pitch: "معدّل الملعب",
-    line: (field: string) => `في ${iso(field)}، ما حدا من اللي حدّدوا حالهم عمل أحسن منك.`,
+    per10: "كل 10 دقايق على الكاميرا",
+    line: (field: string) => `في ${iso(field)}، ما حدا من اللي لقوا حالهم عمل أحسن منك.`,
   },
 
   rival: {
@@ -362,7 +366,7 @@ const ar: TileStrings = {
     plain: "أرقامك جاهزة. لاقي حالك لتشوفها.",
     teaserLabel: { topSpeedKmh: "أعلى سرعة بالملعب", distanceKm: "أكثر ركض بالملعب", dribblesWon: "أكثر مراوغات", shots: "أكثر تسديدات" },
     found: "لقوا حالهم",
-    toGo: "لسّا ما حدّدوا",
+    toGo: "لسّا ما لقوا حالهم",
     minutes: "لتلاقي حالك",
   },
 
@@ -381,13 +385,13 @@ const ar: TileStrings = {
     title: "اللمسات",
     sub: (from: number, to: number) => `أكثر وقت بين الدقيقة ${from} و${to}`,
     between: "بين كل لمسة",
-    busiest: "بأكثر 5 دقائق",
+    busiest: "بأكثر 5 دقايق",
     watched: "من الماتش",
     unit: (n: number) => arCount(n, ["لمسة", "لمستين", "لمسات"]),
   },
 
   total: {
-    title: (field: string | null) => (field ? `مسافتك في ${iso(field)}` : `مسافتك مع ${iso("Replay")}`),
+    title: (field: string | null) => (field ? `مسافتك في ${iso(field)}` : `مسافتك مع ريبلاي`),
     when: (date: string) => `من ${date}`,
     sub: (milestone: string) => `من ${milestone}`,
     milestone: (km: number) => (km === 21.1 ? "نص ماراثون" : km === 42.2 ? "ماراثون" : `${km} كم`),
@@ -399,7 +403,7 @@ const ar: TileStrings = {
   },
 
   spells: {
-    title: "ركضك كل 10 دقائق",
+    title: "ركضك كل 10 دقايق",
     stronger: "أقوى فترة إلك كانت بالآخر",
     strongest: (from: number, to: number) => `أقوى فترة بين الدقيقة ${from} و${to}`,
     total: "المجموع",
@@ -409,9 +413,9 @@ const ar: TileStrings = {
 
   ranks: {
     title: "ترتيبك بالملعب",
-    line: (n: number) => `من أصل ${arN(n, ["لاعب", "لاعبين", "لاعبين"])} حدّدوا حالهم بالماتش.`,
+    line: (n: number) => `من أصل ${arN(n, ["لاعب", "لاعبين", "لاعبين"])} لقوا حالهم بالماتش.`,
     top3: "مرات بأول ثلاثة",
-    claimed: "حدّدوا حالهم",
+    claimed: "لقوا حالهم",
     best: "أحسن ترتيب",
   },
 
@@ -511,15 +515,15 @@ const ar: TileStrings = {
     line: (names: string[]) => `${arList(names)} ${names.length === 1 ? "لقى حاله" : "لقوا حالهم"}. وين إنت منهم؟`,
     found: "لقوا حالهم",
     players: "لاعب",
-    minutes: "لتاخذ أرقامك",
+    minutes: "لتلاقي حالك",
   },
 
   unclaimed: {
     title: "أرقامك ناطرتك",
     sub: "لاقي حالك بالفيديو",
-    line: "لسّا ما حدا من هالماتش حدّد حاله. كون الأول.",
+    line: "لسّا ما حدا من هالماتش لقى حاله. كون الأول.",
     players: "لاعب",
-    minutes: "لتحدّد حالك",
+    minutes: "لتلاقي حالك",
   },
 };
 

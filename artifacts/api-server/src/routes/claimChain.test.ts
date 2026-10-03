@@ -539,8 +539,19 @@ describe("undo", () => {
   });
 });
 
+/*
+ * "Shouldn't take away, should be counted for both" (product owner,
+ * 2026-10-03). Picking someone another player already picked used to be a 409
+ * when they had vouched for the stretch, and silently stripped them when they
+ * had not. Both claimants now keep the shared frames.
+ */
 describe("another player has already vouched for that stretch", () => {
-  it("refuses the tap and changes nothing", async () => {
+  it("accepts the tap and leaves the other player's row exactly as it was", async () => {
+    await setIdentities([{
+      id: "person-rival",
+      name: "rival",
+      parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }],
+    }] as never);
     await db.insert(claimMatchIdentityBindingsTable).values({
       userId: rivalId,
       recordingId,
@@ -554,9 +565,19 @@ describe("another player has already vouched for that stretch", () => {
     });
 
     const res = await request(app).post(url("/tap")).send({ trackId: "t1", frame: 10 });
-    expect(res.status).toBe(409);
-    expect(res.body.conflict).toEqual({ trackId: "t1", fromFrame: 40, toFrame: 60 });
-    expect((await storedManifest()).identities ?? []).toEqual([]);
+    expect(res.status).toBe(200);
+    expect(res.body.chain).toEqual([{ trackId: "t1", fromFrame: 10, toFrame: 99 }]);
+    const identities = (await storedManifest()).identities ?? [];
+    // The rival's row is bound to the rival, so it is a player's claim, not a
+    // board grouping to be moved: nothing is taken off it.
+    expect(identities.find((item) => item.id === "person-rival")?.parts)
+      .toEqual([{ trackId: "t1", fromFrame: 0, toFrame: 99 }]);
+    expect(identities.find((item) => item.id === claimIdentityId(playerId, recordingId))?.parts)
+      .toEqual([expect.objectContaining({ trackId: "t1", fromFrame: 10, toFrame: 99 })]);
+    // And the rival's binding is not disturbed.
+    const [rival] = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.userId, rivalId));
+    expect(rival).toMatchObject({ state: "confirmed", personId: "person-rival" });
   });
 
   it("ignores a released binding, which is what release is for", async () => {
@@ -587,6 +608,164 @@ describe("another player has already vouched for that stretch", () => {
       state: "confirmed",
     });
     expect((await request(app).post(url("/tap")).send({ trackId: "t1", frame: 10 })).status).toBe(200);
+  });
+});
+
+describe("two players pick the same person: counted for both, nothing taken away", () => {
+  const rivalRow = () => claimIdentityId(rivalId, recordingId);
+  const mineRow = () => claimIdentityId(playerId, recordingId);
+  const extent = (parts: TrackingIdentity["parts"] | undefined) =>
+    (parts ?? []).map(({ trackId, fromFrame, toFrame }) => ({ trackId, fromFrame, toFrame }));
+
+  it("a tap on someone another player claimed keeps their row whole and gives the frames to both", async () => {
+    actAs(rivalId);
+    expect((await request(app).post(url("/tap")).send({ trackId: "t1", frame: 0 })).status).toBe(200);
+
+    actAs(playerId);
+    const res = await request(app).post(url("/tap")).send({ trackId: "t1", frame: 20 });
+    expect(res.status).toBe(200);
+    expect(res.body.chain).toEqual([{ trackId: "t1", fromFrame: 20, toFrame: 99 }]);
+
+    const identities = (await storedManifest()).identities ?? [];
+    // Before 2026-10-03 the second claimant took frames 20-99 off the first.
+    expect(extent(identities.find((item) => item.id === rivalRow())?.parts))
+      .toEqual([{ trackId: "t1", fromFrame: 0, toFrame: 99 }]);
+    expect(extent(identities.find((item) => item.id === mineRow())?.parts))
+      .toEqual([{ trackId: "t1", fromFrame: 20, toFrame: 99 }]);
+  });
+
+  it("still moves a claimant off the BOARD row, but never off another player's claim", async () => {
+    await setIdentities([
+      { id: "person-x", name: "tracker guess", parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }] },
+      { id: claimIdentityId(rivalId, recordingId), name: "rival", parts: [{ trackId: "t2", fromFrame: 100, toFrame: 199 }] },
+    ] as never);
+
+    await request(app).post(url("/tap")).send({ trackId: "t1", frame: 20 });
+    const res = await request(app).post(url("/tap"))
+      .send({ trackId: "t2", frame: 100, rejectedTrackId: "t1" });
+    expect(res.status).toBe(200);
+    expect(res.body.chain).toEqual([
+      { trackId: "t1", fromFrame: 20, toFrame: 99 },
+      { trackId: "t2", fromFrame: 100, toFrame: 199 },
+    ]);
+
+    const identities = (await storedManifest()).identities ?? [];
+    // The board row gives up what the claimant took, exactly as before...
+    expect(extent(identities.find((item) => item.id === "person-x")?.parts))
+      .toEqual([{ trackId: "t1", fromFrame: 0, toFrame: 19 }]);
+    // ...while the other player's claim keeps every frame.
+    expect(extent(identities.find((item) => item.id === rivalRow())?.parts))
+      .toEqual([{ trackId: "t2", fromFrame: 100, toFrame: 199 }]);
+  });
+
+  it("/find saves overlap freely, and both players get a confirmed binding, coverage and stats", async () => {
+    const { default: claimMatchRouter } = await import("./claimMatch");
+    const withAdmin = express();
+    withAdmin.use(express.json());
+    withAdmin.use("/api", claimMatchRouter);
+
+    actAs(rivalId);
+    const rivalSave = await request(app).put(gameUrl()).send({
+      state: { step: "done" },
+      parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }, { trackId: "t2", fromFrame: 100, toFrame: 199 }],
+      bench: [],
+      done: true,
+    });
+    expect(rivalSave.status).toBe(200);
+
+    actAs(playerId);
+    const mySave = await request(app).put(gameUrl()).send({
+      state: { step: "done" },
+      parts: [{ trackId: "t1", fromFrame: 50, toFrame: 99 }, { trackId: "t2", fromFrame: 100, toFrame: 199 }],
+      bench: [],
+      done: true,
+    });
+    expect(mySave.status).toBe(200);
+
+    // Identity rows: the first claimant keeps everything, the second has
+    // the shared stretch too.
+    const identities = (await storedManifest()).identities ?? [];
+    expect(extent(identities.find((item) => item.id === rivalRow())?.parts)).toEqual([
+      { trackId: "t1", fromFrame: 0, toFrame: 99 },
+      { trackId: "t2", fromFrame: 100, toFrame: 199 },
+    ]);
+    expect(extent(identities.find((item) => item.id === mineRow())?.parts)).toEqual([
+      { trackId: "t1", fromFrame: 50, toFrame: 99 },
+      { trackId: "t2", fromFrame: 100, toFrame: 199 },
+    ]);
+
+    // Bindings: both confirmed, each on their own row, each vouching for
+    // the shared stretch -- nobody is disputed.
+    const bindings = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    const rivalBinding = bindings.find((row) => row.userId === rivalId);
+    const myBinding = bindings.find((row) => row.userId === playerId);
+    expect(rivalBinding).toMatchObject({ state: "confirmed", personId: rivalRow() });
+    expect(myBinding).toMatchObject({ state: "confirmed", personId: mineRow() });
+    const coversShared = (fragments: Array<{ trackId: string; fromFrame: number; toFrame: number }> | undefined) =>
+      (fragments ?? []).some((f) => f.trackId === "t2" && f.fromFrame <= 150 && f.toFrame >= 150);
+    expect(coversShared(rivalBinding?.vouchedFragments)).toBe(true);
+    expect(coversShared(myBinding?.vouchedFragments)).toBe(true);
+
+    // Coverage: each player's own share, the shared stretch counted for both.
+    const progress = await db.select().from(claimMatchProgressTable)
+      .where(eq(claimMatchProgressTable.recordingId, recordingId));
+    expect(progress.find((row) => row.userId === rivalId)?.claimedPercent).toBeCloseTo(100, 0);
+    expect(progress.find((row) => row.userId === playerId)?.claimedPercent).toBeCloseTo(75, 0);
+
+    // Stats: both players are listed, each measured over their own row,
+    // which includes the shared stretch.
+    actAs(adminId);
+    const metrics = await request(withAdmin).get(`/api/admin/recordings/${recordingId}/player-metrics`);
+    expect(metrics.status).toBe(200);
+    const byUser = new Map((metrics.body.players as Array<{ userId: number; playerStats: { confirmedSeconds: number } }>)
+      .map((row) => [row.userId, row]));
+    expect(byUser.get(rivalId)?.playerStats.confirmedSeconds).toBeCloseTo(8, 1);
+    expect(byUser.get(playerId)?.playerStats.confirmedSeconds).toBeCloseTo(6, 1);
+  });
+
+  it("a later save by the first player does not take the frames back either", async () => {
+    actAs(playerId);
+    await request(app).post(url("/tap")).send({ trackId: "t1", frame: 20 });
+    actAs(rivalId);
+    await request(app).post(url("/tap")).send({ trackId: "t1", frame: 0 });
+
+    const identities = (await storedManifest()).identities ?? [];
+    expect(extent(identities.find((item) => item.id === mineRow())?.parts))
+      .toEqual([{ trackId: "t1", fromFrame: 20, toFrame: 99 }]);
+    expect(extent(identities.find((item) => item.id === rivalRow())?.parts))
+      .toEqual([{ trackId: "t1", fromFrame: 0, toFrame: 99 }]);
+  });
+});
+
+describe("the identity board's vouched-fragment lock with shared claims", () => {
+  let movesVouched: typeof import("./claimMatch").identityMapMovesVouchedFragment;
+  beforeAll(async () => {
+    movesVouched = (await import("./claimMatch")).identityMapMovesVouchedFragment;
+  });
+  const binding = { personId: "claim:aaa", vouchedFragments: [{ trackId: "t1", fromFrame: 40, toFrame: 60 }] };
+
+  it("does not treat another player's claim holding the same frames as a move", () => {
+    expect(movesVouched(binding, [
+      { id: "claim:aaa", parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }] },
+      { id: "claim:bbb", parts: [{ trackId: "t1", fromFrame: 20, toFrame: 99 }] },
+    ] as never)).toBe(false);
+    // A legacy binding's board row counts as a player's row when named.
+    expect(movesVouched(binding, [
+      { id: "claim:aaa", parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }] },
+      { id: "person-rival", parts: [{ trackId: "t1", fromFrame: 50, toFrame: 99 }] },
+    ] as never, new Set(["person-rival"]))).toBe(false);
+  });
+
+  it("still refuses a board row taking a vouched frame, or the owner's row losing it", () => {
+    expect(movesVouched(binding, [
+      { id: "claim:aaa", parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }] },
+      { id: "person-x", parts: [{ trackId: "t1", fromFrame: 50, toFrame: 99 }] },
+    ] as never)).toBe(true);
+    expect(movesVouched(binding, [
+      { id: "claim:aaa", parts: [{ trackId: "t1", fromFrame: 0, toFrame: 45 }] },
+      { id: "claim:bbb", parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }] },
+    ] as never)).toBe(true);
   });
 });
 

@@ -9,7 +9,7 @@ export type TileMetric = "distanceKm" | "topSpeedKmh" | "touches" | "passesCompl
 type MatchBit = { code: string; startLocal: string; fieldName: string; players: number; watch: string | null };
 
 export type StatTile =
-  | { kind: "lastMatch"; match: MatchBit; metric: TileMetric; value: number; pitchAverage: number; claimed: number; secondary: Partial<Record<TileMetric, number>> }
+  | { kind: "lastMatch"; match: MatchBit; metric: TileMetric; value: number; pitchAverage: number; claimed: number; secondary: Partial<Record<TileMetric, number>>; per10?: boolean }
   | { kind: "personalBest"; match: MatchBit; metric: TileMetric; value: number; previousBest: number; previousBestLocal: string; at: number | null; fasterAtField: number | null }
   | { kind: "rival"; fieldName: string; month: string; board: Array<{ rank: number; name: string; distanceKm: number; me: boolean }>; total: number; myRank: number; other: { name: string; distanceKm: number }; mine: number; perMatch: number; upcoming: { code: string; startLocal: string } | null }
   | { kind: "form"; metric: "distanceKm" | "topSpeedKmh" | "touches"; values: Array<{ startLocal: string; value: number }>; streak: number; latest: number; average: number; upcoming: { code: string; startLocal: string } | null }
@@ -18,7 +18,7 @@ export type StatTile =
   | { kind: "touches"; match: MatchBit; total: number; firstIndex: number; blocks: number[]; busiest: { index: number; count: number }; everySeconds: number | null }
   | { kind: "distanceTotal"; fieldName: string | null; sinceLocal: string; latestLocal: string; matches: number; totalKm: number; perMatch: number[]; milestone: number; passed: boolean; matchesToGo: number }
   | { kind: "distanceSpells"; match: MatchBit; spells: number[]; strongest: number; finishedStrongest: boolean }
-  | { kind: "ranks"; match: MatchBit; claimed: number; ranks: Array<{ metric: TileMetric; rank: number; value: number; of: number | null }> }
+  | { kind: "ranks"; match: MatchBit; claimed: number; ranks: Array<{ metric: TileMetric; rank: number; value: number; of: number | null; shared?: boolean; per10?: boolean }> }
   | { kind: "style"; matches: number; touches: number; passes: number; dribbles: number; shots: number; other: number; lean: "passer" | "dribbler" | "shooter" | "allRounder" }
   | { kind: "challenge"; upcoming: { code: string; startLocal: string; fieldName: string }; metric: "passesCompleted" | "distanceKm" | "touches" | "dribblesWon"; target: number; average: number; best: number; scaleMax: number }
   | { kind: "dribbles"; match: MatchBit; won: number; lost: number; rank: number | null; leaderName: string | null }

@@ -10,6 +10,7 @@ import { OrientationLock } from "@/components/orientation-lock";
 import { useAuth } from "@/lib/auth";
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { useMyMatches } from "@/lib/match-api";
+import { recordInAppLocation } from "@/lib/find-nav";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -20,9 +21,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const inviteCount = myMatches.data?.invites.length ?? 0;
 
 
+  // Find yourself can go back to wherever the player came from inside the app.
+  React.useEffect(() => { recordInAppLocation(location); }, [location]);
+
   const isLogin = location === "/";
-  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find/") || location.startsWith("/find-quick/");
+  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find-quick/");
   const isPortfolio = location.startsWith("/portfolio/");
+  // Find yourself is part of the app (header, language switch, tab bar) but
+  // scrolls as a document, so its tab bar is pinned to the viewport.
   const isWholeGameClaim = location.startsWith("/find/");
   const isWatchFeed = location === "/home";
   const isLegalDocument = location === "/privacy" || location === "/terms" || location === "/delete-account";
@@ -85,7 +91,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {!hideTabBar && (
         <nav
           className={cn(
-            "absolute bottom-3 start-3 end-3 z-50 flex h-[70px] mx-auto max-w-[408px] items-center justify-around gap-1 rounded-2xl border border-line px-2 pb-safe pt-2 backdrop-blur-md",
+            isWholeGameClaim ? "fixed" : "absolute",
+            "bottom-3 start-3 end-3 z-50 flex h-[70px] mx-auto max-w-[408px] items-center justify-around gap-1 rounded-2xl border border-line px-2 pb-safe pt-2 backdrop-blur-md",
             useTranslucentBar
               ? "bg-void/85 text-text"
               : "bg-surface/95 text-muted-foreground"

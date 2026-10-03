@@ -103,6 +103,7 @@ describe("the most impressive number wins", () => {
       { match: match(1, "2026-09-29 23:00"), stats: stats({ topSpeedKmh: 24.3, extras: { blocks: [], topSpeedAt: 2472, shotTimes: [], goalTimes: [], team: "A", teamPassesCompleted: null } }) },
       { match: match(2, "2026-09-25 22:00"), stats: stats({ topSpeedKmh: 22.1 }) },
       { match: match(3, "2026-09-21 22:00"), stats: stats({ topSpeedKmh: 21.4 }) },
+      { match: match(4, "2026-09-17 22:00"), stats: stats({ topSpeedKmh: 20.9 }) },
     ];
     const tile = pickStatTile(base({ history, fieldFaster: 2 }));
     expect(tile).toMatchObject({ kind: "personalBest", metric: "topSpeedKmh", value: 24.3, previousBest: 22.1, at: 2472, fasterAtField: 2 });
@@ -121,7 +122,8 @@ describe("the most impressive number wins", () => {
       peer(13, "Yazan", { distanceKm: 2.8 }),
     ];
     const tile = pickStatTile(base({ history, lastPeers }));
-    expect(tile).toMatchObject({ kind: "lastMatch", metric: "distanceKm", value: 3.78, pitchAverage: 2.9, claimed: 4 });
+    // ranked like the report: per ten minutes on camera (3.78 km in 60 min = 0.63 km per 10)
+    expect(tile).toMatchObject({ kind: "lastMatch", metric: "distanceKm", value: 0.63, pitchAverage: 0.48, claimed: 4, per10: true });
   });
 
   it("passing a half marathon in the newest match is a moment", () => {

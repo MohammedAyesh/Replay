@@ -4,6 +4,7 @@ import { ChevronRight } from "lucide-react";
 import { useTileCopy, type TileStrings } from "@/i18n/stat-tile-strings";
 import type { StatTile, TileMetric } from "@/lib/stat-tile";
 import { cn } from "@/lib/utils";
+import { findPath } from "@/lib/find-nav";
 
 /**
  * Home's stat tiles, in the Whoop style: a near-black card of one fixed
@@ -396,11 +397,11 @@ function LastMatch({ tile, c, now }: P<"lastMatch">) {
   return (
     <Card testId="lastMatch" href={report(tile.match.code)} title={l.title[tile.metric]} when={matchWhen(tile.match.startLocal, now, c.locale)} line={l.line(tile.match.fieldName)}
       foot={shown.map((m) => ({ v: value(m, tile.secondary[m]!), u: m === "distanceKm" || m === "topSpeedKmh" ? c.units[m] : undefined, l: c.small[m] }))}>
-      <Headline big={value(tile.metric, tile.value)} unit={unit || c.bigUnit(tile.metric, tile.value)} sub={l.sub(tile.claimed)} color={TEAL} />
+      <Headline big={value(tile.metric, tile.value)} unit={unit || c.bigUnit(tile.metric, tile.value)} sub={tile.per10 ? `${l.per10} · ${l.sub(tile.claimed)}` : l.sub(tile.claimed)} color={TEAL} />
       <div className="mt-5">
         <RankList color={TEAL} rows={[
-          { name: c.you, v: `${value(tile.metric, tile.value)}${unit ? ` ${unit}` : ""}`, n: tile.value, me: true },
-          { name: l.pitch, v: `${value(tile.metric, tile.pitchAverage)}${unit ? ` ${unit}` : ""}`, n: tile.pitchAverage },
+          { name: c.you, v: `${value(tile.metric, tile.value)}${unit ? ` ${unit}` : ""}${tile.per10 ? ` ${c.per10Short}` : ""}`, n: tile.value, me: true },
+          { name: l.pitch, v: `${value(tile.metric, tile.pitchAverage)}${unit ? ` ${unit}` : ""}${tile.per10 ? ` ${c.per10Short}` : ""}`, n: tile.pitchAverage },
         ]} />
       </div>
     </Card>
@@ -447,7 +448,7 @@ function NotFound({ tile, c, now }: P<"notFound">) {
     players ? { v: String(Math.max(0, players - tile.found)), l: n.toGo } : { v: "2", u: c.min, l: n.minutes },
   ];
   return (
-    <Card testId="notFound" href={`/find/${tile.findRecordingId}`} title={n.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
+    <Card testId="notFound" href={findPath(tile.findRecordingId, tile.match.code)} title={n.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
       line={teaser && tile.teaser ? teaser(value(tile.teaser.metric, tile.teaser.value)) : n.plain} foot={foot}>
       <Ring frac={players ? tile.found / players : 0.1} color={SILVER} big={n.big(tile.found, players)} sub={n.sub} dashed={!players} />
     </Card>
@@ -514,7 +515,7 @@ function Ranks({ tile, c, now }: P<"ranks">) {
   return (
     <Card testId="ranks" href={report(tile.match.code)} title={r.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={r.line(tile.claimed)}
       foot={[{ v: String(tile.ranks.filter((x) => x.rank <= 3).length), l: r.top3 }, { v: String(tile.claimed), l: r.claimed }, { v: c.locale === "ar" ? `#${Math.min(...tile.ranks.map((x) => x.rank))}` : c.ordinal(Math.min(...tile.ranks.map((x) => x.rank))), l: r.best }]}>
-      <RankList color={SILVER} rows={tile.ranks.map((x) => ({ rank: c.locale === "ar" ? `#${x.rank}` : c.ordinal(x.rank), name: c.metric[x.metric], v: `${value(x.metric, x.value)}${unitOf(x.metric)}`, n: of + 1 - x.rank, me: true }))} />
+      <RankList color={SILVER} rows={tile.ranks.map((x) => ({ rank: `${x.shared ? "=" : ""}${c.locale === "ar" ? `#${x.rank}` : c.ordinal(x.rank)}`, name: c.metric[x.metric], v: `${value(x.metric, x.value)}${unitOf(x.metric)}${x.per10 ? ` ${c.per10Short}` : ""}`, n: of + 1 - x.rank, me: true }))} />
     </Card>
   );
 }
@@ -698,7 +699,7 @@ function Friends({ tile, c, now }: P<"friends">) {
   const peers = [...tile.peers].sort((a, b) => (b.distanceKm ?? -1) - (a.distanceKm ?? -1)).slice(0, 4);
   const top = Math.max(...peers.map((p) => p.distanceKm ?? 0), 1);
   return (
-    <Card testId="friends" href={`/find/${tile.findRecordingId}`} title={f.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={f.line(tile.peers.map((p) => p.name).slice(0, 3))}
+    <Card testId="friends" href={findPath(tile.findRecordingId, tile.match.code)} title={f.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={f.line(tile.peers.map((p) => p.name).slice(0, 3))}
       foot={[{ v: String(tile.found), l: f.found }, { v: tile.match.players ? String(tile.match.players) : "–", l: f.players }, { v: "2", u: c.min, l: f.minutes }]}>
       <RankList color={LIME} rows={[
         ...peers.map((p) => ({ name: p.name, v: p.distanceKm !== null ? `${p.distanceKm.toFixed(1)} ${c.units.distanceKm}` : "–", n: p.distanceKm ?? 0 })),
@@ -711,7 +712,7 @@ function Friends({ tile, c, now }: P<"friends">) {
 function Unclaimed({ tile, c, now }: P<"unclaimed">) {
   const u = c.unclaimed;
   return (
-    <Card testId="unclaimed" href={`/find/${tile.findRecordingId}`} title={u.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={u.line}
+    <Card testId="unclaimed" href={findPath(tile.findRecordingId, tile.match.code)} title={u.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={u.line}
       foot={[{ v: tile.match.players ? String(tile.match.players) : "–", l: u.players }, { v: tile.match.startLocal.slice(11, 16), l: dayRef(tile.match.startLocal, now, c.locale) }, { v: "2", u: c.min, l: u.minutes }]}>
       <Ring frac={0} dashed color={LIME} big="?" sub={u.sub} />
     </Card>
