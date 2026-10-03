@@ -15,7 +15,7 @@ else
 
   # Tables that must exist in the public schema (derived from lib/db/src/schema/).
   # Keep this list in sync with the pgTable declarations in lib/db/src/schema/.
-  EXPECTED_TABLES="users fields recordings clips likes saved_clips follows user_clips ads ad_impressions ad_clicks academies academy_recordings live_schedules clip_settings recording_schedules"
+  EXPECTED_TABLES="users fields recordings clips likes saved_clips follows user_clips ads ad_impressions ad_clicks academies academy_recordings academy_announcements academy_attendance academy_fees academy_finance_staff academy_members academy_other_payments academy_payment_categories academy_player_renewals academy_players academy_sessions academy_squads live_schedules clip_settings recording_schedules"
 
   # Build a single-query VALUES list so we make exactly one psql round-trip.
   VALUES=""

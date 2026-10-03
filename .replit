@@ -18,7 +18,11 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "api-server-tests"
+args = "artifacts/api-server: API Server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/soccerwatch: web"
 
 [[workflows.workflow]]
 name = "api-server-tests"

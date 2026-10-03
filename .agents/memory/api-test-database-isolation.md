@@ -3,11 +3,11 @@ name: API test database isolation
 description: The API test command inherits the workspace database and can mutate shared data.
 ---
 
-Do not run the API-server Vitest suite until its process is pointed at an explicitly disposable test database. It is not isolated by the test runner: route tests perform fixture inserts/deletes, and at least one test clears the settings-rules table without a filter.
+Do not run the API-server Vitest suite until its process is pointed at an explicitly disposable test database. It is not isolated by the test runner: route tests perform fixture inserts/deletes, and at least one test clears the settings-rules table without a filter. Never use the shared database as a schema source either; build the disposable database from the checked-in Drizzle schema only.
 
-**Why:** The package test script is a plain `vitest run`, and the DB package opens the ambient `DATABASE_URL`; running the suite against a shared workspace database can remove existing data.
+**Why:** The package test script is a plain `vitest run`, and the DB package opens `DATABASE_URL`; running the suite against a shared workspace database can remove existing data. Even a read-only schema dump makes test setup depend on the shared database and its credentials.
 
-**How to apply:** Before running API tests, verify an isolated test URL is configured and that destructive cleanup is scoped to test-owned records. Never rely on cleanup-by-convention alone.
+**How to apply:** Unset inherited database and PostgreSQL connection settings, create a temporary loopback PostgreSQL cluster, set the test marker and local URL, and pass the unchanged guard before applying Drizzle schema or running tests. Keep setup, tests, and teardown in one shell invocation; never rely on cleanup-by-convention alone.
 
 The suite also inherits workspace Bunny settings. Some tests require Storage credentials for their local fake origin, while the failover-route tests need the primary exporter to appear unconfigured. Do not unset Bunny variables globally to make one test pass; stub the configuration checks in the failover test instead.
 
