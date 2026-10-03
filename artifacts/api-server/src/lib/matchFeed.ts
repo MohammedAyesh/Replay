@@ -243,7 +243,8 @@ function cacheFingerprints(
     if (!sources.length) continue;
     const input = {
       // 2: the cached row also carries the timeline extras the Home tiles use.
-      version: 2,
+      // 3: top speed measured per piece on 0.5 s medians (it read ~0 before).
+      version: 3,
       matchId,
       matchPlayerId: player.id,
       userId: player.userId,
