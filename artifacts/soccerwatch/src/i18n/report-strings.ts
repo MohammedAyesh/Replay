@@ -41,7 +41,7 @@ const en = {
   flags: "Moments flagged during the game",
 
   findTitle: "You're not in the numbers yet",
-  findDesc: "Pick yourself from a few photos and confirm a few moments — about 3 minutes. Then you get your distance, speed, touches and moments.",
+  findDesc: "Pick yourself from a few photos and confirm a few moments. Then you get your distance, speed, touches and moments.",
   findCta: "Find yourself",
 
   you: "You",
@@ -226,7 +226,7 @@ const ar: ReportStrings = {
   flags: "لحظات انعلّمت وقت الماتش",
 
   findTitle: "لسا مش موجود بالأرقام",
-  findDesc: "اختار حالك من كم صورة وأكّد كم لحظة، تقريبًا 3 دقايق. وبعدها بتاخذ مسافتك وسرعتك ولمساتك ولحظاتك.",
+  findDesc: "اختار حالك من كم صورة وأكّد كم لحظة. وبعدها بتاخذ مسافتك وسرعتك ولمساتك ولحظاتك.",
   findCta: "لاقي حالك",
 
   you: "إنت",

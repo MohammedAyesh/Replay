@@ -215,7 +215,7 @@ const en = {
   sbHypePost: "The whistle's gone. Relive it, find yourself, vote the man of the match.",
   // Find yourself
   findTitle: "Find yourself in this game",
-  findDesc: "Pick yourself from a few photos and confirm a few moments — about 3 minutes. You get your distance, top speed, touches, passes, dribbles, and your moments cut into clips.",
+  findDesc: "Pick yourself from a few photos and confirm a few moments. You get your distance, top speed, touches, passes, dribbles, and your moments cut into clips.",
   findCta: "Find yourself",
   findBadge: "Find yourself",
   // Head to head
@@ -647,7 +647,7 @@ const ar: MatchStrings = {
   sbHypePost: "الصافرة ضربت. ارجع شوفه، لاقي حالك، وصوّت لرجل الماتش.",
   // Find yourself
   findTitle: "لاقي حالك بهالماتش",
-  findDesc: "اختار حالك من كم صورة وأكّد كم لحظة، تقريبًا 3 دقايق. وبتاخذ المسافة، أعلى سرعة، اللمسات، التمريرات، المراوغات، ولحظاتك مقصوصة مقاطع.",
+  findDesc: "اختار حالك من كم صورة وأكّد كم لحظة. وبتاخذ المسافة، أعلى سرعة، اللمسات، التمريرات، المراوغات، ولحظاتك مقصوصة مقاطع.",
   findCta: "لاقي حالك",
   findBadge: "لاقي حالك",
   // Head to head

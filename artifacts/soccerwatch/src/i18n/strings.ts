@@ -1042,7 +1042,7 @@ const strings = {
       dribblesDesc: "ركضة بالكرة بتتخطّى فيها لاعب واحد من الفريق الثاني على الأقل. بتكون ناجحة إذا الكرة ضلّت مع فريقك بعدها.",
       topSpeed: "أعلى سرعة",
       goals: "الأهداف",
-      measuredTitle: "قاسه ريبلاي",
+      measuredTitle: "قاسها ريبلاي",
       measuredDesc: "نفس أرقام تقارير الماتشات. أي إشي ما انقاس بماتش ما بنحطه.",
       topSpeedBest: (matches: number) => (matches === 1 ? "بماتش واحد" : `أعلى رقم من ${matches} ماتشات`),
       inMatches: (matches: number) => (matches === 1 ? "بماتش واحد" : `بـ ${matches} ماتشات`),
