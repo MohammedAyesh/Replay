@@ -4,6 +4,8 @@ import {
   daysBetween,
   mondayOf,
   pickStatTile,
+  pickStatTiles,
+  tileTopic,
   scoreTiles,
   teaser,
   type HomeTileInput,
@@ -174,5 +176,39 @@ describe("teaser", () => {
   it("picks the number furthest above normal", () => {
     expect(teaser([peer(1, "A", { topSpeedKmh: 22, distanceKm: 4.5, dribblesWon: 2, shots: 1 })])).toEqual({ metric: "distanceKm", value: 4.5 });
     expect(teaser([])).toBeNull();
+  });
+});
+
+describe("the carousel", () => {
+  const history = [
+    { match: match(1, "2026-09-29 23:00"), stats: stats({ passesCompleted: 17, passesTried: 21, topSpeedKmh: 24.3, touches: 52, shots: 4 }) },
+    { match: match(2, "2026-09-25 22:00"), stats: stats({ passesCompleted: 6, passesTried: 14, topSpeedKmh: 22.1 }) },
+    { match: match(3, "2026-09-21 22:00"), stats: stats({ passesCompleted: 5, passesTried: 12, topSpeedKmh: 21.4 }) },
+  ];
+
+  it("starts with the single best tile and never repeats a story", () => {
+    const input = base({ history });
+    const tiles = pickStatTiles(input);
+    expect(tiles[0]).toEqual(pickStatTile(input));
+    expect(tiles.length).toBeGreaterThan(1);
+    expect(tiles.length).toBeLessThanOrEqual(5);
+    const topics = tiles.map(tileTopic);
+    expect(new Set(topics).size).toBe(topics.length);
+  });
+
+  it("shows one claim tile at most, first", () => {
+    const tiles = pickStatTiles(base({
+      history,
+      unclaimed: [
+        { match: match(9, "2026-09-30 21:00"), findRecordingId: 77, claimed: 0, peers: [] },
+        { match: match(8, "2026-09-29 21:00"), findRecordingId: 78, claimed: 0, peers: [] },
+      ],
+    }));
+    expect(tiles[0].kind).toBe("unclaimed");
+    expect(tiles.filter((t) => tileTopic(t) === "claim")).toHaveLength(1);
+  });
+
+  it("is empty when nothing fits", () => {
+    expect(pickStatTiles(base())).toEqual([]);
   });
 });

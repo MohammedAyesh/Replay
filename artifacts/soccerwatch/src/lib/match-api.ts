@@ -242,6 +242,8 @@ export type MyMatches = {
   personalFormPending?: boolean;
   /** the one stat tile under "Your next match", chosen by the server */
   statTile?: StatTile | null;
+  /** Home's stats carousel, most impressive first (statTile is its first slide). */
+  statTiles?: StatTile[];
 };
 
 export type MatchClip = {

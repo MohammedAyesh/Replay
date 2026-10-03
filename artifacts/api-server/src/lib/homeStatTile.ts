@@ -638,3 +638,49 @@ export function scoreTiles(input: HomeTileInput): ScoredTile[] {
 export function pickStatTile(input: HomeTileInput): StatTile | null {
   return scoreTiles(input)[0]?.tile ?? null;
 }
+
+const CLAIM_KINDS = new Set<StatTile["kind"]>(["unclaimed", "friends", "notFound"]);
+
+/**
+ * What a tile is about, so the carousel never shows the same number twice:
+ * "17 passes, a personal best" and "17 of 21 passes completed" from the same
+ * match are one story. Tiles that don't name a match and a number are their
+ * own topic.
+ */
+export function tileTopic(tile: StatTile): string {
+  if (CLAIM_KINDS.has(tile.kind)) return "claim";
+  const code = "match" in tile ? tile.match.code : "";
+  switch (tile.kind) {
+    case "personalBest":
+    case "lastMatch":
+      return `${code}:${tile.metric}`;
+    case "passing":
+      return `${code}:passesCompleted`;
+    case "touches":
+      return `${code}:touches`;
+    case "dribbles":
+    case "dribbleDuel":
+      return `${code}:dribblesWon`;
+    case "shots":
+      return `${code}:shots`;
+    case "distanceSpells":
+      return `${code}:distanceKm`;
+    default:
+      return tile.kind;
+  }
+}
+
+/** The carousel: up to `limit` tiles, best first, one per topic. */
+export function pickStatTiles(input: HomeTileInput, limit = 5): StatTile[] {
+  const seen = new Set<string>();
+  const out: StatTile[] = [];
+  for (const { tile, score } of scoreTiles(input)) {
+    if (out.length >= limit) break;
+    if (score <= 0) continue;
+    const topic = tileTopic(tile);
+    if (seen.has(topic)) continue;
+    seen.add(topic);
+    out.push(tile);
+  }
+  return out;
+}

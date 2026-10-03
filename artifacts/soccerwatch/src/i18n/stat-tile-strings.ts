@@ -45,6 +45,15 @@ const en = {
   fasterAtField: (n: number, field: string) => n === 0 ? `Nobody at ${field} has gone faster.` : n === 1 ? `Only one player at ${field} has gone faster.` : `Only ${enWord(n)} players at ${field} have gone faster.`,
   bestBody: { distanceKm: "in one match", touches: "touches in one match", passesCompleted: "passes completed in one match", dribblesWon: "dribbles won in one match", goals: "goals in one match", topSpeedKmh: "", shots: "shots in one match" } as Record<TileMetric, string>,
   bestOn: (day: string, time: string) => `on ${day} at ${time}.`,
+  /** The word beside a big number: "17 passes", "1 goal", "4.8 km". */
+  bigUnit: (metric: TileMetric, n: number): string => {
+    if (metric === "distanceKm") return "km";
+    if (metric === "topSpeedKmh") return "km/h";
+    const one = n === 1;
+    return ({ touches: one ? "touch" : "touches", passesCompleted: one ? "pass" : "passes", dribblesWon: one ? "dribble" : "dribbles", goals: one ? "goal" : "goals", shots: one ? "shot" : "shots" } as Record<string, string>)[metric];
+  },
+  /** The small line under "17 passes", before "on Tuesday at 20:00." */
+  bestRest: { distanceKm: "covered in one match", touches: "in one match", passesCompleted: "completed in one match", dribblesWon: "won in one match", goals: "scored in one match", topSpeedKmh: "", shots: "on target in one match" } as Record<TileMetric, string>,
   oldBest: (value: string, date: string) => `Your old best: ${value}, ${date}`,
   watchRun: "Watch the run",
   yourSprint: "Your sprint",
@@ -217,6 +226,21 @@ const ar: TileStrings = {
   fasterAtField: (n: number, field: string) => n === 0 ? `ما في حدا بـ${field} ركض أسرع.` : n === 1 ? `لاعب واحد بس بـ${field} ركض أسرع.` : `بس ${n} لاعبين بـ${field} ركضوا أسرع.`,
   bestBody: { distanceKm: "بماتش واحد", touches: "لمسة بماتش واحد", passesCompleted: "تمريرة صحيحة بماتش واحد", dribblesWon: "مراوغة ناجحة بماتش واحد", goals: "أهداف بماتش واحد", topSpeedKmh: "", shots: "تسديدة بماتش واحد" },
   bestOn: (day: string, time: string) => `يوم ${day} الساعة ${time}.`,
+  // Arabic counting: 1 and 11+ take the singular, 2 the dual, 3–10 the plural.
+  bigUnit: (metric: TileMetric, n: number): string => {
+    if (metric === "distanceKm") return "كم";
+    if (metric === "topSpeedKmh") return "كم/س";
+    const forms: Record<string, [string, string, string]> = {
+      touches: ["لمسة", "لمستين", "لمسات"],
+      passesCompleted: ["تمريرة", "تمريرتين", "تمريرات"],
+      dribblesWon: ["مراوغة", "مراوغتين", "مراوغات"],
+      goals: ["هدف", "هدفين", "أهداف"],
+      shots: ["تسديدة", "تسديدتين", "تسديدات"],
+    };
+    const [one, two, few] = forms[metric];
+    return n === 2 ? two : n >= 3 && n <= 10 && Number.isInteger(n) ? few : one;
+  },
+  bestRest: { distanceKm: "بماتش واحد", touches: "بماتش واحد", passesCompleted: "صحيحة بماتش واحد", dribblesWon: "ناجحة بماتش واحد", goals: "بماتش واحد", topSpeedKmh: "", shots: "على المرمى بماتش واحد" },
   oldBest: (value: string, date: string) => `رقمك القديم: ${value}، ${date}`,
   watchRun: "شوف الركضة",
   yourSprint: "ركضتك",
@@ -364,3 +388,5 @@ export function useTileCopy(): TileStrings & { locale: "en" | "ar" } {
 }
 
 export type { TileStrings };
+/** For tests: the two copies side by side. */
+export const tileCopies = { en, ar };

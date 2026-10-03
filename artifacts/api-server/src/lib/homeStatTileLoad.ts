@@ -23,7 +23,7 @@ import {
   matchRoomsTable,
   usersTable,
 } from "@workspace/db";
-import { pickStatTile, type HomeTileInput, type StatTile, type TileMatchRef, type TilePeer } from "./homeStatTile";
+import { pickStatTiles, type HomeTileInput, type StatTile, type TileMatchRef, type TilePeer } from "./homeStatTile";
 
 type RecentItem = {
   code: string;
@@ -72,13 +72,21 @@ async function peersOf(matchId: number, viewerId: number, visibleIds: number[], 
     .map((row) => ({ ...row, me: row.userId === viewerId }));
 }
 
-export async function loadStatTile(input: {
+type StatTileLoadInput = {
   userId: number;
   recent: RecentItem[];
   upcoming: { code: string; startLocal: string; field: { name: string } } | null;
   visiblePlayerIdsByMatch: ReadonlyMap<number, number[]>;
   blockedIds: Set<number> | null;
-}): Promise<StatTile | null> {
+};
+
+/** The single most impressive tile (the first slide of the carousel). */
+export async function loadStatTile(input: StatTileLoadInput): Promise<StatTile | null> {
+  return (await loadStatTiles(input, 1))[0] ?? null;
+}
+
+/** Home's stats carousel: up to `limit` tiles, best first, one per topic. */
+export async function loadStatTiles(input: StatTileLoadInput, limit = 5): Promise<StatTile[]> {
   const { userId, recent, visiblePlayerIdsByMatch } = input;
   const blocked = input.blockedIds ?? new Set<number>();
   const nowLocal = ammanNowLocal();
@@ -221,7 +229,7 @@ export async function loadStatTile(input: {
     });
   }
 
-  return pickStatTile({
+  return pickStatTiles({
     nowLocal,
     history,
     lastPeers,
@@ -229,5 +237,5 @@ export async function loadStatTile(input: {
     fieldFaster,
     unclaimed,
     upcoming: input.upcoming ? { code: input.upcoming.code, startLocal: input.upcoming.startLocal, fieldName: input.upcoming.field.name } : null,
-  });
+  }, limit);
 }

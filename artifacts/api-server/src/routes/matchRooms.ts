@@ -67,7 +67,7 @@ import {
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, playerMatchForm } from "../lib/matchStatsCache";
 import { canViewMatchPlayerRows } from "../lib/matchStatsRules";
-import { loadStatTile } from "../lib/homeStatTileLoad";
+import { loadStatTiles } from "../lib/homeStatTileLoad";
 
 const router: IRouter = Router();
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 6 * 1024 * 1024 } });
@@ -684,7 +684,7 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     return;
   }
   if (user.isGuest) {
-    res.json({ upcoming: [], live: [], recent: [], invites: [], personalForm: null, personalFormPending: false, statTile: null });
+    res.json({ upcoming: [], live: [], recent: [], invites: [], personalForm: null, personalFormPending: false, statTile: null, statTiles: [] });
     return;
   }
   const memberRooms = await roomsForUser(user.id);
@@ -854,16 +854,16 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     }),
   ]);
   const upcomingItems = active.filter((i) => i.phase === "pre" && i.startMs > now - 60 * 60 * 1000).sort(byStart);
-  // The one stat tile under "Your next match"; Home works without it.
-  const statTile = await loadStatTile({
+  // Home's stats carousel, most impressive first; Home works without it.
+  const statTiles = await loadStatTiles({
     userId: user.id,
     recent: recentItems,
     upcoming: upcomingItems.find((item) => item.startMs > now) ?? null,
     visiblePlayerIdsByMatch,
     blockedIds,
   }).catch((error) => {
-    logger.warn({ userId: user.id, err: error }, "Could not choose the home stat tile");
-    return null;
+    logger.warn({ userId: user.id, err: error }, "Could not choose the home stat tiles");
+    return [];
   });
   res.json({
     live: active.filter((i) => i.phase === "live").sort(byStart),
@@ -878,7 +878,8 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     invites: [...accountInvites, ...inviteRooms.filter(Boolean)],
     personalForm,
     personalFormPending: queuedFills > 0,
-    statTile,
+    statTile: statTiles[0] ?? null,
+    statTiles,
   });
 });
 

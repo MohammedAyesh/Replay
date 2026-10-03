@@ -153,15 +153,21 @@ function Cta({ href, children, primary = true }: { href: string | null; children
   );
 }
 
-function Big({ v, unit, tone = "text", size = "lg" }: { v: string; unit?: string; tone?: "text" | "lime" | "turf"; size?: "lg" | "xl" }) {
+/**
+ * The headline number. `word` makes the unit part of the headline ("17 passes"),
+ * big and in the reader's direction, so the line underneath can stay short.
+ */
+function Big({ v, unit, tone = "text", size = "lg", word = false }: { v: string; unit?: string; tone?: "text" | "lime" | "turf"; size?: "lg" | "xl"; word?: boolean }) {
   return (
-    <p className="flex items-baseline gap-2" dir="ltr">
-      <span className={cn(
+    <p className={cn("flex items-baseline", word ? "gap-3" : "gap-2")} dir={word ? undefined : "ltr"}>
+      <span dir="ltr" className={cn(
         "font-display font-bold leading-none tabular-nums",
         size === "xl" ? "text-[72px] sm:text-[84px]" : "text-[56px] sm:text-[64px]",
         tone === "lime" ? "text-floodlight" : tone === "turf" ? "text-turf" : "text-text",
       )}>{v}</span>
-      {unit && <span className="font-display text-lg font-bold text-muted-text">{unit}</span>}
+      {unit && (word
+        ? <span className={cn("font-display font-bold leading-none text-text", size === "xl" ? "text-[40px] sm:text-[46px]" : "text-[30px] sm:text-[34px]")}>{unit}</span>
+        : <span className="font-display text-lg font-bold text-muted-text">{unit}</span>)}
     </p>
   );
 }
@@ -265,7 +271,7 @@ function LastMatch({ tile, c, now }: P<"lastMatch">) {
         </>}
         right={<div className="flex flex-col gap-3 md:items-end">
           <Chip tone="violet">{c.numberOne(c.metricShort[tile.metric])}</Chip>
-          <Big v={value(tile.metric, tile.value)} unit={unit} />
+          <Big v={value(tile.metric, tile.value)} unit={c.bigUnit(tile.metric, tile.value)} word />
           <div className="flex w-full flex-col gap-3">
             <Meter label={c.you} valueText={`${value(tile.metric, tile.value)} ${unit}`} fraction={tile.value / max} mine />
             <Meter label={c.pitchAverage} valueText={`${value(tile.metric, tile.pitchAverage)} ${unit}`} fraction={tile.pitchAverage / max} mine={false} />
@@ -285,14 +291,14 @@ function PersonalBest({ tile, c, now }: P<"personalBest">) {
   const left = (
     <>
       <Eyebrow chip={<Chip>{c.metricShort[tile.metric]}</Chip>}>{c.newBest}</Eyebrow>
-      <div className="mt-3"><Big v={value(tile.metric, tile.value)} unit={tile.metric === "distanceKm" || run ? unit : undefined} tone="lime" size="xl" /></div>
+      <div className="mt-3"><Big v={value(tile.metric, tile.value)} unit={c.bigUnit(tile.metric, tile.value)} tone="lime" size="xl" word /></div>
       {run ? (
         <Body className="mt-3 text-[15px] text-text/85">
           {c.bestSpeedBody(tile.at !== null ? clock(tile.at) : null, day, time)}
           {tile.fasterAtField !== null && <> {c.fasterAtField(tile.fasterAtField, tile.match.fieldName)}</>}
         </Body>
       ) : (
-        <Body className="mt-3 text-[15px] text-text/85">{c.bestBody[tile.metric]} {c.bestOn(day, time)}</Body>
+        <Body className="mt-3 text-[15px] text-text/85">{c.bestRest[tile.metric]} {c.bestOn(day, time)}</Body>
       )}
       <p className="mt-2 text-xs text-muted-text">{c.oldBest(`${value(tile.metric, tile.previousBest)}${tile.metric === "distanceKm" || run ? ` ${unit}` : ""}`, longDate(tile.previousBestLocal, c.locale))}</p>
       <Cta href={run && watch ? watch : `/m/${tile.match.code}`}>{run && watch ? c.watchRun : c.matchReport}</Cta>
@@ -617,7 +623,7 @@ function Challenge({ tile, c, now }: P<"challenge">) {
           <Cta href={`/m/${tile.upcoming.code}`} primary={false}>{c.openMatch}</Cta>
         </>}
         right={<div className="flex flex-col gap-4">
-          <div className="md:self-end"><Big v={fmt(tile.target)} unit={unit} /></div>
+          <div className="md:self-end"><Big v={fmt(tile.target)} unit={c.bigUnit(tile.metric, tile.target)} word /></div>
           <div dir="ltr" className="relative mt-6 h-12">
             <span className="absolute inset-x-0 top-5 h-2 rounded-full bg-[#1E2740]" />
             <span className="absolute top-5 h-2 rounded-full bg-[#4A5470]" style={{ width: at(tile.average) }} />
