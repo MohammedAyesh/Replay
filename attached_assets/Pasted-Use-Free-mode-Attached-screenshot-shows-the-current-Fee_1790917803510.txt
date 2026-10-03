@@ -1,0 +1,85 @@
+Use Free mode. Attached screenshot shows the current Fees & Payments section.
+
+TASK: REBUILD the Academy Console "Fees & Payments" section from scratch
+around how academy money actually works: MONTHLY payments. The current
+one-off-fee design does not match reality and is being replaced. Plan first:
+reply with your proposed data model, endpoints, and UI structure, and STOP
+for my approval before building.
+
+── HOW ACADEMY MONEY ACTUALLY WORKS (the model to build) ──
+
+1. MONTHLY PLAYER FEES — the heart of the section.
+   - Each SQUAD has a default monthly fee (e.g. Demo U12 = 25 JOD/month).
+   - An individual player can override that amount or be marked exempt.
+     New/moved players automatically inherit their squad's rate.
+   - Every month, each active, non-exempt player owes their monthly amount.
+     The owner's core workflow: pick a month, see each squad's players with
+     paid / due / waived status, and mark payments with ONE click. Collected
+     vs outstanding for that month must be visible at a glance.
+   - History matters: the amount owed for a past month must be the amount
+     that applied THEN — changing a squad's rate later must never rewrite
+     old months.
+   - Deactivated players stop owing from the following month; exempt players
+     show as exempt, never as due.
+   - Months follow the Amman calendar.
+
+2. ONE-OFF CHARGES — kit, registration, tournament fees. Kept alongside the
+   monthly view: a charge can be added to any player (label, amount, due
+   date, due/paid/waived). The four existing seeded fees and the existing
+   academy_fees table serve this purpose — do not migrate or delete them.
+
+3. SALARIES — monthly, like player fees but money out:
+   - The academy has STAFF members (name, role e.g. coach/admin, monthly
+     salary amount, active flag).
+   - Month by month, the owner sees who has been paid and marks salaries
+     paid. Same snapshot rule: past months keep the salary that applied then.
+
+4. OTHER PAYMENTS — one-off academy expenses (pitch rental, equipment...):
+   label, amount, date, due/paid, note. The academy_expenses table already
+   exists for this — reuse it; do not drop or modify it.
+
+── UI VISION (you design the specifics) ──
+One "Fees & Payments" sidebar item. A clear way to switch between Player
+payments / Salaries / One-off charges / Other payments (or a grouping you
+can justify as simpler). A month navigator drives the monthly views — same
+mental model as the Attendance month navigation. Player payments grouped by
+squad with per-squad subtotals and obvious one-click mark-paid. A compact
+overview: this month's money in (collected / outstanding) and money out
+(salaries paid / unpaid + other). No horizontal scroll controls anywhere —
+solve overflow with layout. Desktop-first, proper mobile, full EN/AR with
+RTL mirroring, JOD from fils integers per app convention.
+
+── TECHNICAL RULES ──
+- Schema changes are expected and must be ADDITIVE ONLY (new tables for the
+  monthly ledgers and staff; new nullable columns on existing tables are
+  allowed; never modify or drop existing columns/tables/data). After schema
+  + OpenAPI + codegen, STOP: I run `pnpm --filter db run push` myself and
+  confirm before you implement endpoints or UI.
+- Monthly ledger rows should be created lazily/idempotently (opening or
+  touching a month materializes that month's dues for eligible players) —
+  no cron jobs.
+- Owner-only, enforced server-side on every endpoint in this section (coach
+  gets 403 from the API). OpenAPI-first, path/body params only, codegen,
+  membership checks, cross-academy IDs rejected — the established patterns.
+- Zero regression outside this section: Squads, Players, Attendance,
+  Schedule, Recordings, Announcements, dashboard, /admin, public routes
+  untouched. Known full-suite test drift stays documented and untouched.
+
+── DEMO DATA ──
+Extend the existing seed script (same "Demo " prefix and safe-delete rules;
+I run it myself — give me the command): squad monthly rates (e.g. U12 25,
+U15 30, First Team 40 JOD), one player with an override and one exempt,
+monthly ledgers for last month and the current month with a realistic mix
+of paid/due/waived, 3 staff (mixed Arabic/English names) with salaries and
+mixed paid/unpaid months, 2-3 other payments. The script prints the expected
+monthly totals so I can compare against the overview.
+
+── VALIDATION before closing ──
+Focused Academy API tests on the disposable database: ledger generation
+idempotency (touching a month twice never duplicates), snapshot behavior
+(rate change doesn't alter past months), override/exempt/deactivated
+handling, owner-only 403s, cross-academy rejection. Typecheck + SoccerWatch
+suite. List explicitly every signed-in state I must verify myself.
+
+End with the standard report + per-file diff summary with one-line
+descriptions.

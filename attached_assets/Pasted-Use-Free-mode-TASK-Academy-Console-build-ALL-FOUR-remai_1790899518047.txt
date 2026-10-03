@@ -1,0 +1,89 @@
+Use Free mode.
+
+TASK: Academy Console — build ALL FOUR remaining sections in one task:
+ATTENDANCE, RECORDINGS, FEES & PAYMENTS, ANNOUNCEMENTS. When this task ends,
+no section of the console may still show "Coming Soon".
+
+Plan first: reply with an implementation plan covering all four sections
+(endpoints, file-touch list, build order) and STOP for my approval.
+
+CONTEXT: Squads, Players, and Schedule & Results are live and must not change.
+All needed tables already exist (academy_attendance, academy_fees,
+academy_announcements, and the academy_recordings join table) — NO schema
+changes, NO database push. Demo data in academy 743: players, sessions, 4
+attendance records on one past session, 4 fees, 2 announcements. Follow the
+established patterns exactly: OpenAPI-first with path/body params only, codegen,
+server-side membership on every route, cross-academy IDs rejected, each
+section's UI in its own component under components/academy-console/, EN/AR
+strings via i18n with full RTL, query invalidation so dashboard and related
+counts stay live, and focused API tests on the disposable schema-only database.
+
+── SECTION 1: ATTENDANCE (both roles) ──
+- Entry: pick a session (reuse Schedule's session list; most recent/today
+  first). For the selected session show a marking grid: the players of the
+  session's squad (or all active players if the session is academy-wide),
+  each markable present / absent / late / excused.
+- Saving upserts per (session, player) — the existing unique constraint —
+  so re-marking changes status, never duplicates.
+- Per-session summary counts (present/absent/late/excused) on the session
+  list so coaches see at a glance what's been taken.
+- The seeded past session with 4 attendance records must display correctly.
+
+── SECTION 2: RECORDINGS (both roles, READ-ONLY) ──
+- List the recordings linked to the selected academy through the
+  academy_recordings join table, newest first, with playback through the
+  app's EXISTING player and API proxy components — exactly how recordings
+  are played elsewhere in the app. No new playback logic, no direct Bunny
+  URLs, no changes to recording/pipeline/admin code.
+- Localized empty state for an academy with no linked recordings (DevAcademy
+  likely has none — the empty state is what I'll see; make it good).
+- Nothing in this section writes to the database.
+
+── SECTION 3: FEES & PAYMENTS (OWNER-ONLY — server-side enforced; a coach
+   calling any fees endpoint gets 403, not just hidden UI) ──
+- List fees across the academy: player, label, amount in JOD (stored
+  amount_fils integer — follow the app's existing JOD formatting precedent),
+  due date, status due/paid/waived, paid date. Client-side filters: status
+  and player/squad. Totals by status at the top.
+- Create fee: player, label, amount in JOD (convert to fils), due date
+  (date-only — keep it a YYYY-MM-DD string through the API per the
+  .agents/memory/date-only-openapi.md note), status defaults to due.
+- Actions: mark paid (sets paid_at), waive, edit, and delete with
+  confirmation (fees have no dependent records, so hard delete is allowed
+  here, unlike players).
+- The 4 seeded fees must display with correct JOD amounts (25.000, 15.000,
+  30.000, 20.000) and statuses.
+
+── SECTION 4: ANNOUNCEMENTS (both roles) ──
+- List newest first: title, body, academy-wide or squad-scoped badge,
+  created date (Amman), author.
+- Create (title + body required, optional squad scope), edit, delete with
+  confirmation.
+- Per announcement, a WhatsApp share button that opens a wa.me link
+  pre-filled with the announcement title and body (URL-encoded, Arabic text
+  must survive the encoding) — free share links, no WhatsApp API.
+- The 2 seeded announcements (one academy-wide, one squad-scoped, one with
+  Arabic title) must display correctly.
+
+── ZERO-REGRESSION ──
+No schema changes. No changes to Squads, Players, Schedule & Results beyond
+wiring the new sections into the console page, and none to /admin, public
+routes, recording pipelines, or non-console code.
+
+── MANDATORY FINAL VERIFICATION (before you may close the task) ──
+1. Focused Academy Console API tests on the disposable database (file filter,
+   not the full suite), extended to cover: attendance upsert and session/player
+   scoping, fees CRUD + owner-only 403 for a coach, announcements CRUD,
+   recordings list scoping, plus the usual 401/403/cross-academy checks.
+   All must pass.
+2. pnpm run typecheck and the SoccerWatch test suite must pass.
+3. Walk EVERY console section in the served preview and confirm none renders
+   a Coming Soon state. If the preview cannot authenticate, you must instead
+   verify via the routes/code that no section can reach a Coming Soon render
+   for a member, and say explicitly that visual confirmation falls to me.
+4. Produce a per-section status table: built / tests passing / verified how.
+The known pre-existing full-suite drift (match_rooms.substitutes_per_team,
+booking fixtures) remains out of scope — document it, do not fix it.
+
+End with the standard report + per-file diff summary with one-line
+descriptions.

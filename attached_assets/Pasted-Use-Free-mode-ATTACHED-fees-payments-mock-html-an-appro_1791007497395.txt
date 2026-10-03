@@ -1,0 +1,114 @@
+Use Free mode. ATTACHED: fees-payments-mock.html — an approved interactive
+design mock. Open it in a browser and study every screen and dialog before
+planning. The mock is the SPECIFICATION for structure, behavior, copy and
+flows. It is NOT code to reuse: do not copy its markup, CSS, fonts or colors.
+The real page is built with the Academy Console's existing design system and
+components (the same theme used across the whole console — sidebar pages,
+cards, buttons, dialogs, pills) so it looks native to the SaaS, and with full
+EN/AR + RTL via the existing i18n system.
+
+TASK: Build the real "Fees & Payments" section of the Academy Console (it
+currently shows Coming Soon) to match the approved mock exactly in features
+and flow. Plan first: reply with your data model, endpoints, and build order,
+then STOP for my approval.
+
+── THE MODEL (as demonstrated in the mock) ──
+Subscriptions are expiry-date based. Each player has a subscription expiry
+date. Past it, debt accrues automatically: one effective monthly fee per full
+month late, COMPUTED from the expiry date and today — never materialized by
+background jobs. Effective fee = team's monthly fee − player's fixed JOD
+discount (never below zero). A player's outstanding balance = accrued months
+× effective fee + their unpaid one-off fees.
+
+── TAB 1: PLAYER PAYMENTS ──
+- Teams view: one card per team (= existing academy_squads) showing player
+  count, monthly fee, players behind, outstanding total. "+ Add team" creates
+  a real squad (name + monthly fee) — the same squads the Squads section
+  shows.
+- Team page (drill-down with back): every active player of the team. Each row:
+  name; effective fee with discount shown if any; status pill — green "Paid
+  until <date>", amber "Expires <date>" within 7 days, red "Expired <date> ·
+  N mo owed"; outstanding amount (or "Settled"); three actions: Renew,
+  Other fees, ✎ billing.
+  Inactive players appear ONLY if they still have an outstanding balance,
+  clearly badged inactive.
+- "+ Add player" on the team page creates a REAL roster player (the same
+  academy_players the Players section shows) with name, optional discount,
+  and a "paid until" date picker defaulting to one month from today, freely
+  editable. Existing roster players with no expiry set yet appear with a
+  "No subscription yet" state and get their date via ✎.
+- Renew dialog: months stepper 1–12, defaulting to the months owed (min 1);
+  warning line when months are owed ("Owes N months since <date> — covered
+  first"); live calculation (months × effective fee) and the new expiry date;
+  renewal always extends FROM THE CURRENT EXPIRY, so paying late never erases
+  the gap. Recording it creates a payment record (for history and the
+  dashboard) and advances the expiry.
+- Other fees dialog: the player's one-off charges — reuse the EXISTING
+  academy_fees table and records for this — list with Paid pill or "Mark
+  paid" per fee, and an add form (label + amount). Marking paid counts as
+  collected money.
+- ✎ Billing dialog: fixed JOD/month discount, and a directly editable
+  subscription expiry date (for corrections — injured month, special deal);
+  owed months recalculate from it.
+
+── TAB 2: SALARIES ──
+Employee list (a new academy staff concept): name, role, salary JOD/month,
+next salary date (red when due/past), contract end date (amber warning
+within 30 days). Actions per row: "Pay salary" — records the payment as a
+PAID entry under Other payments with a Salary category and advances the next
+salary date one month — and "Edit" (all fields). "+ Add employee" with the
+same dialog. Nothing is ever paid automatically.
+
+── TAB 3: OTHER PAYMENTS ──
+- Quick-add form: category chips (defaults: Rent, Transport, Replay,
+  Equipment, Other, Salary) with a dashed "+ type" chip that lets the owner
+  save a custom category (per academy, persisted); label; amount; status
+  Paid / Not paid.
+- Month list: each payment with category, date, amount, Paid/Not-paid pill,
+  "Mark paid" on unpaid rows, and a repeat action that re-records the same
+  payment today as NOT PAID. Header shows paid and unpaid totals for the
+  month.
+
+── TAB 4: DASHBOARD (first tab in order, built last) ──
+Tiles: Collected this month (renewals + one-off fees marked paid), Spent
+this month (PAID other payments incl. salaries), Net, Unpaid bills count.
+"Needs attention" list: expired and expiring-soon players each with their
+outstanding and an inline Renew that opens the same renew dialog; plus
+unpaid bills. All month math in Amman time.
+
+── TECHNICAL RULES ──
+- Schema: ADDITIVE ONLY. Expect roughly: a monthly-fee column or equivalent
+  for squads, discount + subscription-expiry for players, a payments/
+  transactions record, staff, other payments, and custom categories — you
+  propose the exact shape in the plan. Reuse academy_fees for one-off player
+  charges; do not create a parallel table for them. After schema + OpenAPI +
+  codegen, STOP for me to run `pnpm --filter db run push`, then continue on
+  my confirmation.
+- Owner-only, enforced server-side on every endpoint in this section.
+  Established console patterns throughout: OpenAPI-first, path/body params
+  only, membership checks, cross-academy IDs rejected, codegen, section UI
+  in its own components under components/academy-console/.
+- Amounts stored as fils integers, displayed per the app's JOD convention;
+  dates handled in Amman time; date-only values stay YYYY-MM-DD strings
+  through the API (see .agents/memory/date-only-openapi.md).
+- Zero regression outside this section (Squads/Players data is shared — new
+  teams and players created here must behave identically to ones created in
+  their own sections). Known full-suite drift stays untouched.
+
+── DEMO DATA ──
+Extend the seed script to mirror the mock's states: team monthly fees, one
+player with a discount, one covered, one expiring within 7 days, one expired
+~2 months with an unpaid kit fee (in academy_fees), 2 staff (one with a
+contract ending within 30 days, one salary due), other payments one paid one
+unpaid, and a couple of recorded payment transactions this month so the
+dashboard has numbers. Print expected dashboard tile values. Do not run it;
+give me the command.
+
+── VALIDATION before closing ──
+API tests on the disposable schema-only database: owed computation including
+a multi-month gap, renewal extending from old expiry and recording payment,
+discount applied, manual expiry edit recalculating owed, fee mark-paid
+counting as collected, custom category persistence, owner-only 403 for a
+coach on every endpoint, cross-academy rejection. Typecheck + SoccerWatch
+suite. List exactly what I must verify signed-in. End with the standard
+report + per-file diff summary with one-line descriptions.

@@ -17,6 +17,7 @@ import { StreamingPanel } from "@/components/StreamingPanel";
 import StatPaymentsTab from "@/components/admin/StatPaymentsTab";
 import { ReportsTab } from "@/components/admin/ReportsTab";
 import { useAdminReports } from "@/lib/safety-api";
+import { useTranslation } from "@/i18n";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
@@ -37,6 +38,13 @@ import {
   getGetFieldVideosQueryKey,
   getGetFieldRecordingsQueryKey,
   getListBannersQueryKey,
+  getListAdminAcademiesQueryKey,
+  getListAcademyMembersQueryKey,
+  useListAdminAcademies,
+  useListAcademyMembers,
+  useAddAcademyMember,
+  useRemoveAcademyMemberRole,
+  type AcademyMemberRole,
 } from "@workspace/api-client-react";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -2797,6 +2805,9 @@ function AcademiesTab() {
           })}
         </div>
       )}
+      <section className="mt-8 border-t border-zinc-800 pt-8" data-testid="academy-members-management">
+        <AcademyMembersTab />
+      </section>
     </div>
   );
 }
@@ -6474,8 +6485,185 @@ function OwnersBillingTab() {
   );
 }
 
-// ─── Main Admin Console ───────────────────────────────────────────────────────
+function AcademyMembersTab() {
+  const { locale, t } = useTranslation();
+  const queryClient = useQueryClient();
+  const labels = t.adminAcademyMembers;
+  const [selectedAcademyId, setSelectedAcademyId] = useState<number | null>(null);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<AcademyMemberRole>("coach");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const academiesQuery = useListAdminAcademies({
+    query: { queryKey: getListAdminAcademiesQueryKey() },
+  });
+  const academies = academiesQuery.data ?? [];
+  const membersQuery = useListAcademyMembers(selectedAcademyId ?? 0, {
+    query: {
+      enabled: selectedAcademyId !== null,
+      queryKey: getListAcademyMembersQueryKey(selectedAcademyId ?? 0),
+    },
+  });
+  const addMember = useAddAcademyMember();
+  const removeRole = useRemoveAcademyMemberRole();
 
+  useEffect(() => {
+    if (selectedAcademyId === null && academies[0]) setSelectedAcademyId(academies[0].id);
+  }, [academies, selectedAcademyId]);
+
+  const assign = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (selectedAcademyId === null || !email.trim() || addMember.isPending) return;
+    const existingMember = membersQuery.data?.find(
+      (member) => member.email.toLowerCase() === email.trim().toLowerCase(),
+    );
+    if (existingMember?.roles.includes(role)) {
+      setError(null);
+      setNotice(labels.assignmentAlreadyExists);
+      return;
+    }
+    setNotice(null);
+    setError(null);
+    addMember.mutate(
+      { academyId: selectedAcademyId, data: { email: email.trim(), role } },
+      {
+        onSuccess: () => {
+          setEmail("");
+          setNotice(labels.assignmentSuccess);
+          void queryClient.invalidateQueries({ queryKey: getListAcademyMembersQueryKey(selectedAcademyId) });
+        },
+        onError: (mutationError) => setError(
+          typeof mutationError === "object"
+            && mutationError !== null
+            && "status" in mutationError
+            && (mutationError as { status?: unknown }).status === 404
+            ? labels.unknownUser
+            : labels.assignmentFailure,
+        ),
+      },
+    );
+  };
+
+  const remove = (userId: number, memberName: string, memberRole: AcademyMemberRole) => {
+    if (selectedAcademyId === null || removeRole.isPending) return;
+    if (!window.confirm(labels.removeConfirm(memberName, memberRole === "owner" ? labels.owner : labels.coach))) return;
+    setNotice(null);
+    setError(null);
+    removeRole.mutate(
+      { academyId: selectedAcademyId, userId, role: memberRole },
+      {
+        onSuccess: () => {
+          setNotice(labels.removalSuccess);
+          void queryClient.invalidateQueries({ queryKey: getListAcademyMembersQueryKey(selectedAcademyId) });
+        },
+        onError: () => setError(labels.removalFailure),
+      },
+    );
+  };
+
+  if (academiesQuery.isLoading) {
+    return <div className="space-y-3" data-testid="academy-members-loading"><div className="h-12 animate-pulse rounded-xl bg-zinc-900" /><div className="h-40 animate-pulse rounded-2xl bg-zinc-900" /></div>;
+  }
+  if (academiesQuery.isError) {
+    return <p className="rounded-xl border border-red-400/20 bg-red-400/10 px-3 py-4 text-sm text-red-300" role="alert" data-testid="status-academy-list-error">{labels.academiesLoadError}</p>;
+  }
+
+  return (
+    <div className="space-y-4" dir={locale === "ar" ? "rtl" : "ltr"} data-testid="admin-academy-members">
+      <div>
+        <p className="text-sm font-semibold text-white">{labels.title}</p>
+        <p className="mt-1 text-xs text-zinc-500">{labels.description}</p>
+      </div>
+
+      {academies.length === 0 ? (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-12 text-center text-sm text-zinc-500" data-testid="academy-members-empty-academies">{labels.noAcademies}</div>
+      ) : (
+        <>
+          <label className="block text-xs font-semibold text-zinc-400" htmlFor="admin-academy-member-academy">
+            {labels.academy}
+            <select
+              id="admin-academy-member-academy"
+              value={selectedAcademyId ?? ""}
+              onChange={(event) => setSelectedAcademyId(Number(event.target.value))}
+              className="mt-2 min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 text-sm text-white outline-none focus:border-primary"
+              data-testid="select-admin-academy-members-academy"
+            >
+              <option value="" disabled>{labels.chooseAcademy}</option>
+              {academies.map((academy) => <option key={academy.id} value={academy.id}>{academy.name}</option>)}
+            </select>
+          </label>
+
+          <form onSubmit={assign} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4" data-testid="form-academy-member-assignment">
+            <h2 className="text-sm font-semibold text-white">{labels.addTitle}</h2>
+            <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_150px_auto] sm:items-end">
+              <label className="block text-xs font-semibold text-zinc-400">
+                {labels.email}
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  className="mt-2 min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-primary"
+                  data-testid="input-academy-member-email"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-zinc-400">
+                {labels.role}
+                <select
+                  value={role}
+                  onChange={(event) => setRole(event.target.value as AcademyMemberRole)}
+                  className="mt-2 min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 text-sm text-white outline-none focus:border-primary"
+                  data-testid="select-academy-member-role"
+                >
+                  <option value="coach">{labels.coach}</option>
+                  <option value="owner">{labels.owner}</option>
+                </select>
+              </label>
+              <button type="submit" disabled={addMember.isPending} className="min-h-11 rounded-xl bg-primary px-4 text-sm font-bold text-black disabled:opacity-50" data-testid="button-assign-academy-member">
+                {addMember.isPending ? labels.assigning : labels.assign}
+              </button>
+            </div>
+          </form>
+
+          {notice && <p className="rounded-xl border border-turf/20 bg-turf/10 px-3 py-2 text-sm text-turf" role="status" data-testid="status-academy-member-success">{notice}</p>}
+          {error && <p className="rounded-xl border border-red-400/20 bg-red-400/10 px-3 py-2 text-sm text-red-300" role="alert" data-testid="status-academy-member-error">{error}</p>}
+
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4" data-testid="academy-member-list">
+            <h2 className="text-sm font-semibold text-white">{labels.members}</h2>
+            {membersQuery.isLoading ? (
+              <div className="mt-3 space-y-2"><div className="h-14 animate-pulse rounded-xl bg-zinc-950" /><div className="h-14 animate-pulse rounded-xl bg-zinc-950" /></div>
+            ) : membersQuery.isError ? (
+              <p className="mt-4 rounded-xl bg-zinc-950 px-3 py-4 text-sm text-zinc-500" data-testid="status-academy-members-load-error">{labels.loadError}</p>
+            ) : membersQuery.data?.length ? (
+              <div className="mt-3 space-y-2">
+                {membersQuery.data.map((member) => (
+                  <div key={member.userId} className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 sm:flex-row sm:items-center" data-testid={`row-academy-member-${member.userId}`}>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-white" data-testid={`text-academy-member-name-${member.userId}`}>{member.name}</p>
+                      <p className="truncate text-xs text-zinc-500">{member.email}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {member.roles.map((memberRole) => (
+                        <div key={memberRole} className="flex items-center gap-2 rounded-full border border-zinc-700 px-2 py-1">
+                          <span className="text-xs text-zinc-300">{memberRole === "owner" ? labels.owner : labels.coach}</span>
+                          <button type="button" onClick={() => remove(member.userId, member.name, memberRole)} disabled={removeRole.isPending} className="text-[11px] font-semibold text-zinc-500 hover:text-red-300 disabled:opacity-50" data-testid={`button-remove-academy-role-${member.userId}-${memberRole}`}>
+                            {removeRole.isPending ? labels.removing : labels.remove}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-4 rounded-xl bg-zinc-950 px-3 py-6 text-center text-sm text-zinc-500" data-testid="academy-members-empty">{labels.empty}</p>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
 /**
  * One list, not two.
  *

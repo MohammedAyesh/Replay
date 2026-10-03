@@ -1,10 +1,10 @@
 import * as React from "react";
 import { Link, useLocation } from "wouter";
-import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
+import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useGetAcademyConsoleMemberships, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, getGetAcademyConsoleMembershipsQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles } from "lucide-react";
+import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles, GraduationCap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,6 +59,12 @@ export default function Account() {
   const displayUser = user ?? authUser;
   const { data: stats } = useGetAccountStats({ query: { enabled: !isGuest, queryKey: getGetAccountStatsQueryKey() } });
   const { data: claimedMatches } = useGetAccountClaimedMatches({ query: { enabled: !isGuest, queryKey: getGetAccountClaimedMatchesQueryKey() } });
+  const { data: academyMemberships } = useGetAcademyConsoleMemberships({
+    query: {
+      enabled: !isGuest && Boolean(authUser),
+      queryKey: getGetAcademyConsoleMembershipsQueryKey(),
+    },
+  });
 
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
   const [isEditOpen, setIsEditOpen] = React.useState(false);
@@ -373,6 +379,23 @@ export default function Account() {
                   <Video className="h-4 w-4 text-primary" />
                 </span>
                 <span className="font-medium text-foreground">{t.account.ownerConsole}</span>
+              </div>
+              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
+            </Link>
+          )}
+
+          {(academyMemberships?.length ?? 0) > 0 && (
+            <Link
+              href="/academy"
+              data-testid="link-academy-console"
+              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
+            >
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-turf/10">
+                  <GraduationCap className="h-4 w-4 text-turf" />
+                </span>
+                <span className="font-medium text-foreground">{t.account.academyConsole}</span>
               </div>
               <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
               <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />

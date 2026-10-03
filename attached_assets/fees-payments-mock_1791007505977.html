@@ -1,0 +1,345 @@
+<title>Fees Redesign Mock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* v2: + add team / add player / editable expiry / staff edit / paid state + custom categories on other payments */
+:root{
+  --bg:#0a0f1a; --panel:#101828; --panel2:#17213a; --line:#243049;
+  --fg:#e8eef7; --dim:#8da0bd;
+  --accent:#2dd8c4; --act:#d4ff4f; --actfg:#14200a;
+  --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+  --display:'Chakra Petch',system-ui,sans-serif;
+  --body:'IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);margin:0;padding:24px 16px 48px}
+.wrap{max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
+.eyebrow{color:var(--accent);font-family:var(--display);font-size:.72rem;letter-spacing:.18em;text-transform:uppercase}
+.sub{color:var(--dim);font-size:.9rem;margin:0}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tab{background:none;border:1px solid var(--line);color:var(--dim);padding:8px 14px;border-radius:999px;font-family:var(--body);font-size:.88rem;cursor:pointer}
+.tab.on{background:var(--panel2);color:var(--accent);border-color:var(--accent)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+.tile .k{color:var(--dim);font-size:.78rem}
+.tile .v{font-family:var(--display);font-size:1.5rem;font-variant-numeric:tabular-nums;margin-top:4px}
+.squad{cursor:pointer;transition:border-color .15s}
+.squad:hover{border-color:var(--accent)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .who{min-width:0}
+.name{font-weight:600}
+.meta{color:var(--dim);font-size:.82rem}
+.pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:.75rem;font-weight:600}
+.p-ok{background:rgba(52,211,153,.14);color:var(--ok)}
+.p-warn{background:rgba(251,191,36,.14);color:var(--warn)}
+.p-bad{background:rgba(248,113,113,.14);color:var(--bad)}
+.money{font-family:var(--display);font-variant-numeric:tabular-nums}
+.due{color:var(--bad)} .zero{color:var(--dim)}
+.btn{border:1px solid var(--line);background:var(--panel2);color:var(--fg);border-radius:10px;padding:8px 12px;font-family:var(--body);font-size:.85rem;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--act);color:var(--actfg);border-color:var(--act);font-weight:600}
+.btn.ghost{background:none}
+.btn:focus-visible,.tab:focus-visible,.chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.acts{display:flex;gap:8px;flex-wrap:wrap}
+.back{color:var(--accent);background:none;border:none;font-family:var(--body);font-size:.9rem;cursor:pointer;padding:0}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:14px;padding:20px;max-width:380px;width:calc(100vw - 48px)}
+dialog::backdrop{background:rgba(4,8,16,.7)}
+.field{display:flex;flex-direction:column;gap:4px;margin-top:12px}
+.field label{font-size:.8rem;color:var(--dim)}
+.field input,.field select{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:8px;font-family:var(--body);font-size:.9rem}
+.calc{background:var(--panel2);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:.86rem;display:flex;flex-direction:column;gap:4px}
+.calc .line{display:flex;justify-content:space-between;gap:12px}
+.note{font-size:.78rem;color:var(--dim);margin-top:10px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{border:1px solid var(--line);background:none;color:var(--dim);border-radius:999px;padding:4px 10px;font-size:.78rem;cursor:pointer;font-family:var(--body)}
+.chip.on{color:var(--actfg);background:var(--act);border-color:var(--act)}
+.chip.plus{color:var(--accent);border-style:dashed}
+.newcat{display:flex;gap:6px;align-items:center}
+.newcat input{background:var(--panel2);border:1px solid var(--accent);color:var(--fg);border-radius:999px;padding:4px 10px;font-size:.78rem;width:110px}
+.list-h{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.hint{border:1px dashed var(--line);border-radius:12px;padding:10px 14px;color:var(--dim);font-size:.82rem}
+.sumline{display:flex;gap:16px;flex-wrap:wrap;color:var(--dim);font-size:.82rem}
+.sumline b{color:var(--fg);font-variant-numeric:tabular-nums}
+@media (max-width:480px){ .row{align-items:flex-start} .acts{width:100%} }
+</style>
+
+<div class="wrap">
+  <div>
+    <div class="eyebrow">Design mock · v2 · not the real app</div>
+    <h1 style="font-size:1.6rem">Fees &amp; Payments</h1>
+    <p class="sub">Collect and view money with as few taps as possible. Everything works with sample data (resets on reload).</p>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="view"></div>
+</div>
+
+<dialog id="dlg"></dialog>
+
+<script>
+const JD = f => (f/1000).toFixed(3)+' JOD';
+const today = new Date(2026,9,3); // 3 Oct 2026 (mock clock)
+const fmt = d => d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+const iso = d => d.toISOString().slice(0,10);
+const addM=(d,n)=>{const x=new Date(d);x.setMonth(x.getMonth()+n);return x};
+const monthsLate=d=>{let n=0,x=addM(d,1);while(x<=today){n++;x=addM(x,1)}return n};
+
+let squads=[{id:1,name:'U12',rate:25000},{id:2,name:'U15',rate:30000},{id:3,name:'First Team',rate:40000}];
+let players=[
+ {id:1,sq:1,name:'Zayd Al-Khatib',disc:0,exp:new Date(2026,9,28),fees:[]},
+ {id:2,sq:1,name:'ليان الحسن',disc:5000,exp:new Date(2026,9,6),fees:[]},
+ {id:3,sq:1,name:'Omar Al-Majali',disc:0,exp:new Date(2026,7,20),fees:[{l:'Kit',a:15000,paid:false}]},
+ {id:4,sq:2,name:'Kareem Saleh',disc:0,exp:new Date(2026,10,15),fees:[]},
+ {id:5,sq:2,name:'هبة خليل',disc:0,exp:new Date(2026,8,10),fees:[]},
+ {id:6,sq:3,name:'Rami Qasem',disc:10000,exp:new Date(2026,9,30),fees:[{l:'Tournament entry',a:10000,paid:true}]},
+ {id:7,sq:3,name:'فارس الشامي',disc:0,exp:new Date(2026,9,2),fees:[]},
+];
+let staff=[
+ {id:1,name:'حمزة',role:'Coach',sal:200000,next:new Date(2026,9,5),end:new Date(2027,5,30)},
+ {id:2,name:'Sara Haddad',role:'Admin',sal:150000,next:new Date(2026,9,20),end:new Date(2026,10,1)},
+];
+let cats=['Rent','Transport','Replay','Equipment','Other'];
+let others=[
+ {l:'Field rent — October',a:120000,c:'Rent',d:new Date(2026,9,1),paid:true},
+ {l:'Replay subscription',a:30000,c:'Replay',d:new Date(2026,9,1),paid:false},
+];
+let collected=55000, nid=100;
+
+const eff=p=>Math.max(0,squads.find(s=>s.id===p.sq).rate-p.disc);
+const owedSub=p=>monthsLate(p.exp)*eff(p);
+const owedFees=p=>p.fees.filter(f=>!f.paid).reduce((a,f)=>a+f.a,0);
+const owed=p=>owedSub(p)+owedFees(p);
+const state=p=>{const dl=(p.exp-today)/864e5; return dl<0?'bad':dl<=7?'warn':'ok'};
+
+let tab='players', openSquad=null, addingCat=false;
+const tabs=[['dash','Dashboard'],['players','Player payments'],['sal','Salaries'],['other','Other payments']];
+const $=id=>document.getElementById(id);
+
+function render(){
+  $('tabs').innerHTML=tabs.map(([k,l])=>`<button class="tab ${tab===k?'on':''}" onclick="go('${k}')">${l}</button>`).join('');
+  $('view').innerHTML = tab==='players'?(openSquad?squadPage():squadCards())
+    : tab==='sal'?salaries() : tab==='other'?otherPay() : dash();
+}
+function go(k){tab=k;openSquad=null;render()}
+
+/* ---- Player payments ---- */
+function squadCards(){
+  return `<div class="list-h"><h2 style="font-size:1.15rem">Teams</h2>
+    <button class="btn primary" onclick="teamDlg()">+ Add team</button></div>
+  <div class="grid" style="margin-top:10px">`+squads.map(s=>{
+    const ps=players.filter(p=>p.sq===s.id);
+    const behind=ps.filter(p=>owed(p)>0);
+    const out=behind.reduce((a,p)=>a+owed(p),0);
+    return `<div class="card squad" onclick="openSquad=${s.id};render()">
+      <div class="list-h"><h3>${s.name}</h3><span class="meta">${ps.length} players</span></div>
+      <p class="sub" style="margin-top:6px">Monthly fee ${JD(s.rate)}</p>
+      <div class="sumline" style="margin-top:12px">
+        <span>Behind: <b style="color:${behind.length? 'var(--bad)':'var(--ok)'}">${behind.length}</b></span>
+        <span>Outstanding: <b>${JD(out)}</b></span>
+      </div></div>`;
+  }).join('')+`</div>
+  <p class="hint" style="margin-top:14px">Tap a team to see its players. “Outstanding” = months owed after expiry + unpaid extra fees. Debt accrues automatically each month past the expiry date.</p>`;
+}
+function teamDlg(){
+  $('dlg').innerHTML=`<h3>Add team</h3>
+  <div class="field"><label>Team name</label><input id="tn" placeholder="e.g. U10"></div>
+  <div class="field"><label>Monthly fee (JOD)</label><input id="tr" type="number" min="0" step="0.5" placeholder="25"></div>
+  <div class="acts" style="margin-top:14px;justify-content:flex-end">
+    <button class="btn" onclick="dlg.close()">Cancel</button>
+    <button class="btn primary" onclick="addTeam()">Add team</button></div>`;
+  dlg.showModal();
+}
+function addTeam(){const n=$('tn').value.trim(),r=Math.round(+$('tr').value*1000);
+  if(n&&r>0){squads.push({id:++nid,name:n,rate:r});dlg.close();render()}}
+
+function squadPage(){
+  const s=squads.find(x=>x.id===openSquad);
+  const ps=players.filter(p=>p.sq===s.id);
+  return `<button class="back" onclick="openSquad=null;render()">← All teams</button>
+  <div class="card" style="margin-top:10px">
+    <div class="list-h"><h2 style="font-size:1.15rem">${s.name}</h2>
+      <div class="acts"><span class="meta" style="align-self:center">Monthly fee ${JD(s.rate)}</span>
+      <button class="btn primary" onclick="playerDlg(${s.id})">+ Add player</button></div></div>
+    ${ps.map(p=>{
+      const st=state(p), o=owed(p), late=monthsLate(p.exp);
+      const pill= st==='ok'?`<span class="pill p-ok">Paid until ${fmt(p.exp)}</span>`
+        : st==='warn'?`<span class="pill p-warn">Expires ${fmt(p.exp)}</span>`
+        : `<span class="pill p-bad">Expired ${fmt(p.exp)}${late?` · ${late} mo owed`:''}</span>`;
+      return `<div class="row">
+        <div class="who"><div class="name">${p.name}</div>
+          <div class="meta">${JD(eff(p))}/mo${p.disc?` (−${JD(p.disc)} discount)`:''}${owedFees(p)?` · extra fees unpaid`:''}</div>
+          <div style="margin-top:6px">${pill}</div></div>
+        <div style="text-align:end">
+          <div class="money ${o?'due':'zero'}">${o?JD(o):'Settled'}</div>
+          <div class="acts" style="margin-top:8px;justify-content:flex-end">
+            <button class="btn primary" onclick="renew(${p.id})">Renew</button>
+            <button class="btn" onclick="feesDlg(${p.id})">Other fees</button>
+            <button class="btn ghost" onclick="setupDlg(${p.id})" aria-label="Player billing settings">✎</button>
+          </div></div></div>`;
+    }).join('') || '<p class="note">No players yet — add the first one.</p>'}
+  </div>`;
+}
+function playerDlg(sq){
+  $('dlg').innerHTML=`<h3>Add player</h3>
+  <div class="field"><label>Name</label><input id="pn" placeholder="Player name"></div>
+  <div class="field"><label>Discount (JOD / month, optional)</label><input id="pd" type="number" min="0" step="0.5" value="0"></div>
+  <div class="field"><label>Subscription paid until</label><input id="pe" type="date" value="${iso(addM(today,1))}"></div>
+  <p class="note">Default is one month from today — change it freely (e.g. joined mid-month, or already paid a term).</p>
+  <div class="acts" style="margin-top:14px;justify-content:flex-end">
+    <button class="btn" onclick="dlg.close()">Cancel</button>
+    <button class="btn primary" onclick="addPlayer(${sq})">Add player</button></div>`;
+  dlg.showModal();
+}
+function addPlayer(sq){const n=$('pn').value.trim();
+  if(n){players.push({id:++nid,sq,name:n,disc:Math.round(+$('pd').value*1000)||0,exp:new Date($('pe').value),fees:[]});dlg.close();render()}}
+
+function renew(id){
+  const p=players.find(x=>x.id===id), late=monthsLate(p.exp);
+  let m=Math.max(1,late);
+  const draw=()=>{ const amt=m*eff(p); const nx=addM(p.exp,m);
+    $('dlg').innerHTML=`<h3>Renew — ${p.name}</h3>
+    ${late?`<p class="note" style="color:var(--warn)">Owes ${late} month${late>1?'s':''} since ${fmt(p.exp)} — covered first.</p>`:''}
+    <div class="field"><label>Months</label>
+      <div class="acts"><button class="btn" onclick="chM(-1)">−</button>
+      <span class="money" style="align-self:center;min-width:2ch;text-align:center">${m}</span>
+      <button class="btn" onclick="chM(1)">+</button></div></div>
+    <div class="calc">
+      <div class="line"><span>${m} × ${JD(eff(p))}</span><b class="money">${JD(amt)}</b></div>
+      <div class="line"><span>New expiry</span><b>${fmt(nx)}</b></div></div>
+    <div class="acts" style="margin-top:14px;justify-content:flex-end">
+      <button class="btn" onclick="dlg.close()">Cancel</button>
+      <button class="btn primary" onclick="doRenew(${id},${m})">Record payment</button></div>`;
+  };
+  window.chM=d=>{m=Math.min(12,Math.max(1,m+d));draw()};
+  draw(); dlg.showModal();
+}
+function doRenew(id,m){const p=players.find(x=>x.id===id);collected+=m*eff(p);p.exp=addM(p.exp,m);dlg.close();render()}
+
+function feesDlg(id){
+  const p=players.find(x=>x.id===id);
+  const draw=()=>{ $('dlg').innerHTML=`<h3>Other fees — ${p.name}</h3>
+    ${p.fees.length?p.fees.map((f,i)=>`<div class="row"><div><div class="name" style="font-weight:500">${f.l}</div>
+      <div class="meta money">${JD(f.a)}</div></div>
+      ${f.paid?'<span class="pill p-ok">Paid</span>':`<button class="btn primary" onclick="payFee(${id},${i})">Mark paid</button>`}</div>`).join('')
+      :'<p class="note">No extra fees yet.</p>'}
+    <div class="field"><label>Add a fee (kit, tournament…)</label><input id="fl" placeholder="Label"></div>
+    <div class="field"><label>Amount (JOD)</label><input id="fa" type="number" min="0" step="0.5" placeholder="15"></div>
+    <div class="acts" style="margin-top:14px;justify-content:flex-end">
+      <button class="btn" onclick="dlg.close()">Close</button>
+      <button class="btn primary" onclick="addFee(${id})">Add fee</button></div>`;};
+  window._redrawFees=draw; draw(); dlg.showModal();
+}
+function payFee(id,i){const p=players.find(x=>x.id===id);p.fees[i].paid=true;collected+=p.fees[i].a;_redrawFees();render()}
+function addFee(id){const p=players.find(x=>x.id===id);const l=$('fl').value.trim(),a=Math.round(+$('fa').value*1000);
+  if(l&&a>0){p.fees.push({l,a,paid:false});_redrawFees();render()}}
+
+function setupDlg(id){
+  const p=players.find(x=>x.id===id),s=squads.find(x=>x.id===p.sq);
+  $('dlg').innerHTML=`<h3>Billing — ${p.name}</h3>
+  <p class="note">Team fee ${JD(s.rate)}/month. A discount lowers this player only.</p>
+  <div class="field"><label>Discount (JOD / month)</label><input id="dv" type="number" min="0" step="0.5" value="${p.disc/1000}"></div>
+  <div class="field"><label>Subscription expiry date</label><input id="de" type="date" value="${iso(p.exp)}"></div>
+  <p class="note">Editing the date directly is for corrections — e.g. injured month, special deal. Owed months recalculate from it.</p>
+  <div class="acts" style="margin-top:14px;justify-content:flex-end">
+    <button class="btn" onclick="dlg.close()">Cancel</button>
+    <button class="btn primary" onclick="saveSetup(${id})">Save</button></div>`;
+  dlg.showModal();
+}
+function saveSetup(id){const p=players.find(x=>x.id===id);
+  p.disc=Math.round(+$('dv').value*1000)||0; p.exp=new Date($('de').value); dlg.close(); render()}
+
+/* ---- Salaries ---- */
+function salaries(){
+  return `<div class="card"><div class="list-h"><h2 style="font-size:1.15rem">Salaries</h2>
+    <button class="btn primary" onclick="staffDlg()">+ Add employee</button></div>
+  ${staff.map(e=>{const soon=(e.end-today)/864e5<30, due=e.next<=today;
+    return `<div class="row"><div class="who"><div class="name">${e.name}</div>
+      <div class="meta">${e.role} · ${JD(e.sal)}/month</div>
+      <div class="meta" style="margin-top:4px">Next salary <b style="color:${due?'var(--bad)':'var(--fg)'}">${fmt(e.next)}</b>
+       · Contract ends <b style="color:${soon?'var(--warn)':'var(--fg)'}">${fmt(e.end)}</b>${soon?' ⚠':''}</div></div>
+      <div class="acts"><button class="btn primary" onclick="paySal(${e.id})">Pay salary</button>
+      <button class="btn" onclick="staffDlg(${e.id})">Edit</button></div></div>`;}).join('')}
+  </div><p class="hint" style="margin-top:12px">“Pay salary” records the payment (it appears under Other payments as paid) and moves the next salary date one month forward.</p>`;
+}
+function staffDlg(id){
+  const e=id?staff.find(x=>x.id===id):null;
+  $('dlg').innerHTML=`<h3>${e?'Edit — '+e.name:'Add employee'}</h3>
+  <div class="field"><label>Name</label><input id="sn" value="${e?e.name:''}" placeholder="Name"></div>
+  <div class="field"><label>Role</label><input id="sr" value="${e?e.role:''}" placeholder="Coach"></div>
+  <div class="field"><label>Salary (JOD / month)</label><input id="ss" type="number" min="0" step="0.5" value="${e?e.sal/1000:''}"></div>
+  <div class="field"><label>Next salary date</label><input id="sx" type="date" value="${iso(e?e.next:addM(today,1))}"></div>
+  <div class="field"><label>Contract ends</label><input id="se" type="date" value="${iso(e?e.end:addM(today,12))}"></div>
+  <div class="acts" style="margin-top:14px;justify-content:flex-end">
+    <button class="btn" onclick="dlg.close()">Cancel</button>
+    <button class="btn primary" onclick="saveStaff(${id||0})">Save</button></div>`;
+  dlg.showModal();
+}
+function saveStaff(id){
+  const v={name:$('sn').value.trim(),role:$('sr').value.trim(),sal:Math.round(+$('ss').value*1000),
+    next:new Date($('sx').value),end:new Date($('se').value)};
+  if(!v.name||!(v.sal>0))return;
+  if(id){Object.assign(staff.find(x=>x.id===id),v)}else{staff.push({id:++nid,...v})}
+  dlg.close();render();
+}
+function paySal(id){const e=staff.find(x=>x.id===id);
+  others.unshift({l:'Salary — '+e.name,a:e.sal,c:'Salary',d:new Date(today),paid:true});
+  e.next=addM(e.next,1);render()}
+
+/* ---- Other payments ---- */
+let cat='Rent';
+function otherPay(){
+  const paid=others.filter(o=>o.paid).reduce((a,o)=>a+o.a,0);
+  const unpaid=others.filter(o=>!o.paid).reduce((a,o)=>a+o.a,0);
+  return `<div class="card"><h2 style="font-size:1.15rem">Add a payment</h2>
+    <div class="chips" style="margin-top:10px">
+      ${cats.map(c=>`<button class="chip ${cat===c?'on':''}" onclick="cat='${c}';render()">${c}</button>`).join('')}
+      ${addingCat?`<span class="newcat"><input id="nc" placeholder="New type" onkeydown="if(event.key==='Enter')addCat()">
+        <button class="chip plus" onclick="addCat()">Save</button></span>`
+        :`<button class="chip plus" onclick="addingCat=true;render();document.getElementById('nc').focus()">+ type</button>`}
+    </div>
+    <div class="field"><label>What was it for?</label><input id="ol" placeholder="e.g. Bus to Friday match"></div>
+    <div class="field"><label>Amount (JOD)</label><input id="oa" type="number" min="0" step="0.5" placeholder="40"></div>
+    <div class="field"><label>Status</label><select id="op"><option value="1">Paid</option><option value="0">Not paid yet</option></select></div>
+    <div class="acts" style="margin-top:14px"><button class="btn primary" onclick="addOther()">Save payment</button></div></div>
+  <div class="card" style="margin-top:12px">
+    <div class="list-h"><h3>October 2026</h3>
+      <div class="sumline"><span>Paid: <b style="color:var(--ok)">${JD(paid)}</b></span>
+      <span>Not paid: <b style="color:${unpaid?'var(--bad)':'var(--fg)'}">${JD(unpaid)}</b></span></div></div>
+  ${others.map((o,i)=>`<div class="row"><div class="who"><div class="name" style="font-weight:500">${o.l}</div>
+    <div class="meta">${o.c} · ${fmt(o.d)}</div>
+    <div style="margin-top:6px">${o.paid?'<span class="pill p-ok">Paid</span>':'<span class="pill p-bad">Not paid</span>'}</div></div>
+    <div class="acts"><span class="money" style="align-self:center">${JD(o.a)}</span>
+    ${o.paid?'':`<button class="btn primary" onclick="others[${i}].paid=true;render()">Mark paid</button>`}
+    <button class="btn ghost" title="Repeat this payment today (as not paid)" onclick="others.unshift({...others[${i}],d:new Date(today),paid:false});render()">⟳</button></div></div>`).join('')}
+  </div>`;
+}
+function addCat(){const v=$('nc').value.trim();if(v&&!cats.includes(v)){cats.push(v);cat=v}addingCat=false;render()}
+function addOther(){const l=$('ol').value.trim(),a=Math.round(+$('oa').value*1000),p=$('op').value==='1';
+  if(l&&a>0){others.unshift({l,a,c:cat,d:new Date(today),paid:p});render()}}
+
+/* ---- Dashboard ---- */
+function dash(){
+  const out=others.filter(o=>o.paid).reduce((a,o)=>a+o.a,0);
+  const bills=others.filter(o=>!o.paid);
+  const exp=players.filter(p=>state(p)==='bad'), soon=players.filter(p=>state(p)==='warn');
+  return `<div class="tiles">
+    <div class="tile"><div class="k">Collected · October</div><div class="v" style="color:var(--ok)">${JD(collected)}</div></div>
+    <div class="tile"><div class="k">Spent · October</div><div class="v" style="color:var(--bad)">${JD(out)}</div></div>
+    <div class="tile"><div class="k">Net</div><div class="v">${JD(collected-out)}</div></div>
+    <div class="tile"><div class="k">Unpaid bills</div><div class="v" style="color:${bills.length?'var(--warn)':'var(--ok)'}">${bills.length}</div></div></div>
+  <div class="card" style="margin-top:12px"><h3>Needs attention</h3>
+    ${exp.concat(soon).map(p=>`<div class="row"><div class="who"><div class="name">${p.name}</div>
+      <div class="meta">${squads.find(s=>s.id===p.sq).name} · ${state(p)==='bad'?'expired '+fmt(p.exp):'expires '+fmt(p.exp)}</div></div>
+      <div class="acts"><span class="money ${owed(p)?'due':'zero'}" style="align-self:center">${owed(p)?JD(owed(p)):'—'}</span>
+      <button class="btn primary" onclick="openSquad=${p.sq};tab='players';render();renew(${p.id})">Renew</button></div></div>`).join('')
+      || '<p class="note">Everyone is covered. 🎉</p>'}
+    ${bills.map(o=>`<div class="row"><div class="who"><div class="name" style="font-weight:500">${o.l}</div>
+      <div class="meta">${o.c} · unpaid bill</div></div>
+      <span class="money due" style="align-self:center">${JD(o.a)}</span></div>`).join('')}
+  </div>`;
+}
+render();
+</script>

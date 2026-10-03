@@ -1,0 +1,62 @@
+Use Free mode.
+
+TASK: Academy Console — make the SCHEDULE & RESULTS section functional.
+Plan first: reply with an implementation plan (endpoints, file-touch list,
+build order) and STOP for my approval before building.
+
+CONTEXT: Squads and Players are live. The academy_sessions table already exists
+(academy_id, squad_id nullable, type training|match, starts_at UTC, ends_at
+nullable, location, opponent, own/opponent score, notes). NO schema changes, so
+no database push. Demo data: 6 sessions in academy 743 (past and upcoming,
+one past match with a 2-1 result).
+
+TIME HANDLING — the most important requirement in this task:
+All timestamps are STORED in UTC. All input and display in this section is in
+Amman time (Asia/Amman), computed the same way the dashboard's upcoming-sessions
+window and the existing owner surfaces do it. A session created for "19:00"
+by the user means 19:00 Amman, converted to UTC for storage. Never use the
+server's or browser's local timezone as the reference.
+
+SCOPE — the Schedule & Results section at /academy:
+1. List: sessions of the selected academy, grouped or clearly separated into
+   Upcoming and Past, newest-first within Past, soonest-first within Upcoming.
+   Each shows type (training/match), date+time in Amman, squad (or
+   academy-wide), location, opponent for matches, and the result when set.
+   Client-side filters: type and squad. Localized empty states.
+2. Create session: type required (training or match), date+time required
+   (Amman), optional end time, optional squad, location, notes; opponent only
+   for matches. Localized validation.
+3. Edit session: all fields.
+4. Match results: for a match-type session, enter/edit the manual result (own
+   and opponent score, non-negative integers). Results only on matches.
+5. Delete session: with a confirmation dialog. If attendance records exist for
+   the session they are deleted with it, and the dialog must say so explicitly.
+   (Attendance is not built yet, but seeded attendance exists — handle it.)
+6. Both roles (owner AND coach) manage sessions and results.
+7. Dashboard: upcoming-sessions tile stays correct after create/edit/delete
+   (query invalidation), including when a session is moved across the 7-day
+   boundary.
+
+API — OpenAPI-first, path/body parameters only, then codegen: list, create,
+update, delete under /api/academy/console/academies/{academyId}/sessions...,
+following the players/squads patterns exactly: server-side membership on every
+route, both roles, cross-academy sessionId (and squadId in bodies) rejected.
+Timestamps in the API are UTC ISO strings; the Amman conversion lives in the
+client, matching how the dashboard computes its window.
+
+ZERO-REGRESSION: no schema changes; no changes to Squads, Players, other
+sections, /admin, public routes, or non-console code.
+
+VALIDATION (perform and report):
+- API tests on the disposable schema-only database (same setup as before, run
+  with the file filter): 401, non-member 403, cross-academy rejection, CRUD,
+  result-only-on-match rule, attendance deleted with its session.
+- A specific timezone test: create a session via the API at a UTC instant that
+  falls on a DIFFERENT calendar day in Amman than in UTC, and assert the
+  listing/display bucket is the Amman day.
+- Typecheck and the SoccerWatch suite pass.
+- Served preview: the 6 demo sessions correctly split into Upcoming/Past with
+  Amman times matching their seeded values (the seed printed both UTC and Amman
+  for each). If preview auth is unavailable, list my manual checks.
+
+End with the standard report + per-file diff summary with one-line descriptions.

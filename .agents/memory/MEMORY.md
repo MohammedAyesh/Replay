@@ -55,3 +55,6 @@
 - [Match roster track references](match-roster-track-references.md) — `people/match.json` parts identify segment/local-track pairs; use the referenced bundle track's stored frame bounds.
 - [Cartographer and generic JSX](tsx-generic-cartographer.md) — avoid explicit component type arguments in JSX; Vite metadata injection can break Babel parsing even when TypeScript passes.
 - [Claim bundle cache admission](claim-bundle-cache-admission.md) — only settled bundles count toward the cache limit; pending reads never block admission and storage reads time out.
+- [Orval Zod response arrays](orval-zod-response-arrays.md) — give a list endpoint a dedicated item schema when reusing a component can create a generated temporal-dead-zone reference.
+- [Date-only OpenAPI fields](date-only-openapi.md) — avoid `format: date` when Orval-generated Zod must preserve `YYYY-MM-DD` strings.
+- [Wouter query strings](wouter-query-search.md) — `useLocation()` tracks the pathname; read query parameters with `useSearch()` so search-only navigation updates.

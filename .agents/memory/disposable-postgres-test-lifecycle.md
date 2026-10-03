@@ -14,3 +14,9 @@ In this container, initialize the temporary cluster with `initdb -U postgres` an
 **Why:** The default role caused connection failures, and the default Unix-socket directory caused PostgreSQL startup to fail before tests could run.
 
 **How to apply:** Pair explicit test database credentials with a socket directory inside the temporary data directory; keep the client URL pointed only at that temporary server.
+
+When restoring a `pg_dump --schema-only` export into a fresh database from `initdb`, replace the target database's default `public` schema before applying the export.
+
+**Why:** Schema-only dumps may reference `public` without creating it; dropping the initialized schema without recreating it makes the first `CREATE TABLE public...` fail.
+
+**How to apply:** In the disposable target only, run `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` before restoring. Never drop or recreate the source schema.

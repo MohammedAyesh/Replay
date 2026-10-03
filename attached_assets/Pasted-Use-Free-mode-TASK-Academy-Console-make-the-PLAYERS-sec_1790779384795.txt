@@ -1,0 +1,59 @@
+Use Free mode.
+
+TASK: Academy Console — make the PLAYERS section functional.
+Plan first: reply with an implementation plan (endpoints, file-touch list, build
+order) and STOP for my approval before building.
+
+CONTEXT: Squads is live at /academy/squads. The academy_players table already
+exists (academy_id, squad_id nullable, name, jersey number, position, date of
+birth, guardian phone, linked user_id nullable, active flag). NO schema changes
+in this task, so no database push. Demo data: 16 players in academy 743,
+including Arabic names, 2 unassigned, 2 inactive.
+
+SCOPE — the Players section at /academy:
+1. Roster list: all players of the selected academy — name, jersey number,
+   position, squad name (or "Unassigned"), active/inactive status, linked
+   Replay account indicator. Desktop: table (existing ui/table patterns);
+   mobile: cards. Localized empty state.
+2. Client-side filtering: by squad (including Unassigned), by active/inactive,
+   and a name search box. The list endpoint returns ALL players for the
+   academy; filtering happens in the client (our OpenAPI setup does not use
+   query parameters). This is fine at academy scale.
+3. Add player: name required; jersey number, position, date of birth, guardian
+   phone, squad all optional. Localized validation errors.
+4. Edit player: all the same fields, including moving between squads or to
+   Unassigned.
+5. Active/inactive toggle instead of DELETE. There is deliberately NO hard
+   delete in this section: attendance and fees will reference players, and
+   deleting would orphan history. Deactivated players stay visible under the
+   inactive filter and stop counting in squad counts and the dashboard tile.
+6. Link to a Replay account (optional per player): from the player edit view,
+   link by email — look up an existing Replay user the same way the admin
+   member panel does; show the linked state; allow unlink. Linking is
+   informational in this phase (no permissions change for the linked user).
+   An email with no Replay account shows a clear localized error.
+7. Both roles (owner AND coach) can manage players, same as squads.
+8. Dashboard: active-player tile and squad counts stay consistent when players
+   are added, deactivated, or moved.
+
+API — OpenAPI-first, path/body parameters only, then codegen: list, create,
+update (covers squad assignment, active flag, link/unlink user) under
+/api/academy/console/academies/{academyId}/players..., following the squads
+patterns exactly: server-side membership on every route, both roles allowed,
+cross-academy playerId (and squadId in bodies) rejected without modification.
+
+ZERO-REGRESSION: no schema changes, no changes to Squads or other sections,
+/admin, public routes, or non-console code.
+
+VALIDATION (perform and report):
+- API tests on the same isolated throwaway-database setup you used for Squads
+  (pg_dump schema-only copy, overridden DATABASE_URL, dropped after). Run the
+  Academy Console tests with the file filter, not the full suite. Cover: 401,
+  non-member 403, cross-academy rejection, CRUD, squad assignment, deactivation
+  excluded from counts, link/unlink by email including unknown-email failure.
+- Typecheck and the SoccerWatch test suite pass.
+- Served preview: 16 demo players listed with correct squads and statuses,
+  Arabic names rendering correctly. If your preview cannot authenticate, say so
+  and list the exact manual checks for me.
+
+End with the standard report + per-file diff summary with one-line descriptions.

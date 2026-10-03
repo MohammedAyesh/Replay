@@ -51,6 +51,7 @@ import { ArrowLeft, Globe } from "lucide-react";
 import PortfolioPage from "@/features/portfolio/page";
 import LegacyDemoPage from "@/pages/demo-route";
 import DemoPage from "@/pages/demo/DemoPage";
+import AcademyConsole from "@/pages/academy-console";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -550,6 +551,7 @@ function AppRouter() {
         <Route path="/find-quick/:id" component={FindQuickRedirect} />
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
+        <Route path="/academy/*?" component={AcademyConsole} />
         <Route path="/account/blocked" component={BlockedPlayers} />
         <Route path="/owner" component={Owner} />
         <Route path="/owner/var/:requestId" component={OwnerVar} />

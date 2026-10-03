@@ -39,6 +39,9 @@ import friendsRouter from "./friends";
 import portfoliosRouter from "./portfolios";
 import demoShowcaseRouter from "./demoShowcase";
 import demoLeadsRouter from "./demoLeads";
+import academyConsoleRouter from "./academyConsole";
+import academyConsoleSectionsRouter from "./academyConsoleSections";
+import academyFinanceRouter from "./academyFinance";
 
 const router: IRouter = Router();
 
@@ -62,6 +65,9 @@ router.use(clientSettingsRouter);
 router.use(usersRouter);
 router.use(portfoliosRouter);
 router.use(academiesRouter);
+router.use(academyConsoleRouter);
+router.use(academyConsoleSectionsRouter);
+router.use(academyFinanceRouter);
 router.use(contaboRouter);
 router.use(liveRouter);
 router.use(hlsProxyRouter);

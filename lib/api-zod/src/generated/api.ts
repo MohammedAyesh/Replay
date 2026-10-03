@@ -1816,6 +1816,1711 @@ export const GetAcademyRecordingsResponse = zod.array(GetAcademyRecordingsRespon
 
 
 /**
+ * @summary List the signed-in user's academy memberships and roles
+ */
+
+
+
+export const GetAcademyConsoleMembershipsResponseItem = zod.object({
+  "academyId": zod.number(),
+  "academyName": zod.string(),
+  "roles": zod.array(zod.enum(['owner', 'coach'])).min(1)
+})
+export const GetAcademyConsoleMembershipsResponse = zod.array(GetAcademyConsoleMembershipsResponseItem)
+
+
+/**
+ * @summary Get academy dashboard counts for the next seven days
+ */
+
+
+
+export const GetAcademyConsoleDashboardParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+export const getAcademyConsoleDashboardResponseSquadCountMin = 0;
+
+export const getAcademyConsoleDashboardResponseActivePlayerCountMin = 0;
+
+export const getAcademyConsoleDashboardResponseUpcomingSessionCountMin = 0;
+
+
+
+export const GetAcademyConsoleDashboardResponse = zod.object({
+  "academyId": zod.number(),
+  "academyName": zod.string(),
+  "roles": zod.array(zod.enum(['owner', 'coach'])).min(1),
+  "squadCount": zod.number().min(getAcademyConsoleDashboardResponseSquadCountMin),
+  "activePlayerCount": zod.number().min(getAcademyConsoleDashboardResponseActivePlayerCountMin),
+  "upcomingSessionCount": zod.number().min(getAcademyConsoleDashboardResponseUpcomingSessionCountMin)
+})
+
+
+/**
+ * @summary List squads and active player counts for an academy
+ */
+
+
+
+export const ListAcademyConsoleSquadsParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+
+export const listAcademyConsoleSquadsResponseActivePlayerCountMin = 0;
+
+
+
+export const ListAcademyConsoleSquadsResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "name": zod.string(),
+  "ageGroup": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "activePlayerCount": zod.number().min(listAcademyConsoleSquadsResponseActivePlayerCountMin)
+})
+export const ListAcademyConsoleSquadsResponse = zod.array(ListAcademyConsoleSquadsResponseItem)
+
+
+/**
+ * @summary Create a squad in an academy
+ */
+
+
+
+export const CreateAcademyConsoleSquadParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const createAcademyConsoleSquadBodyNameMax = 120;
+
+export const createAcademyConsoleSquadBodyAgeGroupMax = 80;
+
+export const createAcademyConsoleSquadBodyDescriptionMax = 1000;
+
+
+
+export const CreateAcademyConsoleSquadBody = zod.object({
+  "name": zod.string().min(1).max(createAcademyConsoleSquadBodyNameMax),
+  "ageGroup": zod.string().max(createAcademyConsoleSquadBodyAgeGroupMax).nullish(),
+  "description": zod.string().max(createAcademyConsoleSquadBodyDescriptionMax).nullish()
+})
+
+
+
+export const createAcademyConsoleSquadResponseActivePlayerCountMin = 0;
+
+
+
+export const CreateAcademyConsoleSquadResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "name": zod.string(),
+  "ageGroup": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "activePlayerCount": zod.number().min(createAcademyConsoleSquadResponseActivePlayerCountMin)
+})
+
+
+/**
+ * @summary Update a squad in an academy
+ */
+
+
+
+
+export const UpdateAcademyConsoleSquadParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "squadId": zod.coerce.number().min(1)
+})
+
+export const updateAcademyConsoleSquadBodyNameMax = 120;
+
+export const updateAcademyConsoleSquadBodyAgeGroupMax = 80;
+
+export const updateAcademyConsoleSquadBodyDescriptionMax = 1000;
+
+
+
+export const UpdateAcademyConsoleSquadBody = zod.object({
+  "name": zod.string().min(1).max(updateAcademyConsoleSquadBodyNameMax).optional(),
+  "ageGroup": zod.string().max(updateAcademyConsoleSquadBodyAgeGroupMax).nullish(),
+  "description": zod.string().max(updateAcademyConsoleSquadBodyDescriptionMax).nullish()
+})
+
+
+
+export const updateAcademyConsoleSquadResponseActivePlayerCountMin = 0;
+
+
+
+export const UpdateAcademyConsoleSquadResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "name": zod.string(),
+  "ageGroup": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "activePlayerCount": zod.number().min(updateAcademyConsoleSquadResponseActivePlayerCountMin)
+})
+
+
+/**
+ * @summary Delete a squad and unassign its players
+ */
+
+
+
+
+export const DeleteAcademyConsoleSquadParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "squadId": zod.coerce.number().min(1)
+})
+
+export const DeleteAcademyConsoleSquadResponse = zod.void()
+
+
+/**
+ * @summary List all players in an academy
+ */
+
+
+
+export const ListAcademyConsolePlayersParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const listAcademyConsolePlayersResponseJerseyNumberMin = 0;
+
+export const listAcademyConsolePlayersResponseDateOfBirthRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+
+export const ListAcademyConsolePlayersResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "name": zod.string(),
+  "jerseyNumber": zod.number().min(listAcademyConsolePlayersResponseJerseyNumberMin).nullable(),
+  "position": zod.string().nullable(),
+  "dateOfBirth": zod.string().regex(listAcademyConsolePlayersResponseDateOfBirthRegExp).nullable(),
+  "guardianPhone": zod.string().nullable(),
+  "userId": zod.number().min(1).nullable(),
+  "linkedUserEmail": zod.string().email().nullable(),
+  "isActive": zod.boolean()
+})
+export const ListAcademyConsolePlayersResponse = zod.array(ListAcademyConsolePlayersResponseItem)
+
+
+/**
+ * @summary Add a player to an academy
+ */
+
+
+
+export const CreateAcademyConsolePlayerParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const createAcademyConsolePlayerBodyNameMax = 120;
+
+
+export const createAcademyConsolePlayerBodyJerseyNumberMin = 0;
+
+export const createAcademyConsolePlayerBodyPositionMax = 80;
+
+export const createAcademyConsolePlayerBodyDateOfBirthRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const createAcademyConsolePlayerBodyGuardianPhoneMax = 80;
+
+
+
+export const CreateAcademyConsolePlayerBody = zod.object({
+  "name": zod.string().min(1).max(createAcademyConsolePlayerBodyNameMax),
+  "squadId": zod.number().min(1).nullish(),
+  "jerseyNumber": zod.number().min(createAcademyConsolePlayerBodyJerseyNumberMin).nullish(),
+  "position": zod.string().max(createAcademyConsolePlayerBodyPositionMax).nullish(),
+  "dateOfBirth": zod.string().regex(createAcademyConsolePlayerBodyDateOfBirthRegExp).nullish(),
+  "guardianPhone": zod.string().max(createAcademyConsolePlayerBodyGuardianPhoneMax).nullish()
+})
+
+
+
+
+export const createAcademyConsolePlayerResponseJerseyNumberMin = 0;
+
+export const createAcademyConsolePlayerResponseDateOfBirthRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+
+export const CreateAcademyConsolePlayerResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "name": zod.string(),
+  "jerseyNumber": zod.number().min(createAcademyConsolePlayerResponseJerseyNumberMin).nullable(),
+  "position": zod.string().nullable(),
+  "dateOfBirth": zod.string().regex(createAcademyConsolePlayerResponseDateOfBirthRegExp).nullable(),
+  "guardianPhone": zod.string().nullable(),
+  "userId": zod.number().min(1).nullable(),
+  "linkedUserEmail": zod.string().email().nullable(),
+  "isActive": zod.boolean()
+})
+
+
+/**
+ * @summary Update a player's details, squad, status, or linked Replay account
+ */
+
+
+
+
+export const UpdateAcademyConsolePlayerParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "playerId": zod.coerce.number().min(1)
+})
+
+export const updateAcademyConsolePlayerBodyNameMax = 120;
+
+
+export const updateAcademyConsolePlayerBodyJerseyNumberMin = 0;
+
+export const updateAcademyConsolePlayerBodyPositionMax = 80;
+
+export const updateAcademyConsolePlayerBodyDateOfBirthRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const updateAcademyConsolePlayerBodyGuardianPhoneMax = 80;
+
+
+
+export const UpdateAcademyConsolePlayerBody = zod.object({
+  "name": zod.string().min(1).max(updateAcademyConsolePlayerBodyNameMax).optional(),
+  "squadId": zod.number().min(1).nullish(),
+  "jerseyNumber": zod.number().min(updateAcademyConsolePlayerBodyJerseyNumberMin).nullish(),
+  "position": zod.string().max(updateAcademyConsolePlayerBodyPositionMax).nullish(),
+  "dateOfBirth": zod.string().regex(updateAcademyConsolePlayerBodyDateOfBirthRegExp).nullish(),
+  "guardianPhone": zod.string().max(updateAcademyConsolePlayerBodyGuardianPhoneMax).nullish(),
+  "isActive": zod.boolean().optional(),
+  "linkedUserEmail": zod.string().email().nullish().describe('Link an existing Replay account by email; null removes the link; omission leaves it unchanged.')
+})
+
+
+
+
+export const updateAcademyConsolePlayerResponseJerseyNumberMin = 0;
+
+export const updateAcademyConsolePlayerResponseDateOfBirthRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+
+export const UpdateAcademyConsolePlayerResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "name": zod.string(),
+  "jerseyNumber": zod.number().min(updateAcademyConsolePlayerResponseJerseyNumberMin).nullable(),
+  "position": zod.string().nullable(),
+  "dateOfBirth": zod.string().regex(updateAcademyConsolePlayerResponseDateOfBirthRegExp).nullable(),
+  "guardianPhone": zod.string().nullable(),
+  "userId": zod.number().min(1).nullable(),
+  "linkedUserEmail": zod.string().email().nullable(),
+  "isActive": zod.boolean()
+})
+
+
+/**
+ * @summary List sessions in an academy
+ */
+
+
+
+export const ListAcademyConsoleSessionsParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const listAcademyConsoleSessionsResponseOwnScoreMin = 0;
+export const listAcademyConsoleSessionsResponseOwnScoreMax = 2147483647;
+
+export const listAcademyConsoleSessionsResponseOpponentScoreMin = 0;
+export const listAcademyConsoleSessionsResponseOpponentScoreMax = 2147483647;
+
+export const listAcademyConsoleSessionsResponseAttendanceCountsPresentMin = 0;
+
+export const listAcademyConsoleSessionsResponseAttendanceCountsAbsentMin = 0;
+
+export const listAcademyConsoleSessionsResponseAttendanceCountsLateMin = 0;
+
+export const listAcademyConsoleSessionsResponseAttendanceCountsExcusedMin = 0;
+
+
+
+export const ListAcademyConsoleSessionsResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "type": zod.enum(['training', 'match']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date().nullable(),
+  "location": zod.string(),
+  "opponent": zod.string().nullable(),
+  "ownScore": zod.number().min(listAcademyConsoleSessionsResponseOwnScoreMin).max(listAcademyConsoleSessionsResponseOwnScoreMax).nullable(),
+  "opponentScore": zod.number().min(listAcademyConsoleSessionsResponseOpponentScoreMin).max(listAcademyConsoleSessionsResponseOpponentScoreMax).nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "attendanceCounts": zod.object({
+  "present": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsPresentMin),
+  "absent": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsAbsentMin),
+  "late": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsLateMin),
+  "excused": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsExcusedMin)
+})
+})
+export const ListAcademyConsoleSessionsResponse = zod.array(ListAcademyConsoleSessionsResponseItem)
+
+
+/**
+ * @summary Create a training session or match
+ */
+
+
+
+export const CreateAcademyConsoleSessionParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+export const createAcademyConsoleSessionBodyLocationMax = 200;
+
+export const createAcademyConsoleSessionBodyOpponentMax = 160;
+
+export const createAcademyConsoleSessionBodyNotesMax = 2000;
+
+
+
+export const CreateAcademyConsoleSessionBody = zod.object({
+  "type": zod.enum(['training', 'match']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date().nullish(),
+  "squadId": zod.number().min(1).nullish(),
+  "location": zod.string().min(1).max(createAcademyConsoleSessionBodyLocationMax),
+  "opponent": zod.string().max(createAcademyConsoleSessionBodyOpponentMax).nullish().describe('Only accepted for match sessions.'),
+  "notes": zod.string().max(createAcademyConsoleSessionBodyNotesMax).nullish()
+})
+
+
+
+
+export const createAcademyConsoleSessionResponseOwnScoreMin = 0;
+export const createAcademyConsoleSessionResponseOwnScoreMax = 2147483647;
+
+export const createAcademyConsoleSessionResponseOpponentScoreMin = 0;
+export const createAcademyConsoleSessionResponseOpponentScoreMax = 2147483647;
+
+export const createAcademyConsoleSessionResponseAttendanceCountsPresentMin = 0;
+
+export const createAcademyConsoleSessionResponseAttendanceCountsAbsentMin = 0;
+
+export const createAcademyConsoleSessionResponseAttendanceCountsLateMin = 0;
+
+export const createAcademyConsoleSessionResponseAttendanceCountsExcusedMin = 0;
+
+
+
+export const CreateAcademyConsoleSessionResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "type": zod.enum(['training', 'match']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date().nullable(),
+  "location": zod.string(),
+  "opponent": zod.string().nullable(),
+  "ownScore": zod.number().min(createAcademyConsoleSessionResponseOwnScoreMin).max(createAcademyConsoleSessionResponseOwnScoreMax).nullable(),
+  "opponentScore": zod.number().min(createAcademyConsoleSessionResponseOpponentScoreMin).max(createAcademyConsoleSessionResponseOpponentScoreMax).nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "attendanceCounts": zod.object({
+  "present": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsPresentMin),
+  "absent": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsAbsentMin),
+  "late": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsLateMin),
+  "excused": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsExcusedMin)
+})
+})
+
+
+/**
+ * @summary Update a session or match result
+ */
+
+
+
+
+export const UpdateAcademyConsoleSessionParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "sessionId": zod.coerce.number().min(1)
+})
+
+
+export const updateAcademyConsoleSessionBodyLocationMax = 200;
+
+export const updateAcademyConsoleSessionBodyOpponentMax = 160;
+
+export const updateAcademyConsoleSessionBodyOwnScoreMin = 0;
+export const updateAcademyConsoleSessionBodyOwnScoreMax = 2147483647;
+
+export const updateAcademyConsoleSessionBodyOpponentScoreMin = 0;
+export const updateAcademyConsoleSessionBodyOpponentScoreMax = 2147483647;
+
+export const updateAcademyConsoleSessionBodyNotesMax = 2000;
+
+
+
+export const UpdateAcademyConsoleSessionBody = zod.object({
+  "type": zod.enum(['training', 'match']).optional(),
+  "startsAt": zod.coerce.date().optional(),
+  "endsAt": zod.coerce.date().nullish(),
+  "squadId": zod.number().min(1).nullish(),
+  "location": zod.string().min(1).max(updateAcademyConsoleSessionBodyLocationMax).optional(),
+  "opponent": zod.string().max(updateAcademyConsoleSessionBodyOpponentMax).nullish().describe('Only accepted for match sessions; null clears the opponent.'),
+  "ownScore": zod.number().min(updateAcademyConsoleSessionBodyOwnScoreMin).max(updateAcademyConsoleSessionBodyOwnScoreMax).nullish().describe('Set both scores for a match, or set both to null to clear the result.'),
+  "opponentScore": zod.number().min(updateAcademyConsoleSessionBodyOpponentScoreMin).max(updateAcademyConsoleSessionBodyOpponentScoreMax).nullish(),
+  "notes": zod.string().max(updateAcademyConsoleSessionBodyNotesMax).nullish()
+})
+
+
+
+
+export const updateAcademyConsoleSessionResponseOwnScoreMin = 0;
+export const updateAcademyConsoleSessionResponseOwnScoreMax = 2147483647;
+
+export const updateAcademyConsoleSessionResponseOpponentScoreMin = 0;
+export const updateAcademyConsoleSessionResponseOpponentScoreMax = 2147483647;
+
+export const updateAcademyConsoleSessionResponseAttendanceCountsPresentMin = 0;
+
+export const updateAcademyConsoleSessionResponseAttendanceCountsAbsentMin = 0;
+
+export const updateAcademyConsoleSessionResponseAttendanceCountsLateMin = 0;
+
+export const updateAcademyConsoleSessionResponseAttendanceCountsExcusedMin = 0;
+
+
+
+export const UpdateAcademyConsoleSessionResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "type": zod.enum(['training', 'match']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date().nullable(),
+  "location": zod.string(),
+  "opponent": zod.string().nullable(),
+  "ownScore": zod.number().min(updateAcademyConsoleSessionResponseOwnScoreMin).max(updateAcademyConsoleSessionResponseOwnScoreMax).nullable(),
+  "opponentScore": zod.number().min(updateAcademyConsoleSessionResponseOpponentScoreMin).max(updateAcademyConsoleSessionResponseOpponentScoreMax).nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "attendanceCounts": zod.object({
+  "present": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsPresentMin),
+  "absent": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsAbsentMin),
+  "late": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsLateMin),
+  "excused": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsExcusedMin)
+})
+})
+
+
+/**
+ * @summary Delete a session and its attendance records
+ */
+
+
+
+
+export const DeleteAcademyConsoleSessionParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "sessionId": zod.coerce.number().min(1)
+})
+
+export const DeleteAcademyConsoleSessionResponse = zod.void()
+
+
+/**
+ * @summary Get the attendance sheet for a session
+ */
+
+
+
+
+export const GetAcademyConsoleAttendanceParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "sessionId": zod.coerce.number().min(1)
+})
+
+
+
+export const getAcademyConsoleAttendanceResponsePlayersItemJerseyNumberMin = 0;
+
+
+
+export const GetAcademyConsoleAttendanceResponse = zod.object({
+  "sessionId": zod.number().min(1),
+  "players": zod.array(zod.object({
+  "playerId": zod.number().min(1),
+  "playerName": zod.string(),
+  "jerseyNumber": zod.number().min(getAcademyConsoleAttendanceResponsePlayersItemJerseyNumberMin).nullable(),
+  "status": zod.union([zod.literal('present'),zod.literal('absent'),zod.literal('late'),zod.literal('excused'),zod.literal(null)]).nullable()
+}))
+})
+
+
+/**
+ * @summary Upsert attendance statuses for eligible session players
+ */
+
+
+
+
+export const UpdateAcademyConsoleAttendanceParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "sessionId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const UpdateAcademyConsoleAttendanceBody = zod.object({
+  "entries": zod.array(zod.object({
+  "playerId": zod.number().min(1),
+  "status": zod.enum(['present', 'absent', 'late', 'excused'])
+}))
+})
+
+
+
+export const updateAcademyConsoleAttendanceResponsePlayersItemJerseyNumberMin = 0;
+
+
+
+export const UpdateAcademyConsoleAttendanceResponse = zod.object({
+  "sessionId": zod.number().min(1),
+  "players": zod.array(zod.object({
+  "playerId": zod.number().min(1),
+  "playerName": zod.string(),
+  "jerseyNumber": zod.number().min(updateAcademyConsoleAttendanceResponsePlayersItemJerseyNumberMin).nullable(),
+  "status": zod.union([zod.literal('present'),zod.literal('absent'),zod.literal('late'),zod.literal('excused'),zod.literal(null)]).nullable()
+}))
+})
+
+
+/**
+ * @summary List recordings linked to an academy
+ */
+
+
+
+export const ListAcademyConsoleRecordingsParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+
+export const listAcademyConsoleRecordingsResponseDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+
+
+export const ListAcademyConsoleRecordingsResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "fieldId": zod.number().min(1),
+  "court": zod.string(),
+  "date": zod.string().regex(listAcademyConsoleRecordingsResponseDateRegExp),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullable(),
+  "videoUrl": zod.string(),
+  "highlightMoment": zod.string().nullable(),
+  "fieldName": zod.string().nullable()
+})
+export const ListAcademyConsoleRecordingsResponse = zod.array(ListAcademyConsoleRecordingsResponseItem)
+
+
+/**
+ * @summary List academy announcements
+ */
+
+
+
+export const ListAcademyConsoleAnnouncementsParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+
+
+
+
+
+export const ListAcademyConsoleAnnouncementsResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "createdBy": zod.number().min(1),
+  "authorName": zod.string(),
+  "createdAt": zod.coerce.date()
+})
+export const ListAcademyConsoleAnnouncementsResponse = zod.array(ListAcademyConsoleAnnouncementsResponseItem)
+
+
+/**
+ * @summary Create an academy announcement
+ */
+
+
+
+export const CreateAcademyConsoleAnnouncementParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const createAcademyConsoleAnnouncementBodyTitleMax = 200;
+
+export const createAcademyConsoleAnnouncementBodyBodyMax = 10000;
+
+
+
+
+export const CreateAcademyConsoleAnnouncementBody = zod.object({
+  "title": zod.string().min(1).max(createAcademyConsoleAnnouncementBodyTitleMax),
+  "body": zod.string().min(1).max(createAcademyConsoleAnnouncementBodyBodyMax),
+  "squadId": zod.number().min(1).nullish()
+})
+
+
+
+
+
+
+
+export const CreateAcademyConsoleAnnouncementResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "createdBy": zod.number().min(1),
+  "authorName": zod.string(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Update an academy announcement
+ */
+
+
+
+
+export const UpdateAcademyConsoleAnnouncementParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "announcementId": zod.coerce.number().min(1)
+})
+
+export const updateAcademyConsoleAnnouncementBodyTitleMax = 200;
+
+export const updateAcademyConsoleAnnouncementBodyBodyMax = 10000;
+
+
+
+
+export const UpdateAcademyConsoleAnnouncementBody = zod.object({
+  "title": zod.string().min(1).max(updateAcademyConsoleAnnouncementBodyTitleMax).optional(),
+  "body": zod.string().min(1).max(updateAcademyConsoleAnnouncementBodyBodyMax).optional(),
+  "squadId": zod.number().min(1).nullish()
+})
+
+
+
+
+
+
+
+export const UpdateAcademyConsoleAnnouncementResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "title": zod.string(),
+  "body": zod.string(),
+  "createdBy": zod.number().min(1),
+  "authorName": zod.string(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Delete an academy announcement
+ */
+
+
+
+
+export const DeleteAcademyConsoleAnnouncementParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "announcementId": zod.coerce.number().min(1)
+})
+
+export const DeleteAcademyConsoleAnnouncementResponse = zod.void()
+
+
+/**
+ * @summary Get current-month finance totals and items needing attention
+ */
+
+
+
+export const GetAcademyFinanceDashboardParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const getAcademyFinanceDashboardResponseMonthRegExp = new RegExp('^\\d{4}-\\d{2}$');
+export const getAcademyFinanceDashboardResponseCollectedFilsMin = 0;
+
+export const getAcademyFinanceDashboardResponseSpentFilsMin = 0;
+
+export const getAcademyFinanceDashboardResponseUnpaidBillsCountMin = 0;
+
+
+
+export const getAcademyFinanceDashboardResponseExpiredPlayersItemExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getAcademyFinanceDashboardResponseExpiredPlayersItemMonthsOwedMin = 0;
+
+export const getAcademyFinanceDashboardResponseExpiredPlayersItemOutstandingFilsMin = 0;
+
+
+
+export const getAcademyFinanceDashboardResponseExpiringPlayersItemExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getAcademyFinanceDashboardResponseExpiringPlayersItemMonthsOwedMin = 0;
+
+export const getAcademyFinanceDashboardResponseExpiringPlayersItemOutstandingFilsMin = 0;
+
+
+
+export const getAcademyFinanceDashboardResponseUnpaidPaymentsItemOccurredOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetAcademyFinanceDashboardResponse = zod.object({
+  "month": zod.string().regex(getAcademyFinanceDashboardResponseMonthRegExp).describe('Current calendar month in Asia\/Amman.'),
+  "collectedFils": zod.number().min(getAcademyFinanceDashboardResponseCollectedFilsMin),
+  "spentFils": zod.number().min(getAcademyFinanceDashboardResponseSpentFilsMin),
+  "netFils": zod.number(),
+  "unpaidBillsCount": zod.number().min(getAcademyFinanceDashboardResponseUnpaidBillsCountMin),
+  "expiredPlayers": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "squadId": zod.number().min(1),
+  "squadName": zod.string(),
+  "expiresOn": zod.string().regex(getAcademyFinanceDashboardResponseExpiredPlayersItemExpiresOnRegExp),
+  "monthsOwed": zod.number().min(getAcademyFinanceDashboardResponseExpiredPlayersItemMonthsOwedMin),
+  "outstandingFils": zod.number().min(getAcademyFinanceDashboardResponseExpiredPlayersItemOutstandingFilsMin)
+})),
+  "expiringPlayers": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "squadId": zod.number().min(1),
+  "squadName": zod.string(),
+  "expiresOn": zod.string().regex(getAcademyFinanceDashboardResponseExpiringPlayersItemExpiresOnRegExp),
+  "monthsOwed": zod.number().min(getAcademyFinanceDashboardResponseExpiringPlayersItemMonthsOwedMin),
+  "outstandingFils": zod.number().min(getAcademyFinanceDashboardResponseExpiringPlayersItemOutstandingFilsMin)
+})),
+  "unpaidPayments": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "category": zod.string(),
+  "label": zod.string(),
+  "amountFils": zod.number().min(1),
+  "occurredOn": zod.string().regex(getAcademyFinanceDashboardResponseUnpaidPaymentsItemOccurredOnRegExp)
+}))
+})
+
+
+/**
+ * @summary List squads with payment status and outstanding totals
+ */
+
+
+
+export const ListAcademyFinanceTeamsParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+export const listAcademyFinanceTeamsResponseMonthlyFeeFilsMin = 0;
+
+export const listAcademyFinanceTeamsResponsePlayerCountMin = 0;
+
+export const listAcademyFinanceTeamsResponseBehindCountMin = 0;
+
+export const listAcademyFinanceTeamsResponseOutstandingFilsMin = 0;
+
+
+
+export const ListAcademyFinanceTeamsResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "monthlyFeeFils": zod.number().min(listAcademyFinanceTeamsResponseMonthlyFeeFilsMin),
+  "playerCount": zod.number().min(listAcademyFinanceTeamsResponsePlayerCountMin),
+  "behindCount": zod.number().min(listAcademyFinanceTeamsResponseBehindCountMin),
+  "outstandingFils": zod.number().min(listAcademyFinanceTeamsResponseOutstandingFilsMin)
+})
+export const ListAcademyFinanceTeamsResponse = zod.array(ListAcademyFinanceTeamsResponseItem)
+
+
+/**
+ * @summary Create a squad with its monthly fee
+ */
+
+
+
+export const CreateAcademyFinanceTeamParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const createAcademyFinanceTeamBodyNameMax = 120;
+
+export const createAcademyFinanceTeamBodyMonthlyFeeFilsMin = 0;
+
+export const createAcademyFinanceTeamBodyAgeGroupMax = 80;
+
+export const createAcademyFinanceTeamBodyDescriptionMax = 1000;
+
+
+
+export const CreateAcademyFinanceTeamBody = zod.object({
+  "name": zod.string().min(1).max(createAcademyFinanceTeamBodyNameMax),
+  "monthlyFeeFils": zod.number().min(createAcademyFinanceTeamBodyMonthlyFeeFilsMin),
+  "ageGroup": zod.string().max(createAcademyFinanceTeamBodyAgeGroupMax).nullish(),
+  "description": zod.string().max(createAcademyFinanceTeamBodyDescriptionMax).nullish()
+})
+
+
+export const createAcademyFinanceTeamResponseMonthlyFeeFilsMin = 0;
+
+export const createAcademyFinanceTeamResponsePlayerCountMin = 0;
+
+export const createAcademyFinanceTeamResponseBehindCountMin = 0;
+
+export const createAcademyFinanceTeamResponseOutstandingFilsMin = 0;
+
+
+
+export const CreateAcademyFinanceTeamResponse = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "monthlyFeeFils": zod.number().min(createAcademyFinanceTeamResponseMonthlyFeeFilsMin),
+  "playerCount": zod.number().min(createAcademyFinanceTeamResponsePlayerCountMin),
+  "behindCount": zod.number().min(createAcademyFinanceTeamResponseBehindCountMin),
+  "outstandingFils": zod.number().min(createAcademyFinanceTeamResponseOutstandingFilsMin)
+})
+
+
+/**
+ * @summary Update a squad's monthly fee
+ */
+
+
+
+
+export const UpdateAcademyFinanceTeamParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "squadId": zod.coerce.number().min(1)
+})
+
+export const updateAcademyFinanceTeamBodyMonthlyFeeFilsMin = 0;
+
+
+
+export const UpdateAcademyFinanceTeamBody = zod.object({
+  "monthlyFeeFils": zod.number().min(updateAcademyFinanceTeamBodyMonthlyFeeFilsMin)
+})
+
+
+export const updateAcademyFinanceTeamResponseMonthlyFeeFilsMin = 0;
+
+export const updateAcademyFinanceTeamResponsePlayerCountMin = 0;
+
+export const updateAcademyFinanceTeamResponseBehindCountMin = 0;
+
+export const updateAcademyFinanceTeamResponseOutstandingFilsMin = 0;
+
+
+
+export const UpdateAcademyFinanceTeamResponse = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "monthlyFeeFils": zod.number().min(updateAcademyFinanceTeamResponseMonthlyFeeFilsMin),
+  "playerCount": zod.number().min(updateAcademyFinanceTeamResponsePlayerCountMin),
+  "behindCount": zod.number().min(updateAcademyFinanceTeamResponseBehindCountMin),
+  "outstandingFils": zod.number().min(updateAcademyFinanceTeamResponseOutstandingFilsMin)
+})
+
+
+/**
+ * @summary List players and their current balances for a squad
+ */
+
+
+
+
+export const ListAcademyFinanceTeamPlayersParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "squadId": zod.coerce.number().min(1)
+})
+
+
+
+export const listAcademyFinanceTeamPlayersResponseMonthlyFeeFilsMin = 0;
+
+export const listAcademyFinanceTeamPlayersResponseMonthlyDiscountFilsMin = 0;
+
+export const listAcademyFinanceTeamPlayersResponseEffectiveMonthlyFeeFilsMin = 0;
+
+export const listAcademyFinanceTeamPlayersResponseSubscriptionExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const listAcademyFinanceTeamPlayersResponseMonthsOwedMin = 0;
+
+export const listAcademyFinanceTeamPlayersResponseSubscriptionDebtFilsMin = 0;
+
+export const listAcademyFinanceTeamPlayersResponseUnpaidFeesFilsMin = 0;
+
+export const listAcademyFinanceTeamPlayersResponseOutstandingFilsMin = 0;
+
+
+
+export const ListAcademyFinanceTeamPlayersResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "squadId": zod.number().min(1),
+  "name": zod.string(),
+  "isActive": zod.boolean(),
+  "monthlyFeeFils": zod.number().min(listAcademyFinanceTeamPlayersResponseMonthlyFeeFilsMin),
+  "monthlyDiscountFils": zod.number().min(listAcademyFinanceTeamPlayersResponseMonthlyDiscountFilsMin),
+  "effectiveMonthlyFeeFils": zod.number().min(listAcademyFinanceTeamPlayersResponseEffectiveMonthlyFeeFilsMin),
+  "subscriptionExpiresOn": zod.string().regex(listAcademyFinanceTeamPlayersResponseSubscriptionExpiresOnRegExp).nullable(),
+  "subscriptionStatus": zod.enum(['no_subscription', 'paid', 'expiring', 'expired']),
+  "monthsOwed": zod.number().min(listAcademyFinanceTeamPlayersResponseMonthsOwedMin),
+  "subscriptionDebtFils": zod.number().min(listAcademyFinanceTeamPlayersResponseSubscriptionDebtFilsMin),
+  "unpaidFeesFils": zod.number().min(listAcademyFinanceTeamPlayersResponseUnpaidFeesFilsMin),
+  "outstandingFils": zod.number().min(listAcademyFinanceTeamPlayersResponseOutstandingFilsMin)
+})
+export const ListAcademyFinanceTeamPlayersResponse = zod.array(ListAcademyFinanceTeamPlayersResponseItem)
+
+
+/**
+ * @summary Add a roster player with billing information
+ */
+
+
+
+
+export const CreateAcademyFinanceTeamPlayerParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "squadId": zod.coerce.number().min(1)
+})
+
+export const createAcademyFinanceTeamPlayerBodyNameMax = 120;
+
+export const createAcademyFinanceTeamPlayerBodyMonthlyDiscountFilsDefault = 0;
+export const createAcademyFinanceTeamPlayerBodyMonthlyDiscountFilsMin = 0;
+
+export const createAcademyFinanceTeamPlayerBodySubscriptionExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const CreateAcademyFinanceTeamPlayerBody = zod.object({
+  "name": zod.string().min(1).max(createAcademyFinanceTeamPlayerBodyNameMax),
+  "monthlyDiscountFils": zod.number().min(createAcademyFinanceTeamPlayerBodyMonthlyDiscountFilsMin).default(createAcademyFinanceTeamPlayerBodyMonthlyDiscountFilsDefault),
+  "subscriptionExpiresOn": zod.string().regex(createAcademyFinanceTeamPlayerBodySubscriptionExpiresOnRegExp)
+})
+
+
+
+export const createAcademyFinanceTeamPlayerResponseMonthlyFeeFilsMin = 0;
+
+export const createAcademyFinanceTeamPlayerResponseMonthlyDiscountFilsMin = 0;
+
+export const createAcademyFinanceTeamPlayerResponseEffectiveMonthlyFeeFilsMin = 0;
+
+export const createAcademyFinanceTeamPlayerResponseSubscriptionExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const createAcademyFinanceTeamPlayerResponseMonthsOwedMin = 0;
+
+export const createAcademyFinanceTeamPlayerResponseSubscriptionDebtFilsMin = 0;
+
+export const createAcademyFinanceTeamPlayerResponseUnpaidFeesFilsMin = 0;
+
+export const createAcademyFinanceTeamPlayerResponseOutstandingFilsMin = 0;
+
+
+
+export const CreateAcademyFinanceTeamPlayerResponse = zod.object({
+  "id": zod.number().min(1),
+  "squadId": zod.number().min(1),
+  "name": zod.string(),
+  "isActive": zod.boolean(),
+  "monthlyFeeFils": zod.number().min(createAcademyFinanceTeamPlayerResponseMonthlyFeeFilsMin),
+  "monthlyDiscountFils": zod.number().min(createAcademyFinanceTeamPlayerResponseMonthlyDiscountFilsMin),
+  "effectiveMonthlyFeeFils": zod.number().min(createAcademyFinanceTeamPlayerResponseEffectiveMonthlyFeeFilsMin),
+  "subscriptionExpiresOn": zod.string().regex(createAcademyFinanceTeamPlayerResponseSubscriptionExpiresOnRegExp).nullable(),
+  "subscriptionStatus": zod.enum(['no_subscription', 'paid', 'expiring', 'expired']),
+  "monthsOwed": zod.number().min(createAcademyFinanceTeamPlayerResponseMonthsOwedMin),
+  "subscriptionDebtFils": zod.number().min(createAcademyFinanceTeamPlayerResponseSubscriptionDebtFilsMin),
+  "unpaidFeesFils": zod.number().min(createAcademyFinanceTeamPlayerResponseUnpaidFeesFilsMin),
+  "outstandingFils": zod.number().min(createAcademyFinanceTeamPlayerResponseOutstandingFilsMin)
+})
+
+
+/**
+ * @summary Update a player's monthly discount and subscription expiry
+ */
+
+
+
+
+export const UpdateAcademyFinancePlayerBillingParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "playerId": zod.coerce.number().min(1)
+})
+
+export const updateAcademyFinancePlayerBillingBodyMonthlyDiscountFilsMin = 0;
+
+export const updateAcademyFinancePlayerBillingBodySubscriptionExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const UpdateAcademyFinancePlayerBillingBody = zod.object({
+  "monthlyDiscountFils": zod.number().min(updateAcademyFinancePlayerBillingBodyMonthlyDiscountFilsMin).optional(),
+  "subscriptionExpiresOn": zod.string().regex(updateAcademyFinancePlayerBillingBodySubscriptionExpiresOnRegExp).nullish()
+})
+
+
+
+export const updateAcademyFinancePlayerBillingResponseMonthlyFeeFilsMin = 0;
+
+export const updateAcademyFinancePlayerBillingResponseMonthlyDiscountFilsMin = 0;
+
+export const updateAcademyFinancePlayerBillingResponseEffectiveMonthlyFeeFilsMin = 0;
+
+export const updateAcademyFinancePlayerBillingResponseSubscriptionExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const updateAcademyFinancePlayerBillingResponseMonthsOwedMin = 0;
+
+export const updateAcademyFinancePlayerBillingResponseSubscriptionDebtFilsMin = 0;
+
+export const updateAcademyFinancePlayerBillingResponseUnpaidFeesFilsMin = 0;
+
+export const updateAcademyFinancePlayerBillingResponseOutstandingFilsMin = 0;
+
+
+
+export const UpdateAcademyFinancePlayerBillingResponse = zod.object({
+  "id": zod.number().min(1),
+  "squadId": zod.number().min(1),
+  "name": zod.string(),
+  "isActive": zod.boolean(),
+  "monthlyFeeFils": zod.number().min(updateAcademyFinancePlayerBillingResponseMonthlyFeeFilsMin),
+  "monthlyDiscountFils": zod.number().min(updateAcademyFinancePlayerBillingResponseMonthlyDiscountFilsMin),
+  "effectiveMonthlyFeeFils": zod.number().min(updateAcademyFinancePlayerBillingResponseEffectiveMonthlyFeeFilsMin),
+  "subscriptionExpiresOn": zod.string().regex(updateAcademyFinancePlayerBillingResponseSubscriptionExpiresOnRegExp).nullable(),
+  "subscriptionStatus": zod.enum(['no_subscription', 'paid', 'expiring', 'expired']),
+  "monthsOwed": zod.number().min(updateAcademyFinancePlayerBillingResponseMonthsOwedMin),
+  "subscriptionDebtFils": zod.number().min(updateAcademyFinancePlayerBillingResponseSubscriptionDebtFilsMin),
+  "unpaidFeesFils": zod.number().min(updateAcademyFinancePlayerBillingResponseUnpaidFeesFilsMin),
+  "outstandingFils": zod.number().min(updateAcademyFinancePlayerBillingResponseOutstandingFilsMin)
+})
+
+
+/**
+ * @summary Record a subscription renewal and extend the existing expiry date
+ */
+
+
+
+
+export const CreateAcademyFinancePlayerRenewalParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "playerId": zod.coerce.number().min(1)
+})
+
+export const createAcademyFinancePlayerRenewalBodyMonthsMax = 12;
+
+
+
+export const CreateAcademyFinancePlayerRenewalBody = zod.object({
+  "months": zod.number().min(1).max(createAcademyFinancePlayerRenewalBodyMonthsMax)
+})
+
+
+
+export const createAcademyFinancePlayerRenewalResponseMonthsMax = 12;
+
+export const createAcademyFinancePlayerRenewalResponseAmountFilsMin = 0;
+
+export const createAcademyFinancePlayerRenewalResponseEffectiveMonthlyFeeFilsMin = 0;
+
+export const createAcademyFinancePlayerRenewalResponsePreviousExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const createAcademyFinancePlayerRenewalResponseNewExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const CreateAcademyFinancePlayerRenewalResponse = zod.object({
+  "id": zod.number().min(1),
+  "playerId": zod.number().min(1),
+  "months": zod.number().min(1).max(createAcademyFinancePlayerRenewalResponseMonthsMax),
+  "amountFils": zod.number().min(createAcademyFinancePlayerRenewalResponseAmountFilsMin),
+  "effectiveMonthlyFeeFils": zod.number().min(createAcademyFinancePlayerRenewalResponseEffectiveMonthlyFeeFilsMin),
+  "previousExpiresOn": zod.string().regex(createAcademyFinancePlayerRenewalResponsePreviousExpiresOnRegExp),
+  "newExpiresOn": zod.string().regex(createAcademyFinancePlayerRenewalResponseNewExpiresOnRegExp),
+  "paidAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary List a player's existing one-off fees
+ */
+
+
+
+
+export const ListAcademyFinancePlayerFeesParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "playerId": zod.coerce.number().min(1)
+})
+
+
+
+export const listAcademyFinancePlayerFeesResponseAmountFilsMin = 0;
+
+export const listAcademyFinancePlayerFeesResponseDueDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const ListAcademyFinancePlayerFeesResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "playerId": zod.number().min(1),
+  "label": zod.string(),
+  "amountFils": zod.number().min(listAcademyFinancePlayerFeesResponseAmountFilsMin),
+  "dueDate": zod.string().regex(listAcademyFinancePlayerFeesResponseDueDateRegExp),
+  "status": zod.enum(['due', 'paid', 'waived']),
+  "paidAt": zod.coerce.date().nullable(),
+  "note": zod.string().nullable()
+})
+export const ListAcademyFinancePlayerFeesResponse = zod.array(ListAcademyFinancePlayerFeesResponseItem)
+
+
+/**
+ * @summary Add a one-off fee to an existing player
+ */
+
+
+
+
+export const CreateAcademyFinancePlayerFeeParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "playerId": zod.coerce.number().min(1)
+})
+
+export const createAcademyFinancePlayerFeeBodyLabelMax = 200;
+
+
+export const createAcademyFinancePlayerFeeBodyDueDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const createAcademyFinancePlayerFeeBodyNoteMax = 1000;
+
+
+
+export const CreateAcademyFinancePlayerFeeBody = zod.object({
+  "label": zod.string().min(1).max(createAcademyFinancePlayerFeeBodyLabelMax),
+  "amountFils": zod.number().min(1),
+  "dueDate": zod.string().regex(createAcademyFinancePlayerFeeBodyDueDateRegExp).nullish().describe('Defaults to the current date in Asia\/Amman when omitted.'),
+  "note": zod.string().max(createAcademyFinancePlayerFeeBodyNoteMax).nullish()
+})
+
+
+
+export const createAcademyFinancePlayerFeeResponseAmountFilsMin = 0;
+
+export const createAcademyFinancePlayerFeeResponseDueDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const CreateAcademyFinancePlayerFeeResponse = zod.object({
+  "id": zod.number().min(1),
+  "playerId": zod.number().min(1),
+  "label": zod.string(),
+  "amountFils": zod.number().min(createAcademyFinancePlayerFeeResponseAmountFilsMin),
+  "dueDate": zod.string().regex(createAcademyFinancePlayerFeeResponseDueDateRegExp),
+  "status": zod.enum(['due', 'paid', 'waived']),
+  "paidAt": zod.coerce.date().nullable(),
+  "note": zod.string().nullable()
+})
+
+
+/**
+ * @summary Mark an existing one-off fee as paid
+ */
+
+
+
+
+export const MarkAcademyFinanceFeePaidParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "feeId": zod.coerce.number().min(1)
+})
+
+export const MarkAcademyFinanceFeePaidBody = zod.object({
+  "status": zod.enum(['paid'])
+})
+
+
+
+export const markAcademyFinanceFeePaidResponseAmountFilsMin = 0;
+
+export const markAcademyFinanceFeePaidResponseDueDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const MarkAcademyFinanceFeePaidResponse = zod.object({
+  "id": zod.number().min(1),
+  "playerId": zod.number().min(1),
+  "label": zod.string(),
+  "amountFils": zod.number().min(markAcademyFinanceFeePaidResponseAmountFilsMin),
+  "dueDate": zod.string().regex(markAcademyFinanceFeePaidResponseDueDateRegExp),
+  "status": zod.enum(['due', 'paid', 'waived']),
+  "paidAt": zod.coerce.date().nullable(),
+  "note": zod.string().nullable()
+})
+
+
+/**
+ * @summary List academy finance staff
+ */
+
+
+
+export const ListAcademyFinanceStaffParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+export const listAcademyFinanceStaffResponseMonthlySalaryFilsMin = 0;
+
+export const listAcademyFinanceStaffResponseNextSalaryDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const listAcademyFinanceStaffResponseContractEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const ListAcademyFinanceStaffResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "role": zod.string(),
+  "monthlySalaryFils": zod.number().min(listAcademyFinanceStaffResponseMonthlySalaryFilsMin),
+  "nextSalaryDate": zod.string().regex(listAcademyFinanceStaffResponseNextSalaryDateRegExp),
+  "contractEndDate": zod.string().regex(listAcademyFinanceStaffResponseContractEndDateRegExp)
+})
+export const ListAcademyFinanceStaffResponse = zod.array(ListAcademyFinanceStaffResponseItem)
+
+
+/**
+ * @summary Add an academy finance staff member
+ */
+
+
+
+export const CreateAcademyFinanceStaffParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const createAcademyFinanceStaffBodyNameMax = 120;
+
+export const createAcademyFinanceStaffBodyRoleMax = 120;
+
+
+export const createAcademyFinanceStaffBodyNextSalaryDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const createAcademyFinanceStaffBodyContractEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const CreateAcademyFinanceStaffBody = zod.object({
+  "name": zod.string().min(1).max(createAcademyFinanceStaffBodyNameMax),
+  "role": zod.string().min(1).max(createAcademyFinanceStaffBodyRoleMax),
+  "monthlySalaryFils": zod.number().min(1),
+  "nextSalaryDate": zod.string().regex(createAcademyFinanceStaffBodyNextSalaryDateRegExp),
+  "contractEndDate": zod.string().regex(createAcademyFinanceStaffBodyContractEndDateRegExp)
+})
+
+
+export const createAcademyFinanceStaffResponseMonthlySalaryFilsMin = 0;
+
+export const createAcademyFinanceStaffResponseNextSalaryDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const createAcademyFinanceStaffResponseContractEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const CreateAcademyFinanceStaffResponse = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "role": zod.string(),
+  "monthlySalaryFils": zod.number().min(createAcademyFinanceStaffResponseMonthlySalaryFilsMin),
+  "nextSalaryDate": zod.string().regex(createAcademyFinanceStaffResponseNextSalaryDateRegExp),
+  "contractEndDate": zod.string().regex(createAcademyFinanceStaffResponseContractEndDateRegExp)
+})
+
+
+/**
+ * @summary Update an academy finance staff member
+ */
+
+
+
+
+export const UpdateAcademyFinanceStaffParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "staffId": zod.coerce.number().min(1)
+})
+
+export const updateAcademyFinanceStaffBodyNameMax = 120;
+
+export const updateAcademyFinanceStaffBodyRoleMax = 120;
+
+
+export const updateAcademyFinanceStaffBodyNextSalaryDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const updateAcademyFinanceStaffBodyContractEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const UpdateAcademyFinanceStaffBody = zod.object({
+  "name": zod.string().min(1).max(updateAcademyFinanceStaffBodyNameMax).optional(),
+  "role": zod.string().min(1).max(updateAcademyFinanceStaffBodyRoleMax).optional(),
+  "monthlySalaryFils": zod.number().min(1).optional(),
+  "nextSalaryDate": zod.string().regex(updateAcademyFinanceStaffBodyNextSalaryDateRegExp).optional(),
+  "contractEndDate": zod.string().regex(updateAcademyFinanceStaffBodyContractEndDateRegExp).optional()
+})
+
+
+export const updateAcademyFinanceStaffResponseMonthlySalaryFilsMin = 0;
+
+export const updateAcademyFinanceStaffResponseNextSalaryDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const updateAcademyFinanceStaffResponseContractEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const UpdateAcademyFinanceStaffResponse = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "role": zod.string(),
+  "monthlySalaryFils": zod.number().min(updateAcademyFinanceStaffResponseMonthlySalaryFilsMin),
+  "nextSalaryDate": zod.string().regex(updateAcademyFinanceStaffResponseNextSalaryDateRegExp),
+  "contractEndDate": zod.string().regex(updateAcademyFinanceStaffResponseContractEndDateRegExp)
+})
+
+
+/**
+ * @summary Record a paid salary expense and advance the next salary date
+ */
+
+
+
+
+export const RecordAcademyFinanceSalaryPaymentParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "staffId": zod.coerce.number().min(1)
+})
+
+
+export const recordAcademyFinanceSalaryPaymentResponseStaffMonthlySalaryFilsMin = 0;
+
+export const recordAcademyFinanceSalaryPaymentResponseStaffNextSalaryDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const recordAcademyFinanceSalaryPaymentResponseStaffContractEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+
+export const recordAcademyFinanceSalaryPaymentResponsePaymentOccurredOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const RecordAcademyFinanceSalaryPaymentResponse = zod.object({
+  "staff": zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "role": zod.string(),
+  "monthlySalaryFils": zod.number().min(recordAcademyFinanceSalaryPaymentResponseStaffMonthlySalaryFilsMin),
+  "nextSalaryDate": zod.string().regex(recordAcademyFinanceSalaryPaymentResponseStaffNextSalaryDateRegExp),
+  "contractEndDate": zod.string().regex(recordAcademyFinanceSalaryPaymentResponseStaffContractEndDateRegExp)
+}),
+  "payment": zod.object({
+  "id": zod.number().min(1),
+  "staffId": zod.number().min(1).nullable(),
+  "category": zod.string(),
+  "label": zod.string(),
+  "amountFils": zod.number().min(1),
+  "occurredOn": zod.string().regex(recordAcademyFinanceSalaryPaymentResponsePaymentOccurredOnRegExp),
+  "status": zod.enum(['paid', 'unpaid']),
+  "paidAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary List other payments for the current Amman month and totals
+ */
+
+
+
+export const ListAcademyFinanceOtherPaymentsParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const listAcademyFinanceOtherPaymentsResponseMonthRegExp = new RegExp('^\\d{4}-\\d{2}$');
+export const listAcademyFinanceOtherPaymentsResponsePaidTotalFilsMin = 0;
+
+export const listAcademyFinanceOtherPaymentsResponseUnpaidTotalFilsMin = 0;
+
+
+
+
+export const listAcademyFinanceOtherPaymentsResponsePaymentsItemOccurredOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const ListAcademyFinanceOtherPaymentsResponse = zod.object({
+  "month": zod.string().regex(listAcademyFinanceOtherPaymentsResponseMonthRegExp),
+  "paidTotalFils": zod.number().min(listAcademyFinanceOtherPaymentsResponsePaidTotalFilsMin),
+  "unpaidTotalFils": zod.number().min(listAcademyFinanceOtherPaymentsResponseUnpaidTotalFilsMin),
+  "payments": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "staffId": zod.number().min(1).nullable(),
+  "category": zod.string(),
+  "label": zod.string(),
+  "amountFils": zod.number().min(1),
+  "occurredOn": zod.string().regex(listAcademyFinanceOtherPaymentsResponsePaymentsItemOccurredOnRegExp),
+  "status": zod.enum(['paid', 'unpaid']),
+  "paidAt": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Record an other payment as paid or unpaid
+ */
+
+
+
+export const CreateAcademyFinanceOtherPaymentParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const createAcademyFinanceOtherPaymentBodyCategoryMax = 120;
+
+export const createAcademyFinanceOtherPaymentBodyLabelMax = 240;
+
+
+
+
+export const CreateAcademyFinanceOtherPaymentBody = zod.object({
+  "category": zod.string().min(1).max(createAcademyFinanceOtherPaymentBodyCategoryMax),
+  "label": zod.string().min(1).max(createAcademyFinanceOtherPaymentBodyLabelMax),
+  "amountFils": zod.number().min(1),
+  "status": zod.enum(['paid', 'unpaid'])
+})
+
+
+
+
+export const createAcademyFinanceOtherPaymentResponseOccurredOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const CreateAcademyFinanceOtherPaymentResponse = zod.object({
+  "id": zod.number().min(1),
+  "staffId": zod.number().min(1).nullable(),
+  "category": zod.string(),
+  "label": zod.string(),
+  "amountFils": zod.number().min(1),
+  "occurredOn": zod.string().regex(createAcademyFinanceOtherPaymentResponseOccurredOnRegExp),
+  "status": zod.enum(['paid', 'unpaid']),
+  "paidAt": zod.coerce.date().nullable()
+})
+
+
+/**
+ * @summary Mark an unpaid other payment as paid
+ */
+
+
+
+
+export const MarkAcademyFinanceOtherPaymentPaidParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "paymentId": zod.coerce.number().min(1)
+})
+
+export const MarkAcademyFinanceOtherPaymentPaidBody = zod.object({
+  "status": zod.enum(['paid'])
+})
+
+
+
+
+export const markAcademyFinanceOtherPaymentPaidResponseOccurredOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const MarkAcademyFinanceOtherPaymentPaidResponse = zod.object({
+  "id": zod.number().min(1),
+  "staffId": zod.number().min(1).nullable(),
+  "category": zod.string(),
+  "label": zod.string(),
+  "amountFils": zod.number().min(1),
+  "occurredOn": zod.string().regex(markAcademyFinanceOtherPaymentPaidResponseOccurredOnRegExp),
+  "status": zod.enum(['paid', 'unpaid']),
+  "paidAt": zod.coerce.date().nullable()
+})
+
+
+/**
+ * @summary Repeat a payment today as unpaid
+ */
+
+
+
+
+export const RepeatAcademyFinanceOtherPaymentParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "paymentId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const repeatAcademyFinanceOtherPaymentResponseOccurredOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const RepeatAcademyFinanceOtherPaymentResponse = zod.object({
+  "id": zod.number().min(1),
+  "staffId": zod.number().min(1).nullable(),
+  "category": zod.string(),
+  "label": zod.string(),
+  "amountFils": zod.number().min(1),
+  "occurredOn": zod.string().regex(repeatAcademyFinanceOtherPaymentResponseOccurredOnRegExp),
+  "status": zod.enum(['paid', 'unpaid']),
+  "paidAt": zod.coerce.date().nullable()
+})
+
+
+/**
+ * @summary List built-in and academy-specific other-payment categories
+ */
+
+
+
+export const ListAcademyFinanceCategoriesParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const ListAcademyFinanceCategoriesResponse = zod.object({
+  "builtIn": zod.array(zod.string()),
+  "custom": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string()
+}))
+})
+
+
+/**
+ * @summary Save a custom other-payment category for this academy
+ */
+
+
+
+export const CreateAcademyFinanceCategoryParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const createAcademyFinanceCategoryBodyNameMax = 120;
+
+
+
+export const CreateAcademyFinanceCategoryBody = zod.object({
+  "name": zod.string().min(1).max(createAcademyFinanceCategoryBodyNameMax)
+})
+
+
+
+
+export const CreateAcademyFinanceCategoryResponse = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string()
+})
+
+
+/**
+ * @summary List role assignments for an academy
+ */
+
+
+
+export const ListAcademyMembersParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const ListAcademyMembersResponseItem = zod.object({
+  "userId": zod.number(),
+  "name": zod.string(),
+  "email": zod.string().email(),
+  "roles": zod.array(zod.enum(['owner', 'coach'])).min(1)
+})
+export const ListAcademyMembersResponse = zod.array(ListAcademyMembersResponseItem)
+
+
+/**
+ * @summary Assign an academy role to an existing Replay user by email
+ */
+
+
+
+export const AddAcademyMemberParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const AddAcademyMemberBody = zod.object({
+  "email": zod.string().email(),
+  "role": zod.enum(['owner', 'coach'])
+})
+
+
+
+
+export const AddAcademyMemberResponse = zod.object({
+  "userId": zod.number(),
+  "name": zod.string(),
+  "email": zod.string().email(),
+  "roles": zod.array(zod.enum(['owner', 'coach'])).min(1)
+})
+
+
+/**
+ * @summary Remove one academy role assignment without removing other roles
+ */
+
+
+
+
+export const RemoveAcademyMemberRoleParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "userId": zod.coerce.number().min(1),
+  "role": zod.enum(['owner', 'coach'])
+})
+
+export const RemoveAcademyMemberRoleResponse = zod.void()
+
+
+/**
  * @summary List all academies (admin)
  */
 export const ListAdminAcademiesResponseItem = zod.object({

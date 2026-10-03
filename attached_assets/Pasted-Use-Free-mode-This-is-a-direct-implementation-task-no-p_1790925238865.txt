@@ -1,0 +1,79 @@
+Use Free mode. This is a direct implementation task — no planning pause.
+
+TASK: Fix the Fees & Payments section's logic and UX based on real usage.
+Four changes. The data model and schema stay exactly as they are — this is
+behavior, layout, and copy. No database push.
+
+── CHANGE 1: THE CURRENT MONTH IS LIVE; ONLY PAST MONTHS ARE FROZEN ──
+This is the most important change and it is a semantics fix, not a UI fix.
+Today the current month is a frozen snapshot, which produces absurd results:
+I set a squad's rate and this month doesn't react; I add a staff member and
+this month shows "no salary payments"; only 2 of 16 players appear because
+the month materialized before rates existed; a player I marked exempt still
+shows a stale Due row.
+
+New rule:
+- The CURRENT month (and any future month, if opened) continuously reflects
+  today's billing rules: setting or changing a squad rate, adding a player,
+  changing an override/exemption, adding or editing staff — all of it shows
+  up in the current month immediately on next load (refresh the month's rows
+  idempotently when it is viewed or when rules change).
+- Rows already marked PAID or WAIVED in the current month are never altered
+  by a rules refresh — payments that happened stay exactly as recorded.
+- PAST months stay frozen exactly as the snapshot model already does. The
+  effective-dated terms and history hooks stay — they are what makes past
+  months correct.
+- With this rule, the "This month is a fixed snapshot..." banner becomes
+  unnecessary — remove it. If any note is needed, a single quiet line on
+  PAST months only ("Closed month") is enough.
+
+── CHANGE 2: MOVE ALL CONFIGURATION OUT OF THE OPERATIONAL TABS ──
+"Monthly billing rules" (squad rates + 16 per-player override rows with
+individual Save buttons) is a settings wall buried inside the Player fees
+tab. Move ALL configuration — squad monthly rates, player overrides and
+exemptions, staff roster and salaries — into a dedicated "Billing settings"
+view reached from a clearly visible control next to the month navigator (or
+an equivalent you can justify). In settings, replace the 16-save-button wall
+with a compact list where selecting a player opens a small edit dialog for
+override/exempt. The four money tabs (Overview, Player fees, Salaries, Other
+payments) become purely operational: see the month, mark things paid, leave.
+
+── CHANGE 3: RESTORE TWO LOST REQUIREMENTS ──
+a) The Player fees tab must group players BY SQUAD (squad name + per-squad
+   collected/outstanding subtotal, Unassigned group last), not a flat list.
+b) ONE-OFF CHARGES (kit, registration — the existing academy_fees records,
+   including the four seeded ones) have no home in the new tabs. Give them
+   one: either a fifth view or a clearly separated block inside Player fees
+   — your call, as long as the existing add/edit/mark-paid/waive/delete
+   actions and records are all reachable again.
+
+── CHANGE 4: BUGS AND LANGUAGE ──
+- An EXEMPT player's row shows a "Mark paid" button on 0.000 JOD — exempt
+  rows must show no payment actions at all.
+- Month labels: render "October 2026" (localized properly in Arabic), never
+  raw "2026-10".
+- Replace accountant-speak across the section in both languages: "Salary
+  run", "snapshot", "billing rule" → plain words (Salaries, This month,
+  Monthly fees). Overview cards should not duplicate the same numbers twice
+  (the stat cards and the "collection" cards currently repeat each other —
+  keep one clear presentation).
+- Rate/amount inputs: a soft sanity bound (e.g. reject negative, warn on
+  implausibly large values) with localized messages.
+
+── RULES ──
+Owner-only enforcement unchanged. No schema changes, no push, no changes to
+other console sections, /admin, or public routes. EN/AR with full RTL for
+everything touched. Known full-suite drift stays untouched.
+
+── VALIDATION before closing ──
+- API/unit tests on the disposable database for the new current-month
+  behavior: rule change reflected in current month on refresh; PAID/WAIVED
+  rows survive a refresh untouched; past month unaffected by a rules change;
+  newly added player and staff appear in the current month; exempt player
+  gets no due row.
+- Typecheck and the SoccerWatch suite pass.
+- In the preview, verify what you can; list explicitly what I must check
+  signed-in. Also update the seed script if the new semantics change its
+  expected-totals output, and give me the exact seed command again.
+
+End with the standard report + per-file diff summary with one-line descriptions.

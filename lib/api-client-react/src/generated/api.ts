@@ -20,6 +20,49 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AcademyAnnouncementInput,
+  AcademyAnnouncementSummary,
+  AcademyAnnouncementUpdate,
+  AcademyAttendanceInput,
+  AcademyAttendanceSheet,
+  AcademyConsoleDashboard,
+  AcademyConsoleMembership,
+  AcademyConsoleRecording,
+  AcademyFinanceCategory,
+  AcademyFinanceCategoryInput,
+  AcademyFinanceCategoryList,
+  AcademyFinanceDashboard,
+  AcademyFinanceFee,
+  AcademyFinanceFeeInput,
+  AcademyFinanceFeePaymentInput,
+  AcademyFinanceOtherPayment,
+  AcademyFinanceOtherPaymentInput,
+  AcademyFinanceOtherPaymentList,
+  AcademyFinanceOtherPaymentStatusUpdate,
+  AcademyFinancePlayer,
+  AcademyFinancePlayerBillingUpdate,
+  AcademyFinancePlayerInput,
+  AcademyFinanceRenewal,
+  AcademyFinanceRenewalInput,
+  AcademyFinanceSalaryPayment,
+  AcademyFinanceStaff,
+  AcademyFinanceStaffInput,
+  AcademyFinanceStaffUpdate,
+  AcademyFinanceTeam,
+  AcademyFinanceTeamInput,
+  AcademyFinanceTeamMonthlyFeeUpdate,
+  AcademyMemberAssignment,
+  AcademyMemberListItem,
+  AcademyMemberSummary,
+  AcademyPlayerInput,
+  AcademyPlayerSummary,
+  AcademyPlayerUpdate,
+  AcademySessionInput,
+  AcademySessionSummary,
+  AcademySessionUpdate,
+  AcademySquadInput,
+  AcademySquadSummary,
+  AcademySquadUpdate,
   AcademySummary,
   AccountDeletionError,
   AccountDeletionResponse,
@@ -4314,6 +4357,3275 @@ export function useGetAcademyRecordings<TData = Awaited<ReturnType<typeof getAca
 
 
 
+
+export const getGetAcademyConsoleMembershipsUrl = () => {
+
+
+
+
+  return `/api/academy/console/memberships`
+}
+
+/**
+ * @summary List the signed-in user's academy memberships and roles
+ */
+export const getAcademyConsoleMemberships = async ( options?: RequestInit): Promise<AcademyConsoleMembership[]> => {
+
+  return customFetch<AcademyConsoleMembership[]>(getGetAcademyConsoleMembershipsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyConsoleMembershipsQueryKey = () => {
+    return [
+    `/api/academy/console/memberships`
+    ] as const;
+    }
+
+
+export const getGetAcademyConsoleMembershipsQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyConsoleMemberships>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleMemberships>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyConsoleMembershipsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyConsoleMemberships>>> = ({ signal }) => getAcademyConsoleMemberships({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleMemberships>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyConsoleMembershipsQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyConsoleMemberships>>>
+export type GetAcademyConsoleMembershipsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List the signed-in user's academy memberships and roles
+ */
+
+export function useGetAcademyConsoleMemberships<TData = Awaited<ReturnType<typeof getAcademyConsoleMemberships>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleMemberships>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyConsoleMembershipsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAcademyConsoleDashboardUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/dashboard`
+}
+
+/**
+ * @summary Get academy dashboard counts for the next seven days
+ */
+export const getAcademyConsoleDashboard = async (academyId: number, options?: RequestInit): Promise<AcademyConsoleDashboard> => {
+
+  return customFetch<AcademyConsoleDashboard>(getGetAcademyConsoleDashboardUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyConsoleDashboardQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/dashboard`
+    ] as const;
+    }
+
+
+export const getGetAcademyConsoleDashboardQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyConsoleDashboard>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleDashboard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyConsoleDashboardQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyConsoleDashboard>>> = ({ signal }) => getAcademyConsoleDashboard(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleDashboard>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyConsoleDashboardQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyConsoleDashboard>>>
+export type GetAcademyConsoleDashboardQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get academy dashboard counts for the next seven days
+ */
+
+export function useGetAcademyConsoleDashboard<TData = Awaited<ReturnType<typeof getAcademyConsoleDashboard>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleDashboard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyConsoleDashboardQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAcademyConsoleSquadsUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/squads`
+}
+
+/**
+ * @summary List squads and active player counts for an academy
+ */
+export const listAcademyConsoleSquads = async (academyId: number, options?: RequestInit): Promise<AcademySquadSummary[]> => {
+
+  return customFetch<AcademySquadSummary[]>(getListAcademyConsoleSquadsUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyConsoleSquadsQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/squads`
+    ] as const;
+    }
+
+
+export const getListAcademyConsoleSquadsQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyConsoleSquads>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleSquads>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyConsoleSquadsQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyConsoleSquads>>> = ({ signal }) => listAcademyConsoleSquads(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleSquads>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyConsoleSquadsQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyConsoleSquads>>>
+export type ListAcademyConsoleSquadsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List squads and active player counts for an academy
+ */
+
+export function useListAcademyConsoleSquads<TData = Awaited<ReturnType<typeof listAcademyConsoleSquads>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleSquads>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyConsoleSquadsQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyConsoleSquadUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/squads`
+}
+
+/**
+ * @summary Create a squad in an academy
+ */
+export const createAcademyConsoleSquad = async (academyId: number,
+    academySquadInput: AcademySquadInput, options?: RequestInit): Promise<AcademySquadSummary> => {
+
+  return customFetch<AcademySquadSummary>(getCreateAcademyConsoleSquadUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academySquadInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyConsoleSquadMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleSquad>>, TError,{academyId: number;data: BodyType<AcademySquadInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleSquad>>, TError,{academyId: number;data: BodyType<AcademySquadInput>}, TContext> => {
+
+const mutationKey = ['createAcademyConsoleSquad'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyConsoleSquad>>, {academyId: number;data: BodyType<AcademySquadInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyConsoleSquad(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyConsoleSquadMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyConsoleSquad>>>
+    export type CreateAcademyConsoleSquadMutationBody = BodyType<AcademySquadInput>
+    export type CreateAcademyConsoleSquadMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a squad in an academy
+ */
+export const useCreateAcademyConsoleSquad = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleSquad>>, TError,{academyId: number;data: BodyType<AcademySquadInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyConsoleSquad>>,
+        TError,
+        {academyId: number;data: BodyType<AcademySquadInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyConsoleSquadMutationOptions(options));
+    }
+
+export const getUpdateAcademyConsoleSquadUrl = (academyId: number,
+    squadId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/squads/${squadId}`
+}
+
+/**
+ * @summary Update a squad in an academy
+ */
+export const updateAcademyConsoleSquad = async (academyId: number,
+    squadId: number,
+    academySquadUpdate: AcademySquadUpdate, options?: RequestInit): Promise<AcademySquadSummary> => {
+
+  return customFetch<AcademySquadSummary>(getUpdateAcademyConsoleSquadUrl(academyId,squadId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academySquadUpdate)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyConsoleSquadMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleSquad>>, TError,{academyId: number;squadId: number;data: BodyType<AcademySquadUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleSquad>>, TError,{academyId: number;squadId: number;data: BodyType<AcademySquadUpdate>}, TContext> => {
+
+const mutationKey = ['updateAcademyConsoleSquad'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyConsoleSquad>>, {academyId: number;squadId: number;data: BodyType<AcademySquadUpdate>}> = (props) => {
+          const {academyId,squadId,data} = props ?? {};
+
+          return  updateAcademyConsoleSquad(academyId,squadId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyConsoleSquadMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyConsoleSquad>>>
+    export type UpdateAcademyConsoleSquadMutationBody = BodyType<AcademySquadUpdate>
+    export type UpdateAcademyConsoleSquadMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a squad in an academy
+ */
+export const useUpdateAcademyConsoleSquad = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleSquad>>, TError,{academyId: number;squadId: number;data: BodyType<AcademySquadUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyConsoleSquad>>,
+        TError,
+        {academyId: number;squadId: number;data: BodyType<AcademySquadUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyConsoleSquadMutationOptions(options));
+    }
+
+export const getDeleteAcademyConsoleSquadUrl = (academyId: number,
+    squadId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/squads/${squadId}`
+}
+
+/**
+ * @summary Delete a squad and unassign its players
+ */
+export const deleteAcademyConsoleSquad = async (academyId: number,
+    squadId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAcademyConsoleSquadUrl(academyId,squadId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteAcademyConsoleSquadMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleSquad>>, TError,{academyId: number;squadId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleSquad>>, TError,{academyId: number;squadId: number}, TContext> => {
+
+const mutationKey = ['deleteAcademyConsoleSquad'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAcademyConsoleSquad>>, {academyId: number;squadId: number}> = (props) => {
+          const {academyId,squadId} = props ?? {};
+
+          return  deleteAcademyConsoleSquad(academyId,squadId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAcademyConsoleSquadMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAcademyConsoleSquad>>>
+
+    export type DeleteAcademyConsoleSquadMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a squad and unassign its players
+ */
+export const useDeleteAcademyConsoleSquad = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleSquad>>, TError,{academyId: number;squadId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAcademyConsoleSquad>>,
+        TError,
+        {academyId: number;squadId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAcademyConsoleSquadMutationOptions(options));
+    }
+
+export const getListAcademyConsolePlayersUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/players`
+}
+
+/**
+ * @summary List all players in an academy
+ */
+export const listAcademyConsolePlayers = async (academyId: number, options?: RequestInit): Promise<AcademyPlayerSummary[]> => {
+
+  return customFetch<AcademyPlayerSummary[]>(getListAcademyConsolePlayersUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyConsolePlayersQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/players`
+    ] as const;
+    }
+
+
+export const getListAcademyConsolePlayersQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyConsolePlayers>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsolePlayers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyConsolePlayersQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyConsolePlayers>>> = ({ signal }) => listAcademyConsolePlayers(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsolePlayers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyConsolePlayersQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyConsolePlayers>>>
+export type ListAcademyConsolePlayersQueryError = ErrorType<void>
+
+
+/**
+ * @summary List all players in an academy
+ */
+
+export function useListAcademyConsolePlayers<TData = Awaited<ReturnType<typeof listAcademyConsolePlayers>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsolePlayers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyConsolePlayersQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyConsolePlayerUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/players`
+}
+
+/**
+ * @summary Add a player to an academy
+ */
+export const createAcademyConsolePlayer = async (academyId: number,
+    academyPlayerInput: AcademyPlayerInput, options?: RequestInit): Promise<AcademyPlayerSummary> => {
+
+  return customFetch<AcademyPlayerSummary>(getCreateAcademyConsolePlayerUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyPlayerInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyConsolePlayerMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsolePlayer>>, TError,{academyId: number;data: BodyType<AcademyPlayerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsolePlayer>>, TError,{academyId: number;data: BodyType<AcademyPlayerInput>}, TContext> => {
+
+const mutationKey = ['createAcademyConsolePlayer'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyConsolePlayer>>, {academyId: number;data: BodyType<AcademyPlayerInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyConsolePlayer(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyConsolePlayerMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyConsolePlayer>>>
+    export type CreateAcademyConsolePlayerMutationBody = BodyType<AcademyPlayerInput>
+    export type CreateAcademyConsolePlayerMutationError = ErrorType<void>
+
+    /**
+ * @summary Add a player to an academy
+ */
+export const useCreateAcademyConsolePlayer = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsolePlayer>>, TError,{academyId: number;data: BodyType<AcademyPlayerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyConsolePlayer>>,
+        TError,
+        {academyId: number;data: BodyType<AcademyPlayerInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyConsolePlayerMutationOptions(options));
+    }
+
+export const getUpdateAcademyConsolePlayerUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/players/${playerId}`
+}
+
+/**
+ * @summary Update a player's details, squad, status, or linked Replay account
+ */
+export const updateAcademyConsolePlayer = async (academyId: number,
+    playerId: number,
+    academyPlayerUpdate: AcademyPlayerUpdate, options?: RequestInit): Promise<AcademyPlayerSummary> => {
+
+  return customFetch<AcademyPlayerSummary>(getUpdateAcademyConsolePlayerUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyPlayerUpdate)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyConsolePlayerMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsolePlayer>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyPlayerUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsolePlayer>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyPlayerUpdate>}, TContext> => {
+
+const mutationKey = ['updateAcademyConsolePlayer'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyConsolePlayer>>, {academyId: number;playerId: number;data: BodyType<AcademyPlayerUpdate>}> = (props) => {
+          const {academyId,playerId,data} = props ?? {};
+
+          return  updateAcademyConsolePlayer(academyId,playerId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyConsolePlayerMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyConsolePlayer>>>
+    export type UpdateAcademyConsolePlayerMutationBody = BodyType<AcademyPlayerUpdate>
+    export type UpdateAcademyConsolePlayerMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a player's details, squad, status, or linked Replay account
+ */
+export const useUpdateAcademyConsolePlayer = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsolePlayer>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyPlayerUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyConsolePlayer>>,
+        TError,
+        {academyId: number;playerId: number;data: BodyType<AcademyPlayerUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyConsolePlayerMutationOptions(options));
+    }
+
+export const getListAcademyConsoleSessionsUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/sessions`
+}
+
+/**
+ * @summary List sessions in an academy
+ */
+export const listAcademyConsoleSessions = async (academyId: number, options?: RequestInit): Promise<AcademySessionSummary[]> => {
+
+  return customFetch<AcademySessionSummary[]>(getListAcademyConsoleSessionsUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyConsoleSessionsQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/sessions`
+    ] as const;
+    }
+
+
+export const getListAcademyConsoleSessionsQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyConsoleSessions>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyConsoleSessionsQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyConsoleSessions>>> = ({ signal }) => listAcademyConsoleSessions(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleSessions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyConsoleSessionsQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyConsoleSessions>>>
+export type ListAcademyConsoleSessionsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List sessions in an academy
+ */
+
+export function useListAcademyConsoleSessions<TData = Awaited<ReturnType<typeof listAcademyConsoleSessions>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyConsoleSessionsQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyConsoleSessionUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/sessions`
+}
+
+/**
+ * @summary Create a training session or match
+ */
+export const createAcademyConsoleSession = async (academyId: number,
+    academySessionInput: AcademySessionInput, options?: RequestInit): Promise<AcademySessionSummary> => {
+
+  return customFetch<AcademySessionSummary>(getCreateAcademyConsoleSessionUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academySessionInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyConsoleSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleSession>>, TError,{academyId: number;data: BodyType<AcademySessionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleSession>>, TError,{academyId: number;data: BodyType<AcademySessionInput>}, TContext> => {
+
+const mutationKey = ['createAcademyConsoleSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyConsoleSession>>, {academyId: number;data: BodyType<AcademySessionInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyConsoleSession(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyConsoleSessionMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyConsoleSession>>>
+    export type CreateAcademyConsoleSessionMutationBody = BodyType<AcademySessionInput>
+    export type CreateAcademyConsoleSessionMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a training session or match
+ */
+export const useCreateAcademyConsoleSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleSession>>, TError,{academyId: number;data: BodyType<AcademySessionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyConsoleSession>>,
+        TError,
+        {academyId: number;data: BodyType<AcademySessionInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyConsoleSessionMutationOptions(options));
+    }
+
+export const getUpdateAcademyConsoleSessionUrl = (academyId: number,
+    sessionId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/sessions/${sessionId}`
+}
+
+/**
+ * @summary Update a session or match result
+ */
+export const updateAcademyConsoleSession = async (academyId: number,
+    sessionId: number,
+    academySessionUpdate: AcademySessionUpdate, options?: RequestInit): Promise<AcademySessionSummary> => {
+
+  return customFetch<AcademySessionSummary>(getUpdateAcademyConsoleSessionUrl(academyId,sessionId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academySessionUpdate)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyConsoleSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleSession>>, TError,{academyId: number;sessionId: number;data: BodyType<AcademySessionUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleSession>>, TError,{academyId: number;sessionId: number;data: BodyType<AcademySessionUpdate>}, TContext> => {
+
+const mutationKey = ['updateAcademyConsoleSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyConsoleSession>>, {academyId: number;sessionId: number;data: BodyType<AcademySessionUpdate>}> = (props) => {
+          const {academyId,sessionId,data} = props ?? {};
+
+          return  updateAcademyConsoleSession(academyId,sessionId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyConsoleSessionMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyConsoleSession>>>
+    export type UpdateAcademyConsoleSessionMutationBody = BodyType<AcademySessionUpdate>
+    export type UpdateAcademyConsoleSessionMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a session or match result
+ */
+export const useUpdateAcademyConsoleSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleSession>>, TError,{academyId: number;sessionId: number;data: BodyType<AcademySessionUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyConsoleSession>>,
+        TError,
+        {academyId: number;sessionId: number;data: BodyType<AcademySessionUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyConsoleSessionMutationOptions(options));
+    }
+
+export const getDeleteAcademyConsoleSessionUrl = (academyId: number,
+    sessionId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/sessions/${sessionId}`
+}
+
+/**
+ * @summary Delete a session and its attendance records
+ */
+export const deleteAcademyConsoleSession = async (academyId: number,
+    sessionId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAcademyConsoleSessionUrl(academyId,sessionId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteAcademyConsoleSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleSession>>, TError,{academyId: number;sessionId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleSession>>, TError,{academyId: number;sessionId: number}, TContext> => {
+
+const mutationKey = ['deleteAcademyConsoleSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAcademyConsoleSession>>, {academyId: number;sessionId: number}> = (props) => {
+          const {academyId,sessionId} = props ?? {};
+
+          return  deleteAcademyConsoleSession(academyId,sessionId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAcademyConsoleSessionMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAcademyConsoleSession>>>
+
+    export type DeleteAcademyConsoleSessionMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a session and its attendance records
+ */
+export const useDeleteAcademyConsoleSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleSession>>, TError,{academyId: number;sessionId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAcademyConsoleSession>>,
+        TError,
+        {academyId: number;sessionId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAcademyConsoleSessionMutationOptions(options));
+    }
+
+export const getGetAcademyConsoleAttendanceUrl = (academyId: number,
+    sessionId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/sessions/${sessionId}/attendance`
+}
+
+/**
+ * @summary Get the attendance sheet for a session
+ */
+export const getAcademyConsoleAttendance = async (academyId: number,
+    sessionId: number, options?: RequestInit): Promise<AcademyAttendanceSheet> => {
+
+  return customFetch<AcademyAttendanceSheet>(getGetAcademyConsoleAttendanceUrl(academyId,sessionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyConsoleAttendanceQueryKey = (academyId: number,
+    sessionId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/sessions/${sessionId}/attendance`
+    ] as const;
+    }
+
+
+export const getGetAcademyConsoleAttendanceQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyConsoleAttendance>>, TError = ErrorType<void>>(academyId: number,
+    sessionId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleAttendance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyConsoleAttendanceQueryKey(academyId,sessionId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyConsoleAttendance>>> = ({ signal }) => getAcademyConsoleAttendance(academyId,sessionId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined && sessionId !== null && sessionId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleAttendance>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyConsoleAttendanceQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyConsoleAttendance>>>
+export type GetAcademyConsoleAttendanceQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the attendance sheet for a session
+ */
+
+export function useGetAcademyConsoleAttendance<TData = Awaited<ReturnType<typeof getAcademyConsoleAttendance>>, TError = ErrorType<void>>(
+ academyId: number,
+    sessionId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleAttendance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyConsoleAttendanceQueryOptions(academyId,sessionId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateAcademyConsoleAttendanceUrl = (academyId: number,
+    sessionId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/sessions/${sessionId}/attendance`
+}
+
+/**
+ * @summary Upsert attendance statuses for eligible session players
+ */
+export const updateAcademyConsoleAttendance = async (academyId: number,
+    sessionId: number,
+    academyAttendanceInput: AcademyAttendanceInput, options?: RequestInit): Promise<AcademyAttendanceSheet> => {
+
+  return customFetch<AcademyAttendanceSheet>(getUpdateAcademyConsoleAttendanceUrl(academyId,sessionId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyAttendanceInput)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyConsoleAttendanceMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleAttendance>>, TError,{academyId: number;sessionId: number;data: BodyType<AcademyAttendanceInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleAttendance>>, TError,{academyId: number;sessionId: number;data: BodyType<AcademyAttendanceInput>}, TContext> => {
+
+const mutationKey = ['updateAcademyConsoleAttendance'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyConsoleAttendance>>, {academyId: number;sessionId: number;data: BodyType<AcademyAttendanceInput>}> = (props) => {
+          const {academyId,sessionId,data} = props ?? {};
+
+          return  updateAcademyConsoleAttendance(academyId,sessionId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyConsoleAttendanceMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyConsoleAttendance>>>
+    export type UpdateAcademyConsoleAttendanceMutationBody = BodyType<AcademyAttendanceInput>
+    export type UpdateAcademyConsoleAttendanceMutationError = ErrorType<void>
+
+    /**
+ * @summary Upsert attendance statuses for eligible session players
+ */
+export const useUpdateAcademyConsoleAttendance = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleAttendance>>, TError,{academyId: number;sessionId: number;data: BodyType<AcademyAttendanceInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyConsoleAttendance>>,
+        TError,
+        {academyId: number;sessionId: number;data: BodyType<AcademyAttendanceInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyConsoleAttendanceMutationOptions(options));
+    }
+
+export const getListAcademyConsoleRecordingsUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/recordings`
+}
+
+/**
+ * @summary List recordings linked to an academy
+ */
+export const listAcademyConsoleRecordings = async (academyId: number, options?: RequestInit): Promise<AcademyConsoleRecording[]> => {
+
+  return customFetch<AcademyConsoleRecording[]>(getListAcademyConsoleRecordingsUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyConsoleRecordingsQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/recordings`
+    ] as const;
+    }
+
+
+export const getListAcademyConsoleRecordingsQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyConsoleRecordings>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleRecordings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyConsoleRecordingsQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyConsoleRecordings>>> = ({ signal }) => listAcademyConsoleRecordings(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleRecordings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyConsoleRecordingsQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyConsoleRecordings>>>
+export type ListAcademyConsoleRecordingsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List recordings linked to an academy
+ */
+
+export function useListAcademyConsoleRecordings<TData = Awaited<ReturnType<typeof listAcademyConsoleRecordings>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleRecordings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyConsoleRecordingsQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAcademyConsoleAnnouncementsUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/announcements`
+}
+
+/**
+ * @summary List academy announcements
+ */
+export const listAcademyConsoleAnnouncements = async (academyId: number, options?: RequestInit): Promise<AcademyAnnouncementSummary[]> => {
+
+  return customFetch<AcademyAnnouncementSummary[]>(getListAcademyConsoleAnnouncementsUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyConsoleAnnouncementsQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/announcements`
+    ] as const;
+    }
+
+
+export const getListAcademyConsoleAnnouncementsQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyConsoleAnnouncements>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleAnnouncements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyConsoleAnnouncementsQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyConsoleAnnouncements>>> = ({ signal }) => listAcademyConsoleAnnouncements(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleAnnouncements>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyConsoleAnnouncementsQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyConsoleAnnouncements>>>
+export type ListAcademyConsoleAnnouncementsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List academy announcements
+ */
+
+export function useListAcademyConsoleAnnouncements<TData = Awaited<ReturnType<typeof listAcademyConsoleAnnouncements>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsoleAnnouncements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyConsoleAnnouncementsQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyConsoleAnnouncementUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/announcements`
+}
+
+/**
+ * @summary Create an academy announcement
+ */
+export const createAcademyConsoleAnnouncement = async (academyId: number,
+    academyAnnouncementInput: AcademyAnnouncementInput, options?: RequestInit): Promise<AcademyAnnouncementSummary> => {
+
+  return customFetch<AcademyAnnouncementSummary>(getCreateAcademyConsoleAnnouncementUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyAnnouncementInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyConsoleAnnouncementMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleAnnouncement>>, TError,{academyId: number;data: BodyType<AcademyAnnouncementInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleAnnouncement>>, TError,{academyId: number;data: BodyType<AcademyAnnouncementInput>}, TContext> => {
+
+const mutationKey = ['createAcademyConsoleAnnouncement'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyConsoleAnnouncement>>, {academyId: number;data: BodyType<AcademyAnnouncementInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyConsoleAnnouncement(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyConsoleAnnouncementMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyConsoleAnnouncement>>>
+    export type CreateAcademyConsoleAnnouncementMutationBody = BodyType<AcademyAnnouncementInput>
+    export type CreateAcademyConsoleAnnouncementMutationError = ErrorType<void>
+
+    /**
+ * @summary Create an academy announcement
+ */
+export const useCreateAcademyConsoleAnnouncement = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyConsoleAnnouncement>>, TError,{academyId: number;data: BodyType<AcademyAnnouncementInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyConsoleAnnouncement>>,
+        TError,
+        {academyId: number;data: BodyType<AcademyAnnouncementInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyConsoleAnnouncementMutationOptions(options));
+    }
+
+export const getUpdateAcademyConsoleAnnouncementUrl = (academyId: number,
+    announcementId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/announcements/${announcementId}`
+}
+
+/**
+ * @summary Update an academy announcement
+ */
+export const updateAcademyConsoleAnnouncement = async (academyId: number,
+    announcementId: number,
+    academyAnnouncementUpdate: AcademyAnnouncementUpdate, options?: RequestInit): Promise<AcademyAnnouncementSummary> => {
+
+  return customFetch<AcademyAnnouncementSummary>(getUpdateAcademyConsoleAnnouncementUrl(academyId,announcementId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyAnnouncementUpdate)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyConsoleAnnouncementMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleAnnouncement>>, TError,{academyId: number;announcementId: number;data: BodyType<AcademyAnnouncementUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleAnnouncement>>, TError,{academyId: number;announcementId: number;data: BodyType<AcademyAnnouncementUpdate>}, TContext> => {
+
+const mutationKey = ['updateAcademyConsoleAnnouncement'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyConsoleAnnouncement>>, {academyId: number;announcementId: number;data: BodyType<AcademyAnnouncementUpdate>}> = (props) => {
+          const {academyId,announcementId,data} = props ?? {};
+
+          return  updateAcademyConsoleAnnouncement(academyId,announcementId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyConsoleAnnouncementMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyConsoleAnnouncement>>>
+    export type UpdateAcademyConsoleAnnouncementMutationBody = BodyType<AcademyAnnouncementUpdate>
+    export type UpdateAcademyConsoleAnnouncementMutationError = ErrorType<void>
+
+    /**
+ * @summary Update an academy announcement
+ */
+export const useUpdateAcademyConsoleAnnouncement = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleAnnouncement>>, TError,{academyId: number;announcementId: number;data: BodyType<AcademyAnnouncementUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyConsoleAnnouncement>>,
+        TError,
+        {academyId: number;announcementId: number;data: BodyType<AcademyAnnouncementUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyConsoleAnnouncementMutationOptions(options));
+    }
+
+export const getDeleteAcademyConsoleAnnouncementUrl = (academyId: number,
+    announcementId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/announcements/${announcementId}`
+}
+
+/**
+ * @summary Delete an academy announcement
+ */
+export const deleteAcademyConsoleAnnouncement = async (academyId: number,
+    announcementId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAcademyConsoleAnnouncementUrl(academyId,announcementId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteAcademyConsoleAnnouncementMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleAnnouncement>>, TError,{academyId: number;announcementId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleAnnouncement>>, TError,{academyId: number;announcementId: number}, TContext> => {
+
+const mutationKey = ['deleteAcademyConsoleAnnouncement'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAcademyConsoleAnnouncement>>, {academyId: number;announcementId: number}> = (props) => {
+          const {academyId,announcementId} = props ?? {};
+
+          return  deleteAcademyConsoleAnnouncement(academyId,announcementId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAcademyConsoleAnnouncementMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAcademyConsoleAnnouncement>>>
+
+    export type DeleteAcademyConsoleAnnouncementMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete an academy announcement
+ */
+export const useDeleteAcademyConsoleAnnouncement = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleAnnouncement>>, TError,{academyId: number;announcementId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAcademyConsoleAnnouncement>>,
+        TError,
+        {academyId: number;announcementId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAcademyConsoleAnnouncementMutationOptions(options));
+    }
+
+export const getGetAcademyFinanceDashboardUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/dashboard`
+}
+
+/**
+ * @summary Get current-month finance totals and items needing attention
+ */
+export const getAcademyFinanceDashboard = async (academyId: number, options?: RequestInit): Promise<AcademyFinanceDashboard> => {
+
+  return customFetch<AcademyFinanceDashboard>(getGetAcademyFinanceDashboardUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyFinanceDashboardQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/finance/dashboard`
+    ] as const;
+    }
+
+
+export const getGetAcademyFinanceDashboardQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyFinanceDashboard>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyFinanceDashboard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyFinanceDashboardQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyFinanceDashboard>>> = ({ signal }) => getAcademyFinanceDashboard(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyFinanceDashboard>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyFinanceDashboardQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyFinanceDashboard>>>
+export type GetAcademyFinanceDashboardQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get current-month finance totals and items needing attention
+ */
+
+export function useGetAcademyFinanceDashboard<TData = Awaited<ReturnType<typeof getAcademyFinanceDashboard>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyFinanceDashboard>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyFinanceDashboardQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAcademyFinanceTeamsUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/teams`
+}
+
+/**
+ * @summary List squads with payment status and outstanding totals
+ */
+export const listAcademyFinanceTeams = async (academyId: number, options?: RequestInit): Promise<AcademyFinanceTeam[]> => {
+
+  return customFetch<AcademyFinanceTeam[]>(getListAcademyFinanceTeamsUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyFinanceTeamsQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/finance/teams`
+    ] as const;
+    }
+
+
+export const getListAcademyFinanceTeamsQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyFinanceTeams>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceTeams>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyFinanceTeamsQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyFinanceTeams>>> = ({ signal }) => listAcademyFinanceTeams(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceTeams>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyFinanceTeamsQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyFinanceTeams>>>
+export type ListAcademyFinanceTeamsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List squads with payment status and outstanding totals
+ */
+
+export function useListAcademyFinanceTeams<TData = Awaited<ReturnType<typeof listAcademyFinanceTeams>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceTeams>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyFinanceTeamsQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyFinanceTeamUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/teams`
+}
+
+/**
+ * @summary Create a squad with its monthly fee
+ */
+export const createAcademyFinanceTeam = async (academyId: number,
+    academyFinanceTeamInput: AcademyFinanceTeamInput, options?: RequestInit): Promise<AcademyFinanceTeam> => {
+
+  return customFetch<AcademyFinanceTeam>(getCreateAcademyFinanceTeamUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceTeamInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyFinanceTeamMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext> => {
+
+const mutationKey = ['createAcademyFinanceTeam'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, {academyId: number;data: BodyType<AcademyFinanceTeamInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyFinanceTeam(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyFinanceTeamMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinanceTeam>>>
+    export type CreateAcademyFinanceTeamMutationBody = BodyType<AcademyFinanceTeamInput>
+    export type CreateAcademyFinanceTeamMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a squad with its monthly fee
+ */
+export const useCreateAcademyFinanceTeam = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyFinanceTeam>>,
+        TError,
+        {academyId: number;data: BodyType<AcademyFinanceTeamInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyFinanceTeamMutationOptions(options));
+    }
+
+export const getUpdateAcademyFinanceTeamUrl = (academyId: number,
+    squadId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/teams/${squadId}`
+}
+
+/**
+ * @summary Update a squad's monthly fee
+ */
+export const updateAcademyFinanceTeam = async (academyId: number,
+    squadId: number,
+    academyFinanceTeamMonthlyFeeUpdate: AcademyFinanceTeamMonthlyFeeUpdate, options?: RequestInit): Promise<AcademyFinanceTeam> => {
+
+  return customFetch<AcademyFinanceTeam>(getUpdateAcademyFinanceTeamUrl(academyId,squadId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceTeamMonthlyFeeUpdate)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyFinanceTeamMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinanceTeam>>, TError,{academyId: number;squadId: number;data: BodyType<AcademyFinanceTeamMonthlyFeeUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinanceTeam>>, TError,{academyId: number;squadId: number;data: BodyType<AcademyFinanceTeamMonthlyFeeUpdate>}, TContext> => {
+
+const mutationKey = ['updateAcademyFinanceTeam'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyFinanceTeam>>, {academyId: number;squadId: number;data: BodyType<AcademyFinanceTeamMonthlyFeeUpdate>}> = (props) => {
+          const {academyId,squadId,data} = props ?? {};
+
+          return  updateAcademyFinanceTeam(academyId,squadId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyFinanceTeamMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyFinanceTeam>>>
+    export type UpdateAcademyFinanceTeamMutationBody = BodyType<AcademyFinanceTeamMonthlyFeeUpdate>
+    export type UpdateAcademyFinanceTeamMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a squad's monthly fee
+ */
+export const useUpdateAcademyFinanceTeam = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinanceTeam>>, TError,{academyId: number;squadId: number;data: BodyType<AcademyFinanceTeamMonthlyFeeUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyFinanceTeam>>,
+        TError,
+        {academyId: number;squadId: number;data: BodyType<AcademyFinanceTeamMonthlyFeeUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyFinanceTeamMutationOptions(options));
+    }
+
+export const getListAcademyFinanceTeamPlayersUrl = (academyId: number,
+    squadId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/teams/${squadId}/players`
+}
+
+/**
+ * @summary List players and their current balances for a squad
+ */
+export const listAcademyFinanceTeamPlayers = async (academyId: number,
+    squadId: number, options?: RequestInit): Promise<AcademyFinancePlayer[]> => {
+
+  return customFetch<AcademyFinancePlayer[]>(getListAcademyFinanceTeamPlayersUrl(academyId,squadId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyFinanceTeamPlayersQueryKey = (academyId: number,
+    squadId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/finance/teams/${squadId}/players`
+    ] as const;
+    }
+
+
+export const getListAcademyFinanceTeamPlayersQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyFinanceTeamPlayers>>, TError = ErrorType<void>>(academyId: number,
+    squadId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceTeamPlayers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyFinanceTeamPlayersQueryKey(academyId,squadId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyFinanceTeamPlayers>>> = ({ signal }) => listAcademyFinanceTeamPlayers(academyId,squadId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined && squadId !== null && squadId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceTeamPlayers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyFinanceTeamPlayersQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyFinanceTeamPlayers>>>
+export type ListAcademyFinanceTeamPlayersQueryError = ErrorType<void>
+
+
+/**
+ * @summary List players and their current balances for a squad
+ */
+
+export function useListAcademyFinanceTeamPlayers<TData = Awaited<ReturnType<typeof listAcademyFinanceTeamPlayers>>, TError = ErrorType<void>>(
+ academyId: number,
+    squadId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceTeamPlayers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyFinanceTeamPlayersQueryOptions(academyId,squadId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyFinanceTeamPlayerUrl = (academyId: number,
+    squadId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/teams/${squadId}/players`
+}
+
+/**
+ * @summary Add a roster player with billing information
+ */
+export const createAcademyFinanceTeamPlayer = async (academyId: number,
+    squadId: number,
+    academyFinancePlayerInput: AcademyFinancePlayerInput, options?: RequestInit): Promise<AcademyFinancePlayer> => {
+
+  return customFetch<AcademyFinancePlayer>(getCreateAcademyFinanceTeamPlayerUrl(academyId,squadId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinancePlayerInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyFinanceTeamPlayerMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeamPlayer>>, TError,{academyId: number;squadId: number;data: BodyType<AcademyFinancePlayerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeamPlayer>>, TError,{academyId: number;squadId: number;data: BodyType<AcademyFinancePlayerInput>}, TContext> => {
+
+const mutationKey = ['createAcademyFinanceTeamPlayer'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinanceTeamPlayer>>, {academyId: number;squadId: number;data: BodyType<AcademyFinancePlayerInput>}> = (props) => {
+          const {academyId,squadId,data} = props ?? {};
+
+          return  createAcademyFinanceTeamPlayer(academyId,squadId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyFinanceTeamPlayerMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinanceTeamPlayer>>>
+    export type CreateAcademyFinanceTeamPlayerMutationBody = BodyType<AcademyFinancePlayerInput>
+    export type CreateAcademyFinanceTeamPlayerMutationError = ErrorType<void>
+
+    /**
+ * @summary Add a roster player with billing information
+ */
+export const useCreateAcademyFinanceTeamPlayer = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeamPlayer>>, TError,{academyId: number;squadId: number;data: BodyType<AcademyFinancePlayerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyFinanceTeamPlayer>>,
+        TError,
+        {academyId: number;squadId: number;data: BodyType<AcademyFinancePlayerInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyFinanceTeamPlayerMutationOptions(options));
+    }
+
+export const getUpdateAcademyFinancePlayerBillingUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/players/${playerId}/billing`
+}
+
+/**
+ * @summary Update a player's monthly discount and subscription expiry
+ */
+export const updateAcademyFinancePlayerBilling = async (academyId: number,
+    playerId: number,
+    academyFinancePlayerBillingUpdate: AcademyFinancePlayerBillingUpdate, options?: RequestInit): Promise<AcademyFinancePlayer> => {
+
+  return customFetch<AcademyFinancePlayer>(getUpdateAcademyFinancePlayerBillingUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinancePlayerBillingUpdate)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyFinancePlayerBillingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinancePlayerBilling>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinancePlayerBillingUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinancePlayerBilling>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinancePlayerBillingUpdate>}, TContext> => {
+
+const mutationKey = ['updateAcademyFinancePlayerBilling'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyFinancePlayerBilling>>, {academyId: number;playerId: number;data: BodyType<AcademyFinancePlayerBillingUpdate>}> = (props) => {
+          const {academyId,playerId,data} = props ?? {};
+
+          return  updateAcademyFinancePlayerBilling(academyId,playerId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyFinancePlayerBillingMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyFinancePlayerBilling>>>
+    export type UpdateAcademyFinancePlayerBillingMutationBody = BodyType<AcademyFinancePlayerBillingUpdate>
+    export type UpdateAcademyFinancePlayerBillingMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a player's monthly discount and subscription expiry
+ */
+export const useUpdateAcademyFinancePlayerBilling = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinancePlayerBilling>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinancePlayerBillingUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyFinancePlayerBilling>>,
+        TError,
+        {academyId: number;playerId: number;data: BodyType<AcademyFinancePlayerBillingUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyFinancePlayerBillingMutationOptions(options));
+    }
+
+export const getCreateAcademyFinancePlayerRenewalUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/players/${playerId}/renewals`
+}
+
+/**
+ * @summary Record a subscription renewal and extend the existing expiry date
+ */
+export const createAcademyFinancePlayerRenewal = async (academyId: number,
+    playerId: number,
+    academyFinanceRenewalInput: AcademyFinanceRenewalInput, options?: RequestInit): Promise<AcademyFinanceRenewal> => {
+
+  return customFetch<AcademyFinanceRenewal>(getCreateAcademyFinancePlayerRenewalUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceRenewalInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyFinancePlayerRenewalMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinancePlayerRenewal>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinanceRenewalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinancePlayerRenewal>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinanceRenewalInput>}, TContext> => {
+
+const mutationKey = ['createAcademyFinancePlayerRenewal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinancePlayerRenewal>>, {academyId: number;playerId: number;data: BodyType<AcademyFinanceRenewalInput>}> = (props) => {
+          const {academyId,playerId,data} = props ?? {};
+
+          return  createAcademyFinancePlayerRenewal(academyId,playerId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyFinancePlayerRenewalMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinancePlayerRenewal>>>
+    export type CreateAcademyFinancePlayerRenewalMutationBody = BodyType<AcademyFinanceRenewalInput>
+    export type CreateAcademyFinancePlayerRenewalMutationError = ErrorType<void>
+
+    /**
+ * @summary Record a subscription renewal and extend the existing expiry date
+ */
+export const useCreateAcademyFinancePlayerRenewal = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinancePlayerRenewal>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinanceRenewalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyFinancePlayerRenewal>>,
+        TError,
+        {academyId: number;playerId: number;data: BodyType<AcademyFinanceRenewalInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyFinancePlayerRenewalMutationOptions(options));
+    }
+
+export const getListAcademyFinancePlayerFeesUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/players/${playerId}/fees`
+}
+
+/**
+ * @summary List a player's existing one-off fees
+ */
+export const listAcademyFinancePlayerFees = async (academyId: number,
+    playerId: number, options?: RequestInit): Promise<AcademyFinanceFee[]> => {
+
+  return customFetch<AcademyFinanceFee[]>(getListAcademyFinancePlayerFeesUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyFinancePlayerFeesQueryKey = (academyId: number,
+    playerId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/finance/players/${playerId}/fees`
+    ] as const;
+    }
+
+
+export const getListAcademyFinancePlayerFeesQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyFinancePlayerFees>>, TError = ErrorType<void>>(academyId: number,
+    playerId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinancePlayerFees>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyFinancePlayerFeesQueryKey(academyId,playerId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyFinancePlayerFees>>> = ({ signal }) => listAcademyFinancePlayerFees(academyId,playerId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined && playerId !== null && playerId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinancePlayerFees>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyFinancePlayerFeesQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyFinancePlayerFees>>>
+export type ListAcademyFinancePlayerFeesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List a player's existing one-off fees
+ */
+
+export function useListAcademyFinancePlayerFees<TData = Awaited<ReturnType<typeof listAcademyFinancePlayerFees>>, TError = ErrorType<void>>(
+ academyId: number,
+    playerId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinancePlayerFees>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyFinancePlayerFeesQueryOptions(academyId,playerId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyFinancePlayerFeeUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/players/${playerId}/fees`
+}
+
+/**
+ * @summary Add a one-off fee to an existing player
+ */
+export const createAcademyFinancePlayerFee = async (academyId: number,
+    playerId: number,
+    academyFinanceFeeInput: AcademyFinanceFeeInput, options?: RequestInit): Promise<AcademyFinanceFee> => {
+
+  return customFetch<AcademyFinanceFee>(getCreateAcademyFinancePlayerFeeUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceFeeInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyFinancePlayerFeeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinancePlayerFee>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinanceFeeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinancePlayerFee>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinanceFeeInput>}, TContext> => {
+
+const mutationKey = ['createAcademyFinancePlayerFee'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinancePlayerFee>>, {academyId: number;playerId: number;data: BodyType<AcademyFinanceFeeInput>}> = (props) => {
+          const {academyId,playerId,data} = props ?? {};
+
+          return  createAcademyFinancePlayerFee(academyId,playerId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyFinancePlayerFeeMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinancePlayerFee>>>
+    export type CreateAcademyFinancePlayerFeeMutationBody = BodyType<AcademyFinanceFeeInput>
+    export type CreateAcademyFinancePlayerFeeMutationError = ErrorType<void>
+
+    /**
+ * @summary Add a one-off fee to an existing player
+ */
+export const useCreateAcademyFinancePlayerFee = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinancePlayerFee>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyFinanceFeeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyFinancePlayerFee>>,
+        TError,
+        {academyId: number;playerId: number;data: BodyType<AcademyFinanceFeeInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyFinancePlayerFeeMutationOptions(options));
+    }
+
+export const getMarkAcademyFinanceFeePaidUrl = (academyId: number,
+    feeId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/fees/${feeId}`
+}
+
+/**
+ * @summary Mark an existing one-off fee as paid
+ */
+export const markAcademyFinanceFeePaid = async (academyId: number,
+    feeId: number,
+    academyFinanceFeePaymentInput: AcademyFinanceFeePaymentInput, options?: RequestInit): Promise<AcademyFinanceFee> => {
+
+  return customFetch<AcademyFinanceFee>(getMarkAcademyFinanceFeePaidUrl(academyId,feeId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceFeePaymentInput)
+  }
+);}
+
+
+
+
+export const getMarkAcademyFinanceFeePaidMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markAcademyFinanceFeePaid>>, TError,{academyId: number;feeId: number;data: BodyType<AcademyFinanceFeePaymentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markAcademyFinanceFeePaid>>, TError,{academyId: number;feeId: number;data: BodyType<AcademyFinanceFeePaymentInput>}, TContext> => {
+
+const mutationKey = ['markAcademyFinanceFeePaid'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markAcademyFinanceFeePaid>>, {academyId: number;feeId: number;data: BodyType<AcademyFinanceFeePaymentInput>}> = (props) => {
+          const {academyId,feeId,data} = props ?? {};
+
+          return  markAcademyFinanceFeePaid(academyId,feeId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkAcademyFinanceFeePaidMutationResult = NonNullable<Awaited<ReturnType<typeof markAcademyFinanceFeePaid>>>
+    export type MarkAcademyFinanceFeePaidMutationBody = BodyType<AcademyFinanceFeePaymentInput>
+    export type MarkAcademyFinanceFeePaidMutationError = ErrorType<void>
+
+    /**
+ * @summary Mark an existing one-off fee as paid
+ */
+export const useMarkAcademyFinanceFeePaid = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markAcademyFinanceFeePaid>>, TError,{academyId: number;feeId: number;data: BodyType<AcademyFinanceFeePaymentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markAcademyFinanceFeePaid>>,
+        TError,
+        {academyId: number;feeId: number;data: BodyType<AcademyFinanceFeePaymentInput>},
+        TContext
+      > => {
+      return useMutation(getMarkAcademyFinanceFeePaidMutationOptions(options));
+    }
+
+export const getListAcademyFinanceStaffUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/staff`
+}
+
+/**
+ * @summary List academy finance staff
+ */
+export const listAcademyFinanceStaff = async (academyId: number, options?: RequestInit): Promise<AcademyFinanceStaff[]> => {
+
+  return customFetch<AcademyFinanceStaff[]>(getListAcademyFinanceStaffUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyFinanceStaffQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/finance/staff`
+    ] as const;
+    }
+
+
+export const getListAcademyFinanceStaffQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyFinanceStaff>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceStaff>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyFinanceStaffQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyFinanceStaff>>> = ({ signal }) => listAcademyFinanceStaff(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceStaff>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyFinanceStaffQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyFinanceStaff>>>
+export type ListAcademyFinanceStaffQueryError = ErrorType<void>
+
+
+/**
+ * @summary List academy finance staff
+ */
+
+export function useListAcademyFinanceStaff<TData = Awaited<ReturnType<typeof listAcademyFinanceStaff>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceStaff>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyFinanceStaffQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyFinanceStaffUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/staff`
+}
+
+/**
+ * @summary Add an academy finance staff member
+ */
+export const createAcademyFinanceStaff = async (academyId: number,
+    academyFinanceStaffInput: AcademyFinanceStaffInput, options?: RequestInit): Promise<AcademyFinanceStaff> => {
+
+  return customFetch<AcademyFinanceStaff>(getCreateAcademyFinanceStaffUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceStaffInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyFinanceStaffMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceStaff>>, TError,{academyId: number;data: BodyType<AcademyFinanceStaffInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceStaff>>, TError,{academyId: number;data: BodyType<AcademyFinanceStaffInput>}, TContext> => {
+
+const mutationKey = ['createAcademyFinanceStaff'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinanceStaff>>, {academyId: number;data: BodyType<AcademyFinanceStaffInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyFinanceStaff(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyFinanceStaffMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinanceStaff>>>
+    export type CreateAcademyFinanceStaffMutationBody = BodyType<AcademyFinanceStaffInput>
+    export type CreateAcademyFinanceStaffMutationError = ErrorType<void>
+
+    /**
+ * @summary Add an academy finance staff member
+ */
+export const useCreateAcademyFinanceStaff = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceStaff>>, TError,{academyId: number;data: BodyType<AcademyFinanceStaffInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyFinanceStaff>>,
+        TError,
+        {academyId: number;data: BodyType<AcademyFinanceStaffInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyFinanceStaffMutationOptions(options));
+    }
+
+export const getUpdateAcademyFinanceStaffUrl = (academyId: number,
+    staffId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/staff/${staffId}`
+}
+
+/**
+ * @summary Update an academy finance staff member
+ */
+export const updateAcademyFinanceStaff = async (academyId: number,
+    staffId: number,
+    academyFinanceStaffUpdate: AcademyFinanceStaffUpdate, options?: RequestInit): Promise<AcademyFinanceStaff> => {
+
+  return customFetch<AcademyFinanceStaff>(getUpdateAcademyFinanceStaffUrl(academyId,staffId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceStaffUpdate)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyFinanceStaffMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinanceStaff>>, TError,{academyId: number;staffId: number;data: BodyType<AcademyFinanceStaffUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinanceStaff>>, TError,{academyId: number;staffId: number;data: BodyType<AcademyFinanceStaffUpdate>}, TContext> => {
+
+const mutationKey = ['updateAcademyFinanceStaff'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyFinanceStaff>>, {academyId: number;staffId: number;data: BodyType<AcademyFinanceStaffUpdate>}> = (props) => {
+          const {academyId,staffId,data} = props ?? {};
+
+          return  updateAcademyFinanceStaff(academyId,staffId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyFinanceStaffMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyFinanceStaff>>>
+    export type UpdateAcademyFinanceStaffMutationBody = BodyType<AcademyFinanceStaffUpdate>
+    export type UpdateAcademyFinanceStaffMutationError = ErrorType<void>
+
+    /**
+ * @summary Update an academy finance staff member
+ */
+export const useUpdateAcademyFinanceStaff = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyFinanceStaff>>, TError,{academyId: number;staffId: number;data: BodyType<AcademyFinanceStaffUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyFinanceStaff>>,
+        TError,
+        {academyId: number;staffId: number;data: BodyType<AcademyFinanceStaffUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyFinanceStaffMutationOptions(options));
+    }
+
+export const getRecordAcademyFinanceSalaryPaymentUrl = (academyId: number,
+    staffId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/staff/${staffId}/salary-payment`
+}
+
+/**
+ * @summary Record a paid salary expense and advance the next salary date
+ */
+export const recordAcademyFinanceSalaryPayment = async (academyId: number,
+    staffId: number, options?: RequestInit): Promise<AcademyFinanceSalaryPayment> => {
+
+  return customFetch<AcademyFinanceSalaryPayment>(getRecordAcademyFinanceSalaryPaymentUrl(academyId,staffId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRecordAcademyFinanceSalaryPaymentMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordAcademyFinanceSalaryPayment>>, TError,{academyId: number;staffId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordAcademyFinanceSalaryPayment>>, TError,{academyId: number;staffId: number}, TContext> => {
+
+const mutationKey = ['recordAcademyFinanceSalaryPayment'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordAcademyFinanceSalaryPayment>>, {academyId: number;staffId: number}> = (props) => {
+          const {academyId,staffId} = props ?? {};
+
+          return  recordAcademyFinanceSalaryPayment(academyId,staffId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordAcademyFinanceSalaryPaymentMutationResult = NonNullable<Awaited<ReturnType<typeof recordAcademyFinanceSalaryPayment>>>
+
+    export type RecordAcademyFinanceSalaryPaymentMutationError = ErrorType<void>
+
+    /**
+ * @summary Record a paid salary expense and advance the next salary date
+ */
+export const useRecordAcademyFinanceSalaryPayment = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordAcademyFinanceSalaryPayment>>, TError,{academyId: number;staffId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordAcademyFinanceSalaryPayment>>,
+        TError,
+        {academyId: number;staffId: number},
+        TContext
+      > => {
+      return useMutation(getRecordAcademyFinanceSalaryPaymentMutationOptions(options));
+    }
+
+export const getListAcademyFinanceOtherPaymentsUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/other-payments`
+}
+
+/**
+ * @summary List other payments for the current Amman month and totals
+ */
+export const listAcademyFinanceOtherPayments = async (academyId: number, options?: RequestInit): Promise<AcademyFinanceOtherPaymentList> => {
+
+  return customFetch<AcademyFinanceOtherPaymentList>(getListAcademyFinanceOtherPaymentsUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyFinanceOtherPaymentsQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/finance/other-payments`
+    ] as const;
+    }
+
+
+export const getListAcademyFinanceOtherPaymentsQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyFinanceOtherPayments>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceOtherPayments>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyFinanceOtherPaymentsQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyFinanceOtherPayments>>> = ({ signal }) => listAcademyFinanceOtherPayments(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceOtherPayments>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyFinanceOtherPaymentsQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyFinanceOtherPayments>>>
+export type ListAcademyFinanceOtherPaymentsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List other payments for the current Amman month and totals
+ */
+
+export function useListAcademyFinanceOtherPayments<TData = Awaited<ReturnType<typeof listAcademyFinanceOtherPayments>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceOtherPayments>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyFinanceOtherPaymentsQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyFinanceOtherPaymentUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/other-payments`
+}
+
+/**
+ * @summary Record an other payment as paid or unpaid
+ */
+export const createAcademyFinanceOtherPayment = async (academyId: number,
+    academyFinanceOtherPaymentInput: AcademyFinanceOtherPaymentInput, options?: RequestInit): Promise<AcademyFinanceOtherPayment> => {
+
+  return customFetch<AcademyFinanceOtherPayment>(getCreateAcademyFinanceOtherPaymentUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceOtherPaymentInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyFinanceOtherPaymentMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceOtherPayment>>, TError,{academyId: number;data: BodyType<AcademyFinanceOtherPaymentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceOtherPayment>>, TError,{academyId: number;data: BodyType<AcademyFinanceOtherPaymentInput>}, TContext> => {
+
+const mutationKey = ['createAcademyFinanceOtherPayment'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinanceOtherPayment>>, {academyId: number;data: BodyType<AcademyFinanceOtherPaymentInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyFinanceOtherPayment(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyFinanceOtherPaymentMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinanceOtherPayment>>>
+    export type CreateAcademyFinanceOtherPaymentMutationBody = BodyType<AcademyFinanceOtherPaymentInput>
+    export type CreateAcademyFinanceOtherPaymentMutationError = ErrorType<void>
+
+    /**
+ * @summary Record an other payment as paid or unpaid
+ */
+export const useCreateAcademyFinanceOtherPayment = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceOtherPayment>>, TError,{academyId: number;data: BodyType<AcademyFinanceOtherPaymentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyFinanceOtherPayment>>,
+        TError,
+        {academyId: number;data: BodyType<AcademyFinanceOtherPaymentInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyFinanceOtherPaymentMutationOptions(options));
+    }
+
+export const getMarkAcademyFinanceOtherPaymentPaidUrl = (academyId: number,
+    paymentId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/other-payments/${paymentId}`
+}
+
+/**
+ * @summary Mark an unpaid other payment as paid
+ */
+export const markAcademyFinanceOtherPaymentPaid = async (academyId: number,
+    paymentId: number,
+    academyFinanceOtherPaymentStatusUpdate: AcademyFinanceOtherPaymentStatusUpdate, options?: RequestInit): Promise<AcademyFinanceOtherPayment> => {
+
+  return customFetch<AcademyFinanceOtherPayment>(getMarkAcademyFinanceOtherPaymentPaidUrl(academyId,paymentId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceOtherPaymentStatusUpdate)
+  }
+);}
+
+
+
+
+export const getMarkAcademyFinanceOtherPaymentPaidMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markAcademyFinanceOtherPaymentPaid>>, TError,{academyId: number;paymentId: number;data: BodyType<AcademyFinanceOtherPaymentStatusUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markAcademyFinanceOtherPaymentPaid>>, TError,{academyId: number;paymentId: number;data: BodyType<AcademyFinanceOtherPaymentStatusUpdate>}, TContext> => {
+
+const mutationKey = ['markAcademyFinanceOtherPaymentPaid'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markAcademyFinanceOtherPaymentPaid>>, {academyId: number;paymentId: number;data: BodyType<AcademyFinanceOtherPaymentStatusUpdate>}> = (props) => {
+          const {academyId,paymentId,data} = props ?? {};
+
+          return  markAcademyFinanceOtherPaymentPaid(academyId,paymentId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkAcademyFinanceOtherPaymentPaidMutationResult = NonNullable<Awaited<ReturnType<typeof markAcademyFinanceOtherPaymentPaid>>>
+    export type MarkAcademyFinanceOtherPaymentPaidMutationBody = BodyType<AcademyFinanceOtherPaymentStatusUpdate>
+    export type MarkAcademyFinanceOtherPaymentPaidMutationError = ErrorType<void>
+
+    /**
+ * @summary Mark an unpaid other payment as paid
+ */
+export const useMarkAcademyFinanceOtherPaymentPaid = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markAcademyFinanceOtherPaymentPaid>>, TError,{academyId: number;paymentId: number;data: BodyType<AcademyFinanceOtherPaymentStatusUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markAcademyFinanceOtherPaymentPaid>>,
+        TError,
+        {academyId: number;paymentId: number;data: BodyType<AcademyFinanceOtherPaymentStatusUpdate>},
+        TContext
+      > => {
+      return useMutation(getMarkAcademyFinanceOtherPaymentPaidMutationOptions(options));
+    }
+
+export const getRepeatAcademyFinanceOtherPaymentUrl = (academyId: number,
+    paymentId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/other-payments/${paymentId}/repeat`
+}
+
+/**
+ * @summary Repeat a payment today as unpaid
+ */
+export const repeatAcademyFinanceOtherPayment = async (academyId: number,
+    paymentId: number, options?: RequestInit): Promise<AcademyFinanceOtherPayment> => {
+
+  return customFetch<AcademyFinanceOtherPayment>(getRepeatAcademyFinanceOtherPaymentUrl(academyId,paymentId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRepeatAcademyFinanceOtherPaymentMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof repeatAcademyFinanceOtherPayment>>, TError,{academyId: number;paymentId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof repeatAcademyFinanceOtherPayment>>, TError,{academyId: number;paymentId: number}, TContext> => {
+
+const mutationKey = ['repeatAcademyFinanceOtherPayment'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof repeatAcademyFinanceOtherPayment>>, {academyId: number;paymentId: number}> = (props) => {
+          const {academyId,paymentId} = props ?? {};
+
+          return  repeatAcademyFinanceOtherPayment(academyId,paymentId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RepeatAcademyFinanceOtherPaymentMutationResult = NonNullable<Awaited<ReturnType<typeof repeatAcademyFinanceOtherPayment>>>
+
+    export type RepeatAcademyFinanceOtherPaymentMutationError = ErrorType<void>
+
+    /**
+ * @summary Repeat a payment today as unpaid
+ */
+export const useRepeatAcademyFinanceOtherPayment = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof repeatAcademyFinanceOtherPayment>>, TError,{academyId: number;paymentId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof repeatAcademyFinanceOtherPayment>>,
+        TError,
+        {academyId: number;paymentId: number},
+        TContext
+      > => {
+      return useMutation(getRepeatAcademyFinanceOtherPaymentMutationOptions(options));
+    }
+
+export const getListAcademyFinanceCategoriesUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/categories`
+}
+
+/**
+ * @summary List built-in and academy-specific other-payment categories
+ */
+export const listAcademyFinanceCategories = async (academyId: number, options?: RequestInit): Promise<AcademyFinanceCategoryList> => {
+
+  return customFetch<AcademyFinanceCategoryList>(getListAcademyFinanceCategoriesUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyFinanceCategoriesQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/finance/categories`
+    ] as const;
+    }
+
+
+export const getListAcademyFinanceCategoriesQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyFinanceCategories>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceCategories>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyFinanceCategoriesQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyFinanceCategories>>> = ({ signal }) => listAcademyFinanceCategories(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceCategories>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyFinanceCategoriesQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyFinanceCategories>>>
+export type ListAcademyFinanceCategoriesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List built-in and academy-specific other-payment categories
+ */
+
+export function useListAcademyFinanceCategories<TData = Awaited<ReturnType<typeof listAcademyFinanceCategories>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceCategories>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyFinanceCategoriesQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAcademyFinanceCategoryUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/categories`
+}
+
+/**
+ * @summary Save a custom other-payment category for this academy
+ */
+export const createAcademyFinanceCategory = async (academyId: number,
+    academyFinanceCategoryInput: AcademyFinanceCategoryInput, options?: RequestInit): Promise<AcademyFinanceCategory> => {
+
+  return customFetch<AcademyFinanceCategory>(getCreateAcademyFinanceCategoryUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceCategoryInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyFinanceCategoryMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceCategory>>, TError,{academyId: number;data: BodyType<AcademyFinanceCategoryInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceCategory>>, TError,{academyId: number;data: BodyType<AcademyFinanceCategoryInput>}, TContext> => {
+
+const mutationKey = ['createAcademyFinanceCategory'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinanceCategory>>, {academyId: number;data: BodyType<AcademyFinanceCategoryInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyFinanceCategory(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyFinanceCategoryMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinanceCategory>>>
+    export type CreateAcademyFinanceCategoryMutationBody = BodyType<AcademyFinanceCategoryInput>
+    export type CreateAcademyFinanceCategoryMutationError = ErrorType<void>
+
+    /**
+ * @summary Save a custom other-payment category for this academy
+ */
+export const useCreateAcademyFinanceCategory = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceCategory>>, TError,{academyId: number;data: BodyType<AcademyFinanceCategoryInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyFinanceCategory>>,
+        TError,
+        {academyId: number;data: BodyType<AcademyFinanceCategoryInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyFinanceCategoryMutationOptions(options));
+    }
+
+export const getListAcademyMembersUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/admin/academies/${academyId}/members`
+}
+
+/**
+ * @summary List role assignments for an academy
+ */
+export const listAcademyMembers = async (academyId: number, options?: RequestInit): Promise<AcademyMemberListItem[]> => {
+
+  return customFetch<AcademyMemberListItem[]>(getListAcademyMembersUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyMembersQueryKey = (academyId: number,) => {
+    return [
+    `/api/admin/academies/${academyId}/members`
+    ] as const;
+    }
+
+
+export const getListAcademyMembersQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyMembers>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyMembersQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyMembers>>> = ({ signal }) => listAcademyMembers(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyMembers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyMembersQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyMembers>>>
+export type ListAcademyMembersQueryError = ErrorType<void>
+
+
+/**
+ * @summary List role assignments for an academy
+ */
+
+export function useListAcademyMembers<TData = Awaited<ReturnType<typeof listAcademyMembers>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyMembers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyMembersQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getAddAcademyMemberUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/admin/academies/${academyId}/members`
+}
+
+/**
+ * @summary Assign an academy role to an existing Replay user by email
+ */
+export const addAcademyMember = async (academyId: number,
+    academyMemberAssignment: AcademyMemberAssignment, options?: RequestInit): Promise<AcademyMemberSummary> => {
+
+  return customFetch<AcademyMemberSummary>(getAddAcademyMemberUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyMemberAssignment)
+  }
+);}
+
+
+
+
+export const getAddAcademyMemberMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAcademyMember>>, TError,{academyId: number;data: BodyType<AcademyMemberAssignment>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addAcademyMember>>, TError,{academyId: number;data: BodyType<AcademyMemberAssignment>}, TContext> => {
+
+const mutationKey = ['addAcademyMember'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addAcademyMember>>, {academyId: number;data: BodyType<AcademyMemberAssignment>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  addAcademyMember(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddAcademyMemberMutationResult = NonNullable<Awaited<ReturnType<typeof addAcademyMember>>>
+    export type AddAcademyMemberMutationBody = BodyType<AcademyMemberAssignment>
+    export type AddAcademyMemberMutationError = ErrorType<void>
+
+    /**
+ * @summary Assign an academy role to an existing Replay user by email
+ */
+export const useAddAcademyMember = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAcademyMember>>, TError,{academyId: number;data: BodyType<AcademyMemberAssignment>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addAcademyMember>>,
+        TError,
+        {academyId: number;data: BodyType<AcademyMemberAssignment>},
+        TContext
+      > => {
+      return useMutation(getAddAcademyMemberMutationOptions(options));
+    }
+
+export const getRemoveAcademyMemberRoleUrl = (academyId: number,
+    userId: number,
+    role: 'owner' | 'coach',) => {
+
+
+
+
+  return `/api/admin/academies/${academyId}/members/${userId}/${role}`
+}
+
+/**
+ * @summary Remove one academy role assignment without removing other roles
+ */
+export const removeAcademyMemberRole = async (academyId: number,
+    userId: number,
+    role: 'owner' | 'coach', options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRemoveAcademyMemberRoleUrl(academyId,userId,role),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getRemoveAcademyMemberRoleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'coach'}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'coach'}, TContext> => {
+
+const mutationKey = ['removeAcademyMemberRole'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeAcademyMemberRole>>, {academyId: number;userId: number;role: 'owner' | 'coach'}> = (props) => {
+          const {academyId,userId,role} = props ?? {};
+
+          return  removeAcademyMemberRole(academyId,userId,role,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveAcademyMemberRoleMutationResult = NonNullable<Awaited<ReturnType<typeof removeAcademyMemberRole>>>
+
+    export type RemoveAcademyMemberRoleMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove one academy role assignment without removing other roles
+ */
+export const useRemoveAcademyMemberRole = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'coach'}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeAcademyMemberRole>>,
+        TError,
+        {academyId: number;userId: number;role: 'owner' | 'coach'},
+        TContext
+      > => {
+      return useMutation(getRemoveAcademyMemberRoleMutationOptions(options));
+    }
 
 export const getListAdminAcademiesUrl = () => {
 

@@ -1,0 +1,45 @@
+Use Free mode. Attached: a screenshot of the Academy Console sidebar header
+in ARABIC showing the problem in task A.
+
+── TASK A: FIX THE SIDEBAR HEADER LAYOUT IN ARABIC (cosmetic only) ──
+In English the header is correct. In Arabic it falls apart: the academy name
+("DevAcademy") sits alone on one side while the subtitle "لوحة الأكاديمية"
+floats separately under the logo pair — the name and its subtitle are no
+longer one block. Fix the RTL layout so Arabic mirrors the English structure
+exactly: the logo pair (academy logo | Replay mark) on one side, and the
+academy name with its subtitle stacked DIRECTLY beneath it as a single text
+block beside the logos. One visual group, mirrored — not elements scattered
+across the header. Verify at desktop and phone widths. No changes beyond
+this header's layout.
+
+── TASK B: MONTHLY ATTENDANCE INSIGHTS (new, inside the Attendance section) ──
+Add a monthly summary to the existing Attendance section, driven by the
+month navigation it already has. For the selected month, compute each
+player's attendance from the existing marked attendance records (no schema
+changes — this is computed from academy_attendance):
+- For each player: count their marked records in that month as present,
+  late, absent, excused. Absence rate = absent ÷ (present + late + absent);
+  EXCUSED records are excluded from the calculation entirely.
+- Only include players with at least 2 counted records in the month, so a
+  single session can't produce a misleading 100%.
+Show two compact lists for the month:
+1. "Most committed" — the players with the LOWEST absence rate (top 5),
+   each with their rate and the fraction behind it (e.g. 92% · 11/12).
+2. "Most absent" — the players with the HIGHEST absence rate (top 5), same
+   format, visually flagged as needing attention.
+Place the summary where it reads naturally in the section (e.g. beside or
+below the session list for that month) without crowding the marking flow,
+which stays exactly as it is. Localized empty state when a month has too
+few records. Both owner and coach can see it. EN/AR with correct RTL and
+digit handling.
+
+── RULES ──
+No schema changes, no push. No changes outside the console sidebar header
+(Task A) and the Attendance section (Task B). Existing attendance marking,
+Schedule integration, and all other sections untouched.
+
+── VALIDATION ──
+Add a focused test for the absence-rate computation (excused exclusion,
+minimum-records threshold, tie handling). Typecheck + SoccerWatch suite.
+Preview-check what you can; list what I must verify signed-in. End with the
+standard report + per-file diff summary with one-line descriptions.

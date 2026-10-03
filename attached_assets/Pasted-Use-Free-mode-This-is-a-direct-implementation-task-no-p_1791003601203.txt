@@ -1,0 +1,46 @@
+Use Free mode. This is a direct implementation task — no planning pause.
+
+TASK: REMOVE the Fees & Payments feature entirely. We are deliberately
+starting this section over from zero later; this task only clears the ground.
+Nothing else in the Academy Console changes.
+
+── WHAT TO REMOVE ──
+1. UI: the entire Fees & Payments section (finance hub, player fees cards,
+   salaries, other payments, one-off charges views, billing settings). The
+   "Fees & Payments" sidebar item goes back to the same localized, branded
+   Coming Soon state the unbuilt sections used, owner-only visibility
+   unchanged.
+2. API: all finance/fees/expenses/staff/billing endpoints and their
+   handlers, their OpenAPI contracts, and the generated client/Zod outputs
+   (regenerate after removal). The original one-off player-fee endpoints
+   from Phase 1 may be removed too if nothing else uses them — but the
+   academy_fees TABLE and its rows stay.
+3. Tests: the finance test files.
+4. Seed script: remove the finance parts (rates, billing terms, monthly
+   ledgers, staff, salaries, expenses). Keep everything else the seed does
+   (squads, players, sessions, attendance, the four one-off fees).
+5. Schema: DELETE the schema definitions and index exports for exactly
+   these seven tables, and no others:
+   academy_expenses, academy_squad_monthly_rates,
+   academy_player_billing_terms, academy_monthly_player_fees,
+   academy_staff, academy_staff_salary_terms,
+   academy_monthly_salary_payments.
+   Also remove the roster-path billing-term hooks added for them, restoring
+   the Players write path to its pre-finance behavior (Players API behavior
+   must be identical to before).
+   DO NOT touch academy_fees or any other table. DO NOT run the database
+   push — I will run it myself and I expect it to propose dropping exactly
+   those seven tables and nothing else.
+
+── KEEP INTACT ──
+Dashboard, Squads, Players, Attendance, Schedule & Results, Recordings,
+Announcements, /admin, public routes — all exactly as they are. Typecheck
+and the SoccerWatch suite must pass after removal. The known full-suite
+drift stays untouched.
+
+── VALIDATION before closing ──
+Typecheck, SoccerWatch suite, and the remaining Academy Console tests pass;
+the console renders with Fees & Payments as Coming Soon and every other
+section working; the seed script runs clean in a dry review (do not execute
+it). End with the standard report + per-file diff summary with one-line
+descriptions.

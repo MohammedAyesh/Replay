@@ -1,0 +1,67 @@
+Use Free mode. This is a direct implementation task — no planning pause.
+Attached screenshots show the current Fees & Payments section. Seven fixes,
+in priority order. No schema changes (everything needed already exists in
+the schema), no database push.
+
+── FIX 1 (CRITICAL): EDITING AN EXISTING TEAM'S MONTHLY FEE ──
+There is currently NO way to set or change the monthly fee of an existing
+team — the team page shows "Monthly team fee: JOD 0.000" as plain text, and
+all three existing teams are stuck at zero, which makes every player
+0.000/month and the whole subscription model inert. Add a clear edit
+affordance for the team's monthly fee on the team page (and accessible from
+the team card if natural), using the same field the "+ Add team" dialog has.
+Changing the fee affects future renewals and newly accrued months only —
+it never alters recorded renewals.
+
+── FIX 2 (CRITICAL): THE DEMO SEED'S FINANCE STATES ──
+The seeded data has no team fees, no expiry dates, no debt — so the core
+model cannot be exercised. Fix the seed script so it produces, for the demo
+teams/players (same "Demo " prefix and safe-delete rules; I run it myself):
+team monthly fees (e.g. U12 25, U15 30, First Team 40 JOD), one player with
+a JOD discount, one covered into next month, one expiring within 7 days,
+one expired ~2 months (so owed = 2 × effective fee), an unpaid one-off kit
+fee on the expired player, one employee whose contract ends within 30 days
+and one whose salary is due, other payments one paid one unpaid, and 1-2
+renewal records this month so Collected is non-zero. Print expected
+dashboard tile values. Give me the exact command; do not run it.
+
+── FIX 3: ZERO OUTSTANDING MUST NOT LOOK LIKE DEBT ──
+"Outstanding JOD 0.000" currently renders in red/pink. Zero outstanding
+shows as a muted "Settled" (per the approved mock); red is only for actual
+amounts owed.
+
+── FIX 4: RENEW ON A PLAYER WITH NO SUBSCRIPTION ──
+Define and implement the behavior: renewing a player whose subscription has
+never started begins it from TODAY (new expiry = today + N months) at the
+team's effective fee, with the dialog saying so ("Starting subscription —
+paid until <date>"). If the team's monthly fee is 0, the dialog must say
+the team fee isn't set and point to the team-fee edit (Fix 1) instead of
+recording a free renewal.
+
+── FIX 5: DASHBOARD "OPEN COMMITMENTS" CARD ──
+Remove the "Teams in this academy: 3" line — a team count is not a financial
+commitment. The card lists unpaid payments, and may add salaries due this
+month; nothing else.
+
+── FIX 6: DECORATION CLEANUP ──
+Remove the "01 / 02 / 03 / 04" numbering from the tab labels and the
+"TEAM 01/02/03" eyebrows on team cards — they decorate, not inform. Keep
+everything else about the layout as-is (the player card grid stays).
+
+── FIX 7: FORMAT CONSISTENCY ──
+Currency and date rendering in this section must match the conventions used
+by the console's existing money/date surfaces (check how the rest of the
+app renders JOD amounts and dates and conform to it, in both EN and AR —
+including correct digits and order in RTL).
+
+── RULES ──
+Owner-only enforcement unchanged; no changes outside the Fees & Payments
+section and the seed script; EN/AR for all new or changed strings; the
+known baseline stays untouched.
+
+── VALIDATION before closing ──
+Update/extend the finance tests for: team-fee edit affecting future accrual
+only, no-subscription renewal starting from today, zero-fee renewal blocked.
+Run the focused finance tests on the disposable database, typecheck, and
+the SoccerWatch suite. List exactly what I must verify signed-in. End with
+the standard report + per-file diff summary with one-line descriptions.

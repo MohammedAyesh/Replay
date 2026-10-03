@@ -1,0 +1,73 @@
+Use Free mode. I am attaching screenshots of the current Player fees tab.
+This is a direct implementation task — no planning pause. Build, verify,
+report. You decide the implementation; this describes the experience we want.
+
+TASK: Restructure the PLAYER FEES tab of Fees & Payments around squad cards
+with a drill-down, per-player subscription status, and one-by-one or bulk
+payment updates.
+
+── THE EXPERIENCE ──
+
+1. SQUAD CARDS, NOT ONE LONG LIST. The Player fees tab shows one card per
+   squad (plus an Unassigned card). Each card is a summary: squad name,
+   number of players, collected vs outstanding for the selected month, and
+   how many players are behind. Pressing a card opens that squad's own page
+   (a drill-down view with back navigation — not an accordion in the list).
+
+2. INSIDE A SQUAD'S PAGE: every player of the squad, ACTIVE AND INACTIVE
+   (inactive clearly badged; inactive players accrue no new monthly dues but
+   their old unpaid amounts must still be visible and payable).
+
+3. EACH PLAYER ROW answers three questions at a glance:
+   - SUBSCRIPTION STATUS: "Paid until <end of last fully paid month>" —
+     derived from the monthly ledger, never a separately stored date. A
+     player paid through October shows that as their expiry; a player with
+     October unpaid shows their subscription as expired/behind. Exempt
+     players show Exempt instead.
+   - REMAINING FEES: the total of all their unpaid monthly dues (across
+     months, not just the selected one), in JOD. Zero renders as settled,
+     not as an alarming 0.000.
+   - AN UPDATE BUTTON on every row: opens a small dialog to record payment —
+     settle everything outstanding in one tap, or choose which unpaid months
+     to mark paid (and the existing waive option stays available there).
+
+4. BULK UPDATE: inside each squad's page, one clearly placed button that
+   updates all players of the squad at once — e.g. "Mark all paid for
+   <selected month>" / settle all outstanding — with a confirmation that
+   states exactly how many players and what total amount will be marked
+   paid. Exempt players and already-paid players are skipped, and the
+   confirmation says so.
+
+── RULES ──
+- The monthly ledger stays the single source of truth. "Paid until" and
+  "remaining" are computed from it. Do NOT add a stored expiry-date field.
+  Paid/waived rows remain untouchable by rule refreshes, past months stay
+  frozen, and the current-month-live behavior from the last task is
+  unchanged.
+- If you conclude a schema change is genuinely unavoidable, STOP and tell
+  me before touching the schema — I expect none.
+- Owner-only server-side on any new/changed endpoints, established console
+  patterns (OpenAPI-first, path/body params, membership, cross-academy
+  rejection, codegen).
+- Everything else in Fees & Payments (Overview, Salaries, Other payments,
+  One-off charges, Billing settings) and all other console sections stay
+  unchanged, except numbers that must stay consistent with payments made
+  here.
+- EN/AR with full RTL and localized month/date formatting; desktop-first
+  with a proper mobile layout for the cards and the squad page.
+
+── DEMO DATA ──
+Update the seed script so this screen can be judged: give the demo players
+varied ledger states — some paid through the current month, some owing one
+month, at least one owing two months, one inactive player with old unpaid
+dues, plus the existing exempt player. Print expected per-squad outstanding
+totals. Do not run the seed; give me the exact command.
+
+── VALIDATION before closing ──
+API/unit tests on the disposable database: paid-until derivation (including
+a gap month), remaining-fees sum across months, single-player settle,
+bulk update skipping exempt/paid players, inactive player payable but not
+accruing. Typecheck and the SoccerWatch suite pass. List explicitly what I
+must verify signed-in.
+
+End with the standard report + per-file diff summary with one-line descriptions.

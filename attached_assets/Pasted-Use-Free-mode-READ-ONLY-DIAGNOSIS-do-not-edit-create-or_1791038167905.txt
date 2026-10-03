@@ -1,0 +1,16 @@
+Use Free mode.
+
+READ-ONLY DIAGNOSIS — do not edit, create, or delete any file, do not run any git merge/rebase/push/checkout, do not run database pushes, do not "fix" anything you find. Your only output is the report described at the end.
+
+Context: this task has been running for days and contains the complete Academy Console feature (routes, components, schema, API spec, tests). Meanwhile, main has received other edits from other sessions. Before we merge this task into main, I need a full picture of the drift and a safe merge plan.
+
+Answer these questions using read-only inspection only (git log, git diff, git status, reading files):
+
+DRIFT MAP. Compare this task's branch against the current main. List: (a) files changed only in this task, (b) files changed only in main since this task branched, (c) files changed in BOTH — this third list is the important one. For each file in (c), say in one line what each side changed and whether the changes are in the same region of the file.
+KNOWN HOTSPOTS. Explicitly check and report on each of these, even if they don't appear in list (c): .replit (port mappings and workflow/task entries — this file has conflicted twice before), the app shell/layout file that gives /academy its full-width layout, lib/api-spec/openapi.yaml, the Orval-generated client files, strings.ts / i18n files, the Drizzle schema files under lib/db, pnpm-lock.yaml, and any shared router/navigation file where /academy routes are registered.
+SCHEMA SAFETY. List every schema file this task adds or modifies. Confirm whether anything in this task modifies or removes a table/column that existed before the task (vs. purely adding new academy_* tables and columns). Separately, report whether main has made any schema changes of its own since this task branched.
+GENERATED CODE. State whether the Orval-generated files and the OpenAPI spec are consistent with each other on this branch right now, and whether main's spec has diverged — i.e., will a post-merge codegen run be required, and would skipping it break the build?
+MERGE PLAN. Recommend the safest mechanism available in this environment to land this task on main (and say which direction: merge main into the task first to resolve conflicts here, then land the task — or land directly). For each file from list (c) and each hotspot, state the expected resolution in one line (e.g. "keep both workflow entries", "union of port mappings", "task side wins", "regenerate after merge"). Flag any file where an automatic merge would silently produce wrong behavior rather than a visible conflict.
+RISK VERDICT. End with: a one-paragraph verdict on whether this merge is low/medium/high risk, the single most likely way the app breaks after merging, and the one check to run immediately after the merge to catch it.
+
+Do not take any action beyond inspection. End with the full report. No file diffs are needed since nothing should change — if git status shows you modified anything, say so explicitly and list it.

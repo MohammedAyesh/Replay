@@ -1,0 +1,75 @@
+Use Free mode. I am attaching screenshots showing the three problems below.
+
+TASK: Improve three parts of the Academy Console based on real usage. This is
+a product/UX improvement task. I'm describing what's wrong and what we want —
+you decide the best implementation. Plan first: reply with your proposed
+approach for all three and STOP for my approval before building.
+
+── PROBLEM 1: Schedule cards are cluttered with attendance fields ──
+(see match card screenshot)
+Session cards in Schedule & Results now show a row of attendance chips
+("Here 0 · Away 0 · Late 0 · Excused 0") squeezed next to the match score.
+This is confusing: on a match card, "Away" reads as the away team, not an
+absent player, and four zero-chips on every card is noise. Attendance detail
+belongs in the Attendance section, not spread across the schedule.
+WHAT WE WANT: schedule cards go back to being about the session itself (type,
+squad, time, location, opponent, result). If attendance has been taken for a
+session, show at most one small, unambiguous indicator (your choice how), and
+clicking through to full detail happens in Attendance. Also: the grey
+"Demo seed: ..." line on the cards is the session's notes field coming from
+demo data — stop printing notes on the list cards (keep notes visible when
+editing a session). Do not change any session data.
+
+── PROBLEM 2: Attendance session picker is too limited ──
+(see attendance screenshot)
+The session picker is a flat dropdown that only surfaces a handful of
+sessions. A real academy will have sessions several times a week for months —
+a dropdown doesn't scale and gives no sense of time.
+WHAT WE WANT: a date-aware way to pick the session being marked — the coach
+should be able to move through time naturally (e.g. by month or week) and see
+the sessions in that period, covering everything from October 2026 through at
+least the next 6 months, past and future. Default to the most recent session.
+You choose the best control for this (calendar, month navigation, grouped
+list — whatever fits the console's design system and works in RTL and on
+mobile).
+
+── PROBLEM 3: Fees & Payments needs restructuring ──
+(see fees screenshot)
+Today the section is one flat list of player fees with three dropdown filters.
+Two problems. First, structure: an academy's money is not just player fees —
+we need THREE kinds of records under this one section:
+  1. Player payments — fees charged to players, organized BY SQUAD (a squad's
+     players together, unassigned players grouped too), not one flat list.
+  2. Salaries — payments the academy makes to staff/coaches (a payee name,
+     amount, date, status). These are not linked to players.
+  3. Other payments — any other academy expense (label, amount, date, status).
+All three live under the same "Fees & Payments" sidebar item, owner-only as
+today, JOD amounts stored as fils integers like the existing fees.
+Second, UX: replace the current filter-dropdown layout with a clearer
+organization for these three categories (tabs or equivalent — your call),
+with totals that make sense per category. The current controls scroll oddly
+and don't help the owner understand money in vs money out.
+NOTE: salaries and other payments may need additive schema work (new columns
+or a new table). That is allowed, but: ADDITIVE ONLY — no modifying or
+dropping existing columns/tables, no touching the four seeded player fees.
+If schema changes are needed, STOP after schema + OpenAPI + codegen and I
+will run `pnpm --filter db run push` myself and confirm before you continue —
+exactly like Phase 1. If you can model it without schema changes, say so in
+the plan and explain how.
+
+── UNCHANGED RULES ──
+Zero regression outside these three areas: Squads, Players, Attendance
+marking itself, Recordings, Announcements, dashboard, /admin, public routes
+stay as they are. EN/AR with full RTL for everything new or changed.
+Server-side owner-only enforcement extends to salaries and other payments.
+Focused API tests on the disposable database for anything server-side.
+The known full-suite drift stays documented and untouched.
+
+── VALIDATION before closing ──
+Typecheck, SoccerWatch suite, focused Academy tests. In the preview: schedule
+cards clean with no attendance chip row and no notes line; attendance picker
+navigating across months; fees section showing the three categories with the
+four seeded player fees intact under their squads. Whatever you cannot verify
+signed-in, list for me explicitly.
+
+End with the standard report + per-file diff summary with one-line descriptions.

@@ -1,0 +1,57 @@
+Use Free mode.
+
+TASK: Academy Console — make the SQUADS section functional (first real section).
+Plan first: reply with an implementation plan (endpoints, file-touch list, build
+order) and STOP for my approval before building.
+
+CONTEXT: Phase 1 shipped: /academy shell, membership tenancy (academy_members),
+dashboard, and the full v1 schema already exists in the database — including
+academy_squads (academy_id, name, optional description, age group) and
+academy_players.squad_id. There are NO schema changes in this task, so there is
+no database push step. Demo data exists in academy 743 (three "Demo " squads,
+16 players).
+
+SCOPE — the Squads section at /academy:
+1. List: all squads of the selected academy, each showing name, age group if
+   set, and a live count of active players assigned to it. Clean localized
+   empty state when an academy has no squads.
+2. Create: name required, age group and description optional. Localized
+   validation errors.
+3. Edit: rename and change age group/description.
+4. Delete: with a confirmation dialog that states players in the squad will
+   NOT be deleted — they become unassigned (squad_id set to null). That
+   unassignment is exactly what delete does.
+5. Both roles (owner AND coach) can manage squads — squads are day-to-day
+   management, not billing.
+6. Player assignment to squads is NOT in this task — it belongs to the Players
+   section. Do not build player pickers here beyond showing counts.
+7. Dashboard: the squads count tile and the "Set up your squads" getting-started
+   link keep working; the link goes to this section.
+
+API — OpenAPI-first, path/body parameters only (no query params), then codegen:
+- List, create, update, delete squad endpoints under
+  /api/academy/console/academies/{academyId}/... following the existing
+  patterns. Every endpoint enforces authentication + academy membership
+  server-side, per route. A squadId that belongs to a DIFFERENT academy than
+  the path's academyId must be rejected, not acted on.
+
+UI REQUIREMENTS:
+- Use the console's existing components and design language; desktop-first,
+  proper mobile layout like the rest of the console.
+- EN and AR for every new string through the existing i18n system, full RTL
+  correctness (logical properties, digit handling in counts). The seeded demo
+  data includes Arabic squad/player content — it must render correctly.
+
+ZERO-REGRESSION: no schema changes, no changes to other console sections,
+/admin, public routes, or any non-console code.
+
+VALIDATION (perform and report):
+- Direct endpoint checks: anonymous 401; authenticated non-member 403;
+  cross-academy squadId rejected.
+- Typecheck and the app test suite pass.
+- Served preview: the three Demo squads listed with correct counts; create,
+  rename, and delete each verified once. If your preview session cannot
+  authenticate, say so explicitly and list exactly what I need to verify
+  manually.
+
+End with the standard report + per-file diff summary.

@@ -33,6 +33,10 @@ tags:
     description: User profiles and follows
   - name: academies
     description: Soccer academies
+  - name: academyConsole
+    description: Academy Console membership and dashboard
+  - name: academyFinance
+    description: Owner-only Academy Console finance operations
   - name: claimMatch
     description: Claim Your Match tracking and player identity
   - name: owner
@@ -1528,6 +1532,1507 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Recording"
+
+  /academy/console/memberships:
+    get:
+      operationId: getAcademyConsoleMemberships
+      tags: [academyConsole]
+      summary: List the signed-in user's academy memberships and roles
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Academy memberships for the signed-in user
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyConsoleMembership"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: The signed-in user has no academy memberships
+
+  /academy/console/academies/{academyId}/dashboard:
+    get:
+      operationId: getAcademyConsoleDashboard
+      tags: [academyConsole]
+      summary: Get academy dashboard counts for the next seven days
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Academy identity, roles, and academy-scoped counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyConsoleDashboard"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: The signed-in user is not a member of this academy
+        "404":
+          description: Academy not found
+
+  /academy/console/academies/{academyId}/squads:
+    get:
+      operationId: listAcademyConsoleSquads
+      tags: [academyConsole]
+      summary: List squads and active player counts for an academy
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Squads in the academy with active player counts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademySquadSummary"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy not found
+    post:
+      operationId: createAcademyConsoleSquad
+      tags: [academyConsole]
+      summary: Create a squad in an academy
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademySquadInput"
+      responses:
+        "201":
+          description: Created squad with its active player count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademySquadSummary"
+        "400":
+          description: Invalid squad input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy not found
+
+  /academy/console/academies/{academyId}/squads/{squadId}:
+    patch:
+      operationId: updateAcademyConsoleSquad
+      tags: [academyConsole]
+      summary: Update a squad in an academy
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: squadId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademySquadUpdate"
+      responses:
+        "200":
+          description: Updated squad with its active player count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademySquadSummary"
+        "400":
+          description: Invalid squad input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy or squad not found in this academy
+    delete:
+      operationId: deleteAcademyConsoleSquad
+      tags: [academyConsole]
+      summary: Delete a squad and unassign its players
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: squadId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Squad deleted; assigned players are retained and unassigned
+        "400":
+          description: Invalid academy or squad ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy or squad not found in this academy
+
+  /academy/console/academies/{academyId}/players:
+    get:
+      operationId: listAcademyConsolePlayers
+      tags: [academyConsole]
+      summary: List all players in an academy
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Players in the academy, including squad and linked account details
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyPlayerSummary"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy not found
+    post:
+      operationId: createAcademyConsolePlayer
+      tags: [academyConsole]
+      summary: Add a player to an academy
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyPlayerInput"
+      responses:
+        "201":
+          description: Created player
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyPlayerSummary"
+        "400":
+          description: Invalid player input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy or squad not found in this academy
+
+  /academy/console/academies/{academyId}/players/{playerId}:
+    patch:
+      operationId: updateAcademyConsolePlayer
+      tags: [academyConsole]
+      summary: Update a player's details, squad, status, or linked Replay account
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyPlayerUpdate"
+      responses:
+        "200":
+          description: Updated player
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyPlayerSummary"
+        "400":
+          description: Invalid player input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy, player, squad, or Replay user not found
+
+  /academy/console/academies/{academyId}/sessions:
+    get:
+      operationId: listAcademyConsoleSessions
+      tags: [academyConsole]
+      summary: List sessions in an academy
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Sessions in the academy, with squad names and UTC timestamps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademySessionSummary"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy not found
+    post:
+      operationId: createAcademyConsoleSession
+      tags: [academyConsole]
+      summary: Create a training session or match
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademySessionInput"
+      responses:
+        "201":
+          description: Created session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademySessionSummary"
+        "400":
+          description: Invalid session input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy or squad not found in this academy
+
+  /academy/console/academies/{academyId}/sessions/{sessionId}:
+    patch:
+      operationId: updateAcademyConsoleSession
+      tags: [academyConsole]
+      summary: Update a session or match result
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademySessionUpdate"
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademySessionSummary"
+        "400":
+          description: Invalid session input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy, session, or squad not found in this academy
+    delete:
+      operationId: deleteAcademyConsoleSession
+      tags: [academyConsole]
+      summary: Delete a session and its attendance records
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Session and its attendance records deleted
+        "400":
+          description: Invalid academy or session ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy or session not found in this academy
+
+  /academy/console/academies/{academyId}/sessions/{sessionId}/attendance:
+    get:
+      operationId: getAcademyConsoleAttendance
+      tags: [academyConsole]
+      summary: Get the attendance sheet for a session
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Eligible players and their saved attendance statuses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyAttendanceSheet"
+        "400":
+          description: Invalid academy or session ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Session not found in this academy
+    put:
+      operationId: updateAcademyConsoleAttendance
+      tags: [academyConsole]
+      summary: Upsert attendance statuses for eligible session players
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyAttendanceInput"
+      responses:
+        "200":
+          description: Updated attendance sheet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyAttendanceSheet"
+        "400":
+          description: Invalid or duplicate player attendance entries
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Session or player not found in this academy or session roster
+
+  /academy/console/academies/{academyId}/recordings:
+    get:
+      operationId: listAcademyConsoleRecordings
+      tags: [academyConsole]
+      summary: List recordings linked to an academy
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Academy-linked recordings, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyConsoleRecording"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy not found
+
+  /academy/console/academies/{academyId}/announcements:
+    get:
+      operationId: listAcademyConsoleAnnouncements
+      tags: [academyConsole]
+      summary: List academy announcements
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Announcements, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyAnnouncementSummary"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy not found
+    post:
+      operationId: createAcademyConsoleAnnouncement
+      tags: [academyConsole]
+      summary: Create an academy announcement
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyAnnouncementInput"
+      responses:
+        "201":
+          description: Created announcement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyAnnouncementSummary"
+        "400":
+          description: Invalid announcement input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy or squad not found in this academy
+
+  /academy/console/academies/{academyId}/announcements/{announcementId}:
+    patch:
+      operationId: updateAcademyConsoleAnnouncement
+      tags: [academyConsole]
+      summary: Update an academy announcement
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: announcementId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyAnnouncementUpdate"
+      responses:
+        "200":
+          description: Updated announcement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyAnnouncementSummary"
+        "400":
+          description: Invalid announcement input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Announcement or squad not found in this academy
+    delete:
+      operationId: deleteAcademyConsoleAnnouncement
+      tags: [academyConsole]
+      summary: Delete an academy announcement
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: announcementId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Announcement deleted
+        "400":
+          description: Invalid academy or announcement ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Announcement not found in this academy
+
+  /academy/console/academies/{academyId}/finance/dashboard:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: getAcademyFinanceDashboard
+      tags: [academyFinance]
+      summary: Get current-month finance totals and items needing attention
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Finance dashboard calculated for the current month in Amman time
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceDashboard"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+
+  /academy/console/academies/{academyId}/finance/teams:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: listAcademyFinanceTeams
+      tags: [academyFinance]
+      summary: List squads with payment status and outstanding totals
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Squad finance summaries for this academy
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyFinanceTeam"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+    post:
+      operationId: createAcademyFinanceTeam
+      tags: [academyFinance]
+      summary: Create a squad with its monthly fee
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceTeamInput"
+      responses:
+        "201":
+          description: Created squad finance summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceTeam"
+        "400":
+          description: Invalid team input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+
+  /academy/console/academies/{academyId}/finance/teams/{squadId}:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: squadId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    patch:
+      operationId: updateAcademyFinanceTeam
+      tags: [academyFinance]
+      summary: Update a squad's monthly fee
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceTeamMonthlyFeeUpdate"
+      responses:
+        "200":
+          description: Updated squad finance summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceTeam"
+        "400":
+          description: Invalid team input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy or squad not found
+
+  /academy/console/academies/{academyId}/finance/teams/{squadId}/players:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: squadId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: listAcademyFinanceTeamPlayers
+      tags: [academyFinance]
+      summary: List players and their current balances for a squad
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Players with calculated subscription and one-off fee balances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyFinancePlayer"
+        "400":
+          description: Invalid academy or squad ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Squad not found in this academy
+    post:
+      operationId: createAcademyFinanceTeamPlayer
+      tags: [academyFinance]
+      summary: Add a roster player with billing information
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinancePlayerInput"
+      responses:
+        "201":
+          description: Created roster player with calculated billing status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinancePlayer"
+        "400":
+          description: Invalid player input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Squad not found in this academy
+
+  /academy/console/academies/{academyId}/finance/players/{playerId}/billing:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: playerId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    patch:
+      operationId: updateAcademyFinancePlayerBilling
+      tags: [academyFinance]
+      summary: Update a player's monthly discount and subscription expiry
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinancePlayerBillingUpdate"
+      responses:
+        "200":
+          description: Updated player billing summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinancePlayer"
+        "400":
+          description: Invalid billing input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Player not found in this academy
+
+  /academy/console/academies/{academyId}/finance/players/{playerId}/renewals:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: playerId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    post:
+      operationId: createAcademyFinancePlayerRenewal
+      tags: [academyFinance]
+      summary: Record a subscription renewal and extend the existing expiry date
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceRenewalInput"
+      responses:
+        "201":
+          description: Recorded renewal payment and updated subscription expiry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceRenewal"
+        "400":
+          description: Invalid renewal input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Player not found in this academy
+
+  /academy/console/academies/{academyId}/finance/players/{playerId}/fees:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: playerId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: listAcademyFinancePlayerFees
+      tags: [academyFinance]
+      summary: List a player's existing one-off fees
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: One-off fee rows stored in academy_fees
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyFinanceFee"
+        "400":
+          description: Invalid academy or player ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Player not found in this academy
+    post:
+      operationId: createAcademyFinancePlayerFee
+      tags: [academyFinance]
+      summary: Add a one-off fee to an existing player
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceFeeInput"
+      responses:
+        "201":
+          description: Created one-off fee
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceFee"
+        "400":
+          description: Invalid fee input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Player not found in this academy
+
+  /academy/console/academies/{academyId}/finance/fees/{feeId}:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: feeId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    patch:
+      operationId: markAcademyFinanceFeePaid
+      tags: [academyFinance]
+      summary: Mark an existing one-off fee as paid
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceFeePaymentInput"
+      responses:
+        "200":
+          description: Updated one-off fee
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceFee"
+        "400":
+          description: Invalid fee update
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Fee not found in this academy
+        "409":
+          description: A waived fee cannot be marked as paid
+
+  /academy/console/academies/{academyId}/finance/staff:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: listAcademyFinanceStaff
+      tags: [academyFinance]
+      summary: List academy finance staff
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Staff in the academy
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyFinanceStaff"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+        "409":
+          description: Category already exists
+    post:
+      operationId: createAcademyFinanceStaff
+      tags: [academyFinance]
+      summary: Add an academy finance staff member
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceStaffInput"
+      responses:
+        "201":
+          description: Created staff member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceStaff"
+        "400":
+          description: Invalid staff input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+
+  /academy/console/academies/{academyId}/finance/staff/{staffId}:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: staffId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    patch:
+      operationId: updateAcademyFinanceStaff
+      tags: [academyFinance]
+      summary: Update an academy finance staff member
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceStaffUpdate"
+      responses:
+        "200":
+          description: Updated staff member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceStaff"
+        "400":
+          description: Invalid staff update
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Staff member not found in this academy
+
+  /academy/console/academies/{academyId}/finance/staff/{staffId}/salary-payment:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: staffId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    post:
+      operationId: recordAcademyFinanceSalaryPayment
+      tags: [academyFinance]
+      summary: Record a paid salary expense and advance the next salary date
+      security:
+        - clerkSession: []
+      responses:
+        "201":
+          description: Recorded salary payment and updated staff member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceSalaryPayment"
+        "400":
+          description: Invalid academy or staff ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Staff member not found in this academy
+
+  /academy/console/academies/{academyId}/finance/other-payments:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: listAcademyFinanceOtherPayments
+      tags: [academyFinance]
+      summary: List other payments for the current Amman month and totals
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Current-month payment rows and paid/unpaid totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceOtherPaymentList"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+    post:
+      operationId: createAcademyFinanceOtherPayment
+      tags: [academyFinance]
+      summary: Record an other payment as paid or unpaid
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceOtherPaymentInput"
+      responses:
+        "201":
+          description: Created other payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceOtherPayment"
+        "400":
+          description: Invalid payment input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy or payment category not found
+
+  /academy/console/academies/{academyId}/finance/other-payments/{paymentId}:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: paymentId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    patch:
+      operationId: markAcademyFinanceOtherPaymentPaid
+      tags: [academyFinance]
+      summary: Mark an unpaid other payment as paid
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceOtherPaymentStatusUpdate"
+      responses:
+        "200":
+          description: Updated other payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceOtherPayment"
+        "400":
+          description: Invalid payment update
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Payment not found in this academy
+
+  /academy/console/academies/{academyId}/finance/other-payments/{paymentId}/repeat:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: paymentId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    post:
+      operationId: repeatAcademyFinanceOtherPayment
+      tags: [academyFinance]
+      summary: Repeat a payment today as unpaid
+      security:
+        - clerkSession: []
+      responses:
+        "201":
+          description: Created repeated payment with unpaid status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceOtherPayment"
+        "400":
+          description: Invalid academy or payment ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Payment not found in this academy
+
+  /academy/console/academies/{academyId}/finance/categories:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: listAcademyFinanceCategories
+      tags: [academyFinance]
+      summary: List built-in and academy-specific other-payment categories
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Built-in and custom categories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceCategoryList"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+    post:
+      operationId: createAcademyFinanceCategory
+      tags: [academyFinance]
+      summary: Save a custom other-payment category for this academy
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceCategoryInput"
+      responses:
+        "201":
+          description: Created custom category
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceCategory"
+        "400":
+          description: Invalid or duplicate category
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+        "409":
+          description: Category already exists
+
+  /admin/academies/{academyId}/members:
+    get:
+      operationId: listAcademyMembers
+      tags: [admin]
+      summary: List role assignments for an academy
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Academy members and assigned roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyMemberListItem"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Admin access required
+        "404":
+          description: Academy not found
+    post:
+      operationId: addAcademyMember
+      tags: [admin]
+      summary: Assign an academy role to an existing Replay user by email
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyMemberAssignment"
+      responses:
+        "200":
+          description: The user's current academy roles, including the requested role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyMemberSummary"
+        "400":
+          description: Invalid assignment
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Admin access required
+        "404":
+          description: Academy or existing Replay user not found
+
+  /admin/academies/{academyId}/members/{userId}/{role}:
+    delete:
+      operationId: removeAcademyMemberRole
+      tags: [admin]
+      summary: Remove one academy role assignment without removing other roles
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: role
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [owner, coach]
+      responses:
+        "204":
+          description: Role assignment removed
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Admin access required
+        "404":
+          description: Academy member role not found
 
   /admin/academies:
     get:
@@ -4324,6 +5829,975 @@ components:
           description: Branding intro clip prepended to this academy's clip exports and playback.
         recordingCount:
           type: integer
+
+    AcademyMemberRole:
+      type: string
+      enum: [owner, coach]
+
+    AcademyConsoleMembership:
+      type: object
+      required: [academyId, academyName, roles]
+      properties:
+        academyId:
+          type: integer
+        academyName:
+          type: string
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AcademyMemberRole"
+
+    AcademyConsoleDashboard:
+      type: object
+      required: [academyId, academyName, roles, squadCount, activePlayerCount, upcomingSessionCount]
+      properties:
+        academyId:
+          type: integer
+        academyName:
+          type: string
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AcademyMemberRole"
+        squadCount:
+          type: integer
+          minimum: 0
+        activePlayerCount:
+          type: integer
+          minimum: 0
+        upcomingSessionCount:
+          type: integer
+          minimum: 0
+
+    AcademySquadSummary:
+      type: object
+      required: [id, academyId, name, ageGroup, description, activePlayerCount]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        academyId:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        ageGroup:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        activePlayerCount:
+          type: integer
+          minimum: 0
+
+    AcademySquadInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        ageGroup:
+          type: ["string", "null"]
+          maxLength: 80
+        description:
+          type: ["string", "null"]
+          maxLength: 1000
+
+    AcademySquadUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        ageGroup:
+          type: ["string", "null"]
+          maxLength: 80
+        description:
+          type: ["string", "null"]
+          maxLength: 1000
+
+    AcademyPlayerSummary:
+      type: object
+      required:
+        - id
+        - academyId
+        - squadId
+        - squadName
+        - name
+        - jerseyNumber
+        - position
+        - dateOfBirth
+        - guardianPhone
+        - userId
+        - linkedUserEmail
+        - isActive
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        academyId:
+          type: integer
+          minimum: 1
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        squadName:
+          type: ["string", "null"]
+        name:
+          type: string
+        jerseyNumber:
+          type: ["integer", "null"]
+          minimum: 0
+        position:
+          type: ["string", "null"]
+        dateOfBirth:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        guardianPhone:
+          type: ["string", "null"]
+        userId:
+          type: ["integer", "null"]
+          minimum: 1
+        linkedUserEmail:
+          type: ["string", "null"]
+          format: email
+        isActive:
+          type: boolean
+
+    AcademyPlayerInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        jerseyNumber:
+          type: ["integer", "null"]
+          minimum: 0
+        position:
+          type: ["string", "null"]
+          maxLength: 80
+        dateOfBirth:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        guardianPhone:
+          type: ["string", "null"]
+          maxLength: 80
+
+    AcademyPlayerUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        jerseyNumber:
+          type: ["integer", "null"]
+          minimum: 0
+        position:
+          type: ["string", "null"]
+          maxLength: 80
+        dateOfBirth:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        guardianPhone:
+          type: ["string", "null"]
+          maxLength: 80
+        isActive:
+          type: boolean
+        linkedUserEmail:
+          description: Link an existing Replay account by email; null removes the link; omission leaves it unchanged.
+          type: ["string", "null"]
+          format: email
+
+    AcademySessionSummary:
+      type: object
+      required:
+        - id
+        - academyId
+        - squadId
+        - squadName
+        - type
+        - startsAt
+        - endsAt
+        - location
+        - opponent
+        - ownScore
+        - opponentScore
+        - notes
+        - createdAt
+        - attendanceCounts
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        academyId:
+          type: integer
+          minimum: 1
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        squadName:
+          type: ["string", "null"]
+        type:
+          type: string
+          enum: [training, match]
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: ["string", "null"]
+          format: date-time
+        location:
+          type: string
+        opponent:
+          type: ["string", "null"]
+        ownScore:
+          type: ["integer", "null"]
+          minimum: 0
+          maximum: 2147483647
+        opponentScore:
+          type: ["integer", "null"]
+          minimum: 0
+          maximum: 2147483647
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        attendanceCounts:
+          $ref: "#/components/schemas/AcademyAttendanceCounts"
+
+    AcademyAttendanceCounts:
+      type: object
+      required: [present, absent, late, excused]
+      properties:
+        present:
+          type: integer
+          minimum: 0
+        absent:
+          type: integer
+          minimum: 0
+        late:
+          type: integer
+          minimum: 0
+        excused:
+          type: integer
+          minimum: 0
+
+    AcademyAttendancePlayer:
+      type: object
+      required: [playerId, playerName, jerseyNumber, status]
+      properties:
+        playerId:
+          type: integer
+          minimum: 1
+        playerName:
+          type: string
+        jerseyNumber:
+          type: ["integer", "null"]
+          minimum: 0
+        status:
+          type: ["string", "null"]
+          enum: [present, absent, late, excused, null]
+
+    AcademyAttendanceSheet:
+      type: object
+      required: [sessionId, players]
+      properties:
+        sessionId:
+          type: integer
+          minimum: 1
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyAttendancePlayer"
+
+    AcademyAttendanceStatusAssignment:
+      type: object
+      required: [playerId, status]
+      properties:
+        playerId:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [present, absent, late, excused]
+
+    AcademyAttendanceInput:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyAttendanceStatusAssignment"
+
+    AcademyConsoleRecording:
+      type: object
+      required: [id, fieldId, court, date, timeSlot, duration, score, videoUrl, highlightMoment, fieldName]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        fieldId:
+          type: integer
+          minimum: 1
+        court:
+          type: string
+        date:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        timeSlot:
+          type: string
+        duration:
+          type: string
+        score:
+          type: ["string", "null"]
+        videoUrl:
+          type: string
+        highlightMoment:
+          type: ["string", "null"]
+        fieldName:
+          type: ["string", "null"]
+
+    AcademyAnnouncementSummary:
+      type: object
+      required: [id, academyId, squadId, squadName, title, body, createdBy, authorName, createdAt]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        academyId:
+          type: integer
+          minimum: 1
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        squadName:
+          type: ["string", "null"]
+        title:
+          type: string
+        body:
+          type: string
+        createdBy:
+          type: integer
+          minimum: 1
+        authorName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    AcademyAnnouncementInput:
+      type: object
+      required: [title, body]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+
+    AcademyAnnouncementUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+
+    AcademyFinanceDashboard:
+      type: object
+      required: [month, collectedFils, spentFils, netFils, unpaidBillsCount, expiredPlayers, expiringPlayers, unpaidPayments]
+      properties:
+        month:
+          type: string
+          pattern: '^\d{4}-\d{2}$'
+          description: Current calendar month in Asia/Amman.
+        collectedFils:
+          type: integer
+          minimum: 0
+        spentFils:
+          type: integer
+          minimum: 0
+        netFils:
+          type: integer
+        unpaidBillsCount:
+          type: integer
+          minimum: 0
+        expiredPlayers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyFinanceAttentionPlayer"
+        expiringPlayers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyFinanceAttentionPlayer"
+        unpaidPayments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyFinanceAttentionPayment"
+
+    AcademyFinanceAttentionPlayer:
+      type: object
+      required: [id, name, squadId, squadName, expiresOn, monthsOwed, outstandingFils]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        squadId:
+          type: integer
+          minimum: 1
+        squadName:
+          type: string
+        expiresOn:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        monthsOwed:
+          type: integer
+          minimum: 0
+        outstandingFils:
+          type: integer
+          minimum: 0
+
+    AcademyFinanceAttentionPayment:
+      type: object
+      required: [id, category, label, amountFils, occurredOn]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        category:
+          type: string
+        label:
+          type: string
+        amountFils:
+          type: integer
+          minimum: 1
+        occurredOn:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+
+    AcademyFinanceTeam:
+      type: object
+      required: [id, name, monthlyFeeFils, playerCount, behindCount, outstandingFils]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        monthlyFeeFils:
+          type: integer
+          minimum: 0
+        playerCount:
+          type: integer
+          minimum: 0
+        behindCount:
+          type: integer
+          minimum: 0
+        outstandingFils:
+          type: integer
+          minimum: 0
+
+    AcademyFinanceTeamInput:
+      type: object
+      required: [name, monthlyFeeFils]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        monthlyFeeFils:
+          type: integer
+          minimum: 0
+        ageGroup:
+          type: ["string", "null"]
+          maxLength: 80
+        description:
+          type: ["string", "null"]
+          maxLength: 1000
+
+    AcademyFinanceTeamMonthlyFeeUpdate:
+      type: object
+      required: [monthlyFeeFils]
+      properties:
+        monthlyFeeFils:
+          type: integer
+          minimum: 0
+
+    AcademyFinancePlayer:
+      type: object
+      required: [id, squadId, name, isActive, monthlyFeeFils, monthlyDiscountFils, effectiveMonthlyFeeFils, subscriptionExpiresOn, subscriptionStatus, monthsOwed, subscriptionDebtFils, unpaidFeesFils, outstandingFils]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        squadId:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        isActive:
+          type: boolean
+        monthlyFeeFils:
+          type: integer
+          minimum: 0
+        monthlyDiscountFils:
+          type: integer
+          minimum: 0
+        effectiveMonthlyFeeFils:
+          type: integer
+          minimum: 0
+        subscriptionExpiresOn:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        subscriptionStatus:
+          type: string
+          enum: [no_subscription, paid, expiring, expired]
+        monthsOwed:
+          type: integer
+          minimum: 0
+        subscriptionDebtFils:
+          type: integer
+          minimum: 0
+        unpaidFeesFils:
+          type: integer
+          minimum: 0
+        outstandingFils:
+          type: integer
+          minimum: 0
+
+    AcademyFinancePlayerInput:
+      type: object
+      required: [name, subscriptionExpiresOn]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        monthlyDiscountFils:
+          type: integer
+          minimum: 0
+          default: 0
+        subscriptionExpiresOn:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+
+    AcademyFinancePlayerBillingUpdate:
+      type: object
+      properties:
+        monthlyDiscountFils:
+          type: integer
+          minimum: 0
+        subscriptionExpiresOn:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+
+    AcademyFinanceRenewalInput:
+      type: object
+      required: [months]
+      properties:
+        months:
+          type: integer
+          minimum: 1
+          maximum: 12
+
+    AcademyFinanceRenewal:
+      type: object
+      required: [id, playerId, months, amountFils, effectiveMonthlyFeeFils, previousExpiresOn, newExpiresOn, paidAt]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        playerId:
+          type: integer
+          minimum: 1
+        months:
+          type: integer
+          minimum: 1
+          maximum: 12
+        amountFils:
+          type: integer
+          minimum: 0
+        effectiveMonthlyFeeFils:
+          type: integer
+          minimum: 0
+        previousExpiresOn:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        newExpiresOn:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        paidAt:
+          type: string
+          format: date-time
+
+    AcademyFinanceFee:
+      type: object
+      required: [id, playerId, label, amountFils, dueDate, status, paidAt, note]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        playerId:
+          type: integer
+          minimum: 1
+        label:
+          type: string
+        amountFils:
+          type: integer
+          minimum: 0
+        dueDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        status:
+          type: string
+          enum: [due, paid, waived]
+        paidAt:
+          type: ["string", "null"]
+          format: date-time
+        note:
+          type: ["string", "null"]
+
+    AcademyFinanceFeeInput:
+      type: object
+      required: [label, amountFils]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
+        amountFils:
+          type: integer
+          minimum: 1
+        dueDate:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+          description: Defaults to the current date in Asia/Amman when omitted.
+        note:
+          type: ["string", "null"]
+          maxLength: 1000
+
+    AcademyFinanceFeePaymentInput:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [paid]
+
+    AcademyFinanceStaff:
+      type: object
+      required: [id, name, role, monthlySalaryFils, nextSalaryDate, contractEndDate]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        role:
+          type: string
+        monthlySalaryFils:
+          type: integer
+          minimum: 0
+        nextSalaryDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        contractEndDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+
+    AcademyFinanceStaffInput:
+      type: object
+      required: [name, role, monthlySalaryFils, nextSalaryDate, contractEndDate]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        role:
+          type: string
+          minLength: 1
+          maxLength: 120
+        monthlySalaryFils:
+          type: integer
+          minimum: 1
+        nextSalaryDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        contractEndDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+
+    AcademyFinanceStaffUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        role:
+          type: string
+          minLength: 1
+          maxLength: 120
+        monthlySalaryFils:
+          type: integer
+          minimum: 1
+        nextSalaryDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        contractEndDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+
+    AcademyFinanceSalaryPayment:
+      type: object
+      required: [staff, payment]
+      properties:
+        staff:
+          $ref: "#/components/schemas/AcademyFinanceStaff"
+        payment:
+          $ref: "#/components/schemas/AcademyFinanceOtherPayment"
+
+    AcademyFinanceOtherPayment:
+      type: object
+      required: [id, staffId, category, label, amountFils, occurredOn, status, paidAt]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        staffId:
+          type: ["integer", "null"]
+          minimum: 1
+        category:
+          type: string
+        label:
+          type: string
+        amountFils:
+          type: integer
+          minimum: 1
+        occurredOn:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        status:
+          type: string
+          enum: [paid, unpaid]
+        paidAt:
+          type: ["string", "null"]
+          format: date-time
+
+    AcademyFinanceOtherPaymentList:
+      type: object
+      required: [month, paidTotalFils, unpaidTotalFils, payments]
+      properties:
+        month:
+          type: string
+          pattern: '^\d{4}-\d{2}$'
+        paidTotalFils:
+          type: integer
+          minimum: 0
+        unpaidTotalFils:
+          type: integer
+          minimum: 0
+        payments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyFinanceOtherPayment"
+
+    AcademyFinanceOtherPaymentInput:
+      type: object
+      required: [category, label, amountFils, status]
+      properties:
+        category:
+          type: string
+          minLength: 1
+          maxLength: 120
+        label:
+          type: string
+          minLength: 1
+          maxLength: 240
+        amountFils:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [paid, unpaid]
+
+    AcademyFinanceOtherPaymentStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [paid]
+
+    AcademyFinanceCategory:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+
+    AcademyFinanceCategoryList:
+      type: object
+      required: [builtIn, custom]
+      properties:
+        builtIn:
+          type: array
+          items:
+            type: string
+        custom:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyFinanceCategory"
+
+    AcademyFinanceCategoryInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+
+    AcademySessionInput:
+      type: object
+      required: [type, startsAt, location]
+      properties:
+        type:
+          type: string
+          enum: [training, match]
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: ["string", "null"]
+          format: date-time
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        location:
+          type: string
+          minLength: 1
+          maxLength: 200
+        opponent:
+          description: Only accepted for match sessions.
+          type: ["string", "null"]
+          maxLength: 160
+        notes:
+          type: ["string", "null"]
+          maxLength: 2000
+
+    AcademySessionUpdate:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [training, match]
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: ["string", "null"]
+          format: date-time
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        location:
+          type: string
+          minLength: 1
+          maxLength: 200
+        opponent:
+          description: Only accepted for match sessions; null clears the opponent.
+          type: ["string", "null"]
+          maxLength: 160
+        ownScore:
+          description: Set both scores for a match, or set both to null to clear the result.
+          type: ["integer", "null"]
+          minimum: 0
+          maximum: 2147483647
+        opponentScore:
+          type: ["integer", "null"]
+          minimum: 0
+          maximum: 2147483647
+        notes:
+          type: ["string", "null"]
+          maxLength: 2000
+
+    AcademyMemberListItem:
+      type: object
+      required: [userId, name, email, roles]
+      properties:
+        userId:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AcademyMemberRole"
+
+    AcademyMemberSummary:
+      type: object
+      required: [userId, name, email, roles]
+      properties:
+        userId:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AcademyMemberRole"
+
+    AcademyMemberAssignment:
+      type: object
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          $ref: "#/components/schemas/AcademyMemberRole"
 
     CreateAcademyInput:
       type: object

@@ -1,0 +1,89 @@
+Use Free mode. This is a direct implementation task — no planning pause. Build
+it, verify it, report.
+
+TASK: Full redesign of the Academy Console "Fees & Payments" section, plus
+richer demo data. The current version is a flat list of player fees with three
+dropdown filters and scroll controls that don't work and don't make sense. We
+are replacing that layout entirely. You decide the implementation; here is
+what the section must become.
+
+PRECONDITION: the academy_expenses table was prepared earlier and I was asked
+to run the database push. Before implementing expense endpoints, verify
+(read-only) that the table actually exists in the database. If it does not,
+stop and tell me — do not run the push yourself.
+
+── THE VISION ──
+"Fees & Payments" is the owner's money view for the academy. One sidebar item,
+three clearly separated categories inside it:
+
+1. PLAYER PAYMENTS (money in) — fees charged to players, organized BY SQUAD:
+   each squad is its own group (with the squad name and a per-squad subtotal
+   of due/paid/waived), players' fees listed inside their squad's group, and
+   an "Unassigned" group for players without a squad. An owner should be able
+   to glance at a squad and see who has paid and who hasn't. Keep the existing
+   actions per fee: mark paid, waive, edit, delete, add fee.
+2. SALARIES (money out) — payments to staff/coaches: payee name, amount,
+   date, due/paid status, optional note. Add, edit, mark paid, delete.
+3. OTHER PAYMENTS (money out) — any other academy expense: label, amount,
+   date, due/paid status, optional note. Same actions.
+
+Switching between the three must be obvious and instant (tabs, segmented
+control, or whatever fits the console's design system best — your choice, as
+long as it's clearly one section with three views, works on mobile, and
+mirrors correctly in RTL).
+
+At the top of the section: a compact financial overview that makes sense —
+money in (player fees: due / paid / waived) versus money out (salaries +
+other: due / paid). Totals must update live as records change. All amounts
+are JOD displayed from amount_fils integers, following the app's existing
+JOD formatting.
+
+── UX REQUIREMENTS ──
+- No horizontal scroll controls anywhere in this section. If content
+  overflows, solve it with layout (grouping, stacking, collapsing), not
+  scroll buttons.
+- Within a squad group, unpaid/overdue fees should be visually scannable at
+  a glance (status chips or equivalent), and groups with nothing outstanding
+  should read as "settled" without hunting.
+- Clean localized empty states per category (e.g. no salaries yet).
+- Desktop-first with proper mobile layout; full EN/AR with RTL mirroring,
+  Latin digits handled per the app's existing conventions.
+
+── FUNCTIONALITY ──
+- Owner-only, enforced SERVER-SIDE on every player-fee and expense endpoint —
+  a coach gets 403 from the API, not just hidden UI.
+- Expense endpoints follow the established console patterns: OpenAPI-first,
+  path/body params only, membership + role checks, cross-academy IDs
+  rejected, codegen regenerated.
+- The four existing seeded player fees must remain intact and appear under
+  their players' squads.
+
+── MORE DEMO DATA ──
+Extend the existing seed script (artifacts/api-server/src/scripts/
+seed-academy-demo.ts) — same rules it already follows: "Demo " prefix on
+everything it creates, deletes only its own rows, refuses if non-demo rows
+could be affected. Add: enough player fees that every squad group has a
+realistic mix (paid, due, waived — roughly 10-12 fees total across squads
+including at least one for an unassigned player), 3 demo salaries (e.g. two
+coaches and an admin, mixed due/paid), and 3 demo other payments (e.g. pitch
+rental, equipment, transport — mixed statuses), with a mix of Arabic and
+English payee names and labels. DO NOT run the script against the database —
+update it, tell me the exact command, and I will run it. The script's final
+summary must print the expected per-category totals so I can compare them
+against the new overview.
+
+── RULES ──
+Additive only; no changes to existing tables or to Squads, Players,
+Attendance, Schedule, Recordings, Announcements, dashboard, /admin, or
+public routes. The known full-suite test drift stays documented and
+untouched.
+
+── VALIDATION before closing ──
+Focused Academy API tests on the disposable schema-only database, extended
+for expenses: CRUD, owner-only 403 for a coach on every fee and expense
+endpoint, cross-academy rejection. Typecheck and the SoccerWatch suite pass.
+Preview-check what you can; list explicitly every signed-in state I must
+verify myself.
+
+End with the standard report + per-file diff summary with one-line
+descriptions.

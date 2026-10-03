@@ -1198,6 +1198,860 @@ export interface AcademySummary {
   recordingCount: number;
 }
 
+export type AcademyMemberRole = typeof AcademyMemberRole[keyof typeof AcademyMemberRole];
+
+
+export const AcademyMemberRole = {
+  owner: 'owner',
+  coach: 'coach',
+} as const;
+
+export interface AcademyConsoleMembership {
+  academyId: number;
+  academyName: string;
+  /** @minItems 1 */
+  roles: AcademyMemberRole[];
+}
+
+export interface AcademyConsoleDashboard {
+  academyId: number;
+  academyName: string;
+  /** @minItems 1 */
+  roles: AcademyMemberRole[];
+  /** @minimum 0 */
+  squadCount: number;
+  /** @minimum 0 */
+  activePlayerCount: number;
+  /** @minimum 0 */
+  upcomingSessionCount: number;
+}
+
+export interface AcademySquadSummary {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  academyId: number;
+  name: string;
+  /** @nullable */
+  ageGroup: string | null;
+  /** @nullable */
+  description: string | null;
+  /** @minimum 0 */
+  activePlayerCount: number;
+}
+
+export interface AcademySquadInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  ageGroup?: string | null;
+  /**
+     * @maxLength 1000
+     * @nullable
+     */
+  description?: string | null;
+}
+
+export interface AcademySquadUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name?: string;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  ageGroup?: string | null;
+  /**
+     * @maxLength 1000
+     * @nullable
+     */
+  description?: string | null;
+}
+
+export interface AcademyPlayerSummary {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  academyId: number;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId: number | null;
+  /** @nullable */
+  squadName: string | null;
+  name: string;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  jerseyNumber: number | null;
+  /** @nullable */
+  position: string | null;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  dateOfBirth: string | null;
+  /** @nullable */
+  guardianPhone: string | null;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  userId: number | null;
+  /** @nullable */
+  linkedUserEmail: string | null;
+  isActive: boolean;
+}
+
+export interface AcademyPlayerInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId?: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  jerseyNumber?: number | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  position?: string | null;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  dateOfBirth?: string | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  guardianPhone?: string | null;
+}
+
+export interface AcademyPlayerUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name?: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId?: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  jerseyNumber?: number | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  position?: string | null;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  dateOfBirth?: string | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  guardianPhone?: string | null;
+  isActive?: boolean;
+  /**
+     * Link an existing Replay account by email; null removes the link; omission leaves it unchanged.
+     * @nullable
+     */
+  linkedUserEmail?: string | null;
+}
+
+export type AcademySessionSummaryType = typeof AcademySessionSummaryType[keyof typeof AcademySessionSummaryType];
+
+
+export const AcademySessionSummaryType = {
+  training: 'training',
+  match: 'match',
+} as const;
+
+export interface AcademyAttendanceCounts {
+  /** @minimum 0 */
+  present: number;
+  /** @minimum 0 */
+  absent: number;
+  /** @minimum 0 */
+  late: number;
+  /** @minimum 0 */
+  excused: number;
+}
+
+export interface AcademySessionSummary {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  academyId: number;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId: number | null;
+  /** @nullable */
+  squadName: string | null;
+  type: AcademySessionSummaryType;
+  startsAt: string;
+  /** @nullable */
+  endsAt: string | null;
+  location: string;
+  /** @nullable */
+  opponent: string | null;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     * @nullable
+     */
+  ownScore: number | null;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     * @nullable
+     */
+  opponentScore: number | null;
+  /** @nullable */
+  notes: string | null;
+  createdAt: string;
+  attendanceCounts: AcademyAttendanceCounts;
+}
+
+/**
+ * @nullable
+ */
+export type AcademyAttendancePlayerStatus = typeof AcademyAttendancePlayerStatus[keyof typeof AcademyAttendancePlayerStatus] | null;
+
+
+export const AcademyAttendancePlayerStatus = {
+  present: 'present',
+  absent: 'absent',
+  late: 'late',
+  excused: 'excused',
+} as const;
+
+export interface AcademyAttendancePlayer {
+  /** @minimum 1 */
+  playerId: number;
+  playerName: string;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  jerseyNumber: number | null;
+  /** @nullable */
+  status: AcademyAttendancePlayerStatus;
+}
+
+export interface AcademyAttendanceSheet {
+  /** @minimum 1 */
+  sessionId: number;
+  players: AcademyAttendancePlayer[];
+}
+
+export type AcademyAttendanceStatusAssignmentStatus = typeof AcademyAttendanceStatusAssignmentStatus[keyof typeof AcademyAttendanceStatusAssignmentStatus];
+
+
+export const AcademyAttendanceStatusAssignmentStatus = {
+  present: 'present',
+  absent: 'absent',
+  late: 'late',
+  excused: 'excused',
+} as const;
+
+export interface AcademyAttendanceStatusAssignment {
+  /** @minimum 1 */
+  playerId: number;
+  status: AcademyAttendanceStatusAssignmentStatus;
+}
+
+export interface AcademyAttendanceInput {
+  entries: AcademyAttendanceStatusAssignment[];
+}
+
+export interface AcademyConsoleRecording {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  fieldId: number;
+  court: string;
+  /** @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ */
+  date: string;
+  timeSlot: string;
+  duration: string;
+  /** @nullable */
+  score: string | null;
+  videoUrl: string;
+  /** @nullable */
+  highlightMoment: string | null;
+  /** @nullable */
+  fieldName: string | null;
+}
+
+export interface AcademyAnnouncementSummary {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  academyId: number;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId: number | null;
+  /** @nullable */
+  squadName: string | null;
+  title: string;
+  body: string;
+  /** @minimum 1 */
+  createdBy: number;
+  authorName: string;
+  createdAt: string;
+}
+
+export interface AcademyAnnouncementInput {
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  title: string;
+  /**
+     * @minLength 1
+     * @maxLength 10000
+     */
+  body: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId?: number | null;
+}
+
+export interface AcademyAnnouncementUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  title?: string;
+  /**
+     * @minLength 1
+     * @maxLength 10000
+     */
+  body?: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId?: number | null;
+}
+
+export interface AcademyFinanceAttentionPlayer {
+  /** @minimum 1 */
+  id: number;
+  name: string;
+  /** @minimum 1 */
+  squadId: number;
+  squadName: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  expiresOn: string;
+  /** @minimum 0 */
+  monthsOwed: number;
+  /** @minimum 0 */
+  outstandingFils: number;
+}
+
+export interface AcademyFinanceAttentionPayment {
+  /** @minimum 1 */
+  id: number;
+  category: string;
+  label: string;
+  /** @minimum 1 */
+  amountFils: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  occurredOn: string;
+}
+
+export interface AcademyFinanceDashboard {
+  /**
+     * Current calendar month in Asia/Amman.
+     * @pattern ^\d{4}-\d{2}$
+     */
+  month: string;
+  /** @minimum 0 */
+  collectedFils: number;
+  /** @minimum 0 */
+  spentFils: number;
+  netFils: number;
+  /** @minimum 0 */
+  unpaidBillsCount: number;
+  expiredPlayers: AcademyFinanceAttentionPlayer[];
+  expiringPlayers: AcademyFinanceAttentionPlayer[];
+  unpaidPayments: AcademyFinanceAttentionPayment[];
+}
+
+export interface AcademyFinanceTeam {
+  /** @minimum 1 */
+  id: number;
+  name: string;
+  /** @minimum 0 */
+  monthlyFeeFils: number;
+  /** @minimum 0 */
+  playerCount: number;
+  /** @minimum 0 */
+  behindCount: number;
+  /** @minimum 0 */
+  outstandingFils: number;
+}
+
+export interface AcademyFinanceTeamInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+  /** @minimum 0 */
+  monthlyFeeFils: number;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  ageGroup?: string | null;
+  /**
+     * @maxLength 1000
+     * @nullable
+     */
+  description?: string | null;
+}
+
+export interface AcademyFinanceTeamMonthlyFeeUpdate {
+  /** @minimum 0 */
+  monthlyFeeFils: number;
+}
+
+export type AcademyFinancePlayerSubscriptionStatus = typeof AcademyFinancePlayerSubscriptionStatus[keyof typeof AcademyFinancePlayerSubscriptionStatus];
+
+
+export const AcademyFinancePlayerSubscriptionStatus = {
+  no_subscription: 'no_subscription',
+  paid: 'paid',
+  expiring: 'expiring',
+  expired: 'expired',
+} as const;
+
+export interface AcademyFinancePlayer {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  squadId: number;
+  name: string;
+  isActive: boolean;
+  /** @minimum 0 */
+  monthlyFeeFils: number;
+  /** @minimum 0 */
+  monthlyDiscountFils: number;
+  /** @minimum 0 */
+  effectiveMonthlyFeeFils: number;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  subscriptionExpiresOn: string | null;
+  subscriptionStatus: AcademyFinancePlayerSubscriptionStatus;
+  /** @minimum 0 */
+  monthsOwed: number;
+  /** @minimum 0 */
+  subscriptionDebtFils: number;
+  /** @minimum 0 */
+  unpaidFeesFils: number;
+  /** @minimum 0 */
+  outstandingFils: number;
+}
+
+export interface AcademyFinancePlayerInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+  /** @minimum 0 */
+  monthlyDiscountFils?: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  subscriptionExpiresOn: string;
+}
+
+export interface AcademyFinancePlayerBillingUpdate {
+  /** @minimum 0 */
+  monthlyDiscountFils?: number;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  subscriptionExpiresOn?: string | null;
+}
+
+export interface AcademyFinanceRenewalInput {
+  /**
+     * @minimum 1
+     * @maximum 12
+     */
+  months: number;
+}
+
+export interface AcademyFinanceRenewal {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  playerId: number;
+  /**
+     * @minimum 1
+     * @maximum 12
+     */
+  months: number;
+  /** @minimum 0 */
+  amountFils: number;
+  /** @minimum 0 */
+  effectiveMonthlyFeeFils: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  previousExpiresOn: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  newExpiresOn: string;
+  paidAt: string;
+}
+
+export type AcademyFinanceFeeStatus = typeof AcademyFinanceFeeStatus[keyof typeof AcademyFinanceFeeStatus];
+
+
+export const AcademyFinanceFeeStatus = {
+  due: 'due',
+  paid: 'paid',
+  waived: 'waived',
+} as const;
+
+export interface AcademyFinanceFee {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  playerId: number;
+  label: string;
+  /** @minimum 0 */
+  amountFils: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  dueDate: string;
+  status: AcademyFinanceFeeStatus;
+  /** @nullable */
+  paidAt: string | null;
+  /** @nullable */
+  note: string | null;
+}
+
+export interface AcademyFinanceFeeInput {
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  label: string;
+  /** @minimum 1 */
+  amountFils: number;
+  /**
+     * Defaults to the current date in Asia/Amman when omitted.
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  dueDate?: string | null;
+  /**
+     * @maxLength 1000
+     * @nullable
+     */
+  note?: string | null;
+}
+
+export type AcademyFinanceFeePaymentInputStatus = typeof AcademyFinanceFeePaymentInputStatus[keyof typeof AcademyFinanceFeePaymentInputStatus];
+
+
+export const AcademyFinanceFeePaymentInputStatus = {
+  paid: 'paid',
+} as const;
+
+export interface AcademyFinanceFeePaymentInput {
+  status: AcademyFinanceFeePaymentInputStatus;
+}
+
+export interface AcademyFinanceStaff {
+  /** @minimum 1 */
+  id: number;
+  name: string;
+  role: string;
+  /** @minimum 0 */
+  monthlySalaryFils: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  nextSalaryDate: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  contractEndDate: string;
+}
+
+export interface AcademyFinanceStaffInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  role: string;
+  /** @minimum 1 */
+  monthlySalaryFils: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  nextSalaryDate: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  contractEndDate: string;
+}
+
+export interface AcademyFinanceStaffUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name?: string;
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  role?: string;
+  /** @minimum 1 */
+  monthlySalaryFils?: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  nextSalaryDate?: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  contractEndDate?: string;
+}
+
+export type AcademyFinanceOtherPaymentStatus = typeof AcademyFinanceOtherPaymentStatus[keyof typeof AcademyFinanceOtherPaymentStatus];
+
+
+export const AcademyFinanceOtherPaymentStatus = {
+  paid: 'paid',
+  unpaid: 'unpaid',
+} as const;
+
+export interface AcademyFinanceOtherPayment {
+  /** @minimum 1 */
+  id: number;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  staffId: number | null;
+  category: string;
+  label: string;
+  /** @minimum 1 */
+  amountFils: number;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  occurredOn: string;
+  status: AcademyFinanceOtherPaymentStatus;
+  /** @nullable */
+  paidAt: string | null;
+}
+
+export interface AcademyFinanceSalaryPayment {
+  staff: AcademyFinanceStaff;
+  payment: AcademyFinanceOtherPayment;
+}
+
+export interface AcademyFinanceOtherPaymentList {
+  /** @pattern ^\d{4}-\d{2}$ */
+  month: string;
+  /** @minimum 0 */
+  paidTotalFils: number;
+  /** @minimum 0 */
+  unpaidTotalFils: number;
+  payments: AcademyFinanceOtherPayment[];
+}
+
+export type AcademyFinanceOtherPaymentInputStatus = typeof AcademyFinanceOtherPaymentInputStatus[keyof typeof AcademyFinanceOtherPaymentInputStatus];
+
+
+export const AcademyFinanceOtherPaymentInputStatus = {
+  paid: 'paid',
+  unpaid: 'unpaid',
+} as const;
+
+export interface AcademyFinanceOtherPaymentInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  category: string;
+  /**
+     * @minLength 1
+     * @maxLength 240
+     */
+  label: string;
+  /** @minimum 1 */
+  amountFils: number;
+  status: AcademyFinanceOtherPaymentInputStatus;
+}
+
+export type AcademyFinanceOtherPaymentStatusUpdateStatus = typeof AcademyFinanceOtherPaymentStatusUpdateStatus[keyof typeof AcademyFinanceOtherPaymentStatusUpdateStatus];
+
+
+export const AcademyFinanceOtherPaymentStatusUpdateStatus = {
+  paid: 'paid',
+} as const;
+
+export interface AcademyFinanceOtherPaymentStatusUpdate {
+  status: AcademyFinanceOtherPaymentStatusUpdateStatus;
+}
+
+export interface AcademyFinanceCategory {
+  /** @minimum 1 */
+  id: number;
+  name: string;
+}
+
+export interface AcademyFinanceCategoryList {
+  builtIn: string[];
+  custom: AcademyFinanceCategory[];
+}
+
+export interface AcademyFinanceCategoryInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+}
+
+export type AcademySessionInputType = typeof AcademySessionInputType[keyof typeof AcademySessionInputType];
+
+
+export const AcademySessionInputType = {
+  training: 'training',
+  match: 'match',
+} as const;
+
+export interface AcademySessionInput {
+  type: AcademySessionInputType;
+  startsAt: string;
+  /** @nullable */
+  endsAt?: string | null;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId?: number | null;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  location: string;
+  /**
+     * Only accepted for match sessions.
+     * @maxLength 160
+     * @nullable
+     */
+  opponent?: string | null;
+  /**
+     * @maxLength 2000
+     * @nullable
+     */
+  notes?: string | null;
+}
+
+export type AcademySessionUpdateType = typeof AcademySessionUpdateType[keyof typeof AcademySessionUpdateType];
+
+
+export const AcademySessionUpdateType = {
+  training: 'training',
+  match: 'match',
+} as const;
+
+export interface AcademySessionUpdate {
+  type?: AcademySessionUpdateType;
+  startsAt?: string;
+  /** @nullable */
+  endsAt?: string | null;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId?: number | null;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  location?: string;
+  /**
+     * Only accepted for match sessions; null clears the opponent.
+     * @maxLength 160
+     * @nullable
+     */
+  opponent?: string | null;
+  /**
+     * Set both scores for a match, or set both to null to clear the result.
+     * @minimum 0
+     * @maximum 2147483647
+     * @nullable
+     */
+  ownScore?: number | null;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     * @nullable
+     */
+  opponentScore?: number | null;
+  /**
+     * @maxLength 2000
+     * @nullable
+     */
+  notes?: string | null;
+}
+
+export interface AcademyMemberListItem {
+  userId: number;
+  name: string;
+  email: string;
+  /** @minItems 1 */
+  roles: AcademyMemberRole[];
+}
+
+export interface AcademyMemberSummary {
+  userId: number;
+  name: string;
+  email: string;
+  /** @minItems 1 */
+  roles: AcademyMemberRole[];
+}
+
+export interface AcademyMemberAssignment {
+  email: string;
+  role: AcademyMemberRole;
+}
+
 export interface CreateAcademyInput {
   name: string;
   fieldId: number;
