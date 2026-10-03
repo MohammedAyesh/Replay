@@ -7,6 +7,22 @@ import { useLocale } from "./context";
  * claim-strings.ts: two objects, one hook, English as the type.
  */
 const en = {
+  /** The page around the flow: header, ways in and out, shared picks. */
+  find: {
+    title: "Find yourself",
+    back: "Back",
+    signedOutTitle: "Find yourself in this match",
+    signedOutDesc: "Make an account or sign in, and we'll bring you straight back here.",
+    signUp: "Sign up",
+    signIn: "Sign in",
+    seeReport: "See my match report",
+    alsoPickedBy: (names: string) => `Also picked by ${names}`,
+    pickedByYou: "You picked this person",
+    sharedPick: (names: string) => `${names} already picked this person. Is it you too? You'll both be counted.`,
+    sharedYes: "Yes, it's me",
+    sharedNo: "No",
+    progress: (n: number, of: number) => `${n} of ${of}`,
+  },
   common: {
     loading: "Loading the game…",
     loadingChunk: "Loading the next 10 minutes…",
@@ -296,6 +312,21 @@ const en = {
 type GameStrings = typeof en;
 
 const ar: GameStrings = {
+  find: {
+    title: "لاقي حالك",
+    back: "رجوع",
+    signedOutTitle: "لاقي حالك بهالماتش",
+    signedOutDesc: "اعمل حساب أو سجّل دخول، ورح نرجّعك لهون على طول.",
+    signUp: "اعمل حساب",
+    signIn: "سجّل دخول",
+    seeReport: "شوف تقرير الماتش",
+    alsoPickedBy: (names: string) => `${names} اختاره كمان`,
+    pickedByYou: "إنت اخترت هالشخص",
+    sharedPick: (names: string) => `${names} اختار هالشخص قبلك. إنت كمان؟ رح تنحسبوا إنتو الثنين.`,
+    sharedYes: "آه، أنا",
+    sharedNo: "لا",
+    progress: (n: number, of: number) => `${n} من ${of}`,
+  },
   common: {
     loading: "جارٍ تحميل المباراة…",
     loadingChunk: "جارٍ تحميل العشر دقائق التالية…",

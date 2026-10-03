@@ -556,7 +556,7 @@ function Overview({ room, copy, colors, names, now, inviteText, onShare, findRec
   const post = ["processing", "ready", "expired"].includes(room.phase);
   return (
     <>
-      {post && findRecordingId !== null && <FindYourselfCard recordingId={findRecordingId} copy={copy} />}
+      {post && findRecordingId !== null && <FindYourselfCard recordingId={findRecordingId} matchCode={room.code} copy={copy} />}
       {room.booking && <BookingPaymentCard room={room} copy={copy} />}
       {room.phase === "cancelled" && <Card><p className="font-bold">{copy.phase.cancelled}</p></Card>}
       {room.phase === "failed" && <Card><p className="font-bold">{copy.phase.failed}</p></Card>}

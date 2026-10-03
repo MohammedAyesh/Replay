@@ -4,6 +4,7 @@ import { ArrowRight, ChevronRight, Play } from "lucide-react";
 import { useTileCopy, type TileStrings } from "@/i18n/stat-tile-strings";
 import type { StatTile, TileMetric } from "@/lib/stat-tile";
 import { cn } from "@/lib/utils";
+import { findPath } from "@/lib/find-nav";
 
 /**
  * Home's stat tile: one card under "Your next match", picked by the server
@@ -414,7 +415,7 @@ function NotFound({ tile, c, now }: P<"notFound">) {
               <p className="text-xs font-semibold">{c.found(tile.found, players)}</p>
             </div>
           )}
-          <Cta href={`/find/${tile.findRecordingId}`}>{c.findYourself}</Cta>
+          <Cta href={findPath(tile.findRecordingId, tile.match.code)}>{c.findYourself}</Cta>
         </>}
         right={<div className="flex flex-col gap-3">
           {[
@@ -841,7 +842,7 @@ function Friends({ tile, c, now }: P<"friends">) {
           <Eyebrow>{matchWhen(tile.match, c, now)} · {tile.match.fieldName}</Eyebrow>
           <Head>{c.friendsHead(tile.peers.map((p) => p.name))}</Head>
           <Body>{c.friendsBody}</Body>
-          <Cta href={`/find/${tile.findRecordingId}`}>{c.claimStats}</Cta>
+          <Cta href={findPath(tile.findRecordingId, tile.match.code)}>{c.claimStats}</Cta>
         </>}
         right={<div>
           <div>
@@ -882,7 +883,7 @@ function Unclaimed({ tile, c, now }: P<"unclaimed">) {
           <Eyebrow>{matchWhen(tile.match, c, now)} · {tile.match.fieldName}</Eyebrow>
           <Head>{c.nobodyHead}</Head>
           <Body>{c.nobodyBody}</Body>
-          <Cta href={`/find/${tile.findRecordingId}`}>{c.claimMatch}</Cta>
+          <Cta href={findPath(tile.findRecordingId, tile.match.code)}>{c.claimMatch}</Cta>
         </>}
         right={<div className="grid grid-cols-2 gap-3">
           {cells.map(([label, unit]) => (

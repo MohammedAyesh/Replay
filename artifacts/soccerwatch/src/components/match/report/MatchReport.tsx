@@ -23,6 +23,7 @@ import {
 } from "@/lib/match-api";
 import { cameraGaps, clock, minuteMark } from "@/lib/match-report";
 import { cn } from "@/lib/utils";
+import { findPath } from "@/lib/find-nav";
 import { GameBar, Num, Section, visibleColour } from "./ReportParts";
 import {
   Disclosure,
@@ -96,7 +97,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
       {slots.booking && <div className="pt-4">{slots.booking}</div>}
       {slots.rsvp && <div className="pt-4">{slots.rsvp}</div>}
       <FootageBlock room={room} copy={copy} r={r} primary={primary === "watch"} />
-      {canFind && findRecordingId !== null && <FindBlock recordingId={findRecordingId} r={r} />}
+      {canFind && findRecordingId !== null && <FindBlock recordingId={findRecordingId} matchCode={room.code} r={r} />}
 
       {room.stats.enabled && (
         room.stats.unlocked ? (
@@ -345,12 +346,12 @@ function FootageBlock({ room, copy, r, primary }: { room: MatchRoom; copy: Copy;
   );
 }
 
-function FindBlock({ recordingId, r }: { recordingId: number; r: R }) {
+function FindBlock({ recordingId, matchCode, r }: { recordingId: number; matchCode: string; r: R }) {
   return (
     <Section eyebrow={r.you}>
       <p className="font-display text-xl font-bold leading-tight">{r.findTitle}</p>
       <p className="text-sm leading-6 text-muted-text">{r.findDesc}</p>
-      <Link href={`/find/${recordingId}`} className="flex min-h-12 items-center justify-center rounded-full bg-floodlight text-base font-bold text-void" data-testid="link-find-yourself">
+      <Link href={findPath(recordingId, matchCode)} className="flex min-h-12 items-center justify-center rounded-full bg-floodlight text-base font-bold text-void" data-testid="link-find-yourself">
         {r.findCta}
       </Link>
     </Section>
@@ -502,7 +503,7 @@ function SquadBlock({ room, copy, r, colors, claimedIds, findRecordingId }: {
   const visible = [...room.players].filter((player) => player.rsvp !== "out").sort((a, b) => order[a.rsvp] - order[b.rsvp]);
   const captainId = room.captain?.userId ?? null;
   const unclaimed = claimedIds ? visible.filter((player) => player.rsvp === "in" && !claimedIds.has(player.id)).length : 0;
-  const findUrl = findRecordingId !== null ? `${window.location.origin}/find/${findRecordingId}` : null;
+  const findUrl = findRecordingId !== null ? `${window.location.origin}${findPath(findRecordingId, room.code)}` : null;
   return (
     <Section eyebrow={r.squad} aside={<Num>{copy.countIn(room.counts.in, room.counts.needed)}</Num>}>
       <ul className="flex flex-col divide-y divide-[#1B2236]">

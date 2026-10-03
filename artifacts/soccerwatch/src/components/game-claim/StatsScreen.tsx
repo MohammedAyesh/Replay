@@ -4,7 +4,7 @@ import { chunkAt, G2L, mmss } from "@/lib/game-claim/model";
 import { youIds, type Ctx } from "@/lib/game-claim/claim";
 import { computeStats, peopleAt, type ZoneKey } from "@/lib/game-claim/stats";
 import type { GameStrings } from "@/i18n/game-strings";
-import { Btn, Eyebrow, Lede, Row, Section, Stat, Title } from "./bits";
+import { Btn, Eyebrow, Lede, Section, Stat, Title } from "./bits";
 import { ballAt, fetchPlay, loadBall, type Lab, type Play } from "@/lib/game-claim/play";
 import { ReelSection } from "./Reel";
 import { TeamsSection } from "./TeamsSection";
@@ -27,7 +27,8 @@ export function StatsScreen({
   now,
   eyebrow,
   onBack,
-  onExport,
+  onReport,
+  reportLabel,
   ensure,
   recordingId,
   videoUrl,
@@ -44,7 +45,9 @@ export function StatsScreen({
   now: () => number;
   eyebrow: string;
   onBack: () => void;
-  onExport: () => void;
+  /** The match report, which also shows these stats; null when the match is unknown. */
+  onReport: (() => void) | null;
+  reportLabel: string;
   ensure: (k: number) => Promise<unknown>;
 }) {
   const c = copy.stats;
@@ -252,10 +255,10 @@ export function StatsScreen({
           </p>
         </>
       )}
-      <Row>
+      <div className="flex flex-col gap-2.5">
+        {onReport && <Btn kind="primary" testId="button-stats-see-report" onClick={onReport}>{reportLabel}</Btn>}
         <Btn onClick={onBack}>{c.backToTimeline}</Btn>
-        <Btn onClick={onExport}>{copy.done.download}</Btn>
-      </Row>
+      </div>
     </div>
   );
 }

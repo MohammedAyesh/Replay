@@ -471,7 +471,8 @@ function FindQuickRedirect() {
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    if (id) setLocation(`/find/${encodeURIComponent(id)}`, { replace: true });
+    // Keep ?match=... so the match is still known on /find.
+    if (id) setLocation(`/find/${encodeURIComponent(id)}${window.location.search}`, { replace: true });
   }, [id, setLocation]);
 
   return null;

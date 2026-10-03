@@ -770,6 +770,18 @@ export function pick(ctx: Ctx, k: number, cid: string, atTime = chunkMeta(ctx, k
   ctx.S.autoAdded = tw.length;
 }
 
+/**
+ * "Not me": forget who was picked as you in chunk k -- the group, its twins,
+ * extras, taps and roster parts -- so the rejected person is not saved as you.
+ * The chunk stays playable (not skipped); the next pick fills it again.
+ */
+export function clearPick(ctx: Ctx, k: number): void {
+  const y = Y(ctx, k);
+  Object.assign(y, { cid: null, out: [], added: [], dropped: [], extra: [], seen: [], manual: [], rosterParts: [] });
+  ctx.S.qi = 0;
+  ctx.S.autoAdded = 0;
+}
+
 /** Advance to the next chunk in the rotated playable order; 'done' at its end. */
 export function afterChunk(ctx: Ctx): "next" | "done" {
   let nextIndex = ctx.S.oi + 1;
