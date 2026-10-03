@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   daysBetween,
+  matchStrain,
+  strainZone,
   mondayOf,
   pickStatTile,
   pickStatTiles,
@@ -210,5 +212,39 @@ describe("the carousel", () => {
 
   it("is empty when nothing fits", () => {
     expect(pickStatTiles(base())).toEqual([]);
+  });
+});
+
+describe("match strain", () => {
+  it("climbs towards 21 and each point is harder to earn", () => {
+    const easy = matchStrain(2.25, 40)!;
+    const hard = matchStrain(9.84, 113)!;
+    expect(easy.strain).toBeCloseTo(5.4, 1);
+    expect(hard.strain).toBeCloseTo(17.9, 1);
+    expect(matchStrain(12, 90)!.strain).toBeLessThan(21);
+    expect(matchStrain(4, 40)!.strain - matchStrain(2, 40)!.strain).toBeGreaterThan(matchStrain(12, 120)!.strain - matchStrain(10, 120)!.strain);
+  });
+
+  it("estimates calories for a 75 kg player", () => {
+    expect(matchStrain(2.25, 40)!.calories).toBe(340);
+    expect(matchStrain(9.84, 113)!.calories).toBe(1160);
+  });
+
+  it("names the zones the way Whoop does", () => {
+    expect([5, 10, 13.9, 14, 17.9, 18].map(strainZone)).toEqual(["light", "moderate", "moderate", "high", "high", "allOut"]);
+  });
+
+  it("is a tile for the latest match, compared with the one before", () => {
+    const history = [
+      { match: match(1, "2026-09-29 20:00"), stats: stats({ distanceKm: 4.2, minutes: 40 }) },
+      { match: match(2, "2026-09-25 22:00"), stats: stats({ distanceKm: 2.25, minutes: 40 }) },
+    ];
+    const tile = scoreTiles(base({ history })).find((t) => t.tile.kind === "strain")?.tile;
+    expect(tile).toMatchObject({ kind: "strain", zone: "moderate", minutes: 40, previous: 5.4 });
+  });
+
+  it("needs a distance and some minutes", () => {
+    expect(matchStrain(0, 40)).toBeNull();
+    expect(matchStrain(3, 5)).toBeNull();
   });
 });

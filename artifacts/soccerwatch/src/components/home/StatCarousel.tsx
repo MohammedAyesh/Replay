@@ -62,7 +62,7 @@ export function StatCarousel({ tiles }: { tiles: StatTile[] }) {
             role="group"
             aria-roledescription="slide"
             aria-label={copy.slideLabel(index + 1, tiles.length)}
-            className="flex shrink-0 basis-[88%] snap-start sm:basis-[80%] [&>section]:w-full"
+            className="flex shrink-0 basis-[88%] snap-start sm:basis-[360px] [&>*]:w-full"
           >
             <StatTileCard tile={tile} />
           </div>

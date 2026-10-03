@@ -1,11 +1,12 @@
 import { useLocale } from "./context";
-import type { TileMetric } from "@/lib/stat-tile";
+import type { StrainZone, TileMetric } from "@/lib/stat-tile";
 
 /**
- * Copy for the Home stat tiles (components/home/StatTile.tsx). Numbers come
- * in already formatted; the page wraps them LTR so an Arabic sentence never
- * reorders "24.3" or "41:12". Dates and days come in already written in the
- * reader's language.
+ * Copy for the Home stat tiles (components/home/StatTile.tsx), written for the
+ * Whoop-style cards: a short title, one sentence under the visual and three
+ * labels along the bottom. Numbers come in already formatted and the page
+ * wraps them LTR, so an Arabic sentence never reorders "24.3" or "9′48".
+ * The Arabic is the app's Levantine voice: "ماتش", "هالشهر", "شوف".
  */
 
 const enWord = (n: number) => ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"][n] ?? String(n);
@@ -16,35 +17,21 @@ const ordinalEn = (n: number) => {
   return `${n}${({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th"}`;
 };
 
+/** Arabic counted nouns: 1 and 11+ singular, 2 dual, 3–10 plural. */
+const arCount = (n: number, [one, two, few]: [string, string, string]) => (n === 2 ? two : n >= 3 && n <= 10 && Number.isInteger(n) ? few : one);
+/** "ماتش واحد", "ماتشين", "5 ماتشات", "12 ماتش": Arabic drops the number for one and two. */
+const arN = (n: number, forms: [string, string, string], oneWord = "واحد") => (n === 1 ? `${forms[0]} ${oneWord}` : n === 2 ? forms[1] : `${n} ${arCount(n, forms)}`);
+const MATCH: [string, string, string] = ["ماتش", "ماتشين", "ماتشات"];
+/** A name or place set apart from the sentence's direction, so "Laith" or "Jordan Galaxy" never reorders the Arabic around it. */
+const iso = (text: string) => `\u2068${text}\u2069`;
+/** Names joined the Arabic way, with the "و" kept apart from Latin names. */
+const arList = (names: string[]) => (names.length <= 1 ? iso(names[0] ?? "") : `${names.slice(0, -1).map(iso).join("، ")} و ${iso(names.at(-1)!)}`);
+
 const en = {
   units: { distanceKm: "km", topSpeedKmh: "km/h", touches: "touches", passesCompleted: "passes", dribblesWon: "dribbles", goals: "goals", shots: "shots" } as Record<TileMetric, string>,
-  metric: { distanceKm: "Distance", topSpeedKmh: "Top speed", touches: "Touches", passesCompleted: "Passes completed", dribblesWon: "Dribbles won", goals: "Goals", shots: "Shots on target" } as Record<TileMetric, string>,
-  metricShort: { distanceKm: "Distance", topSpeedKmh: "Top speed", touches: "Touches", passesCompleted: "Passes", dribblesWon: "Dribbles", goals: "Goals", shots: "Shots" } as Record<TileMetric, string>,
-  small: { distanceKm: "distance", topSpeedKmh: "top speed", touches: "touches", passesCompleted: "passes", dribblesWon: "dribbles won", goals: "goals", shots: "shots" } as Record<TileMetric, string>,
-  ordinal: ordinalEn,
-  you: "You",
-  matchReport: "Match report",
-  matchAt: (day: string, time: string) => `${day} ${time}`,
-
-  lastMatchEyebrow: "Your last match",
-  lastMatchHead: {
-    distanceKm: "You ran further than anyone on the pitch.",
-    topSpeedKmh: "Nobody on the pitch was faster than you.",
-    touches: "Nobody saw more of the ball than you.",
-    passesCompleted: "You completed more passes than anyone.",
-    dribblesWon: "You beat more players than anyone.",
-    goals: "You scored more than anyone on the pitch.",
-    shots: "Nobody had more shots than you.",
-  } as Record<TileMetric, string>,
-  lastMatchMeta: (field: string, when: string, players: number) => `${field} · ${when}${players ? ` · ${players} players` : ""}`,
-  pitchAverage: "Pitch average",
-  numberOne: (metric: string) => `#1 ${metric}`,
-
-  newBest: "New personal best",
-  bestSpeedBody: (at: string | null, day: string, time: string) => at ? `Your fastest run yet, ${at} into ${day}'s ${time} match.` : `Your fastest run yet, in ${day}'s ${time} match.`,
-  fasterAtField: (n: number, field: string) => n === 0 ? `Nobody at ${field} has gone faster.` : n === 1 ? `Only one player at ${field} has gone faster.` : `Only ${enWord(n)} players at ${field} have gone faster.`,
-  bestBody: { distanceKm: "in one match", touches: "touches in one match", passesCompleted: "passes completed in one match", dribblesWon: "dribbles won in one match", goals: "goals in one match", topSpeedKmh: "", shots: "shots in one match" } as Record<TileMetric, string>,
-  bestOn: (day: string, time: string) => `on ${day} at ${time}.`,
+  metric: { distanceKm: "Distance", topSpeedKmh: "Top speed", touches: "Touches", passesCompleted: "Passes", dribblesWon: "Dribbles won", goals: "Goals", shots: "Shots on target" } as Record<TileMetric, string>,
+  /** Lower-case metric names for the small labels along the bottom. */
+  small: { distanceKm: "distance", topSpeedKmh: "top speed", touches: "touches", passesCompleted: "passes", dribblesWon: "dribbles won", goals: "goals", shots: "shots on target" } as Record<TileMetric, string>,
   /** The word beside a big number: "17 passes", "1 goal", "4.8 km". */
   bigUnit: (metric: TileMetric, n: number): string => {
     if (metric === "distanceKm") return "km";
@@ -52,181 +39,245 @@ const en = {
     const one = n === 1;
     return ({ touches: one ? "touch" : "touches", passesCompleted: one ? "pass" : "passes", dribblesWon: one ? "dribble" : "dribbles", goals: one ? "goal" : "goals", shots: one ? "shot" : "shots" } as Record<string, string>)[metric];
   },
-  /** The small line under "17 passes", before "on Tuesday at 20:00." */
-  bestRest: { distanceKm: "covered in one match", touches: "in one match", passesCompleted: "completed in one match", dribblesWon: "won in one match", goals: "scored in one match", topSpeedKmh: "", shots: "on target in one match" } as Record<TileMetric, string>,
-  oldBest: (value: string, date: string) => `Your old best: ${value}, ${date}`,
-  watchRun: "Watch the run",
-  yourSprint: "Your sprint",
-  clipNote: "the full match, from the start of your run",
+  ordinal: ordinalEn,
+  you: "You",
+  m: "m",
+  min: "min",
+  s: "s",
+  of: (a: string, b: string) => `${a} of ${b}`,
+  players: (n: number): string => (n === 1 ? "player" : "players"),
+  matches: (n: number): string => (n === 1 ? "match" : "matches"),
 
-  rivalAhead: (name: string, gap: string) => `${name} is ${gap} ahead of you this month.`,
-  rivalLead: (field: string) => `You lead ${field} this month.`,
-  rivalAheadBody: "An average match from you puts you past them.",
-  rivalLeadBody: (name: string, gap: string) => `${name} is ${gap} behind. An average match from you keeps you clear.`,
-  distanceThisMonth: "Distance, this month",
-  allPlayers: (n: number) => `All ${n}`,
-  bookNext: "Book your next match",
-
-  formEyebrow: "Your form",
-  formHead: (metric: "distanceKm" | "topSpeedKmh" | "touches", n: number) => {
-    const runs = `${cap(enWord(n))} matches running`;
-    return metric === "distanceKm" ? `${runs}, you've covered more ground.` : metric === "topSpeedKmh" ? `${runs}, you've got faster.` : `${runs}, you've seen more of the ball.`;
+  strain: {
+    title: "Match strain",
+    zone: { light: "Light", moderate: "Moderate", high: "High", allOut: "All out" } as Record<StrainZone, string>,
+    zoneShort: { light: "Light", moderate: "Moderate", high: "High", allOut: "All out" } as Record<StrainZone, string>,
+    harder: (prev: string) => `Harder than your last match (${prev}).`,
+    easier: (prev: string) => `Easier than your last match (${prev}).`,
+    same: "As hard as your last match.",
+    first: "From how far and how hard you ran.",
+    calories: "calories, about",
+    run: "run",
+    played: "played",
   },
-  formBody: (latest: string, day: string, diff: string) => `${latest} on ${day}, ${diff} over your average.`,
-  keepGoing: (when: string) => ` Keep it going ${when}.`,
-  allMatches: "See all your matches",
 
-  notFoundTeaser: {
-    topSpeedKmh: (v: string, day: string) => `Someone hit ${v} km/h on ${day}. Was it you?`,
-    distanceKm: (v: string, day: string) => `Someone ran ${v} km on ${day}. Was it you?`,
-    dribblesWon: (v: string, day: string) => `Someone beat ${v} players on ${day}. Was it you?`,
-    shots: (v: string, day: string) => `Someone had ${v} shots on target on ${day}. Was it you?`,
-  } as Partial<Record<TileMetric, (v: string, day: string) => string>>,
-  notFoundPlain: (day: string) => `Your numbers from ${day} are ready.`,
-  notFoundBody: "Your numbers are ready. Pick yourself once, about two minutes, and we follow you through the whole game.",
-  found: (found: number, total: number) => total ? `${found} of ${total} found` : `${found} found`,
-  findYourself: "Find yourself",
-  yourDistance: "Your distance",
-  yourTopSpeed: "Your top speed",
-  yourPlace: "Your place on the pitch",
-
-  passingEyebrow: "Passing",
-  passingHead: (c: number, t: number) => `${c} of your ${t} passes found a teammate.`,
-  passingBest: (pct: string) => `That's ${pct}, your best rate yet.`,
-  passingRate: (pct: string) => `That's ${pct}.`,
-  pitchAveraged: (pct: string) => ` The pitch averaged ${pct}.`,
-  completed: "completed",
-  lost: "lost",
-  watchPasses: "Watch your passes",
-
-  touchesEyebrow: "Touches",
-  touchesHead: (n: number, every: number | null) => every ? `${n} touches. On the ball every ${every} seconds.` : `${n} touches.`,
-  busiest: (from: number, to: number, count: number) => `Your busiest 5 minutes: ${from}′–${to}′, ${count === 1 ? "one touch" : `${count} touches`}`,
-  everyTouch: "Every touch",
-
-  sinceEyebrow: (date: string, n: number) => `Since ${date} · ${n} matches`,
-  milestoneName: (km: number) => km === 21.1 ? "half marathon" : km === 42.2 ? "marathon" : `${km} km`,
-  totalHead: (total: string, field: string | null) => field ? `${total} km run at ${field}.` : `${total} km run with Replay.`,
-  passedHead: (name: string, field: string | null) => `You've now run a ${name}${field ? ` at ${field}` : ""}.`,
-  passedBody: (total: string, n: number) => `${total} km in ${n} matches.`,
-  toGoBody: (name: string, km: string, k: number, day: string) => `A ${name} is ${km} km. ${k === 1 ? `One more match like ${day}'s` : `${cap(enWord(k))} more matches like ${day}'s`} and you're past it.`,
-  toGoBodyKm: (km: string, k: number, day: string) => `${k === 1 ? `One more match like ${day}'s` : `${cap(enWord(k))} more matches like ${day}'s`} takes you past ${km} km.`,
-  eachBlock: "Each block is one match",
-
-  distanceEyebrow: "Distance",
-  strongerHead: "You finished stronger than you started.",
-  strongerBody: (m: string) => `${m} m in the last ten minutes, more than any other spell.`,
-  strongestHead: (from: number, to: number) => `Your strongest ten minutes: ${from}′–${to}′.`,
-  strongestBody: (m: string) => `${m} m in that spell.`,
-
-  ranksHead: "Where you finished on the pitch",
-  players: (n: number) => `${n} players`,
-  fullTable: "Full table",
-  ofN: (v: string, of: number) => `${v} of ${of}`,
-
-  styleEyebrow: (n: number) => `How you play · last ${n} matches`,
-  styleHead: { passer: "More passer than dribbler.", dribbler: "More dribbler than passer.", shooter: "Always looking for goal.", allRounder: "A bit of everything." },
-  styleBody: (touches: number, share: string) => `Of your ${touches} touches, ${share} were passes.`,
-  passes: "Passes",
-  dribbles: "Dribbles",
-  shotsOnTarget: "Shots on target",
-  otherTouches: "Other touches",
-
-  challengeEyebrow: (when: string, time: string, field: string) => `${when} · ${time} · ${field}`,
-  challengeHead: {
-    passesCompleted: (n: string, when: string) => `Complete ${n} passes ${when}.`,
-    dribblesWon: (n: string, when: string) => `Win ${n} dribbles ${when}.`,
-    touches: (n: string, when: string) => `Get ${n} touches ${when}.`,
-    distanceKm: (n: string, when: string) => `Run ${n} km ${when}.`,
+  best: {
+    title: "New personal best",
+    sub: (metric: TileMetric, n: number) => (metric === "topSpeedKmh" ? "km/h, your fastest ever" : `${en.bigUnit(metric, n)}, your best ever`),
+    line: (old: string, date: string) => `The white mark is your old best: ${old} on ${date}.`,
+    old: "old best",
+    more: "more than before",
+    faster: "faster",
+    times: "the old best",
+    fasterAt: "faster at this pitch",
   },
-  challengeBody: (avg: string, target: string) => `You average ${avg}. ${target} beats your best, and you'll find out about 20 minutes after the whistle.`,
-  average: "average",
-  best: "best",
-  target: "target",
-  openMatch: "Open the match",
 
-  dribblesEyebrow: "Dribbles",
-  won: "won",
-  dribblesBody: (tries: number, won: number) => `You took your man on ${tries === 1 ? "once" : `${enWord(tries)} times`} and beat him ${won === 1 ? "once" : enWord(won)}.`,
-  onlyMore: (name: string) => ` Only ${name} won more.`,
-  rankBadge: (rank: number, metric: string) => `#${rank} ${metric}`,
+  last: {
+    title: { distanceKm: "Furthest on the pitch", topSpeedKmh: "Fastest on the pitch", touches: "Most on the ball", passesCompleted: "Most passes on the pitch", dribblesWon: "Most dribbles won", goals: "Top scorer on the pitch", shots: "Most shots on the pitch" } as Record<TileMetric, string>,
+    sub: (claimed: number) => `Number 1 of ${claimed} who claimed`,
+    pitch: "Pitch average",
+    line: (field: string) => `At ${field}. Nobody who claimed the match did better.`,
+  },
 
-  matchesEyebrow: "Matches played",
-  matchesBody: (makes: string | null) => `in three weeks.${makes ? ` ${makes}` : ""}`,
-  makes: (when: string, n: number) => `${cap(when)} makes ${enWord(n)}.`,
-  weekdays: ["M", "T", "W", "T", "F", "S", "S"],
+  rival: {
+    title: (month: string) => `${month}, distance`,
+    ahead: (name: string, gap: string) => `${name} is ${gap} ahead. One match like yours closes it.`,
+    lead: (name: string, gap: string) => `You lead. ${name} is ${gap} behind you.`,
+    rank: "your rank",
+    perMatch: "per match",
+    players: "players this month",
+  },
 
-  shotsEyebrow: "Shots on target",
-  shotsBody: "Tap a time to watch it. The camera doesn't catch every shot.",
-  watchThem: "Watch them",
+  form: {
+    title: { distanceKm: "Your running", topSpeedKmh: "Your top speed", touches: "Your touches" } as Record<"distanceKm" | "topSpeedKmh" | "touches", string>,
+    when: (n: number) => `Last ${n} matches`,
+    sub: (n: number) => `Up ${enWord(n)} matches running`,
+    average: "average",
+    inARow: "in a row",
+    best: "best",
+    dashed: "The dashed line is your average.",
+  },
 
-  trendEyebrow: "Passing · last 3 matches",
-  trendBody: "More of your passes are finding a teammate every match.",
+  notFound: {
+    title: "Your match is waiting",
+    big: (found: number, total: number) => (total ? `${found}/${total}` : String(found)),
+    sub: "found themselves",
+    teaser: {
+      topSpeedKmh: (v: string) => `Someone hit ${v} km/h. Was it you?`,
+      distanceKm: (v: string) => `Someone ran ${v} km. Was it you?`,
+      dribblesWon: (v: string) => `Someone beat ${v} players. Was it you?`,
+      shots: (v: string) => `Someone had ${v} shots on target. Was it you?`,
+    } as Partial<Record<TileMetric, (v: string) => string>>,
+    plain: "Your numbers are ready. Find yourself to see them.",
+    teaserLabel: { topSpeedKmh: "top speed on the pitch", distanceKm: "most run on the pitch", dribblesWon: "most dribbles won", shots: "most shots" } as Partial<Record<TileMetric, string>>,
+    found: "found",
+    toGo: "still to claim",
+    minutes: "to find yourself",
+  },
 
-  teamEyebrow: "Your team",
-  teamHead: (share: number) => share >= 0.45 ? "Half your team's passes went through you." : share >= 0.3 ? "A third of your team's passes went through you." : share >= 0.23 ? "A quarter of your team's passes went through you." : `${Math.round(share * 100)}% of your team's passes went through you.`,
-  teamBody: (mine: number, total: number, next: number | null) => `${mine} of your team's ${total} completed passes.${next !== null ? ` Next most: ${next}.` : ""}`,
+  passing: {
+    title: "Passing",
+    sub: (c: number, t: number) => `${c} of ${t} found a teammate`,
+    best: "Your best rate yet.",
+    pitch: (pct: string) => `The pitch averaged ${pct}.`,
+    plain: "Tap to watch your passes.",
+    pitchAvg: "pitch average",
+    completed: "completed",
+    lost: "lost",
+  },
 
-  duelEyebrow: "Dribbles won",
-  duelHead: (name: string, diff: number, theyWon: boolean) => theyWon ? `${name} beat you by ${enWord(diff)}.` : `You beat ${name} by ${enWord(diff)}.`,
-  duelLine: (won: number, tries: number, pct: number) => `${won} of ${tries} · ${pct}%`,
-  duelNote: "They tried more often. You lost the ball less.",
-  vs: "vs",
+  touches: {
+    title: "Touches",
+    sub: (from: number, to: number) => `Busiest between ${from}′ and ${to}′`,
+    between: "between touches",
+    busiest: "in your busiest 5′",
+    watched: "of the match seen",
+    unit: (n: number): string => (n === 1 ? "touch" : "touches"),
+  },
 
-  weekEyebrow: "This week",
-  weekHead: (n: number, km: string) => `${n} matches, ${km} km.`,
-  touchesLabel: "touches",
-  passesCompleted: "passes completed",
-  dribblesWon: "dribbles won",
-  shotsLabel: "shots on target",
-  of: "of",
+  total: {
+    title: (field: string | null) => (field ? `Distance at ${field}` : "Distance with Replay"),
+    when: (date: string) => `Since ${date}`,
+    sub: (milestone: string) => `of ${milestone}`,
+    milestone: (km: number) => (km === 21.1 ? "a half marathon" : km === 42.2 ? "a marathon" : `${km} km`),
+    passed: (milestone: string, n: number) => `You've now run ${milestone}, in ${n} ${en.matches(n)}.`,
+    toGo: (milestone: string, k: number, day: string) => `${k === 1 ? `One more match like ${day}'s` : `${cap(enWord(k))} more matches like ${day}'s`} takes you past ${milestone}.`,
+    matches: "matches",
+    perMatch: "per match",
+    lastMatch: "last match",
+  },
 
-  friendsHead: (names: string[]) => `${names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`} have their numbers. Where are yours?`,
-  friendsBody: "You played in this match too. Claim your stats and see how you stack up against them.",
-  claimStats: "Claim your stats",
-  cols: { km: "KM", top: "TOP KM/H", shots: "SHOTS", dribbles: "DRIBBLES" },
+  spells: {
+    title: "Running by 10 minutes",
+    stronger: "Your strongest spell came last",
+    strongest: (from: number, to: number) => `Strongest between ${from}′ and ${to}′`,
+    total: "total",
+    vsAvg: "on your average spell",
+    played: "played",
+  },
 
-  nobodyHead: "Nobody has claimed this match yet.",
-  nobodyBody: "Who ran the furthest? Who was fastest? Be the first to find yourself and set the numbers everyone else has to beat.",
-  claimMatch: "Claim your match",
-  topSpeed: "Top speed",
-  distanceRan: "Distance ran",
-  shotsOnGoal: "Shots on goal",
-  successfulDribbles: "Successful dribbles",
+  ranks: {
+    title: "Where you finished",
+    line: (n: number) => `Out of ${n} ${en.players(n)} who claimed the match.`,
+    top3: "top-three finishes",
+    claimed: "claimed",
+    best: "best finish",
+  },
+
+  style: {
+    title: "How you play",
+    when: (n: number) => `Last ${n} matches`,
+    lean: { passer: "Passer", dribbler: "Dribbler", shooter: "Shooter", allRounder: "All-rounder" },
+    line: { passer: "Most of what you do on the ball is a pass.", dribbler: "You take players on more than you pass.", shooter: "Always looking for goal.", allRounder: "A bit of everything." },
+    passes: "Passes",
+    dribbles: "Dribbles",
+    shots: "Shots",
+    other: "Other",
+    matches: "matches",
+    touches: "touches",
+  },
+
+  challenge: {
+    title: (when: string) => `Target for ${when}`,
+    sub: { passesCompleted: "passes to beat your best", dribblesWon: "dribbles to beat your best", touches: "touches to beat your best", distanceKm: "km to beat your best" },
+    line: (best: string) => `The white mark is the target. Your best is ${best}.`,
+    average: "your average",
+    best: "your best",
+    kickoff: "kick-off",
+  },
+
+  dribbles: {
+    title: "Dribbles",
+    won: "won",
+    lost: "lost",
+    line: (tries: number, won: number) => `You took your man on ${tries === 1 ? "once" : `${enWord(tries)} times`} and beat him ${won === 1 ? "once" : enWord(won)}.`,
+    onlyMore: (name: string) => ` Only ${name} won more.`,
+    tried: "tried",
+    rate: "won",
+    rank: "on the pitch",
+  },
+
+  played: {
+    title: "Matches",
+    when: (date: string) => `Since ${date}`,
+    sub: "In three weeks",
+    next: (when: string, n: number) => `${cap(when)} makes ${enWord(n)}.`,
+    keep: "The dashed day is your next match.",
+    none: "Book a match to keep it going.",
+    perWeek: "per week",
+    thisWeek: "this week",
+    weekdays: ["M", "T", "W", "T", "F", "S", "S"],
+  },
+
+  shots: {
+    title: "Shots",
+    sub: "on target",
+    line: "Tap to watch them. The camera doesn't catch every shot.",
+    first: "first",
+    last: "last",
+    apart: "apart",
+  },
+
+  trend: {
+    title: "Passing rate",
+    when: (n: number) => `Last ${n} matches`,
+    sub: (from: string) => `Up from ${from}`,
+    first: "first match",
+    points: "points better",
+    matches: "matches",
+  },
+
+  team: {
+    title: "Your team's passing",
+    sub: "of your team's passes were yours",
+    line: (next: number | null) => (next !== null ? `The next most was ${next}.` : "More than anyone else on your team."),
+    yours: "yours",
+    total: "team total",
+    next: "next most",
+  },
+
+  duel: {
+    title: "Dribble duel",
+    head: (name: string, diff: number, theyWon: boolean) => (theyWon ? `${name} beat you by ${enWord(diff)}.` : `You beat ${name} by ${enWord(diff)}.`),
+    note: " They tried more, you lost the ball less.",
+    won: "won",
+  },
+
+  week: {
+    title: "This week",
+    km: "km run",
+    touches: "touches",
+    passes: "passes completed",
+    dribbles: "dribbles won",
+    line: (n: number) => `${cap(enWord(n))} ${en.matches(n)} so far. Bars show the share that came off.`,
+    matches: "matches",
+    shots: "shots on target",
+    passing: "passing",
+  },
+
+  friends: {
+    title: "Your friends have their numbers",
+    line: (names: string[]) => `${names.length === 2 ? `${names[0]} and ${names[1]}` : names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`} found themselves. Where do you land?`,
+    found: "found",
+    players: "players",
+    minutes: "to claim yours",
+  },
+
+  unclaimed: {
+    title: "Your numbers are waiting",
+    sub: "Find yourself in the video",
+    line: "Nobody from this match has claimed yet. Be the first.",
+    players: "players",
+    minutes: "to claim",
+  },
 };
 
 type TileStrings = typeof en;
 
 const ar: TileStrings = {
   units: { distanceKm: "كم", topSpeedKmh: "كم/س", touches: "لمسة", passesCompleted: "تمريرة", dribblesWon: "مراوغة", goals: "هدف", shots: "تسديدة" },
-  metric: { distanceKm: "المسافة", topSpeedKmh: "أعلى سرعة", touches: "اللمسات", passesCompleted: "التمريرات الصحيحة", dribblesWon: "المراوغات الناجحة", goals: "الأهداف", shots: "التسديدات على المرمى" },
-  metricShort: { distanceKm: "المسافة", topSpeedKmh: "السرعة", touches: "اللمسات", passesCompleted: "التمريرات", dribblesWon: "المراوغات", goals: "الأهداف", shots: "التسديدات" },
-  small: { distanceKm: "المسافة", topSpeedKmh: "أعلى سرعة", touches: "لمسات", passesCompleted: "تمريرات", dribblesWon: "مراوغات ناجحة", goals: "أهداف", shots: "تسديدات" },
-  ordinal: (n: number) => (["", "الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر"][n] ?? `#${n}`),
-  you: "أنت",
-  matchReport: "تقرير الماتش",
-  matchAt: (day: string, time: string) => `${day} ${time}`,
-
-  lastMatchEyebrow: "آخر ماتش إلك",
-  lastMatchHead: {
-    distanceKm: "ركضت أكثر من أي حدا بالملعب.",
-    topSpeedKmh: "ما في حدا بالملعب كان أسرع منك.",
-    touches: "ما في حدا لمس الكرة أكثر منك.",
-    passesCompleted: "مرّرت تمريرات صحيحة أكثر من الكل.",
-    dribblesWon: "راوغت لاعبين أكثر من الكل.",
-    goals: "سجّلت أكثر من أي حدا بالملعب.",
-    shots: "ما في حدا سدّد أكثر منك.",
-  },
-  lastMatchMeta: (field: string, when: string, players: number) => `${field} · ${when}${players ? ` · ${players} لاعب` : ""}`,
-  pitchAverage: "معدّل الملعب",
-  numberOne: (metric: string) => `#1 ${metric}`,
-
-  newBest: "رقم شخصي جديد",
-  bestSpeedBody: (at: string | null, day: string, time: string) => at ? `أسرع ركضة إلك لهلّق، بالدقيقة ${at} من ماتش ${day} الساعة ${time}.` : `أسرع ركضة إلك لهلّق، بماتش ${day} الساعة ${time}.`,
-  fasterAtField: (n: number, field: string) => n === 0 ? `ما في حدا بـ${field} ركض أسرع.` : n === 1 ? `لاعب واحد بس بـ${field} ركض أسرع.` : `بس ${n} لاعبين بـ${field} ركضوا أسرع.`,
-  bestBody: { distanceKm: "بماتش واحد", touches: "لمسة بماتش واحد", passesCompleted: "تمريرة صحيحة بماتش واحد", dribblesWon: "مراوغة ناجحة بماتش واحد", goals: "أهداف بماتش واحد", topSpeedKmh: "", shots: "تسديدة بماتش واحد" },
-  bestOn: (day: string, time: string) => `يوم ${day} الساعة ${time}.`,
-  // Arabic counting: 1 and 11+ take the singular, 2 the dual, 3–10 the plural.
+  metric: { distanceKm: "المسافة", topSpeedKmh: "أعلى سرعة", touches: "اللمسات", passesCompleted: "التمريرات", dribblesWon: "المراوغات الناجحة", goals: "الأهداف", shots: "التسديدات على المرمى" },
+  small: { distanceKm: "المسافة", topSpeedKmh: "أعلى سرعة", touches: "اللمسات", passesCompleted: "التمريرات", dribblesWon: "مراوغات ناجحة", goals: "الأهداف", shots: "على المرمى" },
   bigUnit: (metric: TileMetric, n: number): string => {
     if (metric === "distanceKm") return "كم";
     if (metric === "topSpeedKmh") return "كم/س";
@@ -237,149 +288,239 @@ const ar: TileStrings = {
       goals: ["هدف", "هدفين", "أهداف"],
       shots: ["تسديدة", "تسديدتين", "تسديدات"],
     };
-    const [one, two, few] = forms[metric];
-    return n === 2 ? two : n >= 3 && n <= 10 && Number.isInteger(n) ? few : one;
+    return arCount(n, forms[metric]);
   },
-  bestRest: { distanceKm: "بماتش واحد", touches: "بماتش واحد", passesCompleted: "صحيحة بماتش واحد", dribblesWon: "ناجحة بماتش واحد", goals: "بماتش واحد", topSpeedKmh: "", shots: "على المرمى بماتش واحد" },
-  oldBest: (value: string, date: string) => `رقمك القديم: ${value}، ${date}`,
-  watchRun: "شوف الركضة",
-  yourSprint: "ركضتك",
-  clipNote: "الماتش كامل، من بداية ركضتك",
+  ordinal: (n: number) => (["", "الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر"][n] ?? `#${n}`),
+  you: "إنت",
+  m: "م",
+  min: "د",
+  s: "ث",
+  of: (a: string, b: string) => `${a} من ${b}`,
+  players: (n: number) => arCount(n, ["لاعب", "لاعبين", "لاعبين"]),
+  matches: (n: number) => arCount(n, ["ماتش", "ماتشين", "ماتشات"]),
 
-  rivalAhead: (name: string, gap: string) => `${name} سابقك بـ${gap} هالشهر.`,
-  rivalLead: (field: string) => `إنت الأول بـ${field} هالشهر.`,
-  rivalAheadBody: "ماتش عادي منك بيطلّعك قدّامه.",
-  rivalLeadBody: (name: string, gap: string) => `${name} وراك بـ${gap}. ماتش عادي منك بيخلّيك قدّام.`,
-  distanceThisMonth: "المسافة، هالشهر",
-  allPlayers: (n: number) => `الكل ${n}`,
-  bookNext: "احجز ماتشك الجاي",
-
-  formEyebrow: "مستواك",
-  formHead: (metric: "distanceKm" | "topSpeedKmh" | "touches", n: number) => {
-    const runs = `${n} ماتشات ورا بعض`;
-    return metric === "distanceKm" ? `${runs} وإنت عم تركض أكثر.` : metric === "topSpeedKmh" ? `${runs} وإنت عم تصير أسرع.` : `${runs} وإنت عم تلمس الكرة أكثر.`;
+  strain: {
+    title: "جهد الماتش",
+    zone: { light: "خفيف", moderate: "متوسط", high: "عالي", allOut: "أقصى جهد" },
+    zoneShort: { light: "خفيف", moderate: "متوسط", high: "عالي", allOut: "أقصى" },
+    harder: (prev: string) => `أصعب من ماتشك اللي قبله (${prev}).`,
+    easier: (prev: string) => `أخف من ماتشك اللي قبله (${prev}).`,
+    same: "نفس جهد ماتشك اللي قبله.",
+    first: "محسوب من قدّيش ركضت وبأي سرعة.",
+    calories: "سعرة تقريباً",
+    run: "ركض",
+    played: "لعب",
   },
-  formBody: (latest: string, day: string, diff: string) => `${latest} يوم ${day}، ${diff} فوق معدّلك.`,
-  keepGoing: (when: string) => ` كمّل هيك ${when}.`,
-  allMatches: "شوف كل ماتشاتك",
 
-  notFoundTeaser: {
-    topSpeedKmh: (v: string, day: string) => `في حدا وصل ${v} كم/س يوم ${day}. كنت إنت؟`,
-    distanceKm: (v: string, day: string) => `في حدا ركض ${v} كم يوم ${day}. كنت إنت؟`,
-    dribblesWon: (v: string, day: string) => `في حدا راوغ ${v} لاعبين يوم ${day}. كنت إنت؟`,
-    shots: (v: string, day: string) => `في حدا سدّد ${v} على المرمى يوم ${day}. كنت إنت؟`,
+  best: {
+    title: "رقم شخصي جديد",
+    sub: (metric: TileMetric, n: number) => (metric === "topSpeedKmh" ? "كم/س، أسرع ما ركضت" : `${ar.bigUnit(metric, n)}، أحسن رقم إلك`),
+    line: (old: string, date: string) => `العلامة البيضا رقمك القديم: ${old} يوم ${date}.`,
+    old: "رقمك القديم",
+    more: "زيادة عن قبل",
+    faster: "أسرع",
+    times: "رقمك القديم",
+    fasterAt: "أسرع منك بهالملعب",
   },
-  notFoundPlain: (day: string) => `أرقامك من يوم ${day} جاهزة.`,
-  notFoundBody: "أرقامك جاهزة. حدّد نفسك مرة وحدة، تقريباً دقيقتين، ونحنا منلحقك طول الماتش.",
-  found: (found: number, total: number) => total ? `${found} من ${total} لقوا حالهم` : `${found} لقوا حالهم`,
-  findYourself: "لاقي حالك",
-  yourDistance: "مسافتك",
-  yourTopSpeed: "أعلى سرعة إلك",
-  yourPlace: "ترتيبك بالملعب",
 
-  passingEyebrow: "التمرير",
-  passingHead: (c: number, t: number) => `${c} من ${t} تمريرة إلك وصلت لزميلك.`,
-  passingBest: (pct: string) => `يعني ${pct}، أحسن نسبة إلك لهلّق.`,
-  passingRate: (pct: string) => `يعني ${pct}.`,
-  pitchAveraged: (pct: string) => ` معدّل الملعب كان ${pct}.`,
-  completed: "صحيحة",
-  lost: "ضايعة",
-  watchPasses: "شوف تمريراتك",
-
-  touchesEyebrow: "اللمسات",
-  touchesHead: (n: number, every: number | null) => every ? `${n} لمسة. الكرة معك كل ${every} ثانية.` : `${n} لمسة.`,
-  busiest: (from: number, to: number, count: number) => `أكثر 5 دقائق إلك: ${from}′–${to}′، ${count} لمسات`,
-  everyTouch: "كل لمسة",
-
-  sinceEyebrow: (date: string, n: number) => `من ${date} · ${n} ماتشات`,
-  milestoneName: (km: number) => km === 21.1 ? "نص ماراثون" : km === 42.2 ? "ماراثون" : `${km} كم`,
-  totalHead: (total: string, field: string | null) => field ? `ركضت ${total} كم بـ${field}.` : `ركضت ${total} كم مع Replay.`,
-  passedHead: (name: string, field: string | null) => `هيك صرت راكض ${name}${field ? ` بـ${field}` : ""}.`,
-  passedBody: (total: string, n: number) => `${total} كم بـ${n} ماتشات.`,
-  toGoBody: (name: string, km: string, k: number, day: string) => `الـ${name} ${km} كم. ${k === 1 ? `ماتش كمان متل ماتش ${day}` : `${k} ماتشات كمان متل ماتش ${day}`} وبتكون عدّيته.`,
-  toGoBodyKm: (km: string, k: number, day: string) => `${k === 1 ? `ماتش كمان متل ماتش ${day}` : `${k} ماتشات كمان متل ماتش ${day}`} وبتعدّي ${km} كم.`,
-  eachBlock: "كل مربّع ماتش",
-
-  distanceEyebrow: "المسافة",
-  strongerHead: "خلّصت أقوى ما بلّشت.",
-  strongerBody: (m: string) => `${m} م بآخر عشر دقائق، أكثر من أي فترة ثانية.`,
-  strongestHead: (from: number, to: number) => `أقوى عشر دقائق إلك: ${from}′–${to}′.`,
-  strongestBody: (m: string) => `${m} م بهالفترة.`,
-
-  ranksHead: "ترتيبك بالملعب",
-  players: (n: number) => `${n} لاعب`,
-  fullTable: "الجدول كامل",
-  ofN: (v: string, of: number) => `${v} من ${of}`,
-
-  styleEyebrow: (n: number) => `أسلوب لعبك · آخر ${n} ماتشات`,
-  styleHead: { passer: "ممرّر أكثر من مراوغ.", dribbler: "مراوغ أكثر من ممرّر.", shooter: "دايماً عينك عالمرمى.", allRounder: "شوي من كل إشي." },
-  styleBody: (touches: number, share: string) => `من أصل ${touches} لمسة، ${share} كانت تمريرات.`,
-  passes: "تمريرات",
-  dribbles: "مراوغات",
-  shotsOnTarget: "على المرمى",
-  otherTouches: "لمسات ثانية",
-
-  challengeEyebrow: (when: string, time: string, field: string) => `${when} · ${time} · ${field}`,
-  challengeHead: {
-    passesCompleted: (n: string, when: string) => `مرّر ${n} تمريرة صحيحة ${when}.`,
-    dribblesWon: (n: string, when: string) => `راوغ ${n} مرات ${when}.`,
-    touches: (n: string, when: string) => `المس الكرة ${n} مرة ${when}.`,
-    distanceKm: (n: string, when: string) => `اركض ${n} كم ${when}.`,
+  last: {
+    title: { distanceKm: "ركضت أكثر من الكل", topSpeedKmh: "أسرع واحد بالملعب", touches: "أكثر واحد لمس الكرة", passesCompleted: "أكثر تمريرات بالملعب", dribblesWon: "أكثر مراوغات ناجحة", goals: "هدّاف الملعب", shots: "أكثر تسديدات بالملعب" },
+    sub: (claimed: number) => `الأول من ${claimed} حدّدوا حالهم`,
+    pitch: "معدّل الملعب",
+    line: (field: string) => `في ${iso(field)}، ما حدا من اللي حدّدوا حالهم عمل أحسن منك.`,
   },
-  challengeBody: (avg: string, target: string) => `معدّلك ${avg}. الـ${target} بتكسر رقمك، وبتعرف النتيجة بعد الصافرة بحوالي 20 دقيقة.`,
-  average: "معدّل",
-  best: "أحسن",
-  target: "الهدف",
-  openMatch: "افتح الماتش",
 
-  dribblesEyebrow: "المراوغات",
-  won: "نجحت",
-  dribblesBody: (tries: number, won: number) => `حاولت تراوغ ${tries} مرات ونجحت ${won}.`,
-  onlyMore: (name: string) => ` بس ${name} نجح أكثر.`,
-  rankBadge: (rank: number, metric: string) => `#${rank} ${metric}`,
+  rival: {
+    title: (month: string) => `${month}، المسافة`,
+    ahead: (name: string, gap: string) => `${iso(name)} سابقك بـ${gap}. ماتش متل ماتشك بيسكّر الفرق.`,
+    lead: (name: string, gap: string) => `إنت الأول. ${iso(name)} وراك بـ${gap}.`,
+    rank: "ترتيبك",
+    perMatch: "بالماتش",
+    players: "لاعب هالشهر",
+  },
 
-  matchesEyebrow: "ماتشات لعبتها",
-  matchesBody: (makes: string | null) => `بثلاث أسابيع.${makes ? ` ${makes}` : ""}`,
-  makes: (when: string, n: number) => `${when} بتصير ${n}.`,
-  weekdays: ["ن", "ث", "ر", "خ", "ج", "س", "ح"],
+  form: {
+    title: { distanceKm: "ركضك", topSpeedKmh: "سرعتك", touches: "لمساتك" },
+    when: (n: number) => `آخر ${arN(n, MATCH)}`,
+    sub: (n: number) => `عم يطلع ${arN(n, MATCH)} ورا بعض`,
+    average: "معدّلك",
+    inARow: "ورا بعض",
+    best: "أحسن رقم",
+    dashed: "الخط المتقطّع هو معدّلك.",
+  },
 
-  shotsEyebrow: "التسديدات على المرمى",
-  shotsBody: "اضغط على الوقت لتشوفها. الكاميرا ما بتلقط كل تسديدة.",
-  watchThem: "شوفهم",
+  notFound: {
+    title: "ماتشك ناطرك",
+    big: (found: number, total: number) => (total ? `${found}/${total}` : String(found)),
+    sub: "لقوا حالهم",
+    teaser: {
+      topSpeedKmh: (v: string) => `في حدا وصل ${v} كم/س. كنت إنت؟`,
+      distanceKm: (v: string) => `في حدا ركض ${v} كم. كنت إنت؟`,
+      dribblesWon: (v: string) => `في حدا راوغ ${v} لاعبين. كنت إنت؟`,
+      shots: (v: string) => `في حدا سدّد ${v} على المرمى. كنت إنت؟`,
+    },
+    plain: "أرقامك جاهزة. لاقي حالك لتشوفها.",
+    teaserLabel: { topSpeedKmh: "أعلى سرعة بالملعب", distanceKm: "أكثر ركض بالملعب", dribblesWon: "أكثر مراوغات", shots: "أكثر تسديدات" },
+    found: "لقوا حالهم",
+    toGo: "لسّا ما حدّدوا",
+    minutes: "لتلاقي حالك",
+  },
 
-  trendEyebrow: "التمرير · آخر 3 ماتشات",
-  trendBody: "تمريراتك عم توصل لزملائك أكثر كل ماتش.",
+  passing: {
+    title: "التمرير",
+    sub: (c: number, t: number) => `${c} من ${t} وصلت لزميلك`,
+    best: "أحسن نسبة إلك لهلّق.",
+    pitch: (pct: string) => `معدّل الملعب كان ${pct}.`,
+    plain: "اضغط لتشوف تمريراتك.",
+    pitchAvg: "معدّل الملعب",
+    completed: "صحيحة",
+    lost: "ضايعة",
+  },
 
-  teamEyebrow: "فريقك",
-  teamHead: (share: number) => share >= 0.45 ? "نص تمريرات فريقك مرّت عن طريقك." : share >= 0.3 ? "ثلث تمريرات فريقك مرّت عن طريقك." : share >= 0.23 ? "ربع تمريرات فريقك مرّت عن طريقك." : `${Math.round(share * 100)}% من تمريرات فريقك مرّت عن طريقك.`,
-  teamBody: (mine: number, total: number, next: number | null) => `${mine} من ${total} تمريرة صحيحة لفريقك.${next !== null ? ` اللي بعدك: ${next}.` : ""}`,
+  touches: {
+    title: "اللمسات",
+    sub: (from: number, to: number) => `أكثر وقت بين الدقيقة ${from} و${to}`,
+    between: "بين كل لمسة",
+    busiest: "بأكثر 5 دقائق",
+    watched: "من الماتش",
+    unit: (n: number) => arCount(n, ["لمسة", "لمستين", "لمسات"]),
+  },
 
-  duelEyebrow: "المراوغات الناجحة",
-  duelHead: (name: string, diff: number, theyWon: boolean) => theyWon ? `${name} غلبك بـ${diff}.` : `غلبت ${name} بـ${diff}.`,
-  duelLine: (won: number, tries: number, pct: number) => `${won} من ${tries} · ${pct}%`,
-  duelNote: "هو حاول أكثر. إنت خسرت الكرة أقل.",
-  vs: "ضد",
+  total: {
+    title: (field: string | null) => (field ? `مسافتك في ${iso(field)}` : `مسافتك مع ${iso("Replay")}`),
+    when: (date: string) => `من ${date}`,
+    sub: (milestone: string) => `من ${milestone}`,
+    milestone: (km: number) => (km === 21.1 ? "نص ماراثون" : km === 42.2 ? "ماراثون" : `${km} كم`),
+    passed: (milestone: string, n: number) => `هيك ركضت ${milestone} بـ${arN(n, MATCH)}.`,
+    toGo: (milestone: string, k: number, day: string) => `${k === 1 ? "ماتش كمان" : k === 2 ? "ماتشين كمان" : `${k} ماتشات كمان`} متل ماتش ${day} وبتعدّي ${milestone}.`,
+    matches: "ماتشات",
+    perMatch: "بالماتش",
+    lastMatch: "آخر ماتش",
+  },
 
-  weekEyebrow: "هالأسبوع",
-  weekHead: (n: number, km: string) => `${n} ماتشات، ${km} كم.`,
-  touchesLabel: "لمسات",
-  passesCompleted: "تمريرات صحيحة",
-  dribblesWon: "مراوغات ناجحة",
-  shotsLabel: "تسديدات على المرمى",
-  of: "من",
+  spells: {
+    title: "ركضك كل 10 دقائق",
+    stronger: "أقوى فترة إلك كانت بالآخر",
+    strongest: (from: number, to: number) => `أقوى فترة بين الدقيقة ${from} و${to}`,
+    total: "المجموع",
+    vsAvg: "فوق معدّل فتراتك",
+    played: "لعب",
+  },
 
-  friendsHead: (names: string[]) => `${names.length === 2 ? `${names[0]} و${names[1]}` : `${names.slice(0, -1).join("، ")} و${names.at(-1)}`} عندهم أرقامهم. وين أرقامك؟`,
-  friendsBody: "إنت كمان لعبت بهالماتش. حدّد حالك وشوف وين إنت منهم.",
-  claimStats: "خذ أرقامك",
-  cols: { km: "كم", top: "أعلى سرعة", shots: "تسديدات", dribbles: "مراوغات" },
+  ranks: {
+    title: "ترتيبك بالملعب",
+    line: (n: number) => `من أصل ${arN(n, ["لاعب", "لاعبين", "لاعبين"])} حدّدوا حالهم بالماتش.`,
+    top3: "مرات بأول ثلاثة",
+    claimed: "حدّدوا حالهم",
+    best: "أحسن ترتيب",
+  },
 
-  nobodyHead: "لسّا ما حدا حدّد حاله بهالماتش.",
-  nobodyBody: "مين ركض أكثر؟ مين كان أسرع؟ كون أول واحد بيلاقي حاله وحطّ الأرقام اللي لازم الكل يكسرها.",
-  claimMatch: "حدّد حالك بالماتش",
-  topSpeed: "أعلى سرعة",
-  distanceRan: "المسافة",
-  shotsOnGoal: "تسديدات على المرمى",
-  successfulDribbles: "مراوغات ناجحة",
+  style: {
+    title: "أسلوب لعبك",
+    when: (n: number) => `آخر ${arN(n, MATCH)}`,
+    lean: { passer: "ممرّر", dribbler: "مراوغ", shooter: "هدّاف", allRounder: "شامل" },
+    line: { passer: "أغلب شغلك بالكرة تمرير.", dribbler: "بتراوغ أكثر ما بتمرّر.", shooter: "دايماً عينك عالمرمى.", allRounder: "شوي من كل إشي." },
+    passes: "تمريرات",
+    dribbles: "مراوغات",
+    shots: "تسديدات",
+    other: "غيرها",
+    matches: "ماتشات",
+    touches: "لمسة",
+  },
+
+  challenge: {
+    title: (when: string) => `هدفك ${when}`,
+    sub: { passesCompleted: "تمريرة لتكسر رقمك", dribblesWon: "مراوغة لتكسر رقمك", touches: "لمسة لتكسر رقمك", distanceKm: "كم لتكسر رقمك" },
+    line: (best: string) => `العلامة البيضا هي الهدف. أحسن رقم إلك ${best}.`,
+    average: "معدّلك",
+    best: "أحسن رقم",
+    kickoff: "البداية",
+  },
+
+  dribbles: {
+    title: "المراوغات",
+    won: "نجحت",
+    lost: "ضاعت",
+    line: (tries: number, won: number) => `حاولت تراوغ ${arN(tries, ["مرة", "مرتين", "مرات"], "وحدة")} ونجحت ${won === 1 ? "مرة وحدة" : won === 2 ? "مرتين" : won}.`,
+    onlyMore: (name: string) => ` بس ${iso(name)} نجح أكثر.`,
+    tried: "محاولات",
+    rate: "نجحت",
+    rank: "بالملعب",
+  },
+
+  played: {
+    title: "ماتشاتك",
+    when: (date: string) => `من ${date}`,
+    sub: "بثلاث أسابيع",
+    next: (when: string, n: number) => `${when} بتصير ${n}.`,
+    keep: "اليوم المتقطّع هو ماتشك الجاي.",
+    none: "احجز ماتش لتكمّل.",
+    perWeek: "بالأسبوع",
+    thisWeek: "هالأسبوع",
+    weekdays: ["ن", "ث", "ر", "خ", "ج", "س", "ح"],
+  },
+
+  shots: {
+    title: "التسديدات",
+    sub: "على المرمى",
+    line: "اضغط لتشوفهم. الكاميرا ما بتلقط كل تسديدة.",
+    first: "أول وحدة",
+    last: "آخر وحدة",
+    apart: "بيناتهم",
+  },
+
+  trend: {
+    title: "نسبة التمرير",
+    when: (n: number) => `آخر ${arN(n, MATCH)}`,
+    sub: (from: string) => `طالعة من ${from}`,
+    first: "أول ماتش",
+    points: "نقطة أحسن",
+    matches: "ماتشات",
+  },
+
+  team: {
+    title: "تمريرات فريقك",
+    sub: "من تمريرات فريقك كانت منك",
+    line: (next: number | null) => (next !== null ? `اللي بعدك عمل ${next}.` : "أكثر من أي حدا بفريقك."),
+    yours: "إلك",
+    total: "للفريق",
+    next: "اللي بعدك",
+  },
+
+  duel: {
+    title: "تحدّي المراوغة",
+    head: (name: string, diff: number, theyWon: boolean) => (theyWon ? `${iso(name)} غلبك بـ${diff === 1 ? "وحدة" : diff}.` : `غلبت ${iso(name)} بـ${diff === 1 ? "وحدة" : diff}.`),
+    note: " هو حاول أكثر، وإنت خسرت الكرة أقل.",
+    won: "نجحت",
+  },
+
+  week: {
+    title: "هالأسبوع",
+    km: "كم ركض",
+    touches: "لمسة",
+    passes: "تمريرة صحيحة",
+    dribbles: "مراوغة ناجحة",
+    line: (n: number) => `${arN(n, MATCH)} لهلّق. الخط تحت كل رقم نسبة اللي زبط.`,
+    matches: "ماتشات",
+    shots: "على المرمى",
+    passing: "تمرير",
+  },
+
+  friends: {
+    title: "صحابك أخذوا أرقامهم",
+    line: (names: string[]) => `${arList(names)} ${names.length === 1 ? "لقى حاله" : "لقوا حالهم"}. وين إنت منهم؟`,
+    found: "لقوا حالهم",
+    players: "لاعب",
+    minutes: "لتاخذ أرقامك",
+  },
+
+  unclaimed: {
+    title: "أرقامك ناطرتك",
+    sub: "لاقي حالك بالفيديو",
+    line: "لسّا ما حدا من هالماتش حدّد حاله. كون الأول.",
+    players: "لاعب",
+    minutes: "لتحدّد حالك",
+  },
 };
 
 export function useTileCopy(): TileStrings & { locale: "en" | "ar" } {
@@ -388,5 +529,5 @@ export function useTileCopy(): TileStrings & { locale: "en" | "ar" } {
 }
 
 export type { TileStrings };
-/** For tests: the two copies side by side. */
+/** For tests and the preview: the two copies side by side. */
 export const tileCopies = { en, ar };

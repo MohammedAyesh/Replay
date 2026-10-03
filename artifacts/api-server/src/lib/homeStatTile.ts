@@ -84,7 +84,10 @@ export type StatTile =
   | { kind: "dribbleDuel"; match: MatchBit; me: { won: number; tries: number }; other: { name: string; won: number; tries: number } }
   | { kind: "week"; matches: number; distanceKm: number; touches: number; passesCompleted: number; passesTried: number; dribblesWon: number; dribbles: number; shots: number }
   | { kind: "friends"; match: MatchBit; findRecordingId: number; found: number; peers: Array<{ name: string; distanceKm: number | null; topSpeedKmh: number | null; shots: number | null; dribblesWon: number | null }> }
-  | { kind: "unclaimed"; match: MatchBit; findRecordingId: number };
+  | { kind: "unclaimed"; match: MatchBit; findRecordingId: number }
+  | { kind: "strain"; match: MatchBit; strain: number; zone: StrainZone; calories: number; distanceKm: number; minutes: number; previous: number | null };
+
+export type StrainZone = "light" | "moderate" | "high" | "allOut";
 
 export type StatTileKind = StatTile["kind"];
 export type ScoredTile = { tile: StatTile; score: number };
@@ -311,6 +314,60 @@ function touches(input: HomeTileInput): ScoredTile | null {
       busiest: { index: first + busiestIndex, count: series[busiestIndex] },
       everySeconds: num(minutes) && minutes > 0 ? Math.round((minutes * 60) / total) : null,
     },
+  };
+}
+
+/**
+ * Match strain, 0 to 21, from how much and how hard the player ran. Whoop's
+ * strain comes from heart rate; Replay has no heart rate, so this is a
+ * movement load on the same scale and with the same shape: each point is
+ * harder to earn than the last.
+ *
+ *   pace      = km run / hours played
+ *   intensity = pace / 6 km/h, kept between 0.6 and 1.6
+ *   load      = metres run x intensity
+ *   strain    = 21 x (1 - e^(-load / 4500))
+ *
+ * Calories are an estimate for a 75 kg player (Replay doesn't ask for
+ * weight): MET = 4 + 0.8 x pace, kept between 5 and 11, x 75 kg x hours.
+ */
+export const STRAIN = { scale: 21, loadScale: 4500, paceForOne: 6, minIntensity: 0.6, maxIntensity: 1.6, weightKg: 75 } as const;
+
+export function strainZone(strain: number): StrainZone {
+  return strain < 10 ? "light" : strain < 14 ? "moderate" : strain < 18 ? "high" : "allOut";
+}
+
+export function matchStrain(distanceKm: number, minutes: number): { strain: number; calories: number } | null {
+  if (!(distanceKm > 0) || !(minutes >= 10)) return null;
+  const hours = minutes / 60;
+  const pace = distanceKm / hours;
+  const intensity = Math.min(STRAIN.maxIntensity, Math.max(STRAIN.minIntensity, pace / STRAIN.paceForOne));
+  const load = distanceKm * 1000 * intensity;
+  const strain = STRAIN.scale * (1 - Math.exp(-load / STRAIN.loadScale));
+  const met = Math.min(11, Math.max(5, 4 + 0.8 * pace));
+  return { strain: Math.round(strain * 10) / 10, calories: Math.round((met * STRAIN.weightKg * hours) / 10) * 10 };
+}
+
+function minutesOf(stats: TileStats): number | null {
+  if (num(stats.minutes) && stats.minutes! > 0) return stats.minutes!;
+  const blocks = stats.extras?.blocks?.length ?? 0;
+  return blocks ? blocks * 5 : null;
+}
+
+function strain(input: HomeTileInput): ScoredTile | null {
+  const latest = input.history[0];
+  if (!latest || !num(latest.stats.distanceKm)) return null;
+  const minutes = minutesOf(latest.stats);
+  const now = minutes === null ? null : matchStrain(latest.stats.distanceKm!, minutes);
+  if (!now || minutes === null) return null;
+  const before = input.history[1];
+  const beforeMinutes = before ? minutesOf(before.stats) : null;
+  const previous = before && num(before.stats.distanceKm) && beforeMinutes !== null ? matchStrain(before.stats.distanceKm!, beforeMinutes)?.strain ?? null : null;
+  // Always worth a slide; a harder match than the last one is worth more.
+  const score = (previous !== null && now.strain > previous ? 62 : 54) * freshness(latest.match.startLocal, input.nowLocal);
+  return {
+    score,
+    tile: { kind: "strain", match: bit(latest.match), strain: now.strain, zone: strainZone(now.strain), calories: now.calories, distanceKm: Math.round(latest.stats.distanceKm! * 100) / 100, minutes: Math.round(minutes), previous },
   };
 }
 
@@ -616,7 +673,7 @@ export function teaser(peers: TilePeer[]): { metric: TileMetric; value: number }
 }
 
 const BUILDERS = [
-  claim, personalBest, lastMatchFirst, distanceTotal, challenge, form, passing, rival, teamShare,
+  claim, strain, personalBest, lastMatchFirst, distanceTotal, challenge, form, passing, rival, teamShare,
   distanceSpells, passingTrend, dribbleDuel, dribbles, ranks, week, shots, touches, matchesPlayed, style,
 ];
 

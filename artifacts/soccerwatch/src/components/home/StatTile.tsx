@@ -1,27 +1,38 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "wouter";
-import { ArrowRight, ChevronRight, Play } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useTileCopy, type TileStrings } from "@/i18n/stat-tile-strings";
 import type { StatTile, TileMetric } from "@/lib/stat-tile";
 import { cn } from "@/lib/utils";
 
 /**
- * Home's stat tile: one card under "Your next match", picked by the server
- * as the most impressive thing it can say to this player right now (see
- * api-server/src/lib/homeStatTile.ts). Built from the stats-first wireframes.
+ * Home's stat tiles, in the Whoop style: a near-black card of one fixed
+ * height, the title and the match along the top, one strong visual with a
+ * big number, one sentence, and three supporting numbers along the bottom.
+ * The whole card is the link. Each visual draws in once, when the card
+ * comes into view.
  *
- * Colour: turf is the player's own number and the eyebrow, lime is the one
- * action (and a personal best), violet marks a rank badge, grey is everyone
- * else. Numbers are always LTR.
+ * Colour says what kind of number it is: teal is running and effort, lime is
+ * on the ball, violet is duels, gold is records and shots, silver is
+ * standings and other players. Numbers are always LTR, in Rajdhani; in
+ * Arabic the charts run right to left like the text.
  */
 
 type Locale = "en" | "ar";
 type Copy = TileStrings & { locale: Locale };
 
+const TEAL = "#2FD8C4";
+const LIME = "#D4FF4F";
+const VIOLET = "#9B85FF";
+const GOLD = "#E9B949";
+const SILVER = "#C9CFDA";
+const MUTED = "#3A4560";
+const TRACK = "#141B2C";
+
 // ---------------------------------------------------------------- formatting
 
 function parts(local: string) {
-  return { y: Number(local.slice(0, 4)), m: Number(local.slice(5, 7)), d: Number(local.slice(8, 10)), time: local.slice(11, 16) };
+  return { y: Number(local.slice(0, 4)), m: Number(local.slice(5, 7)), d: Number(local.slice(8, 10)) };
 }
 function utcNoon(local: string): Date {
   const p = parts(local);
@@ -31,8 +42,8 @@ function daysBetween(a: string, b: string): number {
   return Math.round((utcNoon(b).getTime() - utcNoon(a).getTime()) / 86_400_000);
 }
 const intl = (locale: Locale) => (locale === "ar" ? "ar-JO" : "en-GB");
-function weekday(local: string, locale: Locale): string {
-  return new Intl.DateTimeFormat(intl(locale), { weekday: "long", timeZone: "UTC" }).format(utcNoon(local));
+function weekday(local: string, locale: Locale, style: "long" | "short" = "long"): string {
+  return new Intl.DateTimeFormat(intl(locale), { weekday: style, timeZone: "UTC" }).format(utcNoon(local));
 }
 function shortDate(local: string, locale: Locale): string {
   return new Intl.DateTimeFormat(intl(locale), { day: "numeric", month: "short", timeZone: "UTC", numberingSystem: "latn" }).format(utcNoon(local));
@@ -48,30 +59,34 @@ function dayRef(local: string, nowLocal: string, locale: Locale): string {
   const age = daysBetween(local, nowLocal);
   return age >= 0 && age <= 6 ? weekday(local, locale) : shortDate(local, locale);
 }
-/** "tonight" / "tomorrow" / "on Friday" for a match still to come. */
-function whenRef(local: string, nowLocal: string, locale: Locale, capital = false): string {
+/** "Tue 20:00" for the last week, "14 Sep 20:00" before that. */
+function matchWhen(local: string, nowLocal: string, locale: Locale): string {
+  const age = daysBetween(local, nowLocal);
+  const day = age >= 0 && age <= 6 ? weekday(local, locale, "short") : shortDate(local, locale);
+  return `${day} ${local.slice(11, 16)}`;
+}
+/** "tonight" / "tomorrow" / "Friday" for a match still to come. */
+function whenRef(local: string, nowLocal: string, locale: Locale): string {
   const days = daysBetween(nowLocal, local);
   const hour = Number(local.slice(11, 13));
-  const en = days === 0 ? (hour >= 17 ? "tonight" : "today") : days === 1 ? "tomorrow" : `on ${weekday(local, "en")}`;
-  const ar = days === 0 ? (hour >= 17 ? "الليلة" : "اليوم") : days === 1 ? "بكرا" : `يوم ${weekday(local, "ar")}`;
-  const out = locale === "ar" ? ar : en;
-  return capital && locale === "en" ? out.charAt(0).toUpperCase() + out.slice(1) : out;
+  if (locale === "ar") return days === 0 ? (hour >= 17 ? "الليلة" : "اليوم") : days === 1 ? "بكرا" : `يوم ${weekday(local, "ar")}`;
+  return days === 0 ? (hour >= 17 ? "tonight" : "today") : days === 1 ? "tomorrow" : weekday(local, "en");
 }
 function nowLocal(): string {
   return new Date(Date.now() + 3 * 3_600_000).toISOString().slice(0, 16).replace("T", " ");
 }
-function clock(seconds: number): string {
+/** 588 → "9′48" */
+function minuteMark(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const r = s % 60;
-  return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+  return `${Math.floor(s / 60)}′${String(s % 60).padStart(2, "0")}`;
 }
 function value(metric: TileMetric, v: number): string {
-  if (metric === "distanceKm") return v.toFixed(2);
+  if (metric === "distanceKm") return v.toFixed(1);
   if (metric === "topSpeedKmh") return v.toFixed(1);
   return String(Math.round(v));
 }
+/** Distance shown with one decimal, rounded down so 4.97 never reads as "5.0, nearly 5 km". */
+const km = (v: number) => (Math.floor(v * 10) / 10).toFixed(1);
 const pct = (rate: number) => `${Math.round(rate * 100)}%`;
 function watchAt(watch: string | null, seconds: number | null): string | null {
   if (!watch) return null;
@@ -81,137 +96,219 @@ function watchAt(watch: string | null, seconds: number | null): string | null {
 // ---------------------------------------------------------------- pieces
 
 function N({ children, className }: { children: ReactNode; className?: string }) {
-  return <span dir="ltr" className={cn("font-display tabular-nums", className)}>{children}</span>;
+  return <span dir="ltr" className={cn("tile-num", className)}>{children}</span>;
 }
 
-function Shell({ children, glow = true, testId }: { children: ReactNode; glow?: boolean; testId: string }) {
-  return (
-    <section
-      data-testid={`stat-tile-${testId}`}
-      className={cn("relative overflow-hidden rounded-3xl border p-5 sm:p-6", glow ? "border-turf/25" : "border-line")}
-      style={{
-        background: glow
-          ? "radial-gradient(120% 100% at 100% 0%, rgba(47,216,196,.13), transparent 60%), radial-gradient(90% 90% at 0% 100%, rgba(123,92,255,.14), transparent 60%), #141B2C"
-          : "#141B2C",
-      }}
-    >
-      {children}
-    </section>
-  );
+type Foot = { v: string; u?: string; l: string };
+
+/** Starts the card's animations the first time it is mostly on screen. */
+function useSeen<T extends Element>() {
+  const ref = useRef<T>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || seen) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setSeen(true);
+      return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setSeen(true);
+        io.disconnect();
+      }
+    }, { threshold: 0.6 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [seen]);
+  return { ref, seen };
 }
 
-function Two({ left, right, className }: { left: ReactNode; right: ReactNode; className?: string }) {
-  return (
-    <div className={cn("grid gap-6 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] md:items-center md:gap-10", className)}>
-      <div className="flex min-w-0 flex-col">{left}</div>
-      <div className="min-w-0">{right}</div>
-    </div>
-  );
-}
-
-function Eyebrow({ children, chip }: { children: ReactNode; chip?: ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-turf rtl:tracking-normal">{children}</p>
-      {chip}
-    </div>
-  );
-}
-
-function Chip({ children, tone = "grey" }: { children: ReactNode; tone?: "grey" | "violet" }) {
-  return (
-    <span className={cn(
-      "inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider rtl:tracking-normal",
-      tone === "violet" ? "border border-violet/50 bg-violet/15 text-[#A98CFF] normal-case tracking-normal" : "bg-raised text-text",
-    )}>
-      {children}
-    </span>
-  );
-}
-
-function Head({ children }: { children: ReactNode }) {
-  return <h3 className="mt-2 font-display text-[26px] font-bold leading-[1.15] sm:text-[30px]">{children}</h3>;
-}
-
-function Body({ children, className }: { children: ReactNode; className?: string }) {
-  return <p className={cn("mt-2 text-sm leading-relaxed text-muted-text sm:text-[15px]", className)}>{children}</p>;
-}
-
-function Cta({ href, children, primary = true }: { href: string | null; children: ReactNode; primary?: boolean }) {
-  if (!href) return null;
-  return (
-    <Link
-      href={href}
-      className={cn(
-        "mt-5 inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full px-5 text-sm font-bold",
-        primary ? "bg-floodlight text-void" : "border border-floodlight/80 text-floodlight",
-      )}
-    >
-      {children}
-      <ChevronRight className="h-4 w-4 rtl:rotate-180" aria-hidden />
-    </Link>
-  );
-}
-
-/**
- * The headline number. `word` makes the unit part of the headline ("17 passes"),
- * big and in the reader's direction, so the line underneath can stay short.
- */
-function Big({ v, unit, tone = "text", size = "lg", word = false }: { v: string; unit?: string; tone?: "text" | "lime" | "turf"; size?: "lg" | "xl"; word?: boolean }) {
-  return (
-    <p className={cn("flex items-baseline", word ? "gap-3" : "gap-2")} dir={word ? undefined : "ltr"}>
-      <span dir="ltr" className={cn(
-        "font-display font-bold leading-none tabular-nums",
-        size === "xl" ? "text-[72px] sm:text-[84px]" : "text-[56px] sm:text-[64px]",
-        tone === "lime" ? "text-floodlight" : tone === "turf" ? "text-turf" : "text-text",
-      )}>{v}</span>
-      {unit && (word
-        ? <span className={cn("font-display font-bold leading-none text-text", size === "xl" ? "text-[40px] sm:text-[46px]" : "text-[30px] sm:text-[34px]")}>{unit}</span>
-        : <span className="font-display text-lg font-bold text-muted-text">{unit}</span>)}
-    </p>
-  );
-}
-
-function Bars({ items, highlight, format }: { items: Array<{ label: string; value: number }>; highlight: number; format: (v: number) => string }) {
-  const max = Math.max(...items.map((i) => i.value), 1e-9);
-  return (
-    <div dir="ltr" className="flex h-44 items-end gap-2 sm:gap-3">
-      {items.map((item, index) => {
-        const on = index === highlight;
-        return (
-          <div key={index} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1.5">
-            <span className={cn("font-display text-sm tabular-nums", on ? "font-bold text-turf" : "text-muted-text")}>{format(item.value)}</span>
-            <span
-              className={cn("w-full rounded-t-lg", on ? "bg-turf" : "bg-[#2B3550]")}
-              style={{ height: `${Math.max(3, (item.value / max) * 100)}%`, maxHeight: "calc(100% - 44px)" }}
-            />
-            <span className="truncate text-[11px] text-muted-text">{item.label}</span>
+function Card({ testId, href, title, when, line, foot, children }: { testId: string; href: string | null; title: string; when?: string; line?: ReactNode; foot: Foot[]; children: ReactNode }) {
+  const { ref, seen } = useSeen<HTMLDivElement>();
+  const body = (
+    <>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="min-w-0 truncate text-[13px] font-semibold text-text">{title}</span>
+        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-text">
+          {when}
+          {href && <ChevronRight className="h-3.5 w-3.5 rtl:rotate-180" aria-hidden />}
+        </span>
+      </div>
+      <div className="relative mt-2.5 flex h-[236px] flex-col justify-center">{children}</div>
+      <p className="mt-2 min-h-[36px] text-[13px] leading-snug text-[#C9CFDA]">{line}</p>
+      <div className="mt-auto grid grid-cols-3 gap-2 border-t border-[#141B2C] pt-3">
+        {foot.slice(0, 3).map((f, i) => (
+          <div key={i} className="min-w-0">
+            <p className="truncate text-[22px] font-semibold leading-none text-text"><N>{f.v}</N>{f.u && <span className="ms-1 text-[13px] font-semibold">{f.u}</span>}</p>
+            <p className="mt-1 truncate text-[11px] text-muted-text">{f.l}</p>
           </div>
-        );
-      })}
+        ))}
+      </div>
+    </>
+  );
+  const cls = cn("flex h-[440px] w-full flex-col overflow-hidden rounded-[18px] bg-[#05070C] p-[18px] pb-4 text-text", !seen && "tile-wait");
+  return (
+    <div ref={ref} className="w-full" data-testid={`stat-tile-${testId}`}>
+      {href ? <Link href={href} className={cn(cls, "block focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-floodlight")}>{body}</Link> : <div className={cls}>{body}</div>}
     </div>
   );
 }
 
-function Meter({ label, valueText, fraction, mine }: { label: string; valueText: string; fraction: number; mine: boolean }) {
+const RING = 2 * Math.PI * 88;
+
+function Ring({ frac, color, big, sub, tick, dashed, size = 200, children }: { frac: number; color: string; big: ReactNode; sub?: ReactNode; tick?: number; dashed?: boolean; size?: number; children?: ReactNode }) {
+  const f = Math.min(1, Math.max(0, frac));
+  const a = tick === undefined ? 0 : Math.min(1, Math.max(0, tick)) * 2 * Math.PI - Math.PI / 2;
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className={cn("flex justify-between text-xs", mine ? "font-bold text-text" : "text-muted-text")}>
-        <span>{label}</span>
-        <N className="font-sans">{valueText}</N>
+    <div className="flex flex-col items-center">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg viewBox="0 0 200 200" width={size} height={size} aria-hidden>
+          <circle cx="100" cy="100" r="88" fill="none" stroke={TRACK} strokeWidth="12" strokeDasharray={dashed ? "6 8" : undefined} />
+          {f > 0 && (
+            <circle
+              className="tile-arc"
+              cx="100" cy="100" r="88" fill="none" stroke={color} strokeWidth="12" strokeLinecap="round"
+              transform="rotate(-90 100 100)"
+              strokeDasharray={RING}
+              style={{ strokeDashoffset: RING * (1 - f), ["--tile-arc-from" as string]: RING } as CSSProperties}
+            />
+          )}
+          {tick !== undefined && <line x1={100 + 76 * Math.cos(a)} y1={100 + 76 * Math.sin(a)} x2={100 + 100 * Math.cos(a)} y2={100 + 100 * Math.sin(a)} stroke="#F2F4F8" strokeWidth="3.5" strokeLinecap="round" />}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
+          <span className="text-[56px] font-semibold leading-none tracking-tight"><N>{big}</N></span>
+          {sub && <span className="tile-fade mt-1.5 text-xs font-semibold leading-tight" style={{ color }}>{sub}</span>}
+        </div>
       </div>
-      <div dir="ltr" className="h-2 overflow-hidden rounded-full bg-[#1E2740]">
-        <div className={cn("h-full rounded-full", mine ? "bg-turf" : "bg-[#4A5470]")} style={{ width: `${Math.min(100, Math.max(2, fraction * 100))}%` }} />
-      </div>
+      {children}
     </div>
   );
 }
 
-function SmallStat({ v, unit, label }: { v: string; unit?: string; label: string }) {
+function SmallRing({ frac, color, big, label }: { frac: number; color: string; big: string; label: string }) {
+  const C = 2 * Math.PI * 53;
+  const f = Math.min(1, Math.max(0, frac));
   return (
-    <div className="min-w-0 border-line pe-5 [&:not(:last-child)]:border-e">
-      <p dir="ltr" className="font-display text-xl font-bold tabular-nums rtl:text-end">{v}{unit && <span className="ms-1 text-xs font-semibold text-muted-text">{unit}</span>}</p>
-      <p className="text-xs text-muted-text">{label}</p>
+    <div className="flex flex-col items-center gap-2">
+      <div className="relative h-[130px] w-[130px]">
+        <svg viewBox="0 0 130 130" width="130" height="130" aria-hidden>
+          <circle cx="65" cy="65" r="53" fill="none" stroke={TRACK} strokeWidth="10" />
+          {f > 0 && <circle className="tile-arc" cx="65" cy="65" r="53" fill="none" stroke={color} strokeWidth="10" strokeLinecap="round" transform="rotate(-90 65 65)" strokeDasharray={C} style={{ strokeDashoffset: C * (1 - f), ["--tile-arc-from" as string]: C } as CSSProperties} />}
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center text-[34px] font-semibold"><N>{big}</N></span>
+      </div>
+      <span className="text-xs text-[#C9CFDA]">{label}</span>
+    </div>
+  );
+}
+
+function Headline({ big, unit, sub, color }: { big: string; unit?: string; sub?: ReactNode; color: string }) {
+  return (
+    <div>
+      <p className="flex items-baseline gap-2"><span className="text-[52px] font-semibold leading-none tracking-tight"><N>{big}</N></span>{unit && <span className="font-display text-[22px] font-semibold">{unit}</span>}</p>
+      {sub && <p className="tile-fade mt-1 text-xs font-semibold" style={{ color }}>{sub}</p>}
+    </div>
+  );
+}
+
+function Bars({ values, labels, hi, color, format }: { values: number[]; labels?: string[]; hi: number; color: string; format?: (v: number) => string }) {
+  const max = Math.max(...values, 1e-9);
+  const many = values.length > 8;
+  return (
+    <div className="mt-3">
+      <div className="flex h-[112px] items-end gap-[5px] border-b border-[#1E2740]">
+        {values.map((v, i) => (
+          <div key={i} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
+            {!many && <span className={cn("text-xs font-semibold", i === hi ? "text-text" : "text-muted-text")}><N>{format ? format(v) : v}</N></span>}
+            <span className="tile-grow block w-full rounded-t" style={{ height: `${Math.max(3, (v / max) * (many ? 100 : 82))}%`, background: i === hi ? color : "#232C42", animationDelay: `${i * 40}ms` }} />
+          </div>
+        ))}
+      </div>
+      {labels && (
+        many
+          ? <div className="mt-1.5 flex justify-between text-[10px] text-muted-text"><N>{labels[0]}</N><N>{labels.at(-1)}</N></div>
+          : <div className="mt-1.5 flex gap-[5px]">{labels.map((l, i) => <span key={i} className="min-w-0 flex-1 truncate text-center text-[10px] text-muted-text"><N>{l}</N></span>)}</div>
+      )}
+    </div>
+  );
+}
+
+function LineChart({ values, color, from, to, rtl, note }: { values: number[]; color: string; from: string; to: string; rtl: boolean; note: string }) {
+  const W = 294, H = 120;
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const pad = (hi - lo) * 0.15 || Math.max(1, hi * 0.1);
+  const y = (v: number) => H - 8 - ((v - (lo - pad)) / (hi + pad - (lo - pad))) * (H - 16);
+  const x = (i: number) => {
+    const t = values.length > 1 ? i / (values.length - 1) : 0.5;
+    return 10 + (rtl ? 1 - t : t) * (W - 20);
+  };
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  const d = values.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  return (
+    <div className="mt-3">
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-[120px] w-full" aria-hidden>
+        <line x1="0" x2={W} y1={y(avg)} y2={y(avg)} stroke="#2C3650" strokeDasharray="4 4" />
+        <path className="tile-draw" pathLength={1} d={d} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+        {values.map((v, i) => {
+          const last = i === values.length - 1;
+          return <circle key={i} cx={x(i)} cy={y(v)} r={last ? 6 : 4} fill={last ? color : MUTED} stroke="#05070C" strokeWidth="2" />;
+        })}
+      </svg>
+      <div className="mt-1 flex justify-between gap-2 text-[10px] text-muted-text"><span>{from}</span><span className="truncate">{note}</span><span>{to}</span></div>
+    </div>
+  );
+}
+
+type Row = { rank?: string; name: string; v: string; n: number; me?: boolean };
+
+function RankList({ rows, color }: { rows: Row[]; color: string }) {
+  const max = Math.max(...rows.map((r) => r.n), 1e-9);
+  return (
+    <div className="flex flex-col gap-3">
+      {rows.slice(0, 5).map((r, i) => (
+        <div key={i} className="flex flex-col gap-1.5">
+          <div className={cn("flex items-baseline gap-2 text-[13px]", r.me ? "font-bold text-text" : "text-[#C9CFDA]")}>
+            {r.rank !== undefined && <span className="w-7 shrink-0 text-[15px] font-semibold text-muted-text"><N>{r.rank}</N></span>}
+            <span className="min-w-0 flex-1 truncate">{r.name}</span>
+            <span className="text-[18px] font-semibold"><N>{r.v}</N></span>
+          </div>
+          <span className={cn("block h-1.5 rounded-full bg-[#141B2C]", r.rank !== undefined && "ms-9")}>
+            <span className="tile-grow-x block h-1.5 rounded-full" style={{ width: `${Math.max(4, (r.n / max) * 100)}%`, background: r.me ? color : MUTED, animationDelay: `${i * 60}ms` }} />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Donut({ segs, center }: { segs: Array<{ label: string; n: number; color: string }>; center: string }) {
+  const total = Math.max(1, segs.reduce((a, s) => a + s.n, 0));
+  const L = 2 * Math.PI * 68;
+  let acc = 0;
+  return (
+    <div className="flex items-center gap-4">
+      <div className="relative h-[170px] w-[170px] shrink-0">
+        <svg viewBox="0 0 170 170" width="170" height="170" aria-hidden>
+          <circle cx="85" cy="85" r="68" fill="none" stroke={TRACK} strokeWidth="18" />
+          {segs.map((s) => {
+            const len = (L * s.n) / total;
+            const el = <circle key={s.label} cx="85" cy="85" r="68" fill="none" stroke={s.color} strokeWidth="18" strokeDasharray={`${Math.max(0, len - 2)} ${L}`} strokeDashoffset={-acc} transform="rotate(-90 85 85)" />;
+            acc += len;
+            return el;
+          })}
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center px-6 text-center font-display text-[24px] font-bold leading-tight">{center}</span>
+      </div>
+      <div className="flex min-w-0 flex-col gap-2.5">
+        {segs.map((s) => (
+          <span key={s.label} className="flex items-center gap-2 text-xs">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: s.color }} />
+            <span className="truncate">{s.label}</span>
+            <b className="text-sm"><N>{pct(s.n / total)}</N></b>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -222,6 +319,7 @@ export function StatTileCard({ tile }: { tile: StatTile }) {
   const c = useTileCopy();
   const now = nowLocal();
   switch (tile.kind) {
+    case "strain": return <Strain tile={tile} c={c} now={now} />;
     case "lastMatch": return <LastMatch tile={tile} c={c} now={now} />;
     case "personalBest": return <PersonalBest tile={tile} c={c} now={now} />;
     case "rival": return <Rival tile={tile} c={c} now={now} />;
@@ -232,15 +330,15 @@ export function StatTileCard({ tile }: { tile: StatTile }) {
     case "distanceTotal": return <DistanceTotal tile={tile} c={c} now={now} />;
     case "distanceSpells": return <DistanceSpells tile={tile} c={c} now={now} />;
     case "ranks": return <Ranks tile={tile} c={c} now={now} />;
-    case "style": return <Style tile={tile} c={c} />;
+    case "style": return <Style tile={tile} c={c} now={now} />;
     case "challenge": return <Challenge tile={tile} c={c} now={now} />;
     case "dribbles": return <Dribbles tile={tile} c={c} now={now} />;
     case "matchesPlayed": return <MatchesPlayed tile={tile} c={c} now={now} />;
     case "shots": return <Shots tile={tile} c={c} now={now} />;
-    case "passingTrend": return <PassingTrend tile={tile} c={c} />;
+    case "passingTrend": return <PassingTrend tile={tile} c={c} now={now} />;
     case "teamShare": return <TeamShare tile={tile} c={c} now={now} />;
     case "dribbleDuel": return <DribbleDuel tile={tile} c={c} now={now} />;
-    case "week": return <Week tile={tile} c={c} />;
+    case "week": return <Week tile={tile} c={c} now={now} />;
     case "friends": return <Friends tile={tile} c={c} now={now} />;
     case "unclaimed": return <Unclaimed tile={tile} c={c} now={now} />;
     default: return null;
@@ -249,649 +347,373 @@ export function StatTileCard({ tile }: { tile: StatTile }) {
 
 type P<K extends StatTile["kind"]> = { tile: Extract<StatTile, { kind: K }>; c: Copy; now: string };
 
-const matchWhen = (m: { startLocal: string }, c: Copy, now: string) => c.matchAt(dayRef(m.startLocal, now, c.locale), m.startLocal.slice(11, 16));
+const report = (code: string) => `/m/${code}`;
 
-function LastMatch({ tile, c, now }: P<"lastMatch">) {
-  const unit = c.units[tile.metric];
-  const max = Math.max(tile.value, tile.pitchAverage, 1e-9);
-  const shown = (["topSpeedKmh", "distanceKm", "touches", "passesCompleted"] as const).filter((m) => tile.secondary[m] !== undefined).slice(0, 3);
+function Strain({ tile, c, now }: P<"strain">) {
+  const s = c.strain;
+  const prev = tile.previous;
+  const line = prev === null ? s.first : Math.abs(tile.strain - prev) < 0.3 ? s.same : tile.strain > prev ? s.harder(prev.toFixed(1)) : s.easier(prev.toFixed(1));
+  const zones: Array<[keyof typeof s.zone, number]> = [["light", 10], ["moderate", 4], ["high", 4], ["allOut", 3]];
   return (
-    <Shell testId="lastMatch">
-      <Two
-        left={<>
-          <Eyebrow>{c.lastMatchEyebrow}</Eyebrow>
-          <Head>{c.lastMatchHead[tile.metric]}</Head>
-          <Body className="mt-1">{c.lastMatchMeta(tile.match.fieldName, matchWhen(tile.match, c, now), tile.match.players)}</Body>
-          {shown.length > 0 && (
-            <div className="mt-4 flex gap-5">
-              {shown.map((m) => <SmallStat key={m} v={value(m, tile.secondary[m]!)} unit={m === "topSpeedKmh" ? c.units.topSpeedKmh : m === "distanceKm" ? c.units.distanceKm : undefined} label={c.small[m]} />)}
-            </div>
-          )}
-          <Cta href={`/m/${tile.match.code}`}>{c.matchReport}</Cta>
-        </>}
-        right={<div className="flex flex-col gap-3 md:items-end">
-          <Chip tone="violet">{c.numberOne(c.metricShort[tile.metric])}</Chip>
-          <Big v={value(tile.metric, tile.value)} unit={c.bigUnit(tile.metric, tile.value)} word />
-          <div className="flex w-full flex-col gap-3">
-            <Meter label={c.you} valueText={`${value(tile.metric, tile.value)} ${unit}`} fraction={tile.value / max} mine />
-            <Meter label={c.pitchAverage} valueText={`${value(tile.metric, tile.pitchAverage)} ${unit}`} fraction={tile.pitchAverage / max} mine={false} />
+    <Card testId="strain" href={report(tile.match.code)} title={s.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={line}
+      foot={[{ v: String(tile.calories), l: s.calories }, { v: km(tile.distanceKm), u: c.units.distanceKm, l: s.run }, { v: String(tile.minutes), u: c.min, l: s.played }]}>
+      <Ring frac={tile.strain / 21} color={TEAL} big={tile.strain.toFixed(1)} sub={s.zone[tile.zone]} size={176}>
+        <div className="mt-3 w-full">
+          <div className="relative grid h-1.5 grid-cols-[10fr_4fr_4fr_3fr] gap-[3px]">
+            {zones.map(([z]) => <span key={z} className="rounded-sm" style={{ background: z === tile.zone ? TEAL : "#1E3A44" }} />)}
+            <span className="absolute -top-1 h-3.5 w-1 rounded-full bg-text" style={{ insetInlineStart: `calc(${(tile.strain / 21) * 100}% - 2px)` }} />
           </div>
-        </div>}
-      />
-    </Shell>
+          <div className="mt-1.5 grid grid-cols-[10fr_4fr_4fr_3fr] gap-[3px] text-[10px] text-muted-text">
+            {zones.map(([z]) => <span key={z} className={cn("truncate", z === tile.zone && "text-text")}>{s.zoneShort[z]}</span>)}
+          </div>
+        </div>
+      </Ring>
+    </Card>
   );
 }
 
 function PersonalBest({ tile, c, now }: P<"personalBest">) {
-  const unit = c.units[tile.metric];
-  const day = dayRef(tile.match.startLocal, now, c.locale);
-  const time = tile.match.startLocal.slice(11, 16);
+  const b = c.best;
   const run = tile.metric === "topSpeedKmh";
-  const watch = watchAt(tile.match.watch, tile.at);
-  const left = (
-    <>
-      <Eyebrow chip={<Chip>{c.metricShort[tile.metric]}</Chip>}>{c.newBest}</Eyebrow>
-      <div className="mt-3"><Big v={value(tile.metric, tile.value)} unit={c.bigUnit(tile.metric, tile.value)} tone="lime" size="xl" word /></div>
-      {run ? (
-        <Body className="mt-3 text-[15px] text-text/85">
-          {c.bestSpeedBody(tile.at !== null ? clock(tile.at) : null, day, time)}
-          {tile.fasterAtField !== null && <> {c.fasterAtField(tile.fasterAtField, tile.match.fieldName)}</>}
-        </Body>
-      ) : (
-        <Body className="mt-3 text-[15px] text-text/85">{c.bestRest[tile.metric]} {c.bestOn(day, time)}</Body>
-      )}
-      <p className="mt-2 text-xs text-muted-text">{c.oldBest(`${value(tile.metric, tile.previousBest)}${tile.metric === "distanceKm" || run ? ` ${unit}` : ""}`, longDate(tile.previousBestLocal, c.locale))}</p>
-      <Cta href={run && watch ? watch : `/m/${tile.match.code}`}>{run && watch ? c.watchRun : c.matchReport}</Cta>
-    </>
-  );
-  if (!(run && watch)) return <Shell testId="personalBest"><div className="max-w-xl">{left}</div></Shell>;
+  const scale = tile.value * 1.18;
+  const diff = tile.value - tile.previousBest;
+  const watch = run ? watchAt(tile.match.watch, tile.at) : null;
+  const foot: Foot[] = run
+    ? [{ v: value(tile.metric, tile.previousBest), u: c.units.topSpeedKmh, l: b.old }, { v: `+${diff.toFixed(1)}`, u: c.units.topSpeedKmh, l: b.faster }, tile.fasterAtField !== null ? { v: String(tile.fasterAtField), l: b.fasterAt } : { v: matchWhen(tile.match.startLocal, now, c.locale).split(" ")[1], l: dayRef(tile.match.startLocal, now, c.locale) }]
+    : [{ v: value(tile.metric, tile.previousBest), l: b.old }, { v: `+${value(tile.metric, diff)}`, l: b.more }, { v: tile.previousBest > 0 ? `${(tile.value / tile.previousBest).toFixed(1)}×` : "–", l: b.times }];
   return (
-    <Shell testId="personalBest">
-      <Two
-        left={left}
-        right={
-          <Link href={watch} className="block overflow-hidden rounded-2xl border border-line bg-void/60">
-            <div className="relative flex aspect-video items-center justify-center" style={{ background: "repeating-linear-gradient(135deg,#141B2C 0 10px,#182035 10px 20px)" }}>
-              <span className="absolute start-3 top-2 text-[11px] text-muted-text">{c.clipNote}</span>
-              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-void/90"><Play className="h-5 w-5 fill-current" /></span>
-            </div>
-            <p className="px-3 py-2.5 text-sm font-semibold">{c.yourSprint} · <N>{tile.at !== null ? clock(tile.at) : ""}</N></p>
-          </Link>
-        }
-      />
-    </Shell>
+    <Card testId="personalBest" href={watch ?? report(tile.match.code)} title={b.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
+      line={b.line(`${value(tile.metric, tile.previousBest)}${run ? ` ${c.units.topSpeedKmh}` : ""}`, longDate(tile.previousBestLocal, c.locale))} foot={foot}>
+      <Ring frac={tile.value / scale} tick={tile.previousBest / scale} color={GOLD} big={value(tile.metric, tile.value)} sub={b.sub(tile.metric, tile.value)} />
+    </Card>
   );
 }
 
-function gapText(km: number, c: Copy): string {
-  return km < 1 ? `${Math.round(km * 1000 / 10) * 10} ${c.locale === "ar" ? "م" : "m"}` : `${km.toFixed(1)} ${c.units.distanceKm}`;
+function LastMatch({ tile, c, now }: P<"lastMatch">) {
+  const l = c.last;
+  const unit = tile.metric === "distanceKm" || tile.metric === "topSpeedKmh" ? c.units[tile.metric] : "";
+  const shown = (["topSpeedKmh", "distanceKm", "touches", "passesCompleted", "dribblesWon"] as const).filter((m) => m !== tile.metric && tile.secondary[m] !== undefined).slice(0, 3);
+  return (
+    <Card testId="lastMatch" href={report(tile.match.code)} title={l.title[tile.metric]} when={matchWhen(tile.match.startLocal, now, c.locale)} line={l.line(tile.match.fieldName)}
+      foot={shown.map((m) => ({ v: value(m, tile.secondary[m]!), u: m === "distanceKm" || m === "topSpeedKmh" ? c.units[m] : undefined, l: c.small[m] }))}>
+      <Headline big={value(tile.metric, tile.value)} unit={unit || c.bigUnit(tile.metric, tile.value)} sub={l.sub(tile.claimed)} color={TEAL} />
+      <div className="mt-5">
+        <RankList color={TEAL} rows={[
+          { name: c.you, v: `${value(tile.metric, tile.value)}${unit ? ` ${unit}` : ""}`, n: tile.value, me: true },
+          { name: l.pitch, v: `${value(tile.metric, tile.pitchAverage)}${unit ? ` ${unit}` : ""}`, n: tile.pitchAverage },
+        ]} />
+      </div>
+    </Card>
+  );
 }
 
-function Rival({ tile, c, now }: P<"rival">) {
-  const leading = tile.myRank === 1;
+function Rival({ tile, c }: P<"rival">) {
+  const r = c.rival;
   const gap = Math.abs(tile.other.distanceKm - tile.mine);
-  const max = Math.max(tile.other.distanceKm, tile.mine, 1e-9);
-  const upcoming = tile.upcoming;
+  const gapText = gap < 1 ? `${Math.round(gap * 100) * 10} ${c.m}` : `${gap.toFixed(1)} ${c.units.distanceKm}`;
   return (
-    <Shell testId="rival">
-      <Two
-        left={<>
-          <Eyebrow>{tile.fieldName} · {monthName(tile.month, c.locale)}</Eyebrow>
-          <Head>{leading ? c.rivalLead(tile.fieldName) : c.rivalAhead(tile.other.name, gapText(gap, c))}</Head>
-          <div className="mt-4 flex flex-col gap-3">
-            {(leading
-              ? [{ label: c.you, v: tile.mine, mine: true }, { label: tile.other.name, v: tile.other.distanceKm, mine: false }]
-              : [{ label: tile.other.name, v: tile.other.distanceKm, mine: false }, { label: c.you, v: tile.mine, mine: true }]
-            ).map((row) => <Meter key={row.label} label={row.label} valueText={`${row.v.toFixed(1)} ${c.units.distanceKm}`} fraction={row.v / max} mine={row.mine} />)}
-          </div>
-          <Body>{leading ? c.rivalLeadBody(tile.other.name, gapText(gap, c)) : c.rivalAheadBody}</Body>
-          {upcoming
-            ? <Cta href={`/m/${upcoming.code}`}>{whenRef(upcoming.startLocal, now, c.locale, true)} <N className="font-sans">{upcoming.startLocal.slice(11, 16)}</N></Cta>
-            : <Cta href="/book">{c.bookNext}</Cta>}
-        </>}
-        right={<div className="flex flex-col gap-2">
-          <div className="flex justify-between text-xs text-muted-text"><span>{c.distanceThisMonth}</span><span className="text-turf">{c.allPlayers(tile.total)}</span></div>
-          {tile.board.map((row) => (
-            <div key={`${row.rank}-${row.name}`} className={cn("flex items-center gap-3 rounded-xl px-3 py-2.5", row.me ? "border border-turf/60 bg-turf/5" : "bg-[#182035]")}>
-              <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-void font-display text-lg font-bold", row.me && "text-turf")}><N>{row.rank}</N></span>
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold">{row.me ? c.you : row.name}</span>
-              <N className="font-sans text-sm text-muted-text">{row.distanceKm.toFixed(1)} {c.units.distanceKm}</N>
-            </div>
-          ))}
-        </div>}
-      />
-    </Shell>
+    <Card testId="rival" href={tile.upcoming ? report(tile.upcoming.code) : "/book"} title={r.title(monthName(tile.month, c.locale))} when={tile.fieldName}
+      line={tile.myRank === 1 ? r.lead(tile.other.name, gapText) : r.ahead(tile.other.name, gapText)}
+      foot={[{ v: String(tile.myRank), l: r.rank }, { v: tile.perMatch.toFixed(1), u: c.units.distanceKm, l: r.perMatch }, { v: String(tile.total), l: r.players }]}>
+      <RankList color={TEAL} rows={tile.board.map((b) => ({ rank: String(b.rank), name: b.me ? c.you : b.name, v: b.distanceKm.toFixed(1), n: b.distanceKm, me: b.me }))} />
+    </Card>
   );
 }
 
 function Form({ tile, c, now }: P<"form">) {
-  const unit = c.units[tile.metric];
-  const last = tile.values.at(-1)!;
-  const diff = tile.latest - tile.average;
-  const diffText = tile.metric === "touches" ? `${Math.round(diff)} ${unit}` : `${diff.toFixed(tile.metric === "distanceKm" ? 2 : 1)} ${unit}`;
+  const f = c.form;
+  const unit = tile.metric === "touches" ? c.bigUnit("touches", tile.latest) : c.units[tile.metric];
+  const fmt = (v: number) => (tile.metric === "touches" ? String(Math.round(v)) : v.toFixed(1));
+  const vals = tile.values.map((v) => v.value);
   return (
-    <Shell testId="form">
-      <Two
-        left={<>
-          <Eyebrow>{c.formEyebrow}</Eyebrow>
-          <Head>{c.formHead(tile.metric, tile.streak)}</Head>
-          <Body>
-            {c.formBody(`${value(tile.metric, tile.latest)} ${unit}`, dayRef(last.startLocal, now, c.locale), diffText)}
-            {tile.upcoming && c.keepGoing(`${whenRef(tile.upcoming.startLocal, now, c.locale)} ${tile.upcoming.startLocal.slice(11, 16)}`)}
-          </Body>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {(["distanceKm", "topSpeedKmh", "touches"] as const).map((m) => (
-              <span key={m} className={cn("rounded-full px-3 py-1 text-xs font-semibold", m === tile.metric ? "bg-raised text-text" : "border border-line text-muted-text")}>{c.metricShort[m]}</span>
-            ))}
-          </div>
-          <Cta href="/matches">{c.allMatches}</Cta>
-        </>}
-        right={<Bars
-          items={tile.values.map((v) => ({ label: shortDate(v.startLocal, c.locale), value: v.value }))}
-          highlight={tile.values.length - 1}
-          format={(v) => (tile.metric === "touches" ? String(v) : v.toFixed(1))}
-        />}
-      />
-    </Shell>
+    <Card testId="form" href="/matches" title={f.title[tile.metric]} when={f.when(tile.values.length)}
+      line={f.dashed}
+      foot={[{ v: fmt(tile.average), l: f.average }, { v: String(tile.streak), l: f.inARow }, { v: fmt(Math.max(...vals)), l: f.best }]}>
+      <Headline big={fmt(tile.latest)} unit={unit} sub={f.sub(tile.streak)} color={TEAL} />
+      <LineChart values={vals} color={TEAL} rtl={c.locale === "ar"} note=""
+        from={shortDate(tile.values[0].startLocal, c.locale)} to={dayRef(tile.values.at(-1)!.startLocal, now, c.locale)} />
+    </Card>
   );
 }
 
 function NotFound({ tile, c, now }: P<"notFound">) {
-  const day = dayRef(tile.match.startLocal, now, c.locale);
-  const teaser = tile.teaser ? c.notFoundTeaser[tile.teaser.metric] : undefined;
+  const n = c.notFound;
   const players = tile.match.players;
+  const teaser = tile.teaser ? n.teaser[tile.teaser.metric] : undefined;
+  const teaserUnit = tile.teaser && (tile.teaser.metric === "topSpeedKmh" || tile.teaser.metric === "distanceKm") ? c.units[tile.teaser.metric] : undefined;
+  const foot: Foot[] = [
+    tile.teaser ? { v: value(tile.teaser.metric, tile.teaser.value), u: teaserUnit, l: n.teaserLabel[tile.teaser.metric] ?? c.metric[tile.teaser.metric] } : { v: matchWhen(tile.match.startLocal, now, c.locale).split(" ")[1], l: dayRef(tile.match.startLocal, now, c.locale) },
+    { v: String(tile.found), l: n.found },
+    players ? { v: String(Math.max(0, players - tile.found)), l: n.toGo } : { v: "2", u: c.min, l: n.minutes },
+  ];
   return (
-    <Shell testId="notFound">
-      <Two
-        left={<>
-          <Eyebrow>{matchWhen(tile.match, c, now)} · {tile.match.fieldName}</Eyebrow>
-          <Head>{teaser && tile.teaser ? teaser(value(tile.teaser.metric, tile.teaser.value), day) : c.notFoundPlain(day)}</Head>
-          <Body>{c.notFoundBody}</Body>
-          {players > 0 && (
-            <div className="mt-4 flex max-w-sm flex-col gap-1.5">
-              <div dir="ltr" className="h-2 overflow-hidden rounded-full bg-[#1E2740]"><div className="h-full rounded-full bg-turf" style={{ width: `${Math.max(4, (tile.found / players) * 100)}%` }} /></div>
-              <p className="text-xs font-semibold">{c.found(tile.found, players)}</p>
-            </div>
-          )}
-          <Cta href={`/find/${tile.findRecordingId}`}>{c.findYourself}</Cta>
-        </>}
-        right={<div className="flex flex-col gap-3">
-          {[
-            [c.yourDistance, `-.-- ${c.units.distanceKm}`],
-            [c.yourTopSpeed, `--.- ${c.units.topSpeedKmh}`],
-            [c.yourPlace, players ? `#- ${c.of} ${players}` : "#-"],
-          ].map(([label, ghost]) => (
-            <div key={label} className="flex items-center justify-between rounded-xl bg-[#182035] px-4 py-4">
-              <span className="text-sm text-muted-text">{label}</span>
-              <N className="text-2xl font-bold text-[#4A5470]">{ghost}</N>
-            </div>
-          ))}
-        </div>}
-      />
-    </Shell>
+    <Card testId="notFound" href={`/find/${tile.findRecordingId}`} title={n.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
+      line={teaser && tile.teaser ? teaser(value(tile.teaser.metric, tile.teaser.value)) : n.plain} foot={foot}>
+      <Ring frac={players ? tile.found / players : 0.1} color={SILVER} big={n.big(tile.found, players)} sub={n.sub} dashed={!players} />
+    </Card>
   );
 }
 
 function Passing({ tile, c, now }: P<"passing">) {
-  const dots = Math.min(tile.tried, 33);
-  const scale = tile.tried / dots;
-  const completedDots = Math.round(tile.completed / scale);
+  const p = c.passing;
   return (
-    <Shell testId="passing">
-      <Two
-        left={<>
-          <Eyebrow>{c.passingEyebrow} · {matchWhen(tile.match, c, now)}</Eyebrow>
-          <Head>{c.passingHead(tile.completed, tile.tried)}</Head>
-          <Body>{tile.bestRate ? c.passingBest(pct(tile.rate)) : c.passingRate(pct(tile.rate))}{tile.pitchRate !== null && c.pitchAveraged(pct(tile.pitchRate))}</Body>
-          <Cta href={tile.match.watch ?? `/m/${tile.match.code}`} primary={false}>{tile.match.watch ? c.watchPasses : c.matchReport}</Cta>
-        </>}
-        right={<div className="flex flex-col gap-3">
-          <div dir="ltr" className="grid grid-cols-11 gap-2">
-            {Array.from({ length: dots }, (_, i) => (
-              <span key={i} className={cn("aspect-square rounded-full", i < completedDots ? "bg-turf" : "border-2 border-[#4A5470]")} />
-            ))}
-          </div>
-          <div className="flex gap-4 text-xs text-muted-text">
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-turf" /><N className="font-sans">{tile.completed}</N> {c.completed}</span>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full border-2 border-[#4A5470]" /><N className="font-sans">{tile.tried - tile.completed}</N> {c.lost}</span>
-          </div>
-          <Big v={String(Math.round(tile.rate * 100))} unit="%" />
-        </div>}
-      />
-    </Shell>
+    <Card testId="passing" href={tile.match.watch ?? report(tile.match.code)} title={p.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
+      line={tile.bestRate ? p.best : tile.pitchRate !== null ? p.pitch(pct(tile.pitchRate)) : p.plain}
+      foot={[{ v: tile.pitchRate !== null ? pct(tile.pitchRate) : "–", l: p.pitchAvg }, { v: String(tile.completed), l: p.completed }, { v: String(tile.tried - tile.completed), l: p.lost }]}>
+      <Ring frac={tile.rate} color={LIME} big={pct(tile.rate)} sub={p.sub(tile.completed, tile.tried)} />
+    </Card>
   );
 }
 
 function Touches({ tile, c, now }: P<"touches">) {
-  const startMin = tile.firstIndex * 5;
-  const max = Math.max(...tile.blocks, 1);
+  const t = c.touches;
+  const from = tile.busiest.index * 5;
   return (
-    <Shell testId="touches" glow={false}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <Eyebrow>{c.touchesEyebrow} · {matchWhen(tile.match, c, now)}</Eyebrow>
-          <Head>{c.touchesHead(tile.total, tile.everySeconds)}</Head>
-        </div>
-        {tile.match.watch && <Cta href={tile.match.watch} primary={false}>{c.everyTouch}</Cta>}
-      </div>
-      <div dir="ltr" className="mt-5 flex h-36 items-end gap-1.5 sm:gap-2">
-        {tile.blocks.map((count, i) => {
-          const on = tile.firstIndex + i === tile.busiest.index;
-          return (
-            <div key={i} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
-              <span className={cn("font-display text-xs tabular-nums", on ? "font-bold text-turf" : "text-muted-text")}>{count}</span>
-              <span className={cn("w-full rounded-t-md", on ? "bg-turf" : "bg-[#2B3550]")} style={{ height: `${Math.max(3, (count / max) * 78)}%` }} />
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-text" dir="ltr">
-        <span>{startMin}′</span>
-        <span className="hidden text-center sm:inline" dir={c.locale === "ar" ? "rtl" : "ltr"}>{c.busiest(tile.busiest.index * 5, tile.busiest.index * 5 + 5, tile.busiest.count)}</span>
-        <span>{startMin + tile.blocks.length * 5}′</span>
-      </div>
-      <p className="mt-2 text-xs text-muted-text sm:hidden">{c.busiest(tile.busiest.index * 5, tile.busiest.index * 5 + 5, tile.busiest.count)}</p>
-    </Shell>
+    <Card testId="touches" href={tile.match.watch ?? report(tile.match.code)} title={t.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
+      foot={[{ v: tile.everySeconds !== null ? String(tile.everySeconds) : "–", u: tile.everySeconds !== null ? c.s : undefined, l: t.between }, { v: String(tile.busiest.count), l: t.busiest }, { v: String(tile.blocks.length * 5), u: c.min, l: t.watched }]}>
+      <Headline big={String(tile.total)} unit={t.unit(tile.total)} sub={t.sub(from, from + 5)} color={LIME} />
+      <Bars values={tile.blocks} hi={tile.busiest.index - tile.firstIndex} color={LIME}
+        labels={tile.blocks.map((_, i) => `${(tile.firstIndex + i) * 5}′`)} />
+    </Card>
   );
 }
 
 function DistanceTotal({ tile, c, now }: P<"distanceTotal">) {
-  const name = c.milestoneName(tile.milestone);
-  const scaleMax = tile.passed ? Math.max(tile.totalKm, tile.milestone) : tile.milestone;
+  const t = c.total;
+  const name = t.milestone(tile.milestone);
   const lastDay = dayRef(tile.latestLocal, now, c.locale);
-  const shades = ["#1E8F86", "#22A69B", "#25B8AC", "#2AC8BB", "#2FD8C4"];
+  const per = tile.matches ? tile.totalKm / tile.matches : 0;
   return (
-    <Shell testId="distanceTotal">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <Eyebrow>{c.sinceEyebrow(longDate(tile.sinceLocal, c.locale), tile.matches)}</Eyebrow>
-          <Head>{tile.passed ? c.passedHead(name, tile.fieldName) : c.totalHead(tile.totalKm.toFixed(1), tile.fieldName)}</Head>
-          <Body>
-            {tile.passed
-              ? c.passedBody(tile.totalKm.toFixed(1), tile.matches)
-              : tile.milestone === 21.1 || tile.milestone === 42.2
-                ? c.toGoBody(name, String(tile.milestone), tile.matchesToGo, lastDay)
-                : c.toGoBodyKm(String(tile.milestone), tile.matchesToGo, lastDay)}
-          </Body>
-        </div>
-        <div className="hidden shrink-0 sm:block"><Big v={tile.totalKm.toFixed(1)} unit={c.units.distanceKm} /></div>
-      </div>
-      <div className="mt-6">
-        <div dir="ltr" className="flex h-3.5 overflow-hidden rounded-full bg-[#1E2740]">
-          {tile.perMatch.map((km, i) => (
-            <span key={i} className="h-full border-e border-void/70 last:border-e-0" style={{ width: `${(km / scaleMax) * 100}%`, background: shades[Math.max(0, shades.length - tile.perMatch.length + i)] ?? "#2FD8C4" }} />
-          ))}
-        </div>
-        <div dir="ltr" className="mt-2 flex justify-between text-xs text-muted-text">
-          <span>0 {c.units.distanceKm}</span>
-          <span className="hidden sm:inline" dir={c.locale === "ar" ? "rtl" : "ltr"}>{c.eachBlock}</span>
-          <span>{tile.milestone} {c.units.distanceKm}{tile.milestone === 21.1 || tile.milestone === 42.2 ? `, ${name}` : ""}</span>
-        </div>
-      </div>
-    </Shell>
+    <Card testId="distanceTotal" href="/matches" title={t.title(tile.fieldName)} when={t.when(shortDate(tile.sinceLocal, c.locale))}
+      line={tile.passed ? t.passed(name, tile.matches) : t.toGo(name, tile.matchesToGo, lastDay)}
+      foot={[{ v: String(tile.matches), l: t.matches }, { v: per.toFixed(1), u: c.units.distanceKm, l: t.perMatch }, { v: (tile.perMatch.at(-1) ?? 0).toFixed(1), u: c.units.distanceKm, l: t.lastMatch }]}>
+      <Ring frac={tile.passed ? 1 : tile.totalKm / tile.milestone} color={TEAL} big={km(tile.totalKm)} sub={t.sub(name)} />
+    </Card>
   );
 }
 
 function DistanceSpells({ tile, c, now }: P<"distanceSpells">) {
-  const last = tile.spells.at(-1)!;
+  const s = c.spells;
+  const total = tile.spells.reduce((a, b) => a + b, 0);
+  const avg = total / tile.spells.length;
+  const best = tile.spells[tile.strongest];
   const from = tile.strongest * 10;
   return (
-    <Shell testId="distanceSpells" glow={false}>
-      <Two
-        left={<>
-          <Eyebrow>{c.distanceEyebrow} · {matchWhen(tile.match, c, now)}</Eyebrow>
-          <Head>{tile.finishedStrongest ? c.strongerHead : c.strongestHead(from, from + 10)}</Head>
-          <Body>{tile.finishedStrongest ? c.strongerBody(String(last)) : c.strongestBody(String(tile.spells[tile.strongest]))}</Body>
-        </>}
-        right={<Bars
-          items={tile.spells.map((m, i) => ({ label: `${i * 10}–${i * 10 + 10}′`, value: m }))}
-          highlight={tile.strongest}
-          format={(v) => `${v} ${c.locale === "ar" ? "م" : "m"}`}
-        />}
-      />
-    </Shell>
+    <Card testId="distanceSpells" href={tile.match.watch ? watchAt(tile.match.watch, from * 60) : report(tile.match.code)} title={s.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
+      foot={[{ v: (total / 1000).toFixed(1), u: c.units.distanceKm, l: s.total }, { v: `+${Math.round((best / avg - 1) * 100)}%`, l: s.vsAvg }, { v: String(tile.spells.length * 10), u: c.min, l: s.played }]}>
+      <Headline big={String(best)} unit={c.m} sub={tile.finishedStrongest ? s.stronger : s.strongest(from, from + 10)} color={TEAL} />
+      <Bars values={tile.spells} hi={tile.strongest} color={TEAL} labels={tile.spells.map((_, i) => `${i * 10}–${i * 10 + 10}′`)} />
+    </Card>
   );
 }
 
 function Ranks({ tile, c, now }: P<"ranks">) {
+  const r = c.ranks;
+  const unitOf = (m: TileMetric) => (m === "distanceKm" ? ` ${c.units.distanceKm}` : m === "topSpeedKmh" ? ` ${c.units.topSpeedKmh}` : "");
+  const of = Math.max(tile.claimed, ...tile.ranks.map((x) => x.rank));
   return (
-    <Shell testId="ranks" glow={false}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <Eyebrow>{matchWhen(tile.match, c, now)} · {c.players(tile.claimed)}</Eyebrow>
-          <Head>{c.ranksHead}</Head>
-        </div>
-        <Cta href={`/m/${tile.match.code}`} primary={false}>{c.fullTable}</Cta>
-      </div>
-      <div className="mt-5 grid grid-cols-2 gap-3 sm:flex">
-        {tile.ranks.map((r, i) => (
-          <div key={r.metric} className={cn("min-w-0 flex-1 rounded-2xl p-4", i === 0 ? "border border-turf/60 bg-turf/5" : "bg-[#182035]")}>
-            <span className={cn("inline-flex h-11 min-w-11 items-center justify-center rounded-xl bg-void px-2 font-display text-xl font-bold", i === 0 && "text-turf")}>
-              {c.locale === "ar" ? <N>{`#${r.rank}`}</N> : <N>{c.ordinal(r.rank)}</N>}
-            </span>
-            <p className="mt-3 text-sm font-semibold">{c.metric[r.metric]}</p>
-            <p className="text-xs text-muted-text">{r.of !== null
-              ? <><N className="font-sans">{value(r.metric, r.value)}</N> {c.of} <N className="font-sans">{r.of}</N></>
-              : <><N className="font-sans">{value(r.metric, r.value)}</N>{r.metric === "distanceKm" ? ` ${c.units.distanceKm}` : r.metric === "topSpeedKmh" ? ` ${c.units.topSpeedKmh}` : ""}</>}</p>
-          </div>
-        ))}
-      </div>
-    </Shell>
+    <Card testId="ranks" href={report(tile.match.code)} title={r.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={r.line(tile.claimed)}
+      foot={[{ v: String(tile.ranks.filter((x) => x.rank <= 3).length), l: r.top3 }, { v: String(tile.claimed), l: r.claimed }, { v: c.locale === "ar" ? `#${Math.min(...tile.ranks.map((x) => x.rank))}` : c.ordinal(Math.min(...tile.ranks.map((x) => x.rank))), l: r.best }]}>
+      <RankList color={SILVER} rows={tile.ranks.map((x) => ({ rank: c.locale === "ar" ? `#${x.rank}` : c.ordinal(x.rank), name: c.metric[x.metric], v: `${value(x.metric, x.value)}${unitOf(x.metric)}`, n: of + 1 - x.rank, me: true }))} />
+    </Card>
   );
 }
 
-function Style({ tile, c }: { tile: Extract<StatTile, { kind: "style" }>; c: Copy }) {
-  const total = Math.max(1, tile.passes + tile.dribbles + tile.shots + tile.other);
-  const share = (n: number) => `${Math.round((n / total) * 100)}%`;
+function Style({ tile, c }: P<"style">) {
+  const s = c.style;
   const segs = [
-    { label: c.passes, n: tile.passes, cls: "bg-turf text-void" },
-    { label: c.dribbles, n: tile.dribbles, cls: "bg-violet text-white" },
-    { label: c.shotsOnTarget, n: tile.shots, cls: "bg-floodlight text-void" },
-    { label: c.otherTouches, n: tile.other, cls: "bg-[#2B3550] text-text" },
-  ].filter((s) => s.n > 0);
+    { label: s.passes, n: tile.passes, color: LIME },
+    { label: s.dribbles, n: tile.dribbles, color: VIOLET },
+    { label: s.shots, n: tile.shots, color: GOLD },
+    { label: s.other, n: tile.other, color: MUTED },
+  ].filter((x) => x.n > 0);
   return (
-    <Shell testId="style" glow={false}>
-      <Eyebrow>{c.styleEyebrow(tile.matches)}</Eyebrow>
-      <Head>{c.styleHead[tile.lean]}</Head>
-      <Body>{c.styleBody(tile.touches, share(tile.passes))}</Body>
-      <div dir="ltr" className="mt-6 flex h-12 overflow-hidden rounded-xl">
-        {segs.map((s) => (
-          <span key={s.label} className={cn("flex items-center overflow-hidden whitespace-nowrap border-e-2 border-surface px-3 text-xs font-bold last:border-e-0", s.cls)} style={{ width: `${(s.n / total) * 100}%` }}>
-            {(s.n / total) > 0.12 && <span className="hidden sm:inline">{s.label} {s.n}</span>}
-          </span>
-        ))}
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-text">
-        {segs.map((s) => <span key={s.label}>{s.label} <N className="font-sans">{share(s.n)}</N></span>)}
-      </div>
-    </Shell>
+    <Card testId="style" href="/matches" title={s.title} when={s.when(tile.matches)} line={s.line[tile.lean]}
+      foot={[{ v: String(tile.matches), l: s.matches }, { v: String(tile.touches), l: s.touches }, { v: String(tile.passes), l: s.passes }]}>
+      <Donut segs={segs} center={s.lean[tile.lean]} />
+    </Card>
   );
 }
 
 function Challenge({ tile, c, now }: P<"challenge">) {
-  const when = whenRef(tile.upcoming.startLocal, now, c.locale);
-  const at = (v: number) => `${Math.min(100, Math.max(0, (v / tile.scaleMax) * 100))}%`;
+  const ch = c.challenge;
   const fmt = (v: number) => (tile.metric === "distanceKm" ? v.toFixed(1) : String(Math.round(v)));
-  const unit = tile.metric === "distanceKm" ? c.units.distanceKm : c.units[tile.metric];
+  const scale = Math.max(tile.scaleMax, tile.target * 1.12);
   return (
-    <Shell testId="challenge">
-      <Two
-        left={<>
-          <Eyebrow>{c.challengeEyebrow(whenRef(tile.upcoming.startLocal, now, c.locale, true), tile.upcoming.startLocal.slice(11, 16), tile.upcoming.fieldName)}</Eyebrow>
-          <Head>{c.challengeHead[tile.metric](fmt(tile.target), when)}</Head>
-          <Body>{c.challengeBody(fmt(tile.average), fmt(tile.target))}</Body>
-          <Cta href={`/m/${tile.upcoming.code}`} primary={false}>{c.openMatch}</Cta>
-        </>}
-        right={<div className="flex flex-col gap-4">
-          <div className="md:self-end"><Big v={fmt(tile.target)} unit={c.bigUnit(tile.metric, tile.target)} word /></div>
-          <div dir="ltr" className="relative mt-6 h-12">
-            <span className="absolute inset-x-0 top-5 h-2 rounded-full bg-[#1E2740]" />
-            <span className="absolute top-5 h-2 rounded-full bg-[#4A5470]" style={{ width: at(tile.average) }} />
-            <span className="absolute top-0 -translate-x-1/2 whitespace-nowrap text-[11px] text-muted-text" style={{ left: at(tile.average) }}>{c.average} {fmt(tile.average)}</span>
-            <span className="absolute top-3.5 h-5 w-0.5 -translate-x-1/2 bg-text/70" style={{ left: at(tile.best) }} />
-            <span className="absolute top-9 -translate-x-1/2 whitespace-nowrap text-[11px] text-muted-text" style={{ left: at(tile.best) }}>{c.best} {fmt(tile.best)}</span>
-            <span className="absolute top-3 h-6 w-6 -translate-x-1/2 rounded-full bg-floodlight" style={{ left: at(tile.target) }} />
-            <span className="absolute -top-5 -translate-x-1/2 whitespace-nowrap text-[11px] font-bold text-floodlight" style={{ left: at(tile.target) }}>{c.target} {fmt(tile.target)}</span>
-          </div>
-          <div dir="ltr" className="flex justify-between text-xs text-muted-text"><span>0</span><span>{tile.scaleMax}</span></div>
-        </div>}
-      />
-    </Shell>
+    <Card testId="challenge" href={report(tile.upcoming.code)} title={ch.title(whenRef(tile.upcoming.startLocal, now, c.locale))} when={tile.upcoming.fieldName}
+      line={ch.line(fmt(tile.best))}
+      foot={[{ v: fmt(tile.average), l: ch.average }, { v: fmt(tile.best), l: ch.best }, { v: tile.upcoming.startLocal.slice(11, 16), l: ch.kickoff }]}>
+      <Ring frac={tile.best / scale} tick={tile.target / scale} color={LIME} big={fmt(tile.target)} sub={ch.sub[tile.metric]} />
+    </Card>
   );
 }
 
 function Dribbles({ tile, c, now }: P<"dribbles">) {
+  const d = c.dribbles;
   const tries = tile.won + tile.lost;
   return (
-    <Shell testId="dribbles" glow={false}>
-      <div className="flex items-start justify-between gap-3">
-        <Eyebrow>{c.dribblesEyebrow} · {dayRef(tile.match.startLocal, now, c.locale)}</Eyebrow>
-        {tile.rank !== null && tile.rank <= 3 && <Chip tone="violet">{c.rankBadge(tile.rank, c.metricShort.dribblesWon)}</Chip>}
+    <Card testId="dribbles" href={tile.match.watch ?? report(tile.match.code)} title={d.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
+      line={<>{d.line(tries, tile.won)}{tile.leaderName && d.onlyMore(tile.leaderName)}</>}
+      foot={[{ v: String(tries), l: d.tried }, { v: tries ? pct(tile.won / tries) : "–", l: d.rate }, { v: tile.rank !== null ? (c.locale === "ar" ? `#${tile.rank}` : c.ordinal(tile.rank)) : "–", l: d.rank }]}>
+      <div className="grid grid-cols-2 gap-3">
+        <SmallRing frac={tries ? tile.won / tries : 0} color={VIOLET} big={String(tile.won)} label={d.won} />
+        <SmallRing frac={tries ? tile.lost / tries : 0} color={MUTED} big={String(tile.lost)} label={d.lost} />
       </div>
-      <div className="mt-3 flex gap-8">
-        <div><N className="block text-[72px] font-bold leading-none">{tile.won}</N><p className="mt-1 text-sm text-text">{c.won}</p></div>
-        <div><N className="block text-[72px] font-bold leading-none text-[#4A5470]">{tile.lost}</N><p className="mt-1 text-sm text-muted-text">{c.lost}</p></div>
-      </div>
-      <div dir="ltr" className="mt-4 flex gap-1.5">
-        {Array.from({ length: tries }, (_, i) => <span key={i} className={cn("h-2.5 flex-1 rounded-full", i < tile.won ? "bg-turf" : "bg-[#2B3550]")} />)}
-      </div>
-      <Body className="mt-4">{c.dribblesBody(tries, tile.won)}{tile.leaderName && c.onlyMore(tile.leaderName)}</Body>
-    </Shell>
+    </Card>
   );
+}
+
+function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 function MatchesPlayed({ tile, c, now }: P<"matchesPlayed">) {
+  const p = c.played;
   const counts = new Map<string, number>();
   for (const d of tile.dates) counts.set(d, (counts.get(d) ?? 0) + 1);
-  const add = (date: string, n: number) => {
-    const d = new Date(`${date}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + n);
-    return d.toISOString().slice(0, 10);
-  };
-  const makes = tile.upcomingDate ? c.makes(whenRef(`${tile.upcomingDate} 20:00`, now, c.locale), tile.total + 1) : null;
+  const lastWeek = tile.weekStarts.at(-1);
+  const thisWeek = lastWeek ? tile.dates.filter((d) => d >= lastWeek).length : 0;
+  const weeks = Math.max(1, tile.weekStarts.length);
   return (
-    <Shell testId="matchesPlayed" glow={false}>
-      <Eyebrow>{c.matchesEyebrow}</Eyebrow>
-      <div className="mt-3 flex items-end gap-3">
-        <N className="text-[72px] font-bold leading-none">{tile.total}</N>
-        <p className="pb-2 text-base text-muted-text">{c.matchesBody(makes)}</p>
+    <Card testId="matchesPlayed" href="/matches" title={p.title} when={tile.weekStarts[0] ? p.when(shortDate(tile.weekStarts[0], c.locale)) : undefined}
+      line={tile.upcomingDate ? p.keep : p.none}
+      foot={[{ v: (tile.total / weeks).toFixed(1), l: p.perWeek }, { v: String(thisWeek), l: p.thisWeek }, tile.upcomingDate ? { v: String(tile.total + 1), l: whenRef(`${tile.upcomingDate} 20:00`, now, c.locale) } : { v: String(tile.weekStarts.length), l: c.locale === "ar" ? "أسابيع" : "weeks" }]}>
+      <Headline big={String(tile.total)} unit={c.matches(tile.total)} sub={p.sub} color={TEAL} />
+      <div className="mt-4 grid grid-cols-7 gap-1.5">
+        {p.weekdays.map((d, i) => <span key={i} className="text-center text-[10px] text-muted-text">{d}</span>)}
+        {tile.weekStarts.flatMap((monday) => Array.from({ length: 7 }, (_, i) => {
+          const date = addDays(monday, i);
+          const n = counts.get(date) ?? 0;
+          const next = date === tile.upcomingDate;
+          return (
+            <span key={date} className={cn("flex h-7 items-center justify-center rounded-lg text-[11px] font-bold", n ? "text-[#05070C]" : next ? "border-[1.5px] border-dashed" : "")}
+              style={{ background: n ? TEAL : next ? "transparent" : TRACK, borderColor: next ? LIME : undefined }}>
+              {n > 1 ? <N>{n}</N> : null}
+            </span>
+          );
+        }))}
       </div>
-      <div className="mt-5 grid grid-cols-[auto_repeat(7,minmax(0,1fr))] items-center gap-1.5 sm:gap-2">
-        <span />
-        {c.weekdays.map((d, i) => <span key={i} className="text-center text-xs text-muted-text">{d}</span>)}
-        {tile.weekStarts.map((monday) => (
-          <WeekRow key={monday} label={shortDate(monday, c.locale)}>
-            {Array.from({ length: 7 }, (_, i) => {
-              const date = add(monday, i);
-              const n = counts.get(date) ?? 0;
-              const next = date === tile.upcomingDate;
-              return (
-                <span key={date} className={cn("flex h-9 items-center justify-center rounded-lg text-xs font-bold", n ? "bg-turf text-void" : next ? "border-2 border-dashed border-floodlight" : "bg-[#182035]")}>
-                  {n > 1 ? <N className="font-sans">{n}</N> : null}
-                </span>
-              );
-            })}
-          </WeekRow>
-        ))}
-      </div>
-    </Shell>
-  );
-}
-
-function WeekRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <span className="pe-2 text-xs text-muted-text">{label}</span>
-      {children}
-    </>
+    </Card>
   );
 }
 
 function Shots({ tile, c, now }: P<"shots">) {
+  const s = c.shots;
   const first = tile.times[0] ?? null;
+  const last = tile.times.at(-1) ?? null;
+  const span = Math.max(40 * 60, Math.ceil(((last ?? 0) * 1.15) / 600) * 600);
   return (
-    <Shell testId="shots" glow={false}>
-      <Eyebrow>{c.shotsEyebrow} · {dayRef(tile.match.startLocal, now, c.locale)}</Eyebrow>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <N className="me-2 text-[72px] font-bold leading-none">{tile.shots}</N>
-        {tile.times.map((t) => {
-          const href = watchAt(tile.match.watch, t);
-          const body = <N className="font-sans text-sm">{clock(t)}</N>;
-          return href
-            ? <Link key={t} href={href} className="rounded-xl bg-[#182035] px-4 py-3 text-text hover:bg-raised">{body}</Link>
-            : <span key={t} className="rounded-xl bg-[#182035] px-4 py-3">{body}</span>;
-        })}
+    <Card testId="shots" href={watchAt(tile.match.watch, first) ?? report(tile.match.code)} title={s.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={s.line}
+      foot={[{ v: first !== null ? minuteMark(first) : "–", l: s.first }, { v: last !== null ? minuteMark(last) : "–", l: s.last }, { v: first !== null && last !== null && tile.times.length > 1 ? String(Math.round(last - first)) : "–", u: tile.times.length > 1 ? c.s : undefined, l: s.apart }]}>
+      <Headline big={String(tile.shots)} unit={c.bigUnit("shots", tile.shots)} sub={s.sub} color={GOLD} />
+      <div className="relative mt-8 h-14">
+        <span className="absolute inset-x-0 top-6 h-1 rounded-full bg-[#141B2C]" />
+        {tile.times.map((t, i) => (
+          <span key={i} className="tile-fade absolute rounded-md px-1.5 py-0.5 text-xs font-semibold text-[#2A1E00]"
+            style={{ insetInlineStart: `calc(${(t / span) * 100}% - 18px)`, top: i % 2 ? 30 : 0, background: GOLD, animationDelay: `${600 + i * 120}ms` }}>
+            <N>{minuteMark(t)}</N>
+          </span>
+        ))}
       </div>
-      <Body className="mt-4">{c.shotsBody}</Body>
-      <Cta href={watchAt(tile.match.watch, first) ?? `/m/${tile.match.code}`} primary={false}>{tile.match.watch ? c.watchThem : c.matchReport}</Cta>
-    </Shell>
+      <div className="flex justify-between text-[10px] text-muted-text"><N>0′</N><N>{Math.round(span / 120)}′</N><N>{Math.round(span / 60)}′</N></div>
+    </Card>
   );
 }
 
-function PassingTrend({ tile, c }: { tile: Extract<StatTile, { kind: "passingTrend" }>; c: Copy }) {
+function PassingTrend({ tile, c, now }: P<"passingTrend">) {
+  const t = c.trend;
   const first = tile.rates[0];
   const last = tile.rates.at(-1)!;
   return (
-    <Shell testId="passingTrend">
-      <Eyebrow>{c.trendEyebrow}</Eyebrow>
-      <div dir="ltr" className="mt-3 flex items-center gap-5 rtl:justify-end">
-        <span className="font-display text-[56px] font-bold leading-none tabular-nums">{pct(first.rate)}</span>
-        <ArrowRight className="h-8 w-12 text-[#4A5470]" aria-hidden />
-        <span className="font-display text-[56px] font-bold leading-none tabular-nums">{pct(last.rate)}</span>
-      </div>
-      <Body className="mt-3">{c.trendBody}</Body>
-      <div className="mt-6 flex flex-col gap-2.5">
-        {tile.rates.map((r, i) => {
-          const on = i === tile.rates.length - 1;
-          return (
-            <div key={r.startLocal} className="grid grid-cols-[4.5rem_minmax(0,1fr)_3rem] items-center gap-3 text-sm">
-              <span className="text-muted-text">{shortDate(r.startLocal, c.locale)}</span>
-              <div dir="ltr" className="h-2.5 overflow-hidden rounded-full bg-[#1E2740]"><div className={cn("h-full rounded-full", on ? "bg-turf" : "bg-[#4A5470]")} style={{ width: `${r.rate * 100}%` }} /></div>
-              <N className={cn("font-sans text-end", on && "font-bold")}>{pct(r.rate)}</N>
-            </div>
-          );
-        })}
-      </div>
-    </Shell>
+    <Card testId="passingTrend" href="/matches" title={t.title} when={t.when(tile.rates.length)}
+      foot={[{ v: pct(first.rate), l: t.first }, { v: `+${Math.round((last.rate - first.rate) * 100)}`, l: t.points }, { v: String(tile.rates.length), l: t.matches }]}>
+      <Headline big={pct(last.rate)} sub={t.sub(pct(first.rate))} color={LIME} />
+      <LineChart values={tile.rates.map((r) => r.rate * 100)} color={LIME} rtl={c.locale === "ar"} note=""
+        from={shortDate(first.startLocal, c.locale)} to={dayRef(last.startLocal, now, c.locale)} />
+    </Card>
   );
 }
 
 function TeamShare({ tile, c, now }: P<"teamShare">) {
-  const share = tile.mine / tile.teamTotal;
-  const rest = Math.max(0, tile.teamTotal - tile.mine - tile.teammates.reduce((a, b) => a + b, 0));
-  const segs = [...tile.teammates.map((n) => ({ n })), ...(rest > 0 ? [{ n: rest, rest: true }] : [])];
+  const t = c.team;
+  const next = tile.teammates.length ? Math.max(...tile.teammates) : null;
   return (
-    <Shell testId="teamShare" glow={false}>
-      <Eyebrow>{c.teamEyebrow} · {dayRef(tile.match.startLocal, now, c.locale)}</Eyebrow>
-      <Head>{c.teamHead(share)}</Head>
-      <div dir="ltr" className="mt-6 flex h-12 overflow-hidden rounded-xl">
-        <span className="flex items-center whitespace-nowrap bg-turf px-4 text-sm font-bold text-void" style={{ width: `${share * 100}%` }}>{c.you} {tile.mine}</span>
-        {segs.map((s, i) => (
-          <span key={i} className={cn("flex items-center border-s-2 border-surface px-3 text-sm font-semibold", "rest" in s ? "bg-[#1E2740] text-muted-text" : "bg-[#3A4560] text-text")} style={{ width: `${(s.n / tile.teamTotal) * 100}%` }}>
-            {!("rest" in s) && s.n / tile.teamTotal > 0.07 ? s.n : ""}
-          </span>
-        ))}
-      </div>
-      <Body className="mt-3">{c.teamBody(tile.mine, tile.teamTotal, tile.teammates[0] ?? null)}</Body>
-    </Shell>
+    <Card testId="teamShare" href={report(tile.match.code)} title={t.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={t.line(next)}
+      foot={[{ v: String(tile.mine), l: t.yours }, { v: String(tile.teamTotal), l: t.total }, { v: next !== null ? String(next) : "–", l: t.next }]}>
+      <Ring frac={tile.mine / Math.max(1, tile.teamTotal)} color={LIME} big={pct(tile.mine / Math.max(1, tile.teamTotal))} sub={t.sub} />
+    </Card>
   );
 }
 
 function DribbleDuel({ tile, c, now }: P<"dribbleDuel">) {
+  const d = c.duel;
+  const rate = (w: number, t: number) => (t ? w / t : 0);
   const theyWon = tile.other.won > tile.me.won;
   const diff = Math.abs(tile.other.won - tile.me.won);
-  const rate = (w: number, t: number) => (t ? Math.round((w / t) * 100) : 0);
   const note = theyWon && tile.other.tries > tile.me.tries && rate(tile.me.won, tile.me.tries) > rate(tile.other.won, tile.other.tries);
   return (
-    <Shell testId="dribbleDuel">
-      <Eyebrow>{c.duelEyebrow} · {dayRef(tile.match.startLocal, now, c.locale)}</Eyebrow>
-      <Head>{c.duelHead(tile.other.name, diff, theyWon)}</Head>
-      <div className="mt-6 grid grid-cols-[1fr_auto_1fr] items-center text-center">
-        <div>
-          <N className="block text-[72px] font-bold leading-none text-turf">{tile.me.won}</N>
-          <p className="mt-2 font-semibold">{c.you}</p>
-          <p className="text-sm text-muted-text">{c.duelLine(tile.me.won, tile.me.tries, rate(tile.me.won, tile.me.tries))}</p>
-        </div>
-        <span className="text-sm text-muted-text">{c.vs}</span>
-        <div>
-          <N className="block text-[72px] font-bold leading-none">{tile.other.won}</N>
-          <p className="mt-2 font-semibold">{tile.other.name}</p>
-          <p className="text-sm text-muted-text">{c.duelLine(tile.other.won, tile.other.tries, rate(tile.other.won, tile.other.tries))}</p>
-        </div>
+    <Card testId="dribbleDuel" href={tile.match.watch ?? report(tile.match.code)} title={d.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
+      line={<>{d.head(tile.other.name, diff, theyWon)}{note && d.note}</>}
+      foot={[{ v: pct(rate(tile.me.won, tile.me.tries)), l: c.you }, { v: pct(rate(tile.other.won, tile.other.tries)), l: tile.other.name }, { v: String(diff), l: d.won }]}>
+      <div className="grid grid-cols-2 gap-3">
+        <SmallRing frac={rate(tile.me.won, tile.me.tries)} color={VIOLET} big={`${tile.me.won}/${tile.me.tries}`} label={c.you} />
+        <SmallRing frac={rate(tile.other.won, tile.other.tries)} color={MUTED} big={`${tile.other.won}/${tile.other.tries}`} label={tile.other.name} />
       </div>
-      {note && <p className="mt-4 text-center text-sm text-muted-text">{c.duelNote}</p>}
-    </Shell>
+    </Card>
   );
 }
 
-function Week({ tile, c }: { tile: Extract<StatTile, { kind: "week" }>; c: Copy }) {
-  const cells: Array<[string, number | null, string]> = [
-    [String(tile.touches), null, c.touchesLabel],
-    [String(tile.passesCompleted), tile.passesTried, c.passesCompleted],
-    [String(tile.dribblesWon), tile.dribbles, c.dribblesWon],
-    [String(tile.shots), null, c.shotsLabel],
+function Week({ tile, c }: P<"week">) {
+  const w = c.week;
+  const cells: Array<{ v: string; l: string; frac: number | null; color: string }> = [
+    { v: tile.distanceKm.toFixed(1), l: w.km, frac: null, color: TEAL },
+    { v: String(tile.touches), l: w.touches, frac: null, color: LIME },
+    { v: String(tile.passesCompleted), l: w.passes, frac: tile.passesTried ? tile.passesCompleted / tile.passesTried : null, color: LIME },
+    { v: String(tile.dribblesWon), l: w.dribbles, frac: tile.dribbles ? tile.dribblesWon / tile.dribbles : null, color: VIOLET },
   ];
   return (
-    <Shell testId="week" glow={false}>
-      <Eyebrow>{c.weekEyebrow}</Eyebrow>
-      <Head>{c.weekHead(tile.matches, tile.distanceKm.toFixed(1))}</Head>
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        {cells.map(([v, of, label]) => (
-          <div key={label} className="rounded-2xl bg-[#182035] p-4">
-            <p dir="ltr" className="font-display text-3xl font-bold tabular-nums rtl:text-end">{v}{of !== null && <span className="ms-1.5 text-base text-muted-text">{c.of} {of}</span>}</p>
-            <p className="mt-1 text-sm text-muted-text">{label}</p>
+    <Card testId="week" href="/matches" title={w.title} when={undefined} line={w.line(tile.matches)}
+      foot={[{ v: String(tile.matches), l: w.matches }, { v: String(tile.shots), l: w.shots }, { v: tile.passesTried ? pct(tile.passesCompleted / tile.passesTried) : "–", l: w.passing }]}>
+      <div className="grid grid-cols-2 gap-2.5">
+        {cells.map((cell) => (
+          <div key={cell.l} className="rounded-2xl bg-[#0D121D] p-3.5">
+            <p className="text-[32px] font-semibold leading-none"><N>{cell.v}</N></p>
+            <p className="mt-1 truncate text-[11px] text-muted-text">{cell.l}</p>
+            {cell.frac !== null && (
+              <span className="mt-2.5 block h-1 rounded-full bg-[#141B2C]">
+                <span className="tile-grow-x block h-1 rounded-full" style={{ width: `${Math.max(4, cell.frac * 100)}%`, background: cell.color }} />
+              </span>
+            )}
           </div>
         ))}
       </div>
-    </Shell>
+    </Card>
   );
 }
 
-function initials(name: string): string {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("") || "?";
-}
-
 function Friends({ tile, c, now }: P<"friends">) {
-  const cell = (v: number | null, digits = 0) => (v === null ? "–" : digits ? v.toFixed(digits) : String(v));
+  const f = c.friends;
+  const peers = [...tile.peers].sort((a, b) => (b.distanceKm ?? -1) - (a.distanceKm ?? -1)).slice(0, 4);
+  const top = Math.max(...peers.map((p) => p.distanceKm ?? 0), 1);
   return (
-    <Shell testId="friends">
-      <Two
-        left={<>
-          <Eyebrow>{matchWhen(tile.match, c, now)} · {tile.match.fieldName}</Eyebrow>
-          <Head>{c.friendsHead(tile.peers.map((p) => p.name))}</Head>
-          <Body>{c.friendsBody}</Body>
-          <Cta href={`/find/${tile.findRecordingId}`}>{c.claimStats}</Cta>
-        </>}
-        right={<div>
-          <div>
-            <div className="grid grid-cols-[minmax(0,1fr)_3rem_4rem] sm:grid-cols-[minmax(0,1fr)_3.5rem_4.5rem_3.5rem_4.5rem] gap-2 px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-text rtl:tracking-normal">
-              <span>{dayRef(tile.match.startLocal, now, c.locale)}</span>
-              <span className="text-end">{c.cols.km}</span><span className="text-end">{c.cols.top}</span><span className="hidden text-end sm:block">{c.cols.shots}</span><span className="hidden text-end sm:block">{c.cols.dribbles}</span>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {tile.peers.map((p) => (
-                <div key={p.name} className="grid grid-cols-[minmax(0,1fr)_3rem_4rem] sm:grid-cols-[minmax(0,1fr)_3.5rem_4.5rem_3.5rem_4.5rem] items-center gap-2 rounded-xl bg-[#182035] px-3 py-2.5">
-                  <span className="flex min-w-0 items-center gap-2"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet/25 text-[10px] font-bold text-[#C9B8FF]">{initials(p.name)}</span><span className="truncate text-sm font-semibold">{p.name}</span></span>
-                  {[cell(p.distanceKm, 1), cell(p.topSpeedKmh, 1), cell(p.shots), cell(p.dribblesWon)].map((v, i) => <N key={i} className={cn("text-end text-base font-bold", i >= 2 && "hidden sm:block")}>{v}</N>)}
-                </div>
-              ))}
-              <div className="grid grid-cols-[minmax(0,1fr)_3rem_4rem] sm:grid-cols-[minmax(0,1fr)_3.5rem_4.5rem_3.5rem_4.5rem] items-center gap-2 rounded-xl border border-floodlight/40 bg-floodlight/5 px-3 py-2.5">
-                <span className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-floodlight text-xs font-bold text-floodlight">?</span><span className="text-sm font-semibold">{c.you}</span></span>
-                {[0, 1, 2, 3].map((i) => <span key={i} className={cn("text-end font-display text-base text-muted-text", i >= 2 && "hidden sm:block")}>?</span>)}
-              </div>
-            </div>
-          </div>
-        </div>}
-      />
-    </Shell>
+    <Card testId="friends" href={`/find/${tile.findRecordingId}`} title={f.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={f.line(tile.peers.map((p) => p.name).slice(0, 3))}
+      foot={[{ v: String(tile.found), l: f.found }, { v: tile.match.players ? String(tile.match.players) : "–", l: f.players }, { v: "2", u: c.min, l: f.minutes }]}>
+      <RankList color={LIME} rows={[
+        ...peers.map((p) => ({ name: p.name, v: p.distanceKm !== null ? `${p.distanceKm.toFixed(1)} ${c.units.distanceKm}` : "–", n: p.distanceKm ?? 0 })),
+        { name: c.you, v: "?", n: top * 0.08, me: true },
+      ]} />
+    </Card>
   );
 }
 
 function Unclaimed({ tile, c, now }: P<"unclaimed">) {
-  const cells: Array<[string, string]> = [
-    [c.topSpeed, c.units.topSpeedKmh],
-    [c.distanceRan, c.units.distanceKm],
-    [c.shotsOnGoal, c.units.shots],
-    [c.successfulDribbles, c.units.dribblesWon],
-  ];
+  const u = c.unclaimed;
   return (
-    <Shell testId="unclaimed">
-      <Two
-        left={<>
-          <Eyebrow>{matchWhen(tile.match, c, now)} · {tile.match.fieldName}</Eyebrow>
-          <Head>{c.nobodyHead}</Head>
-          <Body>{c.nobodyBody}</Body>
-          <Cta href={`/find/${tile.findRecordingId}`}>{c.claimMatch}</Cta>
-        </>}
-        right={<div className="grid grid-cols-2 gap-3">
-          {cells.map(([label, unit]) => (
-            <div key={label} className="rounded-2xl bg-[#182035] p-4">
-              <p className="text-sm text-muted-text">{label}</p>
-              <p className="mt-2 flex items-baseline gap-2"><span className="font-display text-4xl font-bold text-turf">?</span><span className="text-sm text-[#4A5470]">{unit}</span></p>
-            </div>
-          ))}
-        </div>}
-      />
-    </Shell>
+    <Card testId="unclaimed" href={`/find/${tile.findRecordingId}`} title={u.title} when={matchWhen(tile.match.startLocal, now, c.locale)} line={u.line}
+      foot={[{ v: tile.match.players ? String(tile.match.players) : "–", l: u.players }, { v: tile.match.startLocal.slice(11, 16), l: dayRef(tile.match.startLocal, now, c.locale) }, { v: "2", u: c.min, l: u.minutes }]}>
+      <Ring frac={0} dashed color={LIME} big="?" sub={u.sub} />
+    </Card>
   );
 }
