@@ -202,6 +202,7 @@ describe("personal moments", () => {
     ];
     const mine = [{ id: "me-goal-301", title: "Your goal", momentSeconds: 301, kind: "your-goal", status: "ready" }];
     expect(mergeMoments(events, mine).map((m) => m.id)).toEqual(["claim-goal-100", "me-goal-301"]);
-    expect(mergeMoments(events, [])).toBe(events);
+    // with no moments of your own, other people's shots still do not become your clips
+    expect(mergeMoments(events, []).map((m) => m.id)).toEqual(["claim-goal-100", "claim-goal-300"]);
   });
 });

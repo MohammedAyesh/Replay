@@ -181,7 +181,9 @@ export function personalMoments(
  * someone else is not your moment), and none that repeat one of yours.
  */
 export function mergeMoments(events: ChainEarnedClip[], mine: PersonalMoment[]): PersonalMoment[] {
-  if (!mine.length) return events;
+  // Called only with ball data. Other people's shots go even when the claim has no moments of
+  // its own: an early return here handed one player 27 "Shot on target" clips of other
+  // players' shots on recording 392 (2026-10-03).
   const kept = events.filter((e) => {
     const kind = e.kind.toLowerCase();
     if (kind === "shot") return false;

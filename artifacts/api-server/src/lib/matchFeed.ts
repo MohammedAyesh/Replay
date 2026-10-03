@@ -67,7 +67,7 @@ import {
 } from "./matchPlay";
 import { loadRecordingPlay, type RecordingPlay } from "./matchPlayLoad";
 import { buildPlayerMetrics } from "./playerMetrics";
-import { matchFlow, type MatchFlow, type RecordingFlowInput } from "./matchFlow";
+import { matchFlow, mergeSpans, type MatchFlow, type RecordingFlowInput } from "./matchFlow";
 import { MatchPlayerReportBuilder, REPORT_BLOCK_SECONDS, type MatchPlayerReport } from "./matchPlayerReport";
 import { teamAtTime, type TeamSpanAtTime, type TeamSpanTeam } from "./matchTeamSpans";
 
@@ -753,7 +753,10 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
       if (!eligibleParts.length) continue;
       const row = perPlayer.get(p.id)!;
       row.claimed = true;
-      const seconds = eligibleParts.reduce((s, x) => s + (x.toFrame - x.fromFrame) / play.fps, 0);
+      // Time on camera, not the sum of the parts: one person split into two tracks that
+      // alternate (recording 392: 135.8 "minutes" in a 120-minute recording) was counted twice.
+      const seconds = mergeSpans(eligibleParts.map((x) => [x.fromFrame / play.fps, x.toFrame / play.fps] as [number, number]))
+        .reduce((s, [a, b]) => s + (b - a), 0);
       row.minutes = Math.round(((row.minutes ?? 0) + seconds / 60) * 10) / 10;
       const report = game ? null : reportFor(p.id);
       const bookingSeconds = (frame: number) => frame / play.fps + link.recordingOffsetSec;
