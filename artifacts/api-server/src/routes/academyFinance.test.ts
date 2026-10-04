@@ -39,6 +39,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import academyFinanceRouter from "./academyFinance";
+import academyConsoleRouter from "./academyConsole";
 
 const tag = `academy_finance_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const userIds: number[] = [];
@@ -90,6 +91,13 @@ let squadBId: number;
 let playerAId: number;
 let renewalPlayerId: number;
 let playerBId: number;
+let expiredReminderPlayerId: number;
+let expiringReminderPlayerId: number;
+let notStartedSquadPlayerId: number;
+let notStartedSquadlessPlayerId: number;
+let renewedSquadPlayerId: number;
+let renewedSquadlessPlayerId: number;
+let inactiveSquadlessPlayerId: number;
 let foreignStaffId: number;
 
 const as = (id: number) => ({ "x-test-user": String(id) });
@@ -103,6 +111,7 @@ beforeAll(async () => {
   app = express();
   app.use(express.json());
   app.use("/api", academyFinanceRouter);
+  app.use("/api", academyConsoleRouter);
 
   const createdUsers = await db.insert(usersTable).values([
     { name: `finance owner ${tag}`, email: `finance_owner_${tag}@academy-test.local` },
@@ -163,8 +172,72 @@ beforeAll(async () => {
       subscriptionExpiresOn: dateOffset(today, 20),
       isActive: true,
     },
+    {
+      academyId: academyAId,
+      squadId: squadAId,
+      name: `Expired reminder player ${tag}`,
+      subscriptionExpiresOn: dateOffset(today, -1),
+      guardianPhone: "078 123 4567",
+      isActive: true,
+    },
+    {
+      academyId: academyAId,
+      squadId: squadAId,
+      name: `Expiring reminder player ${tag}`,
+      monthlyDiscountFils: 7000,
+      subscriptionExpiresOn: dateOffset(today, 4),
+      guardianPhone: "079 123 4567",
+      isActive: true,
+    },
+    {
+      academyId: academyAId,
+      squadId: squadAId,
+      name: `Never started squad player ${tag}`,
+      subscriptionExpiresOn: null,
+      isActive: true,
+    },
+    {
+      academyId: academyAId,
+      squadId: null,
+      name: `Never started squadless player ${tag}`,
+      subscriptionExpiresOn: null,
+      isActive: true,
+    },
+    {
+      academyId: academyAId,
+      squadId: squadAId,
+      name: `Renewed squad player ${tag}`,
+      subscriptionExpiresOn: null,
+      isActive: true,
+    },
+    {
+      academyId: academyAId,
+      squadId: null,
+      name: `Renewed squadless player ${tag}`,
+      subscriptionExpiresOn: null,
+      isActive: true,
+    },
+    {
+      academyId: academyAId,
+      squadId: null,
+      name: `Inactive squadless player ${tag}`,
+      subscriptionExpiresOn: null,
+      isActive: false,
+    },
   ]).returning({ id: academyPlayersTable.id });
   [playerAId, renewalPlayerId, playerBId] = players.map(({ id }) => id);
+  [
+    ,
+    ,
+    ,
+    expiredReminderPlayerId,
+    expiringReminderPlayerId,
+    notStartedSquadPlayerId,
+    notStartedSquadlessPlayerId,
+    renewedSquadPlayerId,
+    renewedSquadlessPlayerId,
+    inactiveSquadlessPlayerId,
+  ] = players.map(({ id }) => id);
 
   await db.insert(academyFeesTable).values({
     academyId: academyBId,
@@ -175,6 +248,36 @@ beforeAll(async () => {
     status: "paid",
     paidAt: new Date(),
   });
+  await db.insert(academyFeesTable).values({
+    academyId: academyAId,
+    playerId: expiredReminderPlayerId,
+    label: `Reminder player fee ${tag}`,
+    amountFils: 6500,
+    dueDate: today,
+    status: "due",
+  });
+  await db.insert(academyPlayerRenewalsTable).values([
+    {
+      academyId: academyAId,
+      playerId: renewedSquadPlayerId,
+      monthsPurchased: 1,
+      amountFils: 23000,
+      effectiveMonthlyFeeFils: 23000,
+      previousExpiresOn: today,
+      newExpiresOn: dateOffset(today, 30),
+      paidAt: new Date(),
+    },
+    {
+      academyId: academyAId,
+      playerId: renewedSquadlessPlayerId,
+      monthsPurchased: 1,
+      amountFils: 23000,
+      effectiveMonthlyFeeFils: 23000,
+      previousExpiresOn: today,
+      newExpiresOn: dateOffset(today, 30),
+      paidAt: new Date(),
+    },
+  ]);
   await db.insert(academyPlayerRenewalsTable).values({
     academyId: academyBId,
     playerId: playerBId,
@@ -278,6 +381,58 @@ describe("Academy Finance owner access and accounting", () => {
     const teamList = await request(app).get(`${financeUrl(academyAId)}/teams`).set(as(ownerId));
     expect(teamList.body).toHaveLength(1);
     expect(teamList.body[0].name).toBe(`Finance squad A ${tag}`);
+  });
+
+  it("returns Amman expiry deltas, guardian contacts, never-started players, and shared collection totals", async () => {
+    const response = await request(app)
+      .get(`${financeUrl(academyAId)}/dashboard`).set(as(ownerId));
+    expect(response.status).toBe(200);
+
+    const expired = response.body.expiredPlayers.find(
+      (player: { id: number }) => player.id === expiredReminderPlayerId,
+    );
+    const expiring = response.body.expiringPlayers.find(
+      (player: { id: number }) => player.id === expiringReminderPlayerId,
+    );
+    expect(expired).toMatchObject({
+      daysUntilExpiry: -1,
+      guardianPhone: "078 123 4567",
+      outstandingFils: 6500,
+    });
+    expect(expiring).toMatchObject({
+      daysUntilExpiry: 4,
+      guardianPhone: "079 123 4567",
+      outstandingFils: 0,
+    });
+
+    const attention = [...response.body.expiredPlayers, ...response.body.expiringPlayers];
+    const outstandingFils = attention.reduce(
+      (total: number, player: { outstandingFils: number }) => total + player.outstandingFils,
+      0,
+    );
+    expect(response.body.collectThisWeek).toEqual({
+      playerCount: attention.length,
+      totalFils: outstandingFils + 23000,
+    });
+    expect(response.body.notStartedPlayers.map((player: { id: number }) => player.id)).toEqual(
+      expect.arrayContaining([notStartedSquadPlayerId, notStartedSquadlessPlayerId]),
+    );
+    expect(response.body.notStartedPlayers.map((player: { id: number }) => player.id)).not.toEqual(
+      expect.arrayContaining([
+        renewedSquadPlayerId,
+        renewedSquadlessPlayerId,
+        inactiveSquadlessPlayerId,
+      ]),
+    );
+
+    const ownerDashboard = await request(app)
+      .get(`/api/academy/console/academies/${academyAId}/dashboard`).set(as(ownerId));
+    const coachDashboard = await request(app)
+      .get(`/api/academy/console/academies/${academyAId}/dashboard`).set(as(coachId));
+    expect(ownerDashboard.status).toBe(200);
+    expect(ownerDashboard.body.collectThisWeek).toEqual(response.body.collectThisWeek);
+    expect(coachDashboard.status).toBe(200);
+    expect(coachDashboard.body.collectThisWeek).toBeNull();
   });
 
   it("calculates multi-month debt from the discounted fee and applies manual expiry edits", async () => {

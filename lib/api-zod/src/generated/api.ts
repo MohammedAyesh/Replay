@@ -1846,6 +1846,10 @@ export const getAcademyConsoleDashboardResponseActivePlayerCountMin = 0;
 
 export const getAcademyConsoleDashboardResponseUpcomingSessionCountMin = 0;
 
+export const getAcademyConsoleDashboardResponseCollectThisWeekOnePlayerCountMin = 0;
+
+export const getAcademyConsoleDashboardResponseCollectThisWeekOneTotalFilsMin = 0;
+
 
 
 export const GetAcademyConsoleDashboardResponse = zod.object({
@@ -1854,7 +1858,11 @@ export const GetAcademyConsoleDashboardResponse = zod.object({
   "roles": zod.array(zod.enum(['owner', 'coach'])).min(1),
   "squadCount": zod.number().min(getAcademyConsoleDashboardResponseSquadCountMin),
   "activePlayerCount": zod.number().min(getAcademyConsoleDashboardResponseActivePlayerCountMin),
-  "upcomingSessionCount": zod.number().min(getAcademyConsoleDashboardResponseUpcomingSessionCountMin)
+  "upcomingSessionCount": zod.number().min(getAcademyConsoleDashboardResponseUpcomingSessionCountMin),
+  "collectThisWeek": zod.union([zod.object({
+  "playerCount": zod.number().min(getAcademyConsoleDashboardResponseCollectThisWeekOnePlayerCountMin),
+  "totalFils": zod.number().min(getAcademyConsoleDashboardResponseCollectThisWeekOneTotalFilsMin)
+}),zod.null()]).optional()
 })
 
 
@@ -2619,6 +2627,12 @@ export const getAcademyFinanceDashboardResponseExpiringPlayersItemOutstandingFil
 export const getAcademyFinanceDashboardResponseUnpaidPaymentsItemOccurredOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 
 
+export const getAcademyFinanceDashboardResponseCollectThisWeekPlayerCountMin = 0;
+
+export const getAcademyFinanceDashboardResponseCollectThisWeekTotalFilsMin = 0;
+
+
+
 export const GetAcademyFinanceDashboardResponse = zod.object({
   "month": zod.string().regex(getAcademyFinanceDashboardResponseMonthRegExp).describe('Current calendar month in Asia\/Amman.'),
   "collectedFils": zod.number().min(getAcademyFinanceDashboardResponseCollectedFilsMin),
@@ -2632,7 +2646,9 @@ export const GetAcademyFinanceDashboardResponse = zod.object({
   "squadName": zod.string(),
   "expiresOn": zod.string().regex(getAcademyFinanceDashboardResponseExpiredPlayersItemExpiresOnRegExp),
   "monthsOwed": zod.number().min(getAcademyFinanceDashboardResponseExpiredPlayersItemMonthsOwedMin),
-  "outstandingFils": zod.number().min(getAcademyFinanceDashboardResponseExpiredPlayersItemOutstandingFilsMin)
+  "outstandingFils": zod.number().min(getAcademyFinanceDashboardResponseExpiredPlayersItemOutstandingFilsMin),
+  "daysUntilExpiry": zod.number().optional().describe('Calendar-day difference between expiresOn and today\'s date in Asia\/Amman.'),
+  "guardianPhone": zod.string().nullish()
 })),
   "expiringPlayers": zod.array(zod.object({
   "id": zod.number().min(1),
@@ -2641,7 +2657,9 @@ export const GetAcademyFinanceDashboardResponse = zod.object({
   "squadName": zod.string(),
   "expiresOn": zod.string().regex(getAcademyFinanceDashboardResponseExpiringPlayersItemExpiresOnRegExp),
   "monthsOwed": zod.number().min(getAcademyFinanceDashboardResponseExpiringPlayersItemMonthsOwedMin),
-  "outstandingFils": zod.number().min(getAcademyFinanceDashboardResponseExpiringPlayersItemOutstandingFilsMin)
+  "outstandingFils": zod.number().min(getAcademyFinanceDashboardResponseExpiringPlayersItemOutstandingFilsMin),
+  "daysUntilExpiry": zod.number().optional().describe('Calendar-day difference between expiresOn and today\'s date in Asia\/Amman.'),
+  "guardianPhone": zod.string().nullish()
 })),
   "unpaidPayments": zod.array(zod.object({
   "id": zod.number().min(1),
@@ -2649,7 +2667,18 @@ export const GetAcademyFinanceDashboardResponse = zod.object({
   "label": zod.string(),
   "amountFils": zod.number().min(1),
   "occurredOn": zod.string().regex(getAcademyFinanceDashboardResponseUnpaidPaymentsItemOccurredOnRegExp)
-}))
+})),
+  "notStartedPlayers": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "guardianPhone": zod.string().nullable()
+})).optional(),
+  "collectThisWeek": zod.object({
+  "playerCount": zod.number().min(getAcademyFinanceDashboardResponseCollectThisWeekPlayerCountMin),
+  "totalFils": zod.number().min(getAcademyFinanceDashboardResponseCollectThisWeekTotalFilsMin)
+}).optional()
 })
 
 

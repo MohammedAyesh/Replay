@@ -161,6 +161,7 @@ export async function financePlayersForSquad(
       squadId: academyPlayersTable.squadId,
       name: academyPlayersTable.name,
       isActive: academyPlayersTable.isActive,
+      guardianPhone: academyPlayersTable.guardianPhone,
       monthlyDiscountFils: academyPlayersTable.monthlyDiscountFils,
       subscriptionExpiresOn: academyPlayersTable.subscriptionExpiresOn,
     })
@@ -230,6 +231,7 @@ export async function financePlayersForSquad(
       squadId: squad.id,
       name: player.name,
       isActive: player.isActive,
+      guardianPhone: player.guardianPhone,
       monthlyFeeFils,
       monthlyDiscountFils,
       effectiveMonthlyFeeFils,
@@ -247,6 +249,46 @@ export async function financePlayersForSquad(
 
   // Inactive roster entries remain visible only while there is debt to collect.
   return summaries.filter((player) => player.isActive || player.outstandingFils > 0);
+}
+
+type FinancePlayerSummary = Awaited<ReturnType<typeof financePlayersForSquad>>[number];
+
+function daysUntilExpiry(expiresOn: string, today: string): number {
+  const midnightUtc = (date: string) => {
+    const [year, month, day] = date.split("-").map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  return Math.round((midnightUtc(expiresOn) - midnightUtc(today)) / 86_400_000);
+}
+
+export async function getAcademyCollectThisWeek(
+  academyId: number,
+  today = getAmmanDate(),
+  suppliedPlayers?: readonly FinancePlayerSummary[],
+) {
+  let players = suppliedPlayers;
+  if (!players) {
+    const squads = await db.select()
+      .from(academySquadsTable)
+      .where(eq(academySquadsTable.academyId, academyId))
+      .orderBy(asc(academySquadsTable.name), asc(academySquadsTable.id));
+    const squadPlayers = await Promise.all(
+      squads.map((squad) => financePlayersForSquad(academyId, squad, today)),
+    );
+    players = squadPlayers.flat();
+  }
+
+  const attentionPlayers = players.filter(
+    (player) => player.subscriptionStatus === "expired" || player.subscriptionStatus === "expiring",
+  );
+  const totalFils = attentionPlayers.reduce((total, player) => {
+    if (player.outstandingFils > 0) return total + player.outstandingFils;
+    return player.subscriptionStatus === "expiring"
+      ? total + player.effectiveMonthlyFeeFils
+      : total;
+  }, 0);
+
+  return { playerCount: attentionPlayers.length, totalFils };
 }
 
 async function financeTeamSummary(squad: SquadRow, today = getAmmanDate()) {
@@ -367,6 +409,7 @@ router.get("/academy/console/academies/:academyId/finance/dashboard", async (req
   const { academyId } = params.data;
   if (!(await authorizeOwner(req, res, academyId))) return;
 
+  const today = getAmmanDate();
   const range = getAmmanMonthRange();
   const [paidFees, paidRenewals, paidPayments, unpaidPayments, squads] = await Promise.all([
     db.select({ amountFils: academyFeesTable.amountFils })
@@ -413,7 +456,7 @@ router.get("/academy/console/academies/:academyId/finance/dashboard", async (req
 
   const squadPlayers = await Promise.all(squads.map(async (squad) => ({
     squad,
-    players: await financePlayersForSquad(academyId, squad),
+    players: await financePlayersForSquad(academyId, squad, today),
   })));
   const attentionPlayers = squadPlayers.flatMap(({ squad, players }) =>
     players.map((player) => ({ squad, player })),
@@ -428,6 +471,8 @@ router.get("/academy/console/academies/:academyId/finance/dashboard", async (req
       expiresOn: player.subscriptionExpiresOn!,
       monthsOwed: player.monthsOwed,
       outstandingFils: player.outstandingFils,
+      daysUntilExpiry: daysUntilExpiry(player.subscriptionExpiresOn!, today),
+      guardianPhone: player.guardianPhone,
     }));
   const expiringPlayers = attentionPlayers
     .filter(({ player }) => player.subscriptionStatus === "expiring")
@@ -439,7 +484,56 @@ router.get("/academy/console/academies/:academyId/finance/dashboard", async (req
       expiresOn: player.subscriptionExpiresOn!,
       monthsOwed: player.monthsOwed,
       outstandingFils: player.outstandingFils,
+      daysUntilExpiry: daysUntilExpiry(player.subscriptionExpiresOn!, today),
+      guardianPhone: player.guardianPhone,
     }));
+  const squadNotStartedPlayers = attentionPlayers
+    .filter(({ player }) =>
+      player.isActive && player.subscriptionStatus === "no_subscription" && player.latestRenewalId === null)
+    .map(({ squad, player }) => ({
+      id: player.id,
+      name: player.name,
+      squadId: squad.id,
+      squadName: squad.name,
+      guardianPhone: player.guardianPhone,
+    }));
+  const squadlessCandidates = await db.select({
+    id: academyPlayersTable.id,
+    name: academyPlayersTable.name,
+    guardianPhone: academyPlayersTable.guardianPhone,
+  })
+    .from(academyPlayersTable)
+    .where(and(
+      eq(academyPlayersTable.academyId, academyId),
+      isNull(academyPlayersTable.squadId),
+      eq(academyPlayersTable.isActive, true),
+      isNull(academyPlayersTable.subscriptionExpiresOn),
+    ))
+    .orderBy(asc(academyPlayersTable.name), asc(academyPlayersTable.id));
+  const squadlessPlayerIds = squadlessCandidates.map(({ id }) => id);
+  const priorSquadlessRenewals = squadlessPlayerIds.length > 0
+    ? await db.select({ playerId: academyPlayerRenewalsTable.playerId })
+      .from(academyPlayerRenewalsTable)
+      .where(and(
+        eq(academyPlayerRenewalsTable.academyId, academyId),
+        inArray(academyPlayerRenewalsTable.playerId, squadlessPlayerIds),
+      ))
+    : [];
+  const previouslyRenewedSquadlessIds = new Set(priorSquadlessRenewals.map(({ playerId }) => playerId));
+  const squadlessNotStartedPlayers = squadlessCandidates
+    .filter(({ id }) => !previouslyRenewedSquadlessIds.has(id))
+    .map((player) => ({
+      ...player,
+      squadId: null,
+      squadName: null,
+    }));
+  const notStartedPlayers = [...squadNotStartedPlayers, ...squadlessNotStartedPlayers]
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
+  const collectThisWeek = await getAcademyCollectThisWeek(
+    academyId,
+    today,
+    attentionPlayers.map(({ player }) => player),
+  );
   const collectedFils = paidFees.reduce((sum, row) => sum + row.amountFils, 0)
     + paidRenewals.reduce((sum, row) => sum + row.amountFils, 0);
   const spentFils = paidPayments.reduce((sum, row) => sum + row.amountFils, 0);
@@ -453,6 +547,8 @@ router.get("/academy/console/academies/:academyId/finance/dashboard", async (req
     expiredPlayers,
     expiringPlayers,
     unpaidPayments,
+    notStartedPlayers,
+    collectThisWeek,
   }));
 });
 

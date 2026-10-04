@@ -47,7 +47,7 @@ import {
   db,
   usersTable,
 } from "@workspace/db";
-import { financePlayersForSquad } from "./academyFinance";
+import { financePlayersForSquad, getAcademyCollectThisWeek } from "./academyFinance";
 import {
   academyRolesForUser,
   requireAcademyConsoleAdmin,
@@ -343,7 +343,7 @@ router.get("/academy/console/academies/:academyId/dashboard", async (req, res): 
 
   const now = new Date();
   const nextSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const [squadCount, activePlayerCount, upcomingSessionCount] = await Promise.all([
+  const [squadCount, activePlayerCount, upcomingSessionCount, collectThisWeek] = await Promise.all([
     db.select({ value: count() })
       .from(academySquadsTable)
       .where(eq(academySquadsTable.academyId, academyId)),
@@ -360,6 +360,9 @@ router.get("/academy/console/academies/:academyId/dashboard", async (req, res): 
         gte(academySessionsTable.startsAt, now),
         lt(academySessionsTable.startsAt, nextSevenDays),
       )),
+    roles.includes("owner")
+      ? getAcademyCollectThisWeek(academyId)
+      : Promise.resolve(null),
   ]);
 
   res.json(GetAcademyConsoleDashboardResponse.parse({
@@ -369,6 +372,7 @@ router.get("/academy/console/academies/:academyId/dashboard", async (req, res): 
     squadCount: Number(squadCount[0]?.value ?? 0),
     activePlayerCount: Number(activePlayerCount[0]?.value ?? 0),
     upcomingSessionCount: Number(upcomingSessionCount[0]?.value ?? 0),
+    collectThisWeek,
   }));
 });
 

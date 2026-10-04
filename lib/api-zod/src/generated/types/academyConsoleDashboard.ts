@@ -5,6 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { AcademyCollectThisWeek } from './academyCollectThisWeek';
 import type { AcademyMemberRole } from './academyMemberRole';
 
 export interface AcademyConsoleDashboard {
@@ -18,4 +19,5 @@ export interface AcademyConsoleDashboard {
   activePlayerCount: number;
   /** @minimum 0 */
   upcomingSessionCount: number;
+  collectThisWeek?: AcademyCollectThisWeek | null;
 }

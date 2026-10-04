@@ -5,8 +5,10 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { AcademyCollectThisWeek } from './academyCollectThisWeek';
 import type { AcademyFinanceAttentionPayment } from './academyFinanceAttentionPayment';
 import type { AcademyFinanceAttentionPlayer } from './academyFinanceAttentionPlayer';
+import type { AcademyFinanceNotStartedPlayer } from './academyFinanceNotStartedPlayer';
 
 export interface AcademyFinanceDashboard {
   /**
@@ -24,4 +26,6 @@ export interface AcademyFinanceDashboard {
   expiredPlayers: AcademyFinanceAttentionPlayer[];
   expiringPlayers: AcademyFinanceAttentionPlayer[];
   unpaidPayments: AcademyFinanceAttentionPayment[];
+  notStartedPlayers?: AcademyFinanceNotStartedPlayer[];
+  collectThisWeek?: AcademyCollectThisWeek;
 }

@@ -65,8 +65,10 @@ import {
   Coins,
   CreditCard,
   FilePlus2,
+  MessageCircle,
   Plus,
   Pencil,
+  Phone,
   RefreshCw,
   ShieldAlert,
   Trash2,
@@ -104,6 +106,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { guardianContactLinks } from "./guardian-contact";
 
 type SectionKey = "dashboard" | "players" | "salaries" | "other";
 type FinanceCopy = ReturnType<typeof useTranslation>["t"]["academyConsole"]["feesPaymentsPanel"];
@@ -607,18 +610,37 @@ function DashboardPanel({ dashboardQuery, locale, copy, onNavigate }: {
   const data = dashboardQuery.data;
   if (dashboardQuery.isLoading) return <PanelSkeleton rows={5} />;
   if (dashboardQuery.isError || !data) return <QueryError message={copy.loadError} retry={() => void dashboardQuery.refetch()} />;
-  const attentionPlayers = [...data.expiredPlayers, ...data.expiringPlayers];
+  const attentionPlayers = [...data.expiredPlayers, ...data.expiringPlayers].sort((a, b) =>
+    (a.daysUntilExpiry ?? Number.MAX_SAFE_INTEGER) - (b.daysUntilExpiry ?? Number.MAX_SAFE_INTEGER)
+      || a.name.localeCompare(b.name)
+      || a.id - b.id,
+  );
+  const notStartedPlayers = data.notStartedPlayers ?? [];
   const unpaidPayments = data.unpaidPayments ?? [];
   const cards = [
     { label: copy.collectedThisMonth, value: data.collectedFils, icon: ArrowDownRight, tone: "text-emerald-300", tint: "bg-emerald-400/10" },
     { label: copy.spentThisMonth, value: data.spentFils, icon: ArrowUpRight, tone: "text-rose-300", tint: "bg-rose-400/10" },
     { label: copy.net, value: data.netFils, icon: Activity, tone: data.netFils < 0 ? "text-rose-300" : "text-primary", tint: data.netFils < 0 ? "bg-rose-400/10" : "bg-primary/10" },
     { label: copy.unpaidBills, value: data.unpaidBillsCount, icon: Clock3, tone: "text-amber-300", tint: "bg-amber-400/10", count: true },
+    {
+      label: copy.collectThisWeek,
+      value: data.collectThisWeek?.totalFils ?? 0,
+      icon: Coins,
+      tone: "text-accent",
+      tint: "bg-accent/10",
+      collectCount: data.collectThisWeek?.playerCount ?? 0,
+    },
   ];
+  const expiryLabel = (daysUntilExpiry: number | undefined) => {
+    if (daysUntilExpiry === undefined) return copy.expiresSoon;
+    if (daysUntilExpiry < 0) return copy.expiryPastDays(Math.abs(daysUntilExpiry));
+    if (daysUntilExpiry === 0) return copy.expiryToday;
+    return copy.expiryInDays(daysUntilExpiry);
+  };
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map(({ label, value, icon: Icon, tone, tint, count }) => (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {cards.map(({ label, value, icon: Icon, tone, tint, count, collectCount }) => (
           <article key={label} className="relative overflow-hidden rounded-xl border border-border/75 bg-card p-4 sm:p-5">
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm text-muted-foreground">{label}</span>
@@ -631,6 +653,12 @@ function DashboardPanel({ dashboardQuery, locale, copy, onNavigate }: {
                 ? new Intl.NumberFormat(locale === "ar" ? "ar-JO" : "en-GB").format(value)
                 : <MoneyAmount amountFils={value} locale={locale} />}
             </p>
+            {collectCount !== undefined && (
+              <>
+                <p className="mt-2 text-xs text-muted-foreground">{copy.collectThisWeekCount(collectCount)}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{copy.collectThisWeekDescription}</p>
+              </>
+            )}
             <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-primary/45 to-transparent" />
           </article>
         ))}
@@ -654,17 +682,54 @@ function DashboardPanel({ dashboardQuery, locale, copy, onNavigate }: {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold">{player.name}</span>
-                      <Badge className={player.monthsOwed > 0 ? "border-amber-300/20 bg-amber-400/10 text-amber-200" : "border-accent/20 bg-accent/10 text-accent"}>
-                        {player.monthsOwed > 0 ? copy.monthsOwedCount(player.monthsOwed) : copy.expiresSoon}
+                      <Badge className={(player.daysUntilExpiry ?? 0) < 0 ? "border-amber-300/20 bg-amber-400/10 text-amber-200" : "border-accent/20 bg-accent/10 text-accent"}>
+                        {expiryLabel(player.daysUntilExpiry)}
                       </Badge>
+                      {player.monthsOwed > 0 && (
+                        <Badge variant="outline">{copy.monthsOwedCount(player.monthsOwed)}</Badge>
+                      )}
                     </div>
                     <p className="mt-1 text-sm text-muted-foreground">{player.squadName} <span className="px-1">·</span> {formatDate(player.expiresOn, locale)}</p>
                   </div>
-                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                  <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
                     <span className="font-display text-sm font-semibold tabular-nums"><MoneyAmount amountFils={player.outstandingFils} locale={locale} /></span>
+                    <div className="flex items-center gap-1.5">
+                      {(() => {
+                        const links = guardianContactLinks(player.guardianPhone);
+                        const whatsappLabel = `${copy.whatsappContact}: ${player.name}`;
+                        const callLabel = `${copy.callGuardian}: ${player.name}`;
+                        return links ? (
+                          <>
+                            <Button asChild size="icon" variant="outline" aria-label={whatsappLabel}>
+                              <a href={links.whatsappUrl} target="_blank" rel="noopener noreferrer">
+                                <MessageCircle className="size-4" aria-hidden="true" />
+                              </a>
+                            </Button>
+                            <Button asChild size="icon" variant="outline" aria-label={callLabel}>
+                              <a href={links.callUrl}>
+                                <Phone className="size-4" aria-hidden="true" />
+                              </a>
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <span title={copy.noGuardianPhone} className="inline-flex">
+                              <Button type="button" size="icon" variant="outline" disabled aria-label={whatsappLabel}>
+                                <MessageCircle className="size-4" aria-hidden="true" />
+                              </Button>
+                            </span>
+                            <span title={copy.noGuardianPhone} className="inline-flex">
+                              <Button type="button" size="icon" variant="outline" disabled aria-label={callLabel}>
+                                <Phone className="size-4" aria-hidden="true" />
+                              </Button>
+                            </span>
+                          </>
+                        );
+                      })()}
                     <Button size="sm" onClick={() => onNavigate(player.squadId, player.id)}>
                       <RefreshCw className="size-3.5" aria-hidden="true" />{copy.renew}
                     </Button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -702,6 +767,23 @@ function DashboardPanel({ dashboardQuery, locale, copy, onNavigate }: {
           )}
         </section>
       </div>
+      {notStartedPlayers.length > 0 && (
+        <details className="rounded-xl border border-border/75 bg-card" data-testid="finance-never-started-players">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 sm:p-5">
+            <span className="font-display text-lg font-semibold">{copy.neverStartedPlayers}</span>
+            <Badge variant="outline">{notStartedPlayers.length}</Badge>
+          </summary>
+          <p className="px-4 pb-3 text-sm text-muted-foreground sm:px-5">{copy.neverStartedDescription}</p>
+          <div className="divide-y divide-border/70 border-t border-border/70">
+            {notStartedPlayers.map((player) => (
+              <div key={player.id} className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
+                <span className="font-medium">{player.name}</span>
+                <span className="text-sm text-muted-foreground">{player.squadName ?? copy.noSquad}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
       <div className="flex items-start gap-3 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-muted-foreground">
         <Coins className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden="true" />
         <p>{copy.dashboardAccountingNote}</p>

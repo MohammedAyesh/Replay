@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ChevronDown,
   ClipboardList,
+  Coins,
   GraduationCap,
   LayoutDashboard,
   Menu,
@@ -363,7 +364,7 @@ function Dashboard({ dashboard, isOwner }: { dashboard: AcademyConsoleDashboard;
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {counts.map(({ label, value, icon: Icon, testId }) => (
           <div key={testId} className="rounded-2xl border border-line bg-surface p-5" data-testid={testId}>
             <div className="flex items-start justify-between gap-3">
@@ -373,6 +374,28 @@ function Dashboard({ dashboard, isOwner }: { dashboard: AcademyConsoleDashboard;
             <p className="mt-6 font-display text-4xl font-bold tabular-nums text-text">{value}</p>
           </div>
         ))}
+        {isOwner && dashboard.collectThisWeek && (
+          <article className="rounded-2xl border border-line bg-surface p-5" data-testid="stat-collect-this-week">
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-sm font-semibold text-muted-text">{labels.collectThisWeek}</span>
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-raised text-turf">
+                <Coins className="h-4 w-4" aria-hidden="true" />
+              </span>
+            </div>
+            <p className="mt-6 font-display text-3xl font-bold tabular-nums text-text">
+              <bdi dir={locale === "ar" ? "rtl" : "ltr"}>
+                {new Intl.NumberFormat(locale === "ar" ? "ar-JO" : "en-JO", {
+                  style: "currency",
+                  currency: "JOD",
+                  maximumFractionDigits: 3,
+                }).format(dashboard.collectThisWeek.totalFils / 1000)}
+              </bdi>
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted-text">
+              {labels.collectThisWeekDescription(dashboard.collectThisWeek.playerCount)}
+            </p>
+          </article>
+        )}
       </div>
 
       <section className="rounded-2xl border border-line bg-surface p-5 sm:p-6" data-testid="academy-getting-started">

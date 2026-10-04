@@ -19,4 +19,8 @@ export interface AcademyFinanceAttentionPlayer {
   monthsOwed: number;
   /** @minimum 0 */
   outstandingFils: number;
+  /** Calendar-day difference between expiresOn and today's date in Asia/Amman. */
+  daysUntilExpiry?: number;
+  /** @nullable */
+  guardianPhone?: string | null;
 }

@@ -5978,6 +5978,10 @@ components:
         upcomingSessionCount:
           type: integer
           minimum: 0
+        collectThisWeek:
+          oneOf:
+            - $ref: "#/components/schemas/AcademyCollectThisWeek"
+            - type: "null"
 
     AcademySquadSummary:
       type: object
@@ -6370,6 +6374,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AcademyFinanceAttentionPayment"
+        notStartedPlayers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyFinanceNotStartedPlayer"
+        collectThisWeek:
+          $ref: "#/components/schemas/AcademyCollectThisWeek"
 
     AcademyFinanceAttentionPlayer:
       type: object
@@ -6392,6 +6402,39 @@ components:
           type: integer
           minimum: 0
         outstandingFils:
+          type: integer
+          minimum: 0
+        daysUntilExpiry:
+          type: integer
+          description: Calendar-day difference between expiresOn and today's date in Asia/Amman.
+        guardianPhone:
+          type: ["string", "null"]
+
+    AcademyFinanceNotStartedPlayer:
+      type: object
+      required: [id, name, squadId, squadName, guardianPhone]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        squadName:
+          type: ["string", "null"]
+        guardianPhone:
+          type: ["string", "null"]
+
+    AcademyCollectThisWeek:
+      type: object
+      required: [playerCount, totalFils]
+      properties:
+        playerCount:
+          type: integer
+          minimum: 0
+        totalFils:
           type: integer
           minimum: 0
 

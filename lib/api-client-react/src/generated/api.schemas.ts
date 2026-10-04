@@ -1213,6 +1213,13 @@ export interface AcademyConsoleMembership {
   roles: AcademyMemberRole[];
 }
 
+export interface AcademyCollectThisWeek {
+  /** @minimum 0 */
+  playerCount: number;
+  /** @minimum 0 */
+  totalFils: number;
+}
+
 export interface AcademyConsoleDashboard {
   academyId: number;
   academyName: string;
@@ -1224,6 +1231,7 @@ export interface AcademyConsoleDashboard {
   activePlayerCount: number;
   /** @minimum 0 */
   upcomingSessionCount: number;
+  collectThisWeek?: AcademyCollectThisWeek | null;
 }
 
 export interface AcademySquadSummary {
@@ -1585,6 +1593,10 @@ export interface AcademyFinanceAttentionPlayer {
   monthsOwed: number;
   /** @minimum 0 */
   outstandingFils: number;
+  /** Calendar-day difference between expiresOn and today's date in Asia/Amman. */
+  daysUntilExpiry?: number;
+  /** @nullable */
+  guardianPhone?: string | null;
 }
 
 export interface AcademyFinanceAttentionPayment {
@@ -1596,6 +1608,21 @@ export interface AcademyFinanceAttentionPayment {
   amountFils: number;
   /** @pattern ^\d{4}-\d{2}-\d{2}$ */
   occurredOn: string;
+}
+
+export interface AcademyFinanceNotStartedPlayer {
+  /** @minimum 1 */
+  id: number;
+  name: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId: number | null;
+  /** @nullable */
+  squadName: string | null;
+  /** @nullable */
+  guardianPhone: string | null;
 }
 
 export interface AcademyFinanceDashboard {
@@ -1614,6 +1641,8 @@ export interface AcademyFinanceDashboard {
   expiredPlayers: AcademyFinanceAttentionPlayer[];
   expiringPlayers: AcademyFinanceAttentionPlayer[];
   unpaidPayments: AcademyFinanceAttentionPayment[];
+  notStartedPlayers?: AcademyFinanceNotStartedPlayer[];
+  collectThisWeek?: AcademyCollectThisWeek;
 }
 
 export interface AcademyFinanceTeam {
