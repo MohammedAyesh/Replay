@@ -47,6 +47,7 @@ import {
   db,
   usersTable,
 } from "@workspace/db";
+import { financePlayersForSquad } from "./academyFinance";
 import {
   academyRolesForUser,
   requireAcademyConsoleAdmin,
@@ -515,8 +516,29 @@ router.delete("/academy/console/academies/:academyId/squads/:squadId", async (re
   const { academyId, squadId } = parsedParams.data;
   const roles = await requireAcademyMembership(user.id, academyId, res);
   if (!roles) return;
+  if (!roles.includes("owner")) {
+    res.status(403).json({ error: "Academy owner role required" });
+    return;
+  }
   if (!(await academyExists(academyId))) {
     res.status(404).json({ error: "Academy not found" });
+    return;
+  }
+
+  const [squad] = await db
+    .select()
+    .from(academySquadsTable)
+    .where(and(
+      eq(academySquadsTable.id, squadId),
+      eq(academySquadsTable.academyId, academyId),
+    ));
+  if (!squad) {
+    res.status(404).json({ error: "Squad not found in this academy" });
+    return;
+  }
+  const players = await financePlayersForSquad(academyId, squad);
+  if (players.some((player) => player.outstandingFils > 0)) {
+    res.status(409).json({ error: "Players with outstanding balances cannot be unassigned by deleting this squad" });
     return;
   }
 

@@ -5,6 +5,7 @@ import {
   eq,
   gte,
   inArray,
+  isNull,
   lt,
   sql,
 } from "drizzle-orm";
@@ -19,6 +20,9 @@ import {
   CreateAcademyFinancePlayerFeeParams,
   CreateAcademyFinancePlayerRenewalBody,
   CreateAcademyFinancePlayerRenewalParams,
+  DeleteAcademyFinanceFeeParams,
+  DeleteAcademyFinanceOtherPaymentParams,
+  DeleteAcademyFinancePlayerRenewalParams,
   CreateAcademyFinanceStaffBody,
   CreateAcademyFinanceStaffParams,
   CreateAcademyFinanceTeamBody,
@@ -39,6 +43,8 @@ import {
   ListAcademyFinanceOtherPaymentsResponse,
   ListAcademyFinancePlayerFeesParams,
   ListAcademyFinancePlayerFeesResponse,
+  ListAcademyFinanceUnassignedPlayersParams,
+  ListAcademyFinanceUnassignedPlayersResponse,
   ListAcademyFinanceStaffParams,
   ListAcademyFinanceStaffResponse,
   ListAcademyFinanceTeamPlayersParams,
@@ -143,7 +149,7 @@ function dateIsValidOrRespond(
 
 type SquadRow = typeof academySquadsTable.$inferSelect;
 
-async function financePlayersForSquad(
+export async function financePlayersForSquad(
   academyId: number,
   squad: SquadRow,
   today = getAmmanDate(),
@@ -166,7 +172,8 @@ async function financePlayersForSquad(
 
   if (playerRows.length === 0) return [];
   const playerIds = playerRows.map(({ id }) => id);
-  const feeRows = await db
+  const [feeRows, renewalRows] = await Promise.all([
+    db
     .select({
       playerId: academyFeesTable.playerId,
       amountFils: academyFeesTable.amountFils,
@@ -176,15 +183,34 @@ async function financePlayersForSquad(
     .where(and(
       eq(academyFeesTable.academyId, academyId),
       inArray(academyFeesTable.playerId, playerIds),
-    ));
+    )),
+    db.select({
+      id: academyPlayerRenewalsTable.id,
+      playerId: academyPlayerRenewalsTable.playerId,
+      amountFils: academyPlayerRenewalsTable.amountFils,
+      paidAt: academyPlayerRenewalsTable.paidAt,
+    })
+      .from(academyPlayerRenewalsTable)
+      .where(and(
+        eq(academyPlayerRenewalsTable.academyId, academyId),
+        inArray(academyPlayerRenewalsTable.playerId, playerIds),
+      ))
+      .orderBy(desc(academyPlayerRenewalsTable.id)),
+  ]);
 
   const unpaidFeesByPlayer = new Map<number, number>();
+  const latestRenewalByPlayer = new Map<number, (typeof renewalRows)[number]>();
   for (const fee of feeRows) {
     if (fee.status === "due") {
       unpaidFeesByPlayer.set(
         fee.playerId,
         (unpaidFeesByPlayer.get(fee.playerId) ?? 0) + fee.amountFils,
       );
+    }
+  }
+  for (const renewal of renewalRows) {
+    if (!latestRenewalByPlayer.has(renewal.playerId)) {
+      latestRenewalByPlayer.set(renewal.playerId, renewal);
     }
   }
 
@@ -197,6 +223,7 @@ async function financePlayersForSquad(
       : 0;
     const subscriptionDebtFils = monthsOwed * effectiveMonthlyFeeFils;
     const unpaidFeesFils = unpaidFeesByPlayer.get(player.id) ?? 0;
+    const latestRenewal = latestRenewalByPlayer.get(player.id);
     return {
       id: player.id,
       squadId: squad.id,
@@ -211,6 +238,9 @@ async function financePlayersForSquad(
       subscriptionDebtFils,
       unpaidFeesFils,
       outstandingFils: subscriptionDebtFils + unpaidFeesFils,
+      latestRenewalId: latestRenewal?.id ?? null,
+      latestRenewalAmountFils: latestRenewal?.amountFils ?? null,
+      latestRenewalPaidAt: latestRenewal?.paidAt ?? null,
     };
   });
 
@@ -372,8 +402,6 @@ router.get("/academy/console/academies/:academyId/finance/dashboard", async (req
       .where(and(
         eq(academyOtherPaymentsTable.academyId, academyId),
         eq(academyOtherPaymentsTable.status, "unpaid"),
-        gte(academyOtherPaymentsTable.occurredOn, range.startDate),
-        lt(academyOtherPaymentsTable.occurredOn, range.endDate),
       ))
       .orderBy(desc(academyOtherPaymentsTable.occurredOn), desc(academyOtherPaymentsTable.id)),
     db.select()
@@ -446,6 +474,48 @@ router.get("/academy/console/academies/:academyId/finance/teams", async (req, re
     await Promise.all(squads.map((squad) => financeTeamSummary(squad))),
   ));
 });
+
+router.get(
+  "/academy/console/academies/:academyId/finance/unassigned-players",
+  async (req, res): Promise<void> => {
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const params = ListAcademyFinanceUnassignedPlayersParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+    });
+    if (!params.success) {
+      badRequest(res, params.error.message);
+      return;
+    }
+    const { academyId } = params.data;
+    if (!(await authorizeOwner(req, res, academyId))) return;
+    const players = await db.select({
+      id: academyPlayersTable.id,
+      name: academyPlayersTable.name,
+    }).from(academyPlayersTable).where(and(
+      eq(academyPlayersTable.academyId, academyId),
+      isNull(academyPlayersTable.squadId),
+      eq(academyPlayersTable.isActive, true),
+    )).orderBy(asc(academyPlayersTable.name), asc(academyPlayersTable.id));
+    const playerIds = players.map((player) => player.id);
+    const fees = playerIds.length === 0 ? [] : await db.select({
+      playerId: academyFeesTable.playerId,
+      amountFils: academyFeesTable.amountFils,
+    }).from(academyFeesTable).where(and(
+      eq(academyFeesTable.academyId, academyId),
+      inArray(academyFeesTable.playerId, playerIds),
+      eq(academyFeesTable.status, "due"),
+    ));
+    const feesByPlayer = new Map<number, number>();
+    for (const fee of fees) {
+      feesByPlayer.set(fee.playerId, (feesByPlayer.get(fee.playerId) ?? 0) + fee.amountFils);
+    }
+    res.json(ListAcademyFinanceUnassignedPlayersResponse.parse(players.map((player) => {
+      const unpaidFeesFils = feesByPlayer.get(player.id) ?? 0;
+      return { ...player, unpaidFeesFils, outstandingFils: unpaidFeesFils };
+    })));
+  },
+);
 
 router.post("/academy/console/academies/:academyId/finance/teams", async (req, res): Promise<void> => {
   const user = await requireAcademyConsoleUser(req, res);
@@ -753,6 +823,79 @@ router.post(
   },
 );
 
+router.delete(
+  "/academy/console/academies/:academyId/finance/players/:playerId/renewals/:renewalId",
+  async (req, res): Promise<void> => {
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const params = DeleteAcademyFinancePlayerRenewalParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      playerId: rawParam(req.params.playerId),
+      renewalId: rawParam(req.params.renewalId),
+    });
+    if (!params.success) {
+      badRequest(res, params.error.message);
+      return;
+    }
+    const { academyId, playerId, renewalId } = params.data;
+    if (!(await authorizeOwner(req, res, academyId))) return;
+
+    const result = await db.transaction(async (tx) => {
+      const [player] = await tx.select({
+        id: academyPlayersTable.id,
+        subscriptionExpiresOn: academyPlayersTable.subscriptionExpiresOn,
+      }).from(academyPlayersTable).where(and(
+        eq(academyPlayersTable.id, playerId),
+        eq(academyPlayersTable.academyId, academyId),
+      )).for("update");
+      if (!player) return "missing" as const;
+
+      const [target] = await tx.select({
+        id: academyPlayerRenewalsTable.id,
+      }).from(academyPlayerRenewalsTable).where(and(
+        eq(academyPlayerRenewalsTable.id, renewalId),
+        eq(academyPlayerRenewalsTable.academyId, academyId),
+        eq(academyPlayerRenewalsTable.playerId, playerId),
+      )).for("update");
+      if (!target) return "missing" as const;
+
+      const [latest] = await tx.select({
+        id: academyPlayerRenewalsTable.id,
+        previousExpiresOn: academyPlayerRenewalsTable.previousExpiresOn,
+        newExpiresOn: academyPlayerRenewalsTable.newExpiresOn,
+      }).from(academyPlayerRenewalsTable).where(and(
+        eq(academyPlayerRenewalsTable.academyId, academyId),
+        eq(academyPlayerRenewalsTable.playerId, playerId),
+      )).orderBy(desc(academyPlayerRenewalsTable.id)).limit(1).for("update");
+      if (!latest || latest.id !== renewalId) return "not-latest" as const;
+      if (player.subscriptionExpiresOn !== latest.newExpiresOn) return "not-latest" as const;
+
+      const [deleted] = await tx.delete(academyPlayerRenewalsTable).where(and(
+        eq(academyPlayerRenewalsTable.id, renewalId),
+        eq(academyPlayerRenewalsTable.academyId, academyId),
+        eq(academyPlayerRenewalsTable.playerId, playerId),
+      )).returning({ id: academyPlayerRenewalsTable.id });
+      if (!deleted) return "missing" as const;
+      await tx.update(academyPlayersTable).set({
+        subscriptionExpiresOn: latest.previousExpiresOn,
+      }).where(and(
+        eq(academyPlayersTable.id, playerId),
+        eq(academyPlayersTable.academyId, academyId),
+      ));
+      return "deleted" as const;
+    });
+    if (result === "missing") {
+      notFound(res, "Renewal not found in this academy");
+      return;
+    }
+    if (result === "not-latest") {
+      res.status(409).json({ error: "Only the latest renewal can be undone" });
+      return;
+    }
+    res.status(204).send();
+  },
+);
+
 router.get(
   "/academy/console/academies/:academyId/finance/players/:playerId/fees",
   async (req, res): Promise<void> => {
@@ -905,6 +1048,33 @@ router.patch(
       paidAt: result.fee.paidAt,
       note: result.fee.note,
     }));
+  },
+);
+
+router.delete(
+  "/academy/console/academies/:academyId/finance/fees/:feeId",
+  async (req, res): Promise<void> => {
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const params = DeleteAcademyFinanceFeeParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      feeId: rawParam(req.params.feeId),
+    });
+    if (!params.success) {
+      badRequest(res, params.error.message);
+      return;
+    }
+    const { academyId, feeId } = params.data;
+    if (!(await authorizeOwner(req, res, academyId))) return;
+    const [deleted] = await db.delete(academyFeesTable).where(and(
+      eq(academyFeesTable.id, feeId),
+      eq(academyFeesTable.academyId, academyId),
+    )).returning({ id: academyFeesTable.id });
+    if (!deleted) {
+      notFound(res, "Fee not found in this academy");
+      return;
+    }
+    res.status(204).send();
   },
 );
 
@@ -1139,8 +1309,10 @@ router.get(
     }).from(academyOtherPaymentsTable)
       .where(and(
         eq(academyOtherPaymentsTable.academyId, academyId),
-        gte(academyOtherPaymentsTable.occurredOn, range.startDate),
-        lt(academyOtherPaymentsTable.occurredOn, range.endDate),
+        sql`(${academyOtherPaymentsTable.status} = 'unpaid' OR (
+          ${academyOtherPaymentsTable.occurredOn} >= ${range.startDate}
+          AND ${academyOtherPaymentsTable.occurredOn} < ${range.endDate}
+        ))`,
       ))
       .orderBy(desc(academyOtherPaymentsTable.occurredOn), desc(academyOtherPaymentsTable.id));
     res.json(ListAcademyFinanceOtherPaymentsResponse.parse({
@@ -1261,6 +1433,33 @@ router.patch(
       status: payment.status,
       paidAt: payment.paidAt,
     }));
+  },
+);
+
+router.delete(
+  "/academy/console/academies/:academyId/finance/other-payments/:paymentId",
+  async (req, res): Promise<void> => {
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const params = DeleteAcademyFinanceOtherPaymentParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      paymentId: rawParam(req.params.paymentId),
+    });
+    if (!params.success) {
+      badRequest(res, params.error.message);
+      return;
+    }
+    const { academyId, paymentId } = params.data;
+    if (!(await authorizeOwner(req, res, academyId))) return;
+    const [deleted] = await db.delete(academyOtherPaymentsTable).where(and(
+      eq(academyOtherPaymentsTable.id, paymentId),
+      eq(academyOtherPaymentsTable.academyId, academyId),
+    )).returning({ id: academyOtherPaymentsTable.id });
+    if (!deleted) {
+      notFound(res, "Payment not found in this academy");
+      return;
+    }
+    res.status(204).send();
   },
 );
 

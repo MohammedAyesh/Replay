@@ -34,4 +34,16 @@ export interface AcademyFinancePlayer {
   unpaidFeesFils: number;
   /** @minimum 0 */
   outstandingFils: number;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  latestRenewalId: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  latestRenewalAmountFils: number | null;
+  /** @nullable */
+  latestRenewalPaidAt: Date | null;
 }

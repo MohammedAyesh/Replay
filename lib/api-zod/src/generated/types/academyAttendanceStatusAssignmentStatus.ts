@@ -6,7 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type AcademyAttendanceStatusAssignmentStatus = typeof AcademyAttendanceStatusAssignmentStatus[keyof typeof AcademyAttendanceStatusAssignmentStatus];
+/**
+ * @nullable
+ */
+export type AcademyAttendanceStatusAssignmentStatus = typeof AcademyAttendanceStatusAssignmentStatus[keyof typeof AcademyAttendanceStatusAssignmentStatus] | null;
 
 
 export const AcademyAttendanceStatusAssignmentStatus = {

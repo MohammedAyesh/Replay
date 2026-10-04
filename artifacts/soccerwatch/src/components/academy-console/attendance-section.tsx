@@ -4,10 +4,8 @@ import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   getGetAcademyConsoleAttendanceQueryKey,
   getGetAcademyConsoleAttendanceQueryOptions,
-  getListAcademyConsolePlayersQueryKey,
   getListAcademyConsoleSessionsQueryKey,
   useGetAcademyConsoleAttendance,
-  useListAcademyConsolePlayers,
   useListAcademyConsoleSessions,
   useUpdateAcademyConsoleAttendance,
   type AcademyAttendanceStatusAssignmentStatus,
@@ -19,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { formatAmmanDateTime } from "@/lib/academy-session-time";
 import { computeMonthlyAttendanceInsights } from "@/lib/academy-attendance-insights";
 
-type AttendanceStatus = AcademyAttendanceStatusAssignmentStatus;
+type AttendanceStatus = Exclude<AcademyAttendanceStatusAssignmentStatus, null>;
 const statuses: AttendanceStatus[] = ["present", "absent", "late", "excused"];
 const AMMAN = "Asia/Amman";
 
@@ -57,9 +55,6 @@ export function AcademyAttendanceSection({ academyId }: { academyId: number }) {
   const qc = useQueryClient();
   const sessionsQuery = useListAcademyConsoleSessions(academyId, {
     query: { queryKey: getListAcademyConsoleSessionsQueryKey(academyId), staleTime: 20_000 },
-  });
-  const playersQuery = useListAcademyConsolePlayers(academyId, {
-    query: { queryKey: getListAcademyConsolePlayersQueryKey(academyId), staleTime: 20_000 },
   });
   const sessions = useMemo(
     () => [...(sessionsQuery.data ?? [])].sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt)),
@@ -134,31 +129,21 @@ export function AcademyAttendanceSection({ academyId }: { academyId: number }) {
     monthAttendanceQueries.flatMap((query) => query.data?.players ?? []),
   );
   const updateAttendance = useUpdateAcademyConsoleAttendance();
-  const [marks, setMarks] = useState<Record<number, AttendanceStatus>>({});
+  const [marks, setMarks] = useState<Record<number, AcademyAttendanceStatusAssignmentStatus>>({});
   const [saveError, setSaveError] = useState(false);
 
   useEffect(() => {
     if (!attendanceQuery.data || attendanceQuery.data.sessionId !== sessionId) return;
-    setMarks(Object.fromEntries(attendanceQuery.data.players.flatMap((player) => (
-      player.status ? [[player.playerId, player.status as AttendanceStatus]] : []
-    ))));
+    setMarks({});
   }, [attendanceQuery.data, sessionId]);
 
   const roster = useMemo(() => {
-    const saved = attendanceQuery.data?.players ?? [];
-    if (selectedSession?.squadId !== null && selectedSession?.squadId !== undefined) return saved;
-    const savedById = new Map(saved.map((player) => [player.playerId, player]));
-    return (playersQuery.data ?? []).filter((player) => player.isActive).map((player) => {
-      const existing = savedById.get(player.id);
-      return {
-        playerId: player.id,
-        playerName: player.name,
-        jerseyNumber: player.jerseyNumber,
-        status: existing?.status ?? null,
-      };
-    });
-  }, [attendanceQuery.data, playersQuery.data, selectedSession]);
-  const dirty = roster.some((player) => marks[player.playerId] !== (player.status ?? undefined));
+    return attendanceQuery.data?.players ?? [];
+  }, [attendanceQuery.data]);
+  const hasOverride = (playerId: number) => Object.prototype.hasOwnProperty.call(marks, playerId);
+  const currentMark = (player: (typeof roster)[number]) =>
+    hasOverride(player.playerId) ? marks[player.playerId] : player.status;
+  const dirty = roster.some((player) => hasOverride(player.playerId) && marks[player.playerId] !== player.status);
 
   const selectSession = (session: AcademySessionSummary) => {
     setSessionId(session.id);
@@ -174,10 +159,11 @@ export function AcademyAttendanceSection({ academyId }: { academyId: number }) {
       await updateAttendance.mutateAsync({
         academyId,
         sessionId: selectedSession.id,
-        data: { entries: roster.flatMap((player) => {
-          const status = marks[player.playerId] ?? player.status;
-          return status ? [{ playerId: player.playerId, status }] : [];
-        }) },
+        data: { entries: roster.flatMap((player) => (
+          hasOverride(player.playerId) && marks[player.playerId] !== player.status
+            ? [{ playerId: player.playerId, status: marks[player.playerId] }]
+            : []
+        )) },
       });
       await Promise.all([
         qc.invalidateQueries({ queryKey: getGetAcademyConsoleAttendanceQueryKey(academyId, selectedSession.id) }),
@@ -188,7 +174,7 @@ export function AcademyAttendanceSection({ academyId }: { academyId: number }) {
     }
   };
 
-  const loading = sessionsQuery.isLoading || playersQuery.isLoading || (sessionId !== null && attendanceQuery.isLoading);
+  const loading = sessionsQuery.isLoading || (sessionId !== null && attendanceQuery.isLoading);
   const isArabic = locale === "ar";
   return (
     <section className="space-y-6" data-testid="academy-attendance">
@@ -272,7 +258,7 @@ export function AcademyAttendanceSection({ academyId }: { academyId: number }) {
                   </div>
                 </section>
               )}
-              {attendanceQuery.isError || playersQuery.isError ? <PanelAlert text={copy.loadError} retry={() => void (attendanceQuery.isError ? attendanceQuery.refetch() : playersQuery.refetch())} retryText={t.academyConsole.retry} /> :
+              {attendanceQuery.isError ? <PanelAlert text={copy.loadError} retry={() => void attendanceQuery.refetch()} retryText={t.academyConsole.retry} /> :
                 loading ? <div className="space-y-2" data-testid="attendance-roster-loading">{[0, 1, 2].map((n) => <div key={n} className="h-16 animate-pulse rounded-xl bg-surface" />)}</div> :
                 roster.length === 0 ? <div className="rounded-2xl border border-dashed border-line bg-surface p-7 text-center text-sm text-muted-text" data-testid="attendance-roster-empty">{copy.noPlayers}</div> :
                 <div className="overflow-hidden rounded-2xl border border-line bg-surface">
@@ -281,8 +267,15 @@ export function AcademyAttendanceSection({ academyId }: { academyId: number }) {
                     {roster.map((player) => <div key={player.playerId} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`attendance-player-${player.playerId}`}>
                       <div className="min-w-0"><p dir="auto" className="font-semibold text-text">{player.jerseyNumber !== null ? <span className="me-2 font-mono text-xs text-muted-text">#{player.jerseyNumber}</span> : null}{player.playerName}</p></div>
                       <div className="grid grid-cols-2 gap-1 rounded-xl bg-raised p-1 sm:flex" role="group" aria-label={`${copy.markStatus}: ${player.playerName}`}>
-                        {statuses.map((status) => <button key={status} type="button" aria-pressed={marks[player.playerId] === status || (!marks[player.playerId] && player.status === status)} onClick={() => setMarks((prev) => ({ ...prev, [player.playerId]: status }))} className={`min-h-9 rounded-lg px-3 text-xs font-bold transition-colors ${marks[player.playerId] === status || (!marks[player.playerId] && player.status === status) ? "bg-turf text-void" : "text-muted-text hover:text-text"}`} data-testid={`attendance-${status}-${player.playerId}`}>{copy[status]}</button>)}
+                        {statuses.map((status) => <button key={status} type="button" aria-pressed={currentMark(player) === status} onClick={() => setMarks((prev) => ({ ...prev, [player.playerId]: status }))} className={`min-h-9 rounded-lg px-3 text-xs font-bold transition-colors ${currentMark(player) === status ? "bg-turf text-void" : "text-muted-text hover:text-text"}`} data-testid={`attendance-${status}-${player.playerId}`}>{copy[status]}</button>)}
                       </div>
+                      <Button type="button" size="sm" variant="ghost" className="self-start text-muted-text sm:self-auto"
+                        aria-label={`${copy.clearMark}: ${player.playerName}`}
+                        disabled={currentMark(player) === null}
+                        onClick={() => setMarks((prev) => ({ ...prev, [player.playerId]: null }))}
+                        data-testid={`attendance-clear-${player.playerId}`}>
+                        {copy.clearMark}
+                      </Button>
                     </div>)}
                   </div>
                 </div>}

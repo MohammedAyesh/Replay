@@ -10,5 +10,6 @@ import type { AcademyAttendanceStatusAssignmentStatus } from './academyAttendanc
 export interface AcademyAttendanceStatusAssignment {
   /** @minimum 1 */
   playerId: number;
+  /** @nullable */
   status: AcademyAttendanceStatusAssignmentStatus;
 }

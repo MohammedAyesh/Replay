@@ -1968,7 +1968,7 @@ export const UpdateAcademyConsoleSquadResponse = zod.object({
 
 
 /**
- * @summary Delete a squad and unassign its players
+ * @summary Delete a squad unless its players have outstanding balances
  */
 
 
@@ -2401,7 +2401,7 @@ export const UpdateAcademyConsoleAttendanceParams = zod.object({
 export const UpdateAcademyConsoleAttendanceBody = zod.object({
   "entries": zod.array(zod.object({
   "playerId": zod.number().min(1),
-  "status": zod.enum(['present', 'absent', 'late', 'excused'])
+  "status": zod.union([zod.literal('present'),zod.literal('absent'),zod.literal('late'),zod.literal('excused'),zod.literal(null)]).nullable()
 }))
 })
 
@@ -2686,6 +2686,32 @@ export const ListAcademyFinanceTeamsResponse = zod.array(ListAcademyFinanceTeams
 
 
 /**
+ * @summary List active players without a squad and their unpaid one-off fees
+ */
+
+
+
+export const ListAcademyFinanceUnassignedPlayersParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+export const listAcademyFinanceUnassignedPlayersResponseUnpaidFeesFilsMin = 0;
+
+export const listAcademyFinanceUnassignedPlayersResponseOutstandingFilsMin = 0;
+
+
+
+export const ListAcademyFinanceUnassignedPlayersResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "unpaidFeesFils": zod.number().min(listAcademyFinanceUnassignedPlayersResponseUnpaidFeesFilsMin),
+  "outstandingFils": zod.number().min(listAcademyFinanceUnassignedPlayersResponseOutstandingFilsMin)
+})
+export const ListAcademyFinanceUnassignedPlayersResponse = zod.array(ListAcademyFinanceUnassignedPlayersResponseItem)
+
+
+/**
  * @summary Create a squad with its monthly fee
  */
 
@@ -2804,6 +2830,9 @@ export const listAcademyFinanceTeamPlayersResponseUnpaidFeesFilsMin = 0;
 export const listAcademyFinanceTeamPlayersResponseOutstandingFilsMin = 0;
 
 
+export const listAcademyFinanceTeamPlayersResponseLatestRenewalAmountFilsMin = 0;
+
+
 
 export const ListAcademyFinanceTeamPlayersResponseItem = zod.object({
   "id": zod.number().min(1),
@@ -2818,7 +2847,10 @@ export const ListAcademyFinanceTeamPlayersResponseItem = zod.object({
   "monthsOwed": zod.number().min(listAcademyFinanceTeamPlayersResponseMonthsOwedMin),
   "subscriptionDebtFils": zod.number().min(listAcademyFinanceTeamPlayersResponseSubscriptionDebtFilsMin),
   "unpaidFeesFils": zod.number().min(listAcademyFinanceTeamPlayersResponseUnpaidFeesFilsMin),
-  "outstandingFils": zod.number().min(listAcademyFinanceTeamPlayersResponseOutstandingFilsMin)
+  "outstandingFils": zod.number().min(listAcademyFinanceTeamPlayersResponseOutstandingFilsMin),
+  "latestRenewalId": zod.number().min(1).nullable(),
+  "latestRenewalAmountFils": zod.number().min(listAcademyFinanceTeamPlayersResponseLatestRenewalAmountFilsMin).nullable(),
+  "latestRenewalPaidAt": zod.coerce.date().nullable()
 })
 export const ListAcademyFinanceTeamPlayersResponse = zod.array(ListAcademyFinanceTeamPlayersResponseItem)
 
@@ -2867,6 +2899,9 @@ export const createAcademyFinanceTeamPlayerResponseUnpaidFeesFilsMin = 0;
 export const createAcademyFinanceTeamPlayerResponseOutstandingFilsMin = 0;
 
 
+export const createAcademyFinanceTeamPlayerResponseLatestRenewalAmountFilsMin = 0;
+
+
 
 export const CreateAcademyFinanceTeamPlayerResponse = zod.object({
   "id": zod.number().min(1),
@@ -2881,7 +2916,10 @@ export const CreateAcademyFinanceTeamPlayerResponse = zod.object({
   "monthsOwed": zod.number().min(createAcademyFinanceTeamPlayerResponseMonthsOwedMin),
   "subscriptionDebtFils": zod.number().min(createAcademyFinanceTeamPlayerResponseSubscriptionDebtFilsMin),
   "unpaidFeesFils": zod.number().min(createAcademyFinanceTeamPlayerResponseUnpaidFeesFilsMin),
-  "outstandingFils": zod.number().min(createAcademyFinanceTeamPlayerResponseOutstandingFilsMin)
+  "outstandingFils": zod.number().min(createAcademyFinanceTeamPlayerResponseOutstandingFilsMin),
+  "latestRenewalId": zod.number().min(1).nullable(),
+  "latestRenewalAmountFils": zod.number().min(createAcademyFinanceTeamPlayerResponseLatestRenewalAmountFilsMin).nullable(),
+  "latestRenewalPaidAt": zod.coerce.date().nullable()
 })
 
 
@@ -2925,6 +2963,9 @@ export const updateAcademyFinancePlayerBillingResponseUnpaidFeesFilsMin = 0;
 export const updateAcademyFinancePlayerBillingResponseOutstandingFilsMin = 0;
 
 
+export const updateAcademyFinancePlayerBillingResponseLatestRenewalAmountFilsMin = 0;
+
+
 
 export const UpdateAcademyFinancePlayerBillingResponse = zod.object({
   "id": zod.number().min(1),
@@ -2939,7 +2980,10 @@ export const UpdateAcademyFinancePlayerBillingResponse = zod.object({
   "monthsOwed": zod.number().min(updateAcademyFinancePlayerBillingResponseMonthsOwedMin),
   "subscriptionDebtFils": zod.number().min(updateAcademyFinancePlayerBillingResponseSubscriptionDebtFilsMin),
   "unpaidFeesFils": zod.number().min(updateAcademyFinancePlayerBillingResponseUnpaidFeesFilsMin),
-  "outstandingFils": zod.number().min(updateAcademyFinancePlayerBillingResponseOutstandingFilsMin)
+  "outstandingFils": zod.number().min(updateAcademyFinancePlayerBillingResponseOutstandingFilsMin),
+  "latestRenewalId": zod.number().min(1).nullable(),
+  "latestRenewalAmountFils": zod.number().min(updateAcademyFinancePlayerBillingResponseLatestRenewalAmountFilsMin).nullable(),
+  "latestRenewalPaidAt": zod.coerce.date().nullable()
 })
 
 
@@ -2985,6 +3029,23 @@ export const CreateAcademyFinancePlayerRenewalResponse = zod.object({
   "newExpiresOn": zod.string().regex(createAcademyFinancePlayerRenewalResponseNewExpiresOnRegExp),
   "paidAt": zod.coerce.date()
 })
+
+
+/**
+ * @summary Undo the player's most recent renewal
+ */
+
+
+
+
+
+export const DeleteAcademyFinancePlayerRenewalParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "playerId": zod.coerce.number().min(1),
+  "renewalId": zod.coerce.number().min(1)
+})
+
+export const DeleteAcademyFinancePlayerRenewalResponse = zod.void()
 
 
 /**
@@ -3098,6 +3159,21 @@ export const MarkAcademyFinanceFeePaidResponse = zod.object({
   "paidAt": zod.coerce.date().nullable(),
   "note": zod.string().nullable()
 })
+
+
+/**
+ * @summary Delete a fee record
+ */
+
+
+
+
+export const DeleteAcademyFinanceFeeParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "feeId": zod.coerce.number().min(1)
+})
+
+export const DeleteAcademyFinanceFeeResponse = zod.void()
 
 
 /**
@@ -3264,7 +3340,7 @@ export const RecordAcademyFinanceSalaryPaymentResponse = zod.object({
 
 
 /**
- * @summary List other payments for the current Amman month and totals
+ * @summary List current-month payments and unpaid payments carried over from earlier months
  */
 
 
@@ -3375,6 +3451,21 @@ export const MarkAcademyFinanceOtherPaymentPaidResponse = zod.object({
   "status": zod.enum(['paid', 'unpaid']),
   "paidAt": zod.coerce.date().nullable()
 })
+
+
+/**
+ * @summary Delete an other-payment record
+ */
+
+
+
+
+export const DeleteAcademyFinanceOtherPaymentParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "paymentId": zod.coerce.number().min(1)
+})
+
+export const DeleteAcademyFinanceOtherPaymentResponse = zod.void()
 
 
 /**

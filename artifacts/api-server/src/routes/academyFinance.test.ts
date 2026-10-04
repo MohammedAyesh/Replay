@@ -569,4 +569,111 @@ describe("Academy Finance owner access and accounting", () => {
       });
     expect(wrongCategory.status).toBe(400);
   });
+
+  it("carries unpaid payments forward and keeps active squadless players visible", async () => {
+    const range = getAmmanMonthRange();
+    const priorDate = dateOffset(range.startDate, -1);
+    const [carryover] = await db.insert(academyOtherPaymentsTable).values({
+      academyId: academyAId,
+      category: "Other",
+      label: `Prior-month unpaid payment ${tag}`,
+      amountFils: 19000,
+      occurredOn: priorDate,
+      status: "unpaid",
+    }).returning({ id: academyOtherPaymentsTable.id });
+
+    const payments = await request(app).get(`${financeUrl(academyAId)}/other-payments`).set(as(ownerId));
+    expect(payments.status).toBe(200);
+    expect(payments.body.payments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: carryover.id, status: "unpaid", occurredOn: priorDate }),
+    ]));
+    expect(payments.body.unpaidTotalFils).toBeGreaterThanOrEqual(19000);
+    const dashboard = await request(app).get(`${financeUrl(academyAId)}/dashboard`).set(as(ownerId));
+    expect(dashboard.body.unpaidPayments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: carryover.id, occurredOn: priorDate }),
+    ]));
+
+    const [unassigned] = await db.insert(academyPlayersTable).values({
+      academyId: academyAId,
+      squadId: null,
+      name: `Active squadless player ${tag}`,
+      isActive: true,
+    }).returning({ id: academyPlayersTable.id });
+    const [inactive] = await db.insert(academyPlayersTable).values({
+      academyId: academyAId,
+      squadId: null,
+      name: `Inactive squadless player ${tag}`,
+      isActive: false,
+    }).returning({ id: academyPlayersTable.id });
+    const fee = await request(app).post(`${financeUrl(academyAId)}/players/${unassigned.id}/fees`)
+      .set(as(ownerId)).send({ label: `Squadless fee ${tag}`, amountFils: 7000 });
+    expect(fee.status).toBe(201);
+    const squadless = await request(app).get(`${financeUrl(academyAId)}/unassigned-players`).set(as(ownerId));
+    expect(squadless.status).toBe(200);
+    expect(squadless.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: unassigned.id, unpaidFeesFils: 7000, outstandingFils: 7000 }),
+    ]));
+    expect(squadless.body.map((player: { id: number }) => player.id)).not.toContain(inactive.id);
+  });
+
+  it("allows owners to delete fees and other payments only within their academy", async () => {
+    const fee = await request(app).post(`${financeUrl(academyAId)}/players/${playerAId}/fees`)
+      .set(as(ownerId)).send({ label: `Delete fee ${tag}`, amountFils: 9000 });
+    expect(fee.status).toBe(201);
+    const feeUrl = `${financeUrl(academyAId)}/fees/${fee.body.id}`;
+    expect((await request(app).delete(feeUrl).set(as(coachId))).status).toBe(403);
+    expect((await request(app).delete(`${financeUrl(academyBId)}/fees/${fee.body.id}`).set(as(ownerId))).status).toBe(404);
+    expect((await request(app).delete(feeUrl).set(as(ownerId))).status).toBe(204);
+    expect((await request(app).delete(feeUrl).set(as(ownerId))).status).toBe(404);
+
+    const payment = await db.insert(academyOtherPaymentsTable).values({
+      academyId: academyAId,
+      category: "Other",
+      label: `Delete payment ${tag}`,
+      amountFils: 11000,
+      occurredOn: getAmmanDate(),
+      status: "unpaid",
+    }).returning({ id: academyOtherPaymentsTable.id });
+    const paymentUrl = `${financeUrl(academyAId)}/other-payments/${payment[0].id}`;
+    expect((await request(app).delete(paymentUrl).set(as(coachId))).status).toBe(403);
+    expect((await request(app).delete(`${financeUrl(academyBId)}/other-payments/${payment[0].id}`).set(as(ownerId))).status).toBe(404);
+    expect((await request(app).delete(paymentUrl).set(as(ownerId))).status).toBe(204);
+    expect((await request(app).delete(paymentUrl).set(as(ownerId))).status).toBe(404);
+  });
+
+  it("only undoes the latest renewal and restores its previous expiry", async () => {
+    const team = await request(app).post(`${financeUrl(academyAId)}/teams`)
+      .set(as(ownerId)).send({ name: `Undo renewal team ${tag}`, monthlyFeeFils: 30000 });
+    expect(team.status).toBe(201);
+    const player = await request(app).post(`${financeUrl(academyAId)}/teams/${team.body.id}/players`)
+      .set(as(ownerId)).send({
+        name: `Undo renewal player ${tag}`,
+        monthlyDiscountFils: 5000,
+        subscriptionExpiresOn: getAmmanDate(),
+      });
+    expect(player.status).toBe(201);
+    const renewalUrl = `${financeUrl(academyAId)}/players/${player.body.id}/renewals`;
+    const first = await request(app).post(renewalUrl).set(as(ownerId)).send({ months: 1 });
+    const latest = await request(app).post(renewalUrl).set(as(ownerId)).send({ months: 2 });
+    expect(first.status).toBe(201);
+    expect(latest.status).toBe(201);
+    expect((await request(app).post(renewalUrl).set(as(ownerId)).send({ months: 13 })).status).toBe(400);
+
+    const latestUrl = `${renewalUrl}/${latest.body.id}`;
+    expect((await request(app).delete(latestUrl).set(as(coachId))).status).toBe(403);
+    const earlierUndo = await request(app).delete(`${renewalUrl}/${first.body.id}`).set(as(ownerId));
+    expect(earlierUndo.status).toBe(409);
+    expect(earlierUndo.body.error).toBe("Only the latest renewal can be undone");
+    expect((await request(app).delete(`${financeUrl(academyBId)}/players/${player.body.id}/renewals/${latest.body.id}`).set(as(ownerId))).status).toBe(404);
+    expect((await request(app).delete(latestUrl).set(as(ownerId))).status).toBe(204);
+    const teamPlayers = await request(app).get(`${financeUrl(academyAId)}/teams/${team.body.id}/players`).set(as(ownerId));
+    expect(teamPlayers.body[0]).toMatchObject({
+      id: player.body.id,
+      subscriptionExpiresOn: first.body.newExpiresOn,
+      latestRenewalId: first.body.id,
+      latestRenewalAmountFils: first.body.amountFils,
+    });
+    expect(teamPlayers.body[0].latestRenewalPaidAt).toBeTruthy();
+    expect((await request(app).delete(latestUrl).set(as(ownerId))).status).toBe(404);
+  });
 });

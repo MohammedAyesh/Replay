@@ -476,13 +476,38 @@ describe("Academy Console API", () => {
       .where(eq(academySquadsTable.id, squadBId));
     expect(untouchedOtherAcademySquad?.name).toBe(`Academy B squad one ${tag}`);
 
-    expect((await request(app).delete(`${academySquadsUrl}/${createdSquadId}`).set(as(coachId))).status).toBe(204);
+    expect((await request(app).delete(`${academySquadsUrl}/${createdSquadId}`).set(as(coachId))).status).toBe(403);
+    expect((await request(app).delete(`${academySquadsUrl}/${createdSquadId}`).set(as(ownerId))).status).toBe(204);
     expect((await request(app).delete(squadUrl).set(as(ownerId))).status).toBe(204);
     const [retainedPlayer] = await db
       .select({ id: academyPlayersTable.id, squadId: academyPlayersTable.squadId })
       .from(academyPlayersTable)
       .where(eq(academyPlayersTable.id, playerAId));
     expect(retainedPlayer).toEqual({ id: playerAId, squadId: null });
+  });
+
+  it("prevents deleting a squad when an assigned player has an outstanding subscription balance", async () => {
+    const [debtSquad] = await db.insert(academySquadsTable).values({
+      academyId: academyAId,
+      name: `Protected debt squad ${tag}`,
+      monthlyFeeFils: 30000,
+    }).returning({ id: academySquadsTable.id });
+    const [debtPlayer] = await db.insert(academyPlayersTable).values({
+      academyId: academyAId,
+      squadId: debtSquad.id,
+      name: `Protected debt player ${tag}`,
+      isActive: true,
+      subscriptionExpiresOn: "2000-01-01",
+    }).returning({ id: academyPlayersTable.id });
+    const deleteUrl = `/api/academy/console/academies/${academyAId}/squads/${debtSquad.id}`;
+
+    expect((await request(app).delete(deleteUrl).set(as(coachId))).status).toBe(403);
+    const blocked = await request(app).delete(deleteUrl).set(as(ownerId));
+    expect(blocked.status).toBe(409);
+    const [retained] = await db.select({
+      squadId: academyPlayersTable.squadId,
+    }).from(academyPlayersTable).where(eq(academyPlayersTable.id, debtPlayer.id));
+    expect(retained?.squadId).toBe(debtSquad.id);
   });
 
   it("scopes session management, validates match results, uses UTC timestamps, and removes attendance on delete", async () => {
@@ -706,6 +731,14 @@ describe("Academy Console API", () => {
       });
     expect(firstSave.status).toBe(200);
 
+    await db.update(academyPlayersTable)
+      .set({ squadId: null })
+      .where(eq(academyPlayersTable.id, inactiveAttendancePlayerId));
+    const rosterAfterSquadChange = await request(app).get(attendanceUrl).set(as(coachId));
+    expect(rosterAfterSquadChange.body.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerId: inactiveAttendancePlayerId, status: "excused" }),
+    ]));
+
     const remark = await request(app)
       .put(attendanceUrl)
       .set(as(coachId))
@@ -715,6 +748,14 @@ describe("Academy Console API", () => {
       expect.objectContaining({ playerId: attendancePlayerId, status: "late" }),
       expect.objectContaining({ playerId: inactiveAttendancePlayerId, status: "excused" }),
     ]));
+
+    const clearedInactive = await request(app)
+      .put(attendanceUrl)
+      .set(as(coachId))
+      .send({ entries: [{ playerId: inactiveAttendancePlayerId, status: null }] });
+    expect(clearedInactive.status).toBe(200);
+    expect(clearedInactive.body.players.map((player: { playerId: number }) => player.playerId))
+      .not.toContain(inactiveAttendancePlayerId);
 
     expect((await request(app).put(attendanceUrl).set(as(coachId)).send({
       entries: [
@@ -735,6 +776,24 @@ describe("Academy Console API", () => {
     expect((await request(app).put(academyWideUrl).set(as(coachId))
       .send({ entries: [{ playerId: inactiveAttendancePlayerId, status: "present" }] })).status).toBe(404);
 
+    await db.insert(academyAttendanceTable).values({
+      sessionId: academyWideSessionId,
+      playerId: inactiveAttendancePlayerId,
+      status: "absent",
+    });
+    const inactiveMarked = await request(app).get(academyWideUrl).set(as(ownerId));
+    expect(inactiveMarked.body.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerId: inactiveAttendancePlayerId, status: "absent" }),
+    ]));
+    const clearAcademyWide = await request(app).put(academyWideUrl).set(as(ownerId))
+      .send({ entries: [{ playerId: inactiveAttendancePlayerId, status: null }] });
+    expect(clearAcademyWide.status).toBe(200);
+    expect(clearAcademyWide.body.players.map((player: { playerId: number }) => player.playerId))
+      .not.toContain(inactiveAttendancePlayerId);
+    const wideAttendanceRows = await db.select().from(academyAttendanceTable)
+      .where(eq(academyAttendanceTable.sessionId, academyWideSessionId));
+    expect(wideAttendanceRows.some((row) => row.playerId === inactiveAttendancePlayerId)).toBe(false);
+
     const listedSessions = await request(app)
       .get(`/api/academy/console/academies/${academyAId}/sessions`)
       .set(as(coachId));
@@ -743,7 +802,7 @@ describe("Academy Console API", () => {
       present: 0,
       absent: 0,
       late: 1,
-      excused: 1,
+      excused: 0,
     });
     expect(listedSessions.body.every((session: { academyId: number }) => session.academyId === academyAId))
       .toBe(true);

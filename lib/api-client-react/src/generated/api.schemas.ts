@@ -1473,7 +1473,10 @@ export interface AcademyAttendanceSheet {
   players: AcademyAttendancePlayer[];
 }
 
-export type AcademyAttendanceStatusAssignmentStatus = typeof AcademyAttendanceStatusAssignmentStatus[keyof typeof AcademyAttendanceStatusAssignmentStatus];
+/**
+ * @nullable
+ */
+export type AcademyAttendanceStatusAssignmentStatus = typeof AcademyAttendanceStatusAssignmentStatus[keyof typeof AcademyAttendanceStatusAssignmentStatus] | null;
 
 
 export const AcademyAttendanceStatusAssignmentStatus = {
@@ -1486,6 +1489,7 @@ export const AcademyAttendanceStatusAssignmentStatus = {
 export interface AcademyAttendanceStatusAssignment {
   /** @minimum 1 */
   playerId: number;
+  /** @nullable */
   status: AcademyAttendanceStatusAssignmentStatus;
 }
 
@@ -1684,6 +1688,28 @@ export interface AcademyFinancePlayer {
   monthsOwed: number;
   /** @minimum 0 */
   subscriptionDebtFils: number;
+  /** @minimum 0 */
+  unpaidFeesFils: number;
+  /** @minimum 0 */
+  outstandingFils: number;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  latestRenewalId: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  latestRenewalAmountFils: number | null;
+  /** @nullable */
+  latestRenewalPaidAt: string | null;
+}
+
+export interface AcademyFinanceUnassignedPlayer {
+  /** @minimum 1 */
+  id: number;
+  name: string;
   /** @minimum 0 */
   unpaidFeesFils: number;
   /** @minimum 0 */

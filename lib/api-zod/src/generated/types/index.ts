@@ -50,6 +50,7 @@ export * from './academyFinanceStaffUpdate';
 export * from './academyFinanceTeam';
 export * from './academyFinanceTeamInput';
 export * from './academyFinanceTeamMonthlyFeeUpdate';
+export * from './academyFinanceUnassignedPlayer';
 export * from './academyMemberAssignment';
 export * from './academyMemberListItem';
 export * from './academyMemberRole';

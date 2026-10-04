@@ -8,6 +8,7 @@ import {
   getListAcademyFinanceTeamPlayersQueryKey,
   getListAcademyFinanceTeamsQueryKey,
   getListAcademyFinancePlayerFeesQueryKey,
+  getListAcademyFinanceUnassignedPlayersQueryKey,
   useCreateAcademyFinanceCategory,
   useCreateAcademyFinanceOtherPayment,
   useCreateAcademyFinancePlayerFee,
@@ -15,6 +16,9 @@ import {
   useCreateAcademyFinanceStaff,
   useCreateAcademyFinanceTeam,
   useCreateAcademyFinanceTeamPlayer,
+  useDeleteAcademyFinanceFee,
+  useDeleteAcademyFinanceOtherPayment,
+  useDeleteAcademyFinancePlayerRenewal,
   useGetAcademyFinanceDashboard,
   useListAcademyFinanceCategories,
   useListAcademyFinanceOtherPayments,
@@ -22,6 +26,7 @@ import {
   useListAcademyFinanceStaff,
   useListAcademyFinanceTeamPlayers,
   useListAcademyFinanceTeams,
+  useListAcademyFinanceUnassignedPlayers,
   useMarkAcademyFinanceFeePaid,
   useMarkAcademyFinanceOtherPaymentPaid,
   useRecordAcademyFinanceSalaryPayment,
@@ -42,6 +47,7 @@ import {
   type AcademyFinanceTeamInput,
   type AcademyFinanceTeam,
   type AcademyFinanceOtherPaymentInput,
+  type AcademyFinanceUnassignedPlayer,
 } from "@workspace/api-client-react";
 import {
   Activity,
@@ -63,9 +69,20 @@ import {
   Pencil,
   RefreshCw,
   ShieldAlert,
+  Trash2,
   Users,
   Wallet,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -260,7 +277,7 @@ export function AcademyFeesPaymentsSection({ academyId }: { academyId: number })
   const [section, setSection] = useState<SectionKey>("dashboard");
   const [activeTeamId, setActiveTeamId] = useState<number | null>(null);
   const [pendingRenewPlayerId, setPendingRenewPlayerId] = useState<number | null>(null);
-  const [feedback, setFeedback] = useState<"saved" | "paid" | "repeated" | "categorySaved" | "error" | null>(null);
+  const [feedback, setFeedback] = useState<"saved" | "paid" | "repeated" | "categorySaved" | "renewalUndone" | "deleted" | "error" | null>(null);
   const dashboardQuery = useGetAcademyFinanceDashboard(academyId, {
     query: { queryKey: getGetAcademyFinanceDashboardQueryKey(academyId) },
   });
@@ -281,13 +298,16 @@ export function AcademyFeesPaymentsSection({ academyId }: { academyId: number })
   const createPlayer = useCreateAcademyFinanceTeamPlayer();
   const updateBilling = useUpdateAcademyFinancePlayerBilling();
   const createRenewal = useCreateAcademyFinancePlayerRenewal();
+  const deleteRenewal = useDeleteAcademyFinancePlayerRenewal();
   const createFee = useCreateAcademyFinancePlayerFee();
   const markFeePaid = useMarkAcademyFinanceFeePaid();
+  const deleteFee = useDeleteAcademyFinanceFee();
   const createStaff = useCreateAcademyFinanceStaff();
   const updateStaff = useUpdateAcademyFinanceStaff();
   const recordSalary = useRecordAcademyFinanceSalaryPayment();
   const createPayment = useCreateAcademyFinanceOtherPayment();
   const markPaymentPaid = useMarkAcademyFinanceOtherPaymentPaid();
+  const deletePayment = useDeleteAcademyFinanceOtherPayment();
   const repeatPayment = useRepeatAcademyFinanceOtherPayment();
   const createCategory = useCreateAcademyFinanceCategory();
 
@@ -298,15 +318,15 @@ export function AcademyFeesPaymentsSection({ academyId }: { academyId: number })
   const refreshStaff = () => queryClient.invalidateQueries({ queryKey: getListAcademyFinanceStaffQueryKey(academyId) });
   const refreshOther = () => queryClient.invalidateQueries({ queryKey: getListAcademyFinanceOtherPaymentsQueryKey(academyId) });
   const refreshCategories = () => queryClient.invalidateQueries({ queryKey: getListAcademyFinanceCategoriesQueryKey(academyId) });
-  const playerWriteDone = async (teamId: number, playerId?: number) => {
+  const playerWriteDone = async (teamId: number | null, playerId?: number) => {
     await Promise.all([
       refreshDashboard(),
       refreshTeams(),
-      refreshPlayers(teamId),
+      ...(teamId === null ? [] : [refreshPlayers(teamId)]),
       ...(playerId ? [refreshFees(playerId)] : []),
     ]);
   };
-  const finishWrite = async (message: "saved" | "paid" | "repeated" | "categorySaved") => {
+  const finishWrite = async (message: "saved" | "paid" | "repeated" | "categorySaved" | "renewalUndone" | "deleted") => {
     setFeedback(message);
     setTimeout(() => setFeedback(null), 3600);
     return message;
@@ -359,12 +379,7 @@ export function AcademyFeesPaymentsSection({ academyId }: { academyId: number })
   const onRenew = async (teamId: number, playerId: number, months: number) => {
     setFeedback(null);
     try {
-      let remaining = months;
-      while (remaining > 0) {
-        const part = Math.min(12, remaining);
-        await createRenewal.mutateAsync({ academyId, playerId, data: { months: part } });
-        remaining -= part;
-      }
+      await createRenewal.mutateAsync({ academyId, playerId, data: { months } });
       await playerWriteDone(teamId, playerId);
       await finishWrite("paid");
     } catch (error) {
@@ -373,23 +388,45 @@ export function AcademyFeesPaymentsSection({ academyId }: { academyId: number })
       throw error;
     }
   };
-  const onCreateFee = async (teamId: number, playerId: number, data: AcademyFinanceFeeInput) => {
+  const onUndoRenewal = async (teamId: number, playerId: number, renewalId: number) => {
+    setFeedback(null);
+    try {
+      await deleteRenewal.mutateAsync({ academyId, playerId, renewalId });
+      await playerWriteDone(teamId, playerId);
+      await finishWrite("renewalUndone");
+    } catch (error) {
+      setFeedback("error");
+      throw error;
+    }
+  };
+  const onCreateFee = async (teamId: number | null, playerId: number, data: AcademyFinanceFeeInput) => {
     setFeedback(null);
     try {
       await createFee.mutateAsync({ academyId, playerId, data });
-      await playerWriteDone(teamId, playerId);
+      await Promise.all([refreshDashboard(), refreshTeams(), ...(teamId === null ? [] : [refreshPlayers(teamId)]), refreshFees(playerId)]);
       await finishWrite("saved");
     } catch (error) {
       setFeedback("error");
       throw error;
     }
   };
-  const onMarkFeePaid = async (teamId: number, playerId: number, feeId: number) => {
+  const onMarkFeePaid = async (teamId: number | null, playerId: number, feeId: number) => {
     setFeedback(null);
     try {
       await markFeePaid.mutateAsync({ academyId, feeId, data: { status: "paid" } });
-      await playerWriteDone(teamId, playerId);
+      await Promise.all([refreshDashboard(), refreshTeams(), ...(teamId === null ? [] : [refreshPlayers(teamId)]), refreshFees(playerId)]);
       await finishWrite("paid");
+    } catch (error) {
+      setFeedback("error");
+      throw error;
+    }
+  };
+  const onDeleteFee = async (teamId: number | null, playerId: number, feeId: number) => {
+    setFeedback(null);
+    try {
+      await deleteFee.mutateAsync({ academyId, feeId });
+      await Promise.all([refreshDashboard(), refreshTeams(), ...(teamId === null ? [] : [refreshPlayers(teamId)]), refreshFees(playerId)]);
+      await finishWrite("deleted");
     } catch (error) {
       setFeedback("error");
       throw error;
@@ -446,6 +483,17 @@ export function AcademyFeesPaymentsSection({ academyId }: { academyId: number })
       await repeatPayment.mutateAsync({ academyId, paymentId });
       await Promise.all([refreshOther(), refreshDashboard()]);
       await finishWrite("repeated");
+    } catch (error) {
+      setFeedback("error");
+      throw error;
+    }
+  };
+  const onDeletePayment = async (paymentId: number) => {
+    setFeedback(null);
+    try {
+      await deletePayment.mutateAsync({ academyId, paymentId });
+      await Promise.all([refreshOther(), refreshDashboard()]);
+      await finishWrite("deleted");
     } catch (error) {
       setFeedback("error");
       throw error;
@@ -528,7 +576,8 @@ export function AcademyFeesPaymentsSection({ academyId }: { academyId: number })
           onUpdateTeamFee={onUpdateTeamFee} isUpdatingTeamFee={updateTeam.isPending}
           onCreatePlayer={onCreatePlayer} onUpdateBilling={onUpdateBilling} onRenew={onRenew}
           onCreateFee={onCreateFee} onMarkFeePaid={onMarkFeePaid}
-          onRefreshPlayerWrites={playerWriteDone}
+           onDeleteFee={onDeleteFee} onRefreshPlayerWrites={playerWriteDone}
+           onUndoRenewal={onUndoRenewal}
           pendingRenewPlayerId={pendingRenewPlayerId}
           onPendingRenewHandled={() => setPendingRenewPlayerId(null)}
           isRenewing={createRenewal.isPending} />
@@ -540,9 +589,9 @@ export function AcademyFeesPaymentsSection({ academyId }: { academyId: number })
       )}
       {section === "other" && (
         <OtherPaymentsPanel paymentsQuery={paymentsQuery} categoriesQuery={categoriesQuery} locale={locale} copy={copy}
-          onCreatePayment={onCreatePayment} onMarkPaid={onMarkPaymentPaid} onRepeat={onRepeatPayment}
+          onCreatePayment={onCreatePayment} onMarkPaid={onMarkPaymentPaid} onRepeat={onRepeatPayment} onDelete={onDeletePayment}
           onCreateCategory={onCreateCategory} isSaving={createPayment.isPending}
-          isMarkingPaid={markPaymentPaid.isPending} isRepeating={repeatPayment.isPending}
+          isMarkingPaid={markPaymentPaid.isPending} isRepeating={repeatPayment.isPending} isDeleting={deletePayment.isPending}
           isSavingCategory={createCategory.isPending} />
       )}
     </section>
@@ -638,7 +687,12 @@ function DashboardPanel({ dashboardQuery, locale, copy, onNavigate }: {
               {unpaidPayments.map((payment) => (
                 <div key={payment.id} className="flex items-center justify-between gap-3 py-3">
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{payment.label}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate font-medium">{payment.label}</p>
+                      {payment.occurredOn < `${dashboardQuery.data?.month ?? ammanToday().slice(0, 7)}-01` && (
+                        <Badge variant="outline" className="text-[10px]">{copy.carriedOver}</Badge>
+                      )}
+                    </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">{localizeCategory(payment.category, copy)} <span className="px-1">·</span> {formatDate(payment.occurredOn, locale)}</p>
                   </div>
                   <span className="shrink-0 font-display text-sm font-semibold tabular-nums"><MoneyAmount amountFils={payment.amountFils} locale={locale} /></span>
@@ -658,7 +712,8 @@ function DashboardPanel({ dashboardQuery, locale, copy, onNavigate }: {
 
 function PlayerPaymentsPanel({ academyId, teamsQuery, activeTeamId, onSelectTeam, locale, copy,
   onCreateTeam, isCreatingTeam, onCreatePlayer, onUpdateBilling, onRenew, onCreateFee, onMarkFeePaid,
-  onRefreshPlayerWrites, onUpdateTeamFee, isUpdatingTeamFee, pendingRenewPlayerId, onPendingRenewHandled, isRenewing,
+  onDeleteFee, onUndoRenewal, onRefreshPlayerWrites, onUpdateTeamFee, isUpdatingTeamFee,
+  pendingRenewPlayerId, onPendingRenewHandled, isRenewing,
 }: {
   academyId: number;
   teamsQuery: FinanceQuery<AcademyFinanceTeam[]>;
@@ -673,15 +728,21 @@ function PlayerPaymentsPanel({ academyId, teamsQuery, activeTeamId, onSelectTeam
   onCreatePlayer: (teamId: number, data: AcademyFinancePlayerInput) => Promise<void>;
   onUpdateBilling: (teamId: number, playerId: number, data: AcademyFinancePlayerBillingUpdate) => Promise<void>;
   onRenew: (teamId: number, playerId: number, months: number) => Promise<void>;
-  onCreateFee: (teamId: number, playerId: number, data: AcademyFinanceFeeInput) => Promise<void>;
-  onMarkFeePaid: (teamId: number, playerId: number, feeId: number) => Promise<void>;
-  onRefreshPlayerWrites: (teamId: number, playerId?: number) => Promise<void>;
+  onCreateFee: (teamId: number | null, playerId: number, data: AcademyFinanceFeeInput) => Promise<void>;
+  onMarkFeePaid: (teamId: number | null, playerId: number, feeId: number) => Promise<void>;
+  onDeleteFee: (teamId: number | null, playerId: number, feeId: number) => Promise<void>;
+  onUndoRenewal: (teamId: number, playerId: number, renewalId: number) => Promise<void>;
+  onRefreshPlayerWrites: (teamId: number | null, playerId?: number) => Promise<void>;
   pendingRenewPlayerId: number | null;
   onPendingRenewHandled: () => void;
   isRenewing: boolean;
 }) {
   const { locale: activeLocale } = useTranslation();
   const [teamDialogOpen, setTeamDialogOpen] = useState(false);
+  const [unassignedFeesPlayer, setUnassignedFeesPlayer] = useState<Pick<AcademyFinanceUnassignedPlayer, "id" | "name"> | null>(null);
+  const unassignedPlayersQuery = useListAcademyFinanceUnassignedPlayers(academyId, {
+    query: { queryKey: getListAcademyFinanceUnassignedPlayersQueryKey(academyId) },
+  });
   if (activeTeamId !== null) {
     const selectedTeam = (teamsQuery.data ?? []).find((team) => team.id === activeTeamId);
     if (!selectedTeam) {
@@ -693,6 +754,7 @@ function PlayerPaymentsPanel({ academyId, teamsQuery, activeTeamId, onSelectTeam
         onBack={() => onSelectTeam(null)} onCreatePlayer={onCreatePlayer} onUpdateBilling={onUpdateBilling}
         onUpdateTeamFee={onUpdateTeamFee} isUpdatingTeamFee={isUpdatingTeamFee}
         onRenew={onRenew} onCreateFee={onCreateFee} onMarkFeePaid={onMarkFeePaid}
+        onDeleteFee={onDeleteFee} onUndoRenewal={onUndoRenewal}
         onRefreshPlayerWrites={onRefreshPlayerWrites} pendingRenewPlayerId={pendingRenewPlayerId}
         onPendingRenewHandled={onPendingRenewHandled} isRenewing={isRenewing} />
     );
@@ -748,8 +810,47 @@ function PlayerPaymentsPanel({ academyId, teamsQuery, activeTeamId, onSelectTeam
           ))}
         </div>
       )}
+      {unassignedPlayersQuery.isError ? (
+        <QueryError message={copy.loadError} retry={() => void unassignedPlayersQuery.refetch()} />
+      ) : (unassignedPlayersQuery.data?.length ?? 0) > 0 ? (
+        <section className="overflow-hidden rounded-xl border border-border/75 bg-card" data-testid="finance-unassigned-players">
+          <header className="border-b border-border/70 p-4 sm:p-5">
+            <h3 className="font-display text-lg font-semibold">{copy.squadlessPlayers}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{copy.squadlessPlayersDescription}</p>
+          </header>
+          <div className="divide-y divide-border/70">
+            {(unassignedPlayersQuery.data ?? []).map((player) => (
+              <div key={player.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{player.name}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{copy.noSquad}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-semibold tabular-nums">
+                    <MoneyAmount amountFils={player.outstandingFils} locale={locale} />
+                  </span>
+                  <Button size="sm" variant="outline" onClick={() => setUnassignedFeesPlayer(player)}>
+                    <FilePlus2 className="size-3.5" />{copy.otherFees}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <p className="rounded-lg border border-dashed border-border/70 px-4 py-3 text-xs leading-relaxed text-muted-foreground">{copy.outstandingExplanation}</p>
       <TeamCreateDialog open={teamDialogOpen} onOpenChange={setTeamDialogOpen} copy={copy} onSave={onCreateTeam} isSaving={isCreatingTeam} />
+      {unassignedFeesPlayer && (
+        <PlayerFeesDialog academyId={academyId} player={unassignedFeesPlayer} locale={locale} copy={copy}
+          onClose={() => setUnassignedFeesPlayer(null)}
+          onCreateFee={(playerId, data) => onCreateFee(null, playerId, data)}
+          onMarkPaid={(playerId, feeId) => onMarkFeePaid(null, playerId, feeId)}
+          onDeleteFee={(playerId, feeId) => onDeleteFee(null, playerId, feeId)}
+          onRefresh={async () => {
+            await onRefreshPlayerWrites(null, unassignedFeesPlayer.id);
+            await unassignedPlayersQuery.refetch();
+          }} />
+      )}
     </>
   );
 }
@@ -835,7 +936,7 @@ function TeamFeeEditDialog({ open, onOpenChange, team, copy, onSave, isSaving }:
 }
 
 function TeamDetail({ academyId, team, locale, copy, onBack, onCreatePlayer, onUpdateBilling, onRenew,
-  onUpdateTeamFee, isUpdatingTeamFee, onCreateFee, onMarkFeePaid, onRefreshPlayerWrites,
+  onUpdateTeamFee, isUpdatingTeamFee, onCreateFee, onMarkFeePaid, onDeleteFee, onUndoRenewal, onRefreshPlayerWrites,
   pendingRenewPlayerId, onPendingRenewHandled, isRenewing,
 }: {
   academyId: number;
@@ -850,6 +951,8 @@ function TeamDetail({ academyId, team, locale, copy, onBack, onCreatePlayer, onU
   onRenew: (teamId: number, playerId: number, months: number) => Promise<void>;
   onCreateFee: (teamId: number, playerId: number, data: AcademyFinanceFeeInput) => Promise<void>;
   onMarkFeePaid: (teamId: number, playerId: number, feeId: number) => Promise<void>;
+  onDeleteFee: (teamId: number, playerId: number, feeId: number) => Promise<void>;
+  onUndoRenewal: (teamId: number, playerId: number, renewalId: number) => Promise<void>;
   onRefreshPlayerWrites: (teamId: number, playerId?: number) => Promise<void>;
   pendingRenewPlayerId: number | null;
   onPendingRenewHandled: () => void;
@@ -907,6 +1010,7 @@ function TeamDetail({ academyId, team, locale, copy, onBack, onCreatePlayer, onU
                 {visiblePlayers.map((player) => (
                   <PlayerCard key={player.id} player={player} locale={locale} copy={copy}
                     onRenew={() => setRenewingPlayer(player)}
+                    onUndoRenewal={() => onUndoRenewal(team.id, player.id, player.latestRenewalId!)}
                     onEdit={() => setBillingPlayer(player)}
                     onFees={() => setFeesPlayer(player)} />
                 ))}
@@ -936,16 +1040,31 @@ function TeamDetail({ academyId, team, locale, copy, onBack, onCreatePlayer, onU
           onClose={() => setFeesPlayer(null)}
           onCreateFee={(playerId, data) => onCreateFee(team.id, playerId, data)}
           onMarkPaid={(playerId, feeId) => onMarkFeePaid(team.id, playerId, feeId)}
+          onDeleteFee={(playerId, feeId) => onDeleteFee(team.id, playerId, feeId)}
           onRefresh={() => onRefreshPlayerWrites(team.id, feesPlayer.id)} />
       )}
     </div>
   );
 }
 
-function PlayerCard({ player, locale, copy, onRenew, onEdit, onFees }: {
+function PlayerCard({ player, locale, copy, onRenew, onUndoRenewal, onEdit, onFees }: {
   player: AcademyFinancePlayer; locale: string; copy: FinanceCopy;
-  onRenew: () => void; onEdit: () => void; onFees: () => void;
+  onRenew: () => void; onUndoRenewal: () => Promise<void>; onEdit: () => void; onFees: () => void;
 }) {
+  const [confirmUndo, setConfirmUndo] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const [undoError, setUndoError] = useState(false);
+  const undo = async () => {
+    setUndoing(true); setUndoError(false);
+    try {
+      await onUndoRenewal();
+      setConfirmUndo(false);
+    } catch {
+      setUndoError(true);
+    } finally {
+      setUndoing(false);
+    }
+  };
   const expiringSoon = player.subscriptionStatus === "expiring";
   const expired = player.subscriptionStatus === "expired";
   const statusText = player.subscriptionStatus === "no_subscription" ? copy.noSubscription
@@ -986,9 +1105,35 @@ function PlayerCard({ player, locale, copy, onRenew, onEdit, onFees }: {
       </div>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={onRenew}><RefreshCw className="size-3.5" />{copy.renew}</Button>
+        {player.latestRenewalId !== null && (
+          <Button size="sm" variant="outline" onClick={() => setConfirmUndo(true)} disabled={undoing}>
+            <Trash2 className="size-3.5" />{copy.undoRenewal}
+          </Button>
+        )}
         <Button size="sm" variant="outline" onClick={onFees}><FilePlus2 className="size-3.5" />{copy.otherFees}</Button>
         <Button size="sm" variant="ghost" className="ms-auto" onClick={onEdit}>{copy.billing}</Button>
       </div>
+      {undoError && <p className="text-sm text-destructive-foreground" role="alert">{copy.actionFailed}</p>}
+      <AlertDialog open={confirmUndo} onOpenChange={setConfirmUndo}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{copy.undoRenewalTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{copy.undoRenewalDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          {player.latestRenewalAmountFils !== null && (
+            <p className="text-sm text-muted-foreground">
+              <MoneyAmount amountFils={player.latestRenewalAmountFils} locale={locale} />
+              {player.latestRenewalPaidAt ? ` · ${formatDate(player.latestRenewalPaidAt.slice(0, 10), locale)}` : ""}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={undoing}>{copy.cancel}</AlertDialogCancel>
+            <AlertDialogAction disabled={undoing} onClick={(event) => { event.preventDefault(); void undo(); }}>
+              {undoing ? copy.saving : copy.undoRenewal}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </article>
   );
 }
@@ -1100,7 +1245,7 @@ function RenewalDialog({ player, team, locale, copy, onClose, onEditTeamFee, onC
   const [error, setError] = useState(false);
   useEffect(() => {
     if (player) {
-      setMonths(Math.max(1, player.monthsOwed));
+      setMonths(Math.min(12, Math.max(1, player.monthsOwed)));
       setError(false);
     }
   }, [player?.id, player?.monthsOwed]);
@@ -1110,7 +1255,7 @@ function RenewalDialog({ player, team, locale, copy, onClose, onEditTeamFee, onC
   const projectedExpiry = shiftDate(currentExpiry, months);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!player || effectiveMonthlyFee <= 0 || months < 1 || !Number.isInteger(months)) { setError(true); return; }
+    if (!player || effectiveMonthlyFee <= 0 || months < 1 || months > 12 || !Number.isInteger(months)) { setError(true); return; }
     setError(false);
     try { await onConfirm(player.id, months); onClose(); }
     catch { setError(true); }
@@ -1144,11 +1289,12 @@ function RenewalDialog({ player, team, locale, copy, onClose, onEditTeamFee, onC
               <Field id="finance-renew-months" label={copy.monthsToPurchase}>
                 <div className="flex items-center gap-2">
                   <Button type="button" variant="outline" size="icon" aria-label={copy.decreaseMonths} disabled={months <= 1 || isSaving} onClick={() => setMonths((value) => Math.max(1, value - 1))}>−</Button>
-                  <Input id="finance-renew-months" type="number" min="1" step="1" value={months} onChange={(event) => setMonths(Math.max(1, Number(event.target.value) || 1))} className="max-w-28 text-center tabular-nums" />
-                  <Button type="button" variant="outline" size="icon" aria-label={copy.increaseMonths} disabled={isSaving} onClick={() => setMonths((value) => value + 1)}>+</Button>
+                  <Input id="finance-renew-months" type="number" min="1" max="12" step="1" value={months} onChange={(event) => setMonths(Math.min(12, Math.max(1, Math.trunc(Number(event.target.value) || 1))))} className="max-w-28 text-center tabular-nums" />
+                  <Button type="button" variant="outline" size="icon" aria-label={copy.increaseMonths} disabled={isSaving || months >= 12} onClick={() => setMonths((value) => Math.min(12, value + 1))}>+</Button>
                   <span className="text-sm text-muted-foreground">{copy.monthUnit}</span>
                 </div>
               </Field>
+              <p className="text-xs text-muted-foreground">{copy.renewalLimitHint}</p>
               <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-4">
                 <div className="flex justify-between gap-3 text-sm">
                   <span className="text-muted-foreground">{copy.monthsToPurchase}</span>
@@ -1175,14 +1321,15 @@ function RenewalDialog({ player, team, locale, copy, onClose, onEditTeamFee, onC
   );
 }
 
-function PlayerFeesDialog({ academyId, player, locale, copy, onClose, onCreateFee, onMarkPaid, onRefresh }: {
+function PlayerFeesDialog({ academyId, player, locale, copy, onClose, onCreateFee, onMarkPaid, onDeleteFee, onRefresh }: {
   academyId: number;
-  player: AcademyFinancePlayer;
+  player: Pick<AcademyFinancePlayer, "id" | "name"> | Pick<AcademyFinanceUnassignedPlayer, "id" | "name">;
   locale: string;
   copy: FinanceCopy;
   onClose: () => void;
   onCreateFee: (playerId: number, data: AcademyFinanceFeeInput) => Promise<void>;
   onMarkPaid: (playerId: number, feeId: number) => Promise<void>;
+  onDeleteFee: (playerId: number, feeId: number) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
   const feeQuery = useListAcademyFinancePlayerFees(academyId, player.id, {
@@ -1192,6 +1339,7 @@ function PlayerFeesDialog({ academyId, player, locale, copy, onClose, onCreateFe
   const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [busyFeeId, setBusyFeeId] = useState<number | null>(null);
+  const [pendingDeleteFeeId, setPendingDeleteFeeId] = useState<number | null>(null);
   const [error, setError] = useState(false);
   const addFee = async (event: FormEvent) => {
     event.preventDefault(); setError(false);
@@ -1207,6 +1355,16 @@ function PlayerFeesDialog({ academyId, player, locale, copy, onClose, onCreateFe
     setBusyFeeId(feeId); setError(false);
     try { await onMarkPaid(player.id, feeId); await onRefresh(); }
     catch { setError(true); } finally { setBusyFeeId(null); }
+  };
+  const deleteFee = async () => {
+    if (pendingDeleteFeeId === null) return;
+    const feeId = pendingDeleteFeeId;
+    setBusyFeeId(feeId); setError(false);
+    try {
+      await onDeleteFee(player.id, feeId);
+      await onRefresh();
+      setPendingDeleteFeeId(null);
+    } catch { setError(true); } finally { setBusyFeeId(null); }
   };
   const fees = feeQuery.data ?? [];
   return (
@@ -1230,6 +1388,11 @@ function PlayerFeesDialog({ academyId, player, locale, copy, onClose, onCreateFe
                         <span className="font-display text-sm font-semibold tabular-nums"><MoneyAmount amountFils={fee.amountFils} locale={locale} /></span>
                         {fee.status === "paid" ? <Badge className="border-accent/20 bg-accent/10 text-accent"><Check className="me-1 size-3" />{copy.paid}</Badge>
                           : <Button size="sm" disabled={busyFeeId === fee.id} onClick={() => void markPaid(fee.id)}>{busyFeeId === fee.id ? copy.saving : copy.markPaid}</Button>}
+                        <Button type="button" size="icon" variant="ghost" className="size-8 text-muted-foreground hover:text-destructive-foreground"
+                          aria-label={copy.deleteFee} title={copy.deleteFee} disabled={busyFeeId === fee.id}
+                          onClick={() => setPendingDeleteFeeId(fee.id)}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -1247,6 +1410,20 @@ function PlayerFeesDialog({ academyId, player, locale, copy, onClose, onCreateFe
               </form>
             </div>
           )}
+      <AlertDialog open={pendingDeleteFeeId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteFeeId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{copy.deleteFeeTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{copy.deleteFeeDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busyFeeId !== null}>{copy.cancel}</AlertDialogCancel>
+            <AlertDialogAction disabled={busyFeeId !== null} onClick={(event) => { event.preventDefault(); void deleteFee(); }}>
+              {busyFeeId !== null ? copy.saving : copy.deleteFee}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </ModalShell>
   );
 }
@@ -1261,6 +1438,7 @@ function SalariesPanel({ staffQuery, locale, copy, onSave, onPay, isSaving, isPa
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AcademyFinanceStaff | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [confirmingSalary, setConfirmingSalary] = useState<AcademyFinanceStaff | null>(null);
   const [actionError, setActionError] = useState(false);
   if (staffQuery.isLoading) return <PanelSkeleton rows={4} />;
   if (staffQuery.isError) return <QueryError message={copy.loadError} retry={() => void staffQuery.refetch()} />;
@@ -1268,7 +1446,7 @@ function SalariesPanel({ staffQuery, locale, copy, onSave, onPay, isSaving, isPa
   const openForm = (member?: AcademyFinanceStaff) => { setEditing(member ?? null); setDialogOpen(true); };
   const pay = async (id: number) => {
     setBusyId(id); setActionError(false);
-    try { await onPay(id); } catch { setActionError(true); } finally { setBusyId(null); }
+    try { await onPay(id); setConfirmingSalary(null); } catch { setActionError(true); } finally { setBusyId(null); }
   };
   return (
     <div className="space-y-4">
@@ -1303,7 +1481,7 @@ function SalariesPanel({ staffQuery, locale, copy, onSave, onPay, isSaving, isPa
                   </div>
                 </div>
                 <div className="flex gap-2 sm:shrink-0">
-                  <Button size="sm" onClick={() => void pay(member.id)} disabled={isPaying || busyId === member.id}>
+                  <Button size="sm" onClick={() => setConfirmingSalary(member)} disabled={isPaying || busyId === member.id}>
                     <CircleDollarSign className="size-3.5" />{busyId === member.id ? copy.processing : copy.paySalary}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => openForm(member)}>{copy.edit}</Button>
@@ -1318,6 +1496,32 @@ function SalariesPanel({ staffQuery, locale, copy, onSave, onPay, isSaving, isPa
         <p>{copy.salaryFlowNote}</p>
       </div>
       <StaffDialog open={dialogOpen} onOpenChange={setDialogOpen} member={editing} copy={copy} onSave={onSave} isSaving={isSaving} />
+      <AlertDialog open={confirmingSalary !== null} onOpenChange={(open) => { if (!open) setConfirmingSalary(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{copy.salaryConfirmationTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{copy.salaryConfirmationDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          {confirmingSalary && (
+            <div className="rounded-lg border border-border/70 bg-muted/30 p-3 text-sm">
+              <p className="font-semibold">{confirmingSalary.name} · {confirmingSalary.role}</p>
+              <p className="mt-1 text-muted-foreground">
+                <MoneyAmount amountFils={confirmingSalary.monthlySalaryFils} locale={locale} />{copy.perMonth}
+                <span className="px-1">·</span>{formatDate(confirmingSalary.nextSalaryDate, locale)}
+              </p>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPaying}>{copy.cancel}</AlertDialogCancel>
+            <AlertDialogAction disabled={isPaying} onClick={(event) => {
+              event.preventDefault();
+              if (confirmingSalary) void pay(confirmingSalary.id);
+            }}>
+              {isPaying ? copy.processing : copy.confirmSalaryPayment}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -1375,8 +1579,8 @@ function StaffDialog({ open, onOpenChange, member, copy, onSave, isSaving }: {
   );
 }
 
-function OtherPaymentsPanel({ paymentsQuery, categoriesQuery, locale, copy, onCreatePayment, onMarkPaid, onRepeat,
-  onCreateCategory, isSaving, isMarkingPaid, isRepeating, isSavingCategory,
+function OtherPaymentsPanel({ paymentsQuery, categoriesQuery, locale, copy, onCreatePayment, onMarkPaid, onRepeat, onDelete,
+  onCreateCategory, isSaving, isMarkingPaid, isRepeating, isDeleting, isSavingCategory,
 }: {
   paymentsQuery: FinanceQuery<AcademyFinanceOtherPaymentList>;
   categoriesQuery: FinanceQuery<AcademyFinanceCategoryList>;
@@ -1384,8 +1588,9 @@ function OtherPaymentsPanel({ paymentsQuery, categoriesQuery, locale, copy, onCr
   onCreatePayment: (data: AcademyFinanceOtherPaymentInput) => Promise<void>;
   onMarkPaid: (paymentId: number) => Promise<void>;
   onRepeat: (paymentId: number) => Promise<void>;
+  onDelete: (paymentId: number) => Promise<void>;
   onCreateCategory: (name: string) => Promise<void>;
-  isSaving: boolean; isMarkingPaid: boolean; isRepeating: boolean; isSavingCategory: boolean;
+  isSaving: boolean; isMarkingPaid: boolean; isRepeating: boolean; isDeleting: boolean; isSavingCategory: boolean;
 }) {
   const [label, setLabel] = useState("");
   const [amount, setAmount] = useState("");
@@ -1396,6 +1601,7 @@ function OtherPaymentsPanel({ paymentsQuery, categoriesQuery, locale, copy, onCr
   const [saving, setSaving] = useState(false);
   const [categorySaving, setCategorySaving] = useState(false);
   const [busyPaymentId, setBusyPaymentId] = useState<number | null>(null);
+  const [pendingDeletePaymentId, setPendingDeletePaymentId] = useState<number | null>(null);
   const [error, setError] = useState(false);
   const [actionError, setActionError] = useState(false);
   const categories = categoriesQuery.data;
@@ -1432,12 +1638,25 @@ function OtherPaymentsPanel({ paymentsQuery, categoriesQuery, locale, copy, onCr
     setBusyPaymentId(paymentId); setActionError(false);
     try { await onRepeat(paymentId); } catch { setActionError(true); } finally { setBusyPaymentId(null); }
   };
+  const deletePayment = async () => {
+    if (pendingDeletePaymentId === null) return;
+    setBusyPaymentId(pendingDeletePaymentId); setActionError(false);
+    try {
+      await onDelete(pendingDeletePaymentId);
+      setPendingDeletePaymentId(null);
+    } catch {
+      setActionError(true);
+    } finally {
+      setBusyPaymentId(null);
+    }
+  };
   const builtInName = (name: string) => localizeCategory(name, copy);
   if (paymentsQuery.isLoading || categoriesQuery.isLoading) return <PanelSkeleton rows={4} />;
   if (paymentsQuery.isError || categoriesQuery.isError) {
     return <QueryError message={copy.loadError} retry={() => { void paymentsQuery.refetch(); void categoriesQuery.refetch(); }} />;
   }
   const payments = paymentsQuery.data?.payments ?? [];
+  const paymentMonth = paymentsQuery.data?.month ?? ammanToday().slice(0, 7);
   return (
     <div className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
@@ -1521,6 +1740,9 @@ function OtherPaymentsPanel({ paymentsQuery, categoriesQuery, locale, copy, onCr
                       <Badge className={payment.status === "paid" ? "border-accent/20 bg-accent/10 text-accent" : "border-amber-300/20 bg-amber-400/10 text-amber-200"}>
                         {payment.status === "paid" ? copy.paid : copy.unpaid}
                       </Badge>
+                      {payment.status === "unpaid" && payment.occurredOn < `${paymentMonth}-01` && (
+                        <Badge variant="outline" className="text-[10px]">{copy.carriedOver}</Badge>
+                      )}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">{builtInName(payment.category)} <span className="px-1">·</span> {formatDate(payment.occurredOn, locale)}</p>
                   </div>
@@ -1536,6 +1758,12 @@ function OtherPaymentsPanel({ paymentsQuery, categoriesQuery, locale, copy, onCr
                         disabled={isRepeating || busyPaymentId === payment.id} onClick={() => void repeat(payment.id)}>
                         <RefreshCw className="size-3.5" />
                       </Button>
+                      <Button size="icon" variant="ghost" className="size-8 text-muted-foreground hover:text-destructive-foreground"
+                        aria-label={copy.deletePayment} title={copy.deletePayment}
+                        disabled={isDeleting || busyPaymentId === payment.id}
+                        onClick={() => setPendingDeletePaymentId(payment.id)}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
                     </div>
                   </div>
                 </article>
@@ -1544,6 +1772,20 @@ function OtherPaymentsPanel({ paymentsQuery, categoriesQuery, locale, copy, onCr
           )}
         </section>
       </div>
+      <AlertDialog open={pendingDeletePaymentId !== null} onOpenChange={(open) => { if (!open) setPendingDeletePaymentId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{copy.deletePaymentTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{copy.deletePaymentDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>{copy.cancel}</AlertDialogCancel>
+            <AlertDialogAction disabled={isDeleting} onClick={(event) => { event.preventDefault(); void deletePayment(); }}>
+              {isDeleting ? copy.saving : copy.deletePayment}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <p className="rounded-lg border border-dashed border-border/70 px-4 py-3 text-xs leading-relaxed text-muted-foreground">{copy.repeatPaymentHint}</p>
     </div>
   );

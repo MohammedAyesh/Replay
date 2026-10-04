@@ -408,7 +408,7 @@ type SquadFormValue = {
   description: string;
 };
 
-function SquadsSection({ academyId }: { academyId: number }) {
+function SquadsSection({ academyId, isOwner }: { academyId: number; isOwner: boolean }) {
   const { t, locale } = useTranslation();
   const labels = t.academyConsole;
   const queryClient = useQueryClient();
@@ -583,20 +583,22 @@ function SquadsSection({ academyId }: { academyId: number }) {
                   >
                     <Pencil className="h-4 w-4" aria-hidden="true" />
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      setDeleteError(false);
-                      setPendingDelete(squad);
-                    }}
-                    aria-label={`${labels.deleteSquad}: ${squad.name}`}
-                    className="text-muted-text hover:text-destructive"
-                    data-testid={`button-delete-squad-${squad.id}`}
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden="true" />
-                  </Button>
+                  {isOwner && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setDeleteError(false);
+                        setPendingDelete(squad);
+                      }}
+                      aria-label={`${labels.deleteSquad}: ${squad.name}`}
+                      className="text-muted-text hover:text-destructive"
+                      data-testid={`button-delete-squad-${squad.id}`}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  )}
                 </div>
               </div>
               {squad.description && (
@@ -836,7 +838,7 @@ export default function AcademyConsole() {
               dashboardQuery.isError || !dashboardQuery.data ? <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted-text" data-testid="academy-dashboard-error">{t.academyConsole.dashboardError}</div> :
                 <Dashboard dashboard={dashboardQuery.data} isOwner={isOwner} />
           ) : section === "squads" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <SquadsSection academyId={activeAcademyId} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <SquadsSection academyId={activeAcademyId} isOwner={isOwner} />
           ) : section === "players" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPlayersSection academyId={activeAcademyId} />
           ) : section === "schedule" ? (

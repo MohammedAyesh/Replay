@@ -1692,7 +1692,7 @@ paths:
     delete:
       operationId: deleteAcademyConsoleSquad
       tags: [academyConsole]
-      summary: Delete a squad and unassign its players
+      summary: Delete a squad unless its players have outstanding balances
       security:
         - clerkSession: []
       parameters:
@@ -1716,9 +1716,11 @@ paths:
         "401":
           description: Unauthenticated
         "403":
-          description: Academy membership required
+          description: Academy owner role required
         "404":
           description: Academy or squad not found in this academy
+        "409":
+          description: One or more players have an outstanding balance
 
   /academy/console/academies/{academyId}/players:
     get:
@@ -2273,6 +2275,38 @@ paths:
           description: Academy owner role required
         "404":
           description: Academy not found
+
+  /academy/console/academies/{academyId}/finance/unassigned-players:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      operationId: listAcademyFinanceUnassignedPlayers
+      tags: [academyFinance]
+      summary: List active players without a squad and their unpaid one-off fees
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Active squadless players with outstanding one-off fees
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyFinanceUnassignedPlayer"
+        "400":
+          description: Invalid academy ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
     post:
       operationId: createAcademyFinanceTeam
       tags: [academyFinance]
@@ -2492,6 +2526,46 @@ paths:
         "404":
           description: Player not found in this academy
 
+  /academy/console/academies/{academyId}/finance/players/{playerId}/renewals/{renewalId}:
+    parameters:
+      - name: academyId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: playerId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: renewalId
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    delete:
+      operationId: deleteAcademyFinancePlayerRenewal
+      tags: [academyFinance]
+      summary: Undo the player's most recent renewal
+      security:
+        - clerkSession: []
+      responses:
+        "204":
+          description: Renewal undone and subscription expiry restored
+        "400":
+          description: Invalid academy, player, or renewal ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Renewal not found in this academy
+        "409":
+          description: Only the latest renewal can be undone
+
   /academy/console/academies/{academyId}/finance/players/{playerId}/fees:
     parameters:
       - name: academyId
@@ -2600,6 +2674,23 @@ paths:
           description: Fee not found in this academy
         "409":
           description: A waived fee cannot be marked as paid
+    delete:
+      operationId: deleteAcademyFinanceFee
+      tags: [academyFinance]
+      summary: Delete a fee record
+      security:
+        - clerkSession: []
+      responses:
+        "204":
+          description: Fee deleted
+        "400":
+          description: Invalid academy or fee ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Fee not found in this academy
 
   /academy/console/academies/{academyId}/finance/staff:
     parameters:
@@ -2751,7 +2842,7 @@ paths:
     get:
       operationId: listAcademyFinanceOtherPayments
       tags: [academyFinance]
-      summary: List other payments for the current Amman month and totals
+      summary: List current-month payments and unpaid payments carried over from earlier months
       security:
         - clerkSession: []
       responses:
@@ -2832,6 +2923,23 @@ paths:
                 $ref: "#/components/schemas/AcademyFinanceOtherPayment"
         "400":
           description: Invalid payment update
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Payment not found in this academy
+    delete:
+      operationId: deleteAcademyFinanceOtherPayment
+      tags: [academyFinance]
+      summary: Delete an other-payment record
+      security:
+        - clerkSession: []
+      responses:
+        "204":
+          description: Payment deleted
+        "400":
+          description: Invalid academy or payment ID
         "401":
           description: Unauthenticated
         "403":
@@ -6132,8 +6240,8 @@ components:
           type: integer
           minimum: 1
         status:
-          type: string
-          enum: [present, absent, late, excused]
+          type: ["string", "null"]
+          enum: [present, absent, late, excused, null]
 
     AcademyAttendanceInput:
       type: object
@@ -6355,7 +6463,7 @@ components:
 
     AcademyFinancePlayer:
       type: object
-      required: [id, squadId, name, isActive, monthlyFeeFils, monthlyDiscountFils, effectiveMonthlyFeeFils, subscriptionExpiresOn, subscriptionStatus, monthsOwed, subscriptionDebtFils, unpaidFeesFils, outstandingFils]
+      required: [id, squadId, name, isActive, monthlyFeeFils, monthlyDiscountFils, effectiveMonthlyFeeFils, subscriptionExpiresOn, subscriptionStatus, monthsOwed, subscriptionDebtFils, unpaidFeesFils, outstandingFils, latestRenewalId, latestRenewalAmountFils, latestRenewalPaidAt]
       properties:
         id:
           type: integer
@@ -6388,6 +6496,31 @@ components:
         subscriptionDebtFils:
           type: integer
           minimum: 0
+        unpaidFeesFils:
+          type: integer
+          minimum: 0
+        outstandingFils:
+          type: integer
+          minimum: 0
+        latestRenewalId:
+          type: ["integer", "null"]
+          minimum: 1
+        latestRenewalAmountFils:
+          type: ["integer", "null"]
+          minimum: 0
+        latestRenewalPaidAt:
+          type: ["string", "null"]
+          format: date-time
+
+    AcademyFinanceUnassignedPlayer:
+      type: object
+      required: [id, name, unpaidFeesFils, outstandingFils]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
         unpaidFeesFils:
           type: integer
           minimum: 0

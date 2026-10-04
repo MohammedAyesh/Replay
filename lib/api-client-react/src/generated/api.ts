@@ -51,6 +51,7 @@ import type {
   AcademyFinanceTeam,
   AcademyFinanceTeamInput,
   AcademyFinanceTeamMonthlyFeeUpdate,
+  AcademyFinanceUnassignedPlayer,
   AcademyMemberAssignment,
   AcademyMemberListItem,
   AcademyMemberSummary,
@@ -4743,7 +4744,7 @@ export const getDeleteAcademyConsoleSquadUrl = (academyId: number,
 }
 
 /**
- * @summary Delete a squad and unassign its players
+ * @summary Delete a squad unless its players have outstanding balances
  */
 export const deleteAcademyConsoleSquad = async (academyId: number,
     squadId: number, options?: RequestInit): Promise<void> => {
@@ -4792,7 +4793,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type DeleteAcademyConsoleSquadMutationError = ErrorType<void>
 
     /**
- * @summary Delete a squad and unassign its players
+ * @summary Delete a squad unless its players have outstanding balances
  */
 export const useDeleteAcademyConsoleSquad = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyConsoleSquad>>, TError,{academyId: number;squadId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -5998,12 +5999,89 @@ export function useListAcademyFinanceTeams<TData = Awaited<ReturnType<typeof lis
 
 
 
+export const getListAcademyFinanceUnassignedPlayersUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/unassigned-players`
+}
+
+/**
+ * @summary List active players without a squad and their unpaid one-off fees
+ */
+export const listAcademyFinanceUnassignedPlayers = async (academyId: number, options?: RequestInit): Promise<AcademyFinanceUnassignedPlayer[]> => {
+
+  return customFetch<AcademyFinanceUnassignedPlayer[]>(getListAcademyFinanceUnassignedPlayersUrl(academyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyFinanceUnassignedPlayersQueryKey = (academyId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/finance/unassigned-players`
+    ] as const;
+    }
+
+
+export const getListAcademyFinanceUnassignedPlayersQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyFinanceUnassignedPlayers>>, TError = ErrorType<void>>(academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceUnassignedPlayers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyFinanceUnassignedPlayersQueryKey(academyId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyFinanceUnassignedPlayers>>> = ({ signal }) => listAcademyFinanceUnassignedPlayers(academyId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceUnassignedPlayers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyFinanceUnassignedPlayersQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyFinanceUnassignedPlayers>>>
+export type ListAcademyFinanceUnassignedPlayersQueryError = ErrorType<void>
+
+
+/**
+ * @summary List active players without a squad and their unpaid one-off fees
+ */
+
+export function useListAcademyFinanceUnassignedPlayers<TData = Awaited<ReturnType<typeof listAcademyFinanceUnassignedPlayers>>, TError = ErrorType<void>>(
+ academyId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyFinanceUnassignedPlayers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyFinanceUnassignedPlayersQueryOptions(academyId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getCreateAcademyFinanceTeamUrl = (academyId: number,) => {
 
 
 
 
-  return `/api/academy/console/academies/${academyId}/finance/teams`
+  return `/api/academy/console/academies/${academyId}/finance/unassigned-players`
 }
 
 /**
@@ -6443,6 +6521,80 @@ export const useCreateAcademyFinancePlayerRenewal = <TError = ErrorType<void>,
       return useMutation(getCreateAcademyFinancePlayerRenewalMutationOptions(options));
     }
 
+export const getDeleteAcademyFinancePlayerRenewalUrl = (academyId: number,
+    playerId: number,
+    renewalId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/players/${playerId}/renewals/${renewalId}`
+}
+
+/**
+ * @summary Undo the player's most recent renewal
+ */
+export const deleteAcademyFinancePlayerRenewal = async (academyId: number,
+    playerId: number,
+    renewalId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAcademyFinancePlayerRenewalUrl(academyId,playerId,renewalId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteAcademyFinancePlayerRenewalMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinancePlayerRenewal>>, TError,{academyId: number;playerId: number;renewalId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinancePlayerRenewal>>, TError,{academyId: number;playerId: number;renewalId: number}, TContext> => {
+
+const mutationKey = ['deleteAcademyFinancePlayerRenewal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAcademyFinancePlayerRenewal>>, {academyId: number;playerId: number;renewalId: number}> = (props) => {
+          const {academyId,playerId,renewalId} = props ?? {};
+
+          return  deleteAcademyFinancePlayerRenewal(academyId,playerId,renewalId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAcademyFinancePlayerRenewalMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAcademyFinancePlayerRenewal>>>
+
+    export type DeleteAcademyFinancePlayerRenewalMutationError = ErrorType<void>
+
+    /**
+ * @summary Undo the player's most recent renewal
+ */
+export const useDeleteAcademyFinancePlayerRenewal = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinancePlayerRenewal>>, TError,{academyId: number;playerId: number;renewalId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAcademyFinancePlayerRenewal>>,
+        TError,
+        {academyId: number;playerId: number;renewalId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAcademyFinancePlayerRenewalMutationOptions(options));
+    }
+
 export const getListAcademyFinancePlayerFeesUrl = (academyId: number,
     playerId: number,) => {
 
@@ -6669,6 +6821,78 @@ export const useMarkAcademyFinanceFeePaid = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getMarkAcademyFinanceFeePaidMutationOptions(options));
+    }
+
+export const getDeleteAcademyFinanceFeeUrl = (academyId: number,
+    feeId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/fees/${feeId}`
+}
+
+/**
+ * @summary Delete a fee record
+ */
+export const deleteAcademyFinanceFee = async (academyId: number,
+    feeId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAcademyFinanceFeeUrl(academyId,feeId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteAcademyFinanceFeeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinanceFee>>, TError,{academyId: number;feeId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinanceFee>>, TError,{academyId: number;feeId: number}, TContext> => {
+
+const mutationKey = ['deleteAcademyFinanceFee'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAcademyFinanceFee>>, {academyId: number;feeId: number}> = (props) => {
+          const {academyId,feeId} = props ?? {};
+
+          return  deleteAcademyFinanceFee(academyId,feeId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAcademyFinanceFeeMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAcademyFinanceFee>>>
+
+    export type DeleteAcademyFinanceFeeMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a fee record
+ */
+export const useDeleteAcademyFinanceFee = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinanceFee>>, TError,{academyId: number;feeId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAcademyFinanceFee>>,
+        TError,
+        {academyId: number;feeId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAcademyFinanceFeeMutationOptions(options));
     }
 
 export const getListAcademyFinanceStaffUrl = (academyId: number,) => {
@@ -6973,7 +7197,7 @@ export const getListAcademyFinanceOtherPaymentsUrl = (academyId: number,) => {
 }
 
 /**
- * @summary List other payments for the current Amman month and totals
+ * @summary List current-month payments and unpaid payments carried over from earlier months
  */
 export const listAcademyFinanceOtherPayments = async (academyId: number, options?: RequestInit): Promise<AcademyFinanceOtherPaymentList> => {
 
@@ -7020,7 +7244,7 @@ export type ListAcademyFinanceOtherPaymentsQueryError = ErrorType<void>
 
 
 /**
- * @summary List other payments for the current Amman month and totals
+ * @summary List current-month payments and unpaid payments carried over from earlier months
  */
 
 export function useListAcademyFinanceOtherPayments<TData = Awaited<ReturnType<typeof listAcademyFinanceOtherPayments>>, TError = ErrorType<void>>(
@@ -7183,6 +7407,78 @@ export const useMarkAcademyFinanceOtherPaymentPaid = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getMarkAcademyFinanceOtherPaymentPaidMutationOptions(options));
+    }
+
+export const getDeleteAcademyFinanceOtherPaymentUrl = (academyId: number,
+    paymentId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/other-payments/${paymentId}`
+}
+
+/**
+ * @summary Delete an other-payment record
+ */
+export const deleteAcademyFinanceOtherPayment = async (academyId: number,
+    paymentId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAcademyFinanceOtherPaymentUrl(academyId,paymentId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteAcademyFinanceOtherPaymentMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinanceOtherPayment>>, TError,{academyId: number;paymentId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinanceOtherPayment>>, TError,{academyId: number;paymentId: number}, TContext> => {
+
+const mutationKey = ['deleteAcademyFinanceOtherPayment'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAcademyFinanceOtherPayment>>, {academyId: number;paymentId: number}> = (props) => {
+          const {academyId,paymentId} = props ?? {};
+
+          return  deleteAcademyFinanceOtherPayment(academyId,paymentId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAcademyFinanceOtherPaymentMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAcademyFinanceOtherPayment>>>
+
+    export type DeleteAcademyFinanceOtherPaymentMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete an other-payment record
+ */
+export const useDeleteAcademyFinanceOtherPayment = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAcademyFinanceOtherPayment>>, TError,{academyId: number;paymentId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAcademyFinanceOtherPayment>>,
+        TError,
+        {academyId: number;paymentId: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAcademyFinanceOtherPaymentMutationOptions(options));
     }
 
 export const getRepeatAcademyFinanceOtherPaymentUrl = (academyId: number,

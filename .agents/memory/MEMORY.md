@@ -58,3 +58,4 @@
 - [Orval Zod response arrays](orval-zod-response-arrays.md) — give a list endpoint a dedicated item schema when reusing a component can create a generated temporal-dead-zone reference.
 - [Date-only OpenAPI fields](date-only-openapi.md) — avoid `format: date` when Orval-generated Zod must preserve `YYYY-MM-DD` strings.
 - [Wouter query strings](wouter-query-search.md) — `useLocation()` tracks the pathname; read query parameters with `useSearch()` so search-only navigation updates.
+- [Latest-only renewal undo](latest-only-renewal-undo.md) — verify the requested renewal exists in scope before returning a conflict for an older renewal.

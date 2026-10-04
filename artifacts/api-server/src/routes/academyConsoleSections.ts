@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Response } from "express";
 import {
   CreateAcademyConsoleAnnouncementBody,
@@ -101,8 +101,14 @@ async function attendanceSheet(academyId: number, sessionId: number) {
     .where(and(
       eq(academyPlayersTable.academyId, academyId),
       ...(session.squadId === null
-        ? [eq(academyPlayersTable.isActive, true)]
-        : [eq(academyPlayersTable.squadId, session.squadId)]),
+        ? [or(
+            eq(academyPlayersTable.isActive, true),
+            isNotNull(academyAttendanceTable.playerId),
+          )!]
+        : [or(
+            eq(academyPlayersTable.squadId, session.squadId),
+            isNotNull(academyAttendanceTable.playerId),
+          )!]),
     ))
     .orderBy(asc(academyPlayersTable.name), asc(academyPlayersTable.id));
 
@@ -131,11 +137,24 @@ async function eligiblePlayerIds(academyId: number, sessionId: number) {
   const players = await db
     .select({ id: academyPlayersTable.id })
     .from(academyPlayersTable)
+    .leftJoin(
+      academyAttendanceTable,
+      and(
+        eq(academyAttendanceTable.playerId, academyPlayersTable.id),
+        eq(academyAttendanceTable.sessionId, sessionId),
+      ),
+    )
     .where(and(
       eq(academyPlayersTable.academyId, academyId),
       ...(session.squadId === null
-        ? [eq(academyPlayersTable.isActive, true)]
-        : [eq(academyPlayersTable.squadId, session.squadId)]),
+        ? [or(
+            eq(academyPlayersTable.isActive, true),
+            isNotNull(academyAttendanceTable.playerId),
+          )!]
+        : [or(
+            eq(academyPlayersTable.squadId, session.squadId),
+            isNotNull(academyAttendanceTable.playerId),
+          )!]),
     ));
 
   return new Set(players.map((player) => player.id));
@@ -245,18 +264,30 @@ router.put(
       return;
     }
 
-    if (body.data.entries.length > 0) {
-      await db
-        .insert(academyAttendanceTable)
-        .values(body.data.entries.map((entry) => ({
-          sessionId,
-          playerId: entry.playerId,
-          status: entry.status as AttendanceStatus,
-        })))
-        .onConflictDoUpdate({
-          target: [academyAttendanceTable.sessionId, academyAttendanceTable.playerId],
-          set: { status: sql`excluded.status` },
-        });
+    const entriesToSet = body.data.entries.filter((entry) => entry.status !== null);
+    const entriesToClear = body.data.entries.filter((entry) => entry.status === null);
+    if (entriesToSet.length > 0 || entriesToClear.length > 0) {
+      await db.transaction(async (tx) => {
+        if (entriesToSet.length > 0) {
+          await tx
+            .insert(academyAttendanceTable)
+            .values(entriesToSet.map((entry) => ({
+              sessionId,
+              playerId: entry.playerId,
+              status: entry.status as AttendanceStatus,
+            })))
+            .onConflictDoUpdate({
+              target: [academyAttendanceTable.sessionId, academyAttendanceTable.playerId],
+              set: { status: sql`excluded.status` },
+            });
+        }
+        for (const entry of entriesToClear) {
+          await tx.delete(academyAttendanceTable).where(and(
+            eq(academyAttendanceTable.sessionId, sessionId),
+            eq(academyAttendanceTable.playerId, entry.playerId),
+          ));
+        }
+      });
     }
 
     const sheet = await attendanceSheet(academyId, sessionId);
