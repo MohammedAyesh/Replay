@@ -260,7 +260,8 @@ function cacheFingerprints(
     const input = {
       // 2: the cached row also carries the timeline extras the Home tiles use.
       // 3: top speed measured per piece on 0.5 s medians (it read ~0 before).
-      version: 3,
+      // 4: goals timed at the ball's entry into the mouth, one per restart.
+      version: 4,
       matchId,
       matchPlayerId: player.id,
       userId: player.userId,
