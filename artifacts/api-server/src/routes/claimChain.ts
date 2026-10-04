@@ -803,8 +803,22 @@ export async function resyncChainClaimsForRecording(
     .select({ userId: claimMatchProgressTable.userId, completed: claimMatchProgressTable.completed })
     .from(claimMatchProgressTable)
     .where(eq(claimMatchProgressTable.recordingId, recordingId));
+  // A released or rejected binding was taken away on purpose (an admin's
+  // release, a lost dispute). Its chain stays in the manifest, so re-syncing
+  // it would quietly confirm the claim again: setting the match window on
+  // recording 392 revived a test claim released the night before. Only the
+  // claimant's own next save may bring such a claim back.
+  const withdrawn = new Set(
+    (await db
+      .select({ userId: claimMatchIdentityBindingsTable.userId, state: claimMatchIdentityBindingsTable.state })
+      .from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId)))
+      .filter((binding) => binding.state === "released" || binding.state === "rejected")
+      .map((binding) => binding.userId),
+  );
   let synced = 0;
   for (const row of rows) {
+    if (withdrawn.has(row.userId)) continue;
     try {
       const loaded = await loadContext(req, recordingId, row.userId);
       if (!loaded.ctx) continue;

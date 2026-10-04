@@ -400,6 +400,22 @@ describe("claims inside the window", () => {
     expect(row.earnedClips.map((clip) => clip.momentSeconds)).toEqual([85]);
   });
 
+  it("does not bring back a claim an admin released", async () => {
+    await adminSetChain([
+      { trackId: "early", fromFrame: 0, toFrame: 699 },
+      { trackId: "late", fromFrame: 700, toFrame: 999 },
+    ]);
+    await db.update(claimMatchIdentityBindingsTable)
+      .set({ state: "released", vouchedFragments: [] })
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+
+    const res = await setWindow({ startSeconds: 70 });
+    expect(res.body.resyncedClaims).toBe(0);
+    const [binding] = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    expect(binding.state).toBe("released");
+  });
+
   it("counts nothing for a claim that lies entirely outside the window", async () => {
     await setWindow({ startSeconds: 70 });
     await adminSetChain([{ trackId: "early", fromFrame: 0, toFrame: 699 }]);
