@@ -368,3 +368,50 @@ describe("setting the chain", () => {
     expect(tap.body.nextUncertainty).toMatchObject({ kind: "swap", frame: 150 });
   });
 });
+
+describe("a claim left needs_resolution by a re-analysis", () => {
+  async function staleBinding() {
+    await db.insert(claimMatchIdentityBindingsTable).values({
+      userId: playerId,
+      recordingId,
+      personId: claimIdentityId(playerId, recordingId),
+      trackingBundleId: bundleId,
+      bundleFingerprint: "the-previous-bundle",
+      personParts: [],
+      vouchedFragments: [{ trackId: "gone", fromFrame: 0, toFrame: 50 }],
+      resolutionMethod: "chain",
+      state: "needs_resolution",
+    });
+  }
+
+  it("is confirmed again by an admin-set chain on the current bundle", async () => {
+    await staleBinding();
+    const res = await request(app).post(adminUrl())
+      .send({ userId: playerId, parts: wholeMatch, bundleFingerprint: fingerprint });
+    expect(res.status).toBe(200);
+    expect(res.body.binding).toMatchObject({ state: "confirmed", personId: claimIdentityId(playerId, recordingId) });
+    const [row] = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.userId, playerId));
+    expect(row.bundleFingerprint).not.toBe("the-previous-bundle");
+    expect(row.vouchedFragments).not.toContainEqual({ trackId: "gone", fromFrame: 0, toFrame: 50 });
+  });
+
+  it("is confirmed again when the player re-claims themselves", async () => {
+    await staleBinding();
+    actAs(playerId);
+    const tap = await request(app).post(`${playerUrl()}/tap`).send({ trackId: "t1", frame: 0 });
+    expect(tap.status).toBe(200);
+    const [row] = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.userId, playerId));
+    expect(row.state).toBe("confirmed");
+  });
+
+  it("stays needs_resolution while the player has no chain on the current bundle", async () => {
+    await staleBinding();
+    actAs(playerId);
+    expect((await request(app).get(playerUrl())).status).toBe(200);
+    const [row] = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.userId, playerId));
+    expect(row.state).toBe("needs_resolution");
+  });
+});

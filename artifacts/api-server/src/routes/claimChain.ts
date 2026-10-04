@@ -694,7 +694,16 @@ export async function syncChainClaim(
           }
           : null,
         vouchedFragments: state.vouchedFragments,
-      });
+      },
+      // A bundle replacement marks every binding needs_resolution so that
+      // nobody keeps a claim made on track ids that no longer exist. A chain
+      // read from ctx.manifest IS on the current bundle (replacement swaps the
+      // whole manifest, claim rows included), so a non-empty chain here is the
+      // fresh review that state is waiting for. Without this the state was
+      // terminal: no path ever lifted it, and a player who re-claimed after a
+      // re-analysis was complete but earned nothing (recording 392, Ib and Ez,
+      // 2026-10-04).
+      chain.length > 0);
     }
 
     // Clips only become real user_clips on completion. Materialising earlier
@@ -706,8 +715,9 @@ export async function syncChainClaim(
     // players who picked the same person are two confirmed bindings and both
     // get their clips: sharing frames with another claim is never a dispute.
     // What can still hold this back is a binding a bundle replacement marked
-    // needs_resolution, or a legacy anchor-flow binding to a shared board row
-    // (the bindings table allows one confirmed binding per row).
+    // needs_resolution with no chain on the current bundle yet, or a legacy
+    // anchor-flow binding to a shared board row (the bindings table allows one
+    // confirmed binding per row).
     const bindingAwards = !binding || binding.state === "confirmed";
     let earnedClips: Array<ClaimEarnedClip & { follow?: FollowPoint[] }> = state.earnedClips.map((clip) => ({ ...clip }));
     if (state.completed && bindingAwards) {
