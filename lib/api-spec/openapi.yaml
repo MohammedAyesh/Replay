@@ -1533,6 +1533,235 @@ paths:
                 items:
                   $ref: "#/components/schemas/Recording"
 
+  /join/{code}:
+    get:
+      operationId: getPublicAcademyJoin
+      tags: [academyJoin]
+      summary: Get public academy registration details
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-HJ-NP-Z2-9]{8}$"
+      responses:
+        "200":
+          description: Academy details and available squads
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyJoinPublicInfo"
+        "404":
+          description: Registration link not found
+    post:
+      operationId: submitPublicAcademyRegistration
+      tags: [academyJoin]
+      summary: Submit a public player registration
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-HJ-NP-Z2-9]{8}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyJoinRegistrationInput"
+      responses:
+        "200":
+          description: Existing pending registration matched; no duplicate was inserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyJoinSubmissionResult"
+        "201":
+          description: Registration submitted for academy review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyJoinSubmissionResult"
+        "400":
+          description: Invalid registration details or squad
+        "404":
+          description: Registration link not found
+        "429":
+          description: Too many registration attempts
+
+  /academy/console/academies/{academyId}/join-link:
+    get:
+      operationId: getAcademyConsoleJoinLink
+      tags: [academyConsole]
+      summary: Get the public player-registration link
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Current registration link, if one exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyJoinLink"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+    post:
+      operationId: regenerateAcademyConsoleJoinLink
+      tags: [academyConsole]
+      summary: Create or regenerate the public player-registration link
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: New registration link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyJoinLink"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
+
+  /academy/console/academies/{academyId}/registrations:
+    get:
+      operationId: listAcademyConsoleRegistrations
+      tags: [academyConsole]
+      summary: List academy registration submissions
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
+            default: pending
+      responses:
+        "200":
+          description: Registrations filtered by review status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyRegistrationSummary"
+        "400":
+          description: Invalid academy ID or status
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy not found
+
+  /academy/console/academies/{academyId}/registrations/{registrationId}/approve:
+    post:
+      operationId: approveAcademyConsoleRegistration
+      tags: [academyConsole]
+      summary: Approve a pending registration and create its player
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: registrationId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyRegistrationApproval"
+      responses:
+        "200":
+          description: Created academy player summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyPlayerSummary"
+        "400":
+          description: Invalid approval details
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy, registration, or squad not found
+        "409":
+          description: Registration is no longer pending
+
+  /academy/console/academies/{academyId}/registrations/{registrationId}/reject:
+    post:
+      operationId: rejectAcademyConsoleRegistration
+      tags: [academyConsole]
+      summary: Reject a pending registration
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: registrationId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Registration rejected
+        "400":
+          description: Invalid academy or registration ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy or registration not found
+        "409":
+          description: Registration is no longer pending
+
   /academy/console/memberships:
     get:
       operationId: getAcademyConsoleMemberships
@@ -5958,7 +6187,7 @@ components:
 
     AcademyConsoleDashboard:
       type: object
-      required: [academyId, academyName, roles, squadCount, activePlayerCount, upcomingSessionCount]
+      required: [academyId, academyName, roles, squadCount, activePlayerCount, upcomingSessionCount, pendingRegistrationCount]
       properties:
         academyId:
           type: integer
@@ -5978,10 +6207,141 @@ components:
         upcomingSessionCount:
           type: integer
           minimum: 0
+        pendingRegistrationCount:
+          type: integer
+          minimum: 0
         collectThisWeek:
           oneOf:
             - $ref: "#/components/schemas/AcademyCollectThisWeek"
             - type: "null"
+
+    AcademyJoinLink:
+      type: object
+      required: [joinCode, joinUrl]
+      properties:
+        joinCode:
+          type: ["string", "null"]
+          pattern: "^[A-HJ-NP-Z2-9]{8}$"
+        joinUrl:
+          type: ["string", "null"]
+
+    AcademyJoinPublicSquad:
+      type: object
+      required: [id, name, ageGroup]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        ageGroup:
+          type: ["string", "null"]
+
+    AcademyJoinPublicInfo:
+      type: object
+      required: [academyName, logoUrl, squads]
+      properties:
+        academyName:
+          type: string
+        logoUrl:
+          type: ["string", "null"]
+        squads:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyJoinPublicSquad"
+
+    AcademyJoinRegistrationInput:
+      type: object
+      required: [playerName, guardianPhone]
+      properties:
+        playerName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        dateOfBirth:
+          type: ["string", "null"]
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+        guardianName:
+          type: ["string", "null"]
+          maxLength: 120
+        guardianPhone:
+          type: string
+          minLength: 7
+          maxLength: 20
+          pattern: "^[0-9+ ()-]{7,20}$"
+        preferredSquadId:
+          type: ["integer", "null"]
+          minimum: 1
+        notes:
+          type: ["string", "null"]
+          maxLength: 500
+        locale:
+          type: string
+          enum: [ar, en]
+          default: ar
+        website:
+          type: string
+          maxLength: 0
+
+    AcademyJoinSubmissionResult:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        duplicate:
+          type: boolean
+
+    AcademyRegistrationStatus:
+      type: string
+      enum: [pending, approved, rejected]
+
+    AcademyRegistrationSummary:
+      type: object
+      required: [id, playerName, dateOfBirth, guardianName, guardianPhone, preferredSquadId, preferredSquadName, notes, locale, status, createdAt, createdPlayerId]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        playerName:
+          type: string
+        dateOfBirth:
+          type: ["string", "null"]
+        guardianName:
+          type: ["string", "null"]
+        guardianPhone:
+          type: string
+        preferredSquadId:
+          type: ["integer", "null"]
+        preferredSquadName:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        locale:
+          type: string
+          enum: [ar, en]
+        status:
+          $ref: "#/components/schemas/AcademyRegistrationStatus"
+        createdAt:
+          type: string
+          format: date-time
+        createdPlayerId:
+          type: ["integer", "null"]
+
+    AcademyRegistrationApproval:
+      type: object
+      required: [squadId, jerseyNumber, position]
+      properties:
+        squadId:
+          type: ["integer", "null"]
+          minimum: 1
+        jerseyNumber:
+          type: ["integer", "null"]
+          minimum: 0
+        position:
+          type: ["string", "null"]
+          maxLength: 80
 
     AcademySquadSummary:
       type: object

@@ -55,7 +55,7 @@ const router: IRouter = Router();
  * something absolute. The env var wins because behind a CDN or a proxy the
  * request's own Host header is not necessarily the name people were given.
  */
-function publicBaseUrl(req: Request): string {
+export function publicBaseUrl(req: Request): string {
   const configured = process.env.PUBLIC_SHARE_BASE_URL || process.env.PUBLIC_BASE_URL;
   if (configured) return configured.replace(/\/$/, "");
   const proto = (req.headers["x-forwarded-proto"] as string)?.split(",")[0] || req.protocol || "https";

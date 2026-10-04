@@ -13,10 +13,11 @@ export const academiesTable = pgTable("academies", {
   logoUrl: text("logo_url"),
   /** Bunny Storage CDN URL of this academy's branding intro clip, prepended to exports and playback of its clips. */
   introVideoUrl: text("intro_video_url"),
+  joinCode: text("join_code"),
   liveAccess: boolean("live_access").notNull().default(false),
   cameraIds: text("camera_ids").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [unique("academies_join_code_unique").on(table.joinCode)]);
 
 export const academyRecordingsTable = pgTable("academy_recordings", {
   id: serial("id").primaryKey(),

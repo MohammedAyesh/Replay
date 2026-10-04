@@ -1,5 +1,12 @@
 export * from "./generated/api";
 export * from "./generated/types";
+// Orval gives mixed path/query operations the same Params name for the
+// generated path schema and query type. Prefer the runtime Zod schema and
+// retain the query-shape type under a distinct name.
+export { ListAcademyConsoleRegistrationsParams } from "./generated/api";
+export type {
+  ListAcademyConsoleRegistrationsParams as ListAcademyConsoleRegistrationsQuery,
+} from "./generated/types";
 export * from "./recordingSchedule";
 export * from "./videoTitle";
 export * from "./statsRanking";

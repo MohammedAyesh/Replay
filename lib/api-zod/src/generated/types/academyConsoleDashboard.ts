@@ -19,5 +19,7 @@ export interface AcademyConsoleDashboard {
   activePlayerCount: number;
   /** @minimum 0 */
   upcomingSessionCount: number;
+  /** @minimum 0 */
+  pendingRegistrationCount: number;
   collectThisWeek?: AcademyCollectThisWeek | null;
 }

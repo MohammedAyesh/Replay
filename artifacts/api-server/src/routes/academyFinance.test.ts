@@ -364,9 +364,9 @@ describe("Academy Finance owner access and accounting", () => {
 
     expect(academyAResponse.status).toBe(200);
     expect(academyAResponse.body).toMatchObject({
-      collectedFils: 0,
+      collectedFils: 46000,
       spentFils: 0,
-      netFils: 0,
+      netFils: 46000,
       unpaidBillsCount: 0,
       unpaidPayments: [],
     });

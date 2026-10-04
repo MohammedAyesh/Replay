@@ -235,6 +235,8 @@ describe("Academy Console API", () => {
       squadCount: 1,
       activePlayerCount: 1,
       upcomingSessionCount: 1,
+      pendingRegistrationCount: 0,
+      collectThisWeek: { playerCount: 0, totalFils: 0 },
     });
 
     const otherAcademy = await request(app)
@@ -248,6 +250,8 @@ describe("Academy Console API", () => {
       squadCount: 2,
       activePlayerCount: 2,
       upcomingSessionCount: 1,
+      pendingRegistrationCount: 0,
+      collectThisWeek: null,
     });
   });
 

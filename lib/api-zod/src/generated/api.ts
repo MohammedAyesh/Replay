@@ -1816,6 +1816,214 @@ export const GetAcademyRecordingsResponse = zod.array(GetAcademyRecordingsRespon
 
 
 /**
+ * @summary Get public academy registration details
+ */
+export const getPublicAcademyJoinPathCodeRegExp = new RegExp('^[A-HJ-NP-Z2-9]{8}$');
+
+
+export const GetPublicAcademyJoinParams = zod.object({
+  "code": zod.coerce.string().regex(getPublicAcademyJoinPathCodeRegExp)
+})
+
+
+
+
+export const GetPublicAcademyJoinResponse = zod.object({
+  "academyName": zod.string(),
+  "logoUrl": zod.string().nullable(),
+  "squads": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "ageGroup": zod.string().nullable()
+}))
+})
+
+
+/**
+ * @summary Submit a public player registration
+ */
+export const submitPublicAcademyRegistrationPathCodeRegExp = new RegExp('^[A-HJ-NP-Z2-9]{8}$');
+
+
+export const SubmitPublicAcademyRegistrationParams = zod.object({
+  "code": zod.coerce.string().regex(submitPublicAcademyRegistrationPathCodeRegExp)
+})
+
+export const submitPublicAcademyRegistrationBodyPlayerNameMax = 120;
+
+export const submitPublicAcademyRegistrationBodyDateOfBirthRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const submitPublicAcademyRegistrationBodyGuardianNameMax = 120;
+
+export const submitPublicAcademyRegistrationBodyGuardianPhoneMin = 7;
+export const submitPublicAcademyRegistrationBodyGuardianPhoneMax = 20;
+
+
+export const submitPublicAcademyRegistrationBodyGuardianPhoneRegExp = new RegExp('^[0-9+ ()-]{7,20}$');
+
+export const submitPublicAcademyRegistrationBodyNotesMax = 500;
+
+export const submitPublicAcademyRegistrationBodyLocaleDefault = `ar`;
+export const submitPublicAcademyRegistrationBodyWebsiteMax = 0;
+
+
+
+export const SubmitPublicAcademyRegistrationBody = zod.object({
+  "playerName": zod.string().min(1).max(submitPublicAcademyRegistrationBodyPlayerNameMax),
+  "dateOfBirth": zod.string().regex(submitPublicAcademyRegistrationBodyDateOfBirthRegExp).nullish(),
+  "guardianName": zod.string().max(submitPublicAcademyRegistrationBodyGuardianNameMax).nullish(),
+  "guardianPhone": zod.string().min(submitPublicAcademyRegistrationBodyGuardianPhoneMin).max(submitPublicAcademyRegistrationBodyGuardianPhoneMax).regex(submitPublicAcademyRegistrationBodyGuardianPhoneRegExp),
+  "preferredSquadId": zod.number().min(1).nullish(),
+  "notes": zod.string().max(submitPublicAcademyRegistrationBodyNotesMax).nullish(),
+  "locale": zod.enum(['ar', 'en']).default(submitPublicAcademyRegistrationBodyLocaleDefault),
+  "website": zod.string().max(submitPublicAcademyRegistrationBodyWebsiteMax).optional()
+})
+
+export const SubmitPublicAcademyRegistrationResponse = zod.object({
+  "ok": zod.literal(true),
+  "duplicate": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get the public player-registration link
+ */
+
+
+
+export const GetAcademyConsoleJoinLinkParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const getAcademyConsoleJoinLinkResponseJoinCodeRegExp = new RegExp('^[A-HJ-NP-Z2-9]{8}$');
+
+
+export const GetAcademyConsoleJoinLinkResponse = zod.object({
+  "joinCode": zod.string().regex(getAcademyConsoleJoinLinkResponseJoinCodeRegExp).nullable(),
+  "joinUrl": zod.string().nullable()
+})
+
+
+/**
+ * @summary Create or regenerate the public player-registration link
+ */
+
+
+
+export const RegenerateAcademyConsoleJoinLinkParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const regenerateAcademyConsoleJoinLinkResponseJoinCodeRegExp = new RegExp('^[A-HJ-NP-Z2-9]{8}$');
+
+
+export const RegenerateAcademyConsoleJoinLinkResponse = zod.object({
+  "joinCode": zod.string().regex(regenerateAcademyConsoleJoinLinkResponseJoinCodeRegExp).nullable(),
+  "joinUrl": zod.string().nullable()
+})
+
+
+/**
+ * @summary List academy registration submissions
+ */
+
+
+
+export const ListAcademyConsoleRegistrationsParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+export const listAcademyConsoleRegistrationsQueryStatusDefault = `pending`;
+
+export const ListAcademyConsoleRegistrationsQueryParams = zod.object({
+  "status": zod.enum(['pending', 'approved', 'rejected']).default(listAcademyConsoleRegistrationsQueryStatusDefault)
+})
+
+
+
+
+export const ListAcademyConsoleRegistrationsResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "playerName": zod.string(),
+  "dateOfBirth": zod.string().nullable(),
+  "guardianName": zod.string().nullable(),
+  "guardianPhone": zod.string(),
+  "preferredSquadId": zod.number().nullable(),
+  "preferredSquadName": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "locale": zod.enum(['ar', 'en']),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "createdAt": zod.coerce.date(),
+  "createdPlayerId": zod.number().nullable()
+})
+export const ListAcademyConsoleRegistrationsResponse = zod.array(ListAcademyConsoleRegistrationsResponseItem)
+
+
+/**
+ * @summary Approve a pending registration and create its player
+ */
+
+
+
+
+export const ApproveAcademyConsoleRegistrationParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "registrationId": zod.coerce.number().min(1)
+})
+
+
+export const approveAcademyConsoleRegistrationBodyJerseyNumberMin = 0;
+
+export const approveAcademyConsoleRegistrationBodyPositionMax = 80;
+
+
+
+export const ApproveAcademyConsoleRegistrationBody = zod.object({
+  "squadId": zod.number().min(1).nullable(),
+  "jerseyNumber": zod.number().min(approveAcademyConsoleRegistrationBodyJerseyNumberMin).nullable(),
+  "position": zod.string().max(approveAcademyConsoleRegistrationBodyPositionMax).nullable()
+})
+
+
+
+
+export const approveAcademyConsoleRegistrationResponseJerseyNumberMin = 0;
+
+export const approveAcademyConsoleRegistrationResponseDateOfBirthRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+
+export const ApproveAcademyConsoleRegistrationResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "name": zod.string(),
+  "jerseyNumber": zod.number().min(approveAcademyConsoleRegistrationResponseJerseyNumberMin).nullable(),
+  "position": zod.string().nullable(),
+  "dateOfBirth": zod.string().regex(approveAcademyConsoleRegistrationResponseDateOfBirthRegExp).nullable(),
+  "guardianPhone": zod.string().nullable(),
+  "userId": zod.number().min(1).nullable(),
+  "linkedUserEmail": zod.string().email().nullable(),
+  "isActive": zod.boolean()
+})
+
+
+/**
+ * @summary Reject a pending registration
+ */
+
+
+
+
+export const RejectAcademyConsoleRegistrationParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "registrationId": zod.coerce.number().min(1)
+})
+
+export const RejectAcademyConsoleRegistrationResponse = zod.void()
+
+
+/**
  * @summary List the signed-in user's academy memberships and roles
  */
 
@@ -1846,6 +2054,8 @@ export const getAcademyConsoleDashboardResponseActivePlayerCountMin = 0;
 
 export const getAcademyConsoleDashboardResponseUpcomingSessionCountMin = 0;
 
+export const getAcademyConsoleDashboardResponsePendingRegistrationCountMin = 0;
+
 export const getAcademyConsoleDashboardResponseCollectThisWeekOnePlayerCountMin = 0;
 
 export const getAcademyConsoleDashboardResponseCollectThisWeekOneTotalFilsMin = 0;
@@ -1859,6 +2069,7 @@ export const GetAcademyConsoleDashboardResponse = zod.object({
   "squadCount": zod.number().min(getAcademyConsoleDashboardResponseSquadCountMin),
   "activePlayerCount": zod.number().min(getAcademyConsoleDashboardResponseActivePlayerCountMin),
   "upcomingSessionCount": zod.number().min(getAcademyConsoleDashboardResponseUpcomingSessionCountMin),
+  "pendingRegistrationCount": zod.number().min(getAcademyConsoleDashboardResponsePendingRegistrationCountMin),
   "collectThisWeek": zod.union([zod.object({
   "playerCount": zod.number().min(getAcademyConsoleDashboardResponseCollectThisWeekOnePlayerCountMin),
   "totalFils": zod.number().min(getAcademyConsoleDashboardResponseCollectThisWeekOneTotalFilsMin)

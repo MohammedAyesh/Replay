@@ -1231,7 +1231,141 @@ export interface AcademyConsoleDashboard {
   activePlayerCount: number;
   /** @minimum 0 */
   upcomingSessionCount: number;
+  /** @minimum 0 */
+  pendingRegistrationCount: number;
   collectThisWeek?: AcademyCollectThisWeek | null;
+}
+
+export interface AcademyJoinLink {
+  /**
+     * @nullable
+     * @pattern ^[A-HJ-NP-Z2-9]{8}$
+     */
+  joinCode: string | null;
+  /** @nullable */
+  joinUrl: string | null;
+}
+
+export interface AcademyJoinPublicSquad {
+  /** @minimum 1 */
+  id: number;
+  name: string;
+  /** @nullable */
+  ageGroup: string | null;
+}
+
+export interface AcademyJoinPublicInfo {
+  academyName: string;
+  /** @nullable */
+  logoUrl: string | null;
+  squads: AcademyJoinPublicSquad[];
+}
+
+export type AcademyJoinRegistrationInputLocale = typeof AcademyJoinRegistrationInputLocale[keyof typeof AcademyJoinRegistrationInputLocale];
+
+
+export const AcademyJoinRegistrationInputLocale = {
+  ar: 'ar',
+  en: 'en',
+} as const;
+
+export interface AcademyJoinRegistrationInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  playerName: string;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  dateOfBirth?: string | null;
+  /**
+     * @maxLength 120
+     * @nullable
+     */
+  guardianName?: string | null;
+  /**
+     * @minLength 7
+     * @maxLength 20
+     * @pattern ^[0-9+ ()-]{7,20}$
+     */
+  guardianPhone: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  preferredSquadId?: number | null;
+  /**
+     * @maxLength 500
+     * @nullable
+     */
+  notes?: string | null;
+  locale?: AcademyJoinRegistrationInputLocale;
+  /** @maxLength 0 */
+  website?: string;
+}
+
+export interface AcademyJoinSubmissionResult {
+  ok: true;
+  duplicate?: boolean;
+}
+
+export type AcademyRegistrationStatus = typeof AcademyRegistrationStatus[keyof typeof AcademyRegistrationStatus];
+
+
+export const AcademyRegistrationStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export type AcademyRegistrationSummaryLocale = typeof AcademyRegistrationSummaryLocale[keyof typeof AcademyRegistrationSummaryLocale];
+
+
+export const AcademyRegistrationSummaryLocale = {
+  ar: 'ar',
+  en: 'en',
+} as const;
+
+export interface AcademyRegistrationSummary {
+  /** @minimum 1 */
+  id: number;
+  playerName: string;
+  /** @nullable */
+  dateOfBirth: string | null;
+  /** @nullable */
+  guardianName: string | null;
+  guardianPhone: string;
+  /** @nullable */
+  preferredSquadId: number | null;
+  /** @nullable */
+  preferredSquadName: string | null;
+  /** @nullable */
+  notes: string | null;
+  locale: AcademyRegistrationSummaryLocale;
+  status: AcademyRegistrationStatus;
+  createdAt: string;
+  /** @nullable */
+  createdPlayerId: number | null;
+}
+
+export interface AcademyRegistrationApproval {
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  squadId: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  jerseyNumber: number | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  position: string | null;
 }
 
 export interface AcademySquadSummary {
@@ -3166,4 +3300,17 @@ export type ReplaceTrackingBundleBodyTwo = {
   /** ZIP file containing manifest.json and the segment JSON files */
   bundle: string;
 };
+
+export type ListAcademyConsoleRegistrationsParams = {
+status?: ListAcademyConsoleRegistrationsStatus;
+};
+
+export type ListAcademyConsoleRegistrationsStatus = typeof ListAcademyConsoleRegistrationsStatus[keyof typeof ListAcademyConsoleRegistrationsStatus];
+
+
+export const ListAcademyConsoleRegistrationsStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
 

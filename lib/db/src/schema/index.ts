@@ -13,6 +13,7 @@ export * from "./academies";
 export * from "./academyMembers";
 export * from "./academySquads";
 export * from "./academyPlayers";
+export * from "./academyRegistrations";
 export * from "./academySessions";
 export * from "./academyAttendance";
 export * from "./academyFees";

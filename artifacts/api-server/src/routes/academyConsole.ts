@@ -1,4 +1,5 @@
-import { and, asc, count, eq, gte, lt, sql } from "drizzle-orm";
+import crypto from "node:crypto";
+import { and, asc, count, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   AddAcademyMemberBody,
@@ -17,11 +18,16 @@ import {
   DeleteAcademyConsoleSquadParams,
   GetAcademyConsoleDashboardParams,
   GetAcademyConsoleDashboardResponse,
+  GetAcademyConsoleJoinLinkParams,
+  GetAcademyConsoleJoinLinkResponse,
   GetAcademyConsoleMembershipsResponse,
   ListAcademyConsoleSessionsParams,
   ListAcademyConsoleSessionsResponse,
   ListAcademyConsolePlayersParams,
   ListAcademyConsolePlayersResponse,
+  ListAcademyConsoleRegistrationsParams,
+  ListAcademyConsoleRegistrationsQueryParams,
+  ListAcademyConsoleRegistrationsResponse,
   ListAcademyConsoleSquadsParams,
   ListAcademyConsoleSquadsResponse,
   ListAcademyMembersParams,
@@ -36,11 +42,18 @@ import {
   UpdateAcademyConsoleSquadBody,
   UpdateAcademyConsoleSquadParams,
   UpdateAcademyConsoleSquadResponse,
+  RegenerateAcademyConsoleJoinLinkParams,
+  RegenerateAcademyConsoleJoinLinkResponse,
+  ApproveAcademyConsoleRegistrationParams,
+  ApproveAcademyConsoleRegistrationBody,
+  ApproveAcademyConsoleRegistrationResponse,
+  RejectAcademyConsoleRegistrationParams,
 } from "@workspace/api-zod";
 import {
   academyAttendanceTable,
   academyMembersTable,
   academyPlayersTable,
+  academyRegistrationsTable,
   academySessionsTable,
   academySquadsTable,
   academiesTable,
@@ -54,9 +67,11 @@ import {
   requireAcademyConsoleUser,
   requireAcademyMembership,
 } from "../lib/academyAccess";
+import { publicBaseUrl } from "./share";
 
 const router: IRouter = Router();
 const ROLE_ORDER = ["owner", "coach"] as const;
+const JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function rawParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
@@ -240,6 +255,25 @@ async function academyExists(academyId: number): Promise<boolean> {
   return Boolean(academy);
 }
 
+function generateAcademyJoinCode(): string {
+  const bytes = crypto.randomBytes(8);
+  return [...bytes].map((byte) => JOIN_CODE_ALPHABET[byte & 31]).join("");
+}
+
+function joinLinkPayload(req: Request, joinCode: string | null) {
+  return GetAcademyConsoleJoinLinkResponse.parse({
+    joinCode,
+    joinUrl: joinCode ? `${publicBaseUrl(req)}/join/${joinCode}` : null,
+  });
+}
+
+function isJoinCodeUniqueViolation(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { code?: unknown; constraint?: unknown };
+  return candidate.code === "23505"
+    && (candidate.constraint === undefined || candidate.constraint === "academies_join_code_unique");
+}
+
 async function listAcademyMemberSummaries(academyId: number) {
   const rows = await db
     .select({
@@ -316,6 +350,258 @@ router.get("/academy/console/memberships", async (req, res): Promise<void> => {
   ));
 });
 
+router.get("/academy/console/academies/:academyId/join-link", async (req, res): Promise<void> => {
+  const user = await requireAcademyConsoleUser(req, res);
+  if (!user) return;
+  const parsedParams = GetAcademyConsoleJoinLinkParams.safeParse({
+    academyId: rawParam(req.params.academyId),
+  });
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.message });
+    return;
+  }
+  const { academyId } = parsedParams.data;
+  const roles = await requireAcademyMembership(user.id, academyId, res);
+  if (!roles) return;
+  if (!roles.includes("owner")) {
+    res.status(403).json({ error: "Academy owner role required" });
+    return;
+  }
+  const [academy] = await db
+    .select({ joinCode: academiesTable.joinCode })
+    .from(academiesTable)
+    .where(eq(academiesTable.id, academyId));
+  if (!academy) {
+    res.status(404).json({ error: "Academy not found" });
+    return;
+  }
+  res.json(joinLinkPayload(req, academy.joinCode));
+});
+
+router.post("/academy/console/academies/:academyId/join-link", async (req, res): Promise<void> => {
+  const user = await requireAcademyConsoleUser(req, res);
+  if (!user) return;
+  const parsedParams = RegenerateAcademyConsoleJoinLinkParams.safeParse({
+    academyId: rawParam(req.params.academyId),
+  });
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.message });
+    return;
+  }
+  const { academyId } = parsedParams.data;
+  const roles = await requireAcademyMembership(user.id, academyId, res);
+  if (!roles) return;
+  if (!roles.includes("owner")) {
+    res.status(403).json({ error: "Academy owner role required" });
+    return;
+  }
+  if (!(await academyExists(academyId))) {
+    res.status(404).json({ error: "Academy not found" });
+    return;
+  }
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      const [academy] = await db
+        .update(academiesTable)
+        .set({ joinCode: generateAcademyJoinCode() })
+        .where(eq(academiesTable.id, academyId))
+        .returning({ joinCode: academiesTable.joinCode });
+      if (!academy) {
+        res.status(404).json({ error: "Academy not found" });
+        return;
+      }
+      res.json(joinLinkPayload(req, academy.joinCode));
+      return;
+    } catch (error) {
+      if (!isJoinCodeUniqueViolation(error)) throw error;
+    }
+  }
+  throw new Error("Unable to allocate a unique academy registration code");
+});
+
+router.get("/academy/console/academies/:academyId/registrations", async (req, res): Promise<void> => {
+  const user = await requireAcademyConsoleUser(req, res);
+  if (!user) return;
+  const path = ListAcademyConsoleRegistrationsParams.safeParse({
+    academyId: rawParam(req.params.academyId),
+  });
+  const query = ListAcademyConsoleRegistrationsQueryParams.safeParse({
+    status: req.query.status,
+  });
+  if (!path.success || !query.success) {
+    res.status(400).json({ error: !path.success ? path.error.message : query.error.message });
+    return;
+  }
+  const { academyId } = path.data;
+  const roles = await requireAcademyMembership(user.id, academyId, res);
+  if (!roles) return;
+  if (!(await academyExists(academyId))) {
+    res.status(404).json({ error: "Academy not found" });
+    return;
+  }
+
+  const rows = await db
+    .select({
+      id: academyRegistrationsTable.id,
+      playerName: academyRegistrationsTable.playerName,
+      dateOfBirth: academyRegistrationsTable.dateOfBirth,
+      guardianName: academyRegistrationsTable.guardianName,
+      guardianPhone: academyRegistrationsTable.guardianPhone,
+      preferredSquadId: academyRegistrationsTable.preferredSquadId,
+      preferredSquadName: academySquadsTable.name,
+      notes: academyRegistrationsTable.notes,
+      locale: academyRegistrationsTable.locale,
+      status: academyRegistrationsTable.status,
+      createdAt: academyRegistrationsTable.createdAt,
+      createdPlayerId: academyRegistrationsTable.createdPlayerId,
+    })
+    .from(academyRegistrationsTable)
+    .leftJoin(
+      academySquadsTable,
+      and(
+        eq(academyRegistrationsTable.preferredSquadId, academySquadsTable.id),
+        eq(academySquadsTable.academyId, academyId),
+      ),
+    )
+    .where(and(
+      eq(academyRegistrationsTable.academyId, academyId),
+      eq(academyRegistrationsTable.status, query.data.status),
+    ))
+    .orderBy(desc(academyRegistrationsTable.createdAt), desc(academyRegistrationsTable.id));
+
+  res.json(ListAcademyConsoleRegistrationsResponse.parse(rows));
+});
+
+router.post(
+  "/academy/console/academies/:academyId/registrations/:registrationId/approve",
+  async (req, res): Promise<void> => {
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const parsedParams = ApproveAcademyConsoleRegistrationParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      registrationId: rawParam(req.params.registrationId),
+    });
+    if (!parsedParams.success) {
+      res.status(400).json({ error: parsedParams.error.message });
+      return;
+    }
+    const { academyId, registrationId } = parsedParams.data;
+    const roles = await requireAcademyMembership(user.id, academyId, res);
+    if (!roles) return;
+    if (!(await academyExists(academyId))) {
+      res.status(404).json({ error: "Academy not found" });
+      return;
+    }
+    const body = ApproveAcademyConsoleRegistrationBody.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: body.error.message });
+      return;
+    }
+    if (body.data.squadId != null && !(await academySquadBelongsToAcademy(body.data.squadId, academyId))) {
+      res.status(404).json({ error: "Squad not found in this academy" });
+      return;
+    }
+
+    const result = await db.transaction(async (tx) => {
+      const [registration] = await tx
+        .select()
+        .from(academyRegistrationsTable)
+        .where(and(
+          eq(academyRegistrationsTable.id, registrationId),
+          eq(academyRegistrationsTable.academyId, academyId),
+        ))
+        .for("update");
+      if (!registration) return { kind: "missing" as const };
+      if (registration.status !== "pending") return { kind: "not-pending" as const };
+
+      const [player] = await tx
+        .insert(academyPlayersTable)
+        .values({
+          academyId,
+          name: registration.playerName,
+          squadId: body.data.squadId ?? null,
+          jerseyNumber: body.data.jerseyNumber ?? null,
+          position: normalizeOptionalText(body.data.position),
+          dateOfBirth: registration.dateOfBirth,
+          guardianPhone: registration.guardianPhone,
+        })
+        .returning({ id: academyPlayersTable.id });
+      await tx
+        .update(academyRegistrationsTable)
+        .set({
+          status: "approved",
+          createdPlayerId: player.id,
+          reviewedAt: new Date(),
+          reviewedBy: user.id,
+        })
+        .where(eq(academyRegistrationsTable.id, registrationId));
+      return { kind: "approved" as const, playerId: player.id };
+    });
+
+    if (result.kind === "missing") {
+      res.status(404).json({ error: "Registration not found" });
+      return;
+    }
+    if (result.kind === "not-pending") {
+      res.status(409).json({ error: "Registration is no longer pending" });
+      return;
+    }
+    const [summary] = await academyPlayerSummaries(academyId, result.playerId);
+    res.json(ApproveAcademyConsoleRegistrationResponse.parse(summary));
+  },
+);
+
+router.post(
+  "/academy/console/academies/:academyId/registrations/:registrationId/reject",
+  async (req, res): Promise<void> => {
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const parsedParams = RejectAcademyConsoleRegistrationParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      registrationId: rawParam(req.params.registrationId),
+    });
+    if (!parsedParams.success) {
+      res.status(400).json({ error: parsedParams.error.message });
+      return;
+    }
+    const { academyId, registrationId } = parsedParams.data;
+    const roles = await requireAcademyMembership(user.id, academyId, res);
+    if (!roles) return;
+    if (!(await academyExists(academyId))) {
+      res.status(404).json({ error: "Academy not found" });
+      return;
+    }
+
+    const result = await db.transaction(async (tx) => {
+      const [registration] = await tx
+        .select({ id: academyRegistrationsTable.id, status: academyRegistrationsTable.status })
+        .from(academyRegistrationsTable)
+        .where(and(
+          eq(academyRegistrationsTable.id, registrationId),
+          eq(academyRegistrationsTable.academyId, academyId),
+        ))
+        .for("update");
+      if (!registration) return "missing" as const;
+      if (registration.status !== "pending") return "not-pending" as const;
+      await tx
+        .update(academyRegistrationsTable)
+        .set({ status: "rejected", reviewedAt: new Date(), reviewedBy: user.id })
+        .where(eq(academyRegistrationsTable.id, registrationId));
+      return "rejected" as const;
+    });
+    if (result === "missing") {
+      res.status(404).json({ error: "Registration not found" });
+      return;
+    }
+    if (result === "not-pending") {
+      res.status(409).json({ error: "Registration is no longer pending" });
+      return;
+    }
+    res.status(204).end();
+  },
+);
+
 router.get("/academy/console/academies/:academyId/dashboard", async (req, res): Promise<void> => {
   const user = await requireAcademyConsoleUser(req, res);
   if (!user) return;
@@ -343,7 +629,7 @@ router.get("/academy/console/academies/:academyId/dashboard", async (req, res): 
 
   const now = new Date();
   const nextSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const [squadCount, activePlayerCount, upcomingSessionCount, collectThisWeek] = await Promise.all([
+  const [squadCount, activePlayerCount, upcomingSessionCount, pendingRegistrationCount, collectThisWeek] = await Promise.all([
     db.select({ value: count() })
       .from(academySquadsTable)
       .where(eq(academySquadsTable.academyId, academyId)),
@@ -360,6 +646,12 @@ router.get("/academy/console/academies/:academyId/dashboard", async (req, res): 
         gte(academySessionsTable.startsAt, now),
         lt(academySessionsTable.startsAt, nextSevenDays),
       )),
+    db.select({ value: count() })
+      .from(academyRegistrationsTable)
+      .where(and(
+        eq(academyRegistrationsTable.academyId, academyId),
+        eq(academyRegistrationsTable.status, "pending"),
+      )),
     roles.includes("owner")
       ? getAcademyCollectThisWeek(academyId)
       : Promise.resolve(null),
@@ -372,6 +664,7 @@ router.get("/academy/console/academies/:academyId/dashboard", async (req, res): 
     squadCount: Number(squadCount[0]?.value ?? 0),
     activePlayerCount: Number(activePlayerCount[0]?.value ?? 0),
     upcomingSessionCount: Number(upcomingSessionCount[0]?.value ?? 0),
+    pendingRegistrationCount: Number(pendingRegistrationCount[0]?.value ?? 0),
     collectThisWeek,
   }));
 });

@@ -52,6 +52,7 @@ import PortfolioPage from "@/features/portfolio/page";
 import LegacyDemoPage from "@/pages/demo-route";
 import DemoPage from "@/pages/demo/DemoPage";
 import AcademyConsole from "@/pages/academy-console";
+import AcademyJoinPage from "@/pages/academy-join";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -483,11 +484,13 @@ function AppRouter() {
   const { user, isLoading, isGuest, isSignedIn, refetchLocalUser } = useAuth();
   const { signOut } = useClerk();
   const { locale } = useLocale();
+  const [location] = useLocation();
+  const isPublicJoinRoute = location.split("?")[0].startsWith("/join/");
   const [retryingIdentity, setRetryingIdentity] = useState(false);
   const [signOutPending, setSignOutPending] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
 
-  if (isSignedIn && !user && !isGuest) {
+  if (isSignedIn && !user && !isGuest && !isPublicJoinRoute) {
     const retryIdentity = async () => {
       setRetryingIdentity(true);
       try {
@@ -523,10 +526,11 @@ function AppRouter() {
     );
   }
 
-  return (
-    <Layout>
+  const routes = (
+    <>
       <AuthRedirectGuard />
       <Switch>
+        <Route path="/join/:code" component={AcademyJoinPage} />
         <Route path="/" component={Landing} />
         <Route path="/sign-in/*?" component={SignInPage} />
         <Route path="/sign-up/*?" component={SignUpPage} />
@@ -571,8 +575,10 @@ function AppRouter() {
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />
         <Route component={NotFound} />
       </Switch>
-    </Layout>
+    </>
   );
+
+  return isPublicJoinRoute ? routes : <Layout>{routes}</Layout>;
 }
 
 function ClerkProviderWithRoutes() {

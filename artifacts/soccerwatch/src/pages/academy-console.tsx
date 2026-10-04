@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ChevronDown,
   ClipboardList,
+  UserRoundPlus,
   Coins,
   GraduationCap,
   LayoutDashboard,
@@ -75,10 +76,11 @@ import { AcademyAttendanceSection } from "@/components/academy-console/attendanc
 import { AcademyRecordingsSection } from "@/components/academy-console/recordings-section";
 import { AcademyAnnouncementsSection } from "@/components/academy-console/announcements-section";
 import { AcademyFeesPaymentsSection } from "@/components/academy-console/fees-payments-section";
+import { AcademyRegistrationsSection } from "@/components/academy-console/registrations-section";
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "attendance" | "schedule" | "recordings" | "fees" | "announcements";
+type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -198,6 +200,7 @@ function AcademyConsoleSidebar({
   academyLogoUrl,
   onSelectAcademy,
   isOwner,
+  pendingRegistrationCount,
   mobile = false,
 }: {
   section: ConsoleSection;
@@ -207,6 +210,7 @@ function AcademyConsoleSidebar({
   academyLogoUrl: string | null;
   onSelectAcademy: (academyId: number) => void;
   isOwner: boolean;
+  pendingRegistrationCount: number;
   mobile?: boolean;
 }) {
   const { t, locale, setLocale } = useTranslation();
@@ -216,6 +220,7 @@ function AcademyConsoleSidebar({
     { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
     { id: "squads", label: labels.squads, icon: Users },
     { id: "players", label: labels.players, icon: UserRound },
+    { id: "registrations", label: labels.registrations.title, icon: UserRoundPlus },
     { id: "attendance", label: labels.attendance, icon: ClipboardList },
     { id: "schedule", label: labels.scheduleResults, icon: CalendarDays },
     { id: "recordings", label: labels.recordings, icon: Video },
@@ -275,7 +280,12 @@ function AcademyConsoleSidebar({
                 data-testid={`nav-academy-${item.id}`}
               >
                 <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>{item.label}</span>
+                  <span className="min-w-0 flex-1">{item.label}</span>
+                  {item.id === "registrations" && pendingRegistrationCount > 0 && (
+                    <span className="grid min-w-6 place-items-center rounded-full bg-amber-300/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-amber-200" aria-label={labels.registrations.pendingCount(pendingRegistrationCount, true)}>
+                      {pendingRegistrationCount}
+                    </span>
+                  )}
               </button>
             );
           })}
@@ -344,6 +354,7 @@ function Dashboard({ dashboard, isOwner }: { dashboard: AcademyConsoleDashboard;
     { label: labels.squadsCount, value: dashboard.squadCount, icon: Users, testId: "stat-squads" },
     { label: labels.activePlayersCount, value: dashboard.activePlayerCount, icon: UserRound, testId: "stat-active-players" },
     { label: labels.upcomingSessionsCount, value: dashboard.upcomingSessionCount, icon: CalendarDays, testId: "stat-upcoming-sessions" },
+    { label: labels.registrations.pendingCount(dashboard.pendingRegistrationCount, true), value: dashboard.pendingRegistrationCount, icon: UserRoundPlus, testId: "stat-pending-registrations" },
   ];
   const links: Array<{ section: ConsoleSection; label: string; description: string; icon: typeof Users }> = [
     { section: "squads", label: labels.gettingStartedSquads, description: labels.gettingStartedSquadsDescription, icon: Users },
@@ -799,7 +810,7 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "attendance", "schedule", "recordings", "fees", "announcements"].includes(pathSection)) {
+    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -839,6 +850,7 @@ export default function AcademyConsole() {
       setLocation("/academy");
     },
     isOwner,
+    pendingRegistrationCount: dashboardQuery.data?.pendingRegistrationCount ?? 0,
   };
 
   return (
@@ -866,6 +878,8 @@ export default function AcademyConsole() {
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <SquadsSection academyId={activeAcademyId} />
           ) : section === "players" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPlayersSection academyId={activeAcademyId} />
+          ) : section === "registrations" ? (
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyRegistrationsSection academyId={activeAcademyId} isOwner={isOwner} />
           ) : section === "schedule" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademySessionsSection academyId={activeAcademyId} />
           ) : section === "attendance" ? (
