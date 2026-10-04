@@ -25,8 +25,9 @@ describe("shot credit", () => {
     const s = detectedShots([{ type: "shot", t: 101.4 }], play, pitch);
     expect(s[0].trackId).toBe("s0:white");
     expect(s[0].kit).toEqual(WHITE);
-    // the same shot as a goal
-    expect(detectedGoals([{ type: "goal", t: 101.4 }], play, pitch)[0].trackId).toBe("s0:white");
+    // the same shot as a goal (the game restarted from the halfway line)
+    const restart = { ball: [120, 121, 122].map((t) => ({ t, p: [20, 5] as [number, number] })) };
+    expect(detectedGoals([{ type: "goal", t: 101.4 }], play, pitch, restart)[0].trackId).toBe("s0:white");
   });
 
   it("drops the kick-off after a goal that goals.py read as a shot (rec 392, 68:24)", () => {

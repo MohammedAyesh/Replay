@@ -832,7 +832,86 @@ export const GOAL = {
   scorerSeconds: 8,
   /** a shot on target is credited to a touch this long before it, seconds */
   shooterSeconds: 3,
+  /**
+   * goals.py's time for a goal it inferred is when PLAY STOPPED, not when the
+   * ball went in: on rec 392 that was 4-15 s late (64:24.9 -> 64:29, 67:31 ->
+   * 67:40, 80:09 -> 80:24), and inplay.py marks the kick-off wait itself as a
+   * stoppage, so one more "goal" lands seconds before the kick-off (31:10). The
+   * 8 s scorer window then found the player fetching the ball from the net or
+   * taking the kick-off. So the moment is searched for: the ball's last entry
+   * into a goal mouth up to this long before goals.py's time, seconds.
+   */
+  lookbackSeconds: 20,
+  /** "in the mouth": a ball sample this close to a goal line on the pitch side, metres... */
+  mouthDepthMetres: 1.5,
+  /** ...or up to this far behind it (in the net)... */
+  netMetres: 3,
+  /** ...and this close to the middle of the goal line, metres (camera error included) */
+  mouthHalfWidthMetres: 5,
+  /** mouth samples with nothing seen between them are one visit unless this far apart, seconds */
+  spellGapSeconds: 5,
+  /** a goal is answered by a restart from the halfway line within this long, seconds */
+  restartSeconds: 90,
 } as const;
+
+/**
+ * The restart after a goal: the ball set down on the halfway line. Only the
+ * line (x) is tested, not the spot: on cam1's live calibration the centre spot
+ * projects 5 m off the pitch's middle (to y = 4.8 of 20), so a fixed spot is
+ * missed while a spare ball lying 3.5 m off the line is not.
+ */
+export const RESTART = {
+  /** the ball this close to the halfway line, metres... */
+  halfwayMetres: 3,
+  /** ...staying within this of where it was set down, metres... */
+  stillMetres: 1,
+  /** ...for at least this long, seconds */
+  seconds: 1.5,
+  /** samples further apart than this break the spell, seconds */
+  gapSeconds: 3,
+} as const;
+
+/** A ball position on the pitch, metres, on the tracking clock. */
+export type BallPoint = { t: number; p: [number, number] };
+
+/** What `detectedGoals` needs beyond the touches: the ball's positions and when play ended. */
+export type GoalContext = { ball?: BallPoint[]; ends?: number[] };
+
+/** The goal context of a loaded recording: every ball sample, and the end of each stretch of game and of the recording. */
+export function goalContext(play: {
+  manifest: Pick<TrackingManifest, "width" | "height" | "pitchModel" | "frameRate" | "duration">;
+  sidecars?: Array<BallSidecar | null> | null;
+  phases?: Array<{ kind: string; start: number; end: number }> | null;
+}): GoalContext {
+  const ends = (play.phases ?? []).filter((p) => p.kind === "game").map((p) => p.end);
+  if (play.manifest.duration > 0) ends.push(play.manifest.duration);
+  return { ball: ballOnPitch(play.manifest, play.sidecars), ends };
+}
+
+const ballCache = new WeakMap<object, BallPoint[]>();
+
+/** Every ball-tracker sample of the sidecars on the pitch, metres, by time. Empty without a pitch model. */
+export function ballOnPitch(
+  manifest: Pick<TrackingManifest, "width" | "height" | "pitchModel" | "frameRate">,
+  sidecars: Array<BallSidecar | null> | null | undefined,
+): BallPoint[] {
+  if (!sidecars) return [];
+  const hit = ballCache.get(sidecars);
+  if (hit) return hit;
+  const out: BallPoint[] = [];
+  const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
+  if (manifest.pitchModel) {
+    for (const sc of sidecars) {
+      for (const [f, x, y] of sc?.ball ?? []) {
+        const p = interpolatePitchPosition(x, y, manifest as TrackingManifest);
+        if (p) out.push({ t: f / fps, p: [p.x, p.y] });
+      }
+    }
+  }
+  out.sort((a, b) => a.t - b.t);
+  ballCache.set(sidecars, out);
+  return out;
+}
 
 export type DetectedGoal = {
   t: number;
@@ -1064,12 +1143,119 @@ function strikerBefore(touches: Touch[], t: number, window: number, pitch: Pitch
   return null;
 }
 
-/** Goals the detector saw, merged, each with the player who scored it (never the goalkeeper). */
-export function detectedGoals(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null): DetectedGoal[] {
-  return mergedGoalTimes(events).map((t) => {
-    const touch = strikerBefore(touches, t, GOAL.scorerSeconds, pitch);
-    return { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null };
-  });
+/**
+ * Goals the detector saw, each at the moment the ball went in and with the
+ * player who scored it (never the goalkeeper).
+ *
+ * With a pitch model and ball positions (the sidecar samples, `ballOnPitch`,
+ * plus the touches' own ball positions), a goals.py goal counts only when:
+ *   1. a restart from the halfway line (RESTART) follows it within
+ *      GOAL.restartSeconds -- what answers a goal and nothing else does
+ *      (rec 392: 53:06 and 53:19 were a scramble and a keeper walking out);
+ *   2. the ball was seen entering a goal mouth: the latest visit up to
+ *      GOAL.lookbackSeconds before goals.py's time, and not followed by the ball
+ *      going to the other goal's area before it. Its start is the goal's time,
+ *      and the scorer is the strike before it (`strikerBefore`).
+ * goals.py events answered by the same restart are one goal; the first of them
+ * (in time) that finds the ball's entry sets it -- a later one sees the ball
+ * being fetched out of the net. Search never goes back past the previous
+ * restart. Goals that no restart answers, or whose ball was never seen in a
+ * mouth, are dropped.
+ *
+ * The end of a stretch of game or of the recording (`context.ends`) answers a
+ * goal too: the last goal before full time has no kick-off after it.
+ *
+ * Without a pitch model or any ball position: the old rule (events within
+ * GOAL.mergeSeconds merged to the last, the last touch before it credited).
+ */
+export function detectedGoals(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null, context: GoalContext = {}): DetectedGoal[] {
+  const samples = pitch ? ballSamples(context.ball ?? [], touches) : [];
+  if (!pitch || !samples.length) {
+    return mergedGoalTimes(events).map((t) => credit(t, touches, pitch));
+  }
+  const raw = events.filter((e) => e.type.toLowerCase() === "goal").map((e) => e.t).sort((a, b) => a - b);
+  const restarts = halfwayRests(samples, pitch);
+  // the end of a stretch of game (or of the recording) answers the last goal before it
+  const answers: Array<[number, number]> = [...restarts, ...(context.ends ?? []).map((e): [number, number] => [e, e])]
+    .sort((a, b) => a[0] - b[0]);
+  const groups = new Map<number, number[]>();
+  for (const t of raw) {
+    const k = answers.findIndex(([start]) => start >= t - 2 && start <= t + GOAL.restartSeconds);
+    if (k < 0) continue;
+    groups.set(k, [...(groups.get(k) ?? []), t]);
+  }
+  const out: DetectedGoal[] = [];
+  for (const [k, times] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
+    const [kickoff] = answers[k];
+    // never look back past the restart that answered the previous goal
+    const floor = restarts.reduce((m, [, end]) => (end < times[0] - 2 && end > m ? end : m), -Infinity);
+    let at: number | null = null;
+    for (const t of times) {
+      at = entryIntoMouth(samples, Math.max(t - GOAL.lookbackSeconds, floor), Math.min(t + 1, kickoff), pitch);
+      if (at !== null) break;
+    }
+    if (at !== null) out.push(credit(at, touches, pitch));
+  }
+  return out;
+}
+
+function credit(t: number, touches: Touch[], pitch: PitchSize | null): DetectedGoal {
+  const touch = strikerBefore(touches, t, GOAL.scorerSeconds, pitch);
+  return { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null };
+}
+
+/** The ball tracker's samples and the touches' ball positions together, by time. */
+function ballSamples(ball: BallPoint[], touches: Touch[]): BallPoint[] {
+  const out = ball.slice();
+  for (const c of touches) if (c.ball) out.push({ t: c.t, p: c.ball });
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/** [start, end] of every spell of the ball set down on the halfway line (RESTART), seconds. */
+function halfwayRests(samples: BallPoint[], pitch: PitchSize): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < samples.length;) {
+    const { t, p } = samples[i];
+    if (Math.abs(p[0] - pitch.length / 2) > RESTART.halfwayMetres || p[1] < 0 || p[1] > pitch.width) { i++; continue; }
+    let j = i;
+    while (j + 1 < samples.length
+      && samples[j + 1].t - samples[j].t <= RESTART.gapSeconds
+      && Math.hypot(samples[j + 1].p[0] - p[0], samples[j + 1].p[1] - p[1]) <= RESTART.stillMetres) j++;
+    if (samples[j].t - t >= RESTART.seconds) { out.push([t, samples[j].t]); i = j + 1; } else i++;
+  }
+  return out;
+}
+
+/**
+ * When the ball last went into a goal mouth in [from, to]: the start of the
+ * latest spell of samples in a mouth. Null when there was none, or when the
+ * ball was in the other goal's area after it (that visit was not the goal).
+ */
+function entryIntoMouth(samples: BallPoint[], from: number, to: number, pitch: PitchSize): number | null {
+  const mid = pitch.width / 2;
+  const mouthOf = (p: [number, number]): number | null => {
+    for (const x of [0, pitch.length]) {
+      const depth = x === 0 ? p[0] : pitch.length - p[0];
+      if (depth >= -GOAL.netMetres && depth <= GOAL.mouthDepthMetres && Math.abs(p[1] - mid) <= GOAL.mouthHalfWidthMetres) return x;
+    }
+    return null;
+  };
+  let last: { start: number; end: number; goalX: number } | null = null;
+  let open = false;
+  for (const s of samples) {
+    if (s.t < from) continue;
+    if (s.t > to) break;
+    const g = mouthOf(s.p);
+    if (g === null) { open = false; continue; }
+    if (open && last && last.goalX === g && s.t - last.end <= GOAL.spellGapSeconds) last.end = s.t;
+    else last = { start: s.t, end: s.t, goalX: g };
+    open = true;
+  }
+  if (!last) return null;
+  const other = pitch.length - last.goalX;
+  const away = samples.some((s) => s.t > last!.end && s.t <= to
+    && Math.abs(s.p[0] - other) <= STRIKE.areaDepthMetres && Math.abs(s.p[1] - mid) <= STRIKE.areaHalfWidthMetres);
+  return away ? null : last.start;
 }
 
 function mergedGoalTimes(events: BundleEvent[]): number[] {

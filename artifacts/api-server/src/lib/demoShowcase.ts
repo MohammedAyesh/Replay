@@ -26,6 +26,7 @@ import { readClaimSegment } from "./claimMatchStorage";
 import { logger } from "./logger";
 import { loadRecordingPlay } from "./matchPlayLoad";
 import {
+  goalContext,
   detectedGoals,
   detectedShots,
   passEvents,
@@ -393,7 +394,7 @@ export async function buildDemoReport(recordingId: number): Promise<DemoReport |
   const pick = play.hasKits ? seedTeams(null, play.kitOptions) : null;
   const events = passEvents(play.touches, pick);
   const pitch = pitchSizeOf(play.manifest);
-  const goals = detectedGoals(play.events, play.touches, pitch);
+  const goals = detectedGoals(play.events, play.touches, pitch, goalContext(play));
   const shots = detectedShots(play.events, play.touches, pitch);
 
   let team: DemoReport["team"] = null;

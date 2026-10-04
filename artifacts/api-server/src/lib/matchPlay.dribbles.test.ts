@@ -164,7 +164,9 @@ describe("detected goals and shots", () => {
     const pitch = { length: 40, width: 20 };
     // the keeper came out to 35 m first, then was beaten from 1.8 m out and picked it out of the net
     const play = [touch(99, "s0:keeper", 35, WHITE), touch(100, "s0:passer", 30, BLACK), touch(101, "s0:striker", 38.2, BLACK), touch(101.6, "s0:keeper", 39, WHITE)];
-    const g = detectedGoals([{ type: "goal", t: 102 }], play, pitch);
+    // ...and the game restarted from the halfway line
+    const restart = { ball: [120, 121, 122].map((t) => ({ t, p: [20, 5] as [number, number] })) };
+    const g = detectedGoals([{ type: "goal", t: 102 }], play, pitch, restart);
     expect(g[0].trackId).toBe("s0:striker");
     expect(detectedGoals([{ type: "goal", t: 102 }], play)[0].trackId).toBe("s0:keeper"); // no pitch: the old rule
     const s = detectedShots([{ type: "shot", t: 101.6 }], play, pitch);
