@@ -11,7 +11,7 @@ import {
   type Lab,
   type Touch,
 } from "./matchPlay";
-import { followCrop, followPath, mergeMoments } from "./personalMoments";
+import { ballFollow, followCrop, followPath, mergeMoments, teamGoalMoments } from "./personalMoments";
 
 const WHITE: Lab = [200, 128, 128];
 const BLACK: Lab = [20, 128, 128];
@@ -206,5 +206,41 @@ describe("personal moments", () => {
     expect(mergeMoments(events, mine).map((m) => m.id)).toEqual(["claim-goal-100", "me-goal-301"]);
     // with no moments of your own, other people's shots still do not become your clips
     expect(mergeMoments(events, []).map((m) => m.id)).toEqual(["claim-goal-100", "claim-goal-300"]);
+  });
+
+  it("swaps the bundle's goal guesses for the app's goals when they are given", () => {
+    const events = [
+      { id: "claim-goal-100", title: "Goal", momentSeconds: 100, kind: "goal", status: "ready" },
+      { id: "claim-goal-112", title: "Goal", momentSeconds: 112, kind: "goal", status: "ready" },
+      { id: "claim-kickoff-150", title: "Kick-off", momentSeconds: 150, kind: "kickoff", status: "ready" },
+    ];
+    const team = [
+      { id: "goal-96", title: "Goal", momentSeconds: 96, kind: "goal", status: "ready" },
+      { id: "goal-299", title: "Goal", momentSeconds: 299, kind: "goal", status: "ready" },
+    ];
+    const mine = [{ id: "me-goal-301", title: "Your goal", momentSeconds: 301, kind: "your-goal", status: "ready" }];
+    // one goal at 96 instead of two guesses at 100 and 112; your own goal wins over the team copy
+    expect(mergeMoments(events, mine, team).map((m) => m.id)).toEqual(["goal-96", "claim-kickoff-150", "me-goal-301"]);
+  });
+
+  it("counts a goal only while the claimant was on, and frames it on the ball", () => {
+    const play = {
+      hasBall: true,
+      manifest: { width: 3840, height: 1080, frameRate: 20, duration: 1000 },
+      events: [{ type: "goal", t: 100 }, { type: "goal", t: 600 }],
+      touches: [],
+      sidecars: [{ v: 1, fps: 20, touches: [], kits: {}, ball: [[1900, 3200, 400], [2000, 3400, 420], [2100, 3500, 430]] }],
+      phases: [],
+    } as never;
+    const goals = teamGoalMoments(play, [{ startSeconds: 50, endSeconds: 300 }], { width: 3840, height: 1080, frameRate: 20 });
+    expect(goals.map((g) => g.momentSeconds)).toEqual([100]);
+    const follow = goals[0].follow!;
+    expect(follow).toHaveLength(17);
+    // right-hand goal: the frame sits on the ball, not the middle of the panorama
+    for (const [, x] of follow) expect(x).toBeGreaterThan(0.8);
+  });
+
+  it("has no ball path when the tracker saw no ball near the moment", () => {
+    expect(ballFollow([{ v: 1, fps: 20, touches: [], kits: {}, ball: [[100, 10, 10]] }] as never, { width: 3840, height: 1080, frameRate: 20 }, 500)).toBeUndefined();
   });
 });

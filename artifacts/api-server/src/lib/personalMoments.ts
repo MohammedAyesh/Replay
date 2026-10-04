@@ -181,18 +181,95 @@ export function personalMoments(
 }
 
 /**
+ * The goals the claimant was on the pitch for, from the app's own goal list.
+ *
+ * goals.py's raw "goal" events are not goals: on recording 392 sixteen of them
+ * stood for seven real goals -- a kick-off wait, a stoppage before a penalty,
+ * a keeper walking out, each its own event, and the real ones timed when play
+ * stopped, up to fifteen seconds after the ball went in (so the clip opened on
+ * the kick-off). detectedGoals keeps only events a restart answers, one per
+ * restart, timed at the ball entering the mouth -- the same goals the match
+ * stats count. Each clip follows the ball, so it is framed on the goal rather
+ * than on the middle of the panorama.
+ */
+export function teamGoalMoments(
+  play: RecordingPlay,
+  attributed: ReadonlyArray<{ startSeconds: number; endSeconds: number }>,
+  manifest: Pick<TrackingManifest, "frameRate" | "width" | "height">,
+): PersonalMoment[] {
+  if (!play.hasBall) return [];
+  const pitch = pitchSizeOf(play.manifest);
+  return detectedGoals(play.events, play.touches, pitch, goalContext(play))
+    .filter((g) => attributed.some((span) => g.t >= span.startSeconds && g.t <= span.endSeconds))
+    .map((g) => ({
+      id: `goal-${Math.round(g.t)}`,
+      title: `Goal · ${clock(g.t)}`,
+      momentSeconds: g.t,
+      kind: "goal",
+      status: "ready",
+      follow: ballFollow(play.sidecars, manifest, g.t),
+    }));
+}
+
+/**
+ * Where the ball is, every second of a clip, as fractions of the frame --
+ * followPath's shape, for a moment that is about the ball rather than a
+ * player. Holes keep the last known position; no ball at all gives undefined.
+ */
+export function ballFollow(
+  sidecars: RecordingPlay["sidecars"],
+  manifest: Pick<TrackingManifest, "frameRate" | "width" | "height">,
+  centreSeconds: number,
+): FollowPoint[] | undefined {
+  const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
+  if (!(manifest.width > 0 && manifest.height > 0)) return undefined;
+  const near: Array<[number, number, number]> = [];
+  const lo = (centreSeconds - PERSONAL.halfWindow - 1) * fps;
+  const hi = (centreSeconds + PERSONAL.halfWindow + 1) * fps;
+  for (const sc of sidecars ?? []) for (const b of sc?.ball ?? []) if (b[0] >= lo && b[0] <= hi) near.push(b);
+  if (!near.length) return undefined;
+  const out: Array<FollowPoint | null> = [];
+  let last: [number, number] | null = null;
+  for (let k = -PERSONAL.halfWindow; k <= PERSONAL.halfWindow; k++) {
+    const t = centreSeconds + k;
+    const f = t * fps;
+    let best: [number, number, number] | null = null;
+    for (const b of near) if (Math.abs(b[0] - f) <= fps * 0.75 && (!best || Math.abs(b[0] - f) < Math.abs(best[0] - f))) best = b;
+    if (best) last = [best[1] / manifest.width, best[2] / manifest.height];
+    out.push(last ? [t, last[0], last[1]] : null);
+  }
+  const first = out.find((p): p is FollowPoint => p !== null);
+  if (!first) return undefined;
+  const filled = out.map((p, i): FollowPoint => p ?? [centreSeconds - PERSONAL.halfWindow + i, first[1], first[2]]);
+  return filled.map((p, i) => {
+    const w = filled.slice(Math.max(0, i - 1), i + 2);
+    return [p[0], w.reduce((s, q) => s + q[1], 0) / w.length, w.reduce((s, q) => s + q[2], 0) / w.length];
+  });
+}
+
+/**
  * The claim's moments: its own, plus the bundle's events it was on the pitch
  * for -- but with ball data, only the goals among those (a shot on target by
  * someone else is not your moment), and none that repeat one of yours.
+ *
+ * When `teamGoals` is given (teamGoalMoments) they replace the bundle's goal
+ * events, which are goals.py's unconfirmed guesses.
  */
-export function mergeMoments(events: ChainEarnedClip[], mine: PersonalMoment[]): PersonalMoment[] {
+export function mergeMoments(
+  events: ChainEarnedClip[],
+  mine: PersonalMoment[],
+  teamGoals?: PersonalMoment[],
+): PersonalMoment[] {
   // Called only with ball data. Other people's shots go even when the claim has no moments of
   // its own: an early return here handed one player 27 "Shot on target" clips of other
   // players' shots on recording 392 (2026-10-03).
+  const near = (t: number) => mine.some((m) => Math.abs(m.momentSeconds - t) < 10);
   const kept = events.filter((e) => {
     const kind = e.kind.toLowerCase();
     if (kind === "shot") return false;
-    return !mine.some((m) => Math.abs(m.momentSeconds - e.momentSeconds) < 10);
+    if (teamGoals && kind === "goal") return false;
+    return !near(e.momentSeconds);
   });
-  return [...kept, ...mine].sort((a, b) => a.momentSeconds - b.momentSeconds);
+  const goals = (teamGoals ?? []).filter((g) => !near(g.momentSeconds));
+  return [...kept, ...goals, ...mine].sort((a, b) => a.momentSeconds - b.momentSeconds);
 }

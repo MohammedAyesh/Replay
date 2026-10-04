@@ -24,7 +24,7 @@ import { Router, type IRouter } from "express";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
-import { mergeMoments, personalMoments, type FollowPoint } from "../lib/personalMoments";
+import { mergeMoments, personalMoments, teamGoalMoments, type FollowPoint } from "../lib/personalMoments";
 import type { ClaimEarnedClip } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -731,7 +731,11 @@ export async function syncChainClaim(
             chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
             ctx.manifest,
           );
-          earnedClips = mergeMoments(earnedClips, personalMoments(play, parts, ctx.segments, ctx.manifest));
+          earnedClips = mergeMoments(
+            earnedClips,
+            personalMoments(play, parts, ctx.segments, ctx.manifest),
+            teamGoalMoments(play, state.attributed, ctx.manifest),
+          );
         }
       } catch (error) {
         console.error("[claim-chain] personal moments failed", { recordingId: ctx.recordingId, error });
