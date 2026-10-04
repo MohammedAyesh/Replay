@@ -476,8 +476,8 @@ describe("Academy Console API", () => {
       .where(eq(academySquadsTable.id, squadBId));
     expect(untouchedOtherAcademySquad?.name).toBe(`Academy B squad one ${tag}`);
 
-    expect((await request(app).delete(`${academySquadsUrl}/${createdSquadId}`).set(as(coachId))).status).toBe(403);
-    expect((await request(app).delete(`${academySquadsUrl}/${createdSquadId}`).set(as(ownerId))).status).toBe(204);
+    expect((await request(app).delete(`${academySquadsUrl}/${createdSquadId}`).set(as(coachId))).status).toBe(204);
+    expect((await request(app).delete(`${academySquadsUrl}/${createdSquadId}`).set(as(ownerId))).status).toBe(404);
     expect((await request(app).delete(squadUrl).set(as(ownerId))).status).toBe(204);
     const [retainedPlayer] = await db
       .select({ id: academyPlayersTable.id, squadId: academyPlayersTable.squadId })
@@ -501,7 +501,7 @@ describe("Academy Console API", () => {
     }).returning({ id: academyPlayersTable.id });
     const deleteUrl = `/api/academy/console/academies/${academyAId}/squads/${debtSquad.id}`;
 
-    expect((await request(app).delete(deleteUrl).set(as(coachId))).status).toBe(403);
+    expect((await request(app).delete(deleteUrl).set(as(coachId))).status).toBe(409);
     const blocked = await request(app).delete(deleteUrl).set(as(ownerId));
     expect(blocked.status).toBe(409);
     const [retained] = await db.select({
@@ -664,7 +664,7 @@ describe("Academy Console API", () => {
     expect((await request(app).delete(sessionUrl(createdSessionId)).set(as(coachId))).status).toBe(404);
   });
 
-  it("loads academy-scoped attendance rosters and upserts statuses per player", async () => {
+  it("keeps inactive players off squad attendance until they have a saved mark", async () => {
     const [attendanceSquad] = await db.insert(academySquadsTable).values({
       academyId: academyAId,
       name: `Attendance squad ${tag}`,
@@ -717,19 +717,33 @@ describe("Academy Console API", () => {
     expect(initial.status).toBe(200);
     expect(initial.body.players).toEqual(expect.arrayContaining([
       { playerId: attendancePlayerId, playerName: `Attendance active ${tag}`, jerseyNumber: null, status: null },
-      { playerId: inactiveAttendancePlayerId, playerName: `Attendance inactive ${tag}`, jerseyNumber: null, status: null },
     ]));
+    expect(initial.body.players.map((player: { playerId: number }) => player.playerId))
+      .not.toContain(inactiveAttendancePlayerId);
 
     const firstSave = await request(app)
       .put(attendanceUrl)
       .set(as(coachId))
       .send({
-        entries: [
-          { playerId: attendancePlayerId, status: "present" },
-          { playerId: inactiveAttendancePlayerId, status: "excused" },
-        ],
+        entries: [{ playerId: attendancePlayerId, status: "present" }],
       });
     expect(firstSave.status).toBe(200);
+
+    const rejectedUnmarkedInactive = await request(app)
+      .put(attendanceUrl)
+      .set(as(coachId))
+      .send({ entries: [{ playerId: inactiveAttendancePlayerId, status: "present" }] });
+    expect(rejectedUnmarkedInactive.status).toBe(404);
+
+    await db.insert(academyAttendanceTable).values({
+      sessionId: attendanceSessionId,
+      playerId: inactiveAttendancePlayerId,
+      status: "excused",
+    });
+    const rosterWithSavedMark = await request(app).get(attendanceUrl).set(as(coachId));
+    expect(rosterWithSavedMark.body.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerId: inactiveAttendancePlayerId, status: "excused" }),
+    ]));
 
     await db.update(academyPlayersTable)
       .set({ squadId: null })
@@ -739,6 +753,15 @@ describe("Academy Console API", () => {
       expect.objectContaining({ playerId: inactiveAttendancePlayerId, status: "excused" }),
     ]));
 
+    const updatedInactive = await request(app)
+      .put(attendanceUrl)
+      .set(as(coachId))
+      .send({ entries: [{ playerId: inactiveAttendancePlayerId, status: "late" }] });
+    expect(updatedInactive.status).toBe(200);
+    expect(updatedInactive.body.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerId: inactiveAttendancePlayerId, status: "late" }),
+    ]));
+
     const remark = await request(app)
       .put(attendanceUrl)
       .set(as(coachId))
@@ -746,7 +769,7 @@ describe("Academy Console API", () => {
     expect(remark.status).toBe(200);
     expect(remark.body.players).toEqual(expect.arrayContaining([
       expect.objectContaining({ playerId: attendancePlayerId, status: "late" }),
-      expect.objectContaining({ playerId: inactiveAttendancePlayerId, status: "excused" }),
+      expect.objectContaining({ playerId: inactiveAttendancePlayerId, status: "late" }),
     ]));
 
     const clearedInactive = await request(app)

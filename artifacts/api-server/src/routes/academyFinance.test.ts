@@ -527,6 +527,58 @@ describe("Academy Finance owner access and accounting", () => {
     expect(payment.body.staff.nextSalaryDate).toBe(addMonthsToDate(nextDate, 1));
   });
 
+  it("undoes next salary date only when deleting the latest salary payment", async () => {
+    expect(addMonthsToDate("2026-03-31", -1)).toBe("2026-02-28");
+    expect(addMonthsToDate("2024-03-31", -1)).toBe("2024-02-29");
+
+    const today = getAmmanDate();
+    const nextDate = `${addMonthsToDate(today, 1).slice(0, 7)}-10`;
+    const created = await request(app).post(`${financeUrl(academyAId)}/staff`)
+      .set(as(ownerId)).send({
+        name: `Salary rollback coach ${tag}`,
+        role: "Coach",
+        monthlySalaryFils: 180000,
+        nextSalaryDate: nextDate,
+        contractEndDate: dateOffset(today, 180),
+      });
+    expect(created.status).toBe(201);
+    const staffId = created.body.id as number;
+    const salaryUrl = `${financeUrl(academyAId)}/staff/${staffId}/salary-payment`;
+    const paymentsUrl = `${financeUrl(academyAId)}/other-payments`;
+
+    const firstPayment = await request(app).post(salaryUrl).set(as(ownerId));
+    expect(firstPayment.status).toBe(201);
+    expect(firstPayment.body.staff.nextSalaryDate).toBe(addMonthsToDate(nextDate, 1));
+
+    await db.update(academyOtherPaymentsTable)
+      .set({ category: "salary" })
+      .where(eq(academyOtherPaymentsTable.id, firstPayment.body.payment.id));
+    const deletedLatest = await request(app)
+      .delete(`${paymentsUrl}/${firstPayment.body.payment.id}`)
+      .set(as(ownerId));
+    expect(deletedLatest.status).toBe(204);
+    const [restoredStaff] = await db.select({
+      nextSalaryDate: academyFinanceStaffTable.nextSalaryDate,
+    }).from(academyFinanceStaffTable).where(eq(academyFinanceStaffTable.id, staffId));
+    expect(restoredStaff.nextSalaryDate).toBe(nextDate);
+
+    const earlierPayment = await request(app).post(salaryUrl).set(as(ownerId));
+    expect(earlierPayment.status).toBe(201);
+    const latestPayment = await request(app).post(salaryUrl).set(as(ownerId));
+    expect(latestPayment.status).toBe(201);
+    const dateAfterTwoPayments = addMonthsToDate(nextDate, 2);
+    expect(latestPayment.body.staff.nextSalaryDate).toBe(dateAfterTwoPayments);
+
+    const deletedEarlier = await request(app)
+      .delete(`${paymentsUrl}/${earlierPayment.body.payment.id}`)
+      .set(as(ownerId));
+    expect(deletedEarlier.status).toBe(204);
+    const [unchangedStaff] = await db.select({
+      nextSalaryDate: academyFinanceStaffTable.nextSalaryDate,
+    }).from(academyFinanceStaffTable).where(eq(academyFinanceStaffTable.id, staffId));
+    expect(unchangedStaff.nextSalaryDate).toBe(dateAfterTwoPayments);
+  });
+
   it("rejects foreign academy players, squads, and staff references at the write boundary", async () => {
     const wrongSquad = await request(app).post(
       `${financeUrl(academyAId)}/teams/${squadBId}/players`,

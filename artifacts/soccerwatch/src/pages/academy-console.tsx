@@ -408,7 +408,7 @@ type SquadFormValue = {
   description: string;
 };
 
-function SquadsSection({ academyId, isOwner }: { academyId: number; isOwner: boolean }) {
+function SquadsSection({ academyId }: { academyId: number }) {
   const { t, locale } = useTranslation();
   const labels = t.academyConsole;
   const queryClient = useQueryClient();
@@ -427,7 +427,7 @@ function SquadsSection({ academyId, isOwner }: { academyId: number; isOwner: boo
   const [form, setForm] = useState<SquadFormValue>({ name: "", ageGroup: "", description: "" });
   const [formErrors, setFormErrors] = useState<Partial<Record<keyof SquadFormValue, string>>>({});
   const [saveError, setSaveError] = useState(false);
-  const [deleteError, setDeleteError] = useState(false);
+  const [deleteError, setDeleteError] = useState<"balance" | "generic" | null>(null);
   const numberFormat = new Intl.NumberFormat(locale);
   const squads = squadsQuery.data ?? [];
   const isSaving = createSquad.isPending || updateSquad.isPending;
@@ -505,13 +505,13 @@ function SquadsSection({ academyId, isOwner }: { academyId: number; isOwner: boo
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
-    setDeleteError(false);
+    setDeleteError(null);
     try {
       await deleteSquad.mutateAsync({ academyId, squadId: pendingDelete.id });
       await refreshAcademyCounts();
       setPendingDelete(null);
-    } catch {
-      setDeleteError(true);
+    } catch (error) {
+      setDeleteError(hasHttpStatus(error, 409) ? "balance" : "generic");
     }
   };
 
@@ -583,22 +583,20 @@ function SquadsSection({ academyId, isOwner }: { academyId: number; isOwner: boo
                   >
                     <Pencil className="h-4 w-4" aria-hidden="true" />
                   </Button>
-                  {isOwner && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        setDeleteError(false);
-                        setPendingDelete(squad);
-                      }}
-                      aria-label={`${labels.deleteSquad}: ${squad.name}`}
-                      className="text-muted-text hover:text-destructive"
-                      data-testid={`button-delete-squad-${squad.id}`}
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </Button>
-                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      setDeleteError(null);
+                      setPendingDelete(squad);
+                    }}
+                    aria-label={`${labels.deleteSquad}: ${squad.name}`}
+                    className="text-muted-text hover:text-destructive"
+                    data-testid={`button-delete-squad-${squad.id}`}
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  </Button>
                 </div>
               </div>
               {squad.description && (
@@ -684,7 +682,7 @@ function SquadsSection({ academyId, isOwner }: { academyId: number; isOwner: boo
         onOpenChange={(open) => {
           if (!open && !deleteSquad.isPending) {
             setPendingDelete(null);
-            setDeleteError(false);
+            setDeleteError(null);
           }
         }}
       >
@@ -695,7 +693,11 @@ function SquadsSection({ academyId, isOwner }: { academyId: number; isOwner: boo
               {labels.deleteSquadDescription}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {deleteError && <p className="text-sm text-destructive" role="alert" data-testid="squad-delete-error">{labels.squadDeleteError}</p>}
+          {deleteError && (
+            <p className="text-sm text-destructive" role="alert" data-testid="squad-delete-error">
+              {deleteError === "balance" ? labels.squadDeleteError : labels.squadDeleteGenericError}
+            </p>
+          )}
           <AlertDialogFooter className="gap-2">
             <AlertDialogCancel disabled={deleteSquad.isPending} className="min-h-11">
               {labels.cancel}
@@ -838,7 +840,7 @@ export default function AcademyConsole() {
               dashboardQuery.isError || !dashboardQuery.data ? <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted-text" data-testid="academy-dashboard-error">{t.academyConsole.dashboardError}</div> :
                 <Dashboard dashboard={dashboardQuery.data} isOwner={isOwner} />
           ) : section === "squads" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <SquadsSection academyId={activeAcademyId} isOwner={isOwner} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <SquadsSection academyId={activeAcademyId} />
           ) : section === "players" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPlayersSection academyId={activeAcademyId} />
           ) : section === "schedule" ? (

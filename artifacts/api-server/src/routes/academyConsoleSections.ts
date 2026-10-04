@@ -106,7 +106,10 @@ async function attendanceSheet(academyId: number, sessionId: number) {
             isNotNull(academyAttendanceTable.playerId),
           )!]
         : [or(
-            eq(academyPlayersTable.squadId, session.squadId),
+            and(
+              eq(academyPlayersTable.squadId, session.squadId),
+              eq(academyPlayersTable.isActive, true),
+            ),
             isNotNull(academyAttendanceTable.playerId),
           )!]),
     ))
@@ -152,7 +155,10 @@ async function eligiblePlayerIds(academyId: number, sessionId: number) {
             isNotNull(academyAttendanceTable.playerId),
           )!]
         : [or(
-            eq(academyPlayersTable.squadId, session.squadId),
+            and(
+              eq(academyPlayersTable.squadId, session.squadId),
+              eq(academyPlayersTable.isActive, true),
+            ),
             isNotNull(academyAttendanceTable.playerId),
           )!]),
     ));

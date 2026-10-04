@@ -4,6 +4,7 @@ import {
   desc,
   eq,
   gte,
+  ilike,
   inArray,
   isNull,
   lt,
@@ -1451,11 +1452,61 @@ router.delete(
     }
     const { academyId, paymentId } = params.data;
     if (!(await authorizeOwner(req, res, academyId))) return;
-    const [deleted] = await db.delete(academyOtherPaymentsTable).where(and(
-      eq(academyOtherPaymentsTable.id, paymentId),
-      eq(academyOtherPaymentsTable.academyId, academyId),
-    )).returning({ id: academyOtherPaymentsTable.id });
-    if (!deleted) {
+    const deletedId = await db.transaction(async (tx) => {
+      const [payment] = await tx.select({
+        id: academyOtherPaymentsTable.id,
+        staffId: academyOtherPaymentsTable.staffId,
+        category: academyOtherPaymentsTable.category,
+      })
+        .from(academyOtherPaymentsTable)
+        .where(and(
+          eq(academyOtherPaymentsTable.id, paymentId),
+          eq(academyOtherPaymentsTable.academyId, academyId),
+        ))
+        .for("update");
+      if (!payment) return null;
+
+      if (payment.staffId !== null && payment.category.toLowerCase() === "salary") {
+        const [latestSalaryPayment] = await tx.select({
+          id: academyOtherPaymentsTable.id,
+        })
+          .from(academyOtherPaymentsTable)
+          .where(and(
+            eq(academyOtherPaymentsTable.academyId, academyId),
+            eq(academyOtherPaymentsTable.staffId, payment.staffId),
+            ilike(academyOtherPaymentsTable.category, "salary"),
+          ))
+          .orderBy(desc(academyOtherPaymentsTable.paidAt), desc(academyOtherPaymentsTable.id))
+          .limit(1);
+
+        if (latestSalaryPayment?.id === payment.id) {
+          const [staff] = await tx.select({
+            id: academyFinanceStaffTable.id,
+            nextSalaryDate: academyFinanceStaffTable.nextSalaryDate,
+          })
+            .from(academyFinanceStaffTable)
+            .where(and(
+              eq(academyFinanceStaffTable.id, payment.staffId),
+              eq(academyFinanceStaffTable.academyId, academyId),
+            ))
+            .for("update");
+          if (!staff) throw new Error("Salary payment references a missing staff member");
+          await tx.update(academyFinanceStaffTable)
+            .set({ nextSalaryDate: addMonthsToDate(staff.nextSalaryDate, -1) })
+            .where(and(
+              eq(academyFinanceStaffTable.id, staff.id),
+              eq(academyFinanceStaffTable.academyId, academyId),
+            ));
+        }
+      }
+
+      const [deleted] = await tx.delete(academyOtherPaymentsTable).where(and(
+        eq(academyOtherPaymentsTable.id, paymentId),
+        eq(academyOtherPaymentsTable.academyId, academyId),
+      )).returning({ id: academyOtherPaymentsTable.id });
+      return deleted?.id ?? null;
+    });
+    if (deletedId === null) {
       notFound(res, "Payment not found in this academy");
       return;
     }

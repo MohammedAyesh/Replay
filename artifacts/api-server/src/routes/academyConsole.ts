@@ -514,12 +514,7 @@ router.delete("/academy/console/academies/:academyId/squads/:squadId", async (re
     return;
   }
   const { academyId, squadId } = parsedParams.data;
-  const roles = await requireAcademyMembership(user.id, academyId, res);
-  if (!roles) return;
-  if (!roles.includes("owner")) {
-    res.status(403).json({ error: "Academy owner role required" });
-    return;
-  }
+  if (!(await requireAcademyMembership(user.id, academyId, res))) return;
   if (!(await academyExists(academyId))) {
     res.status(404).json({ error: "Academy not found" });
     return;
