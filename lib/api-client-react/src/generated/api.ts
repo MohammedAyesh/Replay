@@ -5999,6 +5999,77 @@ export function useListAcademyFinanceTeams<TData = Awaited<ReturnType<typeof lis
 
 
 
+export const getCreateAcademyFinanceTeamUrl = (academyId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/finance/teams`
+}
+
+/**
+ * @summary Create a squad with its monthly fee
+ */
+export const createAcademyFinanceTeam = async (academyId: number,
+    academyFinanceTeamInput: AcademyFinanceTeamInput, options?: RequestInit): Promise<AcademyFinanceTeam> => {
+
+  return customFetch<AcademyFinanceTeam>(getCreateAcademyFinanceTeamUrl(academyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFinanceTeamInput)
+  }
+);}
+
+
+
+
+export const getCreateAcademyFinanceTeamMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext> => {
+
+const mutationKey = ['createAcademyFinanceTeam'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, {academyId: number;data: BodyType<AcademyFinanceTeamInput>}> = (props) => {
+          const {academyId,data} = props ?? {};
+
+          return  createAcademyFinanceTeam(academyId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAcademyFinanceTeamMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinanceTeam>>>
+    export type CreateAcademyFinanceTeamMutationBody = BodyType<AcademyFinanceTeamInput>
+    export type CreateAcademyFinanceTeamMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a squad with its monthly fee
+ */
+export const useCreateAcademyFinanceTeam = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAcademyFinanceTeam>>,
+        TError,
+        {academyId: number;data: BodyType<AcademyFinanceTeamInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAcademyFinanceTeamMutationOptions(options));
+    }
+
 export const getListAcademyFinanceUnassignedPlayersUrl = (academyId: number,) => {
 
 
@@ -6075,77 +6146,6 @@ export function useListAcademyFinanceUnassignedPlayers<TData = Awaited<ReturnTyp
 
 
 
-
-export const getCreateAcademyFinanceTeamUrl = (academyId: number,) => {
-
-
-
-
-  return `/api/academy/console/academies/${academyId}/finance/unassigned-players`
-}
-
-/**
- * @summary Create a squad with its monthly fee
- */
-export const createAcademyFinanceTeam = async (academyId: number,
-    academyFinanceTeamInput: AcademyFinanceTeamInput, options?: RequestInit): Promise<AcademyFinanceTeam> => {
-
-  return customFetch<AcademyFinanceTeam>(getCreateAcademyFinanceTeamUrl(academyId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(academyFinanceTeamInput)
-  }
-);}
-
-
-
-
-export const getCreateAcademyFinanceTeamMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext> => {
-
-const mutationKey = ['createAcademyFinanceTeam'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, {academyId: number;data: BodyType<AcademyFinanceTeamInput>}> = (props) => {
-          const {academyId,data} = props ?? {};
-
-          return  createAcademyFinanceTeam(academyId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateAcademyFinanceTeamMutationResult = NonNullable<Awaited<ReturnType<typeof createAcademyFinanceTeam>>>
-    export type CreateAcademyFinanceTeamMutationBody = BodyType<AcademyFinanceTeamInput>
-    export type CreateAcademyFinanceTeamMutationError = ErrorType<void>
-
-    /**
- * @summary Create a squad with its monthly fee
- */
-export const useCreateAcademyFinanceTeam = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAcademyFinanceTeam>>, TError,{academyId: number;data: BodyType<AcademyFinanceTeamInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof createAcademyFinanceTeam>>,
-        TError,
-        {academyId: number;data: BodyType<AcademyFinanceTeamInput>},
-        TContext
-      > => {
-      return useMutation(getCreateAcademyFinanceTeamMutationOptions(options));
-    }
 
 export const getUpdateAcademyFinanceTeamUrl = (academyId: number,
     squadId: number,) => {

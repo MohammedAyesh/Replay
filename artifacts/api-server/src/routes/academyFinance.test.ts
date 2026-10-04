@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
@@ -46,6 +47,40 @@ const fieldIds: number[] = [];
 let app: Express;
 let ownerId: number;
 let coachId: number;
+
+function openApiPathItem(document: string, path: string): string {
+  const header = `  ${path}:\n`;
+  const pathStart = document.indexOf(header);
+  if (pathStart === -1) return "";
+
+  const contentStart = pathStart + header.length;
+  const nextPathOffset = document.slice(contentStart).search(/^  \/[^\n]+:[ \t]*$/m);
+  const pathEnd = nextPathOffset === -1 ? document.length : contentStart + nextPathOffset;
+  return document.slice(pathStart, pathEnd);
+}
+
+describe("Academy Finance OpenAPI paths", () => {
+  it("keeps squad creation and unassigned players on their intended paths", () => {
+    const document = readFileSync(
+      new URL("../../../../lib/api-spec/openapi.yaml", import.meta.url),
+      "utf8",
+    );
+    const teamsPath = openApiPathItem(
+      document,
+      "/academy/console/academies/{academyId}/finance/teams",
+    );
+    const unassignedPlayersPath = openApiPathItem(
+      document,
+      "/academy/console/academies/{academyId}/finance/unassigned-players",
+    );
+
+    expect(teamsPath).toContain("    post:\n      operationId: createAcademyFinanceTeam");
+    expect(unassignedPlayersPath).toContain(
+      "    get:\n      operationId: listAcademyFinanceUnassignedPlayers",
+    );
+    expect(unassignedPlayersPath).not.toMatch(/^    post:$/m);
+  });
+});
 let nonMemberId: number;
 let adminId: number;
 let academyAId: number;

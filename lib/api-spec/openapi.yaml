@@ -2275,6 +2275,33 @@ paths:
           description: Academy owner role required
         "404":
           description: Academy not found
+    post:
+      operationId: createAcademyFinanceTeam
+      tags: [academyFinance]
+      summary: Create a squad with its monthly fee
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFinanceTeamInput"
+      responses:
+        "201":
+          description: Created squad finance summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyFinanceTeam"
+        "400":
+          description: Invalid team input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy not found
 
   /academy/console/academies/{academyId}/finance/unassigned-players:
     parameters:
@@ -2301,33 +2328,6 @@ paths:
                   $ref: "#/components/schemas/AcademyFinanceUnassignedPlayer"
         "400":
           description: Invalid academy ID
-        "401":
-          description: Unauthenticated
-        "403":
-          description: Academy owner role required
-        "404":
-          description: Academy not found
-    post:
-      operationId: createAcademyFinanceTeam
-      tags: [academyFinance]
-      summary: Create a squad with its monthly fee
-      security:
-        - clerkSession: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AcademyFinanceTeamInput"
-      responses:
-        "201":
-          description: Created squad finance summary
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AcademyFinanceTeam"
-        "400":
-          description: Invalid team input
         "401":
           description: Unauthenticated
         "403":

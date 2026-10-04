@@ -2686,32 +2686,6 @@ export const ListAcademyFinanceTeamsResponse = zod.array(ListAcademyFinanceTeams
 
 
 /**
- * @summary List active players without a squad and their unpaid one-off fees
- */
-
-
-
-export const ListAcademyFinanceUnassignedPlayersParams = zod.object({
-  "academyId": zod.coerce.number().min(1)
-})
-
-
-export const listAcademyFinanceUnassignedPlayersResponseUnpaidFeesFilsMin = 0;
-
-export const listAcademyFinanceUnassignedPlayersResponseOutstandingFilsMin = 0;
-
-
-
-export const ListAcademyFinanceUnassignedPlayersResponseItem = zod.object({
-  "id": zod.number().min(1),
-  "name": zod.string(),
-  "unpaidFeesFils": zod.number().min(listAcademyFinanceUnassignedPlayersResponseUnpaidFeesFilsMin),
-  "outstandingFils": zod.number().min(listAcademyFinanceUnassignedPlayersResponseOutstandingFilsMin)
-})
-export const ListAcademyFinanceUnassignedPlayersResponse = zod.array(ListAcademyFinanceUnassignedPlayersResponseItem)
-
-
-/**
  * @summary Create a squad with its monthly fee
  */
 
@@ -2757,6 +2731,32 @@ export const CreateAcademyFinanceTeamResponse = zod.object({
   "behindCount": zod.number().min(createAcademyFinanceTeamResponseBehindCountMin),
   "outstandingFils": zod.number().min(createAcademyFinanceTeamResponseOutstandingFilsMin)
 })
+
+
+/**
+ * @summary List active players without a squad and their unpaid one-off fees
+ */
+
+
+
+export const ListAcademyFinanceUnassignedPlayersParams = zod.object({
+  "academyId": zod.coerce.number().min(1)
+})
+
+
+export const listAcademyFinanceUnassignedPlayersResponseUnpaidFeesFilsMin = 0;
+
+export const listAcademyFinanceUnassignedPlayersResponseOutstandingFilsMin = 0;
+
+
+
+export const ListAcademyFinanceUnassignedPlayersResponseItem = zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "unpaidFeesFils": zod.number().min(listAcademyFinanceUnassignedPlayersResponseUnpaidFeesFilsMin),
+  "outstandingFils": zod.number().min(listAcademyFinanceUnassignedPlayersResponseOutstandingFilsMin)
+})
+export const ListAcademyFinanceUnassignedPlayersResponse = zod.array(ListAcademyFinanceUnassignedPlayersResponseItem)
 
 
 /**
