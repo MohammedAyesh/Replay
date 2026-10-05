@@ -180,9 +180,9 @@ describe("ClipPlayer playback recovery", () => {
     expect(summarizeFatalHlsError({})).toBe("Unspecified hls.js error");
   });
 
-  it("checks an alternate fallback with a one-byte range request", async () => {
+  it("checks an alternate fallback with a bounded range request", async () => {
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get("Range")).toBe("bytes=0-0");
+      expect(new Headers(init?.headers).get("Range")).toBe("bytes=0-65535");
       return new Response(null, { status: 206 });
     }) as unknown as typeof fetch;
 
@@ -214,5 +214,27 @@ describe("ClipPlayer playback recovery", () => {
       ...options,
       currentRetryAttempted: true,
     })).resolves.toEqual({ type: "error" });
+  });
+
+  it("tries the MP4 fallback only after the proxied HLS source has been retried", async () => {
+    const isFallbackAvailable = vi.fn(async () => true);
+    const options = {
+      currentStage: "proxy" as const,
+      hasProxy: true,
+      fallbackSrc: "/api/hls-proxy/segment?url=encoded",
+      isFallbackAvailable,
+    };
+
+    await expect(decidePlaybackRecovery({
+      ...options,
+      currentRetryAttempted: false,
+    })).resolves.toEqual({ type: "retry-current" });
+    expect(isFallbackAvailable).not.toHaveBeenCalled();
+
+    await expect(decidePlaybackRecovery({
+      ...options,
+      currentRetryAttempted: true,
+    })).resolves.toEqual({ type: "switch-source", stage: "fallback" });
+    expect(isFallbackAvailable).toHaveBeenCalledTimes(1);
   });
 });

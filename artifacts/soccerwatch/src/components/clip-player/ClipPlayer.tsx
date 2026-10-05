@@ -106,7 +106,7 @@ export type ClipPlayerProps = {
   src: string;
   /** Same recording through the app proxy. Archived recordings use this before any cross-origin source. */
   proxySrc?: string;
-  /** Optional alternate source used after the preferred HLS sources fail. */
+  /** Same-origin progressive MP4 fallback, tried only after an HLS retry fails. */
   fallbackSrc?: string;
   onFallback?: () => void;
   title: string;

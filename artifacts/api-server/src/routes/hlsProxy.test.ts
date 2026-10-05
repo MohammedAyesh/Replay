@@ -72,6 +72,20 @@ function upstreamOnce(body: string) {
   });
 }
 
+const MP4_RANGE_BYTES = 4 * 1024 * 1024;
+const MIN_MP4_RANGE_BYTES = 64 * 1024;
+
+function mp4Range(start: number, end: number, total: number, fill: number) {
+  return new Response(Buffer.alloc(end - start + 1, fill), {
+    status: 206,
+    headers: {
+      "Content-Type": "video/mp4",
+      "Content-Range": `bytes ${start}-${end}/${total}`,
+      "Accept-Ranges": "bytes",
+    },
+  });
+}
+
 describe("hls-proxy manifest cache", () => {
   it("serves a VOD playlist from cache on the second request", async () => {
     const url = `${UPSTREAM}?vod-${Date.now()}`;
@@ -135,6 +149,78 @@ describe("hls-proxy manifest cache", () => {
       Referer: "https://vz-test.b-cdn.net/",
       Range: "bytes=0-3",
     });
+  });
+
+  it("streams an open-ended MP4 range using bounded upstream requests", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    const total = MP4_RANGE_BYTES + 7;
+    fetchMock
+      .mockResolvedValueOnce(mp4Range(0, MP4_RANGE_BYTES - 1, total, 17))
+      .mockResolvedValueOnce(mp4Range(MP4_RANGE_BYTES, total - 1, total, 29));
+
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url })
+      .set("Range", "bytes=0-");
+
+    expect(res.status).toBe(206);
+    expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(res.headers["content-range"]).toBe(`bytes 0-${total - 1}/${total}`);
+    expect(res.headers["content-length"]).toBe(String(total));
+    expect(res.body).toHaveLength(total);
+    expect(res.body[0]).toBe(17);
+    expect(res.body[total - 1]).toBe(29);
+    expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("Range"))).toEqual([
+      `bytes=0-${MP4_RANGE_BYTES - 1}`,
+      `bytes=${MP4_RANGE_BYTES}-${MP4_RANGE_BYTES + MIN_MP4_RANGE_BYTES - 1}`,
+    ]);
+  });
+
+  it("streams a no-Range MP4 request as a normal full response with range support", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    const total = MP4_RANGE_BYTES + 3;
+    fetchMock
+      .mockResolvedValueOnce(mp4Range(0, MP4_RANGE_BYTES - 1, total, 41))
+      .mockResolvedValueOnce(mp4Range(MP4_RANGE_BYTES, total - 1, total, 53));
+
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(res.headers["content-range"]).toBeUndefined();
+    expect(res.headers["content-length"]).toBe(String(total));
+    expect(res.body).toHaveLength(total);
+    expect(res.body[0]).toBe(41);
+    expect(res.body[total - 1]).toBe(53);
+    expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("Range"))).toEqual([
+      `bytes=0-${MP4_RANGE_BYTES - 1}`,
+      `bytes=${MP4_RANGE_BYTES}-${MP4_RANGE_BYTES + MIN_MP4_RANGE_BYTES - 1}`,
+    ]);
+  });
+
+  it("backs off to smaller bounded ranges when Bunny rejects the preferred chunk size", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    const total = 2 * 1024 * 1024 + 1;
+    fetchMock
+      .mockResolvedValueOnce(new Response("range too large", { status: 500 }))
+      .mockResolvedValueOnce(mp4Range(0, 2 * 1024 * 1024 - 1, total, 67))
+      .mockResolvedValueOnce(mp4Range(2 * 1024 * 1024, total - 1, total, 79));
+
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url })
+      .set("Range", "bytes=0-");
+
+    expect(res.status).toBe(206);
+    expect(res.body).toHaveLength(total);
+    expect(res.body[total - 1]).toBe(79);
+    expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("Range"))).toEqual([
+      `bytes=0-${MP4_RANGE_BYTES - 1}`,
+      `bytes=0-${2 * 1024 * 1024 - 1}`,
+      `bytes=${2 * 1024 * 1024}-${2 * 1024 * 1024 + MIN_MP4_RANGE_BYTES - 1}`,
+    ]);
   });
 
   it("reports WHY an upstream fetch failed instead of a bare 503", async () => {

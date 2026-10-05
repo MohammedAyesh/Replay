@@ -50,6 +50,12 @@ export async function decidePlaybackRecovery(options: {
     return { type: "switch-source", stage: "proxy" };
   }
 
+  // Give the active HLS source one short retry before falling through to the
+  // progressive MP4. A switch to the fallback begins a fresh per-source retry.
+  if (!options.currentRetryAttempted) {
+    return { type: "retry-current" };
+  }
+
   if (options.currentStage !== "fallback" && options.fallbackSrc) {
     const probe = options.isFallbackAvailable ?? isFallbackSourceAvailable;
     if (await probe(options.fallbackSrc)) {
@@ -57,9 +63,7 @@ export async function decidePlaybackRecovery(options: {
     }
   }
 
-  return options.currentRetryAttempted
-    ? { type: "error" }
-    : { type: "retry-current" };
+  return { type: "error" };
 }
 
 export async function isFallbackSourceAvailable(
@@ -69,7 +73,8 @@ export async function isFallbackSourceAvailable(
   const controller = new AbortController();
   try {
     const response = await fetcher(url, {
-      headers: { Range: "bytes=0-0" },
+      // Match the smallest bounded request known to work on large Bunny MP4s.
+      headers: { Range: "bytes=0-65535" },
       signal: controller.signal,
     });
     const available = response.ok;

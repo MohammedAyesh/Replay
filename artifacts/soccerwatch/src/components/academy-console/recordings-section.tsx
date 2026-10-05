@@ -7,6 +7,7 @@ import {
 } from "@workspace/api-client-react";
 import { CalendarDays, Play, Video } from "lucide-react";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
+import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 
@@ -62,6 +63,7 @@ export function AcademyRecordingsSection({ academyId, academyName }: { academyId
         {playing?.videoUrl && <ClipPlayer
           src={playing.videoUrl}
           proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(playing.videoUrl)}`}
+          fallbackSrc={getBunnyMp4FallbackSource(playing.videoUrl)}
           title={`${academyName} · ${playing.date} · ${playing.timeSlot}`}
           source={{ kind: "bunny", videoId: extractBunnyGuid(playing.videoUrl) }}
           academyId={academyId}
