@@ -6,8 +6,9 @@ import {
   getGetAcademyFamilyMeQueryKey,
   getGetPublicAcademyFamilyQueryKey,
 } from "@workspace/api-client-react";
-import { ArrowUpLeft, CalendarDays, Check, Clock3, MapPin, ShieldCheck, Trophy, WalletCards } from "lucide-react";
+import { ArrowUpLeft, CalendarDays, Check, Clock3, Globe, MapPin, ShieldCheck, Trophy, WalletCards } from "lucide-react";
 import { useTranslation } from "@/i18n";
+import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -157,9 +158,25 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
         .fp-payment-status.due{background:color-mix(in srgb,var(--replay-floodlight) 14%,var(--replay-surface));color:var(--replay-floodlight)}
         .fp-payment-status.waived{color:var(--replay-muted)}
       `}</style>
-      <header className="fp-header">
-        <div className="fp-brand"><span className="fp-brand-mark" aria-hidden="true">S</span><span>SOCCERWATCH</span></div>
-        <button type="button" className="fp-lang" onClick={toggleLanguage} aria-label={isEnglish ? "التبديل إلى العربية" : "Switch to English"} data-testid="button-family-language">{isEnglish ? "العربية" : "English"}</button>
+      <header className="replay-header sticky top-3 z-40 mx-3 mt-3 mb-2 shrink-0 rounded-2xl border border-line bg-surface/95 px-4 py-2.5 backdrop-blur-md">
+        <div className="flex items-center justify-between gap-3">
+          <AcademySidebarBrand
+            academyName={family?.academy.name ?? "Academy"}
+            academyLogoUrl={family?.academy.logoUrl ?? null}
+            caption={labels.eyebrow}
+            direction={isEnglish ? "ltr" : "rtl"}
+          />
+          <button
+            type="button"
+            onClick={toggleLanguage}
+            aria-label="Change language"
+            className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-line bg-raised px-3.5 py-2 text-sm font-semibold text-foreground"
+            data-testid="button-family-language"
+          >
+            <Globe className="h-4 w-4" aria-hidden="true" />
+            <span>{lang.toUpperCase()}</span>
+          </button>
+        </div>
       </header>
       {!family && familyQuery.isLoading ? (
         <div className="fp-wrap" aria-label={labels.loading} data-testid="family-loading">
@@ -180,10 +197,6 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
               <div className="fp-trust"><ShieldCheck size={16} aria-hidden="true" />{labels.secure}</div>
             </section>
             <section className="fp-hero" data-testid="family-player-summary">
-              <div className="fp-academy">
-                <span className="fp-logo" data-testid="academy-logo">{family.academy.logoUrl && <img src={family.academy.logoUrl} alt="" />}</span>
-                <span><small>{labels.eyebrow}</small><strong dir="auto" data-testid="text-academy-name">{family.academy.name}</strong></span>
-              </div>
               <div className="fp-player">
                 <div className="fp-player-main">
                   <span className="fp-player-number" data-testid="text-player-jersey">{family.player.jerseyNumber ?? "—"}</span>
