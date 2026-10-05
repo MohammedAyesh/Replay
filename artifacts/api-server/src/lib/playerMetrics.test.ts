@@ -107,3 +107,39 @@ describe("top speed", () => {
     expect(result.topSpeedMetresPerSecond).toBeNull();
   });
 });
+
+function distance(boxes: Box[], seconds: number) {
+  const segments = [{ tracks: [{ id: "t1", boxes }] }] as never;
+  return buildPlayerMetrics(manifest, segments, [whole("t1", boxes)], seconds, 0, 0, 0, 0, 0, 0, []).distanceMetres!;
+}
+
+/** ±4 px (0.4 m) of irregular wobble on the foot point, the way a detection box moves frame to frame. */
+const wobble = (boxes: Box[]) => boxes.map((b) => ({
+  ...b,
+  x: b.x + 4 * Math.sin(b.frame * 1.7) * Math.cos(b.frame * 0.37),
+  y: b.y + 4 * Math.sin(b.frame * 2.3 + 1),
+}));
+
+describe("distance", () => {
+  it("reads a steady run", () => {
+    expect(distance(run(0, 60, 3), 60)).toBeGreaterThan(170);
+    expect(distance(run(0, 60, 3), 60)).toBeLessThan(181);
+  });
+
+  it("does not count box wobble while standing still as running", () => {
+    // Summing every 10 Hz step read this as several hundred metres a minute.
+    expect(distance(wobble(run(0, 60, 0, 200)), 60)).toBeLessThan(12);
+  });
+
+  it("adds little to a run when the box wobbles", () => {
+    const clean = distance(run(0, 60, 3), 60);
+    const noisy = distance(wobble(run(0, 60, 3)), 60);
+    expect(noisy).toBeLessThan(clean * 1.08);
+  });
+
+  it("still breaks the path at a gap of more than 2 s", () => {
+    const first = run(0, 20, 0, 50);
+    const second = run(20 * FPS + 100, 20, 0, 350); // 5 s later, 30 m away
+    expect(distance([...first, ...second], 40)).toBeLessThan(5);
+  });
+});

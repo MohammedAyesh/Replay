@@ -76,6 +76,45 @@ function positionSamplesForRanges(
   return sampled;
 }
 
+/**
+ * Where the player was each second: the median of that second's pitch
+ * positions, in time order. Distance is the path through these points.
+ *
+ * Summing every 10 Hz step instead counted the detection box's wobble as
+ * running: the box's bottom edge moves a few pixels every frame as the legs
+ * and arms move, and at the far touchline a few pixels is half a metre. On
+ * rec 392 that added 20-25% (Ib 8.1 km against 6.5 km on per-second
+ * positions), 0.3 km of it while the player stood still. See
+ * claude/distance-is-inflated-about-20-percent-by-box-wobble-ib-ran-6-5-km-not-8-2026-10-05.md.
+ */
+export function perSecondPath(
+  samples: ReadonlyArray<{ frame: number; pitchX: number; pitchY: number }>,
+  frameRate: number,
+): Array<{ second: number; frame: number; x: number; y: number }> {
+  const fps = Math.max(frameRate, 0.001);
+  const median = (values: number[]) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  };
+  const out: Array<{ second: number; frame: number; x: number; y: number }> = [];
+  let i = 0;
+  const ordered = [...samples].sort((a, b) => a.frame - b.frame);
+  while (i < ordered.length) {
+    const second = Math.floor(ordered[i].frame / fps);
+    const xs: number[] = [];
+    const ys: number[] = [];
+    const firstFrame = ordered[i].frame;
+    while (i < ordered.length && Math.floor(ordered[i].frame / fps) === second) {
+      xs.push(ordered[i].pitchX);
+      ys.push(ordered[i].pitchY);
+      i++;
+    }
+    out.push({ second, frame: firstFrame, x: median(xs), y: median(ys) });
+  }
+  return out;
+}
+
 type SpeedSummary = {
   topSpeedMetresPerSecond: number | null;
   topSpeedUsableTimeFraction: number | null;
@@ -354,12 +393,12 @@ export function buildPlayerMetrics(
   const distanceByBucket = new Map<number, number>();
   if (usablePitchModel) {
     distanceMetres = 0;
-    for (let index = 1; index < smoothed.length; index++) {
-      const previous = smoothed[index - 1];
-      const current = smoothed[index];
-      const gapSeconds = (current.frame - previous.frame) / Math.max(manifest.frameRate, 0.001);
-      if (gapSeconds <= maxGapSeconds) {
-        const step = Math.hypot(current.pitchX - previous.pitchX, current.pitchY - previous.pitchY);
+    const path = perSecondPath(mapped, manifest.frameRate);
+    for (let index = 1; index < path.length; index++) {
+      const previous = path[index - 1];
+      const current = path[index];
+      if (current.second - previous.second <= maxGapSeconds) {
+        const step = Math.hypot(current.x - previous.x, current.y - previous.y);
         distanceMetres += step;
         if (timing) {
           const bucket = timing.bucketOfFrame(current.frame);
