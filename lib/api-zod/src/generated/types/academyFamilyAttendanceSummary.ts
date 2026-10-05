@@ -6,7 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface PublicAcademyFamilyAttendanceSummary {
+export interface AcademyFamilyAttendanceSummary {
   /** @minimum 0 */
   present: number;
   /** @minimum 0 */

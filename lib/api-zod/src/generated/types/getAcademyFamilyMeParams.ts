@@ -8,6 +8,10 @@
 
 export type GetAcademyFamilyMeParams = {
 /**
+ * @minimum 1
+ */
+playerId?: number;
+/**
  * @pattern ^\d{4}-\d{2}-\d{2}$
  */
 from?: string;

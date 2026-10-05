@@ -5,12 +5,12 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
-import type { PublicAcademyFamilyFinanceSubscriptionStatus } from './publicAcademyFamilyFinanceSubscriptionStatus';
+import type { AcademyFamilyFinanceSubscriptionStatus } from './academyFamilyFinanceSubscriptionStatus';
 
 /**
  * @nullable
  */
-export type PublicAcademyFamilyFinance = {
+export type AcademyFamilyFinance = {
   /** @minimum 0 */
   effectiveMonthlyFeeFils: number;
   /**
@@ -18,7 +18,7 @@ export type PublicAcademyFamilyFinance = {
      * @pattern ^\d{4}-\d{2}-\d{2}$
      */
   subscriptionExpiresOn: string | null;
-  subscriptionStatus: PublicAcademyFamilyFinanceSubscriptionStatus;
+  subscriptionStatus: AcademyFamilyFinanceSubscriptionStatus;
   /** @minimum 0 */
   monthsOwed: number;
   /** @minimum 0 */

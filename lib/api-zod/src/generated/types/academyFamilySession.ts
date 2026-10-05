@@ -5,10 +5,10 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
-import type { PublicAcademyFamilySessionType } from './publicAcademyFamilySessionType';
+import type { AcademyFamilySessionType } from './academyFamilySessionType';
 
-export interface PublicAcademyFamilySession {
-  type: PublicAcademyFamilySessionType;
+export interface AcademyFamilySession {
+  type: AcademyFamilySessionType;
   startsAt: Date;
   /** @nullable */
   endsAt: Date | null;

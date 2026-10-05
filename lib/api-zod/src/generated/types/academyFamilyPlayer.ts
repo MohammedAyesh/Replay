@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type PublicAcademyFamilyPlayer = {
+export type AcademyFamilyPlayer = {
+  /** @minimum 1 */
+  id: number;
   name: string;
   /** @nullable */
   squadName: string | null;

@@ -7,6 +7,7 @@ import {
   academyAttendanceTable,
   academyFeesTable,
   academyMembersTable,
+  academyPlayerGuardiansTable,
   academyPlayersTable,
   academyPlayerRenewalsTable,
   academyRecordingsTable,
@@ -54,6 +55,8 @@ let adminId: number;
 let nonMemberId: number;
 let coachId: number;
 let targetId: number;
+let guestId: number;
+let disabledId: number;
 let academyAId: number;
 let academyBId: number;
 let squadAId: number;
@@ -89,6 +92,8 @@ beforeAll(async () => {
     ["non-member", {}],
     ["coach-only", {}],
     ["target", {}],
+    ["guest-user", { isGuest: true }],
+    ["disabled-user", { isDisabled: true }],
   ] as const) {
     const [user] = await db.insert(usersTable).values({
       name: `${name} ${tag}`,
@@ -101,6 +106,8 @@ beforeAll(async () => {
     if (name === "non-member") nonMemberId = user.id;
     if (name === "coach-only") coachId = user.id;
     if (name === "target") targetId = user.id;
+    if (name === "guest-user") guestId = user.id;
+    if (name === "disabled-user") disabledId = user.id;
   }
 
   const [fieldA] = await db.insert(fieldsTable).values({ name: `Academy test field A ${tag}` })
@@ -225,6 +232,8 @@ afterEach(async () => {
   }
   const familyPlayers = [playerAId, inactivePlayerAId, playerBId].filter((id) => Number.isInteger(id));
   if (familyPlayers.length > 0) {
+    await db.delete(academyPlayerGuardiansTable)
+      .where(inArray(academyPlayerGuardiansTable.playerId, familyPlayers));
     await db.update(academyPlayersTable)
       .set({ familyToken: null, userId: null })
       .where(inArray(academyPlayersTable.id, familyPlayers));
@@ -239,6 +248,21 @@ describe("Academy Console API", () => {
     await db.update(academyPlayersTable)
       .set({ familyToken: token, guardianPhone: "079 123 4567" })
       .where(eq(academyPlayersTable.id, playerAId));
+    const claim = await request(app)
+      .post("/api/academy/family/claim")
+      .set(as(ownerId))
+      .send({ token });
+    expect(claim.status).toBe(200);
+    expect(claim.headers["cache-control"]).toBe("no-store");
+    expect(claim.body).toEqual({
+      playerId: playerAId,
+      playerName: `Active player ${tag}`,
+      academyName: `Academy A ${tag}`,
+    });
+    expect((await request(app)
+      .post("/api/academy/family/claim")
+      .set(as(ownerId))
+      .send({ token })).status).toBe(200);
 
     const [otherSquad] = await db.insert(academySquadsTable).values({
       academyId: academyAId,
@@ -360,14 +384,20 @@ describe("Academy Console API", () => {
     const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const to = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const response = await request(app)
-      .get("/api/academy/family")
-      .query({ token, from, to });
+      .get("/api/academy/family/me")
+      .set(as(ownerId))
+      .query({ playerId: playerAId, from, to });
 
     expect(response.status).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(Object.keys(response.body).sort()).toEqual([
-      "academy", "announcements", "attendance", "attendanceSummary", "finance", "payments", "player", "sessions",
+      "academy", "announcements", "attendance", "attendanceSummary", "finance", "payments", "player", "players", "sessions",
     ]);
+    expect(response.body.players).toEqual([{
+      id: playerAId,
+      name: `Active player ${tag}`,
+      academyName: `Academy A ${tag}`,
+    }]);
     expect(response.body.academy.name).toBe(`Academy A ${tag}`);
     expect(response.body.player.name).toBe(`Active player ${tag}`);
     expect(response.body.player).not.toHaveProperty("guardianPhone");
@@ -409,8 +439,8 @@ describe("Academy Console API", () => {
       .toBe(false);
     expect(JSON.stringify(response.body)).not.toContain("079 123 4567");
 
-    const noMarks = await request(app).get("/api/academy/family").query({
-      token,
+    const noMarks = await request(app).get("/api/academy/family/me").set(as(ownerId)).query({
+      playerId: playerAId,
       from: "1900-01-01",
       to: "1900-01-02",
     });
@@ -428,15 +458,24 @@ describe("Academy Console API", () => {
     await db.update(academyPlayersTable)
       .set({ familyToken: inactiveToken })
       .where(eq(academyPlayersTable.id, inactivePlayerAId));
-    const inactive = await request(app).get("/api/academy/family").query({ token: inactiveToken });
+    const inactive = await request(app).post("/api/academy/family/claim")
+      .set(as(ownerId))
+      .send({ token: inactiveToken });
     expect(inactive.status).toBe(404);
     expect(inactive.headers["cache-control"]).toBe("no-store");
 
-    expect((await request(app).get("/api/academy/family").query({ token, from: "2026-02-30", to })).status).toBe(400);
-    expect((await request(app).post("/api/academy/family").query({ token })).status).toBe(404);
+    expect((await request(app).get("/api/academy/family/me").set(as(ownerId)).query({
+      playerId: playerAId,
+      from: "2026-02-30",
+      to,
+    })).status).toBe(400);
+    expect((await request(app).get("/api/academy/family").query({ token })).status).toBe(404);
+    expect((await request(app).post("/api/academy/family/claim").send({ token })).status).toBe(401);
+    expect((await request(app).post("/api/academy/family/claim").set(as(guestId)).send({ token })).status).toBe(401);
+    expect((await request(app).post("/api/academy/family/claim").set(as(disabledId)).send({ token })).status).toBe(401);
   });
 
-  it("serves the signed-in user's first active linked player and other active links", async () => {
+  it("serves linked players, supports selection, and rejects players outside the account", async () => {
     const route = "/api/academy/family/me";
     const unauthenticated = await request(app).get(route);
     expect(unauthenticated.status).toBe(401);
@@ -454,6 +493,10 @@ describe("Academy Console API", () => {
     expect(response.status).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.body.player.name).toBe(`Active player ${tag}`);
+    expect(response.body.players).toEqual([
+      { id: playerAId, name: `Active player ${tag}`, academyName: `Academy A ${tag}` },
+      { id: playerBId, name: `Other academy player one ${tag}`, academyName: `Academy B ${tag}` },
+    ]);
     expect(response.body.otherLinkedPlayers).toEqual([{
       id: playerBId,
       name: `Other academy player one ${tag}`,
@@ -461,6 +504,17 @@ describe("Academy Console API", () => {
     }]);
     expect(response.body.player).not.toHaveProperty("userId");
     expect(response.body.player).not.toHaveProperty("guardianPhone");
+
+    const selected = await request(app).get(route).set(as(ownerId)).query({ playerId: playerBId });
+    expect(selected.status).toBe(200);
+    expect(selected.body.player.name).toBe(`Other academy player one ${tag}`);
+    expect(selected.body.otherLinkedPlayers).toEqual([{
+      id: playerAId,
+      name: `Active player ${tag}`,
+      academyName: `Academy A ${tag}`,
+    }]);
+    expect((await request(app).get(route).set(as(ownerId)).query({ playerId: inactivePlayerAId })).status).toBe(404);
+    expect((await request(app).get(route).set(as(ownerId)).query({ playerId: 999999999 })).status).toBe(404);
   });
 
   it("saves and returns the academy contact phone in admin and public summaries", async () => {
@@ -485,8 +539,9 @@ describe("Academy Console API", () => {
       .send({ contactPhone: "x".repeat(81) })).status).toBe(400);
   });
 
-  it("lets only academy owners create and rotate active-player family links", async () => {
+  it("lets only owners manage family invites and guardian accounts", async () => {
     const playerUrl = `/api/academy/console/academies/${academyAId}/players/${playerAId}/family-link`;
+    const guardiansUrl = `/api/academy/console/academies/${academyAId}/players/${playerAId}/guardians`;
     const initial = await request(app).get(playerUrl).set(as(ownerId));
     expect(initial.status).toBe(200);
     expect(initial.headers["cache-control"]).toBe("no-store");
@@ -494,8 +549,15 @@ describe("Academy Console API", () => {
 
     expect((await request(app).get(playerUrl).set(as(coachId))).status).toBe(403);
     expect((await request(app).post(playerUrl).set(as(coachId))).status).toBe(403);
+    expect((await request(app).get(guardiansUrl).set(as(coachId))).status).toBe(403);
+    expect((await request(app).post(guardiansUrl).set(as(coachId)).send({ email: `target_${tag}@academy-test.local` }))
+      .status).toBe(403);
+    expect((await request(app).get(guardiansUrl)).status).toBe(401);
     expect((await request(app).post(
       `/api/academy/console/academies/${academyAId}/players/${inactivePlayerAId}/family-link`,
+    ).set(as(ownerId))).status).toBe(404);
+    expect((await request(app).get(
+      `/api/academy/console/academies/${academyAId}/players/${inactivePlayerAId}/guardians`,
     ).set(as(ownerId))).status).toBe(404);
 
     const created = await request(app).post(playerUrl).set(as(ownerId));
@@ -512,19 +574,46 @@ describe("Academy Console API", () => {
     const rotatedToken = rotated.body.familyUrl.match(/\/p\/([0-9a-f]{32})$/)?.[1];
     expect(rotatedToken).toBeTruthy();
     expect(rotatedToken).not.toBe(oldToken);
-    expect((await request(app).get("/api/academy/family").query({ token: oldToken })).status).toBe(404);
-    expect((await request(app).get("/api/academy/family").query({
-      token: rotatedToken,
-    })).status).toBe(200);
+    expect((await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token: oldToken })).status)
+      .toBe(404);
+    expect((await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token: rotatedToken })).status)
+      .toBe(200);
+
+    const email = `target_${tag}@academy-test.local`;
+    const added = await request(app).post(guardiansUrl).set(as(ownerId)).send({ email });
+    expect(added.status).toBe(200);
+    expect(added.body).toMatchObject({
+      userId: targetId,
+      name: `target ${tag}`,
+      email,
+      addedBy: "owner",
+    });
+    const duplicate = await request(app).post(guardiansUrl).set(as(ownerId)).send({ email: email.toUpperCase() });
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.userId).toBe(targetId);
+    expect((await request(app).get(guardiansUrl).set(as(ownerId))).body).toHaveLength(2);
+    expect((await request(app).post(guardiansUrl).set(as(ownerId)).send({ email: "missing@academy-test.local" }))
+      .status).toBe(404);
+    expect((await request(app).post(guardiansUrl).set(as(ownerId)).send({ email: "not-an-email" })).status).toBe(400);
+    expect((await request(app).post(guardiansUrl).set(as(ownerId)).send({ email: `guest.user_${tag}@academy-test.local` }))
+      .status).toBe(404);
+    expect((await request(app).post(guardiansUrl).set(as(ownerId)).send({ email: `disabled.user_${tag}@academy-test.local` }))
+      .status).toBe(404);
+    expect((await request(app).delete(`${guardiansUrl}/${targetId}`).set(as(ownerId))).status).toBe(204);
+    expect((await request(app).get(guardiansUrl).set(as(ownerId))).body).toHaveLength(1);
   });
 
-  it("rate limits public family reads separately from registration submissions", async () => {
+  it("rate limits authenticated family-link claims", async () => {
     resetAcademyJoinState();
-    for (let index = 0; index < 60; index += 1) {
-      const response = await request(app).get("/api/academy/family").query({ token: "invalid" });
-      expect(response.status).toBe(404);
+    const token = "c".repeat(32);
+    await db.update(academyPlayersTable)
+      .set({ familyToken: token })
+      .where(eq(academyPlayersTable.id, playerAId));
+    for (let index = 0; index < 5; index += 1) {
+      const response = await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token });
+      expect(response.status).toBe(200);
     }
-    const limited = await request(app).get("/api/academy/family").query({ token: "invalid" });
+    const limited = await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token });
     expect(limited.status).toBe(429);
     expect(limited.headers["cache-control"]).toBe("no-store");
   });

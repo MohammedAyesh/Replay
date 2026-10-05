@@ -5,6 +5,9 @@ import {
   AddAcademyMemberBody,
   AddAcademyMemberParams,
   AddAcademyMemberResponse,
+  AddAcademyConsolePlayerGuardianBody,
+  AddAcademyConsolePlayerGuardianParams,
+  AddAcademyConsolePlayerGuardianResponse,
   CreateAcademyConsoleSessionBody,
   CreateAcademyConsoleSessionParams,
   CreateAcademyConsoleSessionResponse,
@@ -27,6 +30,8 @@ import {
   ListAcademyConsoleSessionsResponse,
   ListAcademyConsolePlayersParams,
   ListAcademyConsolePlayersResponse,
+  ListAcademyConsolePlayerGuardiansParams,
+  ListAcademyConsolePlayerGuardiansResponse,
   ListAcademyConsoleRegistrationsParams,
   ListAcademyConsoleRegistrationsQueryParams,
   ListAcademyConsoleRegistrationsResponse,
@@ -35,6 +40,7 @@ import {
   ListAcademyMembersParams,
   ListAcademyMembersResponse,
   RemoveAcademyMemberRoleParams,
+  RemoveAcademyConsolePlayerGuardianParams,
   UpdateAcademyConsolePlayerBody,
   UpdateAcademyConsolePlayerParams,
   UpdateAcademyConsolePlayerResponse,
@@ -56,6 +62,7 @@ import {
 import {
   academyAttendanceTable,
   academyMembersTable,
+  academyPlayerGuardiansTable,
   academyPlayersTable,
   academyRegistrationsTable,
   academySessionsTable,
@@ -275,6 +282,33 @@ function familyLinkPayload(req: Request, familyToken: string | null) {
   return GetAcademyConsolePlayerFamilyLinkResponse.parse({
     familyUrl: familyToken ? `${publicBaseUrl(req)}/p/${familyToken}` : null,
   });
+}
+
+async function requireActivePlayerOwner(
+  userId: number,
+  academyId: number,
+  playerId: number,
+  res: Parameters<typeof requireAcademyMembership>[2],
+): Promise<boolean> {
+  const roles = await requireAcademyMembership(userId, academyId, res);
+  if (!roles) return false;
+  if (!roles.includes("owner")) {
+    res.status(403).json({ error: "Academy owner role required" });
+    return false;
+  }
+  const [player] = await db
+    .select({ id: academyPlayersTable.id })
+    .from(academyPlayersTable)
+    .where(and(
+      eq(academyPlayersTable.id, playerId),
+      eq(academyPlayersTable.academyId, academyId),
+      eq(academyPlayersTable.isActive, true),
+    ));
+  if (!player) {
+    res.status(404).json({ error: "Active player not found in this academy" });
+    return false;
+  }
+  return true;
 }
 
 function isJoinCodeUniqueViolation(error: unknown): boolean {
@@ -524,6 +558,122 @@ router.post(
   },
 );
 
+router.get(
+  "/academy/console/academies/:academyId/players/:playerId/guardians",
+  async (req, res): Promise<void> => {
+    res.setHeader("Cache-Control", "no-store");
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const params = ListAcademyConsolePlayerGuardiansParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      playerId: rawParam(req.params.playerId),
+    });
+    if (!params.success) {
+      res.status(400).json({ error: params.error.message });
+      return;
+    }
+    const { academyId, playerId } = params.data;
+    if (!(await requireActivePlayerOwner(user.id, academyId, playerId, res))) return;
+
+    const guardians = await db
+      .select({
+        userId: usersTable.id,
+        name: usersTable.name,
+        email: usersTable.email,
+        addedBy: academyPlayerGuardiansTable.addedBy,
+        createdAt: academyPlayerGuardiansTable.createdAt,
+      })
+      .from(academyPlayerGuardiansTable)
+      .innerJoin(usersTable, eq(usersTable.id, academyPlayerGuardiansTable.userId))
+      .where(eq(academyPlayerGuardiansTable.playerId, playerId))
+      .orderBy(asc(usersTable.name), asc(usersTable.email));
+    res.json(ListAcademyConsolePlayerGuardiansResponse.parse(guardians));
+  },
+);
+
+router.post(
+  "/academy/console/academies/:academyId/players/:playerId/guardians",
+  async (req, res): Promise<void> => {
+    res.setHeader("Cache-Control", "no-store");
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const params = AddAcademyConsolePlayerGuardianParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      playerId: rawParam(req.params.playerId),
+    });
+    if (!params.success) {
+      res.status(400).json({ error: params.error.message });
+      return;
+    }
+    const body = AddAcademyConsolePlayerGuardianBody.safeParse(req.body ?? {});
+    if (!body.success) {
+      res.status(400).json({ error: body.error.message });
+      return;
+    }
+    const { academyId, playerId } = params.data;
+    if (!(await requireActivePlayerOwner(user.id, academyId, playerId, res))) return;
+
+    const normalizedEmail = body.data.email.trim().toLowerCase();
+    const [target] = await db
+      .select({
+        id: usersTable.id,
+        isGuest: usersTable.isGuest,
+        isDisabled: usersTable.isDisabled,
+      })
+      .from(usersTable)
+      .where(sql`lower(${usersTable.email}) = ${normalizedEmail}`);
+    if (!target || target.isGuest || target.isDisabled) {
+      res.status(404).json({ error: "Existing Replay user not found" });
+      return;
+    }
+
+    await db.insert(academyPlayerGuardiansTable)
+      .values({ playerId, userId: target.id, addedBy: "owner" })
+      .onConflictDoNothing();
+    const [guardian] = await db
+      .select({
+        userId: usersTable.id,
+        name: usersTable.name,
+        email: usersTable.email,
+        addedBy: academyPlayerGuardiansTable.addedBy,
+        createdAt: academyPlayerGuardiansTable.createdAt,
+      })
+      .from(academyPlayerGuardiansTable)
+      .innerJoin(usersTable, eq(usersTable.id, academyPlayerGuardiansTable.userId))
+      .where(and(
+        eq(academyPlayerGuardiansTable.playerId, playerId),
+        eq(academyPlayerGuardiansTable.userId, target.id),
+      ));
+    res.json(AddAcademyConsolePlayerGuardianResponse.parse(guardian));
+  },
+);
+
+router.delete(
+  "/academy/console/academies/:academyId/players/:playerId/guardians/:userId",
+  async (req, res): Promise<void> => {
+    res.setHeader("Cache-Control", "no-store");
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const params = RemoveAcademyConsolePlayerGuardianParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      playerId: rawParam(req.params.playerId),
+      userId: rawParam(req.params.userId),
+    });
+    if (!params.success) {
+      res.status(400).json({ error: params.error.message });
+      return;
+    }
+    const { academyId, playerId, userId } = params.data;
+    if (!(await requireActivePlayerOwner(user.id, academyId, playerId, res))) return;
+
+    await db.delete(academyPlayerGuardiansTable).where(and(
+      eq(academyPlayerGuardiansTable.playerId, playerId),
+      eq(academyPlayerGuardiansTable.userId, userId),
+    ));
+    res.status(204).end();
+  },
+);
+
 router.get("/academy/console/academies/:academyId/registrations", async (req, res): Promise<void> => {
   const user = await requireAcademyConsoleUser(req, res);
   if (!user) return;
@@ -534,7 +684,9 @@ router.get("/academy/console/academies/:academyId/registrations", async (req, re
     status: req.query.status,
   });
   if (!path.success || !query.success) {
-    res.status(400).json({ error: !path.success ? path.error.message : query.error.message });
+    const pathError = path.success ? undefined : path.error.message;
+    const queryError = query.success ? undefined : query.error?.message;
+    res.status(400).json({ error: pathError ?? queryError ?? "Invalid registration filters" });
     return;
   }
   const { academyId } = path.data;

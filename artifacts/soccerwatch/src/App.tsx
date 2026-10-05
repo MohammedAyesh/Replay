@@ -487,7 +487,8 @@ function AppRouter() {
   const { locale } = useLocale();
   const [location] = useLocation();
   const isPublicJoinRoute = location.split("?")[0].startsWith("/join/");
-  const isPublicStandaloneRoute = isPublicJoinRoute;
+  const isPublicFamilyRoute = location.split(/[?#]/)[0].startsWith("/p/");
+  const isPublicStandaloneRoute = isPublicJoinRoute || isPublicFamilyRoute;
   const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me";
   const isStandaloneRoute = isPublicStandaloneRoute || isFamilyMeRoute;
   const [retryingIdentity, setRetryingIdentity] = useState(false);
@@ -535,6 +536,7 @@ function AppRouter() {
       <AuthRedirectGuard />
       <Switch>
         <Route path="/join/:code" component={AcademyJoinPage} />
+        <Route path="/p/:token"><AcademyFamilyPage source="token" /></Route>
         <Route path="/" component={Landing} />
         <Route path="/sign-in/*?" component={SignInPage} />
         <Route path="/sign-up/*?" component={SignUpPage} />
@@ -621,22 +623,7 @@ function ClerkProviderWithRoutes() {
   );
 }
 
-function PublicFamilyRoutes() {
-  return (
-    <Switch>
-      <Route path="/p/:token"><AcademyFamilyPage source="token" /></Route>
-      <Route component={NotFound} />
-    </Switch>
-  );
-}
-
 function RoutedApp() {
-  const [location] = useLocation();
-  const currentPath = location.split("?")[0];
-  const browserPath = stripBase(window.location.pathname).split("?")[0];
-  if (currentPath.startsWith("/p/") || browserPath.startsWith("/p/")) {
-    return <PublicFamilyRoutes />;
-  }
   return <ClerkProviderWithRoutes />;
 }
 

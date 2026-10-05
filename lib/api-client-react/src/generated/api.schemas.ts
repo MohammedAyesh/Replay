@@ -1823,7 +1823,44 @@ export interface AcademyFinanceTeamMonthlyFeeUpdate {
   monthlyFeeFils: number;
 }
 
-export type PublicAcademyFamilyAcademy = {
+export interface AcademyFamilyClaimInput {
+  /** @pattern ^[0-9a-f]{32}$ */
+  token: string;
+}
+
+export interface AcademyFamilyClaim {
+  /** @minimum 1 */
+  playerId: number;
+  playerName: string;
+  academyName: string;
+}
+
+export interface AcademyPlayerGuardianInput {
+  /**
+     * @minLength 3
+     * @maxLength 254
+     */
+  email: string;
+}
+
+export type AcademyPlayerGuardianAddedBy = typeof AcademyPlayerGuardianAddedBy[keyof typeof AcademyPlayerGuardianAddedBy];
+
+
+export const AcademyPlayerGuardianAddedBy = {
+  owner: 'owner',
+  link: 'link',
+} as const;
+
+export interface AcademyPlayerGuardian {
+  /** @minimum 1 */
+  userId: number;
+  name: string;
+  email: string;
+  addedBy: AcademyPlayerGuardianAddedBy;
+  createdAt: string;
+}
+
+export type AcademyFamilyAcademy = {
   name: string;
   /** @nullable */
   logoUrl: string | null;
@@ -1831,7 +1868,9 @@ export type PublicAcademyFamilyAcademy = {
   contactPhone: string | null;
 };
 
-export type PublicAcademyFamilyPlayer = {
+export type AcademyFamilyPlayer = {
+  /** @minimum 1 */
+  id: number;
   name: string;
   /** @nullable */
   squadName: string | null;
@@ -1844,10 +1883,10 @@ export type PublicAcademyFamilyPlayer = {
   position: string | null;
 };
 
-export type PublicAcademyFamilyFinanceSubscriptionStatus = typeof PublicAcademyFamilyFinanceSubscriptionStatus[keyof typeof PublicAcademyFamilyFinanceSubscriptionStatus];
+export type AcademyFamilyFinanceSubscriptionStatus = typeof AcademyFamilyFinanceSubscriptionStatus[keyof typeof AcademyFamilyFinanceSubscriptionStatus];
 
 
-export const PublicAcademyFamilyFinanceSubscriptionStatus = {
+export const AcademyFamilyFinanceSubscriptionStatus = {
   no_subscription: 'no_subscription',
   paid: 'paid',
   expiring: 'expiring',
@@ -1857,7 +1896,7 @@ export const PublicAcademyFamilyFinanceSubscriptionStatus = {
 /**
  * @nullable
  */
-export type PublicAcademyFamilyFinance = {
+export type AcademyFamilyFinance = {
   /** @minimum 0 */
   effectiveMonthlyFeeFils: number;
   /**
@@ -1865,23 +1904,23 @@ export type PublicAcademyFamilyFinance = {
      * @pattern ^\d{4}-\d{2}-\d{2}$
      */
   subscriptionExpiresOn: string | null;
-  subscriptionStatus: PublicAcademyFamilyFinanceSubscriptionStatus;
+  subscriptionStatus: AcademyFamilyFinanceSubscriptionStatus;
   /** @minimum 0 */
   monthsOwed: number;
   /** @minimum 0 */
   outstandingFils: number;
 } | null;
 
-export type PublicAcademyFamilySessionType = typeof PublicAcademyFamilySessionType[keyof typeof PublicAcademyFamilySessionType];
+export type AcademyFamilySessionType = typeof AcademyFamilySessionType[keyof typeof AcademyFamilySessionType];
 
 
-export const PublicAcademyFamilySessionType = {
+export const AcademyFamilySessionType = {
   training: 'training',
   match: 'match',
 } as const;
 
-export interface PublicAcademyFamilySession {
-  type: PublicAcademyFamilySessionType;
+export interface AcademyFamilySession {
+  type: AcademyFamilySessionType;
   startsAt: string;
   /** @nullable */
   endsAt: string | null;
@@ -1900,32 +1939,32 @@ export interface PublicAcademyFamilySession {
   opponentScore: number | null;
 }
 
-export type PublicAcademyFamilyAttendanceStatus = typeof PublicAcademyFamilyAttendanceStatus[keyof typeof PublicAcademyFamilyAttendanceStatus];
+export type AcademyFamilyAttendanceStatus = typeof AcademyFamilyAttendanceStatus[keyof typeof AcademyFamilyAttendanceStatus];
 
 
-export const PublicAcademyFamilyAttendanceStatus = {
+export const AcademyFamilyAttendanceStatus = {
   present: 'present',
   absent: 'absent',
   late: 'late',
   excused: 'excused',
 } as const;
 
-export type PublicAcademyFamilyAttendanceType = typeof PublicAcademyFamilyAttendanceType[keyof typeof PublicAcademyFamilyAttendanceType];
+export type AcademyFamilyAttendanceType = typeof AcademyFamilyAttendanceType[keyof typeof AcademyFamilyAttendanceType];
 
 
-export const PublicAcademyFamilyAttendanceType = {
+export const AcademyFamilyAttendanceType = {
   training: 'training',
   match: 'match',
 } as const;
 
-export interface PublicAcademyFamilyAttendance {
-  status: PublicAcademyFamilyAttendanceStatus;
+export interface AcademyFamilyAttendance {
+  status: AcademyFamilyAttendanceStatus;
   startsAt: string;
-  type: PublicAcademyFamilyAttendanceType;
+  type: AcademyFamilyAttendanceType;
   location: string;
 }
 
-export interface PublicAcademyFamilyAttendanceSummary {
+export interface AcademyFamilyAttendanceSummary {
   /** @minimum 0 */
   present: number;
   /** @minimum 0 */
@@ -1944,10 +1983,10 @@ export interface PublicAcademyFamilyAttendanceSummary {
   percentPresent: number | null;
 }
 
-export type PublicAcademyFamilyPaymentKind = typeof PublicAcademyFamilyPaymentKind[keyof typeof PublicAcademyFamilyPaymentKind];
+export type AcademyFamilyPaymentKind = typeof AcademyFamilyPaymentKind[keyof typeof AcademyFamilyPaymentKind];
 
 
-export const PublicAcademyFamilyPaymentKind = {
+export const AcademyFamilyPaymentKind = {
   renewal: 'renewal',
   fee: 'fee',
 } as const;
@@ -1955,18 +1994,18 @@ export const PublicAcademyFamilyPaymentKind = {
 /**
  * @nullable
  */
-export type PublicAcademyFamilyPaymentStatus = typeof PublicAcademyFamilyPaymentStatus[keyof typeof PublicAcademyFamilyPaymentStatus] | null;
+export type AcademyFamilyPaymentStatus = typeof AcademyFamilyPaymentStatus[keyof typeof AcademyFamilyPaymentStatus] | null;
 
 
-export const PublicAcademyFamilyPaymentStatus = {
+export const AcademyFamilyPaymentStatus = {
   due: 'due',
   paid: 'paid',
   waived: 'waived',
 } as const;
 
-export interface PublicAcademyFamilyPayment {
+export interface AcademyFamilyPayment {
   id: string;
-  kind: PublicAcademyFamilyPaymentKind;
+  kind: AcademyFamilyPaymentKind;
   date: string;
   /** @minimum 0 */
   amountFils: number;
@@ -1989,33 +2028,34 @@ export interface PublicAcademyFamilyPayment {
      */
   dueDate: string | null;
   /** @nullable */
-  status: PublicAcademyFamilyPaymentStatus;
+  status: AcademyFamilyPaymentStatus;
 }
 
-export interface PublicAcademyFamilyAnnouncement {
+export interface AcademyFamilyAnnouncement {
   title: string;
   body: string;
   createdAt: string;
 }
 
-export interface PublicAcademyFamilyLinkedPlayer {
+export interface AcademyFamilyLinkedPlayer {
   /** @minimum 1 */
   id: number;
   name: string;
   academyName: string;
 }
 
-export interface PublicAcademyFamily {
-  academy: PublicAcademyFamilyAcademy;
-  player: PublicAcademyFamilyPlayer;
+export interface AcademyFamily {
+  academy: AcademyFamilyAcademy;
+  player: AcademyFamilyPlayer;
   /** @nullable */
-  finance: PublicAcademyFamilyFinance;
-  sessions: PublicAcademyFamilySession[];
-  attendance: PublicAcademyFamilyAttendance[];
-  attendanceSummary: PublicAcademyFamilyAttendanceSummary;
-  payments: PublicAcademyFamilyPayment[];
-  announcements: PublicAcademyFamilyAnnouncement[];
-  otherLinkedPlayers?: PublicAcademyFamilyLinkedPlayer[];
+  finance: AcademyFamilyFinance;
+  sessions: AcademyFamilySession[];
+  attendance: AcademyFamilyAttendance[];
+  attendanceSummary: AcademyFamilyAttendanceSummary;
+  payments: AcademyFamilyPayment[];
+  announcements: AcademyFamilyAnnouncement[];
+  players: AcademyFamilyLinkedPlayer[];
+  otherLinkedPlayers?: AcademyFamilyLinkedPlayer[];
 }
 
 export interface AcademyConsoleFamilyLink {
@@ -3529,22 +3569,11 @@ export const ListAcademyConsoleRegistrationsStatus = {
   rejected: 'rejected',
 } as const;
 
-export type GetPublicAcademyFamilyParams = {
-/**
- * @pattern ^[0-9a-f]{32}$
- */
-token: string;
-/**
- * @pattern ^\d{4}-\d{2}-\d{2}$
- */
-from?: string;
-/**
- * @pattern ^\d{4}-\d{2}-\d{2}$
- */
-to?: string;
-};
-
 export type GetAcademyFamilyMeParams = {
+/**
+ * @minimum 1
+ */
+playerId?: number;
 /**
  * @pattern ^\d{4}-\d{2}-\d{2}$
  */

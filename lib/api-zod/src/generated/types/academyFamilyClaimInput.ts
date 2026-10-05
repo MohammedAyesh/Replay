@@ -6,9 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface PublicAcademyFamilyLinkedPlayer {
-  /** @minimum 1 */
-  id: number;
-  name: string;
-  academyName: string;
+export interface AcademyFamilyClaimInput {
+  /** @pattern ^[0-9a-f]{32}$ */
+  token: string;
 }

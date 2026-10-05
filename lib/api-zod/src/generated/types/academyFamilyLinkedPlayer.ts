@@ -6,10 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type PublicAcademyFamilyAcademy = {
+export interface AcademyFamilyLinkedPlayer {
+  /** @minimum 1 */
+  id: number;
   name: string;
-  /** @nullable */
-  logoUrl: string | null;
-  /** @nullable */
-  contactPhone: string | null;
-};
+  academyName: string;
+}

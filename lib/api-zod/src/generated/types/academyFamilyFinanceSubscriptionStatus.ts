@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type PublicAcademyFamilyFinanceSubscriptionStatus = typeof PublicAcademyFamilyFinanceSubscriptionStatus[keyof typeof PublicAcademyFamilyFinanceSubscriptionStatus];
+export type AcademyFamilyFinanceSubscriptionStatus = typeof AcademyFamilyFinanceSubscriptionStatus[keyof typeof AcademyFamilyFinanceSubscriptionStatus];
 
 
-export const PublicAcademyFamilyFinanceSubscriptionStatus = {
+export const AcademyFamilyFinanceSubscriptionStatus = {
   no_subscription: 'no_subscription',
   paid: 'paid',
   expiring: 'expiring',

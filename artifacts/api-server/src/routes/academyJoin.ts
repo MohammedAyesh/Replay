@@ -19,8 +19,7 @@ const router: IRouter = Router();
 const WINDOW_MS = 10 * 60 * 1000;
 const MAX_PER_WINDOW = 5;
 const recent = new Map<string, number[]>();
-const publicReadRecent = new Map<string, number[]>();
-const MAX_PUBLIC_READ_PER_WINDOW = 60;
+const familyClaimRecent = new Map<string, number[]>();
 const JOIN_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{8}$/;
 
 function requestAddress(req: Request): string {
@@ -28,45 +27,35 @@ function requestAddress(req: Request): string {
   return forwarded || req.ip || "unknown";
 }
 
-function allow(req: Request): boolean {
+function allowWithMap(req: Request, hitsByAddress: Map<string, number[]>): boolean {
   const key = requestAddress(req);
   const now = Date.now();
-  const hits = (recent.get(key) ?? []).filter((at) => now - at < WINDOW_MS);
+  const hits = (hitsByAddress.get(key) ?? []).filter((at) => now - at < WINDOW_MS);
   if (hits.length >= MAX_PER_WINDOW) {
-    recent.set(key, hits);
+    hitsByAddress.set(key, hits);
     return false;
   }
   hits.push(now);
-  recent.set(key, hits);
-  if (recent.size > 5000) {
-    for (const [address, entries] of recent) {
-      if (!entries.some((at) => now - at < WINDOW_MS)) recent.delete(address);
+  hitsByAddress.set(key, hits);
+  if (hitsByAddress.size > 5000) {
+    for (const [address, entries] of hitsByAddress) {
+      if (!entries.some((at) => now - at < WINDOW_MS)) hitsByAddress.delete(address);
     }
   }
   return true;
 }
 
-export function allowAcademyFamilyRead(req: Request): boolean {
-  const key = requestAddress(req);
-  const now = Date.now();
-  const hits = (publicReadRecent.get(key) ?? []).filter((at) => now - at < WINDOW_MS);
-  if (hits.length >= MAX_PUBLIC_READ_PER_WINDOW) {
-    publicReadRecent.set(key, hits);
-    return false;
-  }
-  hits.push(now);
-  publicReadRecent.set(key, hits);
-  if (publicReadRecent.size > 5000) {
-    for (const [address, entries] of publicReadRecent) {
-      if (!entries.some((at) => now - at < WINDOW_MS)) publicReadRecent.delete(address);
-    }
-  }
-  return true;
+function allow(req: Request): boolean {
+  return allowWithMap(req, recent);
+}
+
+export function allowAcademyFamilyClaim(req: Request): boolean {
+  return allowWithMap(req, familyClaimRecent);
 }
 
 export function resetAcademyJoinState(): void {
   recent.clear();
-  publicReadRecent.clear();
+  familyClaimRecent.clear();
 }
 
 function asciiDigits(value: string): string {

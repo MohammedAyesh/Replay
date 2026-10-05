@@ -5,12 +5,12 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
-import type { PublicAcademyFamilyPaymentKind } from './publicAcademyFamilyPaymentKind';
-import type { PublicAcademyFamilyPaymentStatus } from './publicAcademyFamilyPaymentStatus';
+import type { AcademyFamilyPaymentKind } from './academyFamilyPaymentKind';
+import type { AcademyFamilyPaymentStatus } from './academyFamilyPaymentStatus';
 
-export interface PublicAcademyFamilyPayment {
+export interface AcademyFamilyPayment {
   id: string;
-  kind: PublicAcademyFamilyPaymentKind;
+  kind: AcademyFamilyPaymentKind;
   date: Date;
   /** @minimum 0 */
   amountFils: number;
@@ -33,5 +33,5 @@ export interface PublicAcademyFamilyPayment {
      */
   dueDate: string | null;
   /** @nullable */
-  status: PublicAcademyFamilyPaymentStatus;
+  status: AcademyFamilyPaymentStatus;
 }

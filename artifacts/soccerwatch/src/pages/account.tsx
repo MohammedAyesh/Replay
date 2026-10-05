@@ -419,7 +419,11 @@ export default function Account() {
                 <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-turf/10">
                   <GraduationCap className="h-4 w-4 text-turf" />
                 </span>
-                <span className="font-medium text-foreground">{t.account.myAcademy}</span>
+                <span className="font-medium text-foreground">
+                  {(myAcademyFamilyQuery.data?.players.length ?? 0) > 1
+                    ? t.account.myAcademyChildren(myAcademyFamilyQuery.data!.players.length)
+                    : t.account.myAcademy}
+                </span>
               </div>
               <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
               <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />

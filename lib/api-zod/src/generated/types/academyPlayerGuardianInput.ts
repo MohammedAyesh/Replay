@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface PublicAcademyFamilyAnnouncement {
-  title: string;
-  body: string;
-  createdAt: Date;
+export interface AcademyPlayerGuardianInput {
+  /**
+     * @minLength 3
+     * @maxLength 254
+     */
+  email: string;
 }

@@ -20,3 +20,9 @@ Vitest 4.1.9 rejects `--minWorkers`; `--maxWorkers=1` is the working serial-run 
 **Why:** The API suite needs predictable serial execution when it is run against a temporary PostgreSQL instance, and the old flag fails before tests start.
 
 **How to apply:** Use `--maxWorkers=1` for serial API-suite runs, and keep temporary database setup, schema push, tests, and teardown in one shell invocation.
+
+The complete serial suite can exceed the blocking shell's five-minute limit before Vitest prints its totals. A forced stop may leave the disposable cluster directory and a stale PID file even though PostgreSQL is no longer running.
+
+**Why:** The suite includes long media-render and worker tests, so a shell timeout is not evidence that all tests finished or failed.
+
+**How to apply:** For a full-suite result, use a runner that can remain active beyond the shell timeout. For focused feature verification, run the relevant test file against a fresh disposable database. After an interrupted run, confirm no process is using the temp cluster before removing its directory; never report missing totals as a pass.

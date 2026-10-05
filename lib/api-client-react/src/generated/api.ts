@@ -29,6 +29,9 @@ import type {
   AcademyConsoleFamilyLink,
   AcademyConsoleMembership,
   AcademyConsoleRecording,
+  AcademyFamily,
+  AcademyFamilyClaim,
+  AcademyFamilyClaimInput,
   AcademyFinanceCategory,
   AcademyFinanceCategoryInput,
   AcademyFinanceCategoryList,
@@ -60,6 +63,8 @@ import type {
   AcademyMemberAssignment,
   AcademyMemberListItem,
   AcademyMemberSummary,
+  AcademyPlayerGuardian,
+  AcademyPlayerGuardianInput,
   AcademyPlayerInput,
   AcademyPlayerSummary,
   AcademyPlayerUpdate,
@@ -127,7 +132,6 @@ import type {
   FollowResult,
   GetAcademyFamilyMeParams,
   GetAdminAnalysisJobQuoteParams,
-  GetPublicAcademyFamilyParams,
   HealthStatus,
   ImpressionInput,
   JerseySidecar,
@@ -152,7 +156,6 @@ import type {
   PatchAdInput,
   PortfolioView,
   ProfileInput,
-  PublicAcademyFamily,
   PublicPlayerStats,
   PublicProfile,
   Recording,
@@ -5567,89 +5570,75 @@ export const useUpdateAcademyConsolePlayer = <TError = ErrorType<void>,
       return useMutation(getUpdateAcademyConsolePlayerMutationOptions(options));
     }
 
-export const getGetPublicAcademyFamilyUrl = (params: GetPublicAcademyFamilyParams,) => {
-  const normalizedParams = new URLSearchParams();
+export const getClaimAcademyFamilyUrl = () => {
 
-  Object.entries(params || {}).forEach(([key, value]) => {
 
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
 
-  const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/api/academy/family?${stringifiedParams}` : `/api/academy/family`
+  return `/api/academy/family/claim`
 }
 
 /**
- * @summary Read the family view for one active academy player
+ * @summary Link an active academy player to the signed-in guardian account
  */
-export const getPublicAcademyFamily = async (params: GetPublicAcademyFamilyParams, options?: RequestInit): Promise<PublicAcademyFamily> => {
+export const claimAcademyFamily = async (academyFamilyClaimInput: AcademyFamilyClaimInput, options?: RequestInit): Promise<AcademyFamilyClaim> => {
 
-  return customFetch<PublicAcademyFamily>(getGetPublicAcademyFamilyUrl(params),
+  return customFetch<AcademyFamilyClaim>(getClaimAcademyFamilyUrl(),
   {
     ...options,
-    method: 'GET'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyFamilyClaimInput)
   }
 );}
 
 
 
 
+export const getClaimAcademyFamilyMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimAcademyFamily>>, TError,{data: BodyType<AcademyFamilyClaimInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof claimAcademyFamily>>, TError,{data: BodyType<AcademyFamilyClaimInput>}, TContext> => {
 
-export const getGetPublicAcademyFamilyQueryKey = (params?: GetPublicAcademyFamilyParams,) => {
-    return [
-    `/api/academy/family`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getGetPublicAcademyFamilyQueryOptions = <TData = Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError = ErrorType<void>>(params: GetPublicAcademyFamilyParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetPublicAcademyFamilyQueryKey(params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicAcademyFamily>>> = ({ signal }) => getPublicAcademyFamily(params, { signal, ...requestOptions });
+const mutationKey = ['claimAcademyFamily'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
 
 
 
 
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimAcademyFamily>>, {data: BodyType<AcademyFamilyClaimInput>}> = (props) => {
+          const {data} = props ?? {};
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetPublicAcademyFamilyQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicAcademyFamily>>>
-export type GetPublicAcademyFamilyQueryError = ErrorType<void>
+          return  claimAcademyFamily(data,requestOptions)
+        }
 
 
-/**
- * @summary Read the family view for one active academy player
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClaimAcademyFamilyMutationResult = NonNullable<Awaited<ReturnType<typeof claimAcademyFamily>>>
+    export type ClaimAcademyFamilyMutationBody = BodyType<AcademyFamilyClaimInput>
+    export type ClaimAcademyFamilyMutationError = ErrorType<void>
+
+    /**
+ * @summary Link an active academy player to the signed-in guardian account
  */
-
-export function useGetPublicAcademyFamily<TData = Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError = ErrorType<void>>(
- params: GetPublicAcademyFamilyParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetPublicAcademyFamilyQueryOptions(params,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return withQueryKey(query, queryOptions.queryKey);
-}
-
-
-
-
-
-
+export const useClaimAcademyFamily = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimAcademyFamily>>, TError,{data: BodyType<AcademyFamilyClaimInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof claimAcademyFamily>>,
+        TError,
+        {data: BodyType<AcademyFamilyClaimInput>},
+        TContext
+      > => {
+      return useMutation(getClaimAcademyFamilyMutationOptions(options));
+    }
 
 export const getGetAcademyFamilyMeUrl = (params?: GetAcademyFamilyMeParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -5667,11 +5656,11 @@ export const getGetAcademyFamilyMeUrl = (params?: GetAcademyFamilyMeParams,) => 
 }
 
 /**
- * @summary Read the family view for the first active player linked to the current user
+ * @summary Read the family view for a player linked to the current account
  */
-export const getAcademyFamilyMe = async (params?: GetAcademyFamilyMeParams, options?: RequestInit): Promise<PublicAcademyFamily> => {
+export const getAcademyFamilyMe = async (params?: GetAcademyFamilyMeParams, options?: RequestInit): Promise<AcademyFamily> => {
 
-  return customFetch<PublicAcademyFamily>(getGetAcademyFamilyMeUrl(params),
+  return customFetch<AcademyFamily>(getGetAcademyFamilyMeUrl(params),
   {
     ...options,
     method: 'GET'
@@ -5714,7 +5703,7 @@ export type GetAcademyFamilyMeQueryError = ErrorType<void>
 
 
 /**
- * @summary Read the family view for the first active player linked to the current user
+ * @summary Read the family view for a player linked to the current account
  */
 
 export function useGetAcademyFamilyMe<TData = Awaited<ReturnType<typeof getAcademyFamilyMe>>, TError = ErrorType<void>>(
@@ -5887,6 +5876,235 @@ export const useRegenerateAcademyConsolePlayerFamilyLink = <TError = ErrorType<v
         TContext
       > => {
       return useMutation(getRegenerateAcademyConsolePlayerFamilyLinkMutationOptions(options));
+    }
+
+export const getListAcademyConsolePlayerGuardiansUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/players/${playerId}/guardians`
+}
+
+/**
+ * @summary List guardian accounts linked to an active player
+ */
+export const listAcademyConsolePlayerGuardians = async (academyId: number,
+    playerId: number, options?: RequestInit): Promise<AcademyPlayerGuardian[]> => {
+
+  return customFetch<AcademyPlayerGuardian[]>(getListAcademyConsolePlayerGuardiansUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAcademyConsolePlayerGuardiansQueryKey = (academyId: number,
+    playerId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/players/${playerId}/guardians`
+    ] as const;
+    }
+
+
+export const getListAcademyConsolePlayerGuardiansQueryOptions = <TData = Awaited<ReturnType<typeof listAcademyConsolePlayerGuardians>>, TError = ErrorType<void>>(academyId: number,
+    playerId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsolePlayerGuardians>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAcademyConsolePlayerGuardiansQueryKey(academyId,playerId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAcademyConsolePlayerGuardians>>> = ({ signal }) => listAcademyConsolePlayerGuardians(academyId,playerId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined && playerId !== null && playerId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsolePlayerGuardians>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAcademyConsolePlayerGuardiansQueryResult = NonNullable<Awaited<ReturnType<typeof listAcademyConsolePlayerGuardians>>>
+export type ListAcademyConsolePlayerGuardiansQueryError = ErrorType<void>
+
+
+/**
+ * @summary List guardian accounts linked to an active player
+ */
+
+export function useListAcademyConsolePlayerGuardians<TData = Awaited<ReturnType<typeof listAcademyConsolePlayerGuardians>>, TError = ErrorType<void>>(
+ academyId: number,
+    playerId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAcademyConsolePlayerGuardians>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAcademyConsolePlayerGuardiansQueryOptions(academyId,playerId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getAddAcademyConsolePlayerGuardianUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/players/${playerId}/guardians`
+}
+
+/**
+ * @summary Link an existing account as a player guardian
+ */
+export const addAcademyConsolePlayerGuardian = async (academyId: number,
+    playerId: number,
+    academyPlayerGuardianInput: AcademyPlayerGuardianInput, options?: RequestInit): Promise<AcademyPlayerGuardian> => {
+
+  return customFetch<AcademyPlayerGuardian>(getAddAcademyConsolePlayerGuardianUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyPlayerGuardianInput)
+  }
+);}
+
+
+
+
+export const getAddAcademyConsolePlayerGuardianMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAcademyConsolePlayerGuardian>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyPlayerGuardianInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addAcademyConsolePlayerGuardian>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyPlayerGuardianInput>}, TContext> => {
+
+const mutationKey = ['addAcademyConsolePlayerGuardian'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addAcademyConsolePlayerGuardian>>, {academyId: number;playerId: number;data: BodyType<AcademyPlayerGuardianInput>}> = (props) => {
+          const {academyId,playerId,data} = props ?? {};
+
+          return  addAcademyConsolePlayerGuardian(academyId,playerId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddAcademyConsolePlayerGuardianMutationResult = NonNullable<Awaited<ReturnType<typeof addAcademyConsolePlayerGuardian>>>
+    export type AddAcademyConsolePlayerGuardianMutationBody = BodyType<AcademyPlayerGuardianInput>
+    export type AddAcademyConsolePlayerGuardianMutationError = ErrorType<void>
+
+    /**
+ * @summary Link an existing account as a player guardian
+ */
+export const useAddAcademyConsolePlayerGuardian = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addAcademyConsolePlayerGuardian>>, TError,{academyId: number;playerId: number;data: BodyType<AcademyPlayerGuardianInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addAcademyConsolePlayerGuardian>>,
+        TError,
+        {academyId: number;playerId: number;data: BodyType<AcademyPlayerGuardianInput>},
+        TContext
+      > => {
+      return useMutation(getAddAcademyConsolePlayerGuardianMutationOptions(options));
+    }
+
+export const getRemoveAcademyConsolePlayerGuardianUrl = (academyId: number,
+    playerId: number,
+    userId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/players/${playerId}/guardians/${userId}`
+}
+
+/**
+ * @summary Remove a guardian account from a player
+ */
+export const removeAcademyConsolePlayerGuardian = async (academyId: number,
+    playerId: number,
+    userId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRemoveAcademyConsolePlayerGuardianUrl(academyId,playerId,userId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getRemoveAcademyConsolePlayerGuardianMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyConsolePlayerGuardian>>, TError,{academyId: number;playerId: number;userId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeAcademyConsolePlayerGuardian>>, TError,{academyId: number;playerId: number;userId: number}, TContext> => {
+
+const mutationKey = ['removeAcademyConsolePlayerGuardian'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeAcademyConsolePlayerGuardian>>, {academyId: number;playerId: number;userId: number}> = (props) => {
+          const {academyId,playerId,userId} = props ?? {};
+
+          return  removeAcademyConsolePlayerGuardian(academyId,playerId,userId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveAcademyConsolePlayerGuardianMutationResult = NonNullable<Awaited<ReturnType<typeof removeAcademyConsolePlayerGuardian>>>
+
+    export type RemoveAcademyConsolePlayerGuardianMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove a guardian account from a player
+ */
+export const useRemoveAcademyConsolePlayerGuardian = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyConsolePlayerGuardian>>, TError,{academyId: number;playerId: number;userId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeAcademyConsolePlayerGuardian>>,
+        TError,
+        {academyId: number;playerId: number;userId: number},
+        TContext
+      > => {
+      return useMutation(getRemoveAcademyConsolePlayerGuardianMutationOptions(options));
     }
 
 export const getListAcademyConsoleSessionsUrl = (academyId: number,) => {

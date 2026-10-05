@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { FamilyLinkActions } from "@/components/academy-console/family-link-actions";
+import { AcademyPlayerGuardians } from "@/components/academy-console/player-guardians";
 
 type PlayerForm = {
   name: string;
@@ -610,6 +611,9 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
               isOwner={isOwner}
             />
           )}
+          {familyLinkPlayer?.isActive && isOwner ? (
+            <AcademyPlayerGuardians academyId={academyId} playerId={familyLinkPlayer.id} />
+          ) : null}
         </DialogContent>
       </Dialog>
     </section>

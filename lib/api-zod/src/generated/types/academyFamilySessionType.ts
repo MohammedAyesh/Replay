@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type PublicAcademyFamilySessionType = typeof PublicAcademyFamilySessionType[keyof typeof PublicAcademyFamilySessionType];
+export type AcademyFamilySessionType = typeof AcademyFamilySessionType[keyof typeof AcademyFamilySessionType];
 
 
-export const PublicAcademyFamilySessionType = {
+export const AcademyFamilySessionType = {
   training: 'training',
   match: 'match',
 } as const;

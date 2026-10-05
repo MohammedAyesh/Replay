@@ -9,10 +9,10 @@
 /**
  * @nullable
  */
-export type PublicAcademyFamilyPaymentStatus = typeof PublicAcademyFamilyPaymentStatus[keyof typeof PublicAcademyFamilyPaymentStatus] | null;
+export type AcademyFamilyPaymentStatus = typeof AcademyFamilyPaymentStatus[keyof typeof AcademyFamilyPaymentStatus] | null;
 
 
-export const PublicAcademyFamilyPaymentStatus = {
+export const AcademyFamilyPaymentStatus = {
   due: 'due',
   paid: 'paid',
   waived: 'waived',

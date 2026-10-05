@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type PublicAcademyFamilyAttendanceStatus = typeof PublicAcademyFamilyAttendanceStatus[keyof typeof PublicAcademyFamilyAttendanceStatus];
+export type AcademyFamilyAttendanceStatus = typeof AcademyFamilyAttendanceStatus[keyof typeof AcademyFamilyAttendanceStatus];
 
 
-export const PublicAcademyFamilyAttendanceStatus = {
+export const AcademyFamilyAttendanceStatus = {
   present: 'present',
   absent: 'absent',
   late: 'late',

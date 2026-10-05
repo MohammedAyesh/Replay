@@ -2059,34 +2059,22 @@ paths:
         "404":
           description: Academy, player, squad, or Replay user not found
 
-  /academy/family:
-    get:
-      operationId: getPublicAcademyFamily
+  /academy/family/claim:
+    post:
+      operationId: claimAcademyFamily
       tags: [academyFamily]
-      summary: Read the family view for one active academy player
-      security: []
-      parameters:
-        - name: token
-          in: query
-          required: true
-          schema:
-            type: string
-            pattern: '^[0-9a-f]{32}$'
-        - name: from
-          in: query
-          required: false
-          schema:
-            type: string
-            pattern: '^\d{4}-\d{2}-\d{2}$'
-        - name: to
-          in: query
-          required: false
-          schema:
-            type: string
-            pattern: '^\d{4}-\d{2}-\d{2}$'
+      summary: Link an active academy player to the signed-in guardian account
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyFamilyClaimInput"
       responses:
         "200":
-          description: Data for the linked player and academy/squad-wide items in the requested date window
+          description: The player linked to the guardian account
           headers:
             Cache-Control:
               schema:
@@ -2095,22 +2083,30 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PublicAcademyFamily"
+                $ref: "#/components/schemas/AcademyFamilyClaim"
         "400":
-          description: Invalid date window
+          description: Invalid invite token
+        "401":
+          description: Unauthenticated, guest, or disabled account
         "404":
-          description: Family link not found
+          description: Active player invite not found
         "429":
-          description: Too many requests
+          description: Too many claim attempts
 
   /academy/family/me:
     get:
       operationId: getAcademyFamilyMe
       tags: [academyFamily]
-      summary: Read the family view for the first active player linked to the current user
+      summary: Read the family view for a player linked to the current account
       security:
         - clerkSession: []
       parameters:
+        - name: playerId
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
         - name: from
           in: query
           required: false
@@ -2125,7 +2121,7 @@ paths:
             pattern: '^\d{4}-\d{2}-\d{2}$'
       responses:
         "200":
-          description: Family view for the first active linked player, including any other linked players
+          description: Family view and player switcher for the linked active academy players
           headers:
             Cache-Control:
               schema:
@@ -2134,13 +2130,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PublicAcademyFamily"
+                $ref: "#/components/schemas/AcademyFamily"
         "400":
           description: Invalid date window
         "401":
           description: Unauthenticated
         "404":
-          description: No active academy player is linked to the current user
+          description: No accessible active player or selected player is not linked to the current account
 
   /academy/console/academies/{academyId}/players/{playerId}/family-link:
     get:
@@ -2205,6 +2201,122 @@ paths:
                 $ref: "#/components/schemas/AcademyConsoleFamilyLink"
         "400":
           description: Invalid academy or player ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy or active player not found
+
+  /academy/console/academies/{academyId}/players/{playerId}/guardians:
+    get:
+      operationId: listAcademyConsolePlayerGuardians
+      tags: [academyConsole]
+      summary: List guardian accounts linked to an active player
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Guardian accounts for this player
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AcademyPlayerGuardian"
+        "400":
+          description: Invalid academy or player ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy or active player not found
+    post:
+      operationId: addAcademyConsolePlayerGuardian
+      tags: [academyConsole]
+      summary: Link an existing account as a player guardian
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcademyPlayerGuardianInput"
+      responses:
+        "200":
+          description: The linked guardian account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyPlayerGuardian"
+        "400":
+          description: Invalid email address
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy owner role required
+        "404":
+          description: Academy, active player, or eligible Replay account not found
+
+  /academy/console/academies/{academyId}/players/{playerId}/guardians/{userId}:
+    delete:
+      operationId: removeAcademyConsolePlayerGuardian
+      tags: [academyConsole]
+      summary: Remove a guardian account from a player
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Guardian association removed, if present
+        "400":
+          description: Invalid academy, player, or user ID
         "401":
           description: Unauthenticated
         "403":
@@ -7020,9 +7132,58 @@ components:
           type: integer
           minimum: 0
 
-    PublicAcademyFamily:
+    AcademyFamilyClaimInput:
       type: object
-      required: [academy, player, finance, sessions, attendance, attendanceSummary, payments, announcements]
+      required: [token]
+      properties:
+        token:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+
+    AcademyFamilyClaim:
+      type: object
+      required: [playerId, playerName, academyName]
+      properties:
+        playerId:
+          type: integer
+          minimum: 1
+        playerName:
+          type: string
+        academyName:
+          type: string
+
+    AcademyPlayerGuardianInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 3
+          maxLength: 254
+
+    AcademyPlayerGuardian:
+      type: object
+      required: [userId, name, email, addedBy, createdAt]
+      properties:
+        userId:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        addedBy:
+          type: string
+          enum: [owner, link]
+        createdAt:
+          type: string
+          format: date-time
+
+    AcademyFamily:
+      type: object
+      required: [academy, player, finance, sessions, attendance, attendanceSummary, payments, announcements, players]
       properties:
         academy:
           type: object
@@ -7036,8 +7197,11 @@ components:
               type: ["string", "null"]
         player:
           type: object
-          required: [name, squadName, jerseyNumber, position]
+          required: [id, name, squadName, jerseyNumber, position]
           properties:
+            id:
+              type: integer
+              minimum: 1
             name:
               type: string
             squadName:
@@ -7069,27 +7233,31 @@ components:
         sessions:
           type: array
           items:
-            $ref: "#/components/schemas/PublicAcademyFamilySession"
+            $ref: "#/components/schemas/AcademyFamilySession"
         attendance:
           type: array
           items:
-            $ref: "#/components/schemas/PublicAcademyFamilyAttendance"
+            $ref: "#/components/schemas/AcademyFamilyAttendance"
         attendanceSummary:
-          $ref: "#/components/schemas/PublicAcademyFamilyAttendanceSummary"
+          $ref: "#/components/schemas/AcademyFamilyAttendanceSummary"
         payments:
           type: array
           items:
-            $ref: "#/components/schemas/PublicAcademyFamilyPayment"
+            $ref: "#/components/schemas/AcademyFamilyPayment"
         announcements:
           type: array
           items:
-            $ref: "#/components/schemas/PublicAcademyFamilyAnnouncement"
+            $ref: "#/components/schemas/AcademyFamilyAnnouncement"
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/AcademyFamilyLinkedPlayer"
         otherLinkedPlayers:
           type: array
           items:
-            $ref: "#/components/schemas/PublicAcademyFamilyLinkedPlayer"
+            $ref: "#/components/schemas/AcademyFamilyLinkedPlayer"
 
-    PublicAcademyFamilyAttendanceSummary:
+    AcademyFamilyAttendanceSummary:
       type: object
       required: [present, late, absent, excused, markedTotal, percentPresent]
       properties:
@@ -7113,7 +7281,7 @@ components:
           minimum: 0
           maximum: 100
 
-    PublicAcademyFamilyPayment:
+    AcademyFamilyPayment:
       type: object
       required: [id, kind, date, amountFils, label, monthsPurchased, newExpiresOn, dueDate, status]
       properties:
@@ -7144,7 +7312,7 @@ components:
           type: ["string", "null"]
           enum: [due, paid, waived, null]
 
-    PublicAcademyFamilyLinkedPlayer:
+    AcademyFamilyLinkedPlayer:
       type: object
       required: [id, name, academyName]
       properties:
@@ -7156,7 +7324,7 @@ components:
         academyName:
           type: string
 
-    PublicAcademyFamilySession:
+    AcademyFamilySession:
       type: object
       required: [type, startsAt, endsAt, location, opponent, ownScore, opponentScore]
       properties:
@@ -7180,7 +7348,7 @@ components:
           type: ["integer", "null"]
           minimum: 0
 
-    PublicAcademyFamilyAttendance:
+    AcademyFamilyAttendance:
       type: object
       required: [status, startsAt, type, location]
       properties:
@@ -7196,7 +7364,7 @@ components:
         location:
           type: string
 
-    PublicAcademyFamilyAnnouncement:
+    AcademyFamilyAnnouncement:
       type: object
       required: [title, body, createdAt]
       properties:

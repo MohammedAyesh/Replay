@@ -1,13 +1,13 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useLocation, useParams, useSearch } from "wouter";
 import {
   useGetAcademyFamilyMe,
-  useGetPublicAcademyFamily,
+  useClaimAcademyFamily,
   getGetAcademyFamilyMeQueryKey,
-  getGetPublicAcademyFamilyQueryKey,
 } from "@workspace/api-client-react";
-import { ArrowUpLeft, CalendarDays, Check, Clock3, Globe, MapPin, ShieldCheck, Trophy, WalletCards } from "lucide-react";
+import { CalendarDays, Check, Clock3, Globe, MapPin, ShieldCheck, Trophy, WalletCards } from "lucide-react";
 import { useTranslation } from "@/i18n";
+import { useAuth } from "@/lib/auth";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 
 function dateOnly(date: Date): string {
@@ -41,6 +41,15 @@ const copy = {
     payments: "Payment history", noPayments: "No payments in the last 12 months.", renewal: "Renewal", fee: "Fee",
     months: "months", until: "until", due: "Due", waived: "Waived",
     privacy: "Shared privately with your family", contact: "Contact academy", secure: "Private family link",
+    inviteTitle: "Connect this player to your family account",
+    inviteDescription: "Sign in or create a SoccerWatch account to connect this player and see their academy schedule, attendance, and updates.",
+    signIn: "Sign in",
+    createAccount: "Create account",
+    claiming: "Connecting this player to your account…",
+    claimErrorTitle: "This family invite is unavailable",
+    claimError: "Ask the academy for a current invite link, then try again.",
+    claimRetry: "Try again",
+    switchPlayer: "View another linked player",
     loading: "Preparing your family view…", errorTitle: "This family link is unavailable", error: "The link may have expired or been replaced. Please ask your academy for a current link.", retry: "Try again",
     today: "Today", upcoming: "UP NEXT", score: "Final score",
   },
@@ -57,6 +66,15 @@ const copy = {
     payments: "سجل المدفوعات", noPayments: "لا توجد مدفوعات خلال آخر ١٢ شهراً.", renewal: "تجديد", fee: "رسوم",
     months: "أشهر", until: "حتى", due: "مستحق", waived: "معفى",
     privacy: "مشاركة خاصة مع العائلة", contact: "تواصل مع الأكاديمية", secure: "رابط عائلي خاص",
+    inviteTitle: "اربط اللاعب بحساب العائلة",
+    inviteDescription: "سجّل الدخول أو أنشئ حساب SoccerWatch لربط اللاعب ومتابعة مواعيده وحضوره وأخبار الأكاديمية.",
+    signIn: "تسجيل الدخول",
+    createAccount: "إنشاء حساب",
+    claiming: "جارٍ ربط اللاعب بحسابكم…",
+    claimErrorTitle: "رابط العائلة غير متاح",
+    claimError: "اطلبوا رابط دعوة حديثًا من الأكاديمية ثم حاولوا مجددًا.",
+    claimRetry: "حاول مجددًا",
+    switchPlayer: "عرض لاعب آخر مرتبط",
     loading: "يتم تجهيز مساحة العائلة…", errorTitle: "رابط العائلة غير متاح", error: "قد يكون الرابط منتهي الصلاحية أو تم استبداله. يرجى طلب رابط جديد من الأكاديمية.", retry: "إعادة المحاولة",
     today: "اليوم", upcoming: "الموعد القادم", score: "النتيجة النهائية",
   },
@@ -67,6 +85,9 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const [location, setLocation] = useLocation();
   const search = useSearch();
   const { locale: appLocale } = useTranslation();
+  const { user, isLoading: authLoading, isGuest } = useAuth();
+  const claim = useClaimAcademyFamily();
+  const attemptedToken = useRef<string | null>(null);
   const requestedLanguage = new URLSearchParams(search).get("lang");
   const isEnglish = requestedLanguage === "en" || (
     requestedLanguage === null && source === "me" && appLocale === "en"
@@ -82,23 +103,33 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
     to.setDate(to.getDate() + 60);
     return { from: dateOnly(from), to: dateOnly(to) };
   }, []);
-  const queryParams = { token: params.token ?? "", ...dateRange };
-  const publicFamilyQuery = useGetPublicAcademyFamily(queryParams, {
+  const rawPlayerId = new URLSearchParams(search).get("playerId");
+  const requestedPlayerId = rawPlayerId && /^\d+$/.test(rawPlayerId) ? Number(rawPlayerId) : undefined;
+  const queryParams = {
+    ...dateRange,
+    ...(source === "me" && Number.isSafeInteger(requestedPlayerId) && requestedPlayerId! > 0
+      ? { playerId: requestedPlayerId }
+      : {}),
+  };
+  const familyQuery = useGetAcademyFamilyMe(queryParams, {
     query: {
-      queryKey: getGetPublicAcademyFamilyQueryKey(queryParams),
-      enabled: source === "token" && Boolean(params.token),
-      retry: false,
-    },
-  });
-  const meFamilyQuery = useGetAcademyFamilyMe(dateRange, {
-    query: {
-      queryKey: getGetAcademyFamilyMeQueryKey(dateRange),
+      queryKey: getGetAcademyFamilyMeQueryKey(queryParams),
       enabled: source === "me",
       retry: false,
     },
   });
-  const familyQuery = source === "me" ? meFamilyQuery : publicFamilyQuery;
   const family = familyQuery.data;
+  const familyToken = params.token ?? "";
+
+  useEffect(() => {
+    if (source !== "token" || authLoading || !user || isGuest || !familyToken) return;
+    if (attemptedToken.current === familyToken) return;
+    attemptedToken.current = familyToken;
+    void claim.mutateAsync({ data: { token: familyToken } })
+      .then((result) => setLocation(`/academy/me?playerId=${result.playerId}`))
+      .catch(() => undefined);
+  }, [authLoading, claim.mutateAsync, familyToken, isGuest, setLocation, source, user]);
+
   const toggleLanguage = () => {
     const nextSearch = new URLSearchParams(search);
     if (isEnglish && source === "me" && appLocale === "en") nextSearch.set("lang", "ar");
@@ -113,6 +144,70 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const attendanceRate = family?.attendanceSummary.percentPresent;
   const upcomingSessions = family?.sessions.filter((session) => new Date(session.startsAt).getTime() >= Date.now()) ?? [];
   const nextSession = upcomingSessions[0];
+
+  if (source === "token") {
+    const invitePath = `/p/${encodeURIComponent(familyToken)}`;
+    const signInPath = `/sign-in?redirect_url=${encodeURIComponent(invitePath)}`;
+    const signUpPath = `/sign-up?redirect_url=${encodeURIComponent(invitePath)}`;
+    const showAuthChoices = !authLoading && (!user || isGuest);
+    const showClaimProgress = authLoading || (Boolean(user) && !isGuest && !claim.isError);
+    return (
+      <main className="grid min-h-[100dvh] place-items-center bg-void px-5 py-10" dir={isEnglish ? "ltr" : "rtl"} lang={isEnglish ? "en" : "ar"} data-testid="academy-family-invite">
+        <section className="w-full max-w-lg rounded-3xl border border-line bg-surface p-7 text-center shadow-2xl shadow-black/10 sm:p-9">
+          <div className="mx-auto flex justify-center">
+            <AcademySidebarBrand academyName="Academy" academyLogoUrl={null} caption={labels.eyebrow} direction={isEnglish ? "ltr" : "rtl"} />
+          </div>
+          <div className="mx-auto mt-8 grid h-14 w-14 place-items-center rounded-2xl bg-turf/10 text-turf">
+            <ShieldCheck size={25} aria-hidden="true" />
+          </div>
+          <h1 className="mt-5 font-display text-3xl font-bold tracking-tight text-text" data-testid="text-family-invite-title">
+            {claim.isError ? labels.claimErrorTitle : labels.inviteTitle}
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-muted-text">
+            {claim.isError ? labels.claimError : labels.inviteDescription}
+          </p>
+          {showAuthChoices ? (
+            <div className="mt-7 grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => setLocation(signInPath)} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-floodlight px-5 font-bold text-void" data-testid="link-family-sign-in">
+                {labels.signIn}
+              </button>
+              <button type="button" onClick={() => setLocation(signUpPath)} className="inline-flex min-h-12 items-center justify-center rounded-xl border border-line bg-raised px-5 font-bold text-text" data-testid="link-family-sign-up">
+                {labels.createAccount}
+              </button>
+            </div>
+          ) : null}
+          {showClaimProgress ? (
+            <p className="mt-6 text-sm font-semibold text-turf" role="status" data-testid="family-claim-loading">
+              {authLoading ? labels.loading : labels.claiming}
+            </p>
+          ) : null}
+          {claim.isError ? (
+            <button
+              type="button"
+              onClick={() => {
+                attemptedToken.current = null;
+                claim.reset();
+              }}
+              className="mt-6 min-h-11 rounded-xl bg-floodlight px-5 font-bold text-void"
+              data-testid="button-family-claim-retry"
+            >
+              {labels.claimRetry}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={toggleLanguage}
+            aria-label="Change language"
+            className="mt-7 inline-flex min-h-10 items-center gap-2 rounded-full border border-line bg-raised px-4 text-sm font-semibold text-text"
+            data-testid="button-family-invite-language"
+          >
+            <Globe className="h-4 w-4" aria-hidden="true" />
+            {lang.toUpperCase()}
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="family-portal" dir={isEnglish ? "ltr" : "rtl"} lang={isEnglish ? "en" : "ar"} data-testid="academy-family-page">
@@ -155,6 +250,8 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
         .fp-payment-status{display:inline-flex;width:max-content;align-items:center;border-radius:999px;padding:3px 8px;background:color-mix(in srgb,var(--replay-turf) 13%,var(--replay-surface));color:var(--replay-turf);font-size:10px;font-weight:800}
         .fp-payment-status.due{background:color-mix(in srgb,var(--replay-floodlight) 14%,var(--replay-surface));color:var(--replay-floodlight)}
         .fp-payment-status.waived{color:var(--replay-muted)}
+        .fp-switcher{display:grid;max-width:420px;gap:6px;margin-bottom:18px;color:var(--replay-muted);font-size:11px;font-weight:700}
+        .fp-switcher select{min-height:42px;width:100%;border:1px solid var(--replay-line);border-radius:11px;background:var(--replay-void);padding:0 12px;color:var(--replay-text);font:inherit}
       `}</style>
       <header className="replay-header sticky top-3 z-40 mx-3 mt-3 mb-2 shrink-0 rounded-2xl border border-line bg-surface/95 px-4 py-2.5 backdrop-blur-md">
         <div className="flex items-center justify-between gap-3">
@@ -195,6 +292,28 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
               <div className="fp-trust"><ShieldCheck size={16} aria-hidden="true" />{labels.secure}</div>
             </section>
             <section className="fp-hero" data-testid="family-player-summary">
+              {family.players.length > 1 && (
+                <label className="fp-switcher" htmlFor="family-player-switcher">
+                  <span>{labels.switchPlayer}</span>
+                  <select
+                    id="family-player-switcher"
+                    value={family.player.id}
+                    onChange={(event) => {
+                      const nextSearch = new URLSearchParams(search);
+                      nextSearch.set("playerId", event.target.value);
+                      const query = nextSearch.toString();
+                      setLocation(`/academy/me${query ? `?${query}` : ""}`);
+                    }}
+                    data-testid="select-family-player"
+                  >
+                    {family.players.map((linkedPlayer) => (
+                      <option key={linkedPlayer.id} value={linkedPlayer.id}>
+                        {linkedPlayer.name} · {linkedPlayer.academyName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div className="fp-player">
                 <div className="fp-player-main">
                   <span className="fp-player-number" data-testid="text-player-jersey">{family.player.jerseyNumber ?? "—"}</span>
