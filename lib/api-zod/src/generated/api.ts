@@ -1757,6 +1757,10 @@ export const GetAdminRecordingPlayerMetricsResponse = zod.object({
 /**
  * @summary List all academies
  */
+export const listAcademiesResponseContactPhoneMax = 80;
+
+
+
 export const ListAcademiesResponseItem = zod.object({
   "id": zod.number(),
   "name": zod.string(),
@@ -1766,6 +1770,7 @@ export const ListAcademiesResponseItem = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "contactPhone": zod.string().max(listAcademiesResponseContactPhoneMax).nullable(),
   "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
@@ -1779,6 +1784,10 @@ export const GetAcademyParams = zod.object({
   "id": zod.coerce.number()
 })
 
+export const getAcademyResponseContactPhoneMax = 80;
+
+
+
 export const GetAcademyResponse = zod.object({
   "id": zod.number(),
   "name": zod.string(),
@@ -1788,6 +1797,7 @@ export const GetAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "contactPhone": zod.string().max(getAcademyResponseContactPhoneMax).nullable(),
   "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
@@ -2380,6 +2390,26 @@ export const getPublicAcademyFamilyResponseSessionsItemOwnScoreMin = 0;
 
 export const getPublicAcademyFamilyResponseSessionsItemOpponentScoreMin = 0;
 
+export const getPublicAcademyFamilyResponseAttendanceSummaryPresentMin = 0;
+
+export const getPublicAcademyFamilyResponseAttendanceSummaryLateMin = 0;
+
+export const getPublicAcademyFamilyResponseAttendanceSummaryAbsentMin = 0;
+
+export const getPublicAcademyFamilyResponseAttendanceSummaryExcusedMin = 0;
+
+export const getPublicAcademyFamilyResponseAttendanceSummaryMarkedTotalMin = 0;
+
+export const getPublicAcademyFamilyResponseAttendanceSummaryPercentPresentMin = 0;
+export const getPublicAcademyFamilyResponseAttendanceSummaryPercentPresentMax = 100;
+
+export const getPublicAcademyFamilyResponsePaymentsItemAmountFilsMin = 0;
+
+export const getPublicAcademyFamilyResponsePaymentsItemMonthsPurchasedMax = 12;
+
+export const getPublicAcademyFamilyResponsePaymentsItemNewExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getPublicAcademyFamilyResponsePaymentsItemDueDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
 
 
 export const GetPublicAcademyFamilyResponse = zod.object({
@@ -2416,11 +2446,148 @@ export const GetPublicAcademyFamilyResponse = zod.object({
   "type": zod.enum(['training', 'match']),
   "location": zod.string()
 })),
+  "attendanceSummary": zod.object({
+  "present": zod.number().min(getPublicAcademyFamilyResponseAttendanceSummaryPresentMin),
+  "late": zod.number().min(getPublicAcademyFamilyResponseAttendanceSummaryLateMin),
+  "absent": zod.number().min(getPublicAcademyFamilyResponseAttendanceSummaryAbsentMin),
+  "excused": zod.number().min(getPublicAcademyFamilyResponseAttendanceSummaryExcusedMin),
+  "markedTotal": zod.number().min(getPublicAcademyFamilyResponseAttendanceSummaryMarkedTotalMin),
+  "percentPresent": zod.number().min(getPublicAcademyFamilyResponseAttendanceSummaryPercentPresentMin).max(getPublicAcademyFamilyResponseAttendanceSummaryPercentPresentMax).nullable()
+}),
+  "payments": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['renewal', 'fee']),
+  "date": zod.coerce.date(),
+  "amountFils": zod.number().min(getPublicAcademyFamilyResponsePaymentsItemAmountFilsMin),
+  "label": zod.string().nullable(),
+  "monthsPurchased": zod.number().min(1).max(getPublicAcademyFamilyResponsePaymentsItemMonthsPurchasedMax).nullable(),
+  "newExpiresOn": zod.string().regex(getPublicAcademyFamilyResponsePaymentsItemNewExpiresOnRegExp).nullable(),
+  "dueDate": zod.string().regex(getPublicAcademyFamilyResponsePaymentsItemDueDateRegExp).nullable(),
+  "status": zod.union([zod.literal('due'),zod.literal('paid'),zod.literal('waived'),zod.literal(null)]).nullable()
+})),
   "announcements": zod.array(zod.object({
   "title": zod.string(),
   "body": zod.string(),
   "createdAt": zod.coerce.date()
-}))
+})),
+  "otherLinkedPlayers": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "academyName": zod.string()
+})).optional()
+})
+
+
+/**
+ * @summary Read the family view for the first active player linked to the current user
+ */
+export const getAcademyFamilyMeQueryFromRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getAcademyFamilyMeQueryToRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetAcademyFamilyMeQueryParams = zod.object({
+  "from": zod.coerce.string().regex(getAcademyFamilyMeQueryFromRegExp).optional(),
+  "to": zod.coerce.string().regex(getAcademyFamilyMeQueryToRegExp).optional()
+})
+
+export const getAcademyFamilyMeResponsePlayerJerseyNumberMin = 0;
+
+export const getAcademyFamilyMeResponseFinanceEffectiveMonthlyFeeFilsMin = 0;
+
+export const getAcademyFamilyMeResponseFinanceSubscriptionExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getAcademyFamilyMeResponseFinanceMonthsOwedMin = 0;
+
+export const getAcademyFamilyMeResponseFinanceOutstandingFilsMin = 0;
+
+export const getAcademyFamilyMeResponseSessionsItemOwnScoreMin = 0;
+
+export const getAcademyFamilyMeResponseSessionsItemOpponentScoreMin = 0;
+
+export const getAcademyFamilyMeResponseAttendanceSummaryPresentMin = 0;
+
+export const getAcademyFamilyMeResponseAttendanceSummaryLateMin = 0;
+
+export const getAcademyFamilyMeResponseAttendanceSummaryAbsentMin = 0;
+
+export const getAcademyFamilyMeResponseAttendanceSummaryExcusedMin = 0;
+
+export const getAcademyFamilyMeResponseAttendanceSummaryMarkedTotalMin = 0;
+
+export const getAcademyFamilyMeResponseAttendanceSummaryPercentPresentMin = 0;
+export const getAcademyFamilyMeResponseAttendanceSummaryPercentPresentMax = 100;
+
+export const getAcademyFamilyMeResponsePaymentsItemAmountFilsMin = 0;
+
+export const getAcademyFamilyMeResponsePaymentsItemMonthsPurchasedMax = 12;
+
+export const getAcademyFamilyMeResponsePaymentsItemNewExpiresOnRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getAcademyFamilyMeResponsePaymentsItemDueDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+
+export const GetAcademyFamilyMeResponse = zod.object({
+  "academy": zod.object({
+  "name": zod.string(),
+  "logoUrl": zod.string().nullable(),
+  "contactPhone": zod.string().nullable()
+}),
+  "player": zod.object({
+  "name": zod.string(),
+  "squadName": zod.string().nullable(),
+  "jerseyNumber": zod.number().min(getAcademyFamilyMeResponsePlayerJerseyNumberMin).nullable(),
+  "position": zod.string().nullable()
+}),
+  "finance": zod.object({
+  "effectiveMonthlyFeeFils": zod.number().min(getAcademyFamilyMeResponseFinanceEffectiveMonthlyFeeFilsMin),
+  "subscriptionExpiresOn": zod.string().regex(getAcademyFamilyMeResponseFinanceSubscriptionExpiresOnRegExp).nullable(),
+  "subscriptionStatus": zod.enum(['no_subscription', 'paid', 'expiring', 'expired']),
+  "monthsOwed": zod.number().min(getAcademyFamilyMeResponseFinanceMonthsOwedMin),
+  "outstandingFils": zod.number().min(getAcademyFamilyMeResponseFinanceOutstandingFilsMin)
+}).nullable(),
+  "sessions": zod.array(zod.object({
+  "type": zod.enum(['training', 'match']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date().nullable(),
+  "location": zod.string(),
+  "opponent": zod.string().nullable(),
+  "ownScore": zod.number().min(getAcademyFamilyMeResponseSessionsItemOwnScoreMin).nullable(),
+  "opponentScore": zod.number().min(getAcademyFamilyMeResponseSessionsItemOpponentScoreMin).nullable()
+})),
+  "attendance": zod.array(zod.object({
+  "status": zod.enum(['present', 'absent', 'late', 'excused']),
+  "startsAt": zod.coerce.date(),
+  "type": zod.enum(['training', 'match']),
+  "location": zod.string()
+})),
+  "attendanceSummary": zod.object({
+  "present": zod.number().min(getAcademyFamilyMeResponseAttendanceSummaryPresentMin),
+  "late": zod.number().min(getAcademyFamilyMeResponseAttendanceSummaryLateMin),
+  "absent": zod.number().min(getAcademyFamilyMeResponseAttendanceSummaryAbsentMin),
+  "excused": zod.number().min(getAcademyFamilyMeResponseAttendanceSummaryExcusedMin),
+  "markedTotal": zod.number().min(getAcademyFamilyMeResponseAttendanceSummaryMarkedTotalMin),
+  "percentPresent": zod.number().min(getAcademyFamilyMeResponseAttendanceSummaryPercentPresentMin).max(getAcademyFamilyMeResponseAttendanceSummaryPercentPresentMax).nullable()
+}),
+  "payments": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['renewal', 'fee']),
+  "date": zod.coerce.date(),
+  "amountFils": zod.number().min(getAcademyFamilyMeResponsePaymentsItemAmountFilsMin),
+  "label": zod.string().nullable(),
+  "monthsPurchased": zod.number().min(1).max(getAcademyFamilyMeResponsePaymentsItemMonthsPurchasedMax).nullable(),
+  "newExpiresOn": zod.string().regex(getAcademyFamilyMeResponsePaymentsItemNewExpiresOnRegExp).nullable(),
+  "dueDate": zod.string().regex(getAcademyFamilyMeResponsePaymentsItemDueDateRegExp).nullable(),
+  "status": zod.union([zod.literal('due'),zod.literal('paid'),zod.literal('waived'),zod.literal(null)]).nullable()
+})),
+  "announcements": zod.array(zod.object({
+  "title": zod.string(),
+  "body": zod.string(),
+  "createdAt": zod.coerce.date()
+})),
+  "otherLinkedPlayers": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "name": zod.string(),
+  "academyName": zod.string()
+})).optional()
 })
 
 
@@ -3959,6 +4126,10 @@ export const RemoveAcademyMemberRoleResponse = zod.void()
 /**
  * @summary List all academies (admin)
  */
+export const listAdminAcademiesResponseContactPhoneMax = 80;
+
+
+
 export const ListAdminAcademiesResponseItem = zod.object({
   "id": zod.number(),
   "name": zod.string(),
@@ -3968,6 +4139,7 @@ export const ListAdminAcademiesResponseItem = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "contactPhone": zod.string().max(listAdminAcademiesResponseContactPhoneMax).nullable(),
   "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
@@ -3977,13 +4149,22 @@ export const ListAdminAcademiesResponse = zod.array(ListAdminAcademiesResponseIt
 /**
  * @summary Create a new academy
  */
+export const createAcademyBodyContactPhoneMax = 80;
+
+
+
 export const CreateAcademyBody = zod.object({
   "name": zod.string(),
   "fieldId": zod.number(),
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
-  "logoUrl": zod.string().nullish()
+  "logoUrl": zod.string().nullish(),
+  "contactPhone": zod.string().max(createAcademyBodyContactPhoneMax).nullish()
 })
+
+export const createAcademyResponseContactPhoneMax = 80;
+
+
 
 export const CreateAcademyResponse = zod.object({
   "id": zod.number(),
@@ -3994,6 +4175,7 @@ export const CreateAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "contactPhone": zod.string().max(createAcademyResponseContactPhoneMax).nullable(),
   "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })
@@ -4006,13 +4188,22 @@ export const UpdateAcademyParams = zod.object({
   "id": zod.coerce.number()
 })
 
+export const updateAcademyBodyContactPhoneMax = 80;
+
+
+
 export const UpdateAcademyBody = zod.object({
   "name": zod.string().optional(),
   "fieldId": zod.number().optional(),
   "daysOfWeek": zod.array(zod.string()).optional(),
   "description": zod.string().nullish(),
-  "logoUrl": zod.string().nullish()
+  "logoUrl": zod.string().nullish(),
+  "contactPhone": zod.string().max(updateAcademyBodyContactPhoneMax).nullish()
 })
+
+export const updateAcademyResponseContactPhoneMax = 80;
+
+
 
 export const UpdateAcademyResponse = zod.object({
   "id": zod.number(),
@@ -4023,6 +4214,7 @@ export const UpdateAcademyResponse = zod.object({
   "daysOfWeek": zod.array(zod.string()),
   "description": zod.string().nullish(),
   "logoUrl": zod.string().nullish(),
+  "contactPhone": zod.string().max(updateAcademyResponseContactPhoneMax).nullable(),
   "introVideoUrl": zod.string().nullish().describe('Branding intro clip prepended to this academy\'s clip exports and playback.'),
   "recordingCount": zod.number()
 })

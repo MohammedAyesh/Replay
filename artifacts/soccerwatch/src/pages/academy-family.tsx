@@ -1,7 +1,14 @@
 import { useMemo } from "react";
 import { useLocation, useParams, useSearch } from "wouter";
-import { useGetPublicAcademyFamily, getGetPublicAcademyFamilyQueryKey } from "@workspace/api-client-react";
+import {
+  useGetAcademyFamilyMe,
+  useGetPublicAcademyFamily,
+  getGetAcademyFamilyMeQueryKey,
+  getGetPublicAcademyFamilyQueryKey,
+} from "@workspace/api-client-react";
 import { ArrowUpLeft, CalendarDays, Check, Clock3, MapPin, ShieldCheck, Trophy, WalletCards } from "lucide-react";
+import { useTranslation } from "@/i18n";
+import { guardianContactLinks } from "@/components/academy-console/guardian-contact";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -31,7 +38,9 @@ const copy = {
     news: "From the academy", noNews: "There are no recent updates.",
     fees: "Membership", monthly: "Monthly fee", expiry: "Covered through", clear: "All up to date",
     owed: "Months outstanding", balance: "Amount due", paid: "Paid", expiring: "Renewal soon", expired: "Expired", noSubscription: "No active subscription",
-    privacy: "Shared privately with your family", contact: "Contact academy", secure: "Private family link",
+    payments: "Payment history", noPayments: "No payments in the last 12 months.", renewal: "Renewal", fee: "Fee",
+    months: "months", until: "until", due: "Due", waived: "Waived", whatsapp: "WhatsApp", callAcademy: "Call academy",
+    privacy: "Shared privately with your family", contact: "WhatsApp academy", secure: "Private family link",
     loading: "Preparing your family view…", errorTitle: "This family link is unavailable", error: "The link may have expired or been replaced. Please ask your academy for a current link.", retry: "Try again",
     today: "Today", upcoming: "UP NEXT", score: "Final score",
   },
@@ -45,17 +54,23 @@ const copy = {
     news: "أخبار الأكاديمية", noNews: "لا توجد تحديثات جديدة.",
     fees: "الاشتراك", monthly: "الرسوم الشهرية", expiry: "مشمول حتى", clear: "كل شيء محدّث",
     owed: "أشهر مستحقة", balance: "المبلغ المستحق", paid: "مدفوع", expiring: "موعد التجديد قريب", expired: "منتهي", noSubscription: "لا يوجد اشتراك حالي",
-    privacy: "مشاركة خاصة مع العائلة", contact: "تواصل مع الأكاديمية", secure: "رابط عائلي خاص",
+    payments: "سجل المدفوعات", noPayments: "لا توجد مدفوعات خلال آخر ١٢ شهراً.", renewal: "تجديد", fee: "رسوم",
+    months: "أشهر", until: "حتى", due: "مستحق", waived: "معفى", whatsapp: "واتساب", callAcademy: "اتصال بالأكاديمية",
+    privacy: "مشاركة خاصة مع العائلة", contact: "مراسلة الأكاديمية", secure: "رابط عائلي خاص",
     loading: "يتم تجهيز مساحة العائلة…", errorTitle: "رابط العائلة غير متاح", error: "قد يكون الرابط منتهي الصلاحية أو تم استبداله. يرجى طلب رابط جديد من الأكاديمية.", retry: "إعادة المحاولة",
     today: "اليوم", upcoming: "الموعد القادم", score: "النتيجة النهائية",
   },
 };
 
-export default function AcademyFamilyPage() {
+export default function AcademyFamilyPage({ source = "token" }: { source?: "token" | "me" }) {
   const params = useParams<{ token?: string }>();
   const [location, setLocation] = useLocation();
   const search = useSearch();
-  const isEnglish = new URLSearchParams(search).get("lang") === "en";
+  const { locale: appLocale } = useTranslation();
+  const requestedLanguage = new URLSearchParams(search).get("lang");
+  const isEnglish = requestedLanguage === "en" || (
+    requestedLanguage === null && source === "me" && appLocale === "en"
+  );
   const lang = isEnglish ? "en" : "ar";
   const labels = copy[lang];
   const locale = isEnglish ? "en" : "ar-JO";
@@ -68,17 +83,27 @@ export default function AcademyFamilyPage() {
     return { from: dateOnly(from), to: dateOnly(to) };
   }, []);
   const queryParams = { token: params.token ?? "", ...dateRange };
-  const familyQuery = useGetPublicAcademyFamily(queryParams, {
+  const publicFamilyQuery = useGetPublicAcademyFamily(queryParams, {
     query: {
       queryKey: getGetPublicAcademyFamilyQueryKey(queryParams),
-      enabled: Boolean(params.token),
+      enabled: source === "token" && Boolean(params.token),
       retry: false,
     },
   });
+  const meFamilyQuery = useGetAcademyFamilyMe(dateRange, {
+    query: {
+      queryKey: getGetAcademyFamilyMeQueryKey(dateRange),
+      enabled: source === "me",
+      retry: false,
+    },
+  });
+  const familyQuery = source === "me" ? meFamilyQuery : publicFamilyQuery;
   const family = familyQuery.data;
+  const academyContact = guardianContactLinks(family?.academy.contactPhone);
   const toggleLanguage = () => {
     const nextSearch = new URLSearchParams(search);
-    if (isEnglish) nextSearch.delete("lang");
+    if (isEnglish && source === "me" && appLocale === "en") nextSearch.set("lang", "ar");
+    else if (isEnglish) nextSearch.delete("lang");
     else nextSearch.set("lang", "en");
     setLocation(`${location.split("?")[0]}${nextSearch.size ? `?${nextSearch.toString()}` : ""}`);
   };
@@ -86,6 +111,7 @@ export default function AcademyFamilyPage() {
     present: labels.present, absent: labels.absent, late: labels.late, excused: labels.excused,
   }[status] ?? status);
   const financeStatus = family?.finance?.subscriptionStatus;
+  const attendanceRate = family?.attendanceSummary.percentPresent;
   const upcomingSessions = family?.sessions.filter((session) => new Date(session.startsAt).getTime() >= Date.now()) ?? [];
   const nextSession = upcomingSessions[0];
 
@@ -119,6 +145,20 @@ export default function AcademyFamilyPage() {
         .fp-footer a{color:var(--replay-turf)}
         .fp-error{border-color:var(--replay-line);background:var(--replay-surface);color:var(--replay-text)}
         .fp-error-mark{background:color-mix(in srgb,var(--replay-turf) 13%,var(--replay-surface));color:var(--replay-turf)}
+        .fp-att-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:12px 0 14px}
+        .fp-att-tile{min-width:0;padding:9px 5px;border:1px solid var(--replay-line);border-radius:11px;background:var(--replay-void);text-align:center}
+        .fp-att-tile strong{display:block;font-size:18px;line-height:1.25;color:var(--replay-text)}
+        .fp-att-tile span{display:block;margin-top:3px;font-size:10px;color:var(--replay-muted)}
+        .fp-payment-list{display:grid;gap:8px}
+        .fp-payment-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border:1px solid var(--replay-line);border-radius:12px;background:var(--replay-void)}
+        .fp-payment-detail{display:grid;min-width:0;gap:4px}
+        .fp-payment-detail strong{font-size:13px;line-height:1.5;color:var(--replay-text)}
+        .fp-payment-detail span{font-size:11px;color:var(--replay-muted)}
+        .fp-payment-amount{flex-shrink:0;text-align:end;font-size:13px;font-weight:800;color:var(--replay-text)}
+        .fp-payment-status{display:inline-flex;width:max-content;align-items:center;border-radius:999px;padding:3px 8px;background:color-mix(in srgb,var(--replay-turf) 13%,var(--replay-surface));color:var(--replay-turf);font-size:10px;font-weight:800}
+        .fp-payment-status.due{background:color-mix(in srgb,var(--replay-floodlight) 14%,var(--replay-surface));color:var(--replay-floodlight)}
+        .fp-payment-status.waived{color:var(--replay-muted)}
+        .fp-contact-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
       `}</style>
       <header className="fp-header">
         <div className="fp-brand"><span className="fp-brand-mark" aria-hidden="true">S</span><span>SOCCERWATCH</span></div>
@@ -176,7 +216,15 @@ export default function AcademyFamilyPage() {
                 })}</div> : <div className="fp-empty" data-testid="family-schedule-empty">{labels.noSessions}</div>}
               </section>
               <section className="fp-card" data-testid="family-attendance">
-                <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.attendance}</h2><p className="fp-card-sub">{labels.attendanceHint}</p></div><span className="fp-count">{family.attendance.length}</span></div>
+                <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.attendance}{attendanceRate != null ? ` · ${new Intl.NumberFormat(locale).format(attendanceRate)}%` : ""}</h2><p className="fp-card-sub">{labels.attendanceHint}</p></div><span className="fp-count">{family.attendance.length}</span></div>
+                <div className="fp-att-summary" data-testid="family-attendance-summary">
+                  {[
+                    { label: labels.present, value: family.attendanceSummary.present },
+                    { label: labels.late, value: family.attendanceSummary.late },
+                    { label: labels.absent, value: family.attendanceSummary.absent },
+                    { label: labels.excused, value: family.attendanceSummary.excused },
+                  ].map((item) => <div className="fp-att-tile" key={item.label}><strong>{new Intl.NumberFormat(locale).format(item.value)}</strong><span>{item.label}</span></div>)}
+                </div>
                 {family.attendance.length ? <div className="fp-attendance">{family.attendance.slice(0, 6).map((item, index) => <div className="fp-att-row" key={`${item.startsAt}-${index}`} data-testid={`family-attendance-${index}`}>
                   <span><span className="fp-att-date">{formatDate(item.startsAt, locale, { day: "numeric", month: "short", year: "numeric" })} · {item.location}</span><strong className="fp-att-type">{item.type === "match" ? labels.match : labels.training}</strong></span>
                   <span className={`fp-status ${item.status}`} data-testid={`family-attendance-status-${index}`}>{statusLabel(item.status)}</span>
@@ -200,8 +248,49 @@ export default function AcademyFamilyPage() {
                   </dl>
                 </> : <div className="fp-pay-status"><Trophy size={15} aria-hidden="true" />{labels.noSubscription}</div>}
               </section>
+              <section className="fp-card" data-testid="family-payments">
+                <div className="fp-card-head">
+                  <div><h2 className="fp-card-title">{labels.payments}</h2></div>
+                  <span className="fp-count">{family.payments.length}</span>
+                </div>
+                {family.payments.length ? (
+                  <div className="fp-payment-list">
+                    {family.payments.map((payment) => {
+                      const title = payment.kind === "renewal"
+                        ? `${labels.renewal} · ${new Intl.NumberFormat(locale).format(payment.monthsPurchased ?? 0)} ${labels.months} → ${labels.until} ${formatDate(payment.newExpiresOn ?? payment.date, locale, { day: "numeric", month: "short", year: "numeric" })}`
+                        : payment.label ?? labels.fee;
+                      const status = payment.status === "paid"
+                        ? labels.paid
+                        : payment.status === "waived"
+                          ? labels.waived
+                          : labels.due;
+                      return (
+                        <article className="fp-payment-row" key={payment.id} data-testid={`family-payment-${payment.id}`}>
+                          <div className="fp-payment-detail">
+                            <strong dir="auto">{title}</strong>
+                            <span>
+                              {formatDate(payment.date, locale, { day: "numeric", month: "short", year: "numeric" })}
+                              {payment.dueDate ? ` · ${labels.due} ${formatDate(payment.dueDate, locale, { day: "numeric", month: "short", year: "numeric" })}` : ""}
+                            </span>
+                            <span className={`fp-payment-status ${payment.status}`}>{status}</span>
+                          </div>
+                          <span className="fp-payment-amount">{formatMoney(payment.amountFils, locale)}</span>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : <div className="fp-empty" data-testid="family-payments-empty">{labels.noPayments}</div>}
+              </section>
             </div>
-            <footer className="fp-footer"><span>{labels.privacy}</span>{family.academy.contactPhone && <a href={`tel:${family.academy.contactPhone}`} data-testid="link-contact-academy">{labels.contact}</a>}</footer>
+            <footer className="fp-footer">
+              <span>{labels.privacy}</span>
+              {academyContact && (
+                <span className="fp-contact-actions">
+                  <a href={academyContact.whatsappUrl} target="_blank" rel="noreferrer" data-testid="link-contact-academy-whatsapp">{labels.contact}</a>
+                  <a href={academyContact.callUrl} data-testid="link-contact-academy-call">{labels.callAcademy}</a>
+                </span>
+              )}
+            </footer>
           </div>
         </>
       )}

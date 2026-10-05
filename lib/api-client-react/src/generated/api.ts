@@ -125,6 +125,7 @@ import type {
   Field,
   FieldRecording,
   FollowResult,
+  GetAcademyFamilyMeParams,
   GetAdminAnalysisJobQuoteParams,
   GetPublicAcademyFamilyParams,
   HealthStatus,
@@ -5638,6 +5639,90 @@ export function useGetPublicAcademyFamily<TData = Awaited<ReturnType<typeof getP
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetPublicAcademyFamilyQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAcademyFamilyMeUrl = (params?: GetAcademyFamilyMeParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/academy/family/me?${stringifiedParams}` : `/api/academy/family/me`
+}
+
+/**
+ * @summary Read the family view for the first active player linked to the current user
+ */
+export const getAcademyFamilyMe = async (params?: GetAcademyFamilyMeParams, options?: RequestInit): Promise<PublicAcademyFamily> => {
+
+  return customFetch<PublicAcademyFamily>(getGetAcademyFamilyMeUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyFamilyMeQueryKey = (params?: GetAcademyFamilyMeParams,) => {
+    return [
+    `/api/academy/family/me`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAcademyFamilyMeQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyFamilyMe>>, TError = ErrorType<void>>(params?: GetAcademyFamilyMeParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyFamilyMe>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyFamilyMeQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyFamilyMe>>> = ({ signal }) => getAcademyFamilyMe(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyFamilyMe>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyFamilyMeQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyFamilyMe>>>
+export type GetAcademyFamilyMeQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read the family view for the first active player linked to the current user
+ */
+
+export function useGetAcademyFamilyMe<TData = Awaited<ReturnType<typeof getAcademyFamilyMe>>, TError = ErrorType<void>>(
+ params?: GetAcademyFamilyMeParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyFamilyMe>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyFamilyMeQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

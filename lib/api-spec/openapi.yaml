@@ -2103,6 +2103,45 @@ paths:
         "429":
           description: Too many requests
 
+  /academy/family/me:
+    get:
+      operationId: getAcademyFamilyMe
+      tags: [academyFamily]
+      summary: Read the family view for the first active player linked to the current user
+      security:
+        - clerkSession: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+      responses:
+        "200":
+          description: Family view for the first active linked player, including any other linked players
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAcademyFamily"
+        "400":
+          description: Invalid date window
+        "401":
+          description: Unauthenticated
+        "404":
+          description: No active academy player is linked to the current user
+
   /academy/console/academies/{academyId}/players/{playerId}/family-link:
     get:
       operationId: getAcademyConsolePlayerFamilyLink
@@ -6255,7 +6294,7 @@ components:
 
     AcademySummary:
       type: object
-      required: [id, name, fieldId, fieldName, fieldLocation, daysOfWeek, recordingCount]
+      required: [id, name, fieldId, fieldName, fieldLocation, daysOfWeek, recordingCount, contactPhone]
       properties:
         id:
           type: integer
@@ -6275,6 +6314,9 @@ components:
           type: ["string", "null"]
         logoUrl:
           type: ["string", "null"]
+        contactPhone:
+          type: ["string", "null"]
+          maxLength: 80
         introVideoUrl:
           type: ["string", "null"]
           description: Branding intro clip prepended to this academy's clip exports and playback.
@@ -6980,7 +7022,7 @@ components:
 
     PublicAcademyFamily:
       type: object
-      required: [academy, player, finance, sessions, attendance, announcements]
+      required: [academy, player, finance, sessions, attendance, attendanceSummary, payments, announcements]
       properties:
         academy:
           type: object
@@ -7032,10 +7074,87 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublicAcademyFamilyAttendance"
+        attendanceSummary:
+          $ref: "#/components/schemas/PublicAcademyFamilyAttendanceSummary"
+        payments:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicAcademyFamilyPayment"
         announcements:
           type: array
           items:
             $ref: "#/components/schemas/PublicAcademyFamilyAnnouncement"
+        otherLinkedPlayers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicAcademyFamilyLinkedPlayer"
+
+    PublicAcademyFamilyAttendanceSummary:
+      type: object
+      required: [present, late, absent, excused, markedTotal, percentPresent]
+      properties:
+        present:
+          type: integer
+          minimum: 0
+        late:
+          type: integer
+          minimum: 0
+        absent:
+          type: integer
+          minimum: 0
+        excused:
+          type: integer
+          minimum: 0
+        markedTotal:
+          type: integer
+          minimum: 0
+        percentPresent:
+          type: ["integer", "null"]
+          minimum: 0
+          maximum: 100
+
+    PublicAcademyFamilyPayment:
+      type: object
+      required: [id, kind, date, amountFils, label, monthsPurchased, newExpiresOn, dueDate, status]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [renewal, fee]
+        date:
+          type: string
+          format: date-time
+        amountFils:
+          type: integer
+          minimum: 0
+        label:
+          type: ["string", "null"]
+        monthsPurchased:
+          type: ["integer", "null"]
+          minimum: 1
+          maximum: 12
+        newExpiresOn:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        dueDate:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        status:
+          type: ["string", "null"]
+          enum: [due, paid, waived, null]
+
+    PublicAcademyFamilyLinkedPlayer:
+      type: object
+      required: [id, name, academyName]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        academyName:
+          type: string
 
     PublicAcademyFamilySession:
       type: object
@@ -7583,6 +7702,9 @@ components:
           type: ["string", "null"]
         logoUrl:
           type: ["string", "null"]
+        contactPhone:
+          type: ["string", "null"]
+          maxLength: 80
 
     UpdateAcademyInput:
       type: object
@@ -7599,6 +7721,9 @@ components:
           type: ["string", "null"]
         logoUrl:
           type: ["string", "null"]
+        contactPhone:
+          type: ["string", "null"]
+          maxLength: 80
 
     AddAcademyRecordingInput:
       type: object

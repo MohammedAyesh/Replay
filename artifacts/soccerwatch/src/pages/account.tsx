@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useLocation } from "wouter";
-import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useGetAcademyConsoleMemberships, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, getGetAcademyConsoleMembershipsQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
+import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useGetAcademyConsoleMemberships, useGetAcademyFamilyMe, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, getGetAcademyConsoleMembershipsQueryKey, getGetAcademyFamilyMeQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -63,6 +63,13 @@ export default function Account() {
     query: {
       enabled: !isGuest && Boolean(authUser),
       queryKey: getGetAcademyConsoleMembershipsQueryKey(),
+    },
+  });
+  const myAcademyFamilyQuery = useGetAcademyFamilyMe(undefined, {
+    query: {
+      enabled: !isGuest && Boolean(authUser),
+      queryKey: getGetAcademyFamilyMeQueryKey(),
+      retry: false,
     },
   });
 
@@ -396,6 +403,23 @@ export default function Account() {
                   <GraduationCap className="h-4 w-4 text-turf" />
                 </span>
                 <span className="font-medium text-foreground">{t.account.academyConsole}</span>
+              </div>
+              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
+              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
+            </Link>
+          )}
+
+          {myAcademyFamilyQuery.data && (
+            <Link
+              href="/academy/me"
+              data-testid="link-my-academy-family"
+              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
+            >
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-turf/10">
+                  <GraduationCap className="h-4 w-4 text-turf" />
+                </span>
+                <span className="font-medium text-foreground">{t.account.myAcademy}</span>
               </div>
               <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
               <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />

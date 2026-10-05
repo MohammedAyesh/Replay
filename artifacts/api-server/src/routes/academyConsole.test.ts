@@ -5,8 +5,10 @@ import { eq, inArray } from "drizzle-orm";
 import {
   academyAnnouncementsTable,
   academyAttendanceTable,
+  academyFeesTable,
   academyMembersTable,
   academyPlayersTable,
+  academyPlayerRenewalsTable,
   academyRecordingsTable,
   academySessionsTable,
   academySquadsTable,
@@ -18,6 +20,12 @@ import {
 } from "@workspace/db";
 
 vi.mock("../lib/clerkUserBridge", () => ({
+  getLocalUserId: vi.fn(async (req: { headers: Record<string, string | undefined> }) => {
+    const raw = req.headers["x-test-user"];
+    if (!raw) return null;
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, Number(raw)));
+    return user && !user.isGuest && !user.isDisabled ? user.id : null;
+  }),
   getLocalUserRecord: vi.fn(async (req: { headers: Record<string, string | undefined> }) => {
     const raw = req.headers["x-test-user"];
     if (!raw) return null;
@@ -34,6 +42,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 import academyConsoleRouter from "./academyConsole";
 import academyConsoleSectionsRouter from "./academyConsoleSections";
 import academyFamilyRouter from "./academyFamily";
+import academiesRouter from "./academies";
 import { resetAcademyJoinState } from "./academyJoin";
 
 const tag = `academy_console_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -60,6 +69,8 @@ const recordingIds: number[] = [];
 const familySquadIds: number[] = [];
 const familySessionIds: number[] = [];
 const familyAnnouncementIds: number[] = [];
+const familyFeeIds: number[] = [];
+const familyRenewalIds: number[] = [];
 let app: Express;
 
 const as = (id: number) => ({ "x-test-user": String(id) });
@@ -70,6 +81,7 @@ beforeAll(async () => {
   app.use("/api", academyConsoleRouter);
   app.use("/api", academyConsoleSectionsRouter);
   app.use("/api", academyFamilyRouter);
+  app.use("/api", academiesRouter);
 
   for (const [name, flags] of [
     ["owner", {}],
@@ -199,16 +211,25 @@ afterEach(async () => {
     await db.delete(academyAnnouncementsTable).where(inArray(academyAnnouncementsTable.id, familyAnnouncementIds));
     familyAnnouncementIds.length = 0;
   }
+  if (familyFeeIds.length > 0) {
+    await db.delete(academyFeesTable).where(inArray(academyFeesTable.id, familyFeeIds));
+    familyFeeIds.length = 0;
+  }
+  if (familyRenewalIds.length > 0) {
+    await db.delete(academyPlayerRenewalsTable).where(inArray(academyPlayerRenewalsTable.id, familyRenewalIds));
+    familyRenewalIds.length = 0;
+  }
   if (familySquadIds.length > 0) {
     await db.delete(academySquadsTable).where(inArray(academySquadsTable.id, familySquadIds));
     familySquadIds.length = 0;
   }
-  const familyPlayers = [playerAId, inactivePlayerAId].filter((id) => Number.isInteger(id));
+  const familyPlayers = [playerAId, inactivePlayerAId, playerBId].filter((id) => Number.isInteger(id));
   if (familyPlayers.length > 0) {
     await db.update(academyPlayersTable)
-      .set({ familyToken: null })
+      .set({ familyToken: null, userId: null })
       .where(inArray(academyPlayersTable.id, familyPlayers));
   }
+  await db.update(academiesTable).set({ contactPhone: null }).where(eq(academiesTable.id, academyAId));
   resetAcademyJoinState();
 });
 
@@ -238,15 +259,79 @@ describe("Academy Console API", () => {
         squadId: squadAId,
         type: "training",
         startsAt: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000),
-        location: "Family attendance pitch",
+        location: "Present attendance pitch",
+      },
+      {
+        academyId: academyAId,
+        squadId: squadAId,
+        type: "training",
+        startsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        location: "Late attendance pitch",
+      },
+      {
+        academyId: academyAId,
+        type: "match",
+        startsAt: new Date(Date.now() + 8 * 24 * 60 * 60 * 1000),
+        location: "Absent attendance pitch",
+      },
+      {
+        academyId: academyAId,
+        squadId: squadAId,
+        type: "training",
+        startsAt: new Date(Date.now() + 9 * 24 * 60 * 60 * 1000),
+        location: "Excused attendance pitch",
       },
     ]).returning({ id: academySessionsTable.id });
     familySessionIds.push(...extraSessions.map(({ id }) => id));
-    await db.insert(academyAttendanceTable).values({
-      sessionId: extraSessions[1].id,
+    await db.insert(academyAttendanceTable).values([
+      { sessionId: extraSessions[1].id, playerId: playerAId, status: "present" },
+      { sessionId: extraSessions[2].id, playerId: playerAId, status: "late" },
+      { sessionId: extraSessions[3].id, playerId: playerAId, status: "absent" },
+      { sessionId: extraSessions[4].id, playerId: playerAId, status: "excused" },
+    ]);
+
+    const now = Date.now();
+    const recentRenewals = await db.insert(academyPlayerRenewalsTable).values({
+      academyId: academyAId,
       playerId: playerAId,
-      status: "present",
-    });
+      monthsPurchased: 3,
+      amountFils: 30000,
+      effectiveMonthlyFeeFils: 10000,
+      previousExpiresOn: new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      newExpiresOn: new Date(now + 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      paidAt: new Date(now - 24 * 60 * 60 * 1000),
+    }).returning({ id: academyPlayerRenewalsTable.id });
+    familyRenewalIds.push(...recentRenewals.map(({ id }) => id));
+    const recentFees = await db.insert(academyFeesTable).values([
+      {
+        academyId: academyAId,
+        playerId: playerAId,
+        label: "Tournament kit",
+        amountFils: 5000,
+        dueDate: new Date(now + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        status: "due",
+        createdAt: new Date(now - 2 * 24 * 60 * 60 * 1000),
+      },
+      {
+        academyId: academyBId,
+        playerId: playerBId,
+        label: "Other player's fee",
+        amountFils: 9000,
+        dueDate: new Date(now).toISOString().slice(0, 10),
+        status: "paid",
+        createdAt: new Date(now - 60 * 60 * 1000),
+      },
+      {
+        academyId: academyAId,
+        playerId: playerAId,
+        label: "Old fee",
+        amountFils: 7000,
+        dueDate: new Date(now - 400 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        status: "paid",
+        createdAt: new Date(now - 400 * 24 * 60 * 60 * 1000),
+      },
+    ]).returning({ id: academyFeesTable.id });
+    familyFeeIds.push(...recentFees.map(({ id }) => id));
 
     const announcements = await db.insert(academyAnnouncementsTable).values([
       {
@@ -281,7 +366,7 @@ describe("Academy Console API", () => {
     expect(response.status).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(Object.keys(response.body).sort()).toEqual([
-      "academy", "announcements", "attendance", "finance", "player", "sessions",
+      "academy", "announcements", "attendance", "attendanceSummary", "finance", "payments", "player", "sessions",
     ]);
     expect(response.body.academy.name).toBe(`Academy A ${tag}`);
     expect(response.body.player.name).toBe(`Active player ${tag}`);
@@ -291,10 +376,30 @@ describe("Academy Console API", () => {
       .not.toContain("Out-of-squad pitch");
     expect(response.body.sessions.map((session: { location: string }) => session.location))
       .not.toContain("Other pitch");
-    expect(response.body.attendance).toEqual([expect.objectContaining({
-      status: "present",
-      location: "Family attendance pitch",
-    })]);
+    expect(response.body.attendance.map((item: { status: string }) => item.status))
+      .toEqual(expect.arrayContaining(["present", "late", "absent", "excused"]));
+    expect(response.body.attendanceSummary).toEqual({
+      present: 1,
+      late: 1,
+      absent: 1,
+      excused: 1,
+      markedTotal: 4,
+      percentPresent: 50,
+    });
+    expect(response.body.payments).toHaveLength(2);
+    expect(response.body.payments[0]).toEqual(expect.objectContaining({
+      kind: "renewal",
+      amountFils: 30000,
+      monthsPurchased: 3,
+      status: "paid",
+    }));
+    expect(response.body.payments[1]).toEqual(expect.objectContaining({
+      kind: "fee",
+      label: "Tournament kit",
+      status: "due",
+    }));
+    expect(JSON.stringify(response.body.payments)).not.toContain("Other player's fee");
+    expect(JSON.stringify(response.body.payments)).not.toContain("Old fee");
     expect(response.body.announcements.map((announcement: { title: string }) => announcement.title))
       .toEqual(expect.arrayContaining([
         `Family squad update ${tag}`,
@@ -303,6 +408,21 @@ describe("Academy Console API", () => {
     expect(response.body.announcements.some((announcement: { title: string }) => announcement.title === `Other squad update ${tag}`))
       .toBe(false);
     expect(JSON.stringify(response.body)).not.toContain("079 123 4567");
+
+    const noMarks = await request(app).get("/api/academy/family").query({
+      token,
+      from: "1900-01-01",
+      to: "1900-01-02",
+    });
+    expect(noMarks.status).toBe(200);
+    expect(noMarks.body.attendanceSummary).toEqual({
+      present: 0,
+      late: 0,
+      absent: 0,
+      excused: 0,
+      markedTotal: 0,
+      percentPresent: null,
+    });
 
     const inactiveToken = "b".repeat(32);
     await db.update(academyPlayersTable)
@@ -314,6 +434,55 @@ describe("Academy Console API", () => {
 
     expect((await request(app).get("/api/academy/family").query({ token, from: "2026-02-30", to })).status).toBe(400);
     expect((await request(app).post("/api/academy/family").query({ token })).status).toBe(404);
+  });
+
+  it("serves the signed-in user's first active linked player and other active links", async () => {
+    const route = "/api/academy/family/me";
+    const unauthenticated = await request(app).get(route);
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers["cache-control"]).toBe("no-store");
+
+    const unlinked = await request(app).get(route).set(as(ownerId));
+    expect(unlinked.status).toBe(404);
+    expect(unlinked.headers["cache-control"]).toBe("no-store");
+
+    await db.update(academyPlayersTable)
+      .set({ userId: ownerId })
+      .where(inArray(academyPlayersTable.id, [playerAId, playerBId]));
+    const response = await request(app).get(route).set(as(ownerId));
+
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body.player.name).toBe(`Active player ${tag}`);
+    expect(response.body.otherLinkedPlayers).toEqual([{
+      id: playerBId,
+      name: `Other academy player one ${tag}`,
+      academyName: `Academy B ${tag}`,
+    }]);
+    expect(response.body.player).not.toHaveProperty("userId");
+    expect(response.body.player).not.toHaveProperty("guardianPhone");
+  });
+
+  it("saves and returns the academy contact phone in admin and public summaries", async () => {
+    const phone = "+962790001122";
+    const updated = await request(app)
+      .patch(`/api/admin/academies/${academyAId}`)
+      .set(as(adminId))
+      .send({ contactPhone: phone });
+
+    expect(updated.status).toBe(200);
+    expect(updated.body.contactPhone).toBe(phone);
+    const publicSummary = await request(app).get(`/api/academies/${academyAId}`);
+    expect(publicSummary.status).toBe(200);
+    expect(publicSummary.body.contactPhone).toBe(phone);
+    const adminList = await request(app).get("/api/admin/academies").set(as(adminId));
+    expect(adminList.status).toBe(200);
+    expect(adminList.body.find((academy: { id: number }) => academy.id === academyAId).contactPhone).toBe(phone);
+
+    expect((await request(app)
+      .patch(`/api/admin/academies/${academyAId}`)
+      .set(as(adminId))
+      .send({ contactPhone: "x".repeat(81) })).status).toBe(400);
   });
 
   it("lets only academy owners create and rotate active-player family links", async () => {

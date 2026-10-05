@@ -297,6 +297,7 @@ interface AdminBanner {
 interface AdminAcademy {
   id: number;
   name: string;
+  contactPhone: string | null;
   fieldId: number;
   fieldName: string;
   fieldLocation: string;
@@ -2301,7 +2302,7 @@ function AcademiesTab() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | "new" | null>(null);
-  const [form, setForm] = useState({ name: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "", introVideoUrl: null as string | null, cameraIds: [] as string[] });
+  const [form, setForm] = useState({ name: "", contactPhone: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "", introVideoUrl: null as string | null, cameraIds: [] as string[] });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
 
@@ -2420,12 +2421,12 @@ function AcademiesTab() {
 
   const startNew = () => {
     setEditing("new");
-    setForm({ name: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "", introVideoUrl: null, cameraIds: [] });
+    setForm({ name: "", contactPhone: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "", introVideoUrl: null, cameraIds: [] });
   };
 
   const startEdit = (a: AdminAcademy) => {
     setEditing(a.id);
-    setForm({ name: a.name, fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "", introVideoUrl: a.introVideoUrl ?? null, cameraIds: a.cameraIds ?? [] });
+    setForm({ name: a.name, contactPhone: a.contactPhone ?? "", fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "", introVideoUrl: a.introVideoUrl ?? null, cameraIds: a.cameraIds ?? [] });
   };
 
   const cancelEdit = () => { setEditing(null); };
@@ -2449,6 +2450,7 @@ function AcademiesTab() {
         daysOfWeek: form.daysOfWeek,
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim() || null,
+        contactPhone: form.contactPhone.trim() || null,
         cameraIds: form.cameraIds,
       };
       if (editing === "new") {
@@ -2823,7 +2825,7 @@ function AcademyForm({
   onCancel,
   title,
 }: {
-  form: { name: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string; introVideoUrl: string | null; cameraIds: string[] };
+  form: { name: string; contactPhone: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string; introVideoUrl: string | null; cameraIds: string[] };
   fields: AdminField[];
   saving: boolean;
   academyId?: number;
@@ -2833,6 +2835,7 @@ function AcademyForm({
   onCancel: () => void;
   title: string;
 }) {
+  const { t } = useTranslation();
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadingIntro, setUploadingIntro] = useState(false);
@@ -2992,6 +2995,22 @@ function AcademyForm({
           onChange={(e) => onChange({ name: e.target.value })}
           placeholder="e.g. Elite Youth Academy"
           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
+        />
+      </div>
+      <div>
+        <label className="text-xs text-zinc-400 mb-1 block" htmlFor="academy-contact-phone">
+          {t.academyConsole.academyContactPhone}
+        </label>
+        <input
+          id="academy-contact-phone"
+          type="tel"
+          autoComplete="tel"
+          dir="ltr"
+          maxLength={80}
+          value={form.contactPhone}
+          onChange={(e) => onChange({ contactPhone: e.target.value })}
+          placeholder="+962 7X XXX XXXX"
+          className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-primary"
         />
       </div>
       <div>

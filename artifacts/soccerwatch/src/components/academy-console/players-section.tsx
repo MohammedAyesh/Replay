@@ -78,7 +78,15 @@ function formForPlayer(player: AcademyPlayerSummary): PlayerForm {
   };
 }
 
-export function AcademyPlayersSection({ academyId, isOwner }: { academyId: number; isOwner: boolean }) {
+export function AcademyPlayersSection({
+  academyId,
+  academyName,
+  isOwner,
+}: {
+  academyId: number;
+  academyName: string;
+  isOwner: boolean;
+}) {
   const { t, locale } = useTranslation();
   const labels = t.academyConsole;
   const queryClient = useQueryClient();
@@ -258,7 +266,7 @@ export function AcademyPlayersSection({ academyId, isOwner }: { academyId: numbe
           data-testid={`button-open-family-link-${player.id}`}
         >
           <Link2 className="me-2 h-4 w-4" aria-hidden="true" />
-          {locale === "ar" ? "رابط العائلة" : "Family link"}
+          {labels.familyLinkButton}
         </Button>
       )}
       <Button
@@ -594,17 +602,18 @@ export function AcademyPlayersSection({ academyId, isOwner }: { academyId: numbe
       >
         <DialogContent dir={locale === "ar" ? "rtl" : "ltr"} className="max-h-[90dvh] overflow-y-auto border-line bg-surface text-text sm:max-w-2xl">
           <DialogHeader className="text-start">
-            <DialogTitle>{locale === "ar" ? "رابط العائلة" : "Family view link"}</DialogTitle>
+            <DialogTitle>{labels.familyLink.title}</DialogTitle>
             <DialogDescription className="text-start text-muted-text">
-              {locale === "ar"
-                ? "أنشئ رابطاً خاصاً للقراءة فقط لمتابعة مواعيد اللاعب وتقدمه."
-                : "Create a private, read-only link to this player's schedule and progress."}
+              {labels.familyLink.description}
             </DialogDescription>
           </DialogHeader>
           {familyLinkPlayer && (
             <FamilyLinkActions
               academyId={academyId}
               playerId={familyLinkPlayer.id}
+              playerName={familyLinkPlayer.name}
+              academyName={academyName}
+              guardianPhone={familyLinkPlayer.guardianPhone}
               isActive={familyLinkPlayer.isActive}
               isOwner={isOwner}
             />

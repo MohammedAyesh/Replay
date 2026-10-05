@@ -1,8 +1,10 @@
 import { and, asc, desc, eq, gte, isNull, lt, or } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
+  academyFeesTable,
   academyAnnouncementsTable,
   academyAttendanceTable,
+  academyPlayerRenewalsTable,
   academyPlayersTable,
   academySessionsTable,
   academySquadsTable,
@@ -13,6 +15,7 @@ import {
   GetPublicAcademyFamilyQueryParams,
   GetPublicAcademyFamilyResponse,
 } from "@workspace/api-zod";
+import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { financePlayersForSquad } from "./academyFinance";
 import { allowAcademyFamilyRead } from "./academyJoin";
 
@@ -55,80 +58,81 @@ function isCalendarDate(value: string): boolean {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
-router.get("/academy/family", async (req, res): Promise<void> => {
-  setNoStore(res);
-  if (!allowAcademyFamilyRead(req)) {
-    res.status(429).json({ error: "Too many requests. Try again in a few minutes." });
-    return;
-  }
-
-  const token = GetPublicAcademyFamilyQueryParams.pick({ token: true }).safeParse({
-    token: rawDate(req.query.token),
+function parseFamilyWindow(fromValue: unknown, toValue: unknown):
+  | { ok: true; startsAtOrAfter: Date; startsBefore: Date }
+  | { ok: false; error: string } {
+  const parsed = GetPublicAcademyFamilyQueryParams.pick({ from: true, to: true }).safeParse({
+    from: rawDate(fromValue),
+    to: rawDate(toValue),
   });
-  if (!token.success) {
-    res.status(404).json({ error: "Family link not found" });
-    return;
-  }
-  const parsedWindow = GetPublicAcademyFamilyQueryParams.pick({ from: true, to: true }).safeParse({
-    from: rawDate(req.query.from),
-    to: rawDate(req.query.to),
-  });
-  if (!parsedWindow.success) {
-    res.status(400).json({ error: "Date window must use YYYY-MM-DD dates" });
-    return;
+  if (!parsed.success) return { ok: false, error: "Date window must use YYYY-MM-DD dates" };
+  if ((parsed.data.from === undefined) !== (parsed.data.to === undefined)) {
+    return { ok: false, error: "Both from and to dates are required together" };
   }
 
   const today = ammanToday();
-  const from = parsedWindow.data.from ?? shiftDate(today, -30);
-  const to = parsedWindow.data.to ?? shiftDate(today, 60);
+  const from = parsed.data.from ?? shiftDate(today, -30);
+  const to = parsed.data.to ?? shiftDate(today, 60);
   if (
     !isCalendarDate(from)
     || !isCalendarDate(to)
     || from > to
     || (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS > MAX_WINDOW_DAYS
   ) {
-    res.status(400).json({ error: "Date window must be valid and no longer than 120 days" });
-    return;
+    return { ok: false, error: "Date window must be valid and no longer than 120 days" };
   }
-  if ((parsedWindow.data.from === undefined) !== (parsedWindow.data.to === undefined)) {
-    res.status(400).json({ error: "Both from and to dates are required together" });
-    return;
-  }
+  return {
+    ok: true,
+    startsAtOrAfter: new Date(`${from}T00:00:00.000Z`),
+    startsBefore: new Date(`${shiftDate(to, 1)}T00:00:00.000Z`),
+  };
+}
 
-  const startsAtOrAfter = new Date(`${from}T00:00:00.000Z`);
-  const startsBefore = new Date(`${shiftDate(to, 1)}T00:00:00.000Z`);
-  const [player] = await db
-    .select({
-      id: academyPlayersTable.id,
-      academyId: academyPlayersTable.academyId,
-      squadId: academyPlayersTable.squadId,
-      name: academyPlayersTable.name,
-      jerseyNumber: academyPlayersTable.jerseyNumber,
-      position: academyPlayersTable.position,
-      academyName: academiesTable.name,
-      logoUrl: academiesTable.logoUrl,
-      contactPhone: academiesTable.contactPhone,
-      squadName: academySquadsTable.name,
-    })
-    .from(academyPlayersTable)
-    .innerJoin(academiesTable, eq(academiesTable.id, academyPlayersTable.academyId))
-    .leftJoin(
-      academySquadsTable,
-      and(
-        eq(academySquadsTable.id, academyPlayersTable.squadId),
-        eq(academySquadsTable.academyId, academyPlayersTable.academyId),
-      ),
-    )
+const familyPlayerSelection = () => db
+  .select({
+    id: academyPlayersTable.id,
+    academyId: academyPlayersTable.academyId,
+    squadId: academyPlayersTable.squadId,
+    userId: academyPlayersTable.userId,
+    name: academyPlayersTable.name,
+    jerseyNumber: academyPlayersTable.jerseyNumber,
+    position: academyPlayersTable.position,
+    academyName: academiesTable.name,
+    logoUrl: academiesTable.logoUrl,
+    contactPhone: academiesTable.contactPhone,
+    squadName: academySquadsTable.name,
+  })
+  .from(academyPlayersTable)
+  .innerJoin(academiesTable, eq(academiesTable.id, academyPlayersTable.academyId))
+  .leftJoin(
+    academySquadsTable,
+    and(
+      eq(academySquadsTable.id, academyPlayersTable.squadId),
+      eq(academySquadsTable.academyId, academyPlayersTable.academyId),
+    ),
+  );
+
+async function findFamilyPlayerByToken(token: string) {
+  const [player] = await familyPlayerSelection().where(and(
+    eq(academyPlayersTable.familyToken, token),
+    eq(academyPlayersTable.isActive, true),
+  ));
+  return player;
+}
+
+async function findFamilyPlayersForUser(userId: number) {
+  return familyPlayerSelection()
     .where(and(
-      eq(academyPlayersTable.familyToken, token.data.token),
+      eq(academyPlayersTable.userId, userId),
       eq(academyPlayersTable.isActive, true),
-    ));
+    ))
+    .orderBy(asc(academyPlayersTable.name), asc(academyPlayersTable.id));
+}
 
-  if (!player) {
-    res.status(404).json({ error: "Family link not found" });
-    return;
-  }
+type FamilyPlayer = NonNullable<Awaited<ReturnType<typeof findFamilyPlayerByToken>>>;
+type FamilyWindow = Extract<ReturnType<typeof parseFamilyWindow>, { ok: true }>;
 
+async function readFamilyView(player: FamilyPlayer, window: FamilyWindow) {
   let finance: {
     effectiveMonthlyFeeFils: number;
     subscriptionExpiresOn: string | null;
@@ -161,18 +165,14 @@ router.get("/academy/family", async (req, res): Promise<void> => {
 
   const sessionScope = player.squadId === null
     ? isNull(academySessionsTable.squadId)
-    : or(
-      isNull(academySessionsTable.squadId),
-      eq(academySessionsTable.squadId, player.squadId),
-    );
+    : or(isNull(academySessionsTable.squadId), eq(academySessionsTable.squadId, player.squadId));
   const announcementScope = player.squadId === null
     ? isNull(academyAnnouncementsTable.squadId)
-    : or(
-      isNull(academyAnnouncementsTable.squadId),
-      eq(academyAnnouncementsTable.squadId, player.squadId),
-    );
+    : or(isNull(academyAnnouncementsTable.squadId), eq(academyAnnouncementsTable.squadId, player.squadId));
+  const paymentCutoff = new Date();
+  paymentCutoff.setUTCFullYear(paymentCutoff.getUTCFullYear() - 1);
 
-  const [sessions, attendance, announcements] = await Promise.all([
+  const [sessions, attendance, announcements, renewals, fees] = await Promise.all([
     db.select({
       type: academySessionsTable.type,
       startsAt: academySessionsTable.startsAt,
@@ -186,8 +186,8 @@ router.get("/academy/family", async (req, res): Promise<void> => {
       .where(and(
         eq(academySessionsTable.academyId, player.academyId),
         sessionScope,
-        gte(academySessionsTable.startsAt, startsAtOrAfter),
-        lt(academySessionsTable.startsAt, startsBefore),
+        gte(academySessionsTable.startsAt, window.startsAtOrAfter),
+        lt(academySessionsTable.startsAt, window.startsBefore),
       ))
       .orderBy(asc(academySessionsTable.startsAt), asc(academySessionsTable.id)),
     db.select({
@@ -202,8 +202,8 @@ router.get("/academy/family", async (req, res): Promise<void> => {
         eq(academyAttendanceTable.playerId, player.id),
         eq(academySessionsTable.academyId, player.academyId),
         sessionScope,
-        gte(academySessionsTable.startsAt, startsAtOrAfter),
-        lt(academySessionsTable.startsAt, startsBefore),
+        gte(academySessionsTable.startsAt, window.startsAtOrAfter),
+        lt(academySessionsTable.startsAt, window.startsBefore),
       ))
       .orderBy(desc(academySessionsTable.startsAt), desc(academySessionsTable.id)),
     db.select({
@@ -215,13 +215,72 @@ router.get("/academy/family", async (req, res): Promise<void> => {
       .where(and(
         eq(academyAnnouncementsTable.academyId, player.academyId),
         announcementScope,
-        gte(academyAnnouncementsTable.createdAt, startsAtOrAfter),
-        lt(academyAnnouncementsTable.createdAt, startsBefore),
+        gte(academyAnnouncementsTable.createdAt, window.startsAtOrAfter),
+        lt(academyAnnouncementsTable.createdAt, window.startsBefore),
       ))
       .orderBy(desc(academyAnnouncementsTable.createdAt), desc(academyAnnouncementsTable.id)),
+    db.select({
+      id: academyPlayerRenewalsTable.id,
+      paidAt: academyPlayerRenewalsTable.paidAt,
+      amountFils: academyPlayerRenewalsTable.amountFils,
+      monthsPurchased: academyPlayerRenewalsTable.monthsPurchased,
+      newExpiresOn: academyPlayerRenewalsTable.newExpiresOn,
+    })
+      .from(academyPlayerRenewalsTable)
+      .where(and(
+        eq(academyPlayerRenewalsTable.academyId, player.academyId),
+        eq(academyPlayerRenewalsTable.playerId, player.id),
+        gte(academyPlayerRenewalsTable.paidAt, paymentCutoff),
+      )),
+    db.select({
+      id: academyFeesTable.id,
+      label: academyFeesTable.label,
+      amountFils: academyFeesTable.amountFils,
+      dueDate: academyFeesTable.dueDate,
+      status: academyFeesTable.status,
+      paidAt: academyFeesTable.paidAt,
+      createdAt: academyFeesTable.createdAt,
+    })
+      .from(academyFeesTable)
+      .where(and(
+        eq(academyFeesTable.academyId, player.academyId),
+        eq(academyFeesTable.playerId, player.id),
+        or(
+          gte(academyFeesTable.createdAt, paymentCutoff),
+          gte(academyFeesTable.paidAt, paymentCutoff),
+        ),
+      )),
   ]);
 
-  res.json(GetPublicAcademyFamilyResponse.parse({
+  const present = attendance.filter((item) => item.status === "present").length;
+  const late = attendance.filter((item) => item.status === "late").length;
+  const markedTotal = attendance.length;
+  const payments = [
+    ...renewals.map((renewal) => ({
+      id: `renewal:${renewal.id}`,
+      kind: "renewal" as const,
+      date: renewal.paidAt.toISOString(),
+      amountFils: renewal.amountFils,
+      label: null,
+      monthsPurchased: renewal.monthsPurchased,
+      newExpiresOn: renewal.newExpiresOn,
+      dueDate: null,
+      status: "paid" as const,
+    })),
+    ...fees.map((fee) => ({
+      id: `fee:${fee.id}`,
+      kind: "fee" as const,
+      date: (fee.paidAt ?? fee.createdAt).toISOString(),
+      amountFils: fee.amountFils,
+      label: fee.label,
+      monthsPurchased: null,
+      newExpiresOn: null,
+      dueDate: fee.dueDate,
+      status: fee.status,
+    })),
+  ].sort((a, b) => Date.parse(b.date) - Date.parse(a.date) || b.id.localeCompare(a.id));
+
+  return GetPublicAcademyFamilyResponse.parse({
     academy: {
       name: player.academyName,
       logoUrl: player.logoUrl,
@@ -236,8 +295,80 @@ router.get("/academy/family", async (req, res): Promise<void> => {
     finance,
     sessions,
     attendance,
+    attendanceSummary: {
+      present,
+      late,
+      absent: attendance.filter((item) => item.status === "absent").length,
+      excused: attendance.filter((item) => item.status === "excused").length,
+      markedTotal,
+      percentPresent: markedTotal === 0 ? null : Math.round(((present + late) / markedTotal) * 100),
+    },
+    payments,
     announcements,
-  }));
+  });
+}
+
+router.get("/academy/family", async (req, res): Promise<void> => {
+  setNoStore(res);
+  if (!allowAcademyFamilyRead(req)) {
+    res.status(429).json({ error: "Too many requests. Try again in a few minutes." });
+    return;
+  }
+
+  const token = GetPublicAcademyFamilyQueryParams.pick({ token: true }).safeParse({
+    token: rawDate(req.query.token),
+  });
+  if (!token.success) {
+    res.status(404).json({ error: "Family link not found" });
+    return;
+  }
+  const window = parseFamilyWindow(req.query.from, req.query.to);
+  if (!window.ok) {
+    res.status(400).json({ error: window.error });
+    return;
+  }
+
+  const player = await findFamilyPlayerByToken(token.data.token);
+  if (!player) {
+    res.status(404).json({ error: "Family link not found" });
+    return;
+  }
+  res.json(await readFamilyView(player, window));
+});
+
+router.get("/academy/family/me", async (req, res): Promise<void> => {
+  setNoStore(res);
+  const user = await getLocalUserRecord(req);
+  if (!user || user.isGuest || user.isDisabled) {
+    unauthenticatedResponse(res);
+    return;
+  }
+
+  const window = parseFamilyWindow(req.query.from, req.query.to);
+  if (!window.ok) {
+    res.status(400).json({ error: window.error });
+    return;
+  }
+  const linkedPlayers = await findFamilyPlayersForUser(user.id);
+  const player = linkedPlayers[0];
+  if (!player) {
+    res.status(404).json({ error: "No active academy player is linked to this account" });
+    return;
+  }
+
+  const familyView = await readFamilyView(player, window);
+  res.json({
+    ...familyView,
+    ...(linkedPlayers.length > 1
+      ? {
+          otherLinkedPlayers: linkedPlayers.slice(1).map((other) => ({
+            id: other.id,
+            name: other.name,
+            academyName: other.academyName,
+          })),
+        }
+      : {}),
+  });
 });
 
 export default router;

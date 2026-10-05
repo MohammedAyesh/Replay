@@ -61,6 +61,7 @@ async function buildSummary(academy: typeof academiesTable.$inferSelect, req: Pa
     daysOfWeek: parseDays(academy.daysOfWeek),
     description: academy.description ?? null,
     logoUrl: academy.logoUrl ?? null,
+    contactPhone: academy.contactPhone ?? null,
     introVideoUrl: academy.introVideoUrl ?? null,
     liveAccess: academy.liveAccess,
     cameraIds: parseCameras(academy.cameraIds),
@@ -136,6 +137,7 @@ const CreateAcademyBody = z.object({
   daysOfWeek: z.array(z.string()).default([]),
   description: z.string().nullable().optional(),
   logoUrl: z.string().nullable().optional(),
+  contactPhone: z.string().max(80).nullable().optional(),
   cameraIds: z.array(z.enum(VALID_CAMERAS)).default([]),
 });
 
@@ -145,6 +147,7 @@ const UpdateAcademyBody = z.object({
   daysOfWeek: z.array(z.string()).optional(),
   description: z.string().nullable().optional(),
   logoUrl: z.string().nullable().optional(),
+  contactPhone: z.string().max(80).nullable().optional(),
   liveAccess: z.boolean().optional(),
   cameraIds: z.array(z.enum(VALID_CAMERAS)).optional(),
 });
@@ -183,6 +186,7 @@ router.post("/admin/academies", async (req, res): Promise<void> => {
       daysOfWeek: body.data.daysOfWeek.join(","),
       description: body.data.description ?? null,
       logoUrl: body.data.logoUrl ?? null,
+      contactPhone: body.data.contactPhone ?? null,
       cameraIds: body.data.cameraIds.join(","),
     })
     .returning();
@@ -206,6 +210,7 @@ router.patch("/admin/academies/:id", async (req, res): Promise<void> => {
   if (body.data.daysOfWeek !== undefined) updates.daysOfWeek = body.data.daysOfWeek.join(",");
   if (body.data.description !== undefined) updates.description = body.data.description;
   if (body.data.logoUrl !== undefined) updates.logoUrl = body.data.logoUrl;
+  if (body.data.contactPhone !== undefined) updates.contactPhone = body.data.contactPhone;
   if (body.data.liveAccess !== undefined) updates.liveAccess = body.data.liveAccess;
   if (body.data.cameraIds !== undefined) updates.cameraIds = body.data.cameraIds.join(",");
 

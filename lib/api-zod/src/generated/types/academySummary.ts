@@ -18,6 +18,11 @@ export interface AcademySummary {
   /** @nullable */
   logoUrl?: string | null;
   /**
+     * @maxLength 80
+     * @nullable
+     */
+  contactPhone: string | null;
+  /**
      * Branding intro clip prepended to this academy's clip exports and playback.
      * @nullable
      */

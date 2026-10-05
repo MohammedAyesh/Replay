@@ -8,6 +8,7 @@ import {
 import { Check, Copy, Link2, LoaderCircle, RefreshCw, ShieldCheck } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
+import { guardianContactLinks } from "./guardian-contact";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -16,36 +17,26 @@ import {
 type FamilyLinkActionsProps = {
   academyId: number;
   playerId: number;
+  playerName: string;
+  academyName: string;
+  guardianPhone: string | null;
   isActive: boolean;
   isOwner: boolean;
 };
 
-const text = {
-  en: {
-    title: "Family view link", description: "Share a private, read-only view of this player's academy schedule and progress with their family.",
-    copy: "Copy link", copied: "Copied", create: "Create family link", rotate: "Rotate link",
-    privacy: "Anyone with this link can view this player's family page. Keep it within the family.",
-    confirmTitle: "Replace this family link?", confirmDescription: "The current link will stop working immediately. Anyone using it will need the new link.",
-    cancel: "Keep current link", confirm: "Replace link", loading: "Loading family link…",
-    error: "The family link could not be loaded.", rotationError: "The link could not be replaced. Please try again.",
-    copyError: "Could not copy automatically. Select and copy the link instead.",
-  },
-  ar: {
-    title: "رابط مساحة العائلة", description: "شارك عرضاً خاصاً للقراءة فقط لمواعيد اللاعب وتقدمه مع عائلته.",
-    copy: "نسخ الرابط", copied: "تم النسخ", create: "إنشاء رابط العائلة", rotate: "تغيير الرابط",
-    privacy: "يمكن لمن يملك الرابط مشاهدة صفحة هذا اللاعب. يرجى مشاركته مع العائلة فقط.",
-    confirmTitle: "استبدال رابط العائلة؟", confirmDescription: "سيتوقف الرابط الحالي عن العمل فوراً، وسيحتاج مستخدموه إلى الرابط الجديد.",
-    cancel: "الإبقاء على الرابط", confirm: "استبدال الرابط", loading: "جارٍ تحميل رابط العائلة…",
-    error: "تعذر تحميل رابط العائلة.", rotationError: "تعذر استبدال الرابط. يرجى المحاولة مجدداً.",
-    copyError: "تعذر النسخ تلقائياً. يرجى تحديد الرابط ونسخه.",
-  },
-};
-
-export function FamilyLinkActions({ academyId, playerId, isActive, isOwner }: FamilyLinkActionsProps) {
+export function FamilyLinkActions({
+  academyId,
+  playerId,
+  playerName,
+  academyName,
+  guardianPhone,
+  isActive,
+  isOwner,
+}: FamilyLinkActionsProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
-  const { locale } = useTranslation();
+  const { t, locale } = useTranslation();
   const isArabic = locale === "ar";
   const queryClient = useQueryClient();
   const queryKey = getGetAcademyConsolePlayerFamilyLinkQueryKey(academyId, playerId);
@@ -53,12 +44,23 @@ export function FamilyLinkActions({ academyId, playerId, isActive, isOwner }: Fa
     query: { enabled: isOwner && isActive, queryKey },
   });
   const regenerate = useRegenerateAcademyConsolePlayerFamilyLink();
-  const labels = isArabic ? text.ar : text.en;
+  const labels = t.academyConsole.familyLink;
 
   if (!isOwner || !isActive) return null;
   const familyUrl = linkQuery.data?.familyUrl ?? null;
   const absoluteUrl = familyUrl
     ? (familyUrl.startsWith("http") ? familyUrl : `${window.location.origin}${familyUrl.startsWith("/") ? "" : "/"}${familyUrl}`)
+    : null;
+  const phoneLinks = guardianContactLinks(guardianPhone);
+  const whatsappShareUrl = absoluteUrl && phoneLinks
+    ? (() => {
+        const url = new URL(phoneLinks.whatsappUrl);
+        const message = isArabic
+          ? `مرحباً، معكم أكاديمية ${academyName}. هذا رابط صفحة العائلة الخاصة باللاعب ${playerName}: ${absoluteUrl}`
+          : `Hello, this is ${academyName}. Here is ${playerName}'s private family page at ${academyName}: ${absoluteUrl}`;
+        url.searchParams.set("text", message);
+        return url.toString();
+      })()
     : null;
 
   const copyLink = async () => {
@@ -103,6 +105,32 @@ export function FamilyLinkActions({ academyId, playerId, isActive, isOwner }: Fa
               {copied ? <Check className="me-2 h-4 w-4" aria-hidden="true" /> : <Copy className="me-2 h-4 w-4" aria-hidden="true" />}
               {copied ? labels.copied : labels.copy}
             </Button>
+            {whatsappShareUrl ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-10 shrink-0"
+                onClick={() => window.open(whatsappShareUrl, "_blank", "noopener,noreferrer")}
+                data-testid={`button-send-family-link-whatsapp-${playerId}`}
+              >
+                {labels.sendWhatsapp}
+              </Button>
+            ) : (
+              <span title={labels.noGuardianPhone} className="inline-flex">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled
+                  className="min-h-10 shrink-0"
+                  aria-label={`${labels.sendWhatsapp}: ${labels.noGuardianPhone}`}
+                  data-testid={`button-send-family-link-whatsapp-${playerId}`}
+                >
+                  {labels.sendWhatsapp}
+                </Button>
+              </span>
+            )}
           </div>
         )}
         {copyFailed && <p className="mt-2 text-xs text-destructive" role="alert" data-testid="family-link-copy-error">{labels.copyError}</p>}

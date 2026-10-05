@@ -14,4 +14,9 @@ export interface UpdateAcademyInput {
   description?: string | null;
   /** @nullable */
   logoUrl?: string | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  contactPhone?: string | null;
 }

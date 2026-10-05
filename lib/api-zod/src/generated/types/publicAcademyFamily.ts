@@ -8,7 +8,10 @@
 import type { PublicAcademyFamilyAcademy } from './publicAcademyFamilyAcademy';
 import type { PublicAcademyFamilyAnnouncement } from './publicAcademyFamilyAnnouncement';
 import type { PublicAcademyFamilyAttendance } from './publicAcademyFamilyAttendance';
+import type { PublicAcademyFamilyAttendanceSummary } from './publicAcademyFamilyAttendanceSummary';
 import type { PublicAcademyFamilyFinance } from './publicAcademyFamilyFinance';
+import type { PublicAcademyFamilyLinkedPlayer } from './publicAcademyFamilyLinkedPlayer';
+import type { PublicAcademyFamilyPayment } from './publicAcademyFamilyPayment';
 import type { PublicAcademyFamilyPlayer } from './publicAcademyFamilyPlayer';
 import type { PublicAcademyFamilySession } from './publicAcademyFamilySession';
 
@@ -19,5 +22,8 @@ export interface PublicAcademyFamily {
   finance: PublicAcademyFamilyFinance;
   sessions: PublicAcademyFamilySession[];
   attendance: PublicAcademyFamilyAttendance[];
+  attendanceSummary: PublicAcademyFamilyAttendanceSummary;
+  payments: PublicAcademyFamilyPayment[];
   announcements: PublicAcademyFamilyAnnouncement[];
+  otherLinkedPlayers?: PublicAcademyFamilyLinkedPlayer[];
 }

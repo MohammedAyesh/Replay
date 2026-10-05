@@ -1191,6 +1191,11 @@ export interface AcademySummary {
   /** @nullable */
   logoUrl?: string | null;
   /**
+     * @maxLength 80
+     * @nullable
+     */
+  contactPhone: string | null;
+  /**
      * Branding intro clip prepended to this academy's clip exports and playback.
      * @nullable
      */
@@ -1920,10 +1925,84 @@ export interface PublicAcademyFamilyAttendance {
   location: string;
 }
 
+export interface PublicAcademyFamilyAttendanceSummary {
+  /** @minimum 0 */
+  present: number;
+  /** @minimum 0 */
+  late: number;
+  /** @minimum 0 */
+  absent: number;
+  /** @minimum 0 */
+  excused: number;
+  /** @minimum 0 */
+  markedTotal: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  percentPresent: number | null;
+}
+
+export type PublicAcademyFamilyPaymentKind = typeof PublicAcademyFamilyPaymentKind[keyof typeof PublicAcademyFamilyPaymentKind];
+
+
+export const PublicAcademyFamilyPaymentKind = {
+  renewal: 'renewal',
+  fee: 'fee',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PublicAcademyFamilyPaymentStatus = typeof PublicAcademyFamilyPaymentStatus[keyof typeof PublicAcademyFamilyPaymentStatus] | null;
+
+
+export const PublicAcademyFamilyPaymentStatus = {
+  due: 'due',
+  paid: 'paid',
+  waived: 'waived',
+} as const;
+
+export interface PublicAcademyFamilyPayment {
+  id: string;
+  kind: PublicAcademyFamilyPaymentKind;
+  date: string;
+  /** @minimum 0 */
+  amountFils: number;
+  /** @nullable */
+  label: string | null;
+  /**
+     * @minimum 1
+     * @maximum 12
+     * @nullable
+     */
+  monthsPurchased: number | null;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  newExpiresOn: string | null;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  dueDate: string | null;
+  /** @nullable */
+  status: PublicAcademyFamilyPaymentStatus;
+}
+
 export interface PublicAcademyFamilyAnnouncement {
   title: string;
   body: string;
   createdAt: string;
+}
+
+export interface PublicAcademyFamilyLinkedPlayer {
+  /** @minimum 1 */
+  id: number;
+  name: string;
+  academyName: string;
 }
 
 export interface PublicAcademyFamily {
@@ -1933,7 +2012,10 @@ export interface PublicAcademyFamily {
   finance: PublicAcademyFamilyFinance;
   sessions: PublicAcademyFamilySession[];
   attendance: PublicAcademyFamilyAttendance[];
+  attendanceSummary: PublicAcademyFamilyAttendanceSummary;
+  payments: PublicAcademyFamilyPayment[];
   announcements: PublicAcademyFamilyAnnouncement[];
+  otherLinkedPlayers?: PublicAcademyFamilyLinkedPlayer[];
 }
 
 export interface AcademyConsoleFamilyLink {
@@ -2372,6 +2454,11 @@ export interface CreateAcademyInput {
   description?: string | null;
   /** @nullable */
   logoUrl?: string | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  contactPhone?: string | null;
 }
 
 export interface UpdateAcademyInput {
@@ -2382,6 +2469,11 @@ export interface UpdateAcademyInput {
   description?: string | null;
   /** @nullable */
   logoUrl?: string | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  contactPhone?: string | null;
 }
 
 export interface AddAcademyRecordingInput {
@@ -3442,6 +3534,17 @@ export type GetPublicAcademyFamilyParams = {
  * @pattern ^[0-9a-f]{32}$
  */
 token: string;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+from?: string;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+to?: string;
+};
+
+export type GetAcademyFamilyMeParams = {
 /**
  * @pattern ^\d{4}-\d{2}-\d{2}$
  */

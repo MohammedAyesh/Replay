@@ -488,6 +488,8 @@ function AppRouter() {
   const [location] = useLocation();
   const isPublicJoinRoute = location.split("?")[0].startsWith("/join/");
   const isPublicStandaloneRoute = isPublicJoinRoute;
+  const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me";
+  const isStandaloneRoute = isPublicStandaloneRoute || isFamilyMeRoute;
   const [retryingIdentity, setRetryingIdentity] = useState(false);
   const [signOutPending, setSignOutPending] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
@@ -557,6 +559,7 @@ function AppRouter() {
         <Route path="/find-quick/:id" component={FindQuickRedirect} />
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
+        <Route path="/academy/me"><AcademyFamilyPage source="me" /></Route>
         <Route path="/academy/*?" component={AcademyConsole} />
         <Route path="/account/blocked" component={BlockedPlayers} />
         <Route path="/owner" component={Owner} />
@@ -580,7 +583,7 @@ function AppRouter() {
     </>
   );
 
-  return isPublicStandaloneRoute ? routes : <Layout>{routes}</Layout>;
+  return isStandaloneRoute ? routes : <Layout>{routes}</Layout>;
 }
 
 function ClerkProviderWithRoutes() {
@@ -621,7 +624,7 @@ function ClerkProviderWithRoutes() {
 function PublicFamilyRoutes() {
   return (
     <Switch>
-      <Route path="/p/:token" component={AcademyFamilyPage} />
+      <Route path="/p/:token"><AcademyFamilyPage source="token" /></Route>
       <Route component={NotFound} />
     </Switch>
   );
