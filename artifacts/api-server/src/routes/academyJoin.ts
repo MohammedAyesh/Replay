@@ -19,11 +19,17 @@ const router: IRouter = Router();
 const WINDOW_MS = 10 * 60 * 1000;
 const MAX_PER_WINDOW = 5;
 const recent = new Map<string, number[]>();
+const publicReadRecent = new Map<string, number[]>();
+const MAX_PUBLIC_READ_PER_WINDOW = 60;
 const JOIN_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{8}$/;
 
-function allow(req: Request): boolean {
+function requestAddress(req: Request): string {
   const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0]?.trim();
-  const key = forwarded || req.ip || "unknown";
+  return forwarded || req.ip || "unknown";
+}
+
+function allow(req: Request): boolean {
+  const key = requestAddress(req);
   const now = Date.now();
   const hits = (recent.get(key) ?? []).filter((at) => now - at < WINDOW_MS);
   if (hits.length >= MAX_PER_WINDOW) {
@@ -40,8 +46,27 @@ function allow(req: Request): boolean {
   return true;
 }
 
+export function allowAcademyFamilyRead(req: Request): boolean {
+  const key = requestAddress(req);
+  const now = Date.now();
+  const hits = (publicReadRecent.get(key) ?? []).filter((at) => now - at < WINDOW_MS);
+  if (hits.length >= MAX_PUBLIC_READ_PER_WINDOW) {
+    publicReadRecent.set(key, hits);
+    return false;
+  }
+  hits.push(now);
+  publicReadRecent.set(key, hits);
+  if (publicReadRecent.size > 5000) {
+    for (const [address, entries] of publicReadRecent) {
+      if (!entries.some((at) => now - at < WINDOW_MS)) publicReadRecent.delete(address);
+    }
+  }
+  return true;
+}
+
 export function resetAcademyJoinState(): void {
   recent.clear();
+  publicReadRecent.clear();
 }
 
 function asciiDigits(value: string): string {

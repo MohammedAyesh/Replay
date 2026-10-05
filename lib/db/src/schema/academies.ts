@@ -11,6 +11,7 @@ export const academiesTable = pgTable("academies", {
   daysOfWeek: text("days_of_week").notNull().default(""),
   description: text("description"),
   logoUrl: text("logo_url"),
+  contactPhone: text("contact_phone"),
   /** Bunny Storage CDN URL of this academy's branding intro clip, prepended to exports and playback of its clips. */
   introVideoUrl: text("intro_video_url"),
   joinCode: text("join_code"),

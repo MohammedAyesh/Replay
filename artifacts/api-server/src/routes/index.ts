@@ -43,6 +43,7 @@ import academyConsoleRouter from "./academyConsole";
 import academyConsoleSectionsRouter from "./academyConsoleSections";
 import academyFinanceRouter from "./academyFinance";
 import academyJoinRouter from "./academyJoin";
+import academyFamilyRouter from "./academyFamily";
 
 const router: IRouter = Router();
 
@@ -55,6 +56,7 @@ router.use(recordingsRouter);
 router.use(demoShowcaseRouter);
 router.use(demoLeadsRouter);
 router.use(academyJoinRouter);
+router.use(academyFamilyRouter);
 router.use(clipsRouter);
 router.use(savedClipsRouter);
 router.use(userClipsRouter);
