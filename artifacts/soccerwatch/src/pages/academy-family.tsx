@@ -8,7 +8,6 @@ import {
 } from "@workspace/api-client-react";
 import { ArrowUpLeft, CalendarDays, Check, Clock3, MapPin, ShieldCheck, Trophy, WalletCards } from "lucide-react";
 import { useTranslation } from "@/i18n";
-import { guardianContactLinks } from "@/components/academy-console/guardian-contact";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -39,8 +38,8 @@ const copy = {
     fees: "Membership", monthly: "Monthly fee", expiry: "Covered through", clear: "All up to date",
     owed: "Months outstanding", balance: "Amount due", paid: "Paid", expiring: "Renewal soon", expired: "Expired", noSubscription: "No active subscription",
     payments: "Payment history", noPayments: "No payments in the last 12 months.", renewal: "Renewal", fee: "Fee",
-    months: "months", until: "until", due: "Due", waived: "Waived", whatsapp: "WhatsApp", callAcademy: "Call academy",
-    privacy: "Shared privately with your family", contact: "WhatsApp academy", secure: "Private family link",
+    months: "months", until: "until", due: "Due", waived: "Waived",
+    privacy: "Shared privately with your family", contact: "Contact academy", secure: "Private family link",
     loading: "Preparing your family view…", errorTitle: "This family link is unavailable", error: "The link may have expired or been replaced. Please ask your academy for a current link.", retry: "Try again",
     today: "Today", upcoming: "UP NEXT", score: "Final score",
   },
@@ -55,8 +54,8 @@ const copy = {
     fees: "الاشتراك", monthly: "الرسوم الشهرية", expiry: "مشمول حتى", clear: "كل شيء محدّث",
     owed: "أشهر مستحقة", balance: "المبلغ المستحق", paid: "مدفوع", expiring: "موعد التجديد قريب", expired: "منتهي", noSubscription: "لا يوجد اشتراك حالي",
     payments: "سجل المدفوعات", noPayments: "لا توجد مدفوعات خلال آخر ١٢ شهراً.", renewal: "تجديد", fee: "رسوم",
-    months: "أشهر", until: "حتى", due: "مستحق", waived: "معفى", whatsapp: "واتساب", callAcademy: "اتصال بالأكاديمية",
-    privacy: "مشاركة خاصة مع العائلة", contact: "مراسلة الأكاديمية", secure: "رابط عائلي خاص",
+    months: "أشهر", until: "حتى", due: "مستحق", waived: "معفى",
+    privacy: "مشاركة خاصة مع العائلة", contact: "تواصل مع الأكاديمية", secure: "رابط عائلي خاص",
     loading: "يتم تجهيز مساحة العائلة…", errorTitle: "رابط العائلة غير متاح", error: "قد يكون الرابط منتهي الصلاحية أو تم استبداله. يرجى طلب رابط جديد من الأكاديمية.", retry: "إعادة المحاولة",
     today: "اليوم", upcoming: "الموعد القادم", score: "النتيجة النهائية",
   },
@@ -99,7 +98,6 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   });
   const familyQuery = source === "me" ? meFamilyQuery : publicFamilyQuery;
   const family = familyQuery.data;
-  const academyContact = guardianContactLinks(family?.academy.contactPhone);
   const toggleLanguage = () => {
     const nextSearch = new URLSearchParams(search);
     if (isEnglish && source === "me" && appLocale === "en") nextSearch.set("lang", "ar");
@@ -158,7 +156,6 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
         .fp-payment-status{display:inline-flex;width:max-content;align-items:center;border-radius:999px;padding:3px 8px;background:color-mix(in srgb,var(--replay-turf) 13%,var(--replay-surface));color:var(--replay-turf);font-size:10px;font-weight:800}
         .fp-payment-status.due{background:color-mix(in srgb,var(--replay-floodlight) 14%,var(--replay-surface));color:var(--replay-floodlight)}
         .fp-payment-status.waived{color:var(--replay-muted)}
-        .fp-contact-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
       `}</style>
       <header className="fp-header">
         <div className="fp-brand"><span className="fp-brand-mark" aria-hidden="true">S</span><span>SOCCERWATCH</span></div>
@@ -282,15 +279,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                 ) : <div className="fp-empty" data-testid="family-payments-empty">{labels.noPayments}</div>}
               </section>
             </div>
-            <footer className="fp-footer">
-              <span>{labels.privacy}</span>
-              {academyContact && (
-                <span className="fp-contact-actions">
-                  <a href={academyContact.whatsappUrl} target="_blank" rel="noreferrer" data-testid="link-contact-academy-whatsapp">{labels.contact}</a>
-                  <a href={academyContact.callUrl} data-testid="link-contact-academy-call">{labels.callAcademy}</a>
-                </span>
-              )}
-            </footer>
+            <footer className="fp-footer"><span>{labels.privacy}</span>{family.academy.contactPhone && <a href={`tel:${family.academy.contactPhone}`} data-testid="link-contact-academy">{labels.contact}</a>}</footer>
           </div>
         </>
       )}

@@ -78,13 +78,8 @@ function formForPlayer(player: AcademyPlayerSummary): PlayerForm {
   };
 }
 
-export function AcademyPlayersSection({
-  academyId,
-  academyName,
-  isOwner,
-}: {
+export function AcademyPlayersSection({ academyId, isOwner }: {
   academyId: number;
-  academyName: string;
   isOwner: boolean;
 }) {
   const { t, locale } = useTranslation();
@@ -611,9 +606,6 @@ export function AcademyPlayersSection({
             <FamilyLinkActions
               academyId={academyId}
               playerId={familyLinkPlayer.id}
-              playerName={familyLinkPlayer.name}
-              academyName={academyName}
-              guardianPhone={familyLinkPlayer.guardianPhone}
               isActive={familyLinkPlayer.isActive}
               isOwner={isOwner}
             />

@@ -8,7 +8,6 @@ import {
 import { Check, Copy, Link2, LoaderCircle, RefreshCw, ShieldCheck } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
-import { guardianContactLinks } from "./guardian-contact";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -17,9 +16,6 @@ import {
 type FamilyLinkActionsProps = {
   academyId: number;
   playerId: number;
-  playerName: string;
-  academyName: string;
-  guardianPhone: string | null;
   isActive: boolean;
   isOwner: boolean;
 };
@@ -27,9 +23,6 @@ type FamilyLinkActionsProps = {
 export function FamilyLinkActions({
   academyId,
   playerId,
-  playerName,
-  academyName,
-  guardianPhone,
   isActive,
   isOwner,
 }: FamilyLinkActionsProps) {
@@ -51,18 +44,6 @@ export function FamilyLinkActions({
   const absoluteUrl = familyUrl
     ? (familyUrl.startsWith("http") ? familyUrl : `${window.location.origin}${familyUrl.startsWith("/") ? "" : "/"}${familyUrl}`)
     : null;
-  const phoneLinks = guardianContactLinks(guardianPhone);
-  const whatsappShareUrl = absoluteUrl && phoneLinks
-    ? (() => {
-        const url = new URL(phoneLinks.whatsappUrl);
-        const message = isArabic
-          ? `مرحباً، معكم أكاديمية ${academyName}. هذا رابط صفحة العائلة الخاصة باللاعب ${playerName}: ${absoluteUrl}`
-          : `Hello, this is ${academyName}. Here is ${playerName}'s private family page at ${academyName}: ${absoluteUrl}`;
-        url.searchParams.set("text", message);
-        return url.toString();
-      })()
-    : null;
-
   const copyLink = async () => {
     if (!absoluteUrl) return;
     setCopied(false);
@@ -105,32 +86,6 @@ export function FamilyLinkActions({
               {copied ? <Check className="me-2 h-4 w-4" aria-hidden="true" /> : <Copy className="me-2 h-4 w-4" aria-hidden="true" />}
               {copied ? labels.copied : labels.copy}
             </Button>
-            {whatsappShareUrl ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="min-h-10 shrink-0"
-                onClick={() => window.open(whatsappShareUrl, "_blank", "noopener,noreferrer")}
-                data-testid={`button-send-family-link-whatsapp-${playerId}`}
-              >
-                {labels.sendWhatsapp}
-              </Button>
-            ) : (
-              <span title={labels.noGuardianPhone} className="inline-flex">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled
-                  className="min-h-10 shrink-0"
-                  aria-label={`${labels.sendWhatsapp}: ${labels.noGuardianPhone}`}
-                  data-testid={`button-send-family-link-whatsapp-${playerId}`}
-                >
-                  {labels.sendWhatsapp}
-                </Button>
-              </span>
-            )}
           </div>
         )}
         {copyFailed && <p className="mt-2 text-xs text-destructive" role="alert" data-testid="family-link-copy-error">{labels.copyError}</p>}
