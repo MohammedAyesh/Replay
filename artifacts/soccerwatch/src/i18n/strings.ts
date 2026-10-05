@@ -140,6 +140,8 @@ const strings = {
     player: {
       loading: "Loading clip...",
       playbackLoading: "Loading video…",
+      playbackProxyLoading: "Connecting to the recording…",
+      playbackRetrying: "The stream hasn’t started yet. Retrying now…",
       fallbackLoading: "Switching to compatible playback…",
       playbackError: "We couldn’t play this recording. Check your connection and try again.",
       retryPlayback: "Try again",
@@ -1388,6 +1390,8 @@ const strings = {
     player: {
       loading: "عم نحمّل المقطع…",
       playbackLoading: "عم نحمّل الفيديو…",
+      playbackProxyLoading: "عم نوصل للتسجيل…",
+      playbackRetrying: "البث ما بلّش بعد. عم نجرّب كمان مرة…",
       fallbackLoading: "عم نبدّل لتشغيل بيزبط مع جهازك…",
       playbackError: "ما قدرنا نشغّل هالتسجيل. تأكد من النت وجرّب كمان مرة.",
       retryPlayback: "جرّب كمان مرة",

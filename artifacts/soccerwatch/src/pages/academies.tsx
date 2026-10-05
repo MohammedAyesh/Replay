@@ -16,7 +16,6 @@ import {
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
-import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 
 /** Pull the bare Bunny GUID out of a full CDN URL like
  *  https://cdn.example.net/abc-123/playlist.m3u8  →  "abc-123"
@@ -294,10 +293,6 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
           <ClipPlayer
             src={recordingFor.rec.videoUrl}
             proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(recordingFor.rec.videoUrl)}`}
-            fallbackSrc={getBunnyMp4FallbackSource(
-              recordingFor.rec.videoUrl,
-              extractBunnyGuid(recordingFor.rec.videoUrl),
-            ) ?? undefined}
             title={recordingFor.title}
             source={{ kind: "bunny", videoId: extractBunnyGuid(recordingFor.rec.videoUrl) }}
             academyId={recordingFor.academyId}

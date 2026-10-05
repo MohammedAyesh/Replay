@@ -10,6 +10,8 @@ import {
   initialPlaybackSourceStage,
   isFallbackSourceAvailable,
   playbackPositionForRestore,
+  PLAYBACK_STALL_TIMEOUT_MS,
+  summarizeFatalHlsError,
 } from "./playbackRecovery";
 
 afterEach(() => {
@@ -77,7 +79,7 @@ describe("ClipPlayer playback recovery", () => {
     watchdog.dispose();
   });
 
-  it("waits 20 seconds without progress and does not count paused time", () => {
+  it("uses the shorter stall timeout without counting paused time", () => {
     vi.useFakeTimers();
     let paused = false;
     const onStalled = vi.fn();
@@ -88,7 +90,7 @@ describe("ClipPlayer playback recovery", () => {
     });
 
     watchdog.waiting();
-    vi.advanceTimersByTime(10_000);
+    vi.advanceTimersByTime(PLAYBACK_STALL_TIMEOUT_MS / 2);
     paused = true;
     watchdog.pause();
     vi.advanceTimersByTime(25_000);
@@ -96,7 +98,7 @@ describe("ClipPlayer playback recovery", () => {
 
     paused = false;
     watchdog.resume();
-    vi.advanceTimersByTime(19_999);
+    vi.advanceTimersByTime(PLAYBACK_STALL_TIMEOUT_MS - 1);
     expect(onStalled).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(onStalled).toHaveBeenCalledTimes(1);
@@ -141,16 +143,44 @@ describe("ClipPlayer playback recovery", () => {
     expect(clampPlaybackPosition(2_530, 3_600)).toBe(2_530);
   });
 
-  it("starts with the proxy on browsers that only support native HLS", () => {
+  it("starts archived playback on the proxy even when hls.js is supported", () => {
     expect(initialPlaybackSourceStage({
-      hlsSupported: false,
-      nativeHlsSupported: true,
       isLive: false,
       proxySrc: "/api/hls-proxy/manifest?url=encoded",
+      src: "https://cdn.example.test/playlist.m3u8",
     })).toBe("proxy");
   });
 
-  it("checks an MP4 fallback with a one-byte range request", async () => {
+  it("keeps live playback on its live source", () => {
+    expect(initialPlaybackSourceStage({
+      isLive: true,
+      proxySrc: "/api/hls-proxy/manifest?url=encoded",
+      src: "https://cdn.example.test/playlist.m3u8",
+    })).toBe("direct");
+  });
+
+  it("retries the proxy once without advancing to a cross-origin source", async () => {
+    const options = {
+      currentStage: "proxy" as const,
+      hasProxy: true,
+    };
+    await expect(decidePlaybackRecovery({ ...options, currentRetryAttempted: false }))
+      .resolves.toEqual({ type: "retry-current" });
+    await expect(decidePlaybackRecovery({ ...options, currentRetryAttempted: true }))
+      .resolves.toEqual({ type: "error" });
+  });
+
+  it("summarizes fatal hls.js diagnostics for the playback error UI", () => {
+    expect(summarizeFatalHlsError({
+      type: "networkError",
+      details: "levelLoadError",
+      reason: "playlist request failed",
+      response: { code: 502 },
+    })).toBe("networkError · levelLoadError · playlist request failed · HTTP 502");
+    expect(summarizeFatalHlsError({})).toBe("Unspecified hls.js error");
+  });
+
+  it("checks an alternate fallback with a one-byte range request", async () => {
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("Range")).toBe("bytes=0-0");
       return new Response(null, { status: 206 });

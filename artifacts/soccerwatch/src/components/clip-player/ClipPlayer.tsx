@@ -48,6 +48,8 @@ import {
   endSeekDrag,
   initialPlaybackSourceStage,
   playbackPositionForRestore,
+  PLAYBACK_STALL_TIMEOUT_MS,
+  summarizeFatalHlsError,
   type PlaybackSourceStage,
 } from "./playbackRecovery";
 import {
@@ -100,11 +102,11 @@ export type ClipTimelineBand = { from: number; to: number; color: string };
 export type ClipSeekRequest = { seconds: number; id: number; play?: boolean };
 
 export type ClipPlayerProps = {
-  /** Preferred HLS manifest URL. Bunny recordings should use the direct CDN URL. */
+  /** Preferred HLS manifest URL. */
   src: string;
-  /** Same recording through the app proxy, used when direct Bunny playback fails or native HLS is required. */
+  /** Same recording through the app proxy. Archived recordings use this before any cross-origin source. */
   proxySrc?: string;
-  /** Optional MP4 source used after the preferred HLS sources fail. */
+  /** Optional alternate source used after the preferred HLS sources fail. */
   fallbackSrc?: string;
   onFallback?: () => void;
   title: string;
@@ -306,10 +308,11 @@ export function ClipPlayer({
   stageBadge,
 }: ClipPlayerProps) {
   const singleRowToolbar = toolbarLayout === "single-row";
+  const initialSourceStage = initialPlaybackSourceStage({ isLive, proxySrc, src });
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const fallbackRestoreUtcRef = useRef<number | null>(null);
-  const sourceStageRef = useRef<PlaybackSourceStage>("direct");
+  const sourceStageRef = useRef<PlaybackSourceStage>(initialSourceStage);
   const resumePositionRef = useRef<number | null>(null);
   const lastKnownPositionRef = useRef(0);
   const currentSourceRetryRef = useRef(false);
@@ -360,7 +363,7 @@ export function ClipPlayer({
   const [qualityLevels, setQualityLevels] = useState<Array<{ width: number; height: number; bitrate: number; index: number }>>([]);
   const [activeQuality, setActiveQuality] = useState(-1);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
-  const [sourceStage, setSourceStageState] = useState<PlaybackSourceStage>("direct");
+  const [sourceStage, setSourceStageState] = useState<PlaybackSourceStage>(initialSourceStage);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [look, setLook] = useState<"original" | "warm" | "cinematic" | "noir">("original");
   const [duration, setDuration] = useState(0);
@@ -369,6 +372,8 @@ export function ClipPlayer({
   const [liveRange, setLiveRange] = useState<{ startUtcMs: number; endUtcMs: number } | null>(null);
   const [showControls, setShowControls] = useState(true);
   const [playbackUiState, setPlaybackUiState] = useState<"loading" | "ready" | "error">("loading");
+  const [isRetryingPlayback, setIsRetryingPlayback] = useState(false);
+  const [playbackDiagnostic, setPlaybackDiagnostic] = useState<string | null>(null);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const [clipEndTime, setClipEndTime] = useState(0);
@@ -392,6 +397,7 @@ export function ClipPlayer({
     currentSourceRetryRef.current = false;
     seekInProgressRef.current = false;
     seekDragStateRef.current = createSeekDragState();
+    setIsRetryingPlayback(false);
     setSourceStageState(stage);
   }, []);
 
@@ -404,7 +410,9 @@ export function ClipPlayer({
       );
     }
     setPlaybackUiState("loading");
-    setPlaybackSourceStage("direct");
+    setPlaybackDiagnostic(null);
+    setIsRetryingPlayback(false);
+    setPlaybackSourceStage(initialPlaybackSourceStage({ isLive, proxySrc, src }));
     setPlaybackAttempt((attempt) => attempt + 1);
   };
 
@@ -413,13 +421,14 @@ export function ClipPlayer({
   }, []);
 
   useEffect(() => {
-    setPlaybackSourceStage("direct");
+    setPlaybackSourceStage(initialPlaybackSourceStage({ isLive, proxySrc, src }));
     currentSourceRetryRef.current = false;
     resumePositionRef.current = null;
     lastKnownPositionRef.current = 0;
     setPlaybackUiState("loading");
+    setPlaybackDiagnostic(null);
     setIsPlaying(false);
-  }, [proxySrc, setPlaybackSourceStage, src]);
+  }, [isLive, proxySrc, setPlaybackSourceStage, src]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = playbackRate;
@@ -597,17 +606,10 @@ export function ClipPlayer({
 
     const hlsSupported = Hls.isSupported();
     const nativeHlsSupported = Boolean(element.canPlayType("application/vnd.apple.mpegurl"));
-    const preferredStage = initialPlaybackSourceStage({
-      hlsSupported,
-      nativeHlsSupported,
-      isLive,
-      proxySrc,
-      src,
-    });
-    if (preferredStage === "proxy" && sourceStageRef.current === "direct") {
-      setPlaybackSourceStage(preferredStage);
-      return;
-    }
+    // A prop update can run this effect once with the previous stage captured
+    // in its closure. Wait for the source-stage state to catch up before
+    // attaching a player; otherwise a stale fallback URL can be loaded.
+    if (sourceStageRef.current !== sourceStage) return;
 
     liveFragmentsRef.current = [];
     setLiveRange(null);
@@ -645,7 +647,7 @@ export function ClipPlayer({
       startupTimer = setTimeout(() => {
         startupTimer = null;
         void handlePlaybackFailure();
-      }, 20_000);
+      }, PLAYBACK_STALL_TIMEOUT_MS);
     };
     const preservePosition = () => {
       if (isLiveDvr) {
@@ -680,6 +682,7 @@ export function ClipPlayer({
 
         if (decision.type === "retry-current") {
           currentSourceRetryRef.current = true;
+          setIsRetryingPlayback(true);
           preservePosition();
           const hls = hlsRef.current;
           if (hls) {
@@ -706,7 +709,11 @@ export function ClipPlayer({
         seeking: seekInProgress || seekInProgressRef.current || element.seeking,
       }),
       onStalled: () => { void handlePlaybackFailure(); },
-      onProgress: () => setPlaybackUiState("ready"),
+      onProgress: () => {
+        setPlaybackUiState("ready");
+        setIsRetryingPlayback(false);
+        setPlaybackDiagnostic(null);
+      },
     });
     const markPlaybackReady = () => {
       clearStartupTimer();
@@ -893,6 +900,22 @@ export function ClipPlayer({
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
+        const diagnostic = summarizeFatalHlsError(data);
+        setPlaybackDiagnostic(diagnostic);
+        setPlaybackUiState("loading");
+        setIsRetryingPlayback(true);
+        console.error("[ClipPlayer] Fatal HLS playback error", {
+          type: data.type,
+          details: data.details,
+          reason: data.reason,
+          responseCode: data.response?.code,
+          responseText: typeof data.response?.text === "string"
+            ? data.response.text.slice(0, 300)
+            : undefined,
+          fragment: data.frag
+            ? { type: data.frag.type, sn: data.frag.sn, level: data.frag.level }
+            : undefined,
+        });
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
           const fragmentLevel = data.frag?.level;
           const failedLevel = typeof fragmentLevel === "number" && Number.isFinite(fragmentLevel)
@@ -963,6 +986,7 @@ export function ClipPlayer({
     programTimeAt,
     proxySrc,
     setPlaybackSourceStage,
+    sourceStage,
     src,
   ]);
 
@@ -1354,8 +1378,19 @@ export function ClipPlayer({
                 )}
                 <LoaderCircle className="h-9 w-9 animate-spin text-primary" aria-hidden="true" />
                 <p className="text-sm font-semibold">
-                  {usingFallback ? t.player.fallbackLoading : t.player.playbackLoading}
+                  {isRetryingPlayback
+                    ? t.player.playbackRetrying
+                    : usingFallback
+                      ? t.player.fallbackLoading
+                      : sourceStage === "proxy"
+                        ? t.player.playbackProxyLoading
+                        : t.player.playbackLoading}
                 </p>
+                {playbackDiagnostic && (
+                  <p className="max-w-sm text-xs leading-5 text-white/65">
+                    {playbackDiagnostic}
+                  </p>
+                )}
               </motion.div>
             )}
             {playbackUiState === "error" && (
@@ -1372,6 +1407,11 @@ export function ClipPlayer({
               >
                 <AlertTriangle className="h-9 w-9 text-amber-300" aria-hidden="true" />
                 <p className="max-w-sm text-sm leading-6">{t.player.playbackError}</p>
+                {playbackDiagnostic && (
+                  <p className="max-w-sm text-xs leading-5 text-white/65">
+                    {playbackDiagnostic}
+                  </p>
+                )}
                 <button
                   type="button"
                   data-testid="button-retry-video"

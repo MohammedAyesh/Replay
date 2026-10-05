@@ -1,5 +1,7 @@
 export type PlaybackSourceStage = "direct" | "proxy" | "fallback";
 
+export const PLAYBACK_STALL_TIMEOUT_MS = 8_000;
+
 export type PlaybackSnapshot = {
   paused: boolean;
   currentTime: number;
@@ -12,18 +14,29 @@ export type RecoveryDecision =
   | { type: "error" };
 
 export function initialPlaybackSourceStage(options: {
-  hlsSupported: boolean;
-  nativeHlsSupported: boolean;
   isLive: boolean;
   proxySrc?: string;
   src?: string;
 }): PlaybackSourceStage {
-  return !options.isLive
-    && !options.hlsSupported
-    && options.nativeHlsSupported
-    && Boolean(options.proxySrc && options.proxySrc !== options.src)
+  return !options.isLive && Boolean(options.proxySrc && options.proxySrc !== options.src)
     ? "proxy"
     : "direct";
+}
+
+export function summarizeFatalHlsError(error: {
+  type?: unknown;
+  details?: unknown;
+  reason?: unknown;
+  response?: { code?: unknown };
+}): string {
+  const parts = [error.type, error.details, error.reason]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .map((part) => part.trim());
+  if (typeof error.response?.code === "number" && Number.isFinite(error.response.code)) {
+    parts.push(`HTTP ${error.response.code}`);
+  }
+  const summary = parts.join(" · ") || "Unspecified hls.js error";
+  return summary.length > 160 ? `${summary.slice(0, 157)}…` : summary;
 }
 
 export async function decidePlaybackRecovery(options: {
@@ -148,7 +161,7 @@ export function createPlaybackWatchdog(options: {
   normalDelayMs?: number;
   seekDelayMs?: number;
 }) {
-  const normalDelayMs = options.normalDelayMs ?? 20_000;
+  const normalDelayMs = options.normalDelayMs ?? PLAYBACK_STALL_TIMEOUT_MS;
   const seekDelayMs = options.seekDelayMs ?? 45_000;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let pending = false;
