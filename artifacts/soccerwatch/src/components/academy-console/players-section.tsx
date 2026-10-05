@@ -34,6 +34,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { FamilyLinkActions } from "@/components/academy-console/family-link-actions";
 
 type PlayerForm = {
   name: string;
@@ -77,7 +78,7 @@ function formForPlayer(player: AcademyPlayerSummary): PlayerForm {
   };
 }
 
-export function AcademyPlayersSection({ academyId }: { academyId: number }) {
+export function AcademyPlayersSection({ academyId, isOwner }: { academyId: number; isOwner: boolean }) {
   const { t, locale } = useTranslation();
   const labels = t.academyConsole;
   const queryClient = useQueryClient();
@@ -104,6 +105,7 @@ export function AcademyPlayersSection({ academyId }: { academyId: number }) {
   const [search, setSearch] = useState("");
   const [squadFilter, setSquadFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<PlayerStatusFilter>("all");
+  const [familyLinkPlayer, setFamilyLinkPlayer] = useState<AcademyPlayerSummary | null>(null);
 
   const players = playersQuery.data ?? [];
   const squads = squadsQuery.data ?? [];
@@ -247,6 +249,18 @@ export function AcademyPlayersSection({ academyId }: { academyId: number }) {
 
   const renderActions = (player: AcademyPlayerSummary) => (
     <div className="flex items-center gap-2">
+      {isOwner && player.isActive && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setFamilyLinkPlayer(player)}
+          data-testid={`button-open-family-link-${player.id}`}
+        >
+          <Link2 className="me-2 h-4 w-4" aria-hidden="true" />
+          {locale === "ar" ? "رابط العائلة" : "Family link"}
+        </Button>
+      )}
       <Button
         type="button"
         variant="outline"
@@ -569,6 +583,32 @@ export function AcademyPlayersSection({ academyId }: { academyId: number }) {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={familyLinkPlayer !== null}
+        onOpenChange={(open) => {
+          if (!open) setFamilyLinkPlayer(null);
+        }}
+      >
+        <DialogContent dir={locale === "ar" ? "rtl" : "ltr"} className="max-h-[90dvh] overflow-y-auto border-line bg-surface text-text sm:max-w-2xl">
+          <DialogHeader className="text-start">
+            <DialogTitle>{locale === "ar" ? "رابط العائلة" : "Family view link"}</DialogTitle>
+            <DialogDescription className="text-start text-muted-text">
+              {locale === "ar"
+                ? "أنشئ رابطاً خاصاً للقراءة فقط لمتابعة مواعيد اللاعب وتقدمه."
+                : "Create a private, read-only link to this player's schedule and progress."}
+            </DialogDescription>
+          </DialogHeader>
+          {familyLinkPlayer && (
+            <FamilyLinkActions
+              academyId={academyId}
+              playerId={familyLinkPlayer.id}
+              isActive={familyLinkPlayer.isActive}
+              isOwner={isOwner}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </section>

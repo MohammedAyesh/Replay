@@ -1818,6 +1818,129 @@ export interface AcademyFinanceTeamMonthlyFeeUpdate {
   monthlyFeeFils: number;
 }
 
+export type PublicAcademyFamilyAcademy = {
+  name: string;
+  /** @nullable */
+  logoUrl: string | null;
+  /** @nullable */
+  contactPhone: string | null;
+};
+
+export type PublicAcademyFamilyPlayer = {
+  name: string;
+  /** @nullable */
+  squadName: string | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  jerseyNumber: number | null;
+  /** @nullable */
+  position: string | null;
+};
+
+export type PublicAcademyFamilyFinanceSubscriptionStatus = typeof PublicAcademyFamilyFinanceSubscriptionStatus[keyof typeof PublicAcademyFamilyFinanceSubscriptionStatus];
+
+
+export const PublicAcademyFamilyFinanceSubscriptionStatus = {
+  no_subscription: 'no_subscription',
+  paid: 'paid',
+  expiring: 'expiring',
+  expired: 'expired',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PublicAcademyFamilyFinance = {
+  /** @minimum 0 */
+  effectiveMonthlyFeeFils: number;
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  subscriptionExpiresOn: string | null;
+  subscriptionStatus: PublicAcademyFamilyFinanceSubscriptionStatus;
+  /** @minimum 0 */
+  monthsOwed: number;
+  /** @minimum 0 */
+  outstandingFils: number;
+} | null;
+
+export type PublicAcademyFamilySessionType = typeof PublicAcademyFamilySessionType[keyof typeof PublicAcademyFamilySessionType];
+
+
+export const PublicAcademyFamilySessionType = {
+  training: 'training',
+  match: 'match',
+} as const;
+
+export interface PublicAcademyFamilySession {
+  type: PublicAcademyFamilySessionType;
+  startsAt: string;
+  /** @nullable */
+  endsAt: string | null;
+  location: string;
+  /** @nullable */
+  opponent: string | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  ownScore: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  opponentScore: number | null;
+}
+
+export type PublicAcademyFamilyAttendanceStatus = typeof PublicAcademyFamilyAttendanceStatus[keyof typeof PublicAcademyFamilyAttendanceStatus];
+
+
+export const PublicAcademyFamilyAttendanceStatus = {
+  present: 'present',
+  absent: 'absent',
+  late: 'late',
+  excused: 'excused',
+} as const;
+
+export type PublicAcademyFamilyAttendanceType = typeof PublicAcademyFamilyAttendanceType[keyof typeof PublicAcademyFamilyAttendanceType];
+
+
+export const PublicAcademyFamilyAttendanceType = {
+  training: 'training',
+  match: 'match',
+} as const;
+
+export interface PublicAcademyFamilyAttendance {
+  status: PublicAcademyFamilyAttendanceStatus;
+  startsAt: string;
+  type: PublicAcademyFamilyAttendanceType;
+  location: string;
+}
+
+export interface PublicAcademyFamilyAnnouncement {
+  title: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface PublicAcademyFamily {
+  academy: PublicAcademyFamilyAcademy;
+  player: PublicAcademyFamilyPlayer;
+  /** @nullable */
+  finance: PublicAcademyFamilyFinance;
+  sessions: PublicAcademyFamilySession[];
+  attendance: PublicAcademyFamilyAttendance[];
+  announcements: PublicAcademyFamilyAnnouncement[];
+}
+
+export interface AcademyConsoleFamilyLink {
+  /** @nullable */
+  familyUrl: string | null;
+}
+
 export type AcademyFinancePlayerSubscriptionStatus = typeof AcademyFinancePlayerSubscriptionStatus[keyof typeof AcademyFinancePlayerSubscriptionStatus];
 
 
@@ -3313,4 +3436,19 @@ export const ListAcademyConsoleRegistrationsStatus = {
   approved: 'approved',
   rejected: 'rejected',
 } as const;
+
+export type GetPublicAcademyFamilyParams = {
+/**
+ * @pattern ^[0-9a-f]{32}$
+ */
+token: string;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+from?: string;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+to?: string;
+};
 

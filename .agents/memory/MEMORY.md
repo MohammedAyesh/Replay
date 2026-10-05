@@ -59,3 +59,4 @@
 - [Date-only OpenAPI fields](date-only-openapi.md) — avoid `format: date` when Orval-generated Zod must preserve `YYYY-MM-DD` strings.
 - [Wouter query strings](wouter-query-search.md) — `useLocation()` tracks the pathname; read query parameters with `useSearch()` so search-only navigation updates.
 - [Latest-only renewal undo](latest-only-renewal-undo.md) — verify the requested renewal exists in scope before returning a conflict for an older renewal.
+- [Orval path and query parameters](orval-path-query-collision.md) — operations combining path and query params can generate colliding `*Params` exports; verify codegen after contract changes.

@@ -53,6 +53,7 @@ import LegacyDemoPage from "@/pages/demo-route";
 import DemoPage from "@/pages/demo/DemoPage";
 import AcademyConsole from "@/pages/academy-console";
 import AcademyJoinPage from "@/pages/academy-join";
+import AcademyFamilyPage from "@/pages/academy-family";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -486,11 +487,12 @@ function AppRouter() {
   const { locale } = useLocale();
   const [location] = useLocation();
   const isPublicJoinRoute = location.split("?")[0].startsWith("/join/");
+  const isPublicStandaloneRoute = isPublicJoinRoute;
   const [retryingIdentity, setRetryingIdentity] = useState(false);
   const [signOutPending, setSignOutPending] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
 
-  if (isSignedIn && !user && !isGuest && !isPublicJoinRoute) {
+  if (isSignedIn && !user && !isGuest && !isPublicStandaloneRoute) {
     const retryIdentity = async () => {
       setRetryingIdentity(true);
       try {
@@ -578,7 +580,7 @@ function AppRouter() {
     </>
   );
 
-  return isPublicJoinRoute ? routes : <Layout>{routes}</Layout>;
+  return isPublicStandaloneRoute ? routes : <Layout>{routes}</Layout>;
 }
 
 function ClerkProviderWithRoutes() {
@@ -616,13 +618,32 @@ function ClerkProviderWithRoutes() {
   );
 }
 
+function PublicFamilyRoutes() {
+  return (
+    <Switch>
+      <Route path="/p/:token" component={AcademyFamilyPage} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function RoutedApp() {
+  const [location] = useLocation();
+  const currentPath = location.split("?")[0];
+  const browserPath = stripBase(window.location.pathname).split("?")[0];
+  if (currentPath.startsWith("/p/") || browserPath.startsWith("/p/")) {
+    return <PublicFamilyRoutes />;
+  }
+  return <ClerkProviderWithRoutes />;
+}
+
 function App() {
   return (
     <WouterRouter base={basePath}>
       <QueryClientProvider client={queryClient}>
         <LocaleProvider>
           <FullscreenVideoProvider>
-            <ClerkProviderWithRoutes />
+            <RoutedApp />
           </FullscreenVideoProvider>
         </LocaleProvider>
       </QueryClientProvider>

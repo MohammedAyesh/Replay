@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { and, asc, count, desc, eq, gte, lt, sql } from "drizzle-orm";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import {
   AddAcademyMemberBody,
   AddAcademyMemberParams,
@@ -20,6 +20,8 @@ import {
   GetAcademyConsoleDashboardResponse,
   GetAcademyConsoleJoinLinkParams,
   GetAcademyConsoleJoinLinkResponse,
+  GetAcademyConsolePlayerFamilyLinkParams,
+  GetAcademyConsolePlayerFamilyLinkResponse,
   GetAcademyConsoleMembershipsResponse,
   ListAcademyConsoleSessionsParams,
   ListAcademyConsoleSessionsResponse,
@@ -44,6 +46,8 @@ import {
   UpdateAcademyConsoleSquadResponse,
   RegenerateAcademyConsoleJoinLinkParams,
   RegenerateAcademyConsoleJoinLinkResponse,
+  RegenerateAcademyConsolePlayerFamilyLinkParams,
+  RegenerateAcademyConsolePlayerFamilyLinkResponse,
   ApproveAcademyConsoleRegistrationParams,
   ApproveAcademyConsoleRegistrationBody,
   ApproveAcademyConsoleRegistrationResponse,
@@ -267,11 +271,24 @@ function joinLinkPayload(req: Request, joinCode: string | null) {
   });
 }
 
+function familyLinkPayload(req: Request, familyToken: string | null) {
+  return GetAcademyConsolePlayerFamilyLinkResponse.parse({
+    familyUrl: familyToken ? `${publicBaseUrl(req)}/p/${familyToken}` : null,
+  });
+}
+
 function isJoinCodeUniqueViolation(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const candidate = error as { code?: unknown; constraint?: unknown };
   return candidate.code === "23505"
     && (candidate.constraint === undefined || candidate.constraint === "academies_join_code_unique");
+}
+
+function isFamilyTokenUniqueViolation(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { code?: unknown; constraint?: unknown };
+  return candidate.code === "23505"
+    && (candidate.constraint === undefined || candidate.constraint === "academy_players_family_token_unique");
 }
 
 async function listAcademyMemberSummaries(academyId: number) {
@@ -419,6 +436,93 @@ router.post("/academy/console/academies/:academyId/join-link", async (req, res):
   }
   throw new Error("Unable to allocate a unique academy registration code");
 });
+
+router.get(
+  "/academy/console/academies/:academyId/players/:playerId/family-link",
+  async (req, res): Promise<void> => {
+    res.setHeader("Cache-Control", "no-store");
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const parsedParams = GetAcademyConsolePlayerFamilyLinkParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      playerId: rawParam(req.params.playerId),
+    });
+    if (!parsedParams.success) {
+      res.status(400).json({ error: parsedParams.error.message });
+      return;
+    }
+    const { academyId, playerId } = parsedParams.data;
+    const roles = await requireAcademyMembership(user.id, academyId, res);
+    if (!roles) return;
+    if (!roles.includes("owner")) {
+      res.status(403).json({ error: "Academy owner role required" });
+      return;
+    }
+    const [player] = await db
+      .select({ familyToken: academyPlayersTable.familyToken })
+      .from(academyPlayersTable)
+      .where(and(
+        eq(academyPlayersTable.id, playerId),
+        eq(academyPlayersTable.academyId, academyId),
+        eq(academyPlayersTable.isActive, true),
+      ));
+    if (!player) {
+      res.status(404).json({ error: "Active player not found in this academy" });
+      return;
+    }
+    res.json(familyLinkPayload(req, player.familyToken));
+  },
+);
+
+router.post(
+  "/academy/console/academies/:academyId/players/:playerId/family-link",
+  async (req, res): Promise<void> => {
+    res.setHeader("Cache-Control", "no-store");
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const parsedParams = RegenerateAcademyConsolePlayerFamilyLinkParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      playerId: rawParam(req.params.playerId),
+    });
+    if (!parsedParams.success) {
+      res.status(400).json({ error: parsedParams.error.message });
+      return;
+    }
+    const { academyId, playerId } = parsedParams.data;
+    const roles = await requireAcademyMembership(user.id, academyId, res);
+    if (!roles) return;
+    if (!roles.includes("owner")) {
+      res.status(403).json({ error: "Academy owner role required" });
+      return;
+    }
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const familyToken = crypto.randomBytes(16).toString("hex");
+      try {
+        const [player] = await db
+          .update(academyPlayersTable)
+          .set({ familyToken })
+          .where(and(
+            eq(academyPlayersTable.id, playerId),
+            eq(academyPlayersTable.academyId, academyId),
+            eq(academyPlayersTable.isActive, true),
+          ))
+          .returning({ familyToken: academyPlayersTable.familyToken });
+        if (!player) {
+          res.status(404).json({ error: "Active player not found in this academy" });
+          return;
+        }
+        res.json(RegenerateAcademyConsolePlayerFamilyLinkResponse.parse(
+          familyLinkPayload(req, player.familyToken),
+        ));
+        return;
+      } catch (error) {
+        if (!isFamilyTokenUniqueViolation(error)) throw error;
+      }
+    }
+    throw new Error("Unable to allocate a unique academy family link");
+  },
+);
 
 router.get("/academy/console/academies/:academyId/registrations", async (req, res): Promise<void> => {
   const user = await requireAcademyConsoleUser(req, res);

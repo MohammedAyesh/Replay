@@ -33,6 +33,8 @@ vi.mock("../lib/clerkUserBridge", () => ({
 
 import academyConsoleRouter from "./academyConsole";
 import academyConsoleSectionsRouter from "./academyConsoleSections";
+import academyFamilyRouter from "./academyFamily";
+import { resetAcademyJoinState } from "./academyJoin";
 
 const tag = `academy_console_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const userIds: number[] = [];
@@ -55,6 +57,9 @@ let sessionWideAId: number;
 let sessionBId: number;
 const temporaryPlayerIds: number[] = [];
 const recordingIds: number[] = [];
+const familySquadIds: number[] = [];
+const familySessionIds: number[] = [];
+const familyAnnouncementIds: number[] = [];
 let app: Express;
 
 const as = (id: number) => ({ "x-test-user": String(id) });
@@ -64,6 +69,7 @@ beforeAll(async () => {
   app.use(express.json());
   app.use("/api", academyConsoleRouter);
   app.use("/api", academyConsoleSectionsRouter);
+  app.use("/api", academyFamilyRouter);
 
   for (const [name, flags] of [
     ["owner", {}],
@@ -184,9 +190,176 @@ afterEach(async () => {
     await db.delete(academyPlayersTable).where(inArray(academyPlayersTable.id, temporaryPlayerIds));
     temporaryPlayerIds.length = 0;
   }
+  if (familySessionIds.length > 0) {
+    await db.delete(academyAttendanceTable).where(inArray(academyAttendanceTable.sessionId, familySessionIds));
+    await db.delete(academySessionsTable).where(inArray(academySessionsTable.id, familySessionIds));
+    familySessionIds.length = 0;
+  }
+  if (familyAnnouncementIds.length > 0) {
+    await db.delete(academyAnnouncementsTable).where(inArray(academyAnnouncementsTable.id, familyAnnouncementIds));
+    familyAnnouncementIds.length = 0;
+  }
+  if (familySquadIds.length > 0) {
+    await db.delete(academySquadsTable).where(inArray(academySquadsTable.id, familySquadIds));
+    familySquadIds.length = 0;
+  }
+  const familyPlayers = [playerAId, inactivePlayerAId].filter((id) => Number.isInteger(id));
+  if (familyPlayers.length > 0) {
+    await db.update(academyPlayersTable)
+      .set({ familyToken: null })
+      .where(inArray(academyPlayersTable.id, familyPlayers));
+  }
+  resetAcademyJoinState();
 });
 
 describe("Academy Console API", () => {
+  it("returns a private family view scoped to the linked active player and date window", async () => {
+    const token = "a".repeat(32);
+    await db.update(academyPlayersTable)
+      .set({ familyToken: token, guardianPhone: "079 123 4567" })
+      .where(eq(academyPlayersTable.id, playerAId));
+
+    const [otherSquad] = await db.insert(academySquadsTable).values({
+      academyId: academyAId,
+      name: `Other squad ${tag}`,
+    }).returning({ id: academySquadsTable.id });
+    familySquadIds.push(otherSquad.id);
+
+    const extraSessions = await db.insert(academySessionsTable).values([
+      {
+        academyId: academyAId,
+        squadId: otherSquad.id,
+        type: "training",
+        startsAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+        location: "Out-of-squad pitch",
+      },
+      {
+        academyId: academyAId,
+        squadId: squadAId,
+        type: "training",
+        startsAt: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000),
+        location: "Family attendance pitch",
+      },
+    ]).returning({ id: academySessionsTable.id });
+    familySessionIds.push(...extraSessions.map(({ id }) => id));
+    await db.insert(academyAttendanceTable).values({
+      sessionId: extraSessions[1].id,
+      playerId: playerAId,
+      status: "present",
+    });
+
+    const announcements = await db.insert(academyAnnouncementsTable).values([
+      {
+        academyId: academyAId,
+        squadId: squadAId,
+        title: `Family squad update ${tag}`,
+        body: "Bring boots.",
+        createdBy: ownerId,
+      },
+      {
+        academyId: academyAId,
+        title: `Family academy update ${tag}`,
+        body: "The academy is open.",
+        createdBy: ownerId,
+      },
+      {
+        academyId: academyAId,
+        squadId: otherSquad.id,
+        title: `Other squad update ${tag}`,
+        body: "Not for this family.",
+        createdBy: ownerId,
+      },
+    ]).returning({ id: academyAnnouncementsTable.id });
+    familyAnnouncementIds.push(...announcements.map(({ id }) => id));
+
+    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const to = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const response = await request(app)
+      .get("/api/academy/family")
+      .query({ token, from, to });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(Object.keys(response.body).sort()).toEqual([
+      "academy", "announcements", "attendance", "finance", "player", "sessions",
+    ]);
+    expect(response.body.academy.name).toBe(`Academy A ${tag}`);
+    expect(response.body.player.name).toBe(`Active player ${tag}`);
+    expect(response.body.player).not.toHaveProperty("guardianPhone");
+    expect(response.body.player).not.toHaveProperty("userId");
+    expect(response.body.sessions.map((session: { location: string }) => session.location))
+      .not.toContain("Out-of-squad pitch");
+    expect(response.body.sessions.map((session: { location: string }) => session.location))
+      .not.toContain("Other pitch");
+    expect(response.body.attendance).toEqual([expect.objectContaining({
+      status: "present",
+      location: "Family attendance pitch",
+    })]);
+    expect(response.body.announcements.map((announcement: { title: string }) => announcement.title))
+      .toEqual(expect.arrayContaining([
+        `Family squad update ${tag}`,
+        `Family academy update ${tag}`,
+      ]));
+    expect(response.body.announcements.some((announcement: { title: string }) => announcement.title === `Other squad update ${tag}`))
+      .toBe(false);
+    expect(JSON.stringify(response.body)).not.toContain("079 123 4567");
+
+    const inactiveToken = "b".repeat(32);
+    await db.update(academyPlayersTable)
+      .set({ familyToken: inactiveToken })
+      .where(eq(academyPlayersTable.id, inactivePlayerAId));
+    const inactive = await request(app).get("/api/academy/family").query({ token: inactiveToken });
+    expect(inactive.status).toBe(404);
+    expect(inactive.headers["cache-control"]).toBe("no-store");
+
+    expect((await request(app).get("/api/academy/family").query({ token, from: "2026-02-30", to })).status).toBe(400);
+    expect((await request(app).post("/api/academy/family").query({ token })).status).toBe(404);
+  });
+
+  it("lets only academy owners create and rotate active-player family links", async () => {
+    const playerUrl = `/api/academy/console/academies/${academyAId}/players/${playerAId}/family-link`;
+    const initial = await request(app).get(playerUrl).set(as(ownerId));
+    expect(initial.status).toBe(200);
+    expect(initial.headers["cache-control"]).toBe("no-store");
+    expect(initial.body).toEqual({ familyUrl: null });
+
+    expect((await request(app).get(playerUrl).set(as(coachId))).status).toBe(403);
+    expect((await request(app).post(playerUrl).set(as(coachId))).status).toBe(403);
+    expect((await request(app).post(
+      `/api/academy/console/academies/${academyAId}/players/${inactivePlayerAId}/family-link`,
+    ).set(as(ownerId))).status).toBe(404);
+
+    const created = await request(app).post(playerUrl).set(as(ownerId));
+    expect(created.status).toBe(200);
+    expect(created.headers["cache-control"]).toBe("no-store");
+    expect(created.body.familyUrl).toMatch(/\/p\/[0-9a-f]{32}$/);
+    const oldToken = created.body.familyUrl.match(/\/p\/([0-9a-f]{32})$/)?.[1];
+    expect(oldToken).toBeTruthy();
+    const reread = await request(app).get(playerUrl).set(as(ownerId));
+    expect(reread.body.familyUrl.match(/\/p\/([0-9a-f]{32})$/)?.[1]).toBe(oldToken);
+
+    const rotated = await request(app).post(playerUrl).set(as(ownerId));
+    expect(rotated.status).toBe(200);
+    const rotatedToken = rotated.body.familyUrl.match(/\/p\/([0-9a-f]{32})$/)?.[1];
+    expect(rotatedToken).toBeTruthy();
+    expect(rotatedToken).not.toBe(oldToken);
+    expect((await request(app).get("/api/academy/family").query({ token: oldToken })).status).toBe(404);
+    expect((await request(app).get("/api/academy/family").query({
+      token: rotatedToken,
+    })).status).toBe(200);
+  });
+
+  it("rate limits public family reads separately from registration submissions", async () => {
+    resetAcademyJoinState();
+    for (let index = 0; index < 60; index += 1) {
+      const response = await request(app).get("/api/academy/family").query({ token: "invalid" });
+      expect(response.status).toBe(404);
+    }
+    const limited = await request(app).get("/api/academy/family").query({ token: "invalid" });
+    expect(limited.status).toBe(429);
+    expect(limited.headers["cache-control"]).toBe("no-store");
+  });
+
   it("enforces signed-in, membership, and admin boundaries", async () => {
     expect((await request(app).get("/api/academy/console/memberships")).status).toBe(401);
     expect((await request(app).get("/api/academy/console/academies/not-a-number/dashboard")).status).toBe(401);

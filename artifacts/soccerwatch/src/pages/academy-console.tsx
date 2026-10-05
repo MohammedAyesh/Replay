@@ -877,7 +877,7 @@ export default function AcademyConsole() {
           ) : section === "squads" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <SquadsSection academyId={activeAcademyId} />
           ) : section === "players" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPlayersSection academyId={activeAcademyId} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPlayersSection academyId={activeAcademyId} isOwner={isOwner} />
           ) : section === "registrations" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyRegistrationsSection academyId={activeAcademyId} isOwner={isOwner} />
           ) : section === "schedule" ? (

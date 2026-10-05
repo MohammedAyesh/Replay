@@ -3,7 +3,7 @@ import { isPublicStandalonePath } from "./public-paths";
 
 describe("isPublicStandalonePath", () => {
   it("allows the public standalone path families", () => {
-    for (const path of ["/w/share-token", "/m/ABC123", "/f/ABC", "/privacy", "/terms", "/delete-account"]) {
+    for (const path of ["/join/ABC123", "/p/family-token", "/w/share-token", "/m/ABC123", "/f/ABC", "/privacy", "/terms", "/delete-account"]) {
       expect(isPublicStandalonePath(path), path).toBe(true);
     }
   });

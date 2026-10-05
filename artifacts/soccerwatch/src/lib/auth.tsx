@@ -5,10 +5,11 @@ export type { User };
 
 export function useAuth() {
   const { isSignedIn, isLoaded } = useUser();
+  const isPublicFamilyPage = typeof window !== "undefined" && window.location.pathname.startsWith("/p/");
 
   const { data: localUser, isLoading: isMeLoading, refetch: refetchLocalUser } = useGetMe({
     query: {
-      enabled: isLoaded,
+      enabled: isLoaded && !isPublicFamilyPage,
       // Retry when Clerk says the user IS signed in but the server returns an
       // error — this handles the race condition where the Clerk session cookie
       // is set in the browser but the server middleware hasn't verified it yet.
@@ -22,7 +23,7 @@ export function useAuth() {
   });
 
   const user = localUser ?? null;
-  const isLoading = !isLoaded || (isLoaded && isMeLoading && isSignedIn === true);
+  const isLoading = !isLoaded || (!isPublicFamilyPage && isLoaded && isMeLoading && isSignedIn === true);
   const isGuest = user?.isGuest ?? false;
   const isAdmin = user?.isAdmin ?? false;
 

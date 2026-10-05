@@ -23,9 +23,11 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
   });
 
   const prevMeIdRef = useRef<number | undefined>(undefined);
+  const isPublicFamilyPage = typeof window !== "undefined" && window.location.pathname.startsWith("/p/");
 
   const { data: me } = useGetMe({
     query: {
+      enabled: !isPublicFamilyPage,
       retry: false,
       staleTime: 5 * 60 * 1000,
       queryKey: getGetMeQueryKey(),

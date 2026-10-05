@@ -26,6 +26,7 @@ import type {
   AcademyAttendanceInput,
   AcademyAttendanceSheet,
   AcademyConsoleDashboard,
+  AcademyConsoleFamilyLink,
   AcademyConsoleMembership,
   AcademyConsoleRecording,
   AcademyFinanceCategory,
@@ -125,6 +126,7 @@ import type {
   FieldRecording,
   FollowResult,
   GetAdminAnalysisJobQuoteParams,
+  GetPublicAcademyFamilyParams,
   HealthStatus,
   ImpressionInput,
   JerseySidecar,
@@ -149,6 +151,7 @@ import type {
   PatchAdInput,
   PortfolioView,
   ProfileInput,
+  PublicAcademyFamily,
   PublicPlayerStats,
   PublicProfile,
   Recording,
@@ -5561,6 +5564,244 @@ export const useUpdateAcademyConsolePlayer = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getUpdateAcademyConsolePlayerMutationOptions(options));
+    }
+
+export const getGetPublicAcademyFamilyUrl = (params: GetPublicAcademyFamilyParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/academy/family?${stringifiedParams}` : `/api/academy/family`
+}
+
+/**
+ * @summary Read the family view for one active academy player
+ */
+export const getPublicAcademyFamily = async (params: GetPublicAcademyFamilyParams, options?: RequestInit): Promise<PublicAcademyFamily> => {
+
+  return customFetch<PublicAcademyFamily>(getGetPublicAcademyFamilyUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPublicAcademyFamilyQueryKey = (params?: GetPublicAcademyFamilyParams,) => {
+    return [
+    `/api/academy/family`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetPublicAcademyFamilyQueryOptions = <TData = Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError = ErrorType<void>>(params: GetPublicAcademyFamilyParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPublicAcademyFamilyQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicAcademyFamily>>> = ({ signal }) => getPublicAcademyFamily(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPublicAcademyFamilyQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicAcademyFamily>>>
+export type GetPublicAcademyFamilyQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read the family view for one active academy player
+ */
+
+export function useGetPublicAcademyFamily<TData = Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError = ErrorType<void>>(
+ params: GetPublicAcademyFamilyParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicAcademyFamily>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPublicAcademyFamilyQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAcademyConsolePlayerFamilyLinkUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/players/${playerId}/family-link`
+}
+
+/**
+ * @summary Get the family link for one player
+ */
+export const getAcademyConsolePlayerFamilyLink = async (academyId: number,
+    playerId: number, options?: RequestInit): Promise<AcademyConsoleFamilyLink> => {
+
+  return customFetch<AcademyConsoleFamilyLink>(getGetAcademyConsolePlayerFamilyLinkUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyConsolePlayerFamilyLinkQueryKey = (academyId: number,
+    playerId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/players/${playerId}/family-link`
+    ] as const;
+    }
+
+
+export const getGetAcademyConsolePlayerFamilyLinkQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyConsolePlayerFamilyLink>>, TError = ErrorType<void>>(academyId: number,
+    playerId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsolePlayerFamilyLink>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyConsolePlayerFamilyLinkQueryKey(academyId,playerId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyConsolePlayerFamilyLink>>> = ({ signal }) => getAcademyConsolePlayerFamilyLink(academyId,playerId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined && playerId !== null && playerId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsolePlayerFamilyLink>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyConsolePlayerFamilyLinkQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyConsolePlayerFamilyLink>>>
+export type GetAcademyConsolePlayerFamilyLinkQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the family link for one player
+ */
+
+export function useGetAcademyConsolePlayerFamilyLink<TData = Awaited<ReturnType<typeof getAcademyConsolePlayerFamilyLink>>, TError = ErrorType<void>>(
+ academyId: number,
+    playerId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsolePlayerFamilyLink>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyConsolePlayerFamilyLinkQueryOptions(academyId,playerId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRegenerateAcademyConsolePlayerFamilyLinkUrl = (academyId: number,
+    playerId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/players/${playerId}/family-link`
+}
+
+/**
+ * @summary Create or rotate the family link for one active player
+ */
+export const regenerateAcademyConsolePlayerFamilyLink = async (academyId: number,
+    playerId: number, options?: RequestInit): Promise<AcademyConsoleFamilyLink> => {
+
+  return customFetch<AcademyConsoleFamilyLink>(getRegenerateAcademyConsolePlayerFamilyLinkUrl(academyId,playerId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRegenerateAcademyConsolePlayerFamilyLinkMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof regenerateAcademyConsolePlayerFamilyLink>>, TError,{academyId: number;playerId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof regenerateAcademyConsolePlayerFamilyLink>>, TError,{academyId: number;playerId: number}, TContext> => {
+
+const mutationKey = ['regenerateAcademyConsolePlayerFamilyLink'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof regenerateAcademyConsolePlayerFamilyLink>>, {academyId: number;playerId: number}> = (props) => {
+          const {academyId,playerId} = props ?? {};
+
+          return  regenerateAcademyConsolePlayerFamilyLink(academyId,playerId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegenerateAcademyConsolePlayerFamilyLinkMutationResult = NonNullable<Awaited<ReturnType<typeof regenerateAcademyConsolePlayerFamilyLink>>>
+
+    export type RegenerateAcademyConsolePlayerFamilyLinkMutationError = ErrorType<void>
+
+    /**
+ * @summary Create or rotate the family link for one active player
+ */
+export const useRegenerateAcademyConsolePlayerFamilyLink = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof regenerateAcademyConsolePlayerFamilyLink>>, TError,{academyId: number;playerId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof regenerateAcademyConsolePlayerFamilyLink>>,
+        TError,
+        {academyId: number;playerId: number},
+        TContext
+      > => {
+      return useMutation(getRegenerateAcademyConsolePlayerFamilyLinkMutationOptions(options));
     }
 
 export const getListAcademyConsoleSessionsUrl = (academyId: number,) => {
