@@ -1,8 +1,9 @@
-import { pgTable, serial, text, integer, boolean, timestamp, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, unique, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { fieldsTable } from "./fields";
 import { recordingsTable } from "./recordings";
+import { academySessionsTable } from "./academySessions";
 
 export const academiesTable = pgTable("academies", {
   id: serial("id").primaryKey(),
@@ -24,8 +25,12 @@ export const academyRecordingsTable = pgTable("academy_recordings", {
   id: serial("id").primaryKey(),
   academyId: integer("academy_id").notNull().references(() => academiesTable.id, { onDelete: "cascade" }),
   recordingId: integer("recording_id").notNull().references(() => recordingsTable.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academySessionsTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [unique().on(t.academyId, t.recordingId)]);
+}, (t) => [
+  unique().on(t.academyId, t.recordingId),
+  index("academy_recordings_session_id_idx").on(t.sessionId),
+]);
 
 export const insertAcademySchema = createInsertSchema(academiesTable).omit({ id: true, createdAt: true });
 export type InsertAcademy = z.infer<typeof insertAcademySchema>;

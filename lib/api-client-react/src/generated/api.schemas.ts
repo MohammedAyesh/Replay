@@ -1551,11 +1551,28 @@ export interface AcademyAttendanceCounts {
   excused: number;
 }
 
+export interface AcademySessionRecording {
+  /** @minimum 1 */
+  id: number;
+  /** @minimum 1 */
+  fieldId: number;
+  court: string;
+  /** @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ */
+  date: string;
+  timeSlot: string;
+  duration: string;
+  /** @nullable */
+  score: string | null;
+  videoUrl: string;
+}
+
 export interface AcademySessionSummary {
   /** @minimum 1 */
   id: number;
   /** @minimum 1 */
   academyId: number;
+  /** @minimum 1 */
+  fieldId: number;
   /**
      * @minimum 1
      * @nullable
@@ -1586,6 +1603,7 @@ export interface AcademySessionSummary {
   notes: string | null;
   createdAt: string;
   attendanceCounts: AcademyAttendanceCounts;
+  recordings: AcademySessionRecording[];
 }
 
 /**
@@ -1661,6 +1679,21 @@ export interface AcademyConsoleRecording {
   highlightMoment: string | null;
   /** @nullable */
   fieldName: string | null;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  sessionId: number | null;
+  /** @nullable */
+  sessionLabel: string | null;
+}
+
+export interface AcademyRecordingSessionUpdate {
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  sessionId: number | null;
 }
 
 export interface AcademyAnnouncementSummary {
@@ -1937,6 +1970,7 @@ export interface AcademyFamilySession {
      * @nullable
      */
   opponentScore: number | null;
+  recordings: AcademySessionRecording[];
 }
 
 export type AcademyFamilyAttendanceStatus = typeof AcademyFamilyAttendanceStatus[keyof typeof AcademyFamilyAttendanceStatus];

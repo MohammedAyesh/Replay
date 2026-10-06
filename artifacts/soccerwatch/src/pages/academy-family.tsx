@@ -1,14 +1,18 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams, useSearch } from "wouter";
+import { AnimatePresence } from "framer-motion";
 import {
   useGetAcademyFamilyMe,
   useClaimAcademyFamily,
   getGetAcademyFamilyMeQueryKey,
+  type AcademySessionRecording,
 } from "@workspace/api-client-react";
-import { CalendarDays, Check, Clock3, Globe, MapPin, ShieldCheck, Trophy, WalletCards } from "lucide-react";
+import { CalendarDays, Check, Clock3, Globe, MapPin, Play, ShieldCheck, Trophy, WalletCards } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
+import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
+import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -52,6 +56,8 @@ const copy = {
     switchPlayer: "View another linked player",
     loading: "Preparing your family view…", errorTitle: "This family link is unavailable", error: "The link may have expired or been replaced. Please ask your academy for a current link.", retry: "Try again",
     today: "Today", upcoming: "UP NEXT", score: "Final score",
+    footage: "Session footage", footageHint: "Recordings shared for sessions in your schedule.",
+    noFootage: "No session footage has been shared yet.", watch: "Watch",
   },
   ar: {
     eyebrow: "مساحة العائلة", welcome: "خطوة أقرب إلى", academy: "رحلته الكروية.",
@@ -77,8 +83,18 @@ const copy = {
     switchPlayer: "عرض لاعب آخر مرتبط",
     loading: "يتم تجهيز مساحة العائلة…", errorTitle: "رابط العائلة غير متاح", error: "قد يكون الرابط منتهي الصلاحية أو تم استبداله. يرجى طلب رابط جديد من الأكاديمية.", retry: "إعادة المحاولة",
     today: "اليوم", upcoming: "الموعد القادم", score: "النتيجة النهائية",
+    footage: "تسجيلات المواعيد", footageHint: "التسجيلات التي تمت مشاركتها لمواعيد اللاعب.",
+    noFootage: "لم تتم مشاركة تسجيلات للمواعيد بعد.", watch: "مشاهدة",
   },
 };
+
+function extractBunnyVideoId(value: string): string {
+  try {
+    return new URL(value).pathname.split("/").filter(Boolean)[0] ?? value;
+  } catch {
+    return value;
+  }
+}
 
 export default function AcademyFamilyPage({ source = "token" }: { source?: "token" | "me" }) {
   const params = useParams<{ token?: string }>();
@@ -86,6 +102,11 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const search = useSearch();
   const { locale: appLocale } = useTranslation();
   const { user, isLoading: authLoading, isGuest } = useAuth();
+  const [playing, setPlaying] = useState<{
+    recording: AcademySessionRecording;
+    startsAt: string;
+    location: string;
+  } | null>(null);
   const claim = useClaimAcademyFamily();
   const attemptedToken = useRef<string | null>(null);
   const requestedLanguage = new URLSearchParams(search).get("lang");
@@ -143,6 +164,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const financeStatus = family?.finance?.subscriptionStatus;
   const attendanceRate = family?.attendanceSummary.percentPresent;
   const upcomingSessions = family?.sessions.filter((session) => new Date(session.startsAt).getTime() >= Date.now()) ?? [];
+  const footageSessions = family?.sessions.filter((session) => session.recordings.length > 0) ?? [];
   const nextSession = upcomingSessions[0];
 
   if (source === "token") {
@@ -342,6 +364,32 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                   </article>;
                 })}</div> : <div className="fp-empty" data-testid="family-schedule-empty">{labels.noSessions}</div>}
               </section>
+              <section className="fp-card" data-testid="family-session-footage">
+                <div className="fp-card-head">
+                  <div><h2 className="fp-card-title">{labels.footage}</h2><p className="fp-card-sub">{labels.footageHint}</p></div>
+                  <span className="fp-count">{footageSessions.reduce((total, session) => total + session.recordings.length, 0)}</span>
+                </div>
+                {footageSessions.length ? <div className="fp-sessions">{footageSessions.flatMap((session) => session.recordings.map((recording) => {
+                  const date = new Date(session.startsAt);
+                  return <article className="fp-session" key={recording.id} data-testid={`family-footage-${recording.id}`}>
+                    <div className="fp-date"><strong>{new Intl.DateTimeFormat(locale, { day: "numeric" }).format(date)}</strong><span>{new Intl.DateTimeFormat(locale, { month: "short" }).format(date)}</span></div>
+                    <div className="fp-session-info">
+                      <strong>{session.type === "match" ? `${labels.match}${session.opponent ? ` · ${session.opponent}` : ""}` : labels.training}</strong>
+                      <span><Clock3 aria-hidden="true" />{new Intl.DateTimeFormat(locale, { weekday: "short", hour: "numeric", minute: "2-digit" }).format(date)} · {recording.timeSlot}</span>
+                      <span><MapPin aria-hidden="true" />{session.location} · {recording.court}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPlaying({ recording, startsAt: session.startsAt, location: session.location })}
+                      className="fp-session-type inline-flex items-center gap-1.5 border-0"
+                      style={{ cursor: "pointer", background: "var(--replay-floodlight)", color: "var(--replay-void)" }}
+                      data-testid={`button-family-watch-${recording.id}`}
+                    >
+                      <Play size={14} aria-hidden="true" />{labels.watch}
+                    </button>
+                  </article>;
+                }))}</div> : <div className="fp-empty" data-testid="family-session-footage-empty">{labels.noFootage}</div>}
+              </section>
               <section className="fp-card" data-testid="family-attendance">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.attendance}{attendanceRate != null ? ` · ${new Intl.NumberFormat(locale).format(attendanceRate)}%` : ""}</h2><p className="fp-card-sub">{labels.attendanceHint}</p></div><span className="fp-count">{family.attendance.length}</span></div>
                 <div className="fp-att-summary" data-testid="family-attendance-summary">
@@ -413,6 +461,20 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
           </div>
         </>
       )}
+      {playing && <AnimatePresence>
+        <ClipPlayer
+          src={playing.recording.videoUrl}
+          proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(playing.recording.videoUrl)}`}
+          fallbackSrc={getBunnyMp4FallbackSource(playing.recording.videoUrl)}
+          title={`${family?.academy.name ?? "Academy"} · ${playing.location} · ${playing.recording.date} ${playing.recording.timeSlot}`}
+          source={{ kind: "bunny", videoId: extractBunnyVideoId(playing.recording.videoUrl) }}
+          layout="overlay"
+          canSave={false}
+          onRequireAuth={() => setPlaying(null)}
+          onSave={async () => { throw new Error("Saving is unavailable in family view."); }}
+          onClose={() => setPlaying(null)}
+        />
+      </AnimatePresence>}
     </main>
   );
 }

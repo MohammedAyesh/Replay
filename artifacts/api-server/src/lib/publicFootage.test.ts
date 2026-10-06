@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canViewPinnedAcademyRecording,
   isPublicBunnyCollectionVideo,
   type PublicFootageContext,
 } from "./publicFootage";
@@ -103,6 +104,80 @@ describe("public Bunny collection visibility", () => {
       title,
       context(),
       [importedRecording()],
+    )).toBe(false);
+  });
+});
+
+describe("pinned academy recording access", () => {
+  const academyId = 22;
+  const viewerId = 8;
+  const squadSession = { academyId, sessionSquadId: 4 };
+  const academyWideSession = { academyId, sessionSquadId: null };
+  const linkedPlayer = {
+    id: 31,
+    academyId,
+    squadId: 4,
+    userId: viewerId,
+    isActive: true,
+  };
+
+  it("allows an academy member to view a pinned recording", () => {
+    expect(canViewPinnedAcademyRecording(
+      viewerId,
+      squadSession,
+      new Set([academyId]),
+      [],
+      new Set(),
+    )).toBe(true);
+  });
+
+  it("allows the linked active player to view a recording for their squad", () => {
+    expect(canViewPinnedAcademyRecording(
+      viewerId,
+      squadSession,
+      new Set(),
+      [linkedPlayer],
+      new Set(),
+    )).toBe(true);
+  });
+
+  it("allows a linked guardian to view an academy-wide session", () => {
+    expect(canViewPinnedAcademyRecording(
+      viewerId,
+      academyWideSession,
+      new Set(),
+      [{ ...linkedPlayer, userId: null, squadId: 7 }],
+      new Set([linkedPlayer.id]),
+    )).toBe(true);
+  });
+
+  it("allows a guardian to view a session for the linked player's squad", () => {
+    expect(canViewPinnedAcademyRecording(
+      viewerId,
+      squadSession,
+      new Set(),
+      [{ ...linkedPlayer, userId: null }],
+      new Set([linkedPlayer.id]),
+    )).toBe(true);
+  });
+
+  it("rejects guardians and linked players for a different squad", () => {
+    expect(canViewPinnedAcademyRecording(
+      viewerId,
+      { academyId, sessionSquadId: 7 },
+      new Set(),
+      [linkedPlayer],
+      new Set([linkedPlayer.id]),
+    )).toBe(false);
+  });
+
+  it("does not grant academy footage access through an inactive player record", () => {
+    expect(canViewPinnedAcademyRecording(
+      viewerId,
+      academyWideSession,
+      new Set(),
+      [{ ...linkedPlayer, isActive: false }],
+      new Set([linkedPlayer.id]),
     )).toBe(false);
   });
 });

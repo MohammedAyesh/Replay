@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AcademyAttendanceCounts } from './academyAttendanceCounts';
+import type { AcademySessionRecording } from './academySessionRecording';
 import type { AcademySessionSummaryType } from './academySessionSummaryType';
 
 export interface AcademySessionSummary {
@@ -13,6 +14,8 @@ export interface AcademySessionSummary {
   id: number;
   /** @minimum 1 */
   academyId: number;
+  /** @minimum 1 */
+  fieldId: number;
   /**
      * @minimum 1
      * @nullable
@@ -43,4 +46,5 @@ export interface AcademySessionSummary {
   notes: string | null;
   createdAt: Date;
   attendanceCounts: AcademyAttendanceCounts;
+  recordings: AcademySessionRecording[];
 }

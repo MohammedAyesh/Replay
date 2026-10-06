@@ -2411,6 +2411,9 @@ export const getAcademyFamilyMeResponseSessionsItemOwnScoreMin = 0;
 
 export const getAcademyFamilyMeResponseSessionsItemOpponentScoreMin = 0;
 
+
+
+export const getAcademyFamilyMeResponseSessionsItemRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
 export const getAcademyFamilyMeResponseAttendanceSummaryPresentMin = 0;
 
 export const getAcademyFamilyMeResponseAttendanceSummaryLateMin = 0;
@@ -2461,7 +2464,17 @@ export const GetAcademyFamilyMeResponse = zod.object({
   "location": zod.string(),
   "opponent": zod.string().nullable(),
   "ownScore": zod.number().min(getAcademyFamilyMeResponseSessionsItemOwnScoreMin).nullable(),
-  "opponentScore": zod.number().min(getAcademyFamilyMeResponseSessionsItemOpponentScoreMin).nullable()
+  "opponentScore": zod.number().min(getAcademyFamilyMeResponseSessionsItemOpponentScoreMin).nullable(),
+  "recordings": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "fieldId": zod.number().min(1),
+  "court": zod.string(),
+  "date": zod.string().regex(getAcademyFamilyMeResponseSessionsItemRecordingsItemDateRegExp),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullable(),
+  "videoUrl": zod.string()
+}))
 })),
   "attendance": zod.array(zod.object({
   "status": zod.enum(['present', 'absent', 'late', 'excused']),
@@ -2628,6 +2641,7 @@ export const ListAcademyConsoleSessionsParams = zod.object({
 
 
 
+
 export const listAcademyConsoleSessionsResponseOwnScoreMin = 0;
 export const listAcademyConsoleSessionsResponseOwnScoreMax = 2147483647;
 
@@ -2644,9 +2658,13 @@ export const listAcademyConsoleSessionsResponseAttendanceCountsExcusedMin = 0;
 
 
 
+export const listAcademyConsoleSessionsResponseRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+
+
 export const ListAcademyConsoleSessionsResponseItem = zod.object({
   "id": zod.number().min(1),
   "academyId": zod.number().min(1),
+  "fieldId": zod.number().min(1),
   "squadId": zod.number().min(1).nullable(),
   "squadName": zod.string().nullable(),
   "type": zod.enum(['training', 'match']),
@@ -2663,7 +2681,17 @@ export const ListAcademyConsoleSessionsResponseItem = zod.object({
   "absent": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsAbsentMin),
   "late": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsLateMin),
   "excused": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsExcusedMin)
-})
+}),
+  "recordings": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "fieldId": zod.number().min(1),
+  "court": zod.string(),
+  "date": zod.string().regex(listAcademyConsoleSessionsResponseRecordingsItemDateRegExp),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullable(),
+  "videoUrl": zod.string()
+}))
 })
 export const ListAcademyConsoleSessionsResponse = zod.array(ListAcademyConsoleSessionsResponseItem)
 
@@ -2700,6 +2728,7 @@ export const CreateAcademyConsoleSessionBody = zod.object({
 
 
 
+
 export const createAcademyConsoleSessionResponseOwnScoreMin = 0;
 export const createAcademyConsoleSessionResponseOwnScoreMax = 2147483647;
 
@@ -2716,9 +2745,13 @@ export const createAcademyConsoleSessionResponseAttendanceCountsExcusedMin = 0;
 
 
 
+export const createAcademyConsoleSessionResponseRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+
+
 export const CreateAcademyConsoleSessionResponse = zod.object({
   "id": zod.number().min(1),
   "academyId": zod.number().min(1),
+  "fieldId": zod.number().min(1),
   "squadId": zod.number().min(1).nullable(),
   "squadName": zod.string().nullable(),
   "type": zod.enum(['training', 'match']),
@@ -2735,7 +2768,17 @@ export const CreateAcademyConsoleSessionResponse = zod.object({
   "absent": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsAbsentMin),
   "late": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsLateMin),
   "excused": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsExcusedMin)
-})
+}),
+  "recordings": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "fieldId": zod.number().min(1),
+  "court": zod.string(),
+  "date": zod.string().regex(createAcademyConsoleSessionResponseRecordingsItemDateRegExp),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullable(),
+  "videoUrl": zod.string()
+}))
 })
 
 
@@ -2781,6 +2824,7 @@ export const UpdateAcademyConsoleSessionBody = zod.object({
 
 
 
+
 export const updateAcademyConsoleSessionResponseOwnScoreMin = 0;
 export const updateAcademyConsoleSessionResponseOwnScoreMax = 2147483647;
 
@@ -2797,9 +2841,13 @@ export const updateAcademyConsoleSessionResponseAttendanceCountsExcusedMin = 0;
 
 
 
+export const updateAcademyConsoleSessionResponseRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+
+
 export const UpdateAcademyConsoleSessionResponse = zod.object({
   "id": zod.number().min(1),
   "academyId": zod.number().min(1),
+  "fieldId": zod.number().min(1),
   "squadId": zod.number().min(1).nullable(),
   "squadName": zod.string().nullable(),
   "type": zod.enum(['training', 'match']),
@@ -2816,7 +2864,17 @@ export const UpdateAcademyConsoleSessionResponse = zod.object({
   "absent": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsAbsentMin),
   "late": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsLateMin),
   "excused": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsExcusedMin)
-})
+}),
+  "recordings": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "fieldId": zod.number().min(1),
+  "court": zod.string(),
+  "date": zod.string().regex(updateAcademyConsoleSessionResponseRecordingsItemDateRegExp),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullable(),
+  "videoUrl": zod.string()
+}))
 })
 
 
@@ -2918,6 +2976,7 @@ export const ListAcademyConsoleRecordingsParams = zod.object({
 export const listAcademyConsoleRecordingsResponseDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
 
 
+
 export const ListAcademyConsoleRecordingsResponseItem = zod.object({
   "id": zod.number().min(1),
   "fieldId": zod.number().min(1),
@@ -2928,9 +2987,52 @@ export const ListAcademyConsoleRecordingsResponseItem = zod.object({
   "score": zod.string().nullable(),
   "videoUrl": zod.string(),
   "highlightMoment": zod.string().nullable(),
-  "fieldName": zod.string().nullable()
+  "fieldName": zod.string().nullable(),
+  "sessionId": zod.number().min(1).nullable(),
+  "sessionLabel": zod.string().nullable()
 })
 export const ListAcademyConsoleRecordingsResponse = zod.array(ListAcademyConsoleRecordingsResponseItem)
+
+
+/**
+ * @summary Attach an academy recording to a session or clear its session link
+ */
+
+
+
+
+export const UpdateAcademyConsoleRecordingSessionParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "recordingId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const UpdateAcademyConsoleRecordingSessionBody = zod.object({
+  "sessionId": zod.number().min(1).nullable()
+})
+
+
+
+export const updateAcademyConsoleRecordingSessionResponseDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+
+
+
+export const UpdateAcademyConsoleRecordingSessionResponse = zod.object({
+  "id": zod.number().min(1),
+  "fieldId": zod.number().min(1),
+  "court": zod.string(),
+  "date": zod.string().regex(updateAcademyConsoleRecordingSessionResponseDateRegExp),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullable(),
+  "videoUrl": zod.string(),
+  "highlightMoment": zod.string().nullable(),
+  "fieldName": zod.string().nullable(),
+  "sessionId": zod.number().min(1).nullable(),
+  "sessionLabel": zod.string().nullable()
+})
 
 
 /**

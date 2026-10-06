@@ -68,6 +68,7 @@ import type {
   AcademyPlayerInput,
   AcademyPlayerSummary,
   AcademyPlayerUpdate,
+  AcademyRecordingSessionUpdate,
   AcademyRegistrationApproval,
   AcademyRegistrationSummary,
   AcademySessionInput,
@@ -6631,6 +6632,79 @@ export function useListAcademyConsoleRecordings<TData = Awaited<ReturnType<typeo
 
 
 
+
+export const getUpdateAcademyConsoleRecordingSessionUrl = (academyId: number,
+    recordingId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/recordings/${recordingId}/session`
+}
+
+/**
+ * @summary Attach an academy recording to a session or clear its session link
+ */
+export const updateAcademyConsoleRecordingSession = async (academyId: number,
+    recordingId: number,
+    academyRecordingSessionUpdate: AcademyRecordingSessionUpdate, options?: RequestInit): Promise<AcademyConsoleRecording> => {
+
+  return customFetch<AcademyConsoleRecording>(getUpdateAcademyConsoleRecordingSessionUrl(academyId,recordingId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(academyRecordingSessionUpdate)
+  }
+);}
+
+
+
+
+export const getUpdateAcademyConsoleRecordingSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleRecordingSession>>, TError,{academyId: number;recordingId: number;data: BodyType<AcademyRecordingSessionUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleRecordingSession>>, TError,{academyId: number;recordingId: number;data: BodyType<AcademyRecordingSessionUpdate>}, TContext> => {
+
+const mutationKey = ['updateAcademyConsoleRecordingSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAcademyConsoleRecordingSession>>, {academyId: number;recordingId: number;data: BodyType<AcademyRecordingSessionUpdate>}> = (props) => {
+          const {academyId,recordingId,data} = props ?? {};
+
+          return  updateAcademyConsoleRecordingSession(academyId,recordingId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAcademyConsoleRecordingSessionMutationResult = NonNullable<Awaited<ReturnType<typeof updateAcademyConsoleRecordingSession>>>
+    export type UpdateAcademyConsoleRecordingSessionMutationBody = BodyType<AcademyRecordingSessionUpdate>
+    export type UpdateAcademyConsoleRecordingSessionMutationError = ErrorType<void>
+
+    /**
+ * @summary Attach an academy recording to a session or clear its session link
+ */
+export const useUpdateAcademyConsoleRecordingSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAcademyConsoleRecordingSession>>, TError,{academyId: number;recordingId: number;data: BodyType<AcademyRecordingSessionUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAcademyConsoleRecordingSession>>,
+        TError,
+        {academyId: number;recordingId: number;data: BodyType<AcademyRecordingSessionUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAcademyConsoleRecordingSessionMutationOptions(options));
+    }
 
 export const getListAcademyConsoleAnnouncementsUrl = (academyId: number,) => {
 

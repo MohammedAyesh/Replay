@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AcademyFamilySessionType } from './academyFamilySessionType';
+import type { AcademySessionRecording } from './academySessionRecording';
 
 export interface AcademyFamilySession {
   type: AcademyFamilySessionType;
@@ -25,4 +26,5 @@ export interface AcademyFamilySession {
      * @nullable
      */
   opponentScore: number | null;
+  recordings: AcademySessionRecording[];
 }

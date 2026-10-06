@@ -1,6 +1,11 @@
 import type { Request } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import {
+  academyMembersTable,
+  academyPlayerGuardiansTable,
+  academyPlayersTable,
+  academyRecordingsTable,
+  academySessionsTable,
   db,
   fieldsTable,
   footageRequestsTable,
@@ -113,6 +118,28 @@ export function isPublicRecordingInContext(
   return !field.isHidden && recording.isVisible;
 }
 
+export function canViewPinnedAcademyRecording(
+  viewerId: number,
+  recording: { academyId: number; sessionSquadId: number | null },
+  memberAcademyIds: Set<number>,
+  players: Array<{
+    id: number;
+    academyId: number;
+    squadId: number | null;
+    userId: number | null;
+    isActive: boolean;
+  }>,
+  guardianPlayerIds: Set<number>,
+): boolean {
+  if (memberAcademyIds.has(recording.academyId)) return true;
+  return players.some((player) => (
+    player.isActive
+    && player.academyId === recording.academyId
+    && (recording.sessionSquadId === null || player.squadId === recording.sessionSquadId)
+    && (player.userId === viewerId || guardianPlayerIds.has(player.id))
+  ));
+}
+
 export function isPublicBunnyVideoInContext(
   field: typeof fieldsTable.$inferSelect,
   context: PublicFootageContext,
@@ -210,8 +237,72 @@ export async function canViewBunnyVideo(req: Request, videoId: string): Promise<
     .from(recordingsTable)
     .innerJoin(fieldsTable, eq(recordingsTable.fieldId, fieldsTable.id));
 
-  return recordings.some(({ recording, field }) => (
+  if (recordings.some(({ recording, field }) => (
     extractBunnyVideoId(recording.videoUrl) === videoId
     && isPublicRecordingInContext(recording, field, context)
+  ))) return true;
+
+  const viewer = context.viewer;
+  if (!viewer || viewer.isGuest || viewer.isDisabled) return false;
+
+  const attachedRecordings = await db
+    .select({
+      academyId: academyRecordingsTable.academyId,
+      sessionSquadId: academySessionsTable.squadId,
+      videoUrl: recordingsTable.videoUrl,
+    })
+    .from(academyRecordingsTable)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, academyRecordingsTable.recordingId))
+    .innerJoin(academySessionsTable, and(
+      eq(academySessionsTable.id, academyRecordingsTable.sessionId),
+      eq(academySessionsTable.academyId, academyRecordingsTable.academyId),
+    ));
+
+  const matching = attachedRecordings.filter(
+    (recording) => extractBunnyVideoId(recording.videoUrl) === videoId,
+  );
+  if (matching.length === 0) return false;
+
+  const academyIds = [...new Set(matching.map(({ academyId }) => academyId))];
+  const memberRows = await db
+    .select({ academyId: academyMembersTable.academyId })
+    .from(academyMembersTable)
+    .where(and(
+      eq(academyMembersTable.userId, viewer.id),
+      inArray(academyMembersTable.academyId, academyIds),
+    ));
+  const memberAcademyIds = new Set(memberRows.map(({ academyId }) => academyId));
+  if (matching.some(({ academyId }) => memberAcademyIds.has(academyId))) return true;
+
+  const players = await db
+    .select({
+      id: academyPlayersTable.id,
+      academyId: academyPlayersTable.academyId,
+      squadId: academyPlayersTable.squadId,
+      userId: academyPlayersTable.userId,
+      isActive: academyPlayersTable.isActive,
+    })
+    .from(academyPlayersTable)
+    .where(and(
+      eq(academyPlayersTable.isActive, true),
+      inArray(academyPlayersTable.academyId, academyIds),
+    ));
+  if (players.length === 0) return false;
+
+  const guardianRows = await db
+    .select({ playerId: academyPlayerGuardiansTable.playerId })
+    .from(academyPlayerGuardiansTable)
+    .where(and(
+      eq(academyPlayerGuardiansTable.userId, viewer.id),
+      inArray(academyPlayerGuardiansTable.playerId, players.map(({ id }) => id)),
+    ));
+  const guardianPlayerIds = new Set(guardianRows.map(({ playerId }) => playerId));
+
+  return matching.some((recording) => canViewPinnedAcademyRecording(
+    viewer.id,
+    recording,
+    memberAcademyIds,
+    players,
+    guardianPlayerIds,
   ));
 }

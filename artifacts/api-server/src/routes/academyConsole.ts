@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, asc, count, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request } from "express";
 import {
   AddAcademyMemberBody,
@@ -64,11 +64,13 @@ import {
   academyMembersTable,
   academyPlayerGuardiansTable,
   academyPlayersTable,
+  academyRecordingsTable,
   academyRegistrationsTable,
   academySessionsTable,
   academySquadsTable,
   academiesTable,
   db,
+  recordingsTable,
   usersTable,
 } from "@workspace/db";
 import { financePlayersForSquad, getAcademyCollectThisWeek } from "./academyFinance";
@@ -172,6 +174,7 @@ async function academySessionSummaries(academyId: number, sessionId?: number) {
     .select({
       id: academySessionsTable.id,
       academyId: academySessionsTable.academyId,
+      fieldId: academiesTable.fieldId,
       squadId: academySessionsTable.squadId,
       squadName: academySquadsTable.name,
       type: academySessionsTable.type,
@@ -185,6 +188,7 @@ async function academySessionSummaries(academyId: number, sessionId?: number) {
       createdAt: academySessionsTable.createdAt,
     })
     .from(academySessionsTable)
+    .innerJoin(academiesTable, eq(academiesTable.id, academySessionsTable.academyId))
     .leftJoin(
       academySquadsTable,
       and(
@@ -231,6 +235,33 @@ async function academySessionSummaries(academyId: number, sessionId?: number) {
     countsBySession.set(row.sessionId, counts);
   }
 
+  const recordingRows = await db
+    .select({
+      sessionId: academyRecordingsTable.sessionId,
+      id: recordingsTable.id,
+      fieldId: recordingsTable.fieldId,
+      court: recordingsTable.court,
+      date: recordingsTable.date,
+      timeSlot: recordingsTable.timeSlot,
+      duration: recordingsTable.duration,
+      score: recordingsTable.score,
+      videoUrl: recordingsTable.videoUrl,
+    })
+    .from(academyRecordingsTable)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, academyRecordingsTable.recordingId))
+    .where(and(
+      eq(academyRecordingsTable.academyId, academyId),
+      inArray(academyRecordingsTable.sessionId, sessions.map(({ id }) => id)),
+    ))
+    .orderBy(asc(recordingsTable.date), asc(recordingsTable.timeSlot), asc(recordingsTable.id));
+  const recordingsBySession = new Map<number, typeof recordingRows>();
+  for (const recording of recordingRows) {
+    if (recording.sessionId === null) continue;
+    const existing = recordingsBySession.get(recording.sessionId) ?? [];
+    existing.push(recording);
+    recordingsBySession.set(recording.sessionId, existing);
+  }
+
   return sessions.map((session) => ({
     ...session,
     attendanceCounts: countsBySession.get(session.id) ?? {
@@ -239,6 +270,10 @@ async function academySessionSummaries(academyId: number, sessionId?: number) {
       late: 0,
       excused: 0,
     },
+    recordings: recordingsBySession.get(session.id)?.map(({
+      sessionId: _sessionId,
+      ...recording
+    }) => recording) ?? [],
   }));
 }
 

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Response } from "express";
 import {
   CreateAcademyConsoleAnnouncementBody,
@@ -17,6 +17,9 @@ import {
   UpdateAcademyConsoleAttendanceBody,
   UpdateAcademyConsoleAttendanceParams,
   UpdateAcademyConsoleAttendanceResponse,
+  UpdateAcademyConsoleRecordingSessionBody,
+  UpdateAcademyConsoleRecordingSessionParams,
+  UpdateAcademyConsoleRecordingSessionResponse,
 } from "@workspace/api-zod";
 import {
   academyAnnouncementsTable,
@@ -40,6 +43,31 @@ import {
 const router: IRouter = Router();
 
 type AttendanceStatus = "present" | "absent" | "late" | "excused";
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function ammanCalendarDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Amman",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function calendarDateOrdinal(value: string): number {
+  const [year, month, day] = value.split("-").map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+function isRecordingWithinSessionWindow(recordingDate: string, startsAt: Date): boolean {
+  return Math.abs(calendarDateOrdinal(recordingDate) - calendarDateOrdinal(ammanCalendarDate(startsAt))) <= DAY_MS;
+}
+
+function academyRecordingLabel(startsAt: Date, location: string): string {
+  return `${ammanCalendarDate(startsAt)} · ${location}`;
+}
 
 function rawParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
@@ -164,6 +192,44 @@ async function eligiblePlayerIds(academyId: number, sessionId: number) {
     ));
 
   return new Set(players.map((player) => player.id));
+}
+
+async function academyConsoleRecordingSummaries(academyId: number, recordingId?: number) {
+  const rows = await db
+    .select({
+      id: recordingsTable.id,
+      fieldId: recordingsTable.fieldId,
+      court: recordingsTable.court,
+      date: recordingsTable.date,
+      timeSlot: recordingsTable.timeSlot,
+      duration: recordingsTable.duration,
+      score: recordingsTable.score,
+      videoUrl: recordingsTable.videoUrl,
+      highlightMoment: recordingsTable.highlightMoment,
+      fieldName: fieldsTable.name,
+      sessionId: academyRecordingsTable.sessionId,
+      sessionStartsAt: academySessionsTable.startsAt,
+      sessionLocation: academySessionsTable.location,
+    })
+    .from(academyRecordingsTable)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, academyRecordingsTable.recordingId))
+    .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .leftJoin(academySessionsTable, and(
+      eq(academySessionsTable.id, academyRecordingsTable.sessionId),
+      eq(academySessionsTable.academyId, academyRecordingsTable.academyId),
+    ))
+    .where(and(
+      eq(academyRecordingsTable.academyId, academyId),
+      ...(recordingId === undefined ? [] : [eq(recordingsTable.id, recordingId)]),
+    ))
+    .orderBy(desc(recordingsTable.date), desc(recordingsTable.createdAt), desc(recordingsTable.id));
+
+  return rows.map(({ sessionStartsAt, sessionLocation, ...recording }) => ({
+    ...recording,
+    sessionLabel: sessionStartsAt && sessionLocation
+      ? academyRecordingLabel(sessionStartsAt, sessionLocation)
+      : null,
+  }));
 }
 
 async function academyAnnouncementSummaries(academyId: number, announcementId?: number) {
@@ -321,26 +387,95 @@ router.get(
     const { academyId } = parsed.data;
     if (!(await authorizeAcademy(user, res, academyId))) return;
 
-    const recordings = await db
+    res.json(ListAcademyConsoleRecordingsResponse.parse(await academyConsoleRecordingSummaries(academyId)));
+  },
+);
+
+router.patch(
+  "/academy/console/academies/:academyId/recordings/:recordingId/session",
+  async (req, res): Promise<void> => {
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+
+    const params = UpdateAcademyConsoleRecordingSessionParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      recordingId: rawParam(req.params.recordingId),
+    });
+    if (!params.success) {
+      res.status(400).json({ error: params.error.message });
+      return;
+    }
+    const { academyId, recordingId } = params.data;
+    if (!(await authorizeAcademy(user, res, academyId))) return;
+
+    const body = UpdateAcademyConsoleRecordingSessionBody.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: body.error.message });
+      return;
+    }
+
+    const [recording] = await db
       .select({
         id: recordingsTable.id,
         fieldId: recordingsTable.fieldId,
-        court: recordingsTable.court,
         date: recordingsTable.date,
-        timeSlot: recordingsTable.timeSlot,
-        duration: recordingsTable.duration,
-        score: recordingsTable.score,
-        videoUrl: recordingsTable.videoUrl,
-        highlightMoment: recordingsTable.highlightMoment,
-        fieldName: fieldsTable.name,
+        academyFieldId: academiesTable.fieldId,
       })
       .from(academyRecordingsTable)
       .innerJoin(recordingsTable, eq(recordingsTable.id, academyRecordingsTable.recordingId))
-      .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
-      .where(eq(academyRecordingsTable.academyId, academyId))
-      .orderBy(desc(recordingsTable.date), desc(recordingsTable.createdAt), desc(recordingsTable.id));
+      .innerJoin(academiesTable, eq(academiesTable.id, academyRecordingsTable.academyId))
+      .where(and(
+        eq(academyRecordingsTable.academyId, academyId),
+        eq(academyRecordingsTable.recordingId, recordingId),
+      ));
+    if (!recording) {
+      res.status(404).json({ error: "Recording not found in this academy" });
+      return;
+    }
 
-    res.json(ListAcademyConsoleRecordingsResponse.parse(recordings));
+    const sessionId = body.data.sessionId;
+    if (sessionId !== null) {
+      const [session] = await db
+        .select({
+          id: academySessionsTable.id,
+          startsAt: academySessionsTable.startsAt,
+          fieldId: academiesTable.fieldId,
+          location: academySessionsTable.location,
+        })
+        .from(academySessionsTable)
+        .innerJoin(academiesTable, eq(academiesTable.id, academySessionsTable.academyId))
+        .where(and(
+          eq(academySessionsTable.id, sessionId),
+          eq(academySessionsTable.academyId, academyId),
+        ));
+      if (!session) {
+        res.status(404).json({ error: "Session not found in this academy" });
+        return;
+      }
+      if (recording.fieldId !== recording.academyFieldId || session.fieldId !== recording.academyFieldId) {
+        res.status(400).json({ error: "Recording and session must belong to the academy field" });
+        return;
+      }
+      if (!isRecordingWithinSessionWindow(recording.date, session.startsAt)) {
+        res.status(400).json({ error: "Recording date must be within one Amman calendar day of the session" });
+        return;
+      }
+    }
+
+    await db
+      .update(academyRecordingsTable)
+      .set({ sessionId })
+      .where(and(
+        eq(academyRecordingsTable.academyId, academyId),
+        eq(academyRecordingsTable.recordingId, recordingId),
+      ));
+
+    const [summary] = await academyConsoleRecordingSummaries(academyId, recordingId);
+    if (!summary) {
+      res.status(404).json({ error: "Recording not found in this academy" });
+      return;
+    }
+    res.json(UpdateAcademyConsoleRecordingSessionResponse.parse(summary));
   },
 );
 

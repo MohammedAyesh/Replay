@@ -672,10 +672,12 @@ const strings = {
         monthlyInsightsError: "Could not load monthly attendance insights. Try again.",
       },
       recordingsPanel: {
-        description: "Linked academy footage, sorted from the latest session. Recordings are read-only here.",
+        description: "Linked academy footage, sorted from the latest session.",
         loading: "Loading academy recordings", loadError: "Could not load recordings. Check your connection and try again.",
         emptyTitle: "No linked recordings yet", emptyDescription: "Recordings connected to this academy will appear here.",
         play: "Play recording", noPlayback: "Playback unavailable",
+        session: "Session", noSession: "No session", assignmentError: "Could not update the session link. Try again.",
+        sessionsLoadError: "Could not load sessions for recording links.",
       },
       announcementsPanel: {
         description: "Post clear updates for the whole academy or a specific squad.",
@@ -1964,10 +1966,12 @@ const strings = {
         monthlyInsightsError: "تعذّر تحميل ملخص الحضور الشهري. حاول مجددًا.",
       },
       recordingsPanel: {
-        description: "تسجيلات الأكاديمية المرتبطة مرتبة من الأحدث. هذه الصفحة للعرض فقط.",
+        description: "تسجيلات الأكاديمية المرتبطة مرتبة من الأحدث.",
         loading: "جارٍ تحميل تسجيلات الأكاديمية", loadError: "تعذّر تحميل التسجيلات. تحقق من اتصالك وحاول مجددًا.",
         emptyTitle: "لا توجد تسجيلات مرتبطة بعد", emptyDescription: "ستظهر هنا التسجيلات المرتبطة بهذه الأكاديمية.",
         play: "تشغيل التسجيل", noPlayback: "التشغيل غير متاح",
+        session: "الموعد", noSession: "بدون موعد", assignmentError: "تعذّر تحديث ربط التسجيل بالموعد. حاول مجددًا.",
+        sessionsLoadError: "تعذّر تحميل المواعيد لربط التسجيلات.",
       },
       announcementsPanel: {
         description: "انشر تحديثات واضحة للأكاديمية كلها أو لفريق محدد.",

@@ -14,7 +14,7 @@ import {
   type AcademySessionSummary,
   type AcademySessionUpdate,
 } from "@workspace/api-client-react";
-import { CalendarDays, Clock3, MapPin, Pencil, Plus, ShieldAlert, Swords, Trash2 } from "lucide-react";
+import { CalendarDays, Clock3, MapPin, Pencil, Plus, ShieldAlert, Swords, Trash2, Video } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -311,6 +311,13 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
               >
                 {copy.viewAttendance}
               </button>
+            )}
+            {session.recordings.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-text" data-testid={`session-recordings-${session.id}`}>
+                <Video className="h-3.5 w-3.5 shrink-0 text-turf" aria-hidden="true" />
+                <span className="font-semibold text-turf">{labels.recordings} · {session.recordings.length}</span>
+                <span>{session.recordings.map((recording) => `${recording.date} ${recording.timeSlot}`).join(" · ")}</span>
+              </div>
             )}
           </div>
           <div className="flex items-center justify-end gap-1 border-t border-line pt-2 sm:border-0 sm:pt-0">

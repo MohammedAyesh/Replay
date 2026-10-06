@@ -74,9 +74,21 @@ const familySessionIds: number[] = [];
 const familyAnnouncementIds: number[] = [];
 const familyFeeIds: number[] = [];
 const familyRenewalIds: number[] = [];
+const temporaryRecordingIds: number[] = [];
 let app: Express;
 
 const as = (id: number) => ({ "x-test-user": String(id) });
+
+function ammanDateKey(value: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Amman",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const values = Object.fromEntries(parts.map(({ type, value: part }) => [type, part]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
 beforeAll(async () => {
   app = express();
@@ -205,6 +217,12 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
+  if (temporaryRecordingIds.length > 0) {
+    await db.delete(academyRecordingsTable)
+      .where(inArray(academyRecordingsTable.recordingId, temporaryRecordingIds));
+    await db.delete(recordingsTable).where(inArray(recordingsTable.id, temporaryRecordingIds));
+    temporaryRecordingIds.length = 0;
+  }
   if (temporaryPlayerIds.length > 0) {
     await db.delete(academyPlayersTable).where(inArray(academyPlayersTable.id, temporaryPlayerIds));
     temporaryPlayerIds.length = 0;
@@ -307,6 +325,37 @@ describe("Academy Console API", () => {
       },
     ]).returning({ id: academySessionsTable.id });
     familySessionIds.push(...extraSessions.map(({ id }) => id));
+    const visibleSessionIds = [sessionAId, extraSessions[0].id];
+    const visibleTestSessions = await db.select({
+      id: academySessionsTable.id,
+      startsAt: academySessionsTable.startsAt,
+    }).from(academySessionsTable).where(inArray(academySessionsTable.id, visibleSessionIds));
+    const startsAtBySessionId = new Map(
+      visibleTestSessions.map((session) => [session.id, session.startsAt]),
+    );
+    const [visibleRecording, outOfSquadRecording] = await db.insert(recordingsTable).values([
+      {
+        fieldId: fieldIds[0],
+        court: "Family test court",
+        date: ammanDateKey(startsAtBySessionId.get(sessionAId)!),
+        timeSlot: "18:00",
+        duration: "60 min",
+        videoUrl: `https://media.example/family-visible-${tag}.m3u8`,
+      },
+      {
+        fieldId: fieldIds[0],
+        court: "Family test court",
+        date: ammanDateKey(startsAtBySessionId.get(extraSessions[0].id)!),
+        timeSlot: "18:00",
+        duration: "60 min",
+        videoUrl: `https://media.example/family-out-of-squad-${tag}.m3u8`,
+      },
+    ]).returning({ id: recordingsTable.id });
+    temporaryRecordingIds.push(visibleRecording.id, outOfSquadRecording.id);
+    await db.insert(academyRecordingsTable).values([
+      { academyId: academyAId, recordingId: visibleRecording.id, sessionId: sessionAId },
+      { academyId: academyAId, recordingId: outOfSquadRecording.id, sessionId: extraSessions[0].id },
+    ]);
     await db.insert(academyAttendanceTable).values([
       { sessionId: extraSessions[1].id, playerId: playerAId, status: "present" },
       { sessionId: extraSessions[2].id, playerId: playerAId, status: "late" },
@@ -406,6 +455,12 @@ describe("Academy Console API", () => {
       .not.toContain("Out-of-squad pitch");
     expect(response.body.sessions.map((session: { location: string }) => session.location))
       .not.toContain("Other pitch");
+    const visibleFootageSession = response.body.sessions.find(
+      (session: { location: string }) => session.location === "Test pitch",
+    );
+    expect(visibleFootageSession.recordings.map((recording: { id: number }) => recording.id))
+      .toEqual([visibleRecording.id]);
+    expect(JSON.stringify(response.body.sessions)).not.toContain(`family-out-of-squad-${tag}`);
     expect(response.body.attendance.map((item: { status: string }) => item.status))
       .toEqual(expect.arrayContaining(["present", "late", "absent", "excused"]));
     expect(response.body.attendanceSummary).toEqual({
@@ -1315,6 +1370,78 @@ describe("Academy Console API", () => {
       .get(`/api/academy/console/academies/${academyBId}/recordings`)
       .set(as(ownerId))).body.map((recording: { id: number }) => recording.id))
       .toEqual([recordingOther.id]);
+  });
+
+  it("attaches and detaches recordings only to nearby same-field sessions in this academy", async () => {
+    const [session] = await db.select({
+      startsAt: academySessionsTable.startsAt,
+      location: academySessionsTable.location,
+    }).from(academySessionsTable).where(eq(academySessionsTable.id, sessionAId));
+    const sessionDate = ammanDateKey(session.startsAt);
+    const outsideDate = new Date(Date.parse(`${sessionDate}T00:00:00Z`) + 3 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const recordings = await db.insert(recordingsTable).values([
+      {
+        fieldId: fieldIds[0],
+        court: "Court A",
+        date: sessionDate,
+        timeSlot: "10:00",
+        duration: "60 min",
+        videoUrl: `https://media.example/session-link-valid-${tag}.m3u8`,
+      },
+      {
+        fieldId: fieldIds[1],
+        court: "Court B",
+        date: sessionDate,
+        timeSlot: "10:00",
+        duration: "60 min",
+        videoUrl: `https://media.example/session-link-wrong-field-${tag}.m3u8`,
+      },
+      {
+        fieldId: fieldIds[0],
+        court: "Court A",
+        date: outsideDate,
+        timeSlot: "10:00",
+        duration: "60 min",
+        videoUrl: `https://media.example/session-link-outside-window-${tag}.m3u8`,
+      },
+    ]).returning({ id: recordingsTable.id });
+    temporaryRecordingIds.push(...recordings.map(({ id }) => id));
+    await db.insert(academyRecordingsTable).values(
+      recordings.map(({ id }) => ({ academyId: academyAId, recordingId: id })),
+    );
+
+    const baseUrl = `/api/academy/console/academies/${academyAId}/recordings/${recordings[0].id}/session`;
+    expect((await request(app).patch(baseUrl).send({ sessionId: sessionAId })).status).toBe(401);
+    expect((await request(app).patch(baseUrl).set(as(nonMemberId)).send({ sessionId: sessionAId })).status).toBe(403);
+
+    const attached = await request(app).patch(baseUrl).set(as(coachId)).send({ sessionId: sessionAId });
+    expect(attached.status).toBe(200);
+    expect(attached.body).toMatchObject({
+      id: recordings[0].id,
+      sessionId: sessionAId,
+      sessionLabel: `${sessionDate} · ${session.location}`,
+    });
+    const listed = await request(app)
+      .get(`/api/academy/console/academies/${academyAId}/recordings`)
+      .set(as(coachId));
+    expect(listed.body.find((recording: { id: number }) => recording.id === recordings[0].id))
+      .toMatchObject({ sessionId: sessionAId, sessionLabel: `${sessionDate} · ${session.location}` });
+
+    const foreignSession = await request(app)
+      .patch(baseUrl)
+      .set(as(coachId))
+      .send({ sessionId: sessionBId });
+    expect(foreignSession.status).toBe(404);
+    const otherFieldUrl = `/api/academy/console/academies/${academyAId}/recordings/${recordings[1].id}/session`;
+    expect((await request(app).patch(otherFieldUrl).set(as(coachId)).send({ sessionId: sessionAId })).status).toBe(400);
+    const outsideWindowUrl = `/api/academy/console/academies/${academyAId}/recordings/${recordings[2].id}/session`;
+    expect((await request(app).patch(outsideWindowUrl).set(as(coachId)).send({ sessionId: sessionAId })).status).toBe(400);
+
+    const detached = await request(app).patch(baseUrl).set(as(coachId)).send({ sessionId: null });
+    expect(detached.status).toBe(200);
+    expect(detached.body).toMatchObject({ id: recordings[0].id, sessionId: null, sessionLabel: null });
   });
 
   it("supports localized announcement CRUD and scopes optional squads", async () => {

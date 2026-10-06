@@ -23,4 +23,11 @@ export interface AcademyConsoleRecording {
   highlightMoment: string | null;
   /** @nullable */
   fieldName: string | null;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  sessionId: number | null;
+  /** @nullable */
+  sessionLabel: string | null;
 }

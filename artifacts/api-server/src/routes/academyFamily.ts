@@ -7,10 +7,12 @@ import {
   academyPlayerGuardiansTable,
   academyPlayerRenewalsTable,
   academyPlayersTable,
+  academyRecordingsTable,
   academySessionsTable,
   academySquadsTable,
   academiesTable,
   db,
+  recordingsTable,
 } from "@workspace/db";
 import {
   ClaimAcademyFamilyBody,
@@ -184,6 +186,7 @@ async function readFamilyView(
 
   const [sessions, attendance, announcements, renewals, fees] = await Promise.all([
     db.select({
+      id: academySessionsTable.id,
       type: academySessionsTable.type,
       startsAt: academySessionsTable.startsAt,
       endsAt: academySessionsTable.endsAt,
@@ -290,6 +293,35 @@ async function readFamilyView(
     })),
   ].sort((a, b) => Date.parse(b.date) - Date.parse(a.date) || b.id.localeCompare(a.id));
 
+  const pinnedRecordings = sessions.length === 0
+    ? []
+    : await db
+      .select({
+        sessionId: academyRecordingsTable.sessionId,
+        id: recordingsTable.id,
+        fieldId: recordingsTable.fieldId,
+        court: recordingsTable.court,
+        date: recordingsTable.date,
+        timeSlot: recordingsTable.timeSlot,
+        duration: recordingsTable.duration,
+        score: recordingsTable.score,
+        videoUrl: recordingsTable.videoUrl,
+      })
+      .from(academyRecordingsTable)
+      .innerJoin(recordingsTable, eq(recordingsTable.id, academyRecordingsTable.recordingId))
+      .where(and(
+        eq(academyRecordingsTable.academyId, player.academyId),
+        inArray(academyRecordingsTable.sessionId, sessions.map(({ id }) => id)),
+      ))
+      .orderBy(asc(recordingsTable.date), asc(recordingsTable.timeSlot), asc(recordingsTable.id));
+  const recordingsBySession = new Map<number, typeof pinnedRecordings>();
+  for (const recording of pinnedRecordings) {
+    if (recording.sessionId === null) continue;
+    const existing = recordingsBySession.get(recording.sessionId) ?? [];
+    existing.push(recording);
+    recordingsBySession.set(recording.sessionId, existing);
+  }
+
   const players = linkedPlayers.map((other) => ({
     id: other.id,
     name: other.name,
@@ -310,7 +342,13 @@ async function readFamilyView(
       position: player.position,
     },
     finance,
-    sessions,
+    sessions: sessions.map(({ id, ...session }) => ({
+      ...session,
+      recordings: recordingsBySession.get(id)?.map(({
+        sessionId: _sessionId,
+        ...recording
+      }) => recording) ?? [],
+    })),
     attendance,
     attendanceSummary: {
       present,
