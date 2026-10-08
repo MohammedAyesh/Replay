@@ -1169,6 +1169,11 @@ function RequestCard({
               {label}
             </span>
             {isProgressing && <span className="font-mono text-[10px] text-accent">{progress}%</span>}
+            {request.academyName && (
+              <span className="rounded-full bg-violet/10 px-2.5 py-1 text-[10px] font-semibold text-violet" data-testid={`label-academy-request-${request.id}`}>
+                {locale === "ar" ? `الأكاديمية: ${request.academyName}` : `Academy: ${request.academyName}`}
+              </span>
+            )}
           </div>
           <p className="mt-2 font-mono text-xs font-medium text-foreground" data-testid={`text-owner-request-window-${request.id}`}>
             {friendlyLocalDate(request.startLocal.slice(0, 10), locale)} · {request.startLocal.slice(11)}–{request.endLocal.slice(11)}
@@ -1176,8 +1181,14 @@ function RequestCard({
           </p>
         </div>
         <div className="shrink-0 text-end">
-           <p className="font-mono text-sm font-semibold text-foreground" data-testid={`text-owner-request-amount-${request.id}`}>{formatJod(request.amountFils)} <span className="text-[10px] font-normal text-muted-foreground">{copy.currency}</span></p>
-          <p className="mt-1 text-[10px] text-muted-foreground">{request.billableHours} {copy.hours}</p>
+          {request.academyName ? (
+            <p className="font-mono text-xs font-semibold text-muted-foreground">—</p>
+          ) : (
+            <>
+              <p className="font-mono text-sm font-semibold text-foreground" data-testid={`text-owner-request-amount-${request.id}`}>{formatJod(request.amountFils)} <span className="text-[10px] font-normal text-muted-foreground">{copy.currency}</span></p>
+              <p className="mt-1 text-[10px] text-muted-foreground">{request.billableHours} {copy.hours}</p>
+            </>
+          )}
         </div>
       </div>
 
@@ -1186,7 +1197,7 @@ function RequestCard({
         <p className="text-xs leading-5 text-muted-foreground" data-testid={`message-owner-request-${request.id}`}>
           {isScheduled ? `${message} ${request.startLocal.slice(11)}` : statusMessage}
         </p>
-        {isReady && (
+        {isReady && request.academyName === null && (
           <p className="mt-2 text-[11px] font-medium text-foreground" data-testid={`summary-owner-request-${request.id}`}>
             {copy.playerLabel} · {requestedDuration} · {copy.charged} {formatJod(request.amountFils)} {copy.currency}
           </p>
@@ -1218,7 +1229,7 @@ function RequestCard({
         <MatchRoomRow match={request.match} locale={locale} onCopy={onCopy} requestId={request.id} />
       )}
 
-      <div className="flex flex-wrap gap-2 border-t border-white/[0.07] p-3">
+      {request.academyName === null && <div className="flex flex-wrap gap-2 border-t border-white/[0.07] p-3">
         {isScheduled && request.varOpensAt && (
           <div className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-[11px] text-muted-text">
             {locale === "ar" ? "يفتح VAR الساعة" : "VAR opens at"} {new Date(request.varOpensAt).toLocaleTimeString(locale === "ar" ? "ar-JO" : "en-JO", { hour: "2-digit", minute: "2-digit" })}
@@ -1278,9 +1289,9 @@ function RequestCard({
             {request.cancellationStatus === "pending" ? copy.cancellationPending : request.cancellationStatus === "approved" ? copy.cancellationApproved : copy.cancellationDeclined}
           </p>
         )}
-      </div>
+      </div>}
 
-      {isCancellable && confirmingCancel === request.id && (
+      {request.academyName === null && isCancellable && confirmingCancel === request.id && (
         <div className="grid gap-3 border-t border-destructive/20 bg-destructive/[0.06] p-3" data-testid={`confirm-cancel-owner-request-${request.id}`}>
           <p className="text-xs leading-5 text-foreground">{copy.cancelPrompt}</p>
           <div className="flex gap-2">
@@ -1290,7 +1301,7 @@ function RequestCard({
         </div>
       )}
 
-      {isReady && showCancellationForm && !request.cancellationStatus && (
+      {request.academyName === null && isReady && showCancellationForm && !request.cancellationStatus && (
         <div className="grid gap-3 border-t border-secondary/20 bg-secondary/[0.05] p-3" data-testid={`form-refund-owner-request-${request.id}`}>
           <label className="text-xs leading-5 text-foreground">
             {copy.cancellationReason}
@@ -1321,7 +1332,7 @@ function RequestCard({
         </div>
       )}
 
-      {isReady && request.shareExpiresAt && <p className="px-4 pb-3 text-[10px] text-muted-foreground" data-testid={`link-expires-owner-request-${request.id}`}>{copy.linkExpires} {new Date(request.shareExpiresAt).toLocaleDateString(locale === "ar" ? "ar-JO" : "en-JO")}</p>}
+      {request.academyName === null && isReady && request.shareExpiresAt && <p className="px-4 pb-3 text-[10px] text-muted-foreground" data-testid={`link-expires-owner-request-${request.id}`}>{copy.linkExpires} {new Date(request.shareExpiresAt).toLocaleDateString(locale === "ar" ? "ar-JO" : "en-JO")}</p>}
     </article>
   );
 }

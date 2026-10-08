@@ -6401,6 +6401,78 @@ export const useDeleteAcademyConsoleSession = <TError = ErrorType<void>,
       return useMutation(getDeleteAcademyConsoleSessionMutationOptions(options));
     }
 
+export const getRetryAcademySessionFootageUrl = (academyId: number,
+    sessionId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/sessions/${sessionId}/footage/retry`
+}
+
+/**
+ * @summary Retry footage booking for an academy session
+ */
+export const retryAcademySessionFootage = async (academyId: number,
+    sessionId: number, options?: RequestInit): Promise<AcademySessionSummary> => {
+
+  return customFetch<AcademySessionSummary>(getRetryAcademySessionFootageUrl(academyId,sessionId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRetryAcademySessionFootageMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryAcademySessionFootage>>, TError,{academyId: number;sessionId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryAcademySessionFootage>>, TError,{academyId: number;sessionId: number}, TContext> => {
+
+const mutationKey = ['retryAcademySessionFootage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryAcademySessionFootage>>, {academyId: number;sessionId: number}> = (props) => {
+          const {academyId,sessionId} = props ?? {};
+
+          return  retryAcademySessionFootage(academyId,sessionId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryAcademySessionFootageMutationResult = NonNullable<Awaited<ReturnType<typeof retryAcademySessionFootage>>>
+
+    export type RetryAcademySessionFootageMutationError = ErrorType<void>
+
+    /**
+ * @summary Retry footage booking for an academy session
+ */
+export const useRetryAcademySessionFootage = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryAcademySessionFootage>>, TError,{academyId: number;sessionId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryAcademySessionFootage>>,
+        TError,
+        {academyId: number;sessionId: number},
+        TContext
+      > => {
+      return useMutation(getRetryAcademySessionFootageMutationOptions(options));
+    }
+
 export const getGetAcademyConsoleAttendanceUrl = (academyId: number,
     sessionId: number,) => {
 

@@ -2,8 +2,9 @@ import { bookingPriceFils, loadCommerce } from "../lib/commerce";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, asc, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import {
+  academiesTable,
   db,
   fieldOwnersTable,
   fieldsTable,
@@ -24,6 +25,7 @@ import { logger } from "../lib/logger";
 import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
 import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
+import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -170,7 +172,8 @@ function newShareToken(): string {
 
 function isActiveShare(row: FootageRequest, now = Date.now()): boolean {
   return (
-    (row.status === "ready" || row.status === "partial")
+    row.academyId === null
+    && (row.status === "ready" || row.status === "partial")
     && Boolean(row.shareToken)
     && !row.shareRevoked
     && Boolean(row.shareExpiresAt)
@@ -178,7 +181,11 @@ function isActiveShare(row: FootageRequest, now = Date.now()): boolean {
   );
 }
 
-export function isVarActive(row: Pick<FootageRequest, "startLocal" | "endLocal" | "status" | "varState">, now = Date.now()): boolean {
+export function isVarActive(
+  row: Pick<FootageRequest, "startLocal" | "endLocal" | "status" | "varState"> & Partial<Pick<FootageRequest, "academyId">>,
+  now = Date.now(),
+): boolean {
+  if (row.academyId != null) return false;
   const opensAt = ammanLocalInstant(row.startLocal) - 3 * 60 * 1000;
   const closesAt = ammanLocalInstant(row.endLocal) + 5 * 60 * 1000;
   return (
@@ -214,10 +221,12 @@ function requestToResponse(
   marks: VarMarkRow[] = [],
   cancellationStatus: string | null = null,
   room: RoomLink = null,
+  academyName: string | null = null,
 ) {
   const active = isActiveShare(row);
-  const varOpenMs = ammanLocalInstant(row.startLocal) - 3 * 60 * 1000;
-  const varCloseMs = ammanLocalInstant(row.endLocal) + 5 * 60 * 1000;
+  const academyOwned = row.academyId !== null;
+  const varOpenMs = academyOwned ? Number.NaN : ammanLocalInstant(row.startLocal) - 3 * 60 * 1000;
+  const varCloseMs = academyOwned ? Number.NaN : ammanLocalInstant(row.endLocal) + 5 * 60 * 1000;
   const base = publicBaseUrl(req);
   const shareUrl = active ? `${base}/w/${row.shareToken}` : null;
   const playbackManifestUrl = active ? `${base}/w/${row.shareToken}/manifest.m3u8` : null;
@@ -237,10 +246,11 @@ function requestToResponse(
     playbackManifestUrl,
     varOpensAt: Number.isFinite(varOpenMs) ? new Date(varOpenMs).toISOString() : null,
     varClosesAt: Number.isFinite(varCloseMs) ? new Date(varCloseMs).toISOString() : null,
-    varState: row.varState,
+    varState: academyOwned ? null : row.varState,
     varActive: isVarActive(row),
     cancellationStatus,
-    marks: marks.map((mark) => markToResponse(mark, row)),
+    academyName,
+    marks: academyOwned ? [] : marks.map((mark) => markToResponse(mark, row)),
     match: room ? {
       code: room.code,
       url: `${base}/m/${room.code}`,
@@ -250,6 +260,7 @@ function requestToResponse(
 }
 
 async function roomLinkFor(row: FootageRequest): Promise<RoomLink> {
+  if (row.academyId !== null) return null;
   try {
     const room = await ensureRoomForRequest(row);
     return { code: room.code, captainToken: room.captainToken };
@@ -615,9 +626,9 @@ async function completeRequest(row: FootageRequest, body: unknown, status: "read
       deliveredSeconds,
       videoId,
       readyAt: now,
-      shareToken: newShareToken(),
-      shareExpiresAt: new Date(now.getTime() + SHARE_LIFETIME_MS),
-      shareRevoked: false,
+      shareToken: row.academyId === null ? newShareToken() : null,
+      shareExpiresAt: row.academyId === null ? new Date(now.getTime() + SHARE_LIFETIME_MS) : null,
+      shareRevoked: row.academyId !== null,
       billableHours,
       amountFils: computeAmountFils(billableHours, row.rateFils),
       updatedAt: now,
@@ -628,12 +639,17 @@ async function completeRequest(row: FootageRequest, body: unknown, status: "read
     )).returning({ id: footageRequestsTable.id });
 
   // Only the call that actually completed the request queues its analysis.
-  if (completed.length > 0) {
+  if (completed.length > 0 && row.academyId === null) {
     try {
       await queueLiveAnalysisForBooking(row, videoId, deliveredSeconds);
     } catch (error) {
       logger.warn({ requestId: row.id, error }, "Could not queue the booking's analysis");
     }
+  }
+  try {
+    await attachAcademyRecordingsForFootageRequest(row, videoId, deliveredSeconds);
+  } catch (error) {
+    logger.warn({ requestId: row.id, error }, "Could not attach completed footage to academy sessions");
   }
 }
 
@@ -737,6 +753,7 @@ async function expireOwnerShares(now = new Date()): Promise<void> {
     .set({ status: "expired", updatedAt: now })
     .where(and(
       inArray(footageRequestsTable.status, ["ready", "partial"]),
+      isNull(footageRequestsTable.academyId),
       isNotNull(footageRequestsTable.shareExpiresAt),
       // Keep the comparison in SQL so this also works when the process has
       // been asleep between interval ticks.
@@ -785,6 +802,7 @@ async function balanceForField(fieldId: number): Promise<{ chargedFils: number; 
       .from(footageRequestsTable)
       .where(and(
         eq(footageRequestsTable.fieldId, fieldId),
+        isNull(footageRequestsTable.academyId),
         inArray(footageRequestsTable.status, ["ready", "partial", "expired"]),
       )),
     db.select({ amountFils: footagePaymentsTable.amountFils })
@@ -1234,6 +1252,7 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     .from(footageRequestsTable)
     .where(and(
       eq(footageRequestsTable.requestedBy, user.id),
+      isNull(footageRequestsTable.academyId),
       inArray(footageRequestsTable.status, ["queued", "running"]),
     ));
   if (unfinished.length >= MAX_UNFINISHED_REQUESTS) {
@@ -1246,6 +1265,7 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     .from(footageRequestsTable)
     .where(and(
       eq(footageRequestsTable.requestedBy, user.id),
+      isNull(footageRequestsTable.academyId),
       inArray(footageRequestsTable.status, ["scheduled", "recording"]),
     ));
   if (scheduled.length >= MAX_SCHEDULED_REQUESTS) {
@@ -1315,26 +1335,36 @@ router.get("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =>
   const field = await fieldForAccess(fieldId, res);
   if (!field) return;
 
-  const rows = await db.select().from(footageRequestsTable)
-    .where(eq(footageRequestsTable.fieldId, fieldId))
+  const requestScope = and(
+    eq(footageRequestsTable.fieldId, fieldId),
+    ...(user.isAdmin ? [] : [isNull(footageRequestsTable.academyId)]),
+  );
+  const rows = await db.select({ request: footageRequestsTable }).from(footageRequestsTable)
+    .where(requestScope)
     .orderBy(desc(footageRequestsTable.createdAt));
   await Promise.all(rows
-    .filter((row) => ACTIVE_REQUEST_STATUSES.includes(row.status as typeof ACTIVE_REQUEST_STATUSES[number]))
-    .map((row) => field.cameraId ? refreshUnfinishedRequest(row, field.cameraId) : Promise.resolve()));
+    .filter(({ request }) => ACTIVE_REQUEST_STATUSES.includes(request.status as typeof ACTIVE_REQUEST_STATUSES[number]))
+    .map(({ request }) => field.cameraId ? refreshUnfinishedRequest(request, field.cameraId) : Promise.resolve()));
   await expireOwnerShares();
 
-  const refreshed = await db.select().from(footageRequestsTable)
-    .where(eq(footageRequestsTable.fieldId, fieldId))
+  const refreshed = await db.select({
+    request: footageRequestsTable,
+    academyName: academiesTable.name,
+  }).from(footageRequestsTable)
+    .leftJoin(academiesTable, eq(academiesTable.id, footageRequestsTable.academyId))
+    .where(requestScope)
     .orderBy(desc(footageRequestsTable.createdAt));
-  const marksByRequest = await marksForRequests(refreshed);
-  const cancellationByRequest = await cancellationStatusForRequests(refreshed);
-  const rooms = await Promise.all(refreshed.map((row) => roomLinkFor(row)));
-  res.json(refreshed.map((row, index) => requestToResponse(
-    row,
+  const requestRows = refreshed.map(({ request }) => request);
+  const marksByRequest = await marksForRequests(requestRows);
+  const cancellationByRequest = await cancellationStatusForRequests(requestRows);
+  const rooms = await Promise.all(requestRows.map((row) => roomLinkFor(row)));
+  res.json(refreshed.map(({ request, academyName }, index) => requestToResponse(
+    request,
     req,
-    marksByRequest.get(row.id) ?? [],
-    cancellationByRequest.get(row.id) ?? null,
+    marksByRequest.get(request.id) ?? [],
+    cancellationByRequest.get(request.id) ?? null,
     rooms[index],
+    user.isAdmin ? academyName : null,
   )));
 });
 
@@ -1345,7 +1375,10 @@ async function requestWithField(id: number): Promise<{ request: FootageRequest; 
     fieldName: fieldsTable.name,
   }).from(footageRequestsTable)
     .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
-    .where(eq(footageRequestsTable.id, id));
+    .where(and(
+      eq(footageRequestsTable.id, id),
+      isNull(footageRequestsTable.academyId),
+    ));
   return row ?? null;
 }
 
@@ -1801,6 +1834,7 @@ router.get("/owner/fields/:fieldId/ledger", async (req, res): Promise<void> => {
     db.select().from(footageRequestsTable)
     .where(and(
         eq(footageRequestsTable.fieldId, fieldId),
+        isNull(footageRequestsTable.academyId),
         inArray(footageRequestsTable.status, ["ready", "partial", "expired", "refunded"]),
       ))
       .orderBy(desc(footageRequestsTable.createdAt)),

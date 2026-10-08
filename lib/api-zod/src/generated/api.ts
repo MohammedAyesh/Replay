@@ -236,6 +236,7 @@ export const ListOwnerFieldRequestsResponseItem = zod.object({
   "varState": zod.string().nullable(),
   "varActive": zod.boolean(),
   "cancellationStatus": zod.union([zod.literal('pending'),zod.literal('approved'),zod.literal('declined'),zod.literal(null)]).nullable(),
+  "academyName": zod.string().nullable(),
   "marks": zod.array(zod.object({
   "id": zod.number(),
   "atUtc": zod.coerce.date(),
@@ -288,6 +289,7 @@ export const CreateOwnerFieldRequestResponse = zod.object({
   "varState": zod.string().nullable(),
   "varActive": zod.boolean(),
   "cancellationStatus": zod.union([zod.literal('pending'),zod.literal('approved'),zod.literal('declined'),zod.literal(null)]).nullable(),
+  "academyName": zod.string().nullable(),
   "marks": zod.array(zod.object({
   "id": zod.number(),
   "atUtc": zod.coerce.date(),
@@ -358,6 +360,7 @@ export const CancelOwnerRequestResponse = zod.object({
   "varState": zod.string().nullable(),
   "varActive": zod.boolean(),
   "cancellationStatus": zod.union([zod.literal('pending'),zod.literal('approved'),zod.literal('declined'),zod.literal(null)]).nullable(),
+  "academyName": zod.string().nullable(),
   "marks": zod.array(zod.object({
   "id": zod.number(),
   "atUtc": zod.coerce.date(),
@@ -2411,6 +2414,8 @@ export const getAcademyFamilyMeResponseSessionsItemOwnScoreMin = 0;
 
 export const getAcademyFamilyMeResponseSessionsItemOpponentScoreMin = 0;
 
+export const getAcademyFamilyMeResponseSessionsItemFootageRecordingCountMin = 0;
+
 
 
 export const getAcademyFamilyMeResponseSessionsItemRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
@@ -2465,6 +2470,11 @@ export const GetAcademyFamilyMeResponse = zod.object({
   "opponent": zod.string().nullable(),
   "ownScore": zod.number().min(getAcademyFamilyMeResponseSessionsItemOwnScoreMin).nullable(),
   "opponentScore": zod.number().min(getAcademyFamilyMeResponseSessionsItemOpponentScoreMin).nullable(),
+  "footage": zod.object({
+  "status": zod.enum(['none', 'no_camera', 'scheduled', 'recording', 'processing', 'ready', 'failed', 'unavailable']),
+  "note": zod.string().nullable(),
+  "recordingCount": zod.number().min(getAcademyFamilyMeResponseSessionsItemFootageRecordingCountMin)
+}),
   "recordings": zod.array(zod.object({
   "id": zod.number().min(1),
   "fieldId": zod.number().min(1),
@@ -2656,6 +2666,8 @@ export const listAcademyConsoleSessionsResponseAttendanceCountsLateMin = 0;
 
 export const listAcademyConsoleSessionsResponseAttendanceCountsExcusedMin = 0;
 
+export const listAcademyConsoleSessionsResponseFootageRecordingCountMin = 0;
+
 
 
 export const listAcademyConsoleSessionsResponseRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
@@ -2681,6 +2693,11 @@ export const ListAcademyConsoleSessionsResponseItem = zod.object({
   "absent": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsAbsentMin),
   "late": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsLateMin),
   "excused": zod.number().min(listAcademyConsoleSessionsResponseAttendanceCountsExcusedMin)
+}),
+  "footage": zod.object({
+  "status": zod.enum(['none', 'no_camera', 'scheduled', 'recording', 'processing', 'ready', 'failed', 'unavailable']),
+  "note": zod.string().nullable(),
+  "recordingCount": zod.number().min(listAcademyConsoleSessionsResponseFootageRecordingCountMin)
 }),
   "recordings": zod.array(zod.object({
   "id": zod.number().min(1),
@@ -2743,6 +2760,8 @@ export const createAcademyConsoleSessionResponseAttendanceCountsLateMin = 0;
 
 export const createAcademyConsoleSessionResponseAttendanceCountsExcusedMin = 0;
 
+export const createAcademyConsoleSessionResponseFootageRecordingCountMin = 0;
+
 
 
 export const createAcademyConsoleSessionResponseRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
@@ -2768,6 +2787,11 @@ export const CreateAcademyConsoleSessionResponse = zod.object({
   "absent": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsAbsentMin),
   "late": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsLateMin),
   "excused": zod.number().min(createAcademyConsoleSessionResponseAttendanceCountsExcusedMin)
+}),
+  "footage": zod.object({
+  "status": zod.enum(['none', 'no_camera', 'scheduled', 'recording', 'processing', 'ready', 'failed', 'unavailable']),
+  "note": zod.string().nullable(),
+  "recordingCount": zod.number().min(createAcademyConsoleSessionResponseFootageRecordingCountMin)
 }),
   "recordings": zod.array(zod.object({
   "id": zod.number().min(1),
@@ -2839,6 +2863,8 @@ export const updateAcademyConsoleSessionResponseAttendanceCountsLateMin = 0;
 
 export const updateAcademyConsoleSessionResponseAttendanceCountsExcusedMin = 0;
 
+export const updateAcademyConsoleSessionResponseFootageRecordingCountMin = 0;
+
 
 
 export const updateAcademyConsoleSessionResponseRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
@@ -2864,6 +2890,11 @@ export const UpdateAcademyConsoleSessionResponse = zod.object({
   "absent": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsAbsentMin),
   "late": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsLateMin),
   "excused": zod.number().min(updateAcademyConsoleSessionResponseAttendanceCountsExcusedMin)
+}),
+  "footage": zod.object({
+  "status": zod.enum(['none', 'no_camera', 'scheduled', 'recording', 'processing', 'ready', 'failed', 'unavailable']),
+  "note": zod.string().nullable(),
+  "recordingCount": zod.number().min(updateAcademyConsoleSessionResponseFootageRecordingCountMin)
 }),
   "recordings": zod.array(zod.object({
   "id": zod.number().min(1),
@@ -2891,6 +2922,82 @@ export const DeleteAcademyConsoleSessionParams = zod.object({
 })
 
 export const DeleteAcademyConsoleSessionResponse = zod.void()
+
+
+/**
+ * @summary Retry footage booking for an academy session
+ */
+
+
+
+
+export const RetryAcademySessionFootageParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "sessionId": zod.coerce.number().min(1)
+})
+
+
+
+
+
+export const retryAcademySessionFootageResponseOwnScoreMin = 0;
+export const retryAcademySessionFootageResponseOwnScoreMax = 2147483647;
+
+export const retryAcademySessionFootageResponseOpponentScoreMin = 0;
+export const retryAcademySessionFootageResponseOpponentScoreMax = 2147483647;
+
+export const retryAcademySessionFootageResponseAttendanceCountsPresentMin = 0;
+
+export const retryAcademySessionFootageResponseAttendanceCountsAbsentMin = 0;
+
+export const retryAcademySessionFootageResponseAttendanceCountsLateMin = 0;
+
+export const retryAcademySessionFootageResponseAttendanceCountsExcusedMin = 0;
+
+export const retryAcademySessionFootageResponseFootageRecordingCountMin = 0;
+
+
+
+export const retryAcademySessionFootageResponseRecordingsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+
+
+export const RetryAcademySessionFootageResponse = zod.object({
+  "id": zod.number().min(1),
+  "academyId": zod.number().min(1),
+  "fieldId": zod.number().min(1),
+  "squadId": zod.number().min(1).nullable(),
+  "squadName": zod.string().nullable(),
+  "type": zod.enum(['training', 'match']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date().nullable(),
+  "location": zod.string(),
+  "opponent": zod.string().nullable(),
+  "ownScore": zod.number().min(retryAcademySessionFootageResponseOwnScoreMin).max(retryAcademySessionFootageResponseOwnScoreMax).nullable(),
+  "opponentScore": zod.number().min(retryAcademySessionFootageResponseOpponentScoreMin).max(retryAcademySessionFootageResponseOpponentScoreMax).nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "attendanceCounts": zod.object({
+  "present": zod.number().min(retryAcademySessionFootageResponseAttendanceCountsPresentMin),
+  "absent": zod.number().min(retryAcademySessionFootageResponseAttendanceCountsAbsentMin),
+  "late": zod.number().min(retryAcademySessionFootageResponseAttendanceCountsLateMin),
+  "excused": zod.number().min(retryAcademySessionFootageResponseAttendanceCountsExcusedMin)
+}),
+  "footage": zod.object({
+  "status": zod.enum(['none', 'no_camera', 'scheduled', 'recording', 'processing', 'ready', 'failed', 'unavailable']),
+  "note": zod.string().nullable(),
+  "recordingCount": zod.number().min(retryAcademySessionFootageResponseFootageRecordingCountMin)
+}),
+  "recordings": zod.array(zod.object({
+  "id": zod.number().min(1),
+  "fieldId": zod.number().min(1),
+  "court": zod.string(),
+  "date": zod.string().regex(retryAcademySessionFootageResponseRecordingsItemDateRegExp),
+  "timeSlot": zod.string(),
+  "duration": zod.string(),
+  "score": zod.string().nullable(),
+  "videoUrl": zod.string()
+}))
+})
 
 
 /**

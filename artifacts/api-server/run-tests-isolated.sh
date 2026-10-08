@@ -62,4 +62,4 @@ API_SERVER_RUN_DB_GUARD=1 node "$SCRIPT_DIR/test-database-guard.mjs"
 
 echo "[api-test-db] Running API tests against 127.0.0.1:${PGPORT}/${DB_NAME}."
 cd "$REPO_ROOT"
-pnpm --filter @workspace/api-server exec vitest run --maxWorkers=1
+pnpm --filter @workspace/api-server exec vitest run "$@" --maxWorkers=1

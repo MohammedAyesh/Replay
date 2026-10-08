@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, like, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   academyRecordingsTable,
   academySessionsTable,
@@ -252,7 +252,12 @@ export async function syncAcademySessionFootageAfterTimeChange(
       ne(academySessionsTable.id, sessionId),
     ))
     .limit(1);
-  if (footage.status === "scheduled" && !otherSession) {
+  if (
+    footage.academyId === academyId
+    && footage.status === "scheduled"
+    && footage.shareToken === null
+    && !otherSession
+  ) {
     const cancelled = await cancelFootageRequest(footage, {
       allowedStatuses: ["scheduled"],
       message: "Cancelled because the academy session time changed",
@@ -301,7 +306,12 @@ export async function cancelScheduledAcademyFootageForSession(
   if (otherSession) return;
   const [footage] = await db.select().from(footageRequestsTable)
     .where(eq(footageRequestsTable.id, session.footageRequestId));
-  if (!footage || footage.status !== "scheduled") return;
+  if (
+    !footage
+    || footage.academyId !== academyId
+    || footage.status !== "scheduled"
+    || footage.shareToken !== null
+  ) return;
   const result = await cancelFootageRequest(footage, {
     allowedStatuses: ["scheduled"],
     message: "Cancelled because the academy session was deleted",
@@ -311,11 +321,11 @@ export async function cancelScheduledAcademyFootageForSession(
   }
 }
 
-export async function academyFootageSummary(
+export function academyFootageSummary(
   request: Pick<FootageRequest, "status"> | null,
   note: string | null,
   recordingCount: number,
-): Promise<AcademyFootageSummary> {
+): AcademyFootageSummary {
   let status: AcademyFootageStatus;
   if (!request) {
     status = note
@@ -341,64 +351,69 @@ export async function attachAcademyRecordingsForFootageRequest(
   deliveredSeconds: number | null,
 ): Promise<void> {
   if (!videoId) return;
-  const linkedSessions = await db.select({
-    id: academySessionsTable.id,
-    academyId: academySessionsTable.academyId,
-  })
-    .from(academySessionsTable)
-    .where(and(
-      eq(academySessionsTable.footageRequestId, request.id),
-      ...(request.academyId === null ? [] : [eq(academySessionsTable.academyId, request.academyId)]),
-    ))
-    .orderBy(asc(academySessionsTable.startsAt), asc(academySessionsTable.id));
-  if (linkedSessions.length === 0) return;
-
   const playbackUrl = getBunnyPlaybackUrl(videoId);
-  const [existingRecording] = await db.select({ id: recordingsTable.id })
-    .from(recordingsTable)
-    .where(eq(recordingsTable.videoUrl, playbackUrl))
-    .limit(1);
-  let recordingId = existingRecording?.id;
-  if (!recordingId) {
-    const [field] = await db.select({ name: fieldsTable.name })
-      .from(fieldsTable)
-      .where(eq(fieldsTable.id, request.fieldId));
-    if (!field) return;
-    const [date, time = ""] = request.startLocal.split(/\s+/);
-    const [, endTime = ""] = request.endLocal.split(/\s+/);
-    const minutes = Math.max(1, Math.ceil((deliveredSeconds ?? request.requestedSeconds) / 60));
-    const [recording] = await db.insert(recordingsTable).values({
-      fieldId: request.fieldId,
-      court: field.name,
-      date,
-      timeSlot: `${time.slice(0, 5)}–${endTime.slice(0, 5)}`,
-      duration: `${minutes} min`,
-      videoUrl: playbackUrl,
-      score: null,
-      isVisible: false,
-    }).returning({ id: recordingsTable.id });
-    recordingId = recording.id;
-  }
-
-  const earliestSessionByAcademy = new Map<number, number>();
-  for (const session of linkedSessions) {
-    if (!earliestSessionByAcademy.has(session.academyId)) {
-      earliestSessionByAcademy.set(session.academyId, session.id);
-    }
-  }
-  for (const [academyId, sessionId] of earliestSessionByAcademy) {
-    const [existingLink] = await db.select({ id: academyRecordingsTable.id })
-      .from(academyRecordingsTable)
+  await db.transaction(async (tx) => {
+    // Serialize duplicate completion callbacks across API replicas without a
+    // schema change; otherwise two workers could create duplicate recordings.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${playbackUrl}, 0))`);
+    const linkedSessions = await tx.select({
+      id: academySessionsTable.id,
+      academyId: academySessionsTable.academyId,
+    })
+      .from(academySessionsTable)
       .where(and(
-        eq(academyRecordingsTable.academyId, academyId),
-        eq(academyRecordingsTable.recordingId, recordingId),
+        eq(academySessionsTable.footageRequestId, request.id),
+        ...(request.academyId === null ? [] : [eq(academySessionsTable.academyId, request.academyId)]),
       ))
+      .orderBy(asc(academySessionsTable.startsAt), asc(academySessionsTable.id));
+    if (linkedSessions.length === 0) return;
+
+    const [existingRecording] = await tx.select({ id: recordingsTable.id })
+      .from(recordingsTable)
+      .where(eq(recordingsTable.videoUrl, playbackUrl))
       .limit(1);
-    if (existingLink) continue;
-    await db.insert(academyRecordingsTable).values({
-      academyId,
-      recordingId,
-      sessionId,
-    }).onConflictDoNothing();
-  }
+    let recordingId = existingRecording?.id;
+    if (!recordingId) {
+      const [field] = await tx.select({ name: fieldsTable.name })
+        .from(fieldsTable)
+        .where(eq(fieldsTable.id, request.fieldId));
+      if (!field) return;
+      const [date, time = ""] = request.startLocal.split(/\s+/);
+      const [, endTime = ""] = request.endLocal.split(/\s+/);
+      const minutes = Math.max(1, Math.ceil((deliveredSeconds ?? request.requestedSeconds) / 60));
+      const [recording] = await tx.insert(recordingsTable).values({
+        fieldId: request.fieldId,
+        court: field.name,
+        date,
+        timeSlot: `${time.slice(0, 5)}–${endTime.slice(0, 5)}`,
+        duration: `${minutes} min`,
+        videoUrl: playbackUrl,
+        score: null,
+        isVisible: false,
+      }).returning({ id: recordingsTable.id });
+      recordingId = recording.id;
+    }
+
+    const earliestSessionByAcademy = new Map<number, number>();
+    for (const session of linkedSessions) {
+      if (!earliestSessionByAcademy.has(session.academyId)) {
+        earliestSessionByAcademy.set(session.academyId, session.id);
+      }
+    }
+    for (const [academyId, sessionId] of earliestSessionByAcademy) {
+      const [existingLink] = await tx.select({ id: academyRecordingsTable.id })
+        .from(academyRecordingsTable)
+        .where(and(
+          eq(academyRecordingsTable.academyId, academyId),
+          eq(academyRecordingsTable.recordingId, recordingId),
+        ))
+        .limit(1);
+      if (existingLink) continue;
+      await tx.insert(academyRecordingsTable).values({
+        academyId,
+        recordingId,
+        sessionId,
+      }).onConflictDoNothing();
+    }
+  });
 }

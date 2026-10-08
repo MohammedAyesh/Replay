@@ -9,12 +9,13 @@ import {
   useDeleteAcademyConsoleSession,
   useListAcademyConsoleSessions,
   useListAcademyConsoleSquads,
+  useRetryAcademySessionFootage,
   useUpdateAcademyConsoleSession,
   type AcademySessionInput,
   type AcademySessionSummary,
   type AcademySessionUpdate,
 } from "@workspace/api-client-react";
-import { CalendarDays, Clock3, MapPin, Pencil, Plus, ShieldAlert, Swords, Trash2, Video } from "lucide-react";
+import { CalendarDays, Clock3, MapPin, Pencil, Plus, RefreshCw, ShieldAlert, Swords, Trash2, Video } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,6 +101,7 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
   const createSession = useCreateAcademyConsoleSession();
   const updateSession = useUpdateAcademyConsoleSession();
   const deleteSession = useDeleteAcademyConsoleSession();
+  const retryFootage = useRetryAcademySessionFootage();
   const [typeFilter, setTypeFilter] = useState<"all" | SessionType>("all");
   const [squadFilter, setSquadFilter] = useState("all");
   const [formOpen, setFormOpen] = useState(false);
@@ -109,6 +111,7 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState(false);
   const [mutationError, setMutationError] = useState(false);
+  const [footageRetryErrorSessionId, setFootageRetryErrorSessionId] = useState<number | null>(null);
   const sessions = sessionsQuery.data ?? [];
   const squads = squadsQuery.data ?? [];
   const isSaving = createSession.isPending || updateSession.isPending;
@@ -248,6 +251,16 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
     }
   };
 
+  const retrySessionFootage = async (sessionId: number) => {
+    setFootageRetryErrorSessionId(null);
+    try {
+      await retryFootage.mutateAsync({ academyId, sessionId });
+      await refreshSessions();
+    } catch {
+      setFootageRetryErrorSessionId(sessionId);
+    }
+  };
+
   const kindLabel = (type: SessionType) => type === "training" ? copy.training : copy.match;
   const renderSession = (session: AcademySessionSummary) => {
     const formatted = formatAmmanDateTime(session.startsAt, locale);
@@ -257,6 +270,8 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
       : "";
     const Icon = session.type === "match" ? Swords : CalendarDays;
     const scoreExists = session.ownScore !== null && session.opponentScore !== null;
+    const footageStatusLabel = copy.footageStatus[session.footage.status];
+    const canRetryFootage = ["no_camera", "unavailable", "failed"].includes(session.footage.status);
     return (
       <article
         key={session.id}
@@ -317,6 +332,34 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
                 <Video className="h-3.5 w-3.5 shrink-0 text-turf" aria-hidden="true" />
                 <span className="font-semibold text-turf">{labels.recordings} · {session.recordings.length}</span>
                 <span>{session.recordings.map((recording) => `${recording.date} ${recording.timeSlot}`).join(" · ")}</span>
+              </div>
+            )}
+            {(session.footage.status !== "none" || session.footage.note) && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid={`session-footage-status-${session.id}`}>
+                <span className={cn(
+                  "rounded-full px-2.5 py-1 font-semibold",
+                  ["failed", "unavailable", "no_camera"].includes(session.footage.status)
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-turf/10 text-turf",
+                )}>{footageStatusLabel}</span>
+                {session.footage.note && <span className="text-muted-text">{session.footage.note}</span>}
+                {canRetryFootage && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void retrySessionFootage(session.id)}
+                    disabled={retryFootage.isPending}
+                    className="min-h-8 px-2 text-xs text-turf"
+                    data-testid={`button-retry-session-footage-${session.id}`}
+                  >
+                    <RefreshCw className={cn("me-1.5 h-3.5 w-3.5", retryFootage.isPending && "animate-spin")} aria-hidden="true" />
+                    {retryFootage.isPending ? copy.retryingFootage : copy.retryFootage}
+                  </Button>
+                )}
+                {footageRetryErrorSessionId === session.id && (
+                  <span className="text-destructive" role="alert">{copy.footageRetryError}</span>
+                )}
               </div>
             )}
           </div>

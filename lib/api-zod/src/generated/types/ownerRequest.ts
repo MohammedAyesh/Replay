@@ -37,6 +37,8 @@ export interface OwnerRequest {
   varActive: boolean;
   /** @nullable */
   cancellationStatus: OwnerRequestCancellationStatus;
+  /** @nullable */
+  academyName: string | null;
   marks: VarMark[];
   /**
      * The players' match room for this booking.

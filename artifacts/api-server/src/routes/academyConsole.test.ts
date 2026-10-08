@@ -1081,6 +1081,20 @@ describe("Academy Console API", () => {
     expect(listed.body.every((session: { academyId: number }) => session.academyId === academyAId)).toBe(true);
     const listedCreated = listed.body.find((session: { id: number }) => session.id === createdSessionId);
     expect(listedCreated.startsAt).toBe(startsAt);
+    expect(listedCreated.footage).toMatchObject({
+      status: "no_camera",
+      note: "No camera is assigned to this field.",
+      recordingCount: 0,
+    });
+    const retryFootage = await request(app)
+      .post(`${sessionUrl(createdSessionId)}/footage/retry`)
+      .set(as(ownerId));
+    expect(retryFootage.status).toBe(200);
+    expect(retryFootage.body.footage).toMatchObject({
+      status: "no_camera",
+      note: "No camera is assigned to this field.",
+      recordingCount: 0,
+    });
     const ammanParts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Amman",
       year: "numeric",

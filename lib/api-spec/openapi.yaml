@@ -2462,6 +2462,42 @@ paths:
         "404":
           description: Academy or session not found in this academy
 
+  /academy/console/academies/{academyId}/sessions/{sessionId}/footage/retry:
+    post:
+      operationId: retryAcademySessionFootage
+      tags: [academyConsole]
+      summary: Retry footage booking for an academy session
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Current session and footage status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademySessionSummary"
+        "400":
+          description: Invalid academy or session ID
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Academy membership required
+        "404":
+          description: Academy or session not found in this academy
+
   /academy/console/academies/{academyId}/sessions/{sessionId}/attendance:
     get:
       operationId: getAcademyConsoleAttendance
@@ -5214,7 +5250,7 @@ components:
 
     OwnerRequest:
       type: object
-      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, varOpensAt, varClosesAt, varState, varActive, cancellationStatus, marks]
+      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, varOpensAt, varClosesAt, varState, varActive, cancellationStatus, marks, academyName]
       properties:
         id:
           type: integer
@@ -5259,6 +5295,8 @@ components:
         cancellationStatus:
           type: ["string", "null"]
           enum: [pending, approved, declined, null]
+        academyName:
+          type: ["string", "null"]
         marks:
           type: array
           items:
@@ -6803,6 +6841,19 @@ components:
           type: ["string", "null"]
           format: email
 
+    AcademySessionFootage:
+      type: object
+      required: [status, note, recordingCount]
+      properties:
+        status:
+          type: string
+          enum: [none, no_camera, scheduled, recording, processing, ready, failed, unavailable]
+        note:
+          type: ["string", "null"]
+        recordingCount:
+          type: integer
+          minimum: 0
+
     AcademySessionSummary:
       type: object
       required:
@@ -6821,6 +6872,7 @@ components:
         - notes
         - createdAt
         - attendanceCounts
+        - footage
         - recordings
       properties:
         id:
@@ -6865,6 +6917,8 @@ components:
           format: date-time
         attendanceCounts:
           $ref: "#/components/schemas/AcademyAttendanceCounts"
+        footage:
+          $ref: "#/components/schemas/AcademySessionFootage"
         recordings:
           type: array
           items:
@@ -7414,7 +7468,7 @@ components:
 
     AcademyFamilySession:
       type: object
-      required: [type, startsAt, endsAt, location, opponent, ownScore, opponentScore, recordings]
+      required: [type, startsAt, endsAt, location, opponent, ownScore, opponentScore, footage, recordings]
       properties:
         type:
           type: string
@@ -7435,6 +7489,8 @@ components:
         opponentScore:
           type: ["integer", "null"]
           minimum: 0
+        footage:
+          $ref: "#/components/schemas/AcademySessionFootage"
         recordings:
           type: array
           items:

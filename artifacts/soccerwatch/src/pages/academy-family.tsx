@@ -58,6 +58,16 @@ const copy = {
     today: "Today", upcoming: "UP NEXT", score: "Final score",
     footage: "Session footage", footageHint: "Recordings shared for sessions in your schedule.",
     noFootage: "No session footage has been shared yet.", watch: "Watch",
+    footageStatus: {
+      none: "Not booked",
+      no_camera: "No camera assigned",
+      scheduled: "Footage booked",
+      recording: "Recording",
+      processing: "Preparing footage",
+      ready: "Footage ready",
+      failed: "Booking failed",
+      unavailable: "No footage available",
+    },
   },
   ar: {
     eyebrow: "مساحة العائلة", welcome: "خطوة أقرب إلى", academy: "رحلته الكروية.",
@@ -85,6 +95,16 @@ const copy = {
     today: "اليوم", upcoming: "الموعد القادم", score: "النتيجة النهائية",
     footage: "تسجيلات المواعيد", footageHint: "التسجيلات التي تمت مشاركتها لمواعيد اللاعب.",
     noFootage: "لم تتم مشاركة تسجيلات للمواعيد بعد.", watch: "مشاهدة",
+    footageStatus: {
+      none: "غير محجوز",
+      no_camera: "لا توجد كاميرا مخصصة",
+      scheduled: "تم حجز التسجيل",
+      recording: "جارٍ التسجيل",
+      processing: "جارٍ تجهيز التسجيل",
+      ready: "التسجيل جاهز",
+      failed: "تعذّر حجز التسجيل",
+      unavailable: "لا يتوفر تسجيل لهذا الموعد",
+    },
   },
 };
 
@@ -164,7 +184,9 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const financeStatus = family?.finance?.subscriptionStatus;
   const attendanceRate = family?.attendanceSummary.percentPresent;
   const upcomingSessions = family?.sessions.filter((session) => new Date(session.startsAt).getTime() >= Date.now()) ?? [];
-  const footageSessions = family?.sessions.filter((session) => session.recordings.length > 0) ?? [];
+  const footageSessions = family?.sessions.filter((session) => (
+    session.recordings.length > 0 || session.footage.status !== "none"
+  )) ?? [];
   const nextSession = upcomingSessions[0];
 
   if (source === "token") {
@@ -369,12 +391,28 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                   <div><h2 className="fp-card-title">{labels.footage}</h2><p className="fp-card-sub">{labels.footageHint}</p></div>
                   <span className="fp-count">{footageSessions.reduce((total, session) => total + session.recordings.length, 0)}</span>
                 </div>
-                {footageSessions.length ? <div className="fp-sessions">{footageSessions.flatMap((session) => session.recordings.map((recording) => {
+                {footageSessions.length ? <div className="fp-sessions">{footageSessions.flatMap((session, index) => {
                   const date = new Date(session.startsAt);
-                  return <article className="fp-session" key={recording.id} data-testid={`family-footage-${recording.id}`}>
+                  const title = session.type === "match"
+                    ? `${labels.match}${session.opponent ? ` · ${session.opponent}` : ""}`
+                    : labels.training;
+                  if (session.recordings.length === 0) {
+                    const statusLabel = labels.footageStatus[session.footage.status];
+                    return [<article className="fp-session" key={`footage-status-${session.startsAt}-${index}`} data-testid={`family-footage-status-${index}`}>
+                      <div className="fp-date"><strong>{new Intl.DateTimeFormat(locale, { day: "numeric" }).format(date)}</strong><span>{new Intl.DateTimeFormat(locale, { month: "short" }).format(date)}</span></div>
+                      <div className="fp-session-info">
+                        <strong>{title}</strong>
+                        <span><Clock3 aria-hidden="true" />{new Intl.DateTimeFormat(locale, { weekday: "short", hour: "numeric", minute: "2-digit" }).format(date)}</span>
+                        <span><MapPin aria-hidden="true" />{session.location}</span>
+                        <span>{session.footage.note || statusLabel}</span>
+                      </div>
+                      <span className="fp-session-type">{statusLabel}</span>
+                    </article>];
+                  }
+                  return session.recordings.map((recording) => <article className="fp-session" key={recording.id} data-testid={`family-footage-${recording.id}`}>
                     <div className="fp-date"><strong>{new Intl.DateTimeFormat(locale, { day: "numeric" }).format(date)}</strong><span>{new Intl.DateTimeFormat(locale, { month: "short" }).format(date)}</span></div>
                     <div className="fp-session-info">
-                      <strong>{session.type === "match" ? `${labels.match}${session.opponent ? ` · ${session.opponent}` : ""}` : labels.training}</strong>
+                      <strong>{title}</strong>
                       <span><Clock3 aria-hidden="true" />{new Intl.DateTimeFormat(locale, { weekday: "short", hour: "numeric", minute: "2-digit" }).format(date)} · {recording.timeSlot}</span>
                       <span><MapPin aria-hidden="true" />{session.location} · {recording.court}</span>
                     </div>
@@ -387,8 +425,8 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                     >
                       <Play size={14} aria-hidden="true" />{labels.watch}
                     </button>
-                  </article>;
-                }))}</div> : <div className="fp-empty" data-testid="family-session-footage-empty">{labels.noFootage}</div>}
+                  </article>);
+                })}</div> : <div className="fp-empty" data-testid="family-session-footage-empty">{labels.noFootage}</div>}
               </section>
               <section className="fp-card" data-testid="family-attendance">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.attendance}{attendanceRate != null ? ` · ${new Intl.NumberFormat(locale).format(attendanceRate)}%` : ""}</h2><p className="fp-card-sub">{labels.attendanceHint}</p></div><span className="fp-count">{family.attendance.length}</span></div>

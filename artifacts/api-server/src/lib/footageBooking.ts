@@ -1,7 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db, footageRequestsTable } from "@workspace/db";
 import { buildOwnerFootageTitle } from "@workspace/api-zod";
-import { computeAmountFils, computeBillableHours } from "./footageBilling";
 import { liveAnalysisEnabled } from "./liveAnalysis";
 import { logger } from "./logger";
 import { controlFetch } from "../routes/contabo";
@@ -149,6 +148,18 @@ function errorMessage(body: unknown, fallback: string): string {
   return bodyString(body, "error", "message", "detail") ?? fallback;
 }
 
+function mappedStatus(body: unknown): "scheduled" | "recording" | "queued" | "running" | "ready" | "partial" | "failed" | "cancelled" {
+  const status = (bodyString(body, "status", "state") ?? "").toLowerCase();
+  if (status === "done" || status === "completed" || status === "ready") return "ready";
+  if (status === "partial") return "partial";
+  if (status === "failed" || status === "error") return "failed";
+  if (status === "cancelled" || status === "canceled") return "cancelled";
+  if (status === "scheduled") return "scheduled";
+  if (status === "recording") return "recording";
+  if (status === "queued") return "queued";
+  return "running";
+}
+
 function localTimeEpoch(value: string): number {
   return parseLocalWallEpoch(value);
 }
@@ -182,12 +193,12 @@ export async function startCameraJob(row: FootageRequest, cameraId: string): Pro
     }
     const remoteStatus = bodyString(result.body, "status", "state");
     const status = remoteStatus
-      ? remoteStatus.toLowerCase()
+      ? mappedStatus(result.body)
       : (future ? "scheduled" : "queued");
     await db.update(footageRequestsTable)
       .set({
         vpsJobId: jobId,
-        status: ["queued", "running", "scheduled", "recording"].includes(status) ? status : (future ? "scheduled" : "queued"),
+        status,
         updatedAt: new Date(),
       })
       .where(eq(footageRequestsTable.id, row.id));

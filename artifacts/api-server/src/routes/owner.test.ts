@@ -385,6 +385,7 @@ describe("owner request status sync", () => {
     expect(isVarActive(row, closesAt + 1)).toBe(false);
     expect(isVarActive({ ...row, varState: "unsupported" }, opensAt)).toBe(false);
     expect(isVarActive({ ...row, varState: "ftp-failed" }, opensAt)).toBe(false);
+    expect(isVarActive({ ...row, academyId: 1 }, opensAt)).toBe(false);
   });
 
   it("transitions a completed VPS request to ready with a charge and token", async () => {

@@ -93,6 +93,8 @@ export * from './academyRegistrationApproval';
 export * from './academyRegistrationStatus';
 export * from './academyRegistrationSummary';
 export * from './academyRegistrationSummaryLocale';
+export * from './academySessionFootage';
+export * from './academySessionFootageStatus';
 export * from './academySessionInput';
 export * from './academySessionInputType';
 export * from './academySessionRecording';

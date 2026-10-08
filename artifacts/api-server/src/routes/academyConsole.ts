@@ -70,6 +70,7 @@ import {
   academySquadsTable,
   academiesTable,
   db,
+  footageRequestsTable,
   recordingsTable,
   usersTable,
 } from "@workspace/db";
@@ -81,6 +82,13 @@ import {
   requireAcademyMembership,
 } from "../lib/academyAccess";
 import { publicBaseUrl } from "./share";
+import {
+  academyFootageSummary,
+  bookAcademySessionFootage,
+  cancelScheduledAcademyFootageForSession,
+  syncAcademySessionFootageAfterTimeChange,
+} from "../lib/academyFootage";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 const ROLE_ORDER = ["owner", "coach"] as const;
@@ -185,6 +193,8 @@ async function academySessionSummaries(academyId: number, sessionId?: number) {
       ownScore: academySessionsTable.ownScore,
       opponentScore: academySessionsTable.opponentScore,
       notes: academySessionsTable.notes,
+      footageRequestId: academySessionsTable.footageRequestId,
+      footageNote: academySessionsTable.footageNote,
       createdAt: academySessionsTable.createdAt,
     })
     .from(academySessionsTable)
@@ -254,6 +264,16 @@ async function academySessionSummaries(academyId: number, sessionId?: number) {
       inArray(academyRecordingsTable.sessionId, sessions.map(({ id }) => id)),
     ))
     .orderBy(asc(recordingsTable.date), asc(recordingsTable.timeSlot), asc(recordingsTable.id));
+  const footageRequestIds = [...new Set(sessions
+    .map(({ footageRequestId }) => footageRequestId)
+    .filter((id): id is number => id !== null))];
+  const footageRows = footageRequestIds.length > 0
+    ? await db.select({
+      id: footageRequestsTable.id,
+      status: footageRequestsTable.status,
+    }).from(footageRequestsTable).where(inArray(footageRequestsTable.id, footageRequestIds))
+    : [];
+  const footageById = new Map(footageRows.map((row) => [row.id, row]));
   const recordingsBySession = new Map<number, typeof recordingRows>();
   for (const recording of recordingRows) {
     if (recording.sessionId === null) continue;
@@ -264,6 +284,11 @@ async function academySessionSummaries(academyId: number, sessionId?: number) {
 
   return sessions.map((session) => ({
     ...session,
+    footage: academyFootageSummary(
+      session.footageRequestId === null ? null : footageById.get(session.footageRequestId) ?? null,
+      session.footageNote,
+      recordingsBySession.get(session.id)?.length ?? 0,
+    ),
     attendanceCounts: countsBySession.get(session.id) ?? {
       present: 0,
       absent: 0,
@@ -680,6 +705,55 @@ router.post(
         eq(academyPlayerGuardiansTable.userId, target.id),
       ));
     res.json(AddAcademyConsolePlayerGuardianResponse.parse(guardian));
+  },
+);
+
+router.post(
+  "/academy/console/academies/:academyId/sessions/:sessionId/footage/retry",
+  async (req, res): Promise<void> => {
+    const user = await requireAcademyConsoleUser(req, res);
+    if (!user) return;
+    const parsedParams = UpdateAcademyConsoleSessionParams.safeParse({
+      academyId: rawParam(req.params.academyId),
+      sessionId: rawParam(req.params.sessionId),
+    });
+    if (!parsedParams.success
+      || !Number.isSafeInteger(parsedParams.data?.academyId)
+      || !Number.isSafeInteger(parsedParams.data?.sessionId)) {
+      res.status(400).json({ error: parsedParams.success ? "Invalid session parameters" : parsedParams.error.message });
+      return;
+    }
+    const { academyId, sessionId } = parsedParams.data;
+    const roles = await requireAcademyMembership(user.id, academyId, res);
+    if (!roles) return;
+    if (!(await academyExists(academyId))) {
+      res.status(404).json({ error: "Academy not found" });
+      return;
+    }
+    const [session] = await db.select({ id: academySessionsTable.id })
+      .from(academySessionsTable)
+      .where(and(
+        eq(academySessionsTable.id, sessionId),
+        eq(academySessionsTable.academyId, academyId),
+      ));
+    if (!session) {
+      res.status(404).json({ error: "Session not found in this academy" });
+      return;
+    }
+    try {
+      await bookAcademySessionFootage(academyId, sessionId, user.id);
+    } catch (error) {
+      req.log.warn({ academyId, sessionId, error }, "Academy footage retry failed");
+      try {
+        await db.update(academySessionsTable)
+          .set({ footageNote: "Footage could not be booked — try again." })
+          .where(eq(academySessionsTable.id, sessionId));
+      } catch (noteError) {
+        logger.warn({ academyId, sessionId, error: noteError }, "Could not save academy footage retry note");
+      }
+    }
+    const [summary] = await academySessionSummaries(academyId, sessionId);
+    res.json(UpdateAcademyConsoleSessionResponse.parse(summary));
   },
 );
 
@@ -1377,6 +1451,18 @@ router.post("/academy/console/academies/:academyId/sessions", async (req, res): 
       notes: normalizeOptionalText(body.data.notes),
     })
     .returning({ id: academySessionsTable.id });
+  try {
+    await bookAcademySessionFootage(academyId, created.id, user.id);
+  } catch (error) {
+    req.log.warn({ academyId, sessionId: created.id, error }, "Academy session saved but footage booking failed");
+    try {
+      await db.update(academySessionsTable)
+        .set({ footageNote: "Footage could not be booked — try again." })
+        .where(eq(academySessionsTable.id, created.id));
+    } catch (noteError) {
+      logger.warn({ academyId, sessionId: created.id, error: noteError }, "Could not save academy footage booking note");
+    }
+  }
   const [summary] = await academySessionSummaries(academyId, created.id);
   res.status(201).json(CreateAcademyConsoleSessionResponse.parse(summary));
 });
@@ -1507,6 +1593,21 @@ router.patch(
       return;
     }
 
+    if (updates.startsAt !== undefined || "endsAt" in updates) {
+      try {
+        await syncAcademySessionFootageAfterTimeChange(academyId, sessionId, user.id);
+      } catch (error) {
+        req.log.warn({ academyId, sessionId, error }, "Academy session saved but footage booking update failed");
+        try {
+          await db.update(academySessionsTable)
+            .set({ footageNote: "The session time changed; footage booking needs a retry." })
+            .where(eq(academySessionsTable.id, sessionId));
+        } catch (noteError) {
+          logger.warn({ academyId, sessionId, error: noteError }, "Could not save academy footage time-change note");
+        }
+      }
+    }
+
     const [summary] = await academySessionSummaries(academyId, sessionId);
     res.json(UpdateAcademyConsoleSessionResponse.parse(summary));
   },
@@ -1536,6 +1637,11 @@ router.delete(
       return;
     }
 
+    try {
+      await cancelScheduledAcademyFootageForSession(academyId, sessionId);
+    } catch (error) {
+      req.log.warn({ academyId, sessionId, error }, "Could not cancel academy session footage before deletion");
+    }
     const [deleted] = await db
       .delete(academySessionsTable)
       .where(and(

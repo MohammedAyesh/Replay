@@ -275,6 +275,8 @@ export interface OwnerRequest {
   varActive: boolean;
   /** @nullable */
   cancellationStatus: OwnerRequestCancellationStatus;
+  /** @nullable */
+  academyName: string | null;
   marks: VarMark[];
   /**
      * The players' match room for this booking.
@@ -1532,6 +1534,28 @@ export interface AcademyPlayerUpdate {
   linkedUserEmail?: string | null;
 }
 
+export type AcademySessionFootageStatus = typeof AcademySessionFootageStatus[keyof typeof AcademySessionFootageStatus];
+
+
+export const AcademySessionFootageStatus = {
+  none: 'none',
+  no_camera: 'no_camera',
+  scheduled: 'scheduled',
+  recording: 'recording',
+  processing: 'processing',
+  ready: 'ready',
+  failed: 'failed',
+  unavailable: 'unavailable',
+} as const;
+
+export interface AcademySessionFootage {
+  status: AcademySessionFootageStatus;
+  /** @nullable */
+  note: string | null;
+  /** @minimum 0 */
+  recordingCount: number;
+}
+
 export type AcademySessionSummaryType = typeof AcademySessionSummaryType[keyof typeof AcademySessionSummaryType];
 
 
@@ -1603,6 +1627,7 @@ export interface AcademySessionSummary {
   notes: string | null;
   createdAt: string;
   attendanceCounts: AcademyAttendanceCounts;
+  footage: AcademySessionFootage;
   recordings: AcademySessionRecording[];
 }
 
@@ -1970,6 +1995,7 @@ export interface AcademyFamilySession {
      * @nullable
      */
   opponentScore: number | null;
+  footage: AcademySessionFootage;
   recordings: AcademySessionRecording[];
 }
 

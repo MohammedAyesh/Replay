@@ -4,7 +4,7 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { and, asc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull } from "drizzle-orm";
 import { db, fieldsTable, footageRequestsTable, userClipsTable, usersTable, varMarksTable } from "@workspace/db";
 import { GetPortfolioClipMediaParams } from "@workspace/api-zod";
 import {
@@ -102,6 +102,7 @@ export async function resolveOwnerShare(token: string): Promise<(OwnerShareRow &
     .where(and(
       eq(footageRequestsTable.shareToken, token),
       inArray(footageRequestsTable.status, ["ready", "partial"]),
+      isNull(footageRequestsTable.academyId),
       eq(footageRequestsTable.shareRevoked, false),
       gt(footageRequestsTable.shareExpiresAt, new Date()),
     ));

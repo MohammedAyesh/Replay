@@ -12,6 +12,7 @@ import {
   academySquadsTable,
   academiesTable,
   db,
+  footageRequestsTable,
   recordingsTable,
 } from "@workspace/db";
 import {
@@ -23,6 +24,7 @@ import {
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { financePlayersForSquad } from "./academyFinance";
 import { allowAcademyFamilyClaim } from "./academyJoin";
+import { academyFootageSummary } from "../lib/academyFootage";
 
 const router: IRouter = Router();
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -194,6 +196,8 @@ async function readFamilyView(
       opponent: academySessionsTable.opponent,
       ownScore: academySessionsTable.ownScore,
       opponentScore: academySessionsTable.opponentScore,
+      footageRequestId: academySessionsTable.footageRequestId,
+      footageNote: academySessionsTable.footageNote,
     })
       .from(academySessionsTable)
       .where(and(
@@ -321,6 +325,16 @@ async function readFamilyView(
     existing.push(recording);
     recordingsBySession.set(recording.sessionId, existing);
   }
+  const footageRequestIds = [...new Set(sessions
+    .map(({ footageRequestId }) => footageRequestId)
+    .filter((id): id is number => id !== null))];
+  const footageRows = footageRequestIds.length > 0
+    ? await db.select({
+      id: footageRequestsTable.id,
+      status: footageRequestsTable.status,
+    }).from(footageRequestsTable).where(inArray(footageRequestsTable.id, footageRequestIds))
+    : [];
+  const footageById = new Map(footageRows.map((row) => [row.id, row]));
 
   const players = linkedPlayers.map((other) => ({
     id: other.id,
@@ -342,8 +356,13 @@ async function readFamilyView(
       position: player.position,
     },
     finance,
-    sessions: sessions.map(({ id, ...session }) => ({
+    sessions: sessions.map(({ id, footageRequestId, footageNote, ...session }) => ({
       ...session,
+      footage: academyFootageSummary(
+        footageRequestId === null ? null : footageById.get(footageRequestId) ?? null,
+        footageNote,
+        recordingsBySession.get(id)?.length ?? 0,
+      ),
       recordings: recordingsBySession.get(id)?.map(({
         sessionId: _sessionId,
         ...recording
