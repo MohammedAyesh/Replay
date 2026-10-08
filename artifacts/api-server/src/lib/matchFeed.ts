@@ -51,6 +51,8 @@ import {
   kitDistance,
   kitOfParts,
   mineTest,
+  observedTeamKits,
+  assignObservedKits,
   passEvents,
   PASS,
   playerMoments,
@@ -349,6 +351,9 @@ export async function fillMatchStatsCacheForRecording(recordingId: number): Prom
 
 const SIDES = ["A", "B", "C"] as const;
 
+/** A two-side split with fewer than minShare of the touches on one side is not shown. */
+export const TEAM_SPLIT = { minTouches: 100, minShare: 0.05 } as const;
+
 function roomColour(room: MatchRoom, side: string): string {
   return side === "A" ? room.teamAColor : side === "B" ? room.teamBColor : room.teamCColor;
 }
@@ -372,6 +377,25 @@ function sideKits(room: MatchRoom, roster: MatchPlayer[], play: RecordingPlay, r
     const fallback = hexToLab(roomColour(room, side));
     if (measured) kits[side] = { lab: measured, measured: true };
     else if (fallback) kits[side] = { lab: fallback, measured: false };
+  }
+  // 2026-10-08: a side nobody on it has claimed used to take the booked swatch,
+  // and a wrong swatch put the whole match on one side (PNKLTQ: white v orange
+  // booked, white v navy worn, 99% possession). For two sides, the shirts the
+  // camera actually saw in this window decide; the swatch only says which is which.
+  if (sides.length === 2 && !(kits.A?.measured && kits.B?.measured)) {
+    const segs = new Set(play.manifest.segments
+      .filter((s) => s.endSeconds > window.fromSeconds && s.startSeconds < window.toSeconds)
+      .map((s) => s.index));
+    const observed = observedTeamKits(play.sidecars, segs);
+    if (observed) {
+      const side = (key: "A" | "B") => ({
+        measured: kits[key]?.measured ? kits[key].lab : null,
+        swatch: hexToLab(roomColour(room, key)),
+      });
+      const [a, b] = assignObservedKits(observed.kits, [side("A"), side("B")]);
+      if (!kits.A?.measured) kits.A = { lab: a, measured: false };
+      if (!kits.B?.measured) kits.B = { lab: b, measured: false };
+    }
   }
   return kits;
 }
@@ -831,6 +855,15 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
     const attempts = t.passesTried.reduce((a, b) => a + b, 0);
     const completions = t.passesCompleted.reduce((a, b) => a + b, 0);
     t.completionPercent = attempts ? Math.round((1000 * completions) / attempts) / 10 : 0;
+    // Two real teams never split a match 99 to 1. When one side has almost none
+    // of the touches the shirts were not told apart, and a split like that is
+    // worse than none: the section is left out instead of showing it.
+    const touchTotal = t.touches.reduce((a, b) => a + b, 0);
+    if (t.sides.length === 2 && touchTotal >= TEAM_SPLIT.minTouches
+      && Math.min(...t.touches) < TEAM_SPLIT.minShare * touchTotal) {
+      logger.warn({ matchId: ctx.room.id, touches: t.touches, colours: t.colours }, "Team split left out: one side has almost no touches");
+      team = null;
+    }
   }
   for (const [playerId, builder] of reports) {
     const row = perPlayer.get(playerId);

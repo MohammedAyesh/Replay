@@ -523,6 +523,108 @@ export function seedTeams(own: Lab | null, options: Array<{ lab: Lab; secs: numb
   return other < 0 ? null : { a, b: options[other].lab };
 }
 
+export const OBSERVED_KITS = {
+  /** below this many kit-seconds on camera the footage says too little to split */
+  minSeconds: 120,
+  /** each shirt must hold at least this share of the time on camera (a referee, a keeper, a bench do not) */
+  minShare: 0.15,
+  /** the two shirts must be at least this far apart (kitDistance) to be two teams */
+  minSeparation: 15,
+  iterations: 25,
+} as const;
+
+/**
+ * The two shirts actually on the pitch, from every track's torso colour: a
+ * 2-means weighted by seconds on camera. Started three ways (split on
+ * lightness, on the red-green axis, on the blue-yellow axis) and the tightest
+ * result kept, so two teams that differ only in hue split as well as white
+ * against navy. Null when the footage does not show two clear shirts.
+ *
+ * 2026-10-08, PNKLTQ: the booking said white against orange, the teams wore
+ * white against navy, nobody had claimed yet, and every player went to the
+ * white side (99% possession, 999 passes to 0). The swatch is a guess; this
+ * is what the camera saw.
+ */
+export function observedTeamKits(
+  sidecars: Array<BallSidecar | null>,
+  segmentIndexes?: ReadonlySet<number>,
+): { kits: [Lab, Lab]; share: [number, number]; separation: number } | null {
+  const pts: Array<{ lab: Lab; w: number }> = [];
+  sidecars.forEach((sc, index) => {
+    if (!sc || (segmentIndexes && !segmentIndexes.has(index))) return;
+    for (const [L, a, b, secs] of Object.values(sc.kits ?? {})) {
+      if (secs > 0 && [L, a, b].every(Number.isFinite)) pts.push({ lab: [L, a, b], w: secs });
+    }
+  });
+  const total = pts.reduce((s, p) => s + p.w, 0);
+  if (pts.length < 4 || total < OBSERVED_KITS.minSeconds) return null;
+  const mean = (group: typeof pts): Lab | null => {
+    const w = group.reduce((s, p) => s + p.w, 0);
+    if (!(w > 0)) return null;
+    return [0, 1, 2].map((k) => group.reduce((s, p) => s + p.lab[k] * p.w, 0) / w) as Lab;
+  };
+  const run = (axis: 0 | 1 | 2) => {
+    // start: split at the weighted median of one channel
+    const sorted = [...pts].sort((p, q) => p.lab[axis] - q.lab[axis]);
+    let acc = 0, cut = 0;
+    while (cut < sorted.length - 1 && acc + sorted[cut].w < total / 2) acc += sorted[cut++].w;
+    let c0 = mean(sorted.slice(0, Math.max(1, cut)));
+    let c1 = mean(sorted.slice(Math.max(1, cut)));
+    if (!c0 || !c1) return null;
+    let assign: number[] = [];
+    for (let it = 0; it < OBSERVED_KITS.iterations; it++) {
+      const next = pts.map((p) => (kitDistance(p.lab, c0!) <= kitDistance(p.lab, c1!) ? 0 : 1));
+      const g0 = pts.filter((_, i) => next[i] === 0), g1 = pts.filter((_, i) => next[i] === 1);
+      const m0 = mean(g0), m1 = mean(g1);
+      if (!m0 || !m1) return null;
+      const settled = next.every((v, i) => v === assign[i]);
+      c0 = m0; c1 = m1; assign = next;
+      if (settled) break;
+    }
+    const sse = pts.reduce((s, p, i) => s + p.w * kitDistance(p.lab, assign[i] === 0 ? c0! : c1!) ** 2, 0);
+    const w0 = pts.reduce((s, p, i) => s + (assign[i] === 0 ? p.w : 0), 0);
+    return { kits: [c0, c1] as [Lab, Lab], share: [w0 / total, 1 - w0 / total] as [number, number], sse };
+  };
+  const best = ([0, 1, 2] as const).map(run).filter((r): r is NonNullable<typeof r> => r !== null)
+    .sort((p, q) => p.sse - q.sse)[0];
+  if (!best) return null;
+  const separation = kitDistance(best.kits[0], best.kits[1]);
+  if (Math.min(...best.share) < OBSERVED_KITS.minShare || separation < OBSERVED_KITS.minSeparation) return null;
+  const round = (lab: Lab) => lab.map((v) => Math.round(v * 10) / 10) as Lab;
+  return { kits: [round(best.kits[0]), round(best.kits[1])], share: [Math.round(best.share[0] * 1000) / 1000, Math.round(best.share[1] * 1000) / 1000], separation: Math.round(separation * 10) / 10 };
+}
+
+/**
+ * Which observed shirt goes to which side. A side whose shirt was measured
+ * from its claimants keeps it and the other side takes the other shirt; with
+ * nothing measured, the pairing nearest the booked colours wins (the swatch
+ * still says which team is which, only not what the camera sees).
+ */
+export function assignObservedKits(
+  observed: [Lab, Lab],
+  sides: [{ measured: Lab | null; swatch: Lab | null }, { measured: Lab | null; swatch: Lab | null }],
+): [Lab, Lab] {
+  const [x, y] = sides;
+  if (x.measured && y.measured) return [x.measured, y.measured];
+  if (x.measured || y.measured) {
+    const m = (x.measured ?? y.measured)!;
+    const other = kitDistance(observed[0], m) <= kitDistance(observed[1], m) ? observed[1] : observed[0];
+    return x.measured ? [x.measured, other] : [other, y.measured!];
+  }
+  if (x.swatch && y.swatch) {
+    const straight = kitDistance(observed[0], x.swatch) + kitDistance(observed[1], y.swatch);
+    const crossed = kitDistance(observed[1], x.swatch) + kitDistance(observed[0], y.swatch);
+    return crossed < straight ? [observed[1], observed[0]] : observed;
+  }
+  // only one swatch: that side takes the shirt nearest it
+  const s = x.swatch ?? y.swatch;
+  if (s) {
+    const near = kitDistance(observed[0], s) <= kitDistance(observed[1], s) ? 0 : 1;
+    return x.swatch ? [observed[near], observed[1 - near]] : [observed[1 - near], observed[near]];
+  }
+  return observed;
+}
+
 export function parseLab(value: unknown): Lab | null {
   if (typeof value !== "string") return null;
   const parts = value.split(",").map(Number);
