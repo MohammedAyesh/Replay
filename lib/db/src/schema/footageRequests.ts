@@ -1,10 +1,12 @@
-import { pgTable, serial, integer, text, boolean, timestamp, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, boolean, timestamp, unique, index } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { fieldsTable } from "./fields";
+import { academiesTable } from "./academies";
 
 export const footageRequestsTable = pgTable("footage_requests", {
   id: serial("id").primaryKey(),
   fieldId: integer("field_id").notNull().references(() => fieldsTable.id, { onDelete: "cascade" }),
+  academyId: integer("academy_id").references(() => academiesTable.id, { onDelete: "set null" }),
   cameraId: text("camera_id").notNull(),
   requestedBy: integer("requested_by").notNull().references(() => usersTable.id, { onDelete: "restrict" }),
   startLocal: text("start_local").notNull(),
@@ -26,6 +28,8 @@ export const footageRequestsTable = pgTable("footage_requests", {
   readyAt: timestamp("ready_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  index("footage_requests_academy_id_idx").on(table.academyId),
+]);
 
 export type FootageRequest = typeof footageRequestsTable.$inferSelect;
