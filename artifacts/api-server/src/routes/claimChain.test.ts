@@ -724,6 +724,34 @@ describe("two players pick the same person: counted for both, nothing taken away
     expect(byUser.get(playerId)?.playerStats.confirmedSeconds).toBeCloseTo(6, 1);
   });
 
+  it.each(["done", "stats"] as const)("resets a finished /find claim at step %s and releases its identity binding", async (step) => {
+    actAs(playerId);
+    const save = await request(app).put(gameUrl()).send({
+      state: { step },
+      parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }],
+      bench: [],
+      done: true,
+    });
+    expect(save.status).toBe(200);
+
+    const before = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    expect(before.find((row) => row.userId === playerId)?.state).toBe("confirmed");
+
+    const reset = await request(app).delete(gameUrl());
+    expect(reset.status).toBe(200);
+    expect(reset.body).toEqual({ ok: true });
+
+    const identities = (await storedManifest()).identities ?? [];
+    expect(identities.some((identity) => identity.id === claimIdentityId(playerId, recordingId))).toBe(false);
+    const after = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    expect(after.find((row) => row.userId === playerId)?.state).toBe("released");
+    const [progress] = await db.select().from(claimMatchProgressTable)
+      .where(eq(claimMatchProgressTable.recordingId, recordingId));
+    expect(progress?.gameState).toBeNull();
+  });
+
   it("a later save by the first player does not take the frames back either", async () => {
     actAs(playerId);
     await request(app).post(url("/tap")).send({ trackId: "t1", frame: 20 });

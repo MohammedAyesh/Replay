@@ -8,6 +8,16 @@ deploymentTarget = "autoscale"
 args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
+[[deployment.responseHeaders]]
+path = "/*"
+name = "Cache-Control"
+value = "no-cache"
+
+[[deployment.responseHeaders]]
+path = "/assets/*"
+name = "Cache-Control"
+value = "public, max-age=31536000, immutable"
+
 [workflows]
 runButton = "Project"
 

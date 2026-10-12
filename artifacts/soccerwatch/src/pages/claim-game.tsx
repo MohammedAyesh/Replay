@@ -67,6 +67,7 @@ import {
   hkey, recordSwitch, restoreClaimVisitOrder, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts, firstRosterChunk, materializeRosterParts, seedRosterParts } from "@/lib/game-claim/parts";
+import { loadResumeChunks } from "@/lib/game-claim/resume";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -445,6 +446,23 @@ export function GameClaim({
     if (!Object.keys(ctxRef.current.S.you).length) return;
     const currentCtx = ctxRef.current;
     const currentState = currentCtx.S;
+    const chunksNeededForSave = Object.entries(currentState.you)
+      .filter(([, answers]) => !answers.skipped && (
+        answers.cid || answers.manual.length || answers.added.length || answers.extra.length || answers.rosterParts?.length
+      ))
+      .map(([key]) => Number(key))
+      .filter((key) => !chunks.current[key]);
+    if (chunksNeededForSave.length) {
+      try {
+        await Promise.all(chunksNeededForSave.map(async (key) => {
+          await loadChunk(key);
+          currentCtx.CH = chunks.current;
+        }));
+      } catch {
+        setSaveError(true);
+        return;
+      }
+    }
     currentState.elapsed = t0.current ? Date.now() - t0.current : currentState.elapsed;
     const body = {
       state: { ...currentState, saved: Date.now() },
@@ -475,7 +493,7 @@ export function GameClaim({
     } catch {
       setSaveError(true);
     }
-  }, [fingerprint, recordingId, queryClient]);
+  }, [fingerprint, loadChunk, recordingId, queryClient]);
 
   const save = useCallback((options: { immediate?: boolean; keepalive?: boolean } = {}) => {
     if (saveTimer.current !== null) {
@@ -806,10 +824,10 @@ export function GameClaim({
 
   /* ------------------------------------------------------- step helpers */
 
-  const ensure = async (k: number) => {
+  const ensure = useCallback(async (k: number) => {
     await loadChunk(k);
     ctx.CH = chunks.current;
-  };
+  }, [ctx, loadChunk]);
 
   const applyShirtIdentityToChunk = (k: number): boolean => {
     const d = chunks.current[k];
@@ -928,8 +946,10 @@ export function GameClaim({
       if (s.k === null) s.step = "done";
     }
     t0.current = Date.now() - (s.elapsed || 0);
-    await Promise.all(Object.keys(s.you).map((k) => ensure(Number(k))));
-    if (s.k !== null) await ensure(s.k);
+    const savedChunks = Object.entries(s.you)
+      .filter(([, answers]) => !answers.skipped)
+      .map(([key]) => Number(key));
+    await loadResumeChunks(s.k, savedChunks, ensure);
     if (s.k !== null && s.step === "next") resolveLoadedChunk(s.k);
     const st = s.step === "done" || s.step === "stats" ? s.step : s.step === "intro" ? "review" : s.step;
     go(st);

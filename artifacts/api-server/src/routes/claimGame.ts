@@ -73,7 +73,8 @@ import {
   syncChainClaim,
   type ChainContext,
 } from "./claimChain";
-import { getClaimMatchWritableBundle, requireAccountUser } from "./claimMatch";
+import { getClaimMatchWritableBundle, requireAccountUser, syncIdentityBinding } from "./claimMatch";
+import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { ammanLocalInstant } from "../lib/matchRooms";
 import { recordingWindow } from "../lib/matchFeed";
 import { clipPartsToMatchWindow, clipRangeToMatchWindow, readMatchWindow } from "../lib/matchWindow";
@@ -492,11 +493,33 @@ router.delete("/recordings/:id/claim-match/game", async (req, res): Promise<void
       eq(claimMatchOffPitchSpansTable.userId, ctx.userId),
       eq(claimMatchOffPitchSpansTable.recordingId, ctx.recordingId),
     ));
-    await syncChainClaim(ctx, [], true);
+    const [bundle] = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.id, ctx.bundleId));
+    if (bundle) {
+      await syncIdentityBinding(ctx.userId, ctx.recordingId, bundle, {
+        identityResolution: null,
+        vouchedFragments: [],
+      });
+    }
     await db
       .update(claimMatchProgressTable)
-      .set({ gameState: null, updatedAt: new Date() })
+      .set({
+        gameState: null,
+        currentTrackId: null,
+        stage: "find",
+        confirmedFromSeconds: 0,
+        currentPositionSeconds: 0,
+        claimedPercent: 0,
+        clipsUnlocked: 0,
+        correctionCount: 0,
+        completed: false,
+        earnedClips: [],
+        updatedAt: new Date(),
+      })
       .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
+    await invalidateMatchStatsCacheForRecording(ctx.recordingId).catch((error) => {
+      console.error("[claim-game] reset stats-cache invalidation failed", { recordingId: ctx.recordingId, error });
+    });
     res.json({ ok: true });
   } catch (error) {
     console.error("[claim-game] reset failed", { recordingId: ctx.recordingId, error });

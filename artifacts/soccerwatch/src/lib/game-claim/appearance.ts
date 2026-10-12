@@ -180,10 +180,31 @@ export const isWeakColour = (p: Appearance | null) => !!p && p.to[0] < 45;
 /** Decode a base64 JPEG crop and measure it. Browser only. */
 export async function featureFromJpeg(jpegBase64: string): Promise<CropFeature | null> {
   if (typeof document === "undefined") return null;
+  if (document.visibilityState === "hidden") {
+    await new Promise<void>((resolve) => {
+      const onVisibilityChange = () => {
+        if (document.visibilityState !== "hidden") {
+          document.removeEventListener("visibilitychange", onVisibilityChange);
+          resolve();
+        }
+      };
+      document.addEventListener("visibilitychange", onVisibilityChange);
+      onVisibilityChange();
+    });
+  }
   const image = new Image();
   image.src = `data:image/jpeg;base64,${jpegBase64}`;
   try {
-    await image.decode();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const decoded = await Promise.race([
+      image.decode().then(() => true, () => false),
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => resolve(false), 3000);
+      }),
+    ]).finally(() => {
+      if (timeout !== undefined) clearTimeout(timeout);
+    });
+    if (!decoded) return null;
   } catch {
     return null;
   }
