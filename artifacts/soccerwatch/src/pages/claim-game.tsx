@@ -549,7 +549,6 @@ export function GameClaim({
     void fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game/decision`, {
       method: "POST",
       credentials: "include",
-      keepalive: true,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...decision, bundleFingerprint: fingerprint }),
     })
@@ -1169,7 +1168,7 @@ export function GameClaim({
   const advance = async () => {
     pendingNextGuess.current = null;
     const where = afterChunk(ctx);
-    if (where === "done") await save({ immediate: true, keepalive: true });
+    if (where === "done") await save({ immediate: true });
     else save();
     setVer((v) => v + 1);
     window.scrollTo({ top: 0 });

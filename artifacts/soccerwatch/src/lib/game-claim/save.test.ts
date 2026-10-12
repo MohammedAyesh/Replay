@@ -25,12 +25,18 @@ describe("sendClaimSave", () => {
   });
 
   it("waits for missing chunks on ordinary saves before sending full parts", async () => {
-    const loadChunk = vi.fn(async () => undefined);
+    let finishLoading!: () => void;
+    const loadChunk = vi.fn(() => new Promise<void>((resolve) => {
+      finishLoading = resolve;
+    }));
     const send = vi.fn(async (includeParts: boolean) => includeParts);
 
-    await expect(sendClaimSave([1, 2], false, loadChunk, send)).resolves.toBe(true);
+    const doneSave = sendClaimSave([1], false, loadChunk, send);
 
-    expect(loadChunk).toHaveBeenCalledTimes(2);
+    expect(loadChunk).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+    finishLoading();
+    await expect(doneSave).resolves.toBe(true);
     expect(send).toHaveBeenCalledWith(true);
   });
 });
