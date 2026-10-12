@@ -403,7 +403,7 @@ export function questions(ctx: Ctx, k: number): Junction[] {
       const B = d.pieces[j.b];
       if (A && B && B.t0 < A.t1 - 1) {
         const s = coSep(ctx, k, [j.a], [j.b]);
-        if (s && s.med <= 2.5) continue; // overlapping and side by side: tracked twice
+        if (!s || s.med > 2.5) continue; // overlapping and not side by side: different people
       }
       qs.push(j);
     }

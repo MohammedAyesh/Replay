@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { materializeRosterParts, chainParts } from "./parts";
+import { firstRosterChunk, materializeRosterParts, seedRosterParts, chainParts } from "./parts";
 import { clearPick, Y, type Ctx } from "./claim";
 
 function makeContext(loaded: boolean): Ctx {
@@ -61,6 +61,49 @@ describe("roster-seeded claim parts", () => {
 
     Y(ctx, 1).out.push("roster:s1:t7:105:140");
     expect(chainParts(ctx)).toEqual([]);
+  });
+
+  it("materializes roster ranges immediately for already loaded chunks", () => {
+    const ctx = makeContext(true);
+
+    seedRosterParts(ctx, 1, [{ trackId: "s1:t7", fromFrame: 105, toFrame: 140 }]);
+
+    expect(Y(ctx, 1).rosterParts).toEqual([]);
+    expect(Y(ctx, 1).manual.map((piece) => piece.id)).toEqual(["roster:s1:t7:105:140"]);
+  });
+
+  it("starts at the first chunk with 30 in-play roster seconds, excluding warm-up", () => {
+    const ctx = makeContext(false);
+    ctx.game.frameRate = 20;
+    ctx.game.chunks = [
+      { k: 1, start: 0, dur: 600 },
+      { k: 2, start: 600, dur: 600 },
+    ];
+    ctx.S.off = [[0, 60, "play"]];
+    const byChunk = new Map([
+      [1, [{ trackId: "s1:t7", fromFrame: 0, toFrame: 1200 }]],
+      [2, [{ trackId: "s1:t7", fromFrame: 12000, toFrame: 24000 }]],
+    ]);
+
+    expect(firstRosterChunk(ctx, byChunk)).toBe(2);
+  });
+
+  it("uses the highest in-play roster score when no chunk reaches 30 seconds", () => {
+    const ctx = makeContext(false);
+    ctx.game.frameRate = 20;
+    ctx.game.chunks = [
+      { k: 1, start: 0, dur: 60 },
+      { k: 2, start: 60, dur: 60 },
+      { k: 3, start: 120, dur: 60 },
+    ];
+    ctx.S.off = [[0, 60, "play"]];
+    const byChunk = new Map([
+      [1, [{ trackId: "s1:t7", fromFrame: 0, toFrame: 1200 }]],
+      [2, [{ trackId: "s1:t7", fromFrame: 1200, toFrame: 1360 }]],
+      [3, [{ trackId: "s1:t7", fromFrame: 2400, toFrame: 2600 }]],
+    ]);
+
+    expect(firstRosterChunk(ctx, byChunk)).toBe(3);
   });
 });
 

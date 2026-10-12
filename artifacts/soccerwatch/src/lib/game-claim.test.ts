@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { JerseySidecar, TrackingManifest } from "@workspace/api-client-react";
-import { buildChunk, splitAtColourJumps, type BundleTrack } from "./game-claim/build";
+import { buildChunk, groupChunk, splitAtColourJumps, type BundleTrack } from "./game-claim/build";
 import {
   chunkPercent,
   afterChunk,
@@ -653,6 +653,33 @@ describe("questions", () => {
     expect(questions(ctx, 0).map((j) => `${j.a}-${j.b}`)).toEqual(["A-B"]);
     Y(ctx, 0).out.push("B");
     expect(questions(ctx, 0)).toEqual([]);
+  });
+
+  it("does not ask whether overlapping pieces are the same person without side-by-side evidence", () => {
+    const ctx = fixture();
+    ctx.CH[0].pieces.B.t0 = 18.5;
+
+    expect(questions(ctx, 0)).toEqual([]);
+  });
+});
+
+describe("overlapping seeded chains", () => {
+  it("does not create a junction when the next chain starts over one second before the previous ends", () => {
+    const chunk = buildChunk({
+      k: 0,
+      start: 0,
+      dur: 60,
+      frameRate: FPS,
+      tracks: [walk("A", 0, 20, 100, 0), walk("B", 18, 40, 100, 0)],
+      crossings: [],
+      sprites: {},
+    });
+
+    groupChunk(chunk, [["A", "B"]]);
+
+    const combined = chunk.groups.find((g) => g.members.includes("A") && g.members.includes("B"));
+    expect(combined).toBeDefined();
+    expect(combined?.junctions).toEqual([]);
   });
 });
 

@@ -1,5 +1,5 @@
-import { kept, ovPos, Y, type Ctx } from "./claim";
-import { union, type ManualPiece } from "./model";
+import { kept, MIN_PLAYABLE_SECONDS, ovPos, Y, type Ctx } from "./claim";
+import { OUT, overlapSeconds, union, type ManualPiece } from "./model";
 
 /**
  * What the claim means to the rest of Replay.
@@ -12,6 +12,7 @@ import { union, type ManualPiece } from "./model";
  */
 
 export type ChainPartOut = { trackId: string; fromFrame: number; toFrame: number };
+export type RosterPartIn = { trackId: string; fromFrame: number; toFrame: number };
 
 function rosterManualId(part: { trackId: string; fromFrame: number; toFrame: number }): string {
   return `roster:${part.trackId}:${part.fromFrame}:${part.toFrame}`;
@@ -59,6 +60,46 @@ export function materializeRosterParts(ctx: Ctx, k: number): void {
     answers.manual.push(piece);
   }
   answers.rosterParts = unresolved;
+}
+
+/** Save exact roster ranges and materialize them immediately when the chunk is already loaded. */
+export function seedRosterParts(ctx: Ctx, k: number, parts: RosterPartIn[]): void {
+  Y(ctx, k).rosterParts = parts;
+  materializeRosterParts(ctx, k);
+}
+
+/** Seconds of this player's roster ranges that remain after out-of-play ranges are removed. */
+export function rosterPartSeconds(ctx: Ctx, k: number, parts: RosterPartIn[]): number {
+  const chunk = ctx.game.chunks.find((candidate) => candidate.k === k);
+  if (!chunk || !parts.length) return 0;
+  const fps = ctx.game.frameRate > 0 ? ctx.game.frameRate : 20;
+  const ranges = union(parts.flatMap((part) => {
+    const start = Math.max(chunk.start, part.fromFrame / fps);
+    const end = Math.min(chunk.start + chunk.dur, part.toFrame / fps);
+    return end > start ? [[start, end] as [number, number]] : [];
+  }));
+  const out = union(ctx.S.off.filter((range) => OUT(range[2])).map(([start, end]) => [start, end] as [number, number]));
+  return ranges.reduce(
+    (seconds, [start, end]) => seconds + Math.max(0, end - start - overlapSeconds(start, end, out)),
+    0,
+  );
+}
+
+/** First chunk with enough in-play roster footage, or the highest-scoring available chunk. */
+export function firstRosterChunk(
+  ctx: Ctx,
+  byChunk: Map<number, RosterPartIn[]>,
+): number | null {
+  const available = ctx.game.chunks.filter(
+    ({ k }) => byChunk.has(k) && !Y(ctx, k).skipped,
+  );
+  if (!available.length) return null;
+  const scores = available.map(({ k }) => ({
+    k,
+    seconds: rosterPartSeconds(ctx, k, byChunk.get(k) ?? []),
+  }));
+  return scores.find(({ seconds }) => seconds >= MIN_PLAYABLE_SECONDS)?.k
+    ?? scores.reduce((best, current) => current.seconds > best.seconds ? current : best).k;
 }
 
 export function chainParts(ctx: Ctx): ChainPartOut[] {

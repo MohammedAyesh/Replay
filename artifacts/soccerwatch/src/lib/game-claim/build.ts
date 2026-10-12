@@ -437,9 +437,11 @@ function joinChains(
     if (members.length) {
       const A = chunk.pieces[members[members.length - 1]];
       const B = chunk.pieces[part.members[0]];
-      const r = reachOk(A, B);
-      const d = A.feat && B.feat ? dist(A.feat, B.feat) : 1.4;
-      junctions.push({ a: A.id, b: B.id, gap: Math.round(r.gap * 10) / 10, dm: Math.round(r.dm * 10) / 10, d: Math.round(d * 100) / 100, ask });
+      if (B.t0 >= A.t1 - 1) {
+        const r = reachOk(A, B);
+        const d = A.feat && B.feat ? dist(A.feat, B.feat) : 1.4;
+        junctions.push({ a: A.id, b: B.id, gap: Math.round(r.gap * 10) / 10, dm: Math.round(r.dm * 10) / 10, d: Math.round(d * 100) / 100, ask });
+      }
     }
     members.push(...part.members);
     junctions.push(...part.junctions);

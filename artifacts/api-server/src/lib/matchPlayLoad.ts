@@ -66,6 +66,11 @@ const DERIVE_VERSION = 4;
 const MAX_CACHED = 6;
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
 
+/** Keep derived play data cached while using the latest bundle manifest. */
+export function withFreshManifest(cached: RecordingPlay, manifest: TrackingManifest): RecordingPlay {
+  return { ...cached, manifest };
+}
+
 async function readSidecar(path: string | undefined, index: number): Promise<BallSidecar | null> {
   if (!path) return null;
   try {
@@ -94,7 +99,7 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
   const cached = playCache.get(recordingId);
   if (cached && cached.key === key && (!opts.keepSegments || cached.data.segments)) {
     cached.at = Date.now();
-    return cached.data;
+    return withFreshManifest(cached.data, manifest);
   }
 
   const sidecars: Array<BallSidecar | null> = [];

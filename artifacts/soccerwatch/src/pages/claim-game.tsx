@@ -66,7 +66,7 @@ import {
   newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
   hkey, recordSwitch, restoreClaimVisitOrder, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
-import { benchSpansOut, chainParts, materializeRosterParts } from "@/lib/game-claim/parts";
+import { benchSpansOut, chainParts, firstRosterChunk, materializeRosterParts, seedRosterParts } from "@/lib/game-claim/parts";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -871,22 +871,19 @@ export function GameClaim({
       });
       byChunk.set(part.segmentIndex, ranges);
     }
-    const firstChunk = game.chunks.find((chunk) => (
-      byChunk.has(chunk.k) && !Y(ctxRef.current, chunk.k).skipped
-        && inPlaySec(ctxRef.current, chunk.k) >= 30
-    ));
-    if (!firstChunk) {
+    const firstChunk = firstRosterChunk(ctxRef.current, byChunk);
+    if (firstChunk === null) {
       go("kit");
       return;
     }
 
     for (const [k, parts] of byChunk) {
       if (Y(ctxRef.current, k).skipped) continue;
-      Y(ctxRef.current, k).rosterParts = parts;
+      seedRosterParts(ctxRef.current, k, parts);
     }
     const state = ctxRef.current.S;
-    state.k = firstChunk.k;
-    state.order = claimVisitOrder(ctxRef.current, firstChunk.k);
+    state.k = firstChunk;
+    state.order = claimVisitOrder(ctxRef.current, firstChunk);
     state.oi = 0;
     state.step = "review";
     setVer((v) => v + 1);
@@ -1140,7 +1137,10 @@ export function GameClaim({
     if (where === "next" && S.k !== null) {
       const nextK = S.k;
       await ensure(nextK);
-      applyShirtIdentityToChunk(nextK);
+      materializeRosterParts(ctxRef.current, nextK);
+      const hasRosterParts = Y(ctxRef.current, nextK).manual.some((piece) => piece.id.startsWith("roster:"));
+      if (hasRosterParts) ctxRef.current.S.step = "review";
+      else applyShirtIdentityToChunk(nextK);
       setVer((v) => v + 1);
       save();
     }
