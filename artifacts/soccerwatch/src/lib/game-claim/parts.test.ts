@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { firstRosterChunk, materializeRosterParts, seedRosterParts, chainParts } from "./parts";
-import { clearPick, Y, type Ctx } from "./claim";
+import { clearPick, newState, pick, Y, type Ctx } from "./claim";
 
 function makeContext(loaded: boolean): Ctx {
   const chunk = {
@@ -121,6 +121,52 @@ describe("roster-seeded claim parts", () => {
     ]);
 
     expect(firstRosterChunk(ctx, byChunk)).toBe(3);
+  });
+
+  it("returns null when every playable roster score is zero", () => {
+    const ctx = makeContext(false);
+    ctx.game.frameRate = 20;
+    ctx.game.chunks = [{ k: 1, start: 0, dur: 60 }];
+    ctx.S.off = [[0, 5, "play"]];
+    const byChunk = new Map([
+      [1, [{ trackId: "s1:t7", fromFrame: 0, toFrame: 100 }]],
+    ]);
+
+    expect(firstRosterChunk(ctx, byChunk)).toBeNull();
+  });
+
+  it("does not choose an unplayable best chunk over a playable fallback", () => {
+    const ctx = makeContext(false);
+    ctx.game.frameRate = 20;
+    ctx.game.chunks = [
+      { k: 1, start: 0, dur: 60 },
+      { k: 2, start: 60, dur: 60 },
+    ];
+    ctx.S.off = [[0, 60, "play"]];
+    const byChunk = new Map([
+      [1, [{ trackId: "s1:t7", fromFrame: 0, toFrame: 1200 }]],
+      [2, [{ trackId: "s1:t7", fromFrame: 1200, toFrame: 1400 }]],
+    ]);
+
+    expect(firstRosterChunk(ctx, byChunk)).toBe(2);
+  });
+
+  it("preserves unresolved roster ranges through a shirt-identity pick for chainParts", () => {
+    const ctx = makeContext(true);
+    ctx.game.chunks = [{ k: 1, start: 0, dur: 10 }];
+    ctx.game.outOfPlay = [];
+    ctx.S = newState(ctx.game);
+    ctx.S.order = [1];
+    ctx.S.oi = 0;
+    ctx.S.k = 1;
+    ctx.S.step = "review";
+    const part = { trackId: "unloaded-track", fromFrame: 100, toFrame: 120 };
+    Y(ctx, 1).rosterParts = [part];
+
+    pick(ctx, 1, "shirt-group", 0);
+
+    expect(Y(ctx, 1).rosterParts).toEqual([part]);
+    expect(chainParts(ctx)).toEqual([part]);
   });
 });
 

@@ -398,12 +398,14 @@ export function questions(ctx: Ctx, k: number): Junction[] {
   if (!y.cid || !d.byCid[y.cid]) return qs;
   for (const c of [y.cid, ...y.added]) {
     for (const j of d.byCid[c]?.junctions ?? []) {
-      if (!j.ask || !keep.has(j.a) || !keep.has(j.b)) continue;
+      if (!j.ask || !keep.has(j.a) || !keep.has(j.b) || has(y.out, j.a) || has(y.out, j.b)) continue;
       const A = d.pieces[j.a];
       const B = d.pieces[j.b];
       if (A && B && B.t0 < A.t1 - 1) {
         const s = coSep(ctx, k, [j.a], [j.b]);
-        if (!s || s.med > 2.5) continue; // overlapping and not side by side: different people
+        if (s && s.med <= 2.5) continue; // side by side during overlap: one person tracked twice
+        if (!has(y.out, j.b)) y.out.push(j.b); // overlap without side-by-side evidence: different people
+        continue;
       }
       qs.push(j);
     }
@@ -762,7 +764,19 @@ export function isSure(r: Array<{ d: number | null }>): boolean {
 /** Pick a group as you in chunk k: resets the chunk and auto-adds your twins. */
 export function pick(ctx: Ctx, k: number, cid: string, atTime = chunkMeta(ctx, k).start): void {
   const y = Y(ctx, k);
-  Object.assign(y, { cid, skipped: false, out: [], added: [], dropped: [], extra: [], seen: [], manual: [], rosterParts: [] });
+  const rosterManual = y.manual.filter((piece) => piece.id.startsWith("roster:"));
+  const rosterParts = y.rosterParts ?? [];
+  Object.assign(y, {
+    cid,
+    skipped: false,
+    out: [],
+    added: [],
+    dropped: [],
+    extra: [],
+    seen: [],
+    manual: rosterManual,
+    rosterParts,
+  });
   ctx.S.qi = 0;
   const profileAt = profileTimeForChunk(ctx, k, atTime);
   const tw = weakColour(ctx, profileAt, k) ? [] : twins(ctx, k, profileAt);

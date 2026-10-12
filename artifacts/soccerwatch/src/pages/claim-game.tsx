@@ -822,6 +822,13 @@ export function GameClaim({
     return true;
   };
 
+  const resolveLoadedChunk = (k: number): void => {
+    materializeRosterParts(ctxRef.current, k);
+    const hasRosterParts = Y(ctxRef.current, k).manual.some((piece) => piece.id.startsWith("roster:"));
+    if (hasRosterParts) ctxRef.current.S.step = "review";
+    else applyShirtIdentityToChunk(k);
+  };
+
   const startNew = async () => {
     pendingNextGuess.current = null;
     if (savedClaim || resetByAdmin) {
@@ -923,7 +930,7 @@ export function GameClaim({
     t0.current = Date.now() - (s.elapsed || 0);
     await Promise.all(Object.keys(s.you).map((k) => ensure(Number(k))));
     if (s.k !== null) await ensure(s.k);
-    if (s.k !== null && s.step === "next") applyShirtIdentityToChunk(s.k);
+    if (s.k !== null && s.step === "next") resolveLoadedChunk(s.k);
     const st = s.step === "done" || s.step === "stats" ? s.step : s.step === "intro" ? "review" : s.step;
     go(st);
   };
@@ -1137,10 +1144,7 @@ export function GameClaim({
     if (where === "next" && S.k !== null) {
       const nextK = S.k;
       await ensure(nextK);
-      materializeRosterParts(ctxRef.current, nextK);
-      const hasRosterParts = Y(ctxRef.current, nextK).manual.some((piece) => piece.id.startsWith("roster:"));
-      if (hasRosterParts) ctxRef.current.S.step = "review";
-      else applyShirtIdentityToChunk(nextK);
+      resolveLoadedChunk(nextK);
       setVer((v) => v + 1);
       save();
     }

@@ -648,18 +648,55 @@ describe("timeline", () => {
 });
 
 describe("questions", () => {
-  it("asks about a join between two kept pieces, and not once one is dropped", () => {
+  it("asks the normal question for sequential pieces, and not once one is dropped", () => {
     const ctx = fixture();
     expect(questions(ctx, 0).map((j) => `${j.a}-${j.b}`)).toEqual(["A-B"]);
     Y(ctx, 0).out.push("B");
     expect(questions(ctx, 0)).toEqual([]);
   });
 
-  it("does not ask whether overlapping pieces are the same person without side-by-side evidence", () => {
+  it("skips and keeps overlapping pieces that are side by side on a calibrated pitch", () => {
+    const ctx = fixture();
+    ctx.CH[0].pieces.B.t0 = 18.5;
+    ctx.game.pitch = {
+      w: 105,
+      h: 68,
+      grid: [
+        [[0, 0], [105, 0]],
+        [[0, 68], [105, 68]],
+      ],
+    };
+    ctx.CH[0].ov.A = [[19, 100, 300, 40, 100], [19.5, 100, 300, 40, 100]];
+    ctx.CH[0].ov.B = [[19, 120, 300, 40, 100], [19.5, 120, 300, 40, 100]];
+
+    expect(questions(ctx, 0)).toEqual([]);
+    expect(Y(ctx, 0).out).not.toContain("B");
+  });
+
+  it("skips and marks overlapping pieces out when calibrated pitch shows they are far apart", () => {
+    const ctx = fixture();
+    ctx.CH[0].pieces.B.t0 = 18.5;
+    ctx.game.pitch = {
+      w: 105,
+      h: 68,
+      grid: [
+        [[0, 0], [105, 0]],
+        [[0, 68], [105, 68]],
+      ],
+    };
+    ctx.CH[0].ov.A = [[19, 100, 300, 40, 100], [19.5, 100, 300, 40, 100]];
+    ctx.CH[0].ov.B = [[19, 3000, 300, 40, 100], [19.5, 3000, 300, 40, 100]];
+
+    expect(questions(ctx, 0)).toEqual([]);
+    expect(Y(ctx, 0).out).toContain("B");
+  });
+
+  it("marks overlapping pieces out when no pitch model can establish side-by-side evidence", () => {
     const ctx = fixture();
     ctx.CH[0].pieces.B.t0 = 18.5;
 
     expect(questions(ctx, 0)).toEqual([]);
+    expect(Y(ctx, 0).out).toContain("B");
   });
 });
 

@@ -1,4 +1,4 @@
-import { kept, MIN_PLAYABLE_SECONDS, ovPos, Y, type Ctx } from "./claim";
+import { inPlaySec, kept, MIN_PLAYABLE_SECONDS, ovPos, Y, type Ctx } from "./claim";
 import { OUT, overlapSeconds, union, type ManualPiece } from "./model";
 
 /**
@@ -85,21 +85,26 @@ export function rosterPartSeconds(ctx: Ctx, k: number, parts: RosterPartIn[]): n
   );
 }
 
-/** First chunk with enough in-play roster footage, or the highest-scoring available chunk. */
+/** First playable chunk with enough roster footage, or the best positive playable score. */
 export function firstRosterChunk(
   ctx: Ctx,
   byChunk: Map<number, RosterPartIn[]>,
 ): number | null {
   const available = ctx.game.chunks.filter(
-    ({ k }) => byChunk.has(k) && !Y(ctx, k).skipped,
+    ({ k }) =>
+      byChunk.has(k) &&
+      !Y(ctx, k).skipped &&
+      inPlaySec(ctx, k) >= MIN_PLAYABLE_SECONDS,
   );
   if (!available.length) return null;
   const scores = available.map(({ k }) => ({
     k,
     seconds: rosterPartSeconds(ctx, k, byChunk.get(k) ?? []),
   }));
-  return scores.find(({ seconds }) => seconds >= MIN_PLAYABLE_SECONDS)?.k
-    ?? scores.reduce((best, current) => current.seconds > best.seconds ? current : best).k;
+  const firstQualified = scores.find(({ seconds }) => seconds >= MIN_PLAYABLE_SECONDS);
+  if (firstQualified) return firstQualified.k;
+  const best = scores.reduce((winner, current) => current.seconds > winner.seconds ? current : winner);
+  return best.seconds > 0 ? best.k : null;
 }
 
 export function chainParts(ctx: Ctx): ChainPartOut[] {
