@@ -17,7 +17,7 @@
 
 const BUNDLE = /\/assets\/index-[\w-]+\.js/;
 const KEY = "replay.reloadedForBuild";
-const RECHECK_AFTER_MS = 10 * 60 * 1000;
+const RECHECK_AFTER_MS = 5 * 60 * 1000;
 
 /** The entry bundle a page of HTML loads, e.g. "/assets/index-D0NsbHlf.js". */
 export function bundleIn(html: string): string | null {
@@ -55,9 +55,31 @@ function writeKey(value: string): void {
 }
 
 let reloading = false;
+let lastCheckedAt = 0;
+let flushFindBeforeReload: (() => Promise<boolean>) | null = null;
+
+export function mayCheckForBuild(lastChecked: number, now: number): boolean {
+  return now - lastChecked >= RECHECK_AFTER_MS;
+}
+
+export function isFindPath(pathname: string, base = import.meta.env.BASE_URL || "/"): boolean {
+  const prefix = base.replace(/\/+$/, "");
+  const path = prefix && pathname.startsWith(prefix) ? pathname.slice(prefix.length) || "/" : pathname;
+  return /^\/find(?:\/|$)/.test(path);
+}
+
+export function registerFindReloadGuard(flush: () => Promise<boolean>): () => void {
+  flushFindBeforeReload = flush;
+  return () => {
+    if (flushFindBeforeReload === flush) flushFindBeforeReload = null;
+  };
+}
 
 export async function checkForNewBuild(base = import.meta.env.BASE_URL || "/"): Promise<void> {
-  if (reloading) return;
+  if (!import.meta.env.PROD || typeof window === "undefined" || reloading) return;
+  const now = Date.now();
+  if (!mayCheckForBuild(lastCheckedAt, now)) return;
+  lastCheckedAt = now;
   const running = runningBundle();
   if (!running) return;
   try {
@@ -65,6 +87,9 @@ export async function checkForNewBuild(base = import.meta.env.BASE_URL || "/"): 
     if (!response.ok) return;
     const live = bundleIn(await response.text());
     if (!shouldReload(running, live, readKey())) return;
+    if (isFindPath(window.location.pathname)) {
+      if (!flushFindBeforeReload || !(await flushFindBeforeReload())) return;
+    }
     reloading = true;
     writeKey(live!);
     window.location.reload();
@@ -73,15 +98,12 @@ export async function checkForNewBuild(base = import.meta.env.BASE_URL || "/"): 
   }
 }
 
-/** Check now, and again whenever the app returns after ten minutes or more in the background. */
+/** Check on startup and when visible again, no more than once every five minutes. */
 export function watchForNewBuilds(): void {
   if (!import.meta.env.PROD || typeof window === "undefined") return;
   void checkForNewBuild();
-  let hiddenAt = 0;
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") {
-      hiddenAt = Date.now();
-    } else if (hiddenAt && Date.now() - hiddenAt >= RECHECK_AFTER_MS) {
+    if (document.visibilityState === "visible") {
       void checkForNewBuild();
     }
   });

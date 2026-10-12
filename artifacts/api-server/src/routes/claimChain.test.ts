@@ -752,6 +752,36 @@ describe("two players pick the same person: counted for both, nothing taken away
     expect(progress?.gameState).toBeNull();
   });
 
+  it("stores a state-only /find save without changing identity parts or coverage", async () => {
+    actAs(playerId);
+    const fullSave = await request(app).put(gameUrl()).send({
+      state: { step: "done" },
+      parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }],
+      bench: [],
+      done: true,
+    });
+    expect(fullSave.status).toBe(200);
+    const beforeManifest = await storedManifest();
+    const [beforeProgress] = await db.select().from(claimMatchProgressTable)
+      .where(eq(claimMatchProgressTable.recordingId, recordingId));
+
+    const stateOnlySave = await request(app).put(gameUrl()).send({
+      state: { step: "done", resumedAfterBuild: true },
+      bench: [],
+      done: true,
+    });
+    expect(stateOnlySave.status).toBe(200);
+    expect((await storedManifest()).identities).toEqual(beforeManifest.identities);
+    const [afterProgress] = await db.select().from(claimMatchProgressTable)
+      .where(eq(claimMatchProgressTable.recordingId, recordingId));
+    expect(afterProgress).toMatchObject({
+      gameState: expect.objectContaining({ resumedAfterBuild: true }),
+      confirmedFromSeconds: beforeProgress.confirmedFromSeconds,
+      claimedPercent: beforeProgress.claimedPercent,
+      completed: beforeProgress.completed,
+    });
+  });
+
   it("a later save by the first player does not take the frames back either", async () => {
     actAs(playerId);
     await request(app).post(url("/tap")).send({ trackId: "t1", frame: 20 });

@@ -89,7 +89,7 @@ const PartsBody = z.array(z.object({
 
 const SaveBody = z.object({
   state: z.record(z.unknown()),
-  parts: PartsBody,
+  parts: PartsBody.optional(),
   bench: z.array(z.object({ fromSeconds: z.number().min(0), toSeconds: z.number().min(0) })).max(200),
   /** Only present after the claimant confirms the name dialog. */
   name: z.string().trim().min(1).max(60).optional(),
@@ -329,6 +329,19 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
       error: "This recording's tracking has been replaced. Reload before continuing your claim.",
       currentBundleFingerprint: ctx.fingerprint,
     });
+    return;
+  }
+
+  if (parsed.data.parts === undefined) {
+    const state = { ...parsed.data.state, bundle: ctx.fingerprint };
+    await db
+      .insert(claimMatchProgressTable)
+      .values({ userId: ctx.userId, recordingId: ctx.recordingId, gameState: state, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
+        set: { gameState: state, updatedAt: new Date() },
+      });
+    res.json({ ok: true });
     return;
   }
 

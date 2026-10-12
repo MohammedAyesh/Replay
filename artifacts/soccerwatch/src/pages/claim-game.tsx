@@ -68,6 +68,8 @@ import {
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts, firstRosterChunk, materializeRosterParts, seedRosterParts } from "@/lib/game-claim/parts";
 import { loadResumeChunks } from "@/lib/game-claim/resume";
+import { sendClaimSave } from "@/lib/game-claim/save";
+import { registerFindReloadGuard } from "@/lib/fresh-build";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -438,12 +440,12 @@ export function GameClaim({
   /* -------------------------------------------------------------- saving */
 
   const saveTimer = useRef<number | null>(null);
-  const sendSave = useCallback(async (keepalive = false) => {
+  const sendSave = useCallback(async (keepalive = false): Promise<boolean> => {
     if (saveTimer.current !== null) {
       window.clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
-    if (!Object.keys(ctxRef.current.S.you).length) return;
+    if (!Object.keys(ctxRef.current.S.you).length) return true;
     const currentCtx = ctxRef.current;
     const currentState = currentCtx.S;
     const chunksNeededForSave = Object.entries(currentState.you)
@@ -452,46 +454,54 @@ export function GameClaim({
       ))
       .map(([key]) => Number(key))
       .filter((key) => !chunks.current[key]);
-    if (chunksNeededForSave.length) {
+    const send = async (includeParts: boolean): Promise<boolean> => {
+      if (includeParts) currentCtx.CH = chunks.current;
+      currentState.elapsed = t0.current ? Date.now() - t0.current : currentState.elapsed;
+      const body = {
+        state: { ...currentState, saved: Date.now() },
+        ...(includeParts ? { parts: chainParts(currentCtx) } : {}),
+        bench: benchSpansOut(currentCtx),
+        done: currentState.step === "done" || currentState.step === "stats",
+        bundleFingerprint: fingerprint,
+        ...(includeParts && pendingClaimName.current ? { name: pendingClaimName.current } : {}),
+      };
       try {
-        await Promise.all(chunksNeededForSave.map(async (key) => {
-          await loadChunk(key);
-          currentCtx.CH = chunks.current;
-        }));
+        const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          ...(keepalive ? { keepalive: true } : {}),
+        });
+        if (!r.ok) {
+          setSaveError(true);
+          return false;
+        }
+        setSaveError(false);
+        if (body.name && pendingClaimName.current === body.name) {
+          pendingClaimName.current = null;
+          void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
+          void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
+        }
+        return true;
       } catch {
         setSaveError(true);
-        return;
+        return false;
       }
-    }
-    currentState.elapsed = t0.current ? Date.now() - t0.current : currentState.elapsed;
-    const body = {
-      state: { ...currentState, saved: Date.now() },
-      parts: chainParts(currentCtx),
-      bench: benchSpansOut(currentCtx),
-      done: currentState.step === "done" || currentState.step === "stats",
-      bundleFingerprint: fingerprint,
-      ...(pendingClaimName.current ? { name: pendingClaimName.current } : {}),
     };
     try {
-      const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        ...(keepalive ? { keepalive: true } : {}),
-      });
-      if (!r.ok) {
-        setSaveError(true);
-        return;
-      }
-      setSaveError(false);
-      if (body.name && pendingClaimName.current === body.name) {
-        pendingClaimName.current = null;
-        void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
-        void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
-      }
+      return await sendClaimSave(
+        chunksNeededForSave,
+        keepalive,
+        async (key) => {
+          await loadChunk(key);
+          currentCtx.CH = chunks.current;
+        },
+        send,
+      );
     } catch {
       setSaveError(true);
+      return false;
     }
   }, [fingerprint, loadChunk, recordingId, queryClient]);
 
@@ -515,6 +525,8 @@ export function GameClaim({
     saveTimer.current = null;
     void sendSave(true);
   }, [sendSave]);
+
+  useEffect(() => registerFindReloadGuard(() => sendSave()), [sendSave]);
 
   useEffect(() => {
     const onVisibilityChange = () => {

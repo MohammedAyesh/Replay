@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { bundleIn, shouldReload } from "./fresh-build";
+import { bundleIn, isFindPath, mayCheckForBuild, shouldReload } from "./fresh-build";
 
 describe("fresh build", () => {
   it("finds the entry bundle in the published HTML", () => {
@@ -14,5 +14,13 @@ describe("fresh build", () => {
     expect(shouldReload("/assets/index-new.js", "/assets/index-new.js", null)).toBe(false);
     expect(shouldReload(null, "/assets/index-new.js", null)).toBe(false);
     expect(shouldReload("/assets/index-old.js", null, null)).toBe(false);
+  });
+
+  it("checks again only after five minutes and recognizes /find routes", () => {
+    expect(mayCheckForBuild(1_000, 1_000 + 5 * 60 * 1000)).toBe(true);
+    expect(mayCheckForBuild(1_000, 1_000 + 5 * 60 * 1000 - 1)).toBe(false);
+    expect(isFindPath("/find/393")).toBe(true);
+    expect(isFindPath("/find-quick/393")).toBe(false);
+    expect(isFindPath("/soccerwatch/find/393", "/soccerwatch/")).toBe(true);
   });
 });
