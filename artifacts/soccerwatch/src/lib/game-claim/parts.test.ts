@@ -72,6 +72,23 @@ describe("roster-seeded claim parts", () => {
     expect(Y(ctx, 1).manual.map((piece) => piece.id)).toEqual(["roster:s1:t7:105:140"]);
   });
 
+  it("retains roster ranges for later chunks until they load, then materializes them", () => {
+    const ctx = makeContext(false);
+    ctx.game.frameRate = 20;
+    ctx.game.chunks = [{ k: 2, start: 15, dur: 10 }];
+    const part = { trackId: "s1:t7", fromFrame: 305, toFrame: 340 };
+
+    seedRosterParts(ctx, 2, [part]);
+    expect(Y(ctx, 2).rosterParts).toEqual([part]);
+
+    const loadedChunk = makeContext(true).CH[1];
+    ctx.CH[2] = { ...loadedChunk!, k: 2, start: 15 };
+    materializeRosterParts(ctx, 2);
+
+    expect(Y(ctx, 2).rosterParts).toEqual([]);
+    expect(Y(ctx, 2).manual.map((piece) => piece.id)).toEqual(["roster:s1:t7:305:340"]);
+  });
+
   it("starts at the first chunk with 30 in-play roster seconds, excluding warm-up", () => {
     const ctx = makeContext(false);
     ctx.game.frameRate = 20;
