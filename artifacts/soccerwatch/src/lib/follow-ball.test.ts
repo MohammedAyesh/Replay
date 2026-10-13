@@ -23,13 +23,18 @@ describe("recorded follow-ball camera", () => {
     expect(cameraAt(path, 4.5)).toBeCloseTo(1 - cameraAt(path, 5.5), 1);
   });
 
-  it("respects the speed limit and dead zone", () => {
+  it("respects the speed limit and holds a small detector wiggle still", () => {
     const targets = Array.from({ length: 101 }, (_, i): [number, number, number] => [i / 10, i < 50 ? .2 : .9, .5]);
     const path = smoothPath(targets);
     for (let i = 1; i < path.length; i++) {
       expect(Math.abs(path[i][1] - path[i - 1][1])).toBeLessThanOrEqual(FOLLOW_MAX_SPEED * FOLLOW_GRID_SECONDS + 1e-8);
     }
-    const wiggles = smoothPath(Array.from({ length: 20 }, (_, i): [number, number, number] => [i / 10, .5 + (i % 2 ? .02 : -.02), .5]));
-    expect(new Set(wiggles.map((p) => p[1])).size).toBe(1);
+    const wiggles = smoothPath(Array.from({ length: 201 }, (_, i): [number, number, number] => [i / 10, .5 + (i % 2 ? .04 : -.04), .5]));
+    expect(Math.max(...wiggles.map((p) => Math.abs(p[1] - .5)))).toBeLessThanOrEqual(.005);
+  });
+
+  it("follows a large move while keeping the zero-lag dead zone", () => {
+    const move = smoothPath(Array.from({ length: 201 }, (_, i): [number, number, number] => [i / 10, i < 100 ? .3 : .7, .5]));
+    expect(cameraAt(move, 19.5)).toBeGreaterThan(.6);
   });
 });
