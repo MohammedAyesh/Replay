@@ -1,4 +1,4 @@
-import { cleanSamples, smoothPath, targetSeriesRange, type BallSample, type CameraPoint, type GameSpan } from "./follow-ball";
+import { smoothPath, targetSeries, type BallSample, type CameraPoint, type GameSpan } from "./follow-ball";
 
 type CachedPath = { signature: string; promise: Promise<CameraPoint[]> };
 const pathCache = new Map<string, CachedPath>();
@@ -22,35 +22,21 @@ function signature(samples: BallSample[], spans: GameSpan[], duration: number): 
   return `${duration}:${samples.length}:${spans.length}:${hash >>> 0}`;
 }
 
-function idleTurn(): Promise<void> {
-  return new Promise((resolve) => {
-    const ric = (globalThis as typeof globalThis & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
-    if (ric) ric(() => resolve(), { timeout: 50 });
-    else setTimeout(resolve, 0);
+function computeOnMainThread(samples: BallSample[], spans: GameSpan[], duration: number): Promise<CameraPoint[]> {
+  return new Promise((resolve, reject) => {
+    const compute = () => {
+      try {
+        resolve(smoothPath(targetSeries(samples, spans, duration)));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    const ric = (globalThis as typeof globalThis & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    if (ric) ric(compute, { timeout: 50 });
+    else setTimeout(compute, 0);
   });
-}
-
-async function computeOnMainThread(samples: BallSample[], spans: GameSpan[], duration: number): Promise<CameraPoint[]> {
-  const clean = cleanSamples(samples);
-  const targetCount = Math.ceil(Math.max(0, duration) / 0.1) + 1;
-  const targets: CameraPoint[] = [];
-  const coreSize = 160;
-  for (let start = 0; start < targetCount; start += coreSize) {
-    const chunk = targetSeriesRange(clean, spans, duration, start, Math.min(targetCount, start + coreSize));
-    for (const point of chunk) targets.push(point);
-    await idleTurn();
-  }
-  const result: CameraPoint[] = [];
-  const overlap = 48;
-  for (let start = 0; start < targets.length; start += coreSize) {
-    const end = Math.min(targets.length, start + coreSize);
-    const from = Math.max(0, start - overlap);
-    const to = Math.min(targets.length, end + overlap);
-    const chunk = smoothPath(targets.slice(from, to));
-    for (let i = start; i < end; i++) result.push(chunk[i - from]);
-    await idleTurn();
-  }
-  return result;
 }
 
 async function computeWithWorker(samples: BallSample[], spans: GameSpan[], duration: number): Promise<CameraPoint[]> {

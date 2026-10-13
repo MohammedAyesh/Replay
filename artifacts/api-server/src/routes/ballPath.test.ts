@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TrackingManifest } from "@workspace/db";
-import { buildBallPath, selectNewestBundle } from "./ballPath";
+import { buildBallPath, getLru, selectNewestBundle, setLru } from "./ballPath";
 
 const manifest = {
   width: 3840,
@@ -52,5 +52,23 @@ describe("ball path response", () => {
 
   it("returns no path when the bundle has no ball rows", () => {
     expect(buildBallPath(manifest, [null, { ball: [] }])).toBeNull();
+  });
+
+  it("rechecks exact GUIDs after a LIKE lookup could treat underscores as wildcards", () => {
+    const falseMatch = { videoUrl: "https://cdn.example/abcXdef/playlist.m3u8", id: 1, manifest, updatedAt: new Date(1) };
+    const exactMatch = { videoUrl: "https://cdn.example/abc_def/playlist.m3u8", id: 2, manifest, updatedAt: new Date(2) };
+    expect(selectNewestBundle([falseMatch, exactMatch], "abc_def")).toBe(exactMatch);
+  });
+
+  it("expires old entries and evicts least-recently-used values at the cache limit", () => {
+    const cache = new Map<string, { expiresAt: number }>();
+    setLru(cache, "expired", { expiresAt: 1 }, 2, 10);
+    setLru(cache, "a", { expiresAt: 100 }, 2, 10);
+    setLru(cache, "b", { expiresAt: 100 }, 2, 10);
+    expect(getLru(cache, "a", 10)).toBeDefined();
+    setLru(cache, "c", { expiresAt: 100 }, 2, 10);
+    expect(cache.has("b")).toBe(false);
+    expect(cache.has("expired")).toBe(false);
+    expect(cache.size).toBe(2);
   });
 });

@@ -26,18 +26,18 @@ const inFlight = new Map<string, Promise<CachedPath>>();
 const POSITIVE_CACHE_LIMIT = 12;
 const NEGATIVE_CACHE_LIMIT = 500;
 
-function getLru<T extends { expiresAt: number }>(store: Map<string, T>, key: string, now: number): T | undefined {
-  const entry = store.get(key);
-  if (!entry || entry.expiresAt <= now) {
-    store.delete(key);
-    return undefined;
+export function getLru<T extends { expiresAt: number }>(store: Map<string, T>, key: string, now: number): T | undefined {
+  for (const [storedKey, storedValue] of store) {
+    if (storedValue.expiresAt <= now) store.delete(storedKey);
   }
+  const entry = store.get(key);
+  if (!entry) return undefined;
   store.delete(key);
   store.set(key, entry);
   return entry;
 }
 
-function setLru<T extends { expiresAt: number }>(store: Map<string, T>, key: string, entry: T, limit: number, now: number): void {
+export function setLru<T extends { expiresAt: number }>(store: Map<string, T>, key: string, entry: T, limit: number, now: number): void {
   for (const [storedKey, storedValue] of store) {
     if (storedValue.expiresAt <= now) store.delete(storedKey);
   }
