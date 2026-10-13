@@ -16,11 +16,39 @@ export type BallPathPayload = {
   coverage: number;
 };
 
-type BundleRow = { id: number; recordingId: number; updatedAt: Date };
-type CachedPath = { payload: BallPathPayload | null; etag?: string; error?: string; expiresAt: number };
+type BundleRow = { id: number; recordingId: number; updatedAt: Date; videoUrl: string };
+type CachedPath = { payload: BallPathPayload; etag: string; expiresAt: number };
+type CachedNegative = { expiresAt: number };
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const cache = new Map<string, CachedPath>();
+const negativeCache = new Map<string, CachedNegative>();
 const inFlight = new Map<string, Promise<CachedPath>>();
+const POSITIVE_CACHE_LIMIT = 12;
+const NEGATIVE_CACHE_LIMIT = 500;
+
+function getLru<T extends { expiresAt: number }>(store: Map<string, T>, key: string, now: number): T | undefined {
+  const entry = store.get(key);
+  if (!entry || entry.expiresAt <= now) {
+    store.delete(key);
+    return undefined;
+  }
+  store.delete(key);
+  store.set(key, entry);
+  return entry;
+}
+
+function setLru<T extends { expiresAt: number }>(store: Map<string, T>, key: string, entry: T, limit: number, now: number): void {
+  for (const [storedKey, storedValue] of store) {
+    if (storedValue.expiresAt <= now) store.delete(storedKey);
+  }
+  store.delete(key);
+  store.set(key, entry);
+  while (store.size > limit) {
+    const oldest = store.keys().next().value;
+    if (oldest === undefined) break;
+    store.delete(oldest);
+  }
+}
 
 function mergeIntervals(intervals: Array<[number, number]>, gap = 0): Array<[number, number]> {
   const sorted = intervals.filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
@@ -34,7 +62,7 @@ function mergeIntervals(intervals: Array<[number, number]>, gap = 0): Array<[num
   return out;
 }
 
-export function selectNewestBundle<T extends { videoUrl: string; id: number; manifest: TrackingManifest; updatedAt: Date }>(
+export function selectNewestBundle<T extends { videoUrl: string; id: number; updatedAt: Date }>(
   rows: T[],
   guid: string,
 ): T | null {
@@ -89,58 +117,74 @@ router.get("/videos/:guid/ball-path", async (req, res): Promise<void> => {
     return;
   }
   const now = Date.now();
-  let cached = cache.get(guid);
-  if (!cached || cached.expiresAt <= now) {
-    cache.delete(guid);
-    let work = inFlight.get(guid);
+  if (getLru(negativeCache, guid, now)) {
+    res.status(404).json({ error: "No analysed ball path" });
+    return;
+  }
+  const candidates = await db.select({
+    id: recordingTrackingBundlesTable.id,
+    recordingId: recordingTrackingBundlesTable.recordingId,
+    updatedAt: recordingTrackingBundlesTable.updatedAt,
+    videoUrl: recordingsTable.videoUrl,
+  }).from(recordingTrackingBundlesTable)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, recordingTrackingBundlesTable.recordingId))
+    .where(or(
+      like(recordingsTable.videoUrl, `%/${guid}/%`),
+      eq(recordingsTable.videoUrl, guid),
+    ))
+    .orderBy(desc(recordingTrackingBundlesTable.updatedAt));
+  const rows = candidates.filter((row) => extractBunnyVideoId(row.videoUrl) === guid);
+  if (!rows.length) {
+    setLru(negativeCache, guid, { expiresAt: now + CACHE_TTL_MS }, NEGATIVE_CACHE_LIMIT, now);
+    res.status(404).json({ error: "No analysed ball path" });
+    return;
+  }
+  let row: BundleRow | undefined;
+  for (const candidate of rows) {
+    if (await canViewRecording(req, candidate.recordingId)) {
+      row = candidate;
+      break;
+    }
+  }
+  if (!row) {
+    // Visibility is caller-specific; never let an inaccessible row poison
+    // another viewer's result for this video GUID.
+    res.status(404).json({ error: "No analysed ball path" });
+    return;
+  }
+
+  const bundleKey = `${row.id}:${row.updatedAt.toISOString()}`;
+  let cached = getLru(cache, bundleKey, now);
+  if (!cached) {
+    let work = inFlight.get(bundleKey);
     if (!work) {
       work = (async (): Promise<CachedPath> => {
-        const rows = await db.select({
-          id: recordingTrackingBundlesTable.id,
-          recordingId: recordingTrackingBundlesTable.recordingId,
-          updatedAt: recordingTrackingBundlesTable.updatedAt,
-        }).from(recordingTrackingBundlesTable)
-          .innerJoin(recordingsTable, eq(recordingsTable.id, recordingTrackingBundlesTable.recordingId))
-          .where(or(
-            like(recordingsTable.videoUrl, `%/${guid}/%`),
-            eq(recordingsTable.videoUrl, guid),
-          ))
-          .orderBy(desc(recordingTrackingBundlesTable.updatedAt));
-        const row = (await Promise.all(rows.map(async (candidate) => ({
-          candidate,
-          visible: await canViewRecording(req, candidate.recordingId),
-        })))).find(({ visible }) => visible)?.candidate;
-        if (!row) return { payload: null, error: "No analysed ball path", expiresAt: Date.now() + CACHE_TTL_MS };
         const [bundle] = await db.select({ manifest: recordingTrackingBundlesTable.manifest })
           .from(recordingTrackingBundlesTable)
-          .where(eq(recordingTrackingBundlesTable.id, row.id))
+          .where(eq(recordingTrackingBundlesTable.id, row!.id))
           .limit(1);
-        if (!bundle) return { payload: null, error: "No analysed ball path", expiresAt: Date.now() + CACHE_TTL_MS };
-        const play = await loadRecordingPlay(row.recordingId, { keepSegments: false });
+        if (!bundle) throw new Error("Selected tracking bundle disappeared");
+        const play = await loadRecordingPlay(row!.recordingId, { keepSegments: false });
         const payload = play ? buildBallPath(bundle.manifest, play.sidecars, play.inPlay) : null;
-        if (!payload) return { payload: null, error: "No ball data", expiresAt: Date.now() + CACHE_TTL_MS };
+        if (!payload) throw new Error("No ball data");
         const etag = `"${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}"`;
         return { payload, etag, expiresAt: Date.now() + CACHE_TTL_MS };
       })();
-      inFlight.set(guid, work);
+      inFlight.set(bundleKey, work);
       void work.finally(() => {
-        if (inFlight.get(guid) === work) inFlight.delete(guid);
+        if (inFlight.get(bundleKey) === work) inFlight.delete(bundleKey);
       }).catch(() => undefined);
     }
     try {
       cached = await work;
-      cache.set(guid, cached);
+      setLru(cache, bundleKey, cached, POSITIVE_CACHE_LIMIT, Date.now());
     } catch {
-      res.status(500).json({ error: "Could not prepare ball path" });
+      res.status(404).json({ error: "No ball data" });
       return;
     }
   }
-  if (!cached.payload) {
-    res.status(404).json({ error: cached.error ?? "No analysed ball path" });
-    return;
-  }
   res.setHeader("Cache-Control", "private, max-age=3600");
-  res.setHeader("ETag", cached.etag!);
+  res.setHeader("ETag", cached.etag);
   if (req.headers["if-none-match"] === cached.etag) {
     res.status(304).end();
     return;
