@@ -384,6 +384,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     integer: true,
     unit: "px",
   },
+  {
+    key: "playback.followBall",
+    group: "Playback",
+    label: "Follow the ball",
+    description: "Enable automatic camera panning for analysed recorded games.",
+    type: "boolean",
+    defaultValue: true,
+  },
 
   // ── Sharing ────────────────────────────────────────────────────────────
   {

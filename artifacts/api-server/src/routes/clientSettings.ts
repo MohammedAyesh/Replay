@@ -16,6 +16,7 @@ const router: IRouter = Router();
  */
 const CLIENT_VISIBLE = [
   "playback.maxWidth",
+  "playback.followBall",
   "downloads.limit",
   "downloads.windowDays",
   "downloads.enabled",
