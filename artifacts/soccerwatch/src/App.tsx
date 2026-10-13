@@ -44,7 +44,7 @@ import { LegalPage } from "@/pages/legal";
 import DeleteAccountPage from "@/pages/delete-account";
 import BlockedPlayers from "@/pages/blocked-players";
 import { useAuth } from "@/lib/auth";
-import { consumeExplicitAuthRedirect, getPostAuthLanding, getRedirectPathFromSearch, getSafeRedirectPath, rememberExplicitAuthRedirect, withRedirectPath } from "@/lib/auth-redirect";
+import { consumeExplicitAuthRedirect, getIncompleteProfileOnboardingRedirect, getPostAuthLanding, getRedirectPathFromSearch, getSafeRedirectPath, rememberExplicitAuthRedirect, withRedirectPath } from "@/lib/auth-redirect";
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
@@ -470,7 +470,7 @@ function AuthRedirectGuard() {
     }
 
     if (!user.profileComplete && pathname !== "/onboarding") {
-      setLocation(withRedirectPath("/onboarding", getSafeRedirectPath(location)));
+      setLocation(getIncompleteProfileOnboardingRedirect(location, window.location.search, window.location.hash));
     }
   }, [isLoading, user, isGuest, isSignedIn, location, setLocation]);
 

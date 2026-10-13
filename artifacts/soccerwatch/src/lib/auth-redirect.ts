@@ -12,7 +12,20 @@ export function getSafeRedirectPath(value: string | null | undefined, fallback =
 }
 
 export function getRedirectPathFromSearch(fallback = "/home"): string {
-  return getSafeRedirectPath(new URLSearchParams(window.location.search).get("redirect_url"), fallback);
+  return getRedirectPathFromSearchValue(window.location.search, fallback);
+}
+
+export function getRedirectPathFromSearchValue(search: string, fallback = "/home"): string {
+  return getSafeRedirectPath(new URLSearchParams(search).get("redirect_url"), fallback);
+}
+
+export function getLocationWithSearchAndHash(pathname: string, search: string, hash: string): string {
+  return `${pathname}${search}${hash}`;
+}
+
+export function getIncompleteProfileOnboardingRedirect(pathname: string, search: string, hash: string): string {
+  const returnPath = getSafeRedirectPath(getLocationWithSearchAndHash(pathname, search, hash));
+  return withRedirectPath("/onboarding", returnPath);
 }
 
 export function isParentOnboardingRedirect(path: string): boolean {

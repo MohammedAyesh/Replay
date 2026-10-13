@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -42,6 +42,7 @@ import { cn } from "@/lib/utils";
 import {
   ammanInputToUtcIso,
   formatAmmanDateTime,
+  suggestAmmanSessionEnd,
   utcIsoToAmmanInput,
 } from "@/lib/academy-session-time";
 
@@ -108,6 +109,7 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
   const [editingSession, setEditingSession] = useState<AcademySessionSummary | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AcademySessionSummary | null>(null);
   const [form, setForm] = useState<SessionForm>({ ...blankForm });
+  const autoEndTime = useRef<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState(false);
   const [mutationError, setMutationError] = useState(false);
@@ -138,6 +140,7 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
 
   const openCreate = () => {
     setEditingSession(null);
+    autoEndTime.current = null;
     setForm({ ...blankForm });
     setFormError(null);
     setMutationError(false);
@@ -145,6 +148,7 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
   };
   const openEdit = (session: AcademySessionSummary) => {
     setEditingSession(session);
+    autoEndTime.current = null;
     setForm(sessionFormFor(session));
     setFormError(null);
     setMutationError(false);
@@ -159,7 +163,14 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
     }
   };
   const updateField = (field: FormField, value: string) => {
-    setForm((current) => ({ ...current, [field]: value }));
+    if (field === "startsAt" && !editingSession) {
+      const suggestion = suggestAmmanSessionEnd(value, form.endsAt, autoEndTime.current);
+      autoEndTime.current = suggestion.autoEnd;
+      setForm((current) => ({ ...current, startsAt: value, endsAt: suggestion.endsAt }));
+    } else {
+      if (field === "endsAt") autoEndTime.current = null;
+      setForm((current) => ({ ...current, [field]: value }));
+    }
     setFormError(null);
     setMutationError(false);
   };

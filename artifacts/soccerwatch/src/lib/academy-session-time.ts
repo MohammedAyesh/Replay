@@ -94,6 +94,35 @@ export function utcIsoToAmmanInput(iso: string | null | undefined): string {
   return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}T${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
 }
 
+export function addMinutesToAmmanInput(value: string, minutes: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match || !Number.isSafeInteger(minutes)) return "";
+  const [, year, month, day, hour, minute] = match;
+  const parts: WallClockParts = {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+  };
+  if (!validWallClock(parts)) return "";
+  const result = new Date(wallClockAsUtcMs(parts) + minutes * 60_000);
+  if (!Number.isFinite(result.getTime())) return "";
+  return `${String(result.getUTCFullYear()).padStart(4, "0")}-${String(result.getUTCMonth() + 1).padStart(2, "0")}-${String(result.getUTCDate()).padStart(2, "0")}T${String(result.getUTCHours()).padStart(2, "0")}:${String(result.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+export function suggestAmmanSessionEnd(
+  startsAt: string,
+  currentEnd: string,
+  previousAutoEnd: string | null,
+): { endsAt: string; autoEnd: string | null } {
+  if (currentEnd && currentEnd !== previousAutoEnd) {
+    return { endsAt: currentEnd, autoEnd: null };
+  }
+  const endsAt = addMinutesToAmmanInput(startsAt, 90);
+  return { endsAt, autoEnd: endsAt || null };
+}
+
 export function formatAmmanDateTime(iso: string, locale: string): {
   date: string;
   dateKey: string;
