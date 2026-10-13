@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { useUpdateProfile, useGetMe, getGetMeQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
+import { useUpdateProfile, useGetMe, getGetMeQueryKey, type PlayerProfileInputPosition as ProfileInputPosition, type PlayerProfileInputGender as ProfileInputGender } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -155,7 +155,7 @@ export default function Onboarding() {
           />
         </div>
 
-        {!isParent && <div className="space-y-1.5">
+        <div className="space-y-1.5">
           <Label htmlFor="onboarding-phone" className="text-sm font-medium text-text/80">
             {copy.phoneNumber}
           </Label>
@@ -168,7 +168,7 @@ export default function Onboarding() {
             className={`h-12 rounded-[13px] border-line bg-raised text-text placeholder:text-muted-text focus-visible:ring-turf ${isArabic ? "text-right" : "text-left"}`}
             autoComplete="tel"
           />
-        </div>}
+        </div>
 
         {!isParent && <div className="space-y-1.5">
           <Label htmlFor="onboarding-position" className="text-sm font-medium text-text/80">
@@ -190,7 +190,7 @@ export default function Onboarding() {
           </select>
         </div>}
 
-        <div className="space-y-1.5">
+        {!isParent && <div className="space-y-1.5">
           <Label htmlFor="onboarding-age" className="text-sm font-medium text-text/80">
             {copy.age}
           </Label>
@@ -204,9 +204,9 @@ export default function Onboarding() {
             placeholder={copy.agePlaceholder}
             className={`h-12 rounded-[13px] border-line bg-raised text-text placeholder:text-muted-text focus-visible:ring-turf ${isArabic ? "text-right" : "text-left"}`}
           />
-        </div>
+        </div>}
 
-        <div className="space-y-1.5">
+        {!isParent && <div className="space-y-1.5">
           <Label htmlFor="onboarding-gender" className="text-sm font-medium text-text/80">
             {copy.gender}
           </Label>
@@ -224,7 +224,7 @@ export default function Onboarding() {
               </option>
             ))}
           </select>
-        </div>
+        </div>}
 
         <div className="mt-4">
           <Button

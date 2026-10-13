@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useLocation } from "wouter";
-import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useGetAcademyConsoleMemberships, useGetAcademyFamilyMe, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, getGetAcademyConsoleMembershipsQueryKey, getGetAcademyFamilyMeQueryKey, type ProfileInputPosition, type ProfileInputGender } from "@workspace/api-client-react";
+import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useGetAcademyConsoleMemberships, useGetAcademyFamilyMe, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, getGetAcademyConsoleMembershipsQueryKey, getGetAcademyFamilyMeQueryKey, type PlayerProfileInputPosition as ProfileInputPosition, type PlayerProfileInputGender as ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";

@@ -188,7 +188,7 @@ router.patch("/account/profile", async (req, res): Promise<void> => {
 
   const [updated] = await db
     .update(usersTable)
-    .set(guardianVariant
+    .set("profileType" in body
       ? { name: body.name, phone: body.phone, profileComplete: true }
       : { name: body.name, phone: body.phone, position: body.position, age: body.age, gender: body.gender, profileComplete: true })
     .where(eq(usersTable.id, userId))

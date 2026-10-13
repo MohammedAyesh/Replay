@@ -10,7 +10,7 @@ import { OrientationLock } from "@/components/orientation-lock";
 import { useAuth } from "@/lib/auth";
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { useMyMatches } from "@/lib/match-api";
-import { useGetAcademyFamilyMe } from "@workspace/api-client-react";
+import { useGetAcademyFamilyMe, getGetAcademyFamilyMeQueryKey } from "@workspace/api-client-react";
 import { recordInAppLocation } from "@/lib/find-nav";
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -19,7 +19,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { user, isGuest } = useAuth();
   const matchCopy = useMatchCopy();
   const myMatches = useMyMatches(Boolean(user) && !isGuest);
-  const academyFamily = useGetAcademyFamilyMe(undefined, { query: { enabled: Boolean(user) && !isGuest, retry: false } });
+  const academyFamily = useGetAcademyFamilyMe(undefined, { query: { queryKey: getGetAcademyFamilyMeQueryKey(), enabled: Boolean(user) && !isGuest, retry: false } });
   const inviteCount = myMatches.data?.invites.length ?? 0;
 
 

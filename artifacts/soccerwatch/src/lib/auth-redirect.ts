@@ -2,8 +2,9 @@ export function getSafeRedirectPath(value: string | null | undefined, fallback =
   if (!value || !value.startsWith("/") || value.startsWith("//")) return fallback;
 
   try {
-    const url = new URL(value, window.location.origin);
-    if (url.origin !== window.location.origin) return fallback;
+    const origin = typeof window === "undefined" ? "https://replay.local" : window.location.origin;
+    const url = new URL(value, origin);
+    if (url.origin !== origin) return fallback;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return fallback;
