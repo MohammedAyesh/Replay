@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ReplayMark } from "@/components/ReplayMark";
 import { applyFrameToVideo, clampOrigin } from "@/lib/cropFrame";
+import { cleanSamples } from "@/lib/follow-ball";
 import type { DemoCopy } from "./copy";
 import { formatClock, withBase, type DemoMatch, type DemoMoment, type DemoReport } from "./data";
 import { claimPlayback, releasePlayback, useActivePlayback, useHlsSource, useInView } from "./playback";
@@ -10,29 +11,11 @@ const PLAYER_ID = "broadcast";
 const OUT_ASPECT = 16 / 9;
 /** Width of the broadcast frame as a share of the panorama: a tight TV shot. */
 const FRAME_W = 0.32;
-/** A ball that jumps further than this in a quarter second is a detector error. */
-const MAX_JUMP = 0.09;
-
 type Path = Array<[number, number, number]>;
 
 /** Drop detector jumps so the camera never whips to a head or a shoe. */
 export function cleanPath(path: Path): Path {
-  const out: Path = [];
-  let rejected = 0;
-  for (const point of path) {
-    const last = out[out.length - 1];
-    if (last) {
-      const dt = Math.max(0.05, point[0] - last[0]);
-      // Six rejections in a row means the ball really is over there.
-      if (Math.abs(point[1] - last[1]) > MAX_JUMP * (dt / 0.25) + 0.02 && rejected < 6) {
-        rejected += 1;
-        continue;
-      }
-    }
-    rejected = 0;
-    out.push(point);
-  }
-  return out;
+  return cleanSamples(path);
 }
 
 /** The ball at time t (linear between samples), or null outside the path. */

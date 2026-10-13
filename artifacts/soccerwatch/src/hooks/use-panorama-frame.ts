@@ -154,6 +154,7 @@ export function usePanoramaFrame() {
     selectedRatio,
     srcAspect,
     readFrame,
+    setOrigin,
     applyFrameChange,
     setSourceAspect,
     handleFramePointerDown,

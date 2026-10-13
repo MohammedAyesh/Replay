@@ -668,6 +668,7 @@ export default function FieldDetail() {
             fallbackSrc={getBunnyMp4FallbackSource(activeVideo.playbackUrl)}
             title={activeVideo.title}
             source={{ kind: "bunny", videoId: activeVideo.guid }}
+            fieldId={collection?.id ?? undefined}
             academyId={academyId}
             layout="overlay"
             canSave={Boolean(user) && !isGuest}

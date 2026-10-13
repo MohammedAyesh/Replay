@@ -59,6 +59,9 @@ export function targetSeries(samples: BallSample[], gameSpans: GameSpan[], durat
 }
 
 function smoothAxis(values: number[], sigma: number, speed: number, deadZone: number): number[] {
+  if (deadZone > 0 && values.length && Math.max(...values) - Math.min(...values) <= deadZone * 2) {
+    return values.map(() => values[0]);
+  }
   const radius = Math.ceil(sigma * 3 / FOLLOW_GRID_SECONDS);
   const gaussian = values.map((_, i) => {
     let total = 0, weight = 0;
@@ -70,19 +73,18 @@ function smoothAxis(values: number[], sigma: number, speed: number, deadZone: nu
     }
     return total / weight;
   });
-  const forward = [...gaussian], backward = [...gaussian];
-  for (let i = 1; i < forward.length; i++) {
-    forward[i] = Math.max(forward[i - 1] - speed * FOLLOW_GRID_SECONDS, Math.min(forward[i - 1] + speed * FOLLOW_GRID_SECONDS, forward[i]));
+  let limited = [...gaussian];
+  for (let pass = 0; pass < 8; pass++) {
+    const forward = [...limited], backward = [...limited];
+    for (let i = 1; i < forward.length; i++) {
+      forward[i] = Math.max(forward[i - 1] - speed * FOLLOW_GRID_SECONDS, Math.min(forward[i - 1] + speed * FOLLOW_GRID_SECONDS, forward[i]));
+    }
+    for (let i = backward.length - 2; i >= 0; i--) {
+      backward[i] = Math.max(backward[i + 1] - speed * FOLLOW_GRID_SECONDS, Math.min(backward[i + 1] + speed * FOLLOW_GRID_SECONDS, backward[i]));
+    }
+    limited = forward.map((v, i) => (v + backward[i]) / 2);
   }
-  for (let i = backward.length - 2; i >= 0; i--) {
-    backward[i] = Math.max(backward[i + 1] - speed * FOLLOW_GRID_SECONDS, Math.min(backward[i + 1] + speed * FOLLOW_GRID_SECONDS, backward[i]));
-  }
-  const limited = forward.map((v, i) => (v + backward[i]) / 2);
-  const out = [...limited];
-  for (let i = 1; i < out.length; i++) {
-    if (Math.abs(gaussian[i] - out[i - 1]) <= deadZone) out[i] = out[i - 1];
-  }
-  return out;
+  return limited;
 }
 
 export function smoothPath(target: CameraPoint[]): CameraPoint[] {

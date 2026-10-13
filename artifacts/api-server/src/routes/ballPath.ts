@@ -31,7 +31,7 @@ function mergeIntervals(intervals: Array<[number, number]>): Array<[number, numb
   return out;
 }
 
-export function selectNewestBundle<T extends { videoUrl: string; bundle: BundleRow }>(
+export function selectNewestBundle<T extends { videoUrl: string; id: number; manifest: TrackingManifest; updatedAt: Date }>(
   rows: T[],
   guid: string,
 ): T | null {
@@ -62,7 +62,7 @@ export function buildBallPath(manifest: TrackingManifest, sidecars: Array<unknow
   return { v: 1, samples, gameSpans, coverage: total ? Math.min(1, covered / total) : 0 };
 }
 
-function cachedBundlePath(bundle: BundleRow, payload: BallPathPayload): { payload: BallPathPayload; etag: string } {
+function cachedBundlePath(bundle: BundleRow, payload: BallPathPayload): { payload: BallPathPayload; etag: string; used: number } {
   const key = `${bundle.id}:${bundle.updatedAt.toISOString()}`;
   const cached = cache.get(key);
   if (cached) {
@@ -93,7 +93,7 @@ router.get("/videos/:guid/ball-path", async (req, res): Promise<void> => {
   }).from(recordingTrackingBundlesTable)
     .innerJoin(recordingsTable, eq(recordingsTable.id, recordingTrackingBundlesTable.recordingId))
     .orderBy(desc(recordingTrackingBundlesTable.updatedAt));
-  const row = rows.find((item) => extractBunnyVideoId(item.videoUrl) === guid);
+  const row = selectNewestBundle(rows, guid);
   if (!row) {
     res.status(404).json({ error: "No analysed ball path" });
     return;
@@ -112,6 +112,10 @@ router.get("/videos/:guid/ball-path", async (req, res): Promise<void> => {
     }
     cached = cachedBundlePath(row, payload);
   } else cached.used = Date.now();
+  if (!cached) {
+    res.status(500).json({ error: "Could not prepare ball path" });
+    return;
+  }
   res.setHeader("Cache-Control", "private, max-age=3600");
   res.setHeader("ETag", cached.etag);
   if (req.headers["if-none-match"] === cached.etag) {

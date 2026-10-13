@@ -156,6 +156,7 @@ const strings = {
       savedToMyClips: "Saved to My Clips",
       saveToMyClips: "Save to My Clips",
       saved: "Saved",
+      followBall: "Follow the ball",
     },
     varPlayer: {
       starting: "Starting VAR — the camera is connecting (up to a minute)",
@@ -188,6 +189,7 @@ const strings = {
       zoomIn: "Zoom in",
       markMoment: "Mark this moment",
       quality: "Quality",
+      followBall: "Follow the ball",
       standard: "Standard",
       fullDetail: "Full detail",
     },
@@ -1463,6 +1465,7 @@ const strings = {
       savedToMyClips: "انحفظ بمقاطعي",
       saveToMyClips: "احفظ بمقاطعي",
       saved: "انحفظ",
+      followBall: "تتبع الكرة",
     },
     varPlayer: {
       starting: "عم نشغّل الـVAR — الكاميرا عم تتصل (لحد دقيقة)",
@@ -1495,6 +1498,7 @@ const strings = {
       zoomIn: "كبّر",
       markMoment: "علّم هاللحظة",
       quality: "الجودة",
+      followBall: "تتبع الكرة",
       standard: "عادي",
       fullDetail: "جودة كاملة",
     },

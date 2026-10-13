@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
   CheckCircle2,
   Circle,
+  CircleDot,
   LoaderCircle,
   Maximize,
   Minimize,
@@ -22,6 +24,7 @@ import { usePanoramaFrame, maxZoomFor } from "@/hooks/use-panorama-frame";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
+import { useClientSettings } from "@/lib/client-settings";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import {
   DEFAULT_SRC_ASPECT,
@@ -30,7 +33,12 @@ import {
   type AspectRatio,
   type CropKeyframe,
   type Frame,
+  clampOrigin,
+  applyFrameToVideo,
 } from "@/lib/cropFrame";
+import {
+  cameraAt, cameraYAt, cleanSamples, smoothPath, targetSeries,
+} from "@/lib/follow-ball";
 import {
   PLAYBACK_MAX_WIDTH,
   capBelowFailedLevel,
@@ -111,6 +119,7 @@ export type ClipPlayerProps = {
   onFallback?: () => void;
   title: string;
   source: ClipSource;
+  fieldId?: number;
   academyId?: number;
   isLive?: boolean;
   /** Enable UTC-based review and clipping for a rolling live HLS DVR window. */
@@ -289,6 +298,7 @@ export function ClipPlayer({
   onFallback,
   title,
   source,
+  fieldId,
   academyId,
   isLive = false,
   liveDvr,
@@ -310,6 +320,7 @@ export function ClipPlayer({
   const singleRowToolbar = toolbarLayout === "single-row";
   const initialSourceStage = initialPlaybackSourceStage({ isLive, proxySrc, src });
   const videoRef = useRef<HTMLVideoElement>(null);
+  const followFrameRef = useRef<Frame | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const fallbackRestoreUtcRef = useRef<number | null>(null);
   const sourceStageRef = useRef<PlaybackSourceStage>(initialSourceStage);
@@ -329,6 +340,7 @@ export function ClipPlayer({
     selectedRatio,
     srcAspect,
     readFrame,
+    setOrigin,
     applyFrameChange,
     setSourceAspect,
     handleFramePointerDown,
@@ -357,6 +369,123 @@ export function ClipPlayer({
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { toast } = useToast();
   const { t } = useTranslation();
+  const clientSettings = useClientSettings(fieldId).data?.settings;
+  const followSetting = clientSettings?.["playback.followBall"] !== false;
+  const [followChoice, setFollowChoice] = useState<boolean | null>(() => {
+    try {
+      const saved = localStorage.getItem("replay.followBall");
+      return saved === null ? null : saved === "true";
+    } catch { return null; }
+  });
+  const ballPathQuery = useQuery({
+    queryKey: ["ball-path", source.kind === "bunny" ? source.videoId : null],
+    queryFn: async (): Promise<{ v: 1; samples: Array<[number, number, number]>; gameSpans: Array<[number, number]>; coverage: number }> => {
+      const response = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/videos/${encodeURIComponent(source.kind === "bunny" ? source.videoId : "")}/ball-path`, { credentials: "include" });
+      if (!response.ok) throw new Error(`Ball path unavailable (${response.status})`);
+      return response.json();
+    },
+    enabled: source.kind === "bunny" && followSetting,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
+  const ballPath = ballPathQuery.data && ballPathQuery.data.coverage >= 0.25
+    ? ballPathQuery.data : undefined;
+  const followAvailable = Boolean(source.kind === "bunny" && followSetting && ballPath);
+  const isFollowingBall = followAvailable && followChoice !== false;
+  const followEnabledRef = useRef(false);
+  followEnabledRef.current = isFollowingBall;
+  const setFollowPreference = useCallback((enabled: boolean) => {
+    if (!enabled && followFrameRef.current) {
+      setOrigin(followFrameRef.current.x, followFrameRef.current.y);
+      followFrameRef.current = null;
+    }
+    try { localStorage.setItem("replay.followBall", String(enabled)); } catch { /* storage can be disabled */ }
+    setFollowChoice(enabled);
+  }, [setOrigin]);
+  const [duration, setDuration] = useState(0);
+  const cameraPath = useMemo(() => {
+    if (!ballPath) return [];
+    try {
+      return smoothPath(targetSeries(cleanSamples(ballPath.samples), ballPath.gameSpans, duration));
+    } catch (error) {
+      console.warn("[ClipPlayer] Could not prepare follow-ball path", error);
+      return [];
+    }
+  }, [ballPath, duration]);
+  const followLoopErrorLogged = useRef(false);
+  const manualTookControl = useRef(false);
+
+  useEffect(() => {
+    if (!isFollowingBall && followFrameRef.current) {
+      setOrigin(followFrameRef.current.x, followFrameRef.current.y);
+      followFrameRef.current = null;
+    }
+  }, [isFollowingBall, setOrigin]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!isFollowingBall) return;
+    if (!cameraPath.length) {
+      if (!followLoopErrorLogged.current) {
+        followLoopErrorLogged.current = true;
+        console.warn("[ClipPlayer] Follow-ball camera has no usable samples");
+      }
+      setFollowPreference(false);
+      return;
+    }
+    if (!video) return;
+    let raf = 0;
+    let active = true;
+    const update = () => {
+      if (!active || !followEnabledRef.current) return;
+      try {
+        const current = videoRef.current;
+        if (!current) return;
+        const frameNow = readFrame();
+        const centerX = cameraAt(cameraPath, current.currentTime);
+        const centerY = frameZoomRef.current > 1.01
+          ? cameraYAt(cameraPath, current.currentTime)
+          : frameNow.y + frameNow.h / 2;
+        const x = clampOrigin(centerX - frameNow.w / 2, frameNow.w);
+        const y = clampOrigin(centerY - frameNow.h / 2, frameNow.h);
+        frameOriginRef.current = { x, y };
+        const nextFrame = { ...frameNow, x, y };
+        followFrameRef.current = nextFrame;
+        applyFrameToVideo(current, nextFrame);
+        if (!current.paused || current.seeking) raf = requestAnimationFrame(update);
+      } catch (error) {
+        if (!followLoopErrorLogged.current) {
+          followLoopErrorLogged.current = true;
+          console.warn("[ClipPlayer] Follow-ball camera stopped", error);
+        }
+        setFollowPreference(false);
+      }
+    };
+    const start = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(update);
+    };
+    const stop = () => { cancelAnimationFrame(raf); };
+    video.addEventListener("play", start);
+    video.addEventListener("seeked", start);
+    video.addEventListener("pause", stop);
+    start();
+    return () => {
+      active = false;
+      stop();
+      video.removeEventListener("play", start);
+      video.removeEventListener("seeked", start);
+      video.removeEventListener("pause", stop);
+    };
+  }, [applyFrameToVideo, cameraPath, frameOriginRef, frameZoomRef, isFollowingBall, readFrame, setFollowPreference]);
+
+  const onFramePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    handleFramePointerMove(event);
+    if (draggedRef.current && !manualTookControl.current) {
+      manualTookControl.current = true;
+      if (isFollowingBall) setFollowPreference(false);
+    }
+  };
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -366,7 +495,6 @@ export function ClipPlayer({
   const [sourceStage, setSourceStageState] = useState<PlaybackSourceStage>(initialSourceStage);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [look, setLook] = useState<"original" | "warm" | "cinematic" | "noir">("original");
-  const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [liveUtcMs, setLiveUtcMs] = useState<number | null>(null);
   const [liveRange, setLiveRange] = useState<{ startUtcMs: number; endUtcMs: number } | null>(null);
@@ -1322,7 +1450,7 @@ export function ClipPlayer({
             ? { height: layout === "overlay" ? "min(100%, calc(100vw * 16 / 9))" : "min(70vh, calc(100% * 16 / 9))", aspectRatio: "9/16" }
             : { width: layout === "overlay" ? "min(100%, calc(100dvh * 16 / 9))" : "min(100%, calc(70vh * 16 / 9))", aspectRatio: "16/9" }}
           onPointerDown={handleFramePointerDown}
-          onPointerMove={handleFramePointerMove}
+          onPointerMove={onFramePointerMove}
           onPointerUp={handleFramePointerUp}
           onPointerCancel={handleFramePointerUp}
           onTouchEnd={(event) => {
@@ -1341,13 +1469,28 @@ export function ClipPlayer({
             ref={videoRef}
             crossOrigin="anonymous"
             className="pointer-events-none select-none"
-            style={{ ...frameToVideoStyle(frame), filter: videoFilter }}
+            style={{ ...frameToVideoStyle(isFollowingBall ? followFrameRef.current ?? frame : frame), filter: videoFilter }}
             playsInline
             onLoadedMetadata={onLoadedMetadata}
             onTimeUpdate={(event) => onPositionChangeRef.current?.(event.currentTarget.currentTime)}
           />
           {stageBadge && (
             <div className="pointer-events-none absolute start-3 top-3 z-20 max-w-[70%]">{stageBadge}</div>
+          )}
+          {followAvailable && !isFollowingBall && (
+            <button
+              type="button"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                manualTookControl.current = false;
+                setFollowPreference(true);
+              }}
+              className="absolute bottom-16 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/25 bg-black/75 px-3 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur"
+            >
+              <CircleDot size={15} aria-hidden="true" />
+              {t.player.followBall}
+            </button>
           )}
           <AnimatePresence>
             {playbackUiState === "loading" && (
@@ -1438,6 +1581,23 @@ export function ClipPlayer({
           setShowQualityPicker(false);
         }}
       />
+      {followAvailable && (
+        <button
+          type="button"
+          aria-label={t.player.followBall}
+          aria-pressed={isFollowingBall}
+          title={t.player.followBall}
+          onClick={() => {
+            manualTookControl.current = false;
+            setFollowPreference(!isFollowingBall);
+          }}
+          className="absolute end-[5.5rem] z-[60] flex items-center gap-1.5 rounded-full border border-white/20 bg-black/70 px-2.5 py-1.5 text-xs font-bold text-white backdrop-blur-sm"
+          style={{ top: "calc(env(safe-area-inset-top) + 4rem)" }}
+        >
+          <CircleDot size={15} aria-hidden="true" />
+          <span className="hidden sm:inline">{t.player.followBall}</span>
+        </button>
+      )}
 
       <AnimatePresence>
         {showControls && clipMode === "idle" && playbackUiState === "ready" && (

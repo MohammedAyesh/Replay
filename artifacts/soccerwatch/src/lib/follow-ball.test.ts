@@ -5,11 +5,11 @@ import {
 
 describe("recorded follow-ball camera", () => {
   it("rejects isolated jumps but accepts a persistent new position", () => {
-    const input: [number, number, number][] = [[0, .2, .5], [.1, .8, .5], [.2, .2, .5],
-      [.3, .8, .5], [.4, .8, .5], [.5, .8, .5], [.6, .8, .5], [.7, .8, .5], [.8, .8, .5], [.9, .8, .5]];
+    const input: [number, number, number][] = [[0, .2, .5], [.03, .8, .5], [.06, .8, .5],
+      [.09, .8, .5], [.12, .8, .5], [.15, .8, .5], [.18, .8, .5], [.21, .8, .5]];
     const clean = cleanSamples(input);
-    expect(clean[1][1]).toBe(.8);
-    expect(clean.length).toBeGreaterThan(2);
+    expect(clean).toHaveLength(2);
+    expect(clean[1][0]).toBe(.21);
   });
 
   it("interpolates a gap toward the known future ball position", () => {

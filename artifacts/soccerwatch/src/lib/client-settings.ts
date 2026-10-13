@@ -12,11 +12,12 @@ export function supportMailto(email: string): string | null {
   return trimmedEmail.includes("@") ? `mailto:${trimmedEmail}` : null;
 }
 
-export function useClientSettings() {
+export function useClientSettings(fieldId?: number) {
   return useQuery({
-    queryKey: ["client-settings"],
+    queryKey: ["client-settings", fieldId ?? null],
     queryFn: async (): Promise<ClientSettingsResponse> => {
-      const response = await fetch(`${apiBase}/client-settings`, {
+      const query = fieldId ? `?fieldId=${fieldId}` : "";
+      const response = await fetch(`${apiBase}/client-settings${query}`, {
         credentials: "include",
       });
       if (!response.ok) {

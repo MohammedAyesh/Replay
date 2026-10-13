@@ -60,4 +60,5 @@
 - [Wouter query strings](wouter-query-search.md) — `useLocation()` tracks the pathname; read query parameters with `useSearch()` so search-only navigation updates.
 - [Latest-only renewal undo](latest-only-renewal-undo.md) — verify the requested renewal exists in scope before returning a conflict for an older renewal.
 - [Port owner inspection](port-owner-inspection.md) — failed workflow status can coexist with a live listener; identify the process owner before restarting.
+- [Follow-ball smoothing](follow-ball-smoothing.md) — preserve time symmetry and enforce speed limits after bidirectional filtering; causal dead zones add visible lag.
 - [Orval path and query parameters](orval-path-query-collision.md) — operations combining path and query params can generate colliding `*Params` exports; verify codegen after contract changes.
