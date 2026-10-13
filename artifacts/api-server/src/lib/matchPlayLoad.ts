@@ -65,6 +65,7 @@ const DERIVE_VERSION = 4;
 
 const MAX_CACHED = 6;
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
+const playLoads = new Map<string, Promise<RecordingPlay | null>>();
 
 /** Keep derived play data cached while using the latest bundle manifest. */
 export function withFreshManifest(cached: RecordingPlay, manifest: TrackingManifest): RecordingPlay {
@@ -101,7 +102,11 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
     cached.at = Date.now();
     return withFreshManifest(cached.data, manifest);
   }
+  const loadKey = `${key}:${opts.keepSegments ? "segments" : "compact"}`;
+  const pending = playLoads.get(loadKey);
+  if (pending) return pending;
 
+  const work = (async (): Promise<RecordingPlay> => {
   const sidecars: Array<BallSidecar | null> = [];
   for (const segment of manifest.segments) sidecars[segment.index] = await readSidecar(segment.ballPath, segment.index);
   // the ball tracker's jumps onto a boot or a head make touches that never
@@ -173,4 +178,11 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
     if (oldest) playCache.delete(oldest[0]);
   }
   return data;
+  })();
+  playLoads.set(loadKey, work);
+  try {
+    return await work;
+  } finally {
+    if (playLoads.get(loadKey) === work) playLoads.delete(loadKey);
+  }
 }

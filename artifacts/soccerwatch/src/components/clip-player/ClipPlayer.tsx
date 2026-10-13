@@ -381,13 +381,15 @@ export function ClipPlayer({
   const followVideoId = source.kind === "bunny" ? source.videoId : null;
   const ballPathQuery = useQuery({
     queryKey: ["ball-path", followVideoId],
-    queryFn: async (): Promise<{ v: 1; samples: Array<[number, number, number]>; gameSpans: Array<[number, number]>; cameraSpans: Array<[number, number]>; coverage: number }> => {
+    queryFn: async (): Promise<{ v: 1; samples: Array<[number, number, number]>; gameSpans: Array<[number, number]>; cameraSpans: Array<[number, number]>; coverage: number } | null> => {
       const response = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/videos/${encodeURIComponent(followVideoId ?? "")}/ball-path`, { credentials: "include" });
+      if (response.status === 404) return null;
       if (!response.ok) throw new Error(`Ball path unavailable (${response.status})`);
       return response.json();
     },
     enabled: followVideoId !== null && followSetting,
     staleTime: 60 * 60 * 1000,
+    refetchOnMount: false,
     retry: false,
   });
   const ballPath = ballPathQuery.data && ballPathQuery.data.coverage >= 0.25
@@ -398,6 +400,7 @@ export function ClipPlayer({
   const followEnabledRef = useRef(false);
   followEnabledRef.current = isFollowingBall;
   const setFollowPreference = useCallback((enabled: boolean) => {
+    followEnabledRef.current = enabled;
     if (!enabled && followFrameRef.current) {
       setOrigin(followFrameRef.current.x, followFrameRef.current.y);
       followFrameRef.current = null;
@@ -406,6 +409,8 @@ export function ClipPlayer({
     setFollowChoice(enabled);
   }, [setOrigin]);
   const [duration, setDuration] = useState(0);
+  const [followUiFrame, setFollowUiFrame] = useState<Frame | null>(null);
+  const displayedFrame = isFollowingBall ? followUiFrame ?? followFrameRef.current ?? frame : frame;
   useEffect(() => {
     setCameraPath(null);
     if (!followVideoId || !ballPath || duration <= 0) return;
@@ -417,8 +422,8 @@ export function ClipPlayer({
       duration,
     ).then((path) => {
       if (active) setCameraPath(path);
-    }).catch((error) => {
-      if (active) console.warn("[ClipPlayer] Could not prepare follow-ball path", error);
+    }).catch(() => {
+      if (active) setCameraPath(null);
     });
     return () => { active = false; };
   }, [ballPath, duration, followVideoId]);
@@ -431,6 +436,15 @@ export function ClipPlayer({
       followFrameRef.current = null;
     }
   }, [isFollowingBall, setOrigin]);
+
+  useEffect(() => {
+    if (!isFollowingBall) {
+      setFollowUiFrame(null);
+      return;
+    }
+    const timer = window.setInterval(() => setFollowUiFrame(followFrameRef.current), 250);
+    return () => window.clearInterval(timer);
+  }, [isFollowingBall]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -482,11 +496,12 @@ export function ClipPlayer({
   }, [applyFrameToVideo, cameraPath, frameOriginRef, frameZoomRef, isFollowingBall, readFrame, setFollowPreference]);
 
   const onFramePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    handleFramePointerMove(event);
-    if (draggedRef.current && !manualTookControl.current) {
-      manualTookControl.current = true;
-      if (isFollowingBall) setFollowPreference(false);
-    }
+    handleFramePointerMove(event, () => {
+      if (isFollowingBall && !manualTookControl.current) {
+        manualTookControl.current = true;
+        setFollowPreference(false);
+      }
+    });
   };
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -1471,7 +1486,7 @@ export function ClipPlayer({
             ref={videoRef}
             crossOrigin="anonymous"
             className="pointer-events-none select-none"
-            style={{ ...frameToVideoStyle(isFollowingBall ? followFrameRef.current ?? frame : frame), filter: videoFilter }}
+                style={{ ...frameToVideoStyle(displayedFrame), filter: videoFilter }}
             playsInline
             onLoadedMetadata={onLoadedMetadata}
             onTimeUpdate={(event) => onPositionChangeRef.current?.(event.currentTarget.currentTime)}
@@ -1835,7 +1850,7 @@ export function ClipPlayer({
                 {singleRowToolbar && (
                   <FrameSizeSlider
                     zoom={frameZoom}
-                    frame={frame}
+                    frame={displayedFrame}
                     maxZoom={maxZoomFor(selectedRatio)}
                     inline
                     onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)}
@@ -1860,7 +1875,7 @@ export function ClipPlayer({
                   <div className="flex justify-center">
                     <FrameSizeSlider
                       zoom={frameZoom}
-                      frame={frame}
+                      frame={displayedFrame}
                       maxZoom={maxZoomFor(selectedRatio)}
                       onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)}
                     />
@@ -1886,11 +1901,11 @@ export function ClipPlayer({
                 <div className="w-2 h-2 rounded-full bg-live animate-pulse" />
                 <span className="text-live text-xs font-bold tabular-nums">{formatElapsed(recElapsed)}</span>
               </div>
-              <MiniMap frame={frame} srcAspect={srcAspect} />
+              <MiniMap frame={displayedFrame} srcAspect={srcAspect} />
             </div>
             <div className="flex-1" />
             <div className="px-4 pointer-events-auto flex flex-col items-center gap-3" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
-              <FrameSizeSlider zoom={frameZoom} frame={frame} maxZoom={maxZoomFor(selectedRatio)} compact onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)} />
+              <FrameSizeSlider zoom={frameZoom} frame={displayedFrame} maxZoom={maxZoomFor(selectedRatio)} compact onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)} />
               <button onClick={() => stopRecording()} className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-line bg-transparent text-text font-bold text-sm hover:bg-raised">
                 <Square className="w-4 h-4 fill-text" />
                 {t.clipping.stopRecording}

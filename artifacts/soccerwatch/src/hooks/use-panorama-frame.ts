@@ -116,13 +116,18 @@ export function usePanoramaFrame() {
     };
   }, []);
 
-  const handleFramePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  const handleFramePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>, onDragStart?: () => void) => {
     if (!dragRef.current.active || !frameBoxRef.current) return;
     const box = frameBoxRef.current;
     if (!(box.clientWidth > 0) || !(box.clientHeight > 0)) return;
     const rawX = event.clientX - dragRef.current.startX;
     const rawY = event.clientY - dragRef.current.startY;
-    if (!draggedRef.current && Math.hypot(rawX, rawY) > 8) draggedRef.current = true;
+    if (!draggedRef.current && Math.hypot(rawX, rawY) > 8) {
+      draggedRef.current = true;
+      onDragStart?.();
+      dragRef.current.originX = frameOriginRef.current.x;
+      dragRef.current.originY = frameOriginRef.current.y;
+    }
     const current = readFrame();
     setOrigin(
       dragRef.current.originX - (rawX / box.clientWidth) * current.w,

@@ -12,6 +12,12 @@ describe("recorded follow-ball camera", () => {
     expect(clean[1][0]).toBe(.21);
   });
 
+  it("judges jumps after long gaps by speed, not only by a short-window cutoff", () => {
+    const samples: [number, number, number][] = [[0, .05, .5], [2, .95, .5], [2.1, .95, .5]];
+    expect(cleanSamples(samples)).toHaveLength(1);
+    expect(cleanSamples([[0, .2, .5], [2, .35, .5]])).toHaveLength(2);
+  });
+
   it("interpolates a gap toward the known future ball position", () => {
     const targets = targetSeries([[1, .2, .5], [3, .8, .5]], [[0, 4]], 4);
     expect(targets.find(([t]) => t === 2)?.[1]).toBeCloseTo(.5);
@@ -29,7 +35,8 @@ describe("recorded follow-ball camera", () => {
     for (let i = 1; i < path.length; i++) {
       expect(Math.abs(path[i][1] - path[i - 1][1])).toBeLessThanOrEqual(FOLLOW_MAX_SPEED * FOLLOW_GRID_SECONDS + 1e-8);
     }
-    const wiggles = smoothPath(Array.from({ length: 201 }, (_, i): [number, number, number] => [i / 10, .5 + (i % 2 ? .04 : -.04), .5]));
+    const wiggles = smoothPath(Array.from({ length: 601 }, (_, i): [number, number, number] =>
+      [i / 10, .5 + .05 * Math.sin((2 * Math.PI * i / 10) / 3), .5]));
     expect(Math.max(...wiggles.map((p) => Math.abs(p[1] - .5)))).toBeLessThanOrEqual(.005);
   });
 

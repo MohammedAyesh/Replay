@@ -1,9 +1,8 @@
-import type { BallSample, CameraPoint, GameSpan } from "./follow-ball";
+import { cleanSamples, smoothPath, targetSeriesRange, type BallSample, type CameraPoint, type GameSpan } from "./follow-ball";
 
 type CachedPath = { signature: string; promise: Promise<CameraPoint[]> };
 const pathCache = new Map<string, CachedPath>();
 const PATH_CACHE_LIMIT = 8;
-let nextRequestId = 1;
 
 function signature(samples: BallSample[], spans: GameSpan[], duration: number): string {
   let hash = 2166136261;
@@ -23,7 +22,66 @@ function signature(samples: BallSample[], spans: GameSpan[], duration: number): 
   return `${duration}:${samples.length}:${spans.length}:${hash >>> 0}`;
 }
 
-export function computeFollowBallPath(
+function idleTurn(): Promise<void> {
+  return new Promise((resolve) => {
+    const ric = (globalThis as typeof globalThis & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
+    if (ric) ric(() => resolve(), { timeout: 50 });
+    else setTimeout(resolve, 0);
+  });
+}
+
+async function computeOnMainThread(samples: BallSample[], spans: GameSpan[], duration: number): Promise<CameraPoint[]> {
+  const clean = cleanSamples(samples);
+  const targetCount = Math.ceil(Math.max(0, duration) / 0.1) + 1;
+  const targets: CameraPoint[] = [];
+  const coreSize = 160;
+  for (let start = 0; start < targetCount; start += coreSize) {
+    const chunk = targetSeriesRange(clean, spans, duration, start, Math.min(targetCount, start + coreSize));
+    for (const point of chunk) targets.push(point);
+    await idleTurn();
+  }
+  const result: CameraPoint[] = [];
+  const overlap = 48;
+  for (let start = 0; start < targets.length; start += coreSize) {
+    const end = Math.min(targets.length, start + coreSize);
+    const from = Math.max(0, start - overlap);
+    const to = Math.min(targets.length, end + overlap);
+    const chunk = smoothPath(targets.slice(from, to));
+    for (let i = start; i < end; i++) result.push(chunk[i - from]);
+    await idleTurn();
+  }
+  return result;
+}
+
+async function computeWithWorker(samples: BallSample[], spans: GameSpan[], duration: number): Promise<CameraPoint[]> {
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL("./follow-ball.worker.ts", import.meta.url), { type: "module" });
+  } catch (error) {
+    return computeOnMainThread(samples, spans, duration);
+  }
+  return new Promise<CameraPoint[]>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      worker.terminate();
+      reject(new Error("Follow-ball worker timed out"));
+    }, 10_000);
+    const finish = (callback: () => void) => {
+      clearTimeout(timeout);
+      worker.terminate();
+      callback();
+    };
+    worker.onmessage = (event: MessageEvent<{ id: number; path?: CameraPoint[]; error?: string }>) => {
+      if (event.data.id !== 1) return;
+      if (event.data.error) finish(() => reject(new Error(event.data.error)));
+      else if (event.data.path) finish(() => resolve(event.data.path!));
+      else finish(() => reject(new Error("Follow-ball worker returned no camera path")));
+    };
+    worker.onerror = (event) => finish(() => reject(new Error(event.message || "Follow-ball worker failed")));
+    worker.postMessage({ id: 1, samples, spans, duration });
+  });
+}
+
+export async function computeFollowBallPath(
   guid: string,
   samples: BallSample[],
   spans: GameSpan[],
@@ -37,22 +95,8 @@ export function computeFollowBallPath(
     return cached.promise;
   }
 
-  const id = nextRequestId++;
-  const worker = new Worker(new URL("./follow-ball.worker.ts", import.meta.url), { type: "module" });
-  const promise = new Promise<CameraPoint[]>((resolve, reject) => {
-    worker.onmessage = (event: MessageEvent<{ id: number; path?: CameraPoint[]; error?: string }>) => {
-      if (event.data.id !== id) return;
-      worker.terminate();
-      if (event.data.error) reject(new Error(event.data.error));
-      else if (event.data.path) resolve(event.data.path);
-      else reject(new Error("Follow-ball worker returned no camera path"));
-    };
-    worker.onerror = (event) => {
-      worker.terminate();
-      reject(new Error(event.message || "Follow-ball worker failed"));
-    };
-    worker.postMessage({ id, samples, spans, duration });
-  });
+  const promise = computeWithWorker(samples, spans, duration).catch(() =>
+    computeOnMainThread(samples, spans, duration));
   pathCache.set(guid, { signature: key, promise });
   while (pathCache.size > PATH_CACHE_LIMIT) {
     const oldest = pathCache.keys().next().value;

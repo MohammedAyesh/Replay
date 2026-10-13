@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { Router, type IRouter } from "express";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, like, or } from "drizzle-orm";
 import { db, recordingsTable, recordingTrackingBundlesTable } from "@workspace/db";
-import { canViewBunnyVideo, extractBunnyVideoId } from "../lib/publicFootage";
-import { readClaimSegment } from "../lib/claimMatchStorage";
+import { canViewBunnyVideo, canViewRecording, extractBunnyVideoId } from "../lib/publicFootage";
 import { parseBallSidecar } from "../lib/matchPlay";
 import { phasesFromProvenance } from "../lib/matchFlow";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
@@ -17,9 +16,11 @@ export type BallPathPayload = {
   coverage: number;
 };
 
-type BundleRow = { id: number; manifest: TrackingManifest; updatedAt: Date };
-const CACHE_LIMIT = 12;
-const cache = new Map<string, { payload: BallPathPayload; etag: string; used: number }>();
+type BundleRow = { id: number; recordingId: number; updatedAt: Date };
+type CachedPath = { payload: BallPathPayload | null; etag?: string; error?: string; expiresAt: number };
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const cache = new Map<string, CachedPath>();
+const inFlight = new Map<string, Promise<CachedPath>>();
 
 function mergeIntervals(intervals: Array<[number, number]>, gap = 0): Array<[number, number]> {
   const sorted = intervals.filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
@@ -80,22 +81,6 @@ export function buildBallPath(
   return { v: 1, samples, gameSpans, cameraSpans, coverage: total ? Math.min(1, covered / total) : 0 };
 }
 
-function cachedBundlePath(bundle: BundleRow, payload: BallPathPayload): { payload: BallPathPayload; etag: string; used: number } {
-  const key = `${bundle.id}:${bundle.updatedAt.toISOString()}`;
-  const cached = cache.get(key);
-  if (cached) {
-    cached.used = Date.now();
-    return cached;
-  }
-  const etag = `"${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}"`;
-  cache.set(key, { payload, etag, used: Date.now() });
-  while (cache.size > CACHE_LIMIT) {
-    const oldest = [...cache.entries()].sort((a, b) => a[1].used - b[1].used)[0];
-    if (oldest) cache.delete(oldest[0]);
-  }
-  return cache.get(key)!;
-}
-
 const router: IRouter = Router();
 router.get("/videos/:guid/ball-path", async (req, res): Promise<void> => {
   const guid = req.params.guid;
@@ -103,45 +88,59 @@ router.get("/videos/:guid/ball-path", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  const rows = await db.select({
-    videoUrl: recordingsTable.videoUrl,
-    id: recordingTrackingBundlesTable.id,
-    recordingId: recordingTrackingBundlesTable.recordingId,
-    manifest: recordingTrackingBundlesTable.manifest,
-    updatedAt: recordingTrackingBundlesTable.updatedAt,
-  }).from(recordingTrackingBundlesTable)
-    .innerJoin(recordingsTable, eq(recordingsTable.id, recordingTrackingBundlesTable.recordingId))
-    .orderBy(desc(recordingTrackingBundlesTable.updatedAt));
-  const row = selectNewestBundle(rows, guid);
-  if (!row) {
-    res.status(404).json({ error: "No analysed ball path" });
-    return;
-  }
-  const key = `${row.id}:${row.updatedAt.toISOString()}`;
-  let cached = cache.get(key);
-  if (!cached) {
-    const phases = phasesFromProvenance(row.manifest.provenance);
-    const hasGamePhases = phases?.some((phase) => phase.kind === "game") ?? false;
-    const inPlaySpans = hasGamePhases
-      ? null
-      : (await loadRecordingPlay(row.recordingId, { keepSegments: true }))?.inPlay ?? null;
-    const sidecars = await Promise.all(row.manifest.segments.map(async (segment) => {
-      if (!segment.ballPath) return null;
-      try { return JSON.parse((await readClaimSegment(segment.ballPath)).toString("utf8")); } catch { return null; }
-    }));
-    const payload = buildBallPath(row.manifest, sidecars, inPlaySpans);
-    if (!payload) {
-      res.status(404).json({ error: "No ball data" });
+  const now = Date.now();
+  let cached = cache.get(guid);
+  if (!cached || cached.expiresAt <= now) {
+    cache.delete(guid);
+    let work = inFlight.get(guid);
+    if (!work) {
+      work = (async (): Promise<CachedPath> => {
+        const rows = await db.select({
+          id: recordingTrackingBundlesTable.id,
+          recordingId: recordingTrackingBundlesTable.recordingId,
+          updatedAt: recordingTrackingBundlesTable.updatedAt,
+        }).from(recordingTrackingBundlesTable)
+          .innerJoin(recordingsTable, eq(recordingsTable.id, recordingTrackingBundlesTable.recordingId))
+          .where(or(
+            like(recordingsTable.videoUrl, `%/${guid}/%`),
+            eq(recordingsTable.videoUrl, guid),
+          ))
+          .orderBy(desc(recordingTrackingBundlesTable.updatedAt));
+        const row = (await Promise.all(rows.map(async (candidate) => ({
+          candidate,
+          visible: await canViewRecording(req, candidate.recordingId),
+        })))).find(({ visible }) => visible)?.candidate;
+        if (!row) return { payload: null, error: "No analysed ball path", expiresAt: Date.now() + CACHE_TTL_MS };
+        const [bundle] = await db.select({ manifest: recordingTrackingBundlesTable.manifest })
+          .from(recordingTrackingBundlesTable)
+          .where(eq(recordingTrackingBundlesTable.id, row.id))
+          .limit(1);
+        if (!bundle) return { payload: null, error: "No analysed ball path", expiresAt: Date.now() + CACHE_TTL_MS };
+        const play = await loadRecordingPlay(row.recordingId, { keepSegments: false });
+        const payload = play ? buildBallPath(bundle.manifest, play.sidecars, play.inPlay) : null;
+        if (!payload) return { payload: null, error: "No ball data", expiresAt: Date.now() + CACHE_TTL_MS };
+        const etag = `"${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}"`;
+        return { payload, etag, expiresAt: Date.now() + CACHE_TTL_MS };
+      })();
+      inFlight.set(guid, work);
+      void work.finally(() => {
+        if (inFlight.get(guid) === work) inFlight.delete(guid);
+      }).catch(() => undefined);
+    }
+    try {
+      cached = await work;
+      cache.set(guid, cached);
+    } catch {
+      res.status(500).json({ error: "Could not prepare ball path" });
       return;
     }
-    cached = cachedBundlePath(row, payload);
-  } else cached.used = Date.now();
-  if (!cached) {
-    res.status(500).json({ error: "Could not prepare ball path" });
+  }
+  if (!cached.payload) {
+    res.status(404).json({ error: cached.error ?? "No analysed ball path" });
     return;
   }
   res.setHeader("Cache-Control", "private, max-age=3600");
-  res.setHeader("ETag", cached.etag);
+  res.setHeader("ETag", cached.etag!);
   if (req.headers["if-none-match"] === cached.etag) {
     res.status(304).end();
     return;

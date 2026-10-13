@@ -306,3 +306,54 @@ export async function canViewBunnyVideo(req: Request, videoId: string): Promise<
     guardianPlayerIds,
   ));
 }
+
+/** Check access to one imported recording so callers can choose a bundle row
+ * whose sidecar data belongs to a recording this viewer is allowed to open. */
+export async function canViewRecording(req: Request, recordingId: number): Promise<boolean> {
+  const context = await createPublicFootageContext(req);
+  const [record] = await db
+    .select({ recording: recordingsTable, field: fieldsTable })
+    .from(recordingsTable)
+    .innerJoin(fieldsTable, eq(recordingsTable.fieldId, fieldsTable.id))
+    .where(eq(recordingsTable.id, recordingId))
+    .limit(1);
+  if (!record) return false;
+  if (isPublicRecordingInContext(record.recording, record.field, context)) return true;
+  const viewer = context.viewer;
+  if (!viewer || viewer.isGuest || viewer.isDisabled) return false;
+  const attached = await db
+    .select({
+      academyId: academyRecordingsTable.academyId,
+      sessionSquadId: academySessionsTable.squadId,
+    })
+    .from(academyRecordingsTable)
+    .innerJoin(academySessionsTable, and(
+      eq(academySessionsTable.id, academyRecordingsTable.sessionId),
+      eq(academySessionsTable.academyId, academyRecordingsTable.academyId),
+    ))
+    .where(eq(academyRecordingsTable.recordingId, recordingId));
+  if (!attached.length) return false;
+  const academyIds = [...new Set(attached.map(({ academyId }) => academyId))];
+  const memberRows = await db.select({ academyId: academyMembersTable.academyId })
+    .from(academyMembersTable)
+    .where(and(eq(academyMembersTable.userId, viewer.id), inArray(academyMembersTable.academyId, academyIds)));
+  const memberAcademyIds = new Set(memberRows.map(({ academyId }) => academyId));
+  if (attached.some(({ academyId }) => memberAcademyIds.has(academyId))) return true;
+  const players = await db.select({
+    id: academyPlayersTable.id,
+    academyId: academyPlayersTable.academyId,
+    squadId: academyPlayersTable.squadId,
+    userId: academyPlayersTable.userId,
+    isActive: academyPlayersTable.isActive,
+  }).from(academyPlayersTable)
+    .where(and(eq(academyPlayersTable.isActive, true), inArray(academyPlayersTable.academyId, academyIds)));
+  if (!players.length) return false;
+  const guardians = await db.select({ playerId: academyPlayerGuardiansTable.playerId })
+    .from(academyPlayerGuardiansTable)
+    .where(and(eq(academyPlayerGuardiansTable.userId, viewer.id), inArray(academyPlayerGuardiansTable.playerId, players.map(({ id }) => id))));
+  const guardianPlayerIds = new Set(guardians.map(({ playerId }) => playerId));
+  return attached.some((recording) => canViewPinnedAcademyRecording(
+    viewer.id, { academyId: recording.academyId, sessionSquadId: recording.sessionSquadId },
+    memberAcademyIds, players, guardianPlayerIds,
+  ));
+}

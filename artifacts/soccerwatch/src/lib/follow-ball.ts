@@ -19,9 +19,9 @@ export function cleanSamples(samples: BallSample[]): BallSample[] {
   for (const point of sorted) {
     const last = out[out.length - 1];
     if (last) {
-      const dt = Math.max(0.05, point[0] - last[0]);
-      if (point[0] - last[0] <= FOLLOW_JUMP_WINDOW
-        && Math.abs(point[1] - last[1]) > FOLLOW_MAX_JUMP && rejected < 6) {
+      const dt = Math.max(0, point[0] - last[0]);
+      const maxDistance = FOLLOW_MAX_JUMP * (dt / FOLLOW_JUMP_WINDOW) + 0.02;
+      if (Math.abs(point[1] - last[1]) > maxDistance && rejected < 6) {
         rejected += 1;
         continue;
       }
@@ -47,9 +47,19 @@ function at(samples: BallSample[], t: number): [number, number] | null {
 
 export function targetSeries(samples: BallSample[], gameSpans: GameSpan[], duration: number): CameraPoint[] {
   const clean = cleanSamples(samples);
+  return targetSeriesRange(clean, gameSpans, duration, 0, Math.ceil(Math.max(0, duration) / FOLLOW_GRID_SECONDS) + 1);
+}
+
+export function targetSeriesRange(
+  clean: BallSample[],
+  gameSpans: GameSpan[],
+  duration: number,
+  fromIndex: number,
+  toIndex: number,
+): CameraPoint[] {
   const points: CameraPoint[] = [];
   const count = Math.ceil(Math.max(0, duration) / FOLLOW_GRID_SECONDS);
-  for (let i = 0; i <= count; i++) {
+  for (let i = fromIndex; i < Math.min(count + 1, toIndex); i++) {
     const t = Math.min(duration, i * FOLLOW_GRID_SECONDS);
     const inGame = gameSpans.some(([start, end]) => t >= start && t <= end);
     const ball = inGame ? at(clean, t) : null;
