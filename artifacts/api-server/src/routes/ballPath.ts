@@ -6,12 +6,14 @@ import { canViewBunnyVideo, extractBunnyVideoId } from "../lib/publicFootage";
 import { readClaimSegment } from "../lib/claimMatchStorage";
 import { parseBallSidecar } from "../lib/matchPlay";
 import { phasesFromProvenance } from "../lib/matchFlow";
+import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import type { TrackingManifest } from "@workspace/db";
 
 export type BallPathPayload = {
   v: 1;
   samples: Array<[number, number, number]>;
   gameSpans: Array<[number, number]>;
+  cameraSpans: Array<[number, number]>;
   coverage: number;
 };
 
@@ -19,14 +21,14 @@ type BundleRow = { id: number; manifest: TrackingManifest; updatedAt: Date };
 const CACHE_LIMIT = 12;
 const cache = new Map<string, { payload: BallPathPayload; etag: string; used: number }>();
 
-function mergeIntervals(intervals: Array<[number, number]>): Array<[number, number]> {
+function mergeIntervals(intervals: Array<[number, number]>, gap = 0): Array<[number, number]> {
   const sorted = intervals.filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
     .sort((a, b) => a[0] - b[0]);
   const out: Array<[number, number]> = [];
   for (const span of sorted) {
     const last = out[out.length - 1];
-    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
-    else out.push([...span]);
+    if (last && (span[0] <= last[1] || span[0] - last[1] < gap)) last[1] = Math.max(last[1], span[1]);
+    else out.push([span[0], span[1]]);
   }
   return out;
 }
@@ -38,7 +40,11 @@ export function selectNewestBundle<T extends { videoUrl: string; id: number; man
   return rows.find((row) => extractBunnyVideoId(row.videoUrl) === guid) ?? null;
 }
 
-export function buildBallPath(manifest: TrackingManifest, sidecars: Array<unknown>): BallPathPayload | null {
+export function buildBallPath(
+  manifest: TrackingManifest,
+  sidecars: Array<unknown>,
+  inPlaySpans?: Array<[number, number]> | null,
+): BallPathPayload | null {
   const fps = manifest.frameRate;
   if (!(fps > 0) || !(manifest.width > 0) || !(manifest.height > 0)) return null;
   const offset = manifest.videoStartSeconds ?? 0;
@@ -52,14 +58,26 @@ export function buildBallPath(manifest: TrackingManifest, sidecars: Array<unknow
   }).sort((a, b) => a[0] - b[0]);
   if (!samples.length) return null;
   const phases = phasesFromProvenance(manifest.provenance);
-  const gameSpans = mergeIntervals((phases ?? [])
+  const phaseSpans = (phases ?? [])
     .filter((phase) => phase.kind === "game")
-    .map((phase) => [Math.round((phase.start + offset) * 100) / 100, Math.round((phase.end + offset) * 100) / 100]));
+    .map((phase) => [phase.start, phase.end] as [number, number]);
+  const trackingSpans = phaseSpans.length
+    ? phaseSpans
+    : inPlaySpans?.length
+      ? inPlaySpans
+      : manifest.duration > 0
+        ? [[0, manifest.duration] as [number, number]]
+        : [];
+  const gameSpans = mergeIntervals(trackingSpans.map(([start, end]) => [
+    Math.round((start + offset) * 100) / 100,
+    Math.round((end + offset) * 100) / 100,
+  ]));
+  const cameraSpans = mergeIntervals(gameSpans, 20);
   const total = gameSpans.reduce((sum, [a, b]) => sum + b - a, 0);
   const covered = mergeIntervals(samples.map(([t]) => [t - 0.5, t + 0.5]))
     .reduce((sum, [a, b]) => sum + gameSpans.reduce((inside, [start, end]) =>
       inside + Math.max(0, Math.min(b, end) - Math.max(a, start)), 0), 0);
-  return { v: 1, samples, gameSpans, coverage: total ? Math.min(1, covered / total) : 0 };
+  return { v: 1, samples, gameSpans, cameraSpans, coverage: total ? Math.min(1, covered / total) : 0 };
 }
 
 function cachedBundlePath(bundle: BundleRow, payload: BallPathPayload): { payload: BallPathPayload; etag: string; used: number } {
@@ -88,6 +106,7 @@ router.get("/videos/:guid/ball-path", async (req, res): Promise<void> => {
   const rows = await db.select({
     videoUrl: recordingsTable.videoUrl,
     id: recordingTrackingBundlesTable.id,
+    recordingId: recordingTrackingBundlesTable.recordingId,
     manifest: recordingTrackingBundlesTable.manifest,
     updatedAt: recordingTrackingBundlesTable.updatedAt,
   }).from(recordingTrackingBundlesTable)
@@ -101,11 +120,16 @@ router.get("/videos/:guid/ball-path", async (req, res): Promise<void> => {
   const key = `${row.id}:${row.updatedAt.toISOString()}`;
   let cached = cache.get(key);
   if (!cached) {
+    const phases = phasesFromProvenance(row.manifest.provenance);
+    const hasGamePhases = phases?.some((phase) => phase.kind === "game") ?? false;
+    const inPlaySpans = hasGamePhases
+      ? null
+      : (await loadRecordingPlay(row.recordingId, { keepSegments: true }))?.inPlay ?? null;
     const sidecars = await Promise.all(row.manifest.segments.map(async (segment) => {
       if (!segment.ballPath) return null;
       try { return JSON.parse((await readClaimSegment(segment.ballPath)).toString("utf8")); } catch { return null; }
     }));
-    const payload = buildBallPath(row.manifest, sidecars);
+    const payload = buildBallPath(row.manifest, sidecars, inPlaySpans);
     if (!payload) {
       res.status(404).json({ error: "No ball data" });
       return;

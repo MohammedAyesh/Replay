@@ -59,9 +59,6 @@ export function targetSeries(samples: BallSample[], gameSpans: GameSpan[], durat
 }
 
 function smoothAxis(values: number[], sigma: number, speed: number, deadZone: number): number[] {
-  if (deadZone > 0 && values.length && Math.max(...values) - Math.min(...values) <= deadZone * 2) {
-    return values.map(() => values[0]);
-  }
   const radius = Math.ceil(sigma * 3 / FOLLOW_GRID_SECONDS);
   const gaussian = values.map((_, i) => {
     let total = 0, weight = 0;
@@ -73,16 +70,43 @@ function smoothAxis(values: number[], sigma: number, speed: number, deadZone: nu
     }
     return total / weight;
   });
-  let limited = [...gaussian];
+  let centered = gaussian;
+  if (deadZone > 0 && gaussian.length) {
+    const forward = new Array<number>(gaussian.length);
+    const backward = new Array<number>(gaussian.length);
+    forward[0] = gaussian[0];
+    for (let i = 1; i < gaussian.length; i++) {
+      const previous = forward[i - 1];
+      const delta = gaussian[i] - previous;
+      forward[i] = Math.abs(delta) <= deadZone ? previous : gaussian[i] - Math.sign(delta) * deadZone;
+    }
+    const last = gaussian.length - 1;
+    backward[last] = gaussian[last];
+    for (let i = last - 1; i >= 0; i--) {
+      const next = backward[i + 1];
+      const delta = gaussian[i] - next;
+      backward[i] = Math.abs(delta) <= deadZone ? next : gaussian[i] - Math.sign(delta) * deadZone;
+    }
+    centered = new Array<number>(gaussian.length);
+    for (let i = 0; i < gaussian.length; i++) centered[i] = (forward[i] + backward[i]) / 2;
+  }
+  let limited = new Array<number>(centered.length);
+  for (let i = 0; i < centered.length; i++) limited[i] = centered[i];
   for (let pass = 0; pass < 8; pass++) {
-    const forward = [...limited], backward = [...limited];
+    const forward = new Array<number>(limited.length);
+    const backward = new Array<number>(limited.length);
+    for (let i = 0; i < limited.length; i++) {
+      forward[i] = limited[i];
+      backward[i] = limited[i];
+    }
     for (let i = 1; i < forward.length; i++) {
       forward[i] = Math.max(forward[i - 1] - speed * FOLLOW_GRID_SECONDS, Math.min(forward[i - 1] + speed * FOLLOW_GRID_SECONDS, forward[i]));
     }
     for (let i = backward.length - 2; i >= 0; i--) {
       backward[i] = Math.max(backward[i + 1] - speed * FOLLOW_GRID_SECONDS, Math.min(backward[i + 1] + speed * FOLLOW_GRID_SECONDS, backward[i]));
     }
-    limited = forward.map((v, i) => (v + backward[i]) / 2);
+    limited = new Array<number>(forward.length);
+    for (let i = 0; i < forward.length; i++) limited[i] = (forward[i] + backward[i]) / 2;
   }
   return limited;
 }
