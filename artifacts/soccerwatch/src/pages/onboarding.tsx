@@ -10,7 +10,7 @@ import { useUser } from "@clerk/react";
 import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
-import { getRedirectPathFromSearch } from "@/lib/auth-redirect";
+import { getRedirectPathFromSearch, isParentOnboardingRedirect } from "@/lib/auth-redirect";
 
 const POSITION_VALUES = ["goalkeeper", "defender", "midfielder", "forward"] as const;
 const GENDER_VALUES = [
@@ -46,6 +46,7 @@ export default function Onboarding() {
   const isArabic = locale === "ar";
   const textDirection = isArabic ? "rtl" : "ltr";
   const returnPath = getRedirectPathFromSearch();
+  const isParent = isParentOnboardingRedirect(returnPath);
 
   // Guard: only kick truly unauthenticated users to login. If Clerk says
   // the user IS signed in, wait for the local user record to arrive instead
@@ -66,7 +67,7 @@ export default function Onboarding() {
     }
   }, [authLoading, user, returnPath, setLocation]);
 
-  const allFilled = name.trim() && phone.trim() && position && age && gender;
+  const allFilled = isParent ? name.trim() && phone.trim() : name.trim() && phone.trim() && position && age && gender;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,9 +78,13 @@ export default function Onboarding() {
         data: {
           name: name.trim(),
           phone: phone.trim(),
-          position: position as ProfileInputPosition,
-          age: parseInt(age, 10),
-          gender: gender as ProfileInputGender,
+          ...(isParent
+            ? { profileType: "guardian" as const }
+            : {
+                position: position as ProfileInputPosition,
+                age: parseInt(age, 10),
+                gender: gender as ProfileInputGender,
+              }),
         },
       },
       {
@@ -125,10 +130,10 @@ export default function Onboarding() {
         {...fadeUp(0.1)}
         className={`mb-2 text-3xl font-bold leading-tight ${isArabic ? "font-['Cairo']" : ""}`}
       >
-        {copy.title}
+        {isParent ? copy.familyTitle : copy.title}
       </motion.h1>
         <motion.p {...fadeUp(0.15)} className="mb-8 text-sm text-turf">
-        {copy.subtitle}
+        {isParent ? copy.familySubtitle : copy.subtitle}
       </motion.p>
 
       <motion.form
@@ -138,7 +143,7 @@ export default function Onboarding() {
       >
         <div className="space-y-1.5">
           <Label htmlFor="onboarding-name" className="text-sm font-medium text-text/80">
-            {copy.fullName}
+            {isParent ? copy.yourName : copy.fullName}
           </Label>
           <Input
             id="onboarding-name"
@@ -150,7 +155,7 @@ export default function Onboarding() {
           />
         </div>
 
-        <div className="space-y-1.5">
+        {!isParent && <div className="space-y-1.5">
           <Label htmlFor="onboarding-phone" className="text-sm font-medium text-text/80">
             {copy.phoneNumber}
           </Label>
@@ -163,9 +168,9 @@ export default function Onboarding() {
             className={`h-12 rounded-[13px] border-line bg-raised text-text placeholder:text-muted-text focus-visible:ring-turf ${isArabic ? "text-right" : "text-left"}`}
             autoComplete="tel"
           />
-        </div>
+        </div>}
 
-        <div className="space-y-1.5">
+        {!isParent && <div className="space-y-1.5">
           <Label htmlFor="onboarding-position" className="text-sm font-medium text-text/80">
             {copy.preferredPosition}
           </Label>
@@ -183,7 +188,7 @@ export default function Onboarding() {
               </option>
             ))}
           </select>
-        </div>
+        </div>}
 
         <div className="space-y-1.5">
           <Label htmlFor="onboarding-age" className="text-sm font-medium text-text/80">

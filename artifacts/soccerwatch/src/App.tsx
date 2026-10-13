@@ -44,7 +44,7 @@ import { LegalPage } from "@/pages/legal";
 import DeleteAccountPage from "@/pages/delete-account";
 import BlockedPlayers from "@/pages/blocked-players";
 import { useAuth } from "@/lib/auth";
-import { getRedirectPathFromSearch, getSafeRedirectPath, withRedirectPath } from "@/lib/auth-redirect";
+import { consumeExplicitAuthRedirect, getPostAuthLanding, getRedirectPathFromSearch, getSafeRedirectPath, rememberExplicitAuthRedirect, withRedirectPath } from "@/lib/auth-redirect";
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
@@ -238,6 +238,7 @@ function AuthHeroLayout({
 
 function SignInPage() {
   const redirectPath = getRedirectPathFromSearch();
+  useEffect(() => rememberExplicitAuthRedirect(), []);
 
   return (
     <AuthHeroLayout>
@@ -258,6 +259,7 @@ function SignUpPage() {
   const [showConsentError, setShowConsentError] = useState(false);
   const isArabic = locale === "ar";
   const redirectPath = getRedirectPathFromSearch();
+  useEffect(() => rememberExplicitAuthRedirect(), []);
   const copy = isArabic
     ? {
         recordingTitle: "أوافق على أن يتم تصويري",
@@ -461,8 +463,14 @@ function AuthRedirectGuard() {
       return;
     }
 
+    if (pathname === "/home") {
+      const explicitHome = consumeExplicitAuthRedirect("/home");
+      if (user.isGuardianOnly && !explicitHome) setLocation(getPostAuthLanding(null, true));
+      return;
+    }
+
     if (!user.profileComplete && pathname !== "/onboarding") {
-      setLocation(withRedirectPath("/onboarding", getSafeRedirectPath(pathname)));
+      setLocation(withRedirectPath("/onboarding", getSafeRedirectPath(location)));
     }
   }, [isLoading, user, isGuest, isSignedIn, location, setLocation]);
 

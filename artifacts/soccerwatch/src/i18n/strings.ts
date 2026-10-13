@@ -1112,6 +1112,9 @@ const strings = {
     onboarding: {
       title: "Complete your profile",
       subtitle: "Help us personalize your Replay experience.",
+      familyTitle: "Set up your family account",
+      familySubtitle: "Add your name and phone number to continue.",
+      yourName: "Your name",
       fullName: "Full name",
       fullNamePlaceholder: "Your full name",
       phoneNumber: "Phone number",
@@ -2421,6 +2424,9 @@ const strings = {
     onboarding: {
       title: "كمّل صفحتك",
       subtitle: "ساعدنا نظبطلك ريبلاي على ذوقك.",
+      familyTitle: "إعداد حساب العائلة",
+      familySubtitle: "أضف اسمك ورقم هاتفك للمتابعة.",
+      yourName: "اسمك",
       fullName: "الاسم الكامل",
       fullNamePlaceholder: "اكتب اسمك الكامل",
       phoneNumber: "رقم الموبايل",

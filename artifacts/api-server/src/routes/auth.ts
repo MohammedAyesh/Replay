@@ -9,6 +9,10 @@ import { recordAuthMeError, recordClerkAuthOutcome } from "../lib/clerkAuthDiagn
 
 const router: IRouter = Router();
 
+export function isGuardianOnlyState(hasActiveGuardianLink: boolean, hasPlayerLink: boolean, position: string | null | undefined): boolean {
+  return hasActiveGuardianLink && !hasPlayerLink && !position;
+}
+
 router.get("/auth/me", async (req, res): Promise<void> => {
   try {
     const user = await getLocalUserRecord(req);
@@ -39,7 +43,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
         eq(academyPlayerGuardiansTable.userId, user.id),
         eq(academyPlayersTable.isActive, true),
       )).limit(1);
-    const isGuardianOnly = Boolean(guardianLink && !ownPlayer && !user.position);
+    const isGuardianOnly = isGuardianOnlyState(Boolean(guardianLink), Boolean(ownPlayer), user.position);
 
     const resolution = getUserResolution(req);
     recordClerkAuthOutcome(req, {

@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays, GraduationCap } from "lucide-react";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
@@ -10,6 +10,7 @@ import { OrientationLock } from "@/components/orientation-lock";
 import { useAuth } from "@/lib/auth";
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { useMyMatches } from "@/lib/match-api";
+import { useGetAcademyFamilyMe } from "@workspace/api-client-react";
 import { recordInAppLocation } from "@/lib/find-nav";
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -18,6 +19,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { user, isGuest } = useAuth();
   const matchCopy = useMatchCopy();
   const myMatches = useMyMatches(Boolean(user) && !isGuest);
+  const academyFamily = useGetAcademyFamilyMe(undefined, { query: { enabled: Boolean(user) && !isGuest, retry: false } });
   const inviteCount = myMatches.data?.invites.length ?? 0;
 
 
@@ -127,6 +129,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
             isActive={location === "/my-clips"}
             isTranslucent={useTranslucentBar}
           />
+          {academyFamily.data && (
+            <NavItem
+              href="/academy/me"
+              icon={<GraduationCap className="w-6 h-6" />}
+              label={t.account.myAcademy}
+              isActive={location === "/academy/me"}
+              isTranslucent={useTranslucentBar}
+            />
+          )}
           <NavItem
             href="/account"
             icon={<UserIcon className="w-6 h-6" />}
