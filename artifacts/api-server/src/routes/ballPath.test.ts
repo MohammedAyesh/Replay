@@ -40,7 +40,7 @@ describe("ball path response", () => {
       samples: [[105, .25, .5], [205, .5, .25]],
       gameSpans: [[105, 125], [135, 145], [165, 185]],
       cameraSpans: [[105, 145], [165, 185]],
-      coverage: 0,
+      coverage: 0.01,
     });
   });
 

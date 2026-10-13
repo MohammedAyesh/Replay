@@ -1,4 +1,4 @@
-import { cleanSamples, smoothPath, targetSeries, type BallSample, type CameraPoint, type GameSpan } from "./follow-ball";
+import { smoothPath, targetSeries, type BallSample, type CameraPoint, type GameSpan } from "./follow-ball";
 
 type Request = {
   id: number;
@@ -17,7 +17,7 @@ const workerScope = self as unknown as {
 workerScope.onmessage = (event) => {
   const { id, samples, spans, duration } = event.data;
   try {
-    const targets = targetSeries(cleanSamples(samples), spans, duration);
+    const targets = targetSeries(samples, spans, duration);
     workerScope.postMessage({ id, path: smoothPath(targets) });
   } catch (error) {
     workerScope.postMessage({ id, error: error instanceof Error ? error.message : String(error) });

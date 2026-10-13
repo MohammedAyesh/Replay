@@ -37,4 +37,9 @@ describe("recorded follow-ball camera", () => {
     const move = smoothPath(Array.from({ length: 201 }, (_, i): [number, number, number] => [i / 10, i < 100 ? .3 : .7, .5]));
     expect(cameraAt(move, 19.5)).toBeGreaterThan(.6);
   });
+
+  it("smooths a two-hour 10 Hz path without argument-limit errors", () => {
+    const targets = Array.from({ length: 72_000 }, (_, i): [number, number, number] => [i / 10, .5 + Math.sin(i / 20) * .03, .5]);
+    expect(() => smoothPath(targets)).not.toThrow();
+  });
 });
