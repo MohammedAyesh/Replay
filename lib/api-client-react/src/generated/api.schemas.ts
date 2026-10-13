@@ -139,6 +139,7 @@ export interface User {
   /** @nullable */
   profilePhoto?: string | null;
   profileComplete: boolean;
+  isGuardianOnly?: boolean;
   /** @nullable */
   preferredLocale?: string | null;
   recordingConsent: boolean;
@@ -1131,36 +1132,51 @@ export interface ShareLinkResult {
   posterUrl: string;
 }
 
-export type ProfileInputPosition = typeof ProfileInputPosition[keyof typeof ProfileInputPosition];
+export type PlayerProfileInputPosition = typeof PlayerProfileInputPosition[keyof typeof PlayerProfileInputPosition];
 
 
-export const ProfileInputPosition = {
+export const PlayerProfileInputPosition = {
   goalkeeper: 'goalkeeper',
   defender: 'defender',
   midfielder: 'midfielder',
   forward: 'forward',
 } as const;
 
-export type ProfileInputGender = typeof ProfileInputGender[keyof typeof ProfileInputGender];
+export type PlayerProfileInputGender = typeof PlayerProfileInputGender[keyof typeof PlayerProfileInputGender];
 
 
-export const ProfileInputGender = {
+export const PlayerProfileInputGender = {
   male: 'male',
   female: 'female',
   prefer_not_to_say: 'prefer_not_to_say',
 } as const;
 
-export interface ProfileInput {
+export interface PlayerProfileInput {
   name: string;
   phone: string;
-  position: ProfileInputPosition;
+  position: PlayerProfileInputPosition;
   /**
      * @minimum 10
      * @maximum 99
      */
   age: number;
-  gender: ProfileInputGender;
+  gender: PlayerProfileInputGender;
 }
+
+export type GuardianProfileInputProfileType = typeof GuardianProfileInputProfileType[keyof typeof GuardianProfileInputProfileType];
+
+
+export const GuardianProfileInputProfileType = {
+  guardian: 'guardian',
+} as const;
+
+export interface GuardianProfileInput {
+  profileType: GuardianProfileInputProfileType;
+  name: string;
+  phone: string;
+}
+
+export type ProfileInput = PlayerProfileInput | GuardianProfileInput;
 
 export interface AccountStats {
   savedClips: number;

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { desc, eq, sql } from "drizzle-orm";
-import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable, fieldsTable, claimMatchIdentityBindingsTable } from "@workspace/db";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { db, savedClipsTable, likesTable, recordingsTable, clipsTable, usersTable, fieldsTable, claimMatchIdentityBindingsTable, academyPlayerGuardiansTable, academyPlayersTable } from "@workspace/db";
 import { GetAccountStatsResponse, UpdateProfileResponse, UpdateProfileBody, UpdateLocaleBody, UpdateLocaleResponse, UpdateConsentsBody, UpdateConsentsResponse } from "@workspace/api-zod";
 import { getLocalAccountUserId, getLocalUserId, getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { accountDeletionHttpResponse, deleteUserAccount } from "../lib/accountDeletion";
@@ -172,9 +172,25 @@ router.patch("/account/profile", async (req, res): Promise<void> => {
     return;
   }
 
+  const guardianVariant = "profileType" in body;
+  if (guardianVariant) {
+    const user = await getLocalUserRecord(req);
+    const [ownPlayer] = await db.select({ id: academyPlayersTable.id }).from(academyPlayersTable)
+      .where(eq(academyPlayersTable.userId, userId)).limit(1);
+    const [guardianLink] = await db.select({ playerId: academyPlayersTable.id }).from(academyPlayerGuardiansTable)
+      .innerJoin(academyPlayersTable, eq(academyPlayersTable.id, academyPlayerGuardiansTable.playerId))
+      .where(and(eq(academyPlayerGuardiansTable.userId, userId), eq(academyPlayersTable.isActive, true))).limit(1);
+    if (!user || user.position || ownPlayer || !guardianLink) {
+      res.status(403).json({ error: "Guardian profile setup is not available" });
+      return;
+    }
+  }
+
   const [updated] = await db
     .update(usersTable)
-    .set({ name: body.name, phone: body.phone, position: body.position, age: body.age, gender: body.gender, profileComplete: true })
+    .set(guardianVariant
+      ? { name: body.name, phone: body.phone, profileComplete: true }
+      : { name: body.name, phone: body.phone, position: body.position, age: body.age, gender: body.gender, profileComplete: true })
     .where(eq(usersTable.id, userId))
     .returning();
 

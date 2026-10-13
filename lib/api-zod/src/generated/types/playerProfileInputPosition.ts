@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type ProfileInputPosition = typeof ProfileInputPosition[keyof typeof ProfileInputPosition];
+export type PlayerProfileInputPosition = typeof PlayerProfileInputPosition[keyof typeof PlayerProfileInputPosition];
 
 
-export const ProfileInputPosition = {
+export const PlayerProfileInputPosition = {
   goalkeeper: 'goalkeeper',
   defender: 'defender',
   midfielder: 'midfielder',

@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type ProfileInputGender = typeof ProfileInputGender[keyof typeof ProfileInputGender];
+export type PlayerProfileInputGender = typeof PlayerProfileInputGender[keyof typeof PlayerProfileInputGender];
 
 
-export const ProfileInputGender = {
+export const PlayerProfileInputGender = {
   male: 'male',
   female: 'female',
   prefer_not_to_say: 'prefer_not_to_say',

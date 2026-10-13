@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import crypto from "crypto";
-import { eq } from "drizzle-orm";
-import { db, usersTable, academiesTable, fieldOwnersTable } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
+import { db, usersTable, academiesTable, fieldOwnersTable, academyPlayersTable, academyPlayerGuardiansTable } from "@workspace/db";
 import { GetMeResponse, LoginAsGuestResponse } from "@workspace/api-zod";
 import { getLocalUserRecord, getUserResolution, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { GUEST_COOKIE_OPTIONS } from "../lib/cookies";
@@ -30,6 +30,16 @@ router.get("/auth/me", async (req, res): Promise<void> => {
       .select({ fieldId: fieldOwnersTable.fieldId })
       .from(fieldOwnersTable)
       .where(eq(fieldOwnersTable.userId, user.id));
+    const [ownPlayer] = await db.select({ id: academyPlayersTable.id })
+      .from(academyPlayersTable).where(eq(academyPlayersTable.userId, user.id)).limit(1);
+    const [guardianLink] = await db.select({ playerId: academyPlayersTable.id })
+      .from(academyPlayerGuardiansTable)
+      .innerJoin(academyPlayersTable, eq(academyPlayersTable.id, academyPlayerGuardiansTable.playerId))
+      .where(and(
+        eq(academyPlayerGuardiansTable.userId, user.id),
+        eq(academyPlayersTable.isActive, true),
+      )).limit(1);
+    const isGuardianOnly = Boolean(guardianLink && !ownPlayer && !user.position);
 
     const resolution = getUserResolution(req);
     recordClerkAuthOutcome(req, {
@@ -57,6 +67,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
       age: user.age ?? null,
       gender: user.gender ?? null,
       profileComplete: user.profileComplete,
+      isGuardianOnly,
       preferredLocale: user.preferredLocale ?? null,
       recordingConsent: user.recordingConsent,
       recordingConsentAt: user.recordingConsentAt?.toISOString() ?? null,

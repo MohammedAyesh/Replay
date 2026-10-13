@@ -5,17 +5,7 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
-import type { ProfileInputGender } from './profileInputGender';
-import type { ProfileInputPosition } from './profileInputPosition';
+import type { GuardianProfileInput } from './guardianProfileInput';
+import type { PlayerProfileInput } from './playerProfileInput';
 
-export interface ProfileInput {
-  name: string;
-  phone: string;
-  position: ProfileInputPosition;
-  /**
-     * @minimum 10
-     * @maximum 99
-     */
-  age: number;
-  gender: ProfileInputGender;
-}
+export type ProfileInput = PlayerProfileInput | GuardianProfileInput;

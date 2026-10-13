@@ -113,6 +113,7 @@ export const LoginResponse = zod.object({
   "nation": zod.string().nullish(),
   "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
+  "isGuardianOnly": zod.boolean().optional(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
   "recordingConsentAt": zod.coerce.date().nullish(),
@@ -141,6 +142,7 @@ export const LoginAsGuestResponse = zod.object({
   "nation": zod.string().nullish(),
   "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
+  "isGuardianOnly": zod.boolean().optional(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
   "recordingConsentAt": zod.coerce.date().nullish(),
@@ -174,6 +176,7 @@ export const GetMeResponse = zod.object({
   "nation": zod.string().nullish(),
   "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
+  "isGuardianOnly": zod.boolean().optional(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
   "recordingConsentAt": zod.coerce.date().nullish(),
@@ -662,6 +665,7 @@ export const UpdateConsentsResponse = zod.object({
   "nation": zod.string().nullish(),
   "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
+  "isGuardianOnly": zod.boolean().optional(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
   "recordingConsentAt": zod.coerce.date().nullish(),
@@ -5001,6 +5005,7 @@ export const UpdateLocaleResponse = zod.object({
   "nation": zod.string().nullish(),
   "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
+  "isGuardianOnly": zod.boolean().optional(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
   "recordingConsentAt": zod.coerce.date().nullish(),
@@ -5014,18 +5019,22 @@ export const UpdateLocaleResponse = zod.object({
 /**
  * @summary Update user profile (onboarding)
  */
-export const updateProfileBodyAgeMin = 10;
-export const updateProfileBodyAgeMax = 99;
+export const updateProfileBodyOneAgeMin = 10;
+export const updateProfileBodyOneAgeMax = 99;
 
 
 
-export const UpdateProfileBody = zod.object({
+export const UpdateProfileBody = zod.union([zod.object({
   "name": zod.string(),
   "phone": zod.string(),
   "position": zod.enum(['goalkeeper', 'defender', 'midfielder', 'forward']),
-  "age": zod.number().min(updateProfileBodyAgeMin).max(updateProfileBodyAgeMax),
+  "age": zod.number().min(updateProfileBodyOneAgeMin).max(updateProfileBodyOneAgeMax),
   "gender": zod.enum(['male', 'female', 'prefer_not_to_say'])
-})
+}),zod.object({
+  "profileType": zod.enum(['guardian']),
+  "name": zod.string(),
+  "phone": zod.string()
+})])
 
 export const UpdateProfileResponse = zod.object({
   "id": zod.number(),
@@ -5040,6 +5049,7 @@ export const UpdateProfileResponse = zod.object({
   "nation": zod.string().nullish(),
   "profilePhoto": zod.string().nullish(),
   "profileComplete": zod.boolean(),
+  "isGuardianOnly": zod.boolean().optional(),
   "preferredLocale": zod.string().nullish(),
   "recordingConsent": zod.boolean(),
   "recordingConsentAt": zod.coerce.date().nullish(),

@@ -25,6 +25,7 @@ export interface User {
   /** @nullable */
   profilePhoto?: string | null;
   profileComplete: boolean;
+  isGuardianOnly?: boolean;
   /** @nullable */
   preferredLocale?: string | null;
   recordingConsent: boolean;

@@ -5154,6 +5154,8 @@ components:
           type: ["string", "null"]
         profileComplete:
           type: boolean
+        isGuardianOnly:
+          type: boolean
         preferredLocale:
           type: ["string", "null"]
         recordingConsent:
@@ -6431,6 +6433,11 @@ components:
 
 
     ProfileInput:
+      oneOf:
+        - $ref: "#/components/schemas/PlayerProfileInput"
+        - $ref: "#/components/schemas/GuardianProfileInput"
+
+    PlayerProfileInput:
       type: object
       required: [name, phone, position, age, gender]
       properties:
@@ -6448,6 +6455,18 @@ components:
         gender:
           type: string
           enum: [male, female, prefer_not_to_say]
+
+    GuardianProfileInput:
+      type: object
+      required: [profileType, name, phone]
+      properties:
+        profileType:
+          type: string
+          enum: [guardian]
+        name:
+          type: string
+        phone:
+          type: string
 
     AccountStats:
       type: object
