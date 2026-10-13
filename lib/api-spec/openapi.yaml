@@ -6966,6 +6966,7 @@ components:
         - squadId
         - squadName
         - type
+        - id
         - startsAt
         - endsAt
         - location
@@ -7571,8 +7572,11 @@ components:
 
     AcademyFamilySession:
       type: object
-      required: [type, startsAt, endsAt, location, opponent, ownScore, opponentScore, footage, recordings]
+      required: [id, type, startsAt, endsAt, location, opponent, ownScore, opponentScore, footage, recordings]
       properties:
+        id:
+          type: integer
+          minimum: 1
         type:
           type: string
           enum: [training, match]

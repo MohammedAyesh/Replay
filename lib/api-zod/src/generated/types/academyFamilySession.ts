@@ -10,6 +10,8 @@ import type { AcademySessionFootage } from './academySessionFootage';
 import type { AcademySessionRecording } from './academySessionRecording';
 
 export interface AcademyFamilySession {
+  /** @minimum 1 */
+  id: number;
   type: AcademyFamilySessionType;
   startsAt: Date;
   /** @nullable */

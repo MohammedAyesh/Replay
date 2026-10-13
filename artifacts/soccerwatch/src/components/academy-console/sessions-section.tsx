@@ -15,7 +15,7 @@ import {
   type AcademySessionSummary,
   type AcademySessionUpdate,
 } from "@workspace/api-client-react";
-import { CalendarDays, Clock3, MapPin, Pencil, Plus, RefreshCw, ShieldAlert, Swords, Trash2, Video } from "lucide-react";
+import { CalendarDays, Clock3, MapPin, Pencil, Play, Plus, RefreshCw, ShieldAlert, Swords, Trash2, Video } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { AcademyLiveOverlay } from "./AcademyLiveOverlay";
 import {
   ammanInputToUtcIso,
   formatAmmanDateTime,
@@ -113,6 +114,7 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState(false);
   const [mutationError, setMutationError] = useState(false);
+  const [liveSession, setLiveSession] = useState<AcademySessionSummary | null>(null);
   const [footageRetryErrorSessionId, setFootageRetryErrorSessionId] = useState<number | null>(null);
   const sessions = sessionsQuery.data ?? [];
   const squads = squadsQuery.data ?? [];
@@ -373,6 +375,18 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
                 )}
               </div>
             )}
+            {["scheduled", "recording"].includes(session.footage.status) && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setLiveSession(session)}
+                className="mt-2 min-h-8 px-2 text-xs text-turf"
+                data-testid={`button-live-session-${session.id}`}
+              >
+                <Play className="me-1.5 h-3.5 w-3.5" aria-hidden="true" />Live view
+              </Button>
+            )}
           </div>
           <div className="flex items-center justify-end gap-1 border-t border-line pt-2 sm:border-0 sm:pt-0">
             <Button
@@ -424,6 +438,11 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
 
   return (
     <section className="space-y-6" data-testid="academy-sessions">
+      {liveSession && <AcademyLiveOverlay
+        statusUrl={`/api/academy/console/academies/${academyId}/sessions/${liveSession.id}/live/status`}
+        title={`${kindLabel(liveSession.type)} · ${liveSession.location}`}
+        onClose={() => setLiveSession(null)}
+      />}
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-turf">{labels.workspace}</p>

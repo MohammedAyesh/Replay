@@ -8,7 +8,8 @@ import { getLocalUserRecord } from "../lib/clerkUserBridge";
 import { requireAcademyConsoleUser } from "../lib/academyAccess";
 import { ammanLocalInstant } from "../lib/matchRooms";
 import { describeLive, parseLiveManifest } from "../lib/liveManifest";
-import { parseLiveCamera } from "../lib/liveCameras";
+import { parseLiveCamera, parseVarControlCamera } from "../lib/liveCameras";
+import { canViewPinnedAcademyRecording } from "../lib/publicFootage";
 import { pipeLiveSegment, rewriteLivePlaylist } from "../lib/liveHlsProxy";
 import { controlFetch, controlResponse } from "./contabo";
 import { logger } from "../lib/logger";
@@ -26,10 +27,10 @@ function param(value: string | string[] | undefined): string {
 }
 
 function varCamera(value: string | null): Camera {
-  const alias = parseLiveCamera(value ?? undefined);
-  if (!alias) return null;
-  const match = /^camera([1-3])$/.exec(alias);
-  return match ? { alias, control: `cam${match[1]}` } : null;
+  const control = parseVarControlCamera(value ?? undefined);
+  const alias = parseLiveCamera(value ?? undefined)
+    ?? (control ? parseLiveCamera(`camera${control.slice(3)}`) : null);
+  return control && alias ? { alias, control } : null;
 }
 
 async function sessionFor(academyId: number, sessionId: number): Promise<SessionLive | null> {
@@ -53,26 +54,26 @@ async function sessionFor(academyId: number, sessionId: number): Promise<Session
 }
 
 async function canViewFamilySession(userId: number, session: SessionLive): Promise<boolean> {
-  const member = await db.select({ id: academyMembersTable.id }).from(academyMembersTable)
-    .where(and(eq(academyMembersTable.userId, userId), eq(academyMembersTable.academyId, session.academyId)));
-  if (member.length) return true;
-  const [selfPlayers, guardianLinks] = await Promise.all([
-    db.select({ id: academyPlayersTable.id }).from(academyPlayersTable).where(and(
-      eq(academyPlayersTable.academyId, session.academyId),
-      eq(academyPlayersTable.userId, userId),
-      eq(academyPlayersTable.isActive, true),
-      ...(session.squadId === null ? [] : [eq(academyPlayersTable.squadId, session.squadId)]),
-    )),
+  const [members, players, guardianLinks] = await Promise.all([
+    db.select({ academyId: academyMembersTable.academyId }).from(academyMembersTable)
+      .where(and(eq(academyMembersTable.userId, userId), eq(academyMembersTable.academyId, session.academyId))),
+    db.select({
+      id: academyPlayersTable.id,
+      academyId: academyPlayersTable.academyId,
+      squadId: academyPlayersTable.squadId,
+      userId: academyPlayersTable.userId,
+      isActive: academyPlayersTable.isActive,
+    }).from(academyPlayersTable).where(eq(academyPlayersTable.academyId, session.academyId)),
     db.select({ playerId: academyPlayerGuardiansTable.playerId }).from(academyPlayerGuardiansTable)
-      .innerJoin(academyPlayersTable, eq(academyPlayersTable.id, academyPlayerGuardiansTable.playerId))
-      .where(and(
-        eq(academyPlayerGuardiansTable.userId, userId),
-        eq(academyPlayersTable.academyId, session.academyId),
-        eq(academyPlayersTable.isActive, true),
-        ...(session.squadId === null ? [] : [eq(academyPlayersTable.squadId, session.squadId)]),
-      )),
+      .where(eq(academyPlayerGuardiansTable.userId, userId)),
   ]);
-  return selfPlayers.length + guardianLinks.length > 0;
+  return canViewPinnedAcademyRecording(
+    userId,
+    { academyId: session.academyId, sessionSquadId: session.squadId },
+    new Set(members.map(({ academyId }) => academyId)),
+    players,
+    new Set(guardianLinks.map(({ playerId }) => playerId)),
+  );
 }
 
 async function authorizedSession(
@@ -112,7 +113,15 @@ async function authorizedSession(
     academyId = found.academyId;
   }
   const session = await sessionFor(academyId, sessionId);
-  if (!session || (surface === "family" && !(await canViewFamilySession(userId, session)))) {
+  const hasConsoleMembership = surface === "console" && (await db.select({ id: academyMembersTable.id })
+    .from(academyMembersTable)
+    .where(and(
+      eq(academyMembersTable.userId, userId),
+      eq(academyMembersTable.academyId, academyId),
+    ))).length > 0;
+  if (!session
+    || (surface === "console" && !hasConsoleMembership)
+    || (surface === "family" && !(await canViewFamilySession(userId, session)))) {
     res.status(404).json({ error: "Session not found" });
     return null;
   }

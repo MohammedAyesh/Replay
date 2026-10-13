@@ -2414,6 +2414,7 @@ export const getAcademyFamilyMeResponseFinanceMonthsOwedMin = 0;
 
 export const getAcademyFamilyMeResponseFinanceOutstandingFilsMin = 0;
 
+
 export const getAcademyFamilyMeResponseSessionsItemOwnScoreMin = 0;
 
 export const getAcademyFamilyMeResponseSessionsItemOpponentScoreMin = 0;
@@ -2467,6 +2468,7 @@ export const GetAcademyFamilyMeResponse = zod.object({
   "outstandingFils": zod.number().min(getAcademyFamilyMeResponseFinanceOutstandingFilsMin)
 }).nullable(),
   "sessions": zod.array(zod.object({
+  "id": zod.number().min(1),
   "type": zod.enum(['training', 'match']),
   "startsAt": zod.coerce.date(),
   "endsAt": zod.coerce.date().nullable(),
@@ -2807,6 +2809,52 @@ export const CreateAcademyConsoleSessionResponse = zod.object({
   "score": zod.string().nullable(),
   "videoUrl": zod.string()
 }))
+})
+
+
+/**
+ * @summary Get HLS live status for a booked academy session
+ */
+
+
+
+
+export const GetAcademyConsoleSessionLiveStatusParams = zod.object({
+  "academyId": zod.coerce.number().min(1),
+  "sessionId": zod.coerce.number().min(1)
+})
+
+export const GetAcademyConsoleSessionLiveStatusResponse = zod.object({
+  "status": zod.enum(['upcoming', 'live', 'not_live', 'ended', 'no_booking']),
+  "windowStartsAt": zod.coerce.date().nullable(),
+  "windowEndsAt": zod.coerce.date().nullable(),
+  "camera": zod.string().nullable(),
+  "variant": zod.enum(['hls']),
+  "playlistPath": zod.string().nullable(),
+  "message": zod.string(),
+  "panAvailable": zod.literal(false)
+})
+
+
+/**
+ * @summary Get HLS live status for an accessible family session
+ */
+
+
+
+export const GetAcademyFamilySessionLiveStatusParams = zod.object({
+  "sessionId": zod.coerce.number().min(1)
+})
+
+export const GetAcademyFamilySessionLiveStatusResponse = zod.object({
+  "status": zod.enum(['upcoming', 'live', 'not_live', 'ended', 'no_booking']),
+  "windowStartsAt": zod.coerce.date().nullable(),
+  "windowEndsAt": zod.coerce.date().nullable(),
+  "camera": zod.string().nullable(),
+  "variant": zod.enum(['hls']),
+  "playlistPath": zod.string().nullable(),
+  "message": zod.string(),
+  "panAvailable": zod.literal(false)
 })
 
 

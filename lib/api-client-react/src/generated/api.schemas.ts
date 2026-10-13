@@ -1572,6 +1572,39 @@ export interface AcademySessionFootage {
   recordingCount: number;
 }
 
+export type AcademyLiveSessionStatusStatus = typeof AcademyLiveSessionStatusStatus[keyof typeof AcademyLiveSessionStatusStatus];
+
+
+export const AcademyLiveSessionStatusStatus = {
+  upcoming: 'upcoming',
+  live: 'live',
+  not_live: 'not_live',
+  ended: 'ended',
+  no_booking: 'no_booking',
+} as const;
+
+export type AcademyLiveSessionStatusVariant = typeof AcademyLiveSessionStatusVariant[keyof typeof AcademyLiveSessionStatusVariant];
+
+
+export const AcademyLiveSessionStatusVariant = {
+  hls: 'hls',
+} as const;
+
+export interface AcademyLiveSessionStatus {
+  status: AcademyLiveSessionStatusStatus;
+  /** @nullable */
+  windowStartsAt: string | null;
+  /** @nullable */
+  windowEndsAt: string | null;
+  /** @nullable */
+  camera: string | null;
+  variant: AcademyLiveSessionStatusVariant;
+  /** @nullable */
+  playlistPath: string | null;
+  message: string;
+  panAvailable: false;
+}
+
 export type AcademySessionSummaryType = typeof AcademySessionSummaryType[keyof typeof AcademySessionSummaryType];
 
 
@@ -1994,6 +2027,8 @@ export const AcademyFamilySessionType = {
 } as const;
 
 export interface AcademyFamilySession {
+  /** @minimum 1 */
+  id: number;
   type: AcademyFamilySessionType;
   startsAt: string;
   /** @nullable */

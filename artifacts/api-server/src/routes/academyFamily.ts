@@ -357,6 +357,7 @@ async function readFamilyView(
     },
     finance,
     sessions: sessions.map(({ id, footageRequestId, footageNote, ...session }) => ({
+      id,
       ...session,
       footage: academyFootageSummary(
         footageRequestId === null ? null : footageById.get(footageRequestId) ?? null,

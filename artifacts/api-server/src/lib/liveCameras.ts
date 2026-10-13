@@ -13,3 +13,10 @@ export function parseLiveCamera(value: string | string[] | undefined): string | 
   const camera = Array.isArray(value) ? value[0] : value;
   return camera && LIVE_CAMERA_UPSTREAM.has(camera) ? camera : null;
 }
+
+/** Resolve the control-service camera name without exposing camera internals to clients. */
+export function parseVarControlCamera(value: string | string[] | undefined): "cam1" | "cam2" | "cam3" | null {
+  const camera = Array.isArray(value) ? value[0] : value;
+  const match = /^(?:camera|cam)([1-3])$/.exec(camera ?? "");
+  return match && parseLiveCamera(`camera${match[1]}`) ? `cam${match[1]}` as "cam1" | "cam2" | "cam3" : null;
+}

@@ -60,6 +60,7 @@ import type {
   AcademyJoinPublicInfo,
   AcademyJoinRegistrationInput,
   AcademyJoinSubmissionResult,
+  AcademyLiveSessionStatus,
   AcademyMemberAssignment,
   AcademyMemberListItem,
   AcademyMemberSummary,
@@ -6255,6 +6256,165 @@ export const useCreateAcademyConsoleSession = <TError = ErrorType<void>,
       > => {
       return useMutation(getCreateAcademyConsoleSessionMutationOptions(options));
     }
+
+export const getGetAcademyConsoleSessionLiveStatusUrl = (academyId: number,
+    sessionId: number,) => {
+
+
+
+
+  return `/api/academy/console/academies/${academyId}/sessions/${sessionId}/live/status`
+}
+
+/**
+ * @summary Get HLS live status for a booked academy session
+ */
+export const getAcademyConsoleSessionLiveStatus = async (academyId: number,
+    sessionId: number, options?: RequestInit): Promise<AcademyLiveSessionStatus> => {
+
+  return customFetch<AcademyLiveSessionStatus>(getGetAcademyConsoleSessionLiveStatusUrl(academyId,sessionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyConsoleSessionLiveStatusQueryKey = (academyId: number,
+    sessionId: number,) => {
+    return [
+    `/api/academy/console/academies/${academyId}/sessions/${sessionId}/live/status`
+    ] as const;
+    }
+
+
+export const getGetAcademyConsoleSessionLiveStatusQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyConsoleSessionLiveStatus>>, TError = ErrorType<void>>(academyId: number,
+    sessionId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleSessionLiveStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyConsoleSessionLiveStatusQueryKey(academyId,sessionId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyConsoleSessionLiveStatus>>> = ({ signal }) => getAcademyConsoleSessionLiveStatus(academyId,sessionId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: academyId !== null && academyId !== undefined && sessionId !== null && sessionId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleSessionLiveStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyConsoleSessionLiveStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyConsoleSessionLiveStatus>>>
+export type GetAcademyConsoleSessionLiveStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get HLS live status for a booked academy session
+ */
+
+export function useGetAcademyConsoleSessionLiveStatus<TData = Awaited<ReturnType<typeof getAcademyConsoleSessionLiveStatus>>, TError = ErrorType<void>>(
+ academyId: number,
+    sessionId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyConsoleSessionLiveStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyConsoleSessionLiveStatusQueryOptions(academyId,sessionId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAcademyFamilySessionLiveStatusUrl = (sessionId: number,) => {
+
+
+
+
+  return `/api/academy/family/sessions/${sessionId}/live/status`
+}
+
+/**
+ * @summary Get HLS live status for an accessible family session
+ */
+export const getAcademyFamilySessionLiveStatus = async (sessionId: number, options?: RequestInit): Promise<AcademyLiveSessionStatus> => {
+
+  return customFetch<AcademyLiveSessionStatus>(getGetAcademyFamilySessionLiveStatusUrl(sessionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAcademyFamilySessionLiveStatusQueryKey = (sessionId: number,) => {
+    return [
+    `/api/academy/family/sessions/${sessionId}/live/status`
+    ] as const;
+    }
+
+
+export const getGetAcademyFamilySessionLiveStatusQueryOptions = <TData = Awaited<ReturnType<typeof getAcademyFamilySessionLiveStatus>>, TError = ErrorType<void>>(sessionId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyFamilySessionLiveStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAcademyFamilySessionLiveStatusQueryKey(sessionId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAcademyFamilySessionLiveStatus>>> = ({ signal }) => getAcademyFamilySessionLiveStatus(sessionId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: sessionId !== null && sessionId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAcademyFamilySessionLiveStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAcademyFamilySessionLiveStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getAcademyFamilySessionLiveStatus>>>
+export type GetAcademyFamilySessionLiveStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get HLS live status for an accessible family session
+ */
+
+export function useGetAcademyFamilySessionLiveStatus<TData = Awaited<ReturnType<typeof getAcademyFamilySessionLiveStatus>>, TError = ErrorType<void>>(
+ sessionId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAcademyFamilySessionLiveStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAcademyFamilySessionLiveStatusQueryOptions(sessionId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getUpdateAcademyConsoleSessionUrl = (academyId: number,
     sessionId: number,) => {
