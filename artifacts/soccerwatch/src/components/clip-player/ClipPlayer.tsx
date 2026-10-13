@@ -37,8 +37,9 @@ import {
   applyFrameToVideo,
 } from "@/lib/cropFrame";
 import {
-  cameraAt, cameraYAt, cleanSamples, smoothPath, targetSeries,
+  cameraAt, cameraYAt, type CameraPoint,
 } from "@/lib/follow-ball";
+import { computeFollowBallPath } from "@/lib/follow-ball-compute";
 import {
   PLAYBACK_MAX_WIDTH,
   capBelowFailedLevel,
@@ -377,20 +378,22 @@ export function ClipPlayer({
       return saved === null ? null : saved === "true";
     } catch { return null; }
   });
+  const followVideoId = source.kind === "bunny" ? source.videoId : null;
   const ballPathQuery = useQuery({
-    queryKey: ["ball-path", source.kind === "bunny" ? source.videoId : null],
-    queryFn: async (): Promise<{ v: 1; samples: Array<[number, number, number]>; gameSpans: Array<[number, number]>; coverage: number }> => {
-      const response = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/videos/${encodeURIComponent(source.kind === "bunny" ? source.videoId : "")}/ball-path`, { credentials: "include" });
+    queryKey: ["ball-path", followVideoId],
+    queryFn: async (): Promise<{ v: 1; samples: Array<[number, number, number]>; gameSpans: Array<[number, number]>; cameraSpans: Array<[number, number]>; coverage: number }> => {
+      const response = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/videos/${encodeURIComponent(followVideoId ?? "")}/ball-path`, { credentials: "include" });
       if (!response.ok) throw new Error(`Ball path unavailable (${response.status})`);
       return response.json();
     },
-    enabled: source.kind === "bunny" && followSetting,
+    enabled: followVideoId !== null && followSetting,
     staleTime: 60 * 60 * 1000,
     retry: false,
   });
   const ballPath = ballPathQuery.data && ballPathQuery.data.coverage >= 0.25
     ? ballPathQuery.data : undefined;
-  const followAvailable = Boolean(source.kind === "bunny" && followSetting && ballPath);
+  const [cameraPath, setCameraPath] = useState<CameraPoint[] | null>(null);
+  const followAvailable = Boolean(followVideoId && followSetting && ballPath && cameraPath?.length);
   const isFollowingBall = followAvailable && followChoice !== false;
   const followEnabledRef = useRef(false);
   followEnabledRef.current = isFollowingBall;
@@ -403,15 +406,22 @@ export function ClipPlayer({
     setFollowChoice(enabled);
   }, [setOrigin]);
   const [duration, setDuration] = useState(0);
-  const cameraPath = useMemo(() => {
-    if (!ballPath) return [];
-    try {
-      return smoothPath(targetSeries(cleanSamples(ballPath.samples), ballPath.gameSpans, duration));
-    } catch (error) {
-      console.warn("[ClipPlayer] Could not prepare follow-ball path", error);
-      return [];
-    }
-  }, [ballPath, duration]);
+  useEffect(() => {
+    setCameraPath(null);
+    if (!followVideoId || !ballPath || duration <= 0) return;
+    let active = true;
+    void computeFollowBallPath(
+      followVideoId,
+      ballPath.samples,
+      ballPath.cameraSpans ?? ballPath.gameSpans,
+      duration,
+    ).then((path) => {
+      if (active) setCameraPath(path);
+    }).catch((error) => {
+      if (active) console.warn("[ClipPlayer] Could not prepare follow-ball path", error);
+    });
+    return () => { active = false; };
+  }, [ballPath, duration, followVideoId]);
   const followLoopErrorLogged = useRef(false);
   const manualTookControl = useRef(false);
 
@@ -424,15 +434,7 @@ export function ClipPlayer({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!isFollowingBall) return;
-    if (!cameraPath.length) {
-      if (!followLoopErrorLogged.current) {
-        followLoopErrorLogged.current = true;
-        console.warn("[ClipPlayer] Follow-ball camera has no usable samples");
-      }
-      setFollowPreference(false);
-      return;
-    }
+    if (!isFollowingBall || !cameraPath?.length) return;
     if (!video) return;
     let raf = 0;
     let active = true;
